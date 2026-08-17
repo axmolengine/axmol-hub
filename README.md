@@ -1,3 +1,3 @@
-# The axmol-launcher
+# The axmol-hub
 
 
