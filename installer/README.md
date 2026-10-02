@@ -28,9 +28,9 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 | `Axmol.Hub-<version>-full.nupkg` | 自更新载荷 |
 | `releases.win.json` / `assets.win.json` / `RELEASES` | 更新索引，静态文件即可作为更新源 |
 
-版本号只有**一个来源**：`src/AxmolHub.App/AxmolHub.App.csproj` 的 `<Version>`。`Build.ps1` 读它，不再有散落的手工副本。
+版本号只有**一个来源**：仓库根的 `Directory.Build.props`（五个项目共用）。`Build.ps1` 读它，不再有散落的手工副本。
 
-`Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台。**当前只有 Windows 能出包**：`AxmolHub.App` 还是 `net8.0-windows` + WPF，`Build.ps1` 里对此有一条显式守卫，随 Avalonia 迁移一并删除。Core 与 Cli 已经能为每个宿主构建。
+`Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台。**当前只有 Windows 能出包**。P6 之后 App 已经是跨平台实现（Avalonia / `net8.0`），守卫的保留理由也随之变了：不再是"项目是 Windows 独占"，而是 **osx / linux 的发行通道（签名、公证、载荷格式）尚未跑通**。Core、Cli 与 App 都已经能为每个宿主构建。
 
 `Test.ps1 -Isolated` 用一次性 `packId`、程序名与安装目录打包两个相邻版本（`x` 与 `x+1`），验证：
 

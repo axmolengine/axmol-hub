@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using AxmolHub.Core;
 
 var root = Path.GetFullPath(args.Length > 0 ? args[0] : "artifacts/checks");
@@ -54,7 +55,7 @@ if (args.Contains("--prepare-release-check"))
     var messagesEntry = new List<string>(); var runnerEntry = new ProcessRunner(message => { messagesEntry.Add(message); Console.WriteLine(message); });
     var environmentEntry = new PlatformBuildService(runnerEntry, toolsEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
     foreach (var name in new[] { "HOME", "TEMP" }) Directory.CreateDirectory(environmentEntry[name]);
-    var serviceEntry = new ProjectService(runnerEntry, new ToolchainDetector(runnerEntry, toolsEntry), toolsEntry, Path.GetFullPath("src/AxmolHub.App/Invoke-Axmol.ps1"));
+    var serviceEntry = new ProjectService(runnerEntry, new ToolchainDetector(runnerEntry, toolsEntry), toolsEntry, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
     var entry = hubEntry.Projects.FirstOrDefault(p => p.Name == "HelloAndroidRelease")
         ?? await serviceEntry.CreateAsync("HelloAndroidRelease", Path.Combine(root, "projects"), selectedEngine);
     var settings = new AndroidReleaseSettings { ApplicationId = "com.axmolhub.releasecheck", VersionCode = 7, VersionName = "0.1.3",
@@ -164,7 +165,7 @@ if (args.Contains("--build-game") || args.Contains("--run-game"))
     var hubState = storeEntry.Load();
     var projectEntry = hubState.Projects.Single(p => p.Name == "HelloAxmol");
     var engineEntry = hubState.Engines.Single(e => e.Version == projectEntry.Version && e.Channel == projectEntry.Channel);
-    var serviceEntry = new ProjectService(runnerEntry, detectorEntry, Path.Combine(root, "tools"), Path.GetFullPath("src/AxmolHub.App/Invoke-Axmol.ps1"));
+    var serviceEntry = new ProjectService(runnerEntry, detectorEntry, Path.Combine(root, "tools"), Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
     if (args.Contains("--build-game"))
     {
         projectEntry.BuildStatus = "Building";
@@ -193,7 +194,7 @@ if (args.Contains("--prepare-windows") || args.Contains("--install-msvc"))
     using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     var runnerEntry = new ProcessRunner(Write);
     var windows = new WindowsToolchainInstaller(new DownloadManager(http, Write), runnerEntry, root, Path.GetFullPath("manifests/toolchain-manifest.json"),
-        Path.GetFullPath("src/AxmolHub.App/Verify-MicrosoftSignature.ps1"), Write);
+        Path.GetFullPath("src/AxmolHub.Core/Scripts/Verify-MicrosoftSignature.ps1"), Write);
     await windows.InstallSdkAsync();
     var prepared = await windows.PrepareBuildToolsAsync();
     if (args.Contains("--install-msvc")) await windows.InstallBuildToolsAsync(prepared);
@@ -226,7 +227,7 @@ if (args.Contains("--install-engine"))
     var toolsRoot = Path.Combine(root, "tools");
     var detectorEntry = new ToolchainDetector(processRunner, toolsRoot);
     await detectorEntry.DetectAsync();
-    var projectService = new ProjectService(processRunner, detectorEntry, toolsRoot, Path.GetFullPath("src/AxmolHub.App/Invoke-Axmol.ps1"));
+    var projectService = new ProjectService(processRunner, detectorEntry, toolsRoot, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
     var created = await projectService.CreateAsync("HelloAxmol", Path.Combine(root, "projects"), engineEntry);
     new StateStore(root).Save(new HubState { Engines = [engineEntry], Projects = [created], DefaultEnginePath = path });
     Console.WriteLine("Official engine verified and project created. Game Build/Run still requires managed MSVC and Windows SDK.");
@@ -244,6 +245,210 @@ async Task Reject<T>(Func<Task> action, string name) where T : Exception
     try { await action(); } catch (T) { Check(true, name); return; }
     throw new Exception("FAILED: " + name);
 }
+
+// ---------------------------------------------------------------------------
+// CLI --json 契约（文档：docs/cli-json-contract.md）。这是**端到端**检查：真起 CLI 进程，
+// 只认 stdout。纯形状断言永远证明不了"stdout 里恰好只有一份 JSON" —— help 那次真错
+// （help 文本打头、后面跟着信封）就是这么漏过去的。所以核心断言是"整段 stdout 必须被
+// JsonDocument.Parse 吃下"，多一个字符都不行。解析在进程内做，不依赖 jq/python，
+// 三个平台行为一致。
+//
+// 放在主流程之前、自带 return：契约检查不需要真实引擎与工具链，因此必须能在
+// 干净的 CI 机器上单独跑（主流程恰恰需要真实引擎树，CI 目前跑不了）。
+// ---------------------------------------------------------------------------
+if (args.Contains("--check-cli-json"))
+{
+    var cliIndex = Array.IndexOf(args, "--check-cli-json");
+    if (cliIndex + 1 >= args.Length || args[cliIndex + 1].StartsWith("--"))
+        throw new ArgumentException("--check-cli-json requires the path to AxmolHub.Cli.dll or to the self-contained host executable.");
+    var cliPath = Path.GetFullPath(args[cliIndex + 1]);
+    if (!File.Exists(cliPath)) throw new FileNotFoundException("Build src/AxmolHub.Cli first: the CLI artifact does not exist.", cliPath);
+
+    // 框架依赖产物是 dll，要借 dotnet 起；自包含产物本身就是宿主可执行文件。
+    var executable = Path.GetExtension(cliPath).Equals(".dll", StringComparison.OrdinalIgnoreCase) ? "dotnet" : cliPath;
+    string[] leading = executable == "dotnet" ? [cliPath] : [];
+    var workspace = Path.GetFullPath(".");
+    var scratch = Path.Combine(root, "cli-contract");
+    if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    Directory.CreateDirectory(scratch);
+
+    var transcript = new List<string>();
+    var cli = new ProcessRunner(line => { lock (transcript) transcript.Add(line); });
+
+    async Task<(int Code, string Output, string Error)> Invoke(string[] arguments)
+    {
+        var result = await cli.RunAsync(executable, [.. leading, .. arguments], workspace, timeout: TimeSpan.FromMinutes(2));
+        return (result.ExitCode, result.Output, result.Error);
+    }
+
+    // 解析失败时把 stdout 原文倒出来再失败，否则只剩一句无信息量的 FAILED。
+    JsonDocument? Parse(string output)
+    {
+        try { return JsonDocument.Parse(output); }
+        catch (JsonException)
+        {
+            Console.Error.WriteLine("--- stdout was not exactly one JSON document ---");
+            Console.Error.WriteLine(output.Length == 0 ? "(stdout was empty)" : output);
+            return null;
+        }
+    }
+
+    // 失败时把子进程的完整 transcript 倒出来；成功时保持安静（否则 14 行 JSON 会被抄两遍）。
+    void Judge(bool condition, string name)
+    {
+        if (condition) { Check(true, name); return; }
+        Console.Error.WriteLine("--- CLI transcript ---");
+        foreach (var line in transcript) Console.Error.WriteLine(line);
+        throw new Exception("FAILED: " + name);
+    }
+
+    bool Has(JsonElement parent, params string[] names) => names.All(name => parent.TryGetProperty(name, out _));
+
+    // 递归确认没有 PascalCase 属性名。命名策略一旦退回 System.Text.Json 的默认值，
+    // 整个契约就和文档对不上了 —— 而那只会在消费方那边炸，不会在这里炸。
+    bool CamelCaseOnly(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Length > 0 && char.IsUpper(property.Name[0])) return false;
+                if (!CamelCaseOnly(property.Value)) return false;
+            }
+            return true;
+        }
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray()) if (!CamelCaseOnly(item)) return false;
+            return true;
+        }
+        return true;
+    }
+
+    // ---- 1) 成功路径 ----
+    var targets = await Invoke(["targets", "--json"]);
+    var targetsDocument = Parse(targets.Output);
+    Judge(targets.Code == 0, "targets --json exits 0");
+    Judge(targetsDocument is not null, "targets --json writes exactly one parseable JSON document to stdout");
+    if (targetsDocument is not null)
+    {
+        using (targetsDocument)
+        {
+            var envelope = targetsDocument.RootElement;
+            Judge(envelope.GetProperty("schema").GetInt32() == CliContract.SchemaVersion, "the envelope declares the contract schema version");
+            Judge(envelope.GetProperty("command").GetString() == "targets", "the envelope names the verb that ran");
+            Judge(envelope.GetProperty("ok").GetBoolean(), "a successful command reports ok:true");
+            Judge(envelope.GetProperty("exitCode").GetInt32() == 0, "the envelope exitCode equals the process exit code");
+            Judge(!envelope.TryGetProperty("error", out _), "a successful envelope carries no error member");
+            Judge(Has(envelope, "schema", "command", "ok", "exitCode", "data"), "the envelope is written with the documented member names");
+            Judge(CamelCaseOnly(envelope), "no PascalCase member survives anywhere in the envelope");
+            var list = envelope.GetProperty("data").GetProperty("targets");
+            Judge(list.GetArrayLength() == BuildTargets.All.Count, "data.targets lists every build target");
+            Judge(list.EnumerateArray().All(target => Has(target, "id", "name", "family", "architecture", "hosts", "simulator", "current")),
+                "every target descriptor uses the documented field names");
+            Judge(list.EnumerateArray().Any(target => target.GetProperty("id").GetString() == "windows-x64"), "target ids stay verbatim in JSON");
+        }
+    }
+
+    // --json 是全局标志：放在动词前面必须和放在后面逐字节相同。
+    var flagFirst = await Invoke(["--json", "targets"]);
+    Judge(flagFirst.Code == 0 && flagFirst.Output == targets.Output, "--json is position independent");
+
+    // ---- 2) help：这里曾真的漏过（help 文本打头 + 信封，stdout 整段不可解析） ----
+    var helpJson = await Invoke(["help", "--json"]);
+    var helpDocument = Parse(helpJson.Output);
+    Judge(helpJson.Code == 0 && helpDocument is not null, "help --json writes exactly one parseable JSON document to stdout");
+    if (helpDocument is not null)
+    {
+        using (helpDocument)
+        {
+            var commands = helpDocument.RootElement.GetProperty("data").GetProperty("commands");
+            Judge(commands.GetArrayLength() == 12 && commands.EnumerateArray().Any(command => command.GetString() == "install-tools"),
+                "help enumerates every verb as data instead of printing prose to stdout");
+        }
+    }
+
+    // ---- 3) 不带 --json 时人读输出必须原样不动 ----
+    var human = await Invoke(["targets"]);
+    Judge(human.Code == 0 && !human.Output.TrimStart().StartsWith('{') && human.Output.Contains("current="),
+        "without --json the human layout is untouched");
+
+    // ---- 4) 失败也必须给 JSON：消费方不该被迫去解析 stderr ----
+    var failure = await Invoke(["select", Path.Combine(scratch, "data"), Path.Combine(scratch, "not-a-project"), "windows-x64", "--json"]);
+    var failureDocument = Parse(failure.Output);
+    Judge(failure.Code == 1, "a failing command keeps its process exit code");
+    Judge(failureDocument is not null, "a failing command still writes exactly one parseable JSON document to stdout");
+    if (failureDocument is not null)
+    {
+        using (failureDocument)
+        {
+            var envelope = failureDocument.RootElement;
+            Judge(!envelope.GetProperty("ok").GetBoolean() && envelope.GetProperty("exitCode").GetInt32() == 1,
+                "the failure envelope reports ok:false together with the real exit code");
+            Judge(envelope.GetProperty("error").GetProperty("type").GetString() == nameof(InvalidDataException),
+                "the failure envelope names the exception type");
+            Judge(!string.IsNullOrWhiteSpace(envelope.GetProperty("error").GetProperty("message").GetString()),
+                "the failure envelope carries the exception message");
+            Judge(!envelope.TryGetProperty("data", out _), "an exception failure carries no data member");
+        }
+    }
+    Judge(failure.Error.Length > 0, "the human diagnostic still goes to stderr rather than stdout");
+
+    // ---- 5) verify 是刻意的例外：ok:false + exitCode:2 但 data 仍要在（"组件缺失"是数据不是异常）----
+    var verify = await Invoke(["verify", Path.Combine(scratch, "clean-root"), "windows-x64", "--json"]);
+    var verifyDocument = Parse(verify.Output);
+    Judge(verify.Code == 2, "verify exits 2 when components are missing");
+    Judge(verifyDocument is not null, "verify with missing components still writes exactly one parseable JSON document");
+    if (verifyDocument is not null)
+    {
+        using (verifyDocument)
+        {
+            var envelope = verifyDocument.RootElement;
+            Judge(!envelope.GetProperty("ok").GetBoolean() && envelope.GetProperty("exitCode").GetInt32() == 2,
+                "verify separates ok:false from exitCode 2 instead of throwing");
+            var data = envelope.GetProperty("data");
+            Judge(data.GetProperty("target").GetString() == "windows-x64" && data.GetProperty("components").GetArrayLength() > 0,
+                "verify keeps its component inventory in data even when it fails");
+            Judge(data.GetProperty("components").EnumerateArray().All(component => Has(component, "name", "status", "details", "executable")),
+                "component descriptors use the documented field names");
+            Judge(!envelope.TryGetProperty("error", out _), "missing components are data, not an error member");
+        }
+    }
+
+    // ---- 6) 未知动词 ----
+    var unknown = await Invoke(["nonsense", "--json"]);
+    var unknownDocument = Parse(unknown.Output);
+    Judge(unknown.Code == 1 && unknownDocument is not null, "an unknown verb also fails in JSON");
+    if (unknownDocument is not null)
+    {
+        using (unknownDocument)
+        {
+            Judge(!unknownDocument.RootElement.GetProperty("ok").GetBoolean()
+                && unknownDocument.RootElement.GetProperty("error").GetProperty("type").GetString() == nameof(ArgumentException),
+                "an unknown verb is reported as an ArgumentException");
+        }
+    }
+
+    // ---- 7) 载荷编码本身（进程内，不依赖上面任何一次调用） ----
+    using (var bare = JsonDocument.Parse(CliContract.Encode("noop", true, 0)))
+    {
+        var members = bare.RootElement.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal);
+        Judge(members.SequenceEqual(["command", "exitCode", "ok", "schema"]),
+            "an envelope without payload or error has exactly the four base members");
+    }
+    using (var child = JsonDocument.Parse(CliContract.Encode("run", true, 7, new ChildExitPayload(7))))
+    {
+        Judge(child.RootElement.GetProperty("data").GetProperty("exitCode").GetInt32() == 7,
+            "run/serve/deploy report the child exit code inside data while ok stays true");
+    }
+    var described = CliContract.Describe(new InvalidDataException("boom"));
+    Judge(described.Type == nameof(InvalidDataException) && described.Message == "boom",
+        "Describe keeps the exception type and message and leaves the stack to stderr");
+
+    Console.WriteLine($"{count} CLI --json contract checks passed.");
+    return;
+}
+
 var messages = new List<string>();
 var runner = new ProcessRunner(message => { lock (messages) messages.Add(message); });
 var script = Path.Combine(root, "process fixture.ps1");
@@ -268,7 +473,19 @@ Check(components.All(c => c.Status == ComponentStatus.Missing), "Existing system
 var engineRoot = args.Length > 1 ? Path.GetFullPath(args[1]) : Path.GetFullPath("../axmol-2.11.5");
 var engine = StateStore.ValidateEngine(engineRoot);
 var environment = detector.BuildEnvironment(engine);
-Check(!environment["PATH"].Split(';').Any(p => p.StartsWith("D:", StringComparison.OrdinalIgnoreCase)), "Build PATH excludes D drive tools");
+// 断言原意是"构建 PATH 里不能有从宿主继承来的开发工具路径"，原先写成"不含 D 盘"只是它的一个
+// 代理判断 —— 只在本仓库不在 D 盘时成立，而 GitHub 的 Windows runner 工作目录正是 D:\a\...，
+// 所以那条断言在 CI 上必然失败。改成直接表达原意、并且与机器无关的写法：
+// 子环境 PATH 的每一项都必须能归到「受管工具根」或「操作系统目录」里，归不进去的就是继承来的。
+var managedTools = Path.GetFullPath(Path.Combine(root, "tools"));
+var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+var buildPath = environment["PATH"].Split(';', StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.TrimEnd('\\')).ToArray();
+bool Managed(string entry) => entry.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase);
+bool OperatingSystemOwned(string entry) => entry.StartsWith(windowsDirectory, StringComparison.OrdinalIgnoreCase);
+var leaked = buildPath.Where(entry => !Managed(entry) && !OperatingSystemOwned(entry)).ToArray();
+Check(leaked.Length == 0, "Build PATH contains no inherited developer directories (leaked: " + string.Join(", ", leaked) + ")");
+// 防退化：上面那条在 PATH 为空时也会通过，所以必须同时要求受管目录确实在起作用。
+Check(buildPath.Count(Managed) > 0, "Build PATH resolves tools from the managed root (" + buildPath.Count(Managed) + " entries)");
 Check(!environment["PATH"].Contains("Microsoft Visual Studio") && environment["INCLUDE"] == "" && environment["LIB"] == "", "Build environment excludes inherited developer paths");
 var oldSdk = Environment.GetEnvironmentVariable("DXSDK_DIR");
 try
@@ -279,12 +496,12 @@ try
 }
 finally { Environment.SetEnvironmentVariable("DXSDK_DIR", oldSdk); }
 
-var wrapper = Path.GetFullPath("src/AxmolHub.App/Invoke-Axmol.ps1");
+var wrapper = Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1");
 var service = new ProjectService(runner, detector, Path.Combine(root, "tools"), wrapper);
 await Reject<ArgumentException>(() => service.CreateAsync("bad;name", root, engine), "Unsafe template name rejected");
 var parent = Path.Combine(root, "projects " + Guid.NewGuid().ToString("N"));
 var project = await service.CreateAsync("HelloAxmol", parent, engine);
-Check(File.Exists(Path.Combine(project.Path, "Source/AppDelegate.cpp")) && StateStore.ReadProject(project.Path).Version == "2.11.5", "Real official CLI creates project and exact version lock");
+Check(File.Exists(Path.Combine(project.Path, "Source/AppDelegate.cpp")) && StateStore.ReadProject(project.Path).Version == engine.Version, "Real official CLI creates project and exact version lock");
 Check(StateStore.ReadProject(project.Path).ProjectType == "cpp", "Default creation uses the official C++ template");
 await Reject<ArgumentException>(() => service.CreateAsync("InvalidScript", parent, engine, projectType: "../lua"), "Invalid scripting type is rejected before creating directories");
 Check(!Directory.Exists(Path.Combine(parent, "InvalidScript")), "Invalid scripting choice leaves no project destination");
@@ -305,7 +522,7 @@ await Reject<InvalidOperationException>(() => service.BuildAsync(project, engine
 var stateStore = new StateStore(Path.Combine(root, "state"));
 var state = new HubState { Engines = [engine], Projects = [project], DefaultEnginePath = engine.Path };
 stateStore.Save(state);
-Check(stateStore.Load().Projects.Single().Version == "2.11.5", "State persistence");
+Check(stateStore.Load().Projects.Single().Version == engine.Version, "State persistence");
 var preferencesStore = new PreferencesStore(Path.Combine(root, "preferences.json"));
 var preferences = new HubPreferences { Language = "en-US", DataRoot = Path.Combine(root, "独立资料库"), ProjectDirectory = Path.Combine(root, "用户项目") };
 preferencesStore.Save(preferences);
@@ -472,7 +689,13 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     await Reject<PlatformNotSupportedException>(() => Task.Run(() => platformService.Plan(entry, new("2.11.5", platformRoot), false, false, "windows")), "Apple build on Windows is rejected before any process");
     entry.Platform = "wasm32";
     var wasmEnvironment = platformService.CreateEnvironment(new("2.11.5", platformRoot), BuildTargets.Get(entry.Platform));
-    Check(!wasmEnvironment.ContainsKey("DXSDK_DIR") && !wasmEnvironment["PATH"].Contains("D:") && wasmEnvironment["EM_CONFIG"].StartsWith(platformRoot), "Web build environment isolates developer paths and emsdk activation");
+    // 同 "Build PATH contains no inherited developer directories"：这里原先也是拿 "D:" 当代理判断，
+    // 只在工作根不在 D 盘时成立。改为按受管根归一化。
+    var wasmTools = Path.GetFullPath(Path.Combine(platformRoot, "tools"));
+    var wasmPath = wasmEnvironment["PATH"].Split(';', StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.TrimEnd('\\')).ToArray();
+    var wasmLeaked = wasmPath.Where(entry => !entry.StartsWith(wasmTools, StringComparison.OrdinalIgnoreCase) && !entry.StartsWith(windowsDirectory, StringComparison.OrdinalIgnoreCase)).ToArray();
+    Check(!wasmEnvironment.ContainsKey("DXSDK_DIR") && wasmLeaked.Length == 0 && wasmEnvironment["EM_CONFIG"].StartsWith(platformRoot),
+        "Web build environment isolates developer paths and emsdk activation (leaked: " + string.Join(", ", wasmLeaked) + ")");
     await Reject<InvalidOperationException>(() => Task.Run(() => platformService.Plan(entry, new("2.11.5", platformRoot), false)), "Missing target tools block build without system fallback");
     Directory.CreateDirectory(BuildTargets.BuildDirectory(entry));
     File.WriteAllText(Path.Combine(BuildTargets.BuildDirectory(entry), "Fixture.exe"), "wrong-target");
@@ -497,6 +720,10 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     Check(modules.HasSelection(engine) && modules.Load(engine).ModuleIds.Length == 0, "Explicitly deselected modules remain deselected after restart");
     await Reject<InvalidDataException>(() => Task.Run(() => modules.Save(engine, ["unknown"])), "Unknown module cannot be persisted");
     await Reject<InvalidOperationException>(() => Task.Run(() => modules.ForEngine(engine with { Version = "99.0.0" })), "Unverified engine version cannot use another version module profile");
+    // 打包配方的版本验证边界同样来自清单，不是代码里的字面量：同一个配方在已声明与未声明的版本上必须给出相反结论。
+    PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
+    await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine with { Version = "99.0.0" }, PackagingRecipes.AndroidPackaging)), "Unverified engine version cannot borrow another version packaging recipe");
+    await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine, "recipe-that-is-not-declared")), "Recipe not declared for the engine version is refused");
     var package = modules.Packages()["cmake"];
     var destination = PackageInstaller.SafePath(moduleRoot, package.Destination);
     Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(destination, package.VerifyFile))!);

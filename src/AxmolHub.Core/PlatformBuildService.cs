@@ -103,7 +103,7 @@ public sealed class PlatformBuildService(ProcessRunner runner, string toolsRoot)
         BuildConfigurations.ValidateTarget(project);
         if (!target.CanBuildOn(host ?? BuildTargets.Host)) throw new PlatformNotSupportedException($"{target.Name} requires {string.Join(" / ", target.Hosts)}. Current host: {host ?? BuildTargets.Host}.");
         if (target.Family == "windows") throw new InvalidOperationException("Use ProjectService for the verified Windows desktop build.");
-        if (target.Family == "android" && engine.Version != "2.11.5") throw new InvalidOperationException("Android packaging profile is verified only for Axmol 2.11.5.");
+        if (target.Family == "android") PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
         if (checkFiles)
         {
             var missing = Inspect(target.Id).Where(item => item.Status == ComponentStatus.Missing).ToArray();

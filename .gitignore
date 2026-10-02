@@ -27,3 +27,9 @@ Thumbs.db
 *.pfx
 *.p12
 *.key
+
+# 开发期临时产物与缓存（自检的报告/截图/夹具也落在这里，见 Services/ScratchDirectory.cs）
+tmp/
+cache/
+
+docs/vision-vs-implementation.md

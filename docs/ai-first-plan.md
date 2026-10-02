@@ -54,7 +54,7 @@ MCP C# SDK 与 `Microsoft.Extensions.AI` 共用 `AIFunction` 抽象，
 | `AxmolHub.Core` | net8.0 | **新增** `ProjectDigest`、`EngineIndex`（宿主无关） |
 | `AxmolHub.Agent` | net8.0 | 工具注册表 + `IChatClient` 管道 + 会话管理 |
 | `AxmolHub.Mcp` | net8.0+ | MCP server（stdio / streamable HTTP），暴露注册表 |
-| `AxmolHub.Cli` | net8.0 | 增加全局 `--json` |
+| `AxmolHub.Cli` | net8.0 | 增加全局 `--json` —— **已落地**，契约类型在 Core（`CliContract.cs`），故 CLI 仍零 NuGet 依赖 |
 | `AxmolHub.App` | — | 聊天面板（Avalonia 迁移后接入，见另案） |
 
 `AxmolHub.Agent` **不引用** `AxmolHub.App`，保证 CLI/MCP 可在无 GUI 环境（CI、服务器、远程 agent）运行。
@@ -192,8 +192,7 @@ MCP C# SDK 与 `Microsoft.Extensions.AI` 共用 `AIFunction` 抽象，
 
 | 阶段 | 产出 | 收益 |
 |---|---|---|
-| **P0 工具契约** | 所有 CLI 命令支持 `--json`，统一返回契约 | Hub 立刻可被脚本/CI 驱动 |
-| **P1 MCP Server** | `AxmolHub.Mcp`，stdio transport | Cursor / Claude Code / CodeBuddy 直接驱动 Hub。**先验证道具有没有价值，再投 UI** |
+| **P0 工具契约** | 所有 CLI 命令支持 `--json`，统一返回契约 —— **已完成 2026-10-02**：契约 `docs/cli-json-contract.md`、类型 `src/AxmolHub.Core/CliContract.cs`、12 动词全接、34 条端到端断言进 CI（`docs/ci.md` §2.6） | Hub 立刻可被脚本/CI 驱动 || **P1 MCP Server** | `AxmolHub.Mcp`，stdio transport | Cursor / Claude Code / CodeBuddy 直接驱动 Hub。**先验证道具有没有价值，再投 UI** |
 | **P2 上下文与索引** | `ProjectDigest` + `EngineIndex`（版本键控） | 专属感的来源 |
 | **P3 聊天面板** | 项目页内嵌，流式输出 + 工具调用卡片 + diff 预览 | 用户看得见的形态 |
 | **P4 闭环** | 构建失败卡片 →「问 AI」→ 自动修复 → 自动重建 | 最直观的差异化体验 |
@@ -222,7 +221,7 @@ MCP C# SDK 与 `Microsoft.Extensions.AI` 共用 `AIFunction` 抽象，
 
 1. **索引必须可重建、按版本命名空间化。** v3 装上即可重建，不需要改代码。
 2. **L0 人设不要写死 v2 约定。** 抽成 `EngineProfile`（按引擎版本选择规则集），v3 加一份即可。
-3. **先解掉单引擎版本绑定。** `module-manifest.json` 只有一个 2.11.5 profile，Android 打包硬编码 `engine.Version != "2.11.5"` 就拒绝——v3 一发布立刻阻塞。这项改动小，且**与 AI 方案正交，应先行**。
+3. **先解掉单引擎版本绑定。** —— **代码级已完成 2026-10-02**：两处硬编码的 `engine.Version != "2.11.5"` 改为查 `module-manifest.json` 的 `verifiedRecipes`，为 v3 放行变成改数据而非改 C#。**注意"未验证版本一律拒绝"这条纪律被刻意保留**，也没有添加新 profile —— 在 v3 上验证打包配方仍是人的工作（详见 `docs/hub-development-plan.md` A1）。**仍未解的是数据与 UI 面**：`module-manifest.json` / `engine-manifest.json` 里只有 2.11.5，且 GUI 的 `MainWindow.xaml.cs:557` 用 `Packages.Single()` 假定只存在一个官方引擎，v3 并存时会直接抛异常。
 
 ---
 

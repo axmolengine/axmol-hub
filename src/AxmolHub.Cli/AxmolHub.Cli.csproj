@@ -1,14 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><Version>0.1.6</Version>
+    <!-- Version 见仓库根的 Directory.Build.props：五个项目共用一个产品版本。 -->
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <!-- 与 installer/Build-Hosts.ps1 的宿主集合一致。列全是为了让锁文件包含每个 RID 的
+         原生资产段；只写 RuntimeIdentifier 会让锁文件内容随最后一次 restore 用的 RID 变化。 -->
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*.txt" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
-    <Content Include="../AxmolHub.App/Invoke-Axmol.ps1" Link="Invoke-Axmol.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 见 AxmolHub.App.csproj：脚本归属 Core，Cli 只是把它复制到自己的输出目录。 -->
+    <Content Include="../AxmolHub.Core/Scripts/*.ps1" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

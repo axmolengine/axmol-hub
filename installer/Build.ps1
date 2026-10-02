@@ -13,12 +13,13 @@ $taskPack = $taskManifest.packages[0]
 if (-not $PackId) { $PackId = $taskManifest.packId }
 if (-not $PackTitle) { $PackTitle = 'Axmol Hub' }
 
-# 版本单一来源 = App 项目文件。旧 .iss 里手工复制的 HubVersion 副本已随 Inno 一并删除。
+# 版本单一来源 = 仓库根的 Directory.Build.props（MSBuild 自动导入，五个项目共用一个值）。
+# 旧 .iss 里手工复制的 HubVersion 副本已随 Inno 一并删除，这里也不再读 App 项目文件。
 if (-not $Version) {
-    [xml]$taskProject = Get-Content -LiteralPath "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj"
-    $Version = @($taskProject.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
+    [xml]$taskProduct = Get-Content -LiteralPath "$taskRoot/Directory.Build.props"
+    $Version = @($taskProduct.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
 }
-if (-not $Version) { throw 'Version was not supplied and could not be read from AxmolHub.App.csproj.' }
+if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
 
 if (-not $Channel) {
     $Channel = 'linux'
@@ -32,9 +33,10 @@ if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'ar
 if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskPack.version) first: dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-packaging" }
 if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CLI $($taskPack.version)")) { throw "The workspace Velopack CLI is not the pinned $($taskPack.version)." }
 
-# 宿主后端尚未实现（见 docs/hub-development-plan.md D1/D2）：App 仍是 net8.0-windows + WPF。
-# Core 与 Cli 已经能为每个宿主构建，这条守卫随 Avalonia 迁移一并删除。
-if ($Runtime -notlike 'win-*') { throw "AxmolHub.App targets net8.0-windows with WPF, so $Runtime cannot be published yet." }
+# P6 起 App 是 Avalonia 版（net8.0，三平台都能构建），但**发行通道仍只验过 Windows**：
+# Velopack 的 osx/linux 载荷要走各自平台的签名与打包流程，尚未跑通。守卫因此保留，
+# 理由从"项目是 Windows 独占"换成了"这条通道还没验过"—— 见 docs/hub-development-plan.md D1/D2/D5。
+if ($Runtime -notlike 'win-*') { throw "The $Runtime release channel is not wired up yet (see docs/hub-development-plan.md D1/D2)." }
 
 $taskPublish = Join-Path $taskRoot "artifacts/app/$Runtime"
 # 必须清空：releases.<channel>.json 是单一索引，残留的旧版本会一并列进发布内容。

@@ -1,0 +1,107 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AxmolHub.App"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="740" d:DesignHeight="500"
+             x:Class="AxmolHub.App.SettingsPage"
+             x:DataType="local:SettingsPage">
+
+  <!-- 设置页（WPF 版的 SettingsPage）。它同时是本地化管线的**活体验收台**：
+       切换语言要就地重灌资源字典，让**已经存在的控件**换文字。
+       Avalonia 的 DynamicResource 是否真的会跟着资源字典变更重新解析，
+       靠读代码判断不了 —— 只能在这里真点一次并断言。见 verify shell 自检。 -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Spacing="16">
+
+      <StackPanel Spacing="6">
+        <TextBlock Text="{DynamicResource Settings}" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock Classes="muted" Text="{DynamicResource SettingsHint}" />
+      </StackPanel>
+
+      <!-- 语言 -->
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,240">
+          <StackPanel>
+            <TextBlock Text="{DynamicResource Language}" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Classes="muted" Margin="0,7,0,0" Text="{DynamicResource LanguageHint}" />
+          </StackPanel>
+          <!-- 语言名刻意**不走**本地化：它就是给看不懂当前界面的人看的。
+               语言标记放在 Tag 里，而不是按下标取值：WPF 版把 "0 ↔ zh-CN / 1 ↔ en-US"
+               这个映射散在 4 处，多一种语言或调一下顺序就会静默错位。
+               用 Tag 之后只有一处映射，且它就在数据本身旁边。 -->
+          <ComboBox x:Name="LanguagePicker" Grid.Column="1">
+            <ComboBoxItem Content="简体中文" Tag="zh-CN" />
+            <ComboBoxItem Content="English" Tag="en-US" />
+          </ComboBox>
+        </Grid>
+      </Border>
+
+      <!-- 存储与项目 -->
+      <Border Classes="card">
+        <StackPanel Spacing="18">
+          <TextBlock Text="{DynamicResource Storage}" FontSize="16" FontWeight="SemiBold" />
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource DataDirectory}" FontWeight="SemiBold" />
+            <!-- WPF 版这里只有一个 Browse 按钮；Avalonia 版多一个"打开"，因为换完目录后
+                 最想做的事就是去看一眼里面有什么。两个按钮都 Dock 到右边，先声明的更靠右。 -->
+            <DockPanel>
+              <Button x:Name="OpenDataFolderButton" DockPanel.Dock="Right" Classes="quiet"
+                      Margin="12,0,0,0" Content="{DynamicResource OpenFolder}" />
+              <Button x:Name="ChooseDataDirectoryButton" DockPanel.Dock="Right"
+                      Margin="12,0,0,0" Content="{DynamicResource Browse}" />
+              <TextBox x:Name="DataLocation" IsReadOnly="True" />
+            </DockPanel>
+            <!-- 走 DynamicResource 且**不带** x:Name 之外的命令式赋值，因此它是本地化的探针：
+                 自检读它的文字来证明换语言时已存在的控件真的换了（命令式赋值做不到这件事）。 -->
+            <TextBlock x:Name="DataHintLabel" Classes="muted" TextWrapping="Wrap"
+                       Text="{DynamicResource DataHint}" />
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource DefaultProjectDirectory}" FontWeight="SemiBold" />
+            <DockPanel>
+              <Button x:Name="ChooseProjectDirectoryButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+                      Content="{DynamicResource Browse}" />
+              <TextBox x:Name="DefaultProjectLocation" IsReadOnly="True" />
+            </DockPanel>
+            <TextBlock Classes="muted" Text="{DynamicResource ProjectDirectoryHint}" />
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource DefaultEngine}" Classes="muted" />
+            <TextBlock x:Name="DefaultEngine" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- 代码编辑器 -->
+      <Border Classes="card">
+        <StackPanel Spacing="16">
+          <TextBlock Text="{DynamicResource Editors}" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" Text="{DynamicResource EditorHint}" />
+
+          <DockPanel>
+            <Button x:Name="SelectVisualStudioButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+                    Content="{DynamicResource SelectEditor}" />
+            <StackPanel>
+              <TextBlock Text="Visual Studio" FontWeight="SemiBold" />
+              <TextBlock x:Name="VisualStudioLocation" Classes="muted" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+          </DockPanel>
+
+          <DockPanel>
+            <Button x:Name="SelectCodeButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+                    Content="{DynamicResource SelectEditor}" />
+            <StackPanel>
+              <TextBlock Text="VS Code" FontWeight="SemiBold" />
+              <TextBlock x:Name="CodeLocation" Classes="muted" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

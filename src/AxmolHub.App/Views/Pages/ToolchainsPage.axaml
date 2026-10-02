@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AxmolHub.App"
+             x:Class="AxmolHub.App.ToolchainsPage"
+             x:DataType="local:ToolchainsPage">
+
+  <!--
+    工具链页。照抄 WPF 版 ToolchainsPage：标题行 → 引擎版本条（配「添加模块」按钮）→
+    可滚动区（模块概览 + 「组件详情」Expander）。
+
+    模块概览是**代码构建**的（WPF 版 RefreshModules 往 ModuleOverview 里堆 Border），
+    因为它的行数取决于引擎版本对应的清单；这里同样留一个 StackPanel 给它。
+  -->
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+    <DockPanel Grid.Row="0" Margin="0,0,0,22">
+      <StackPanel>
+        <TextBlock Text="{DynamicResource ToolsTitle}" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock Text="{DynamicResource ToolsHint}" Classes="muted" Margin="0,8,12,0" />
+      </StackPanel>
+    </DockPanel>
+
+    <Border Grid.Row="1" Background="{DynamicResource Hub.Surface}" CornerRadius="6"
+            Padding="18,16" Margin="0,0,0,18">
+      <StackPanel>
+        <DockPanel>
+          <Button x:Name="ManageModulesButton" Content="{DynamicResource AddModules}"
+                  Classes="primary" DockPanel.Dock="Right" Margin="18,0,0,0" />
+          <TextBlock Text="{DynamicResource EngineVersion}" Margin="0,0,16,0" />
+          <ComboBox x:Name="ModuleEnginePicker" Width="320" HorizontalAlignment="Left" />
+        </DockPanel>
+        <TextBlock Text="{DynamicResource ModulesHint}" Classes="muted" Margin="0,12,0,0" />
+      </StackPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <StackPanel x:Name="ModuleOverview" />
+
+        <Expander x:Name="DetailsExpander" Header="{DynamicResource ComponentDetails}" Margin="0,16,0,0">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="{DynamicResource Platform}" Margin="0,0,16,0" />
+              <ComboBox x:Name="ToolTargetPicker" Width="280" HorizontalAlignment="Left" />
+            </DockPanel>
+            <TextBlock x:Name="ToolTargetHint" Foreground="{DynamicResource Hub.TextSecondary}"
+                       TextWrapping="Wrap" Margin="0,10,0,12" />
+            <DataGrid x:Name="ToolsGrid" Height="300" RowHeight="64">
+              <DataGrid.Columns>
+                <DataGridTextColumn Binding="{Binding Name}" Width="200" x:DataType="local:ToolRow" />
+                <DataGridTextColumn Binding="{Binding Status}" Width="110" x:DataType="local:ToolRow" />
+                <DataGridTextColumn Binding="{Binding Details}" Width="*" x:DataType="local:ToolRow" />
+              </DataGrid.Columns>
+            </DataGrid>
+            <WrapPanel Margin="0,12,0,0">
+              <Button x:Name="InstallSdkButton" Content="{DynamicResource InstallSdk}" />
+              <Button x:Name="InstallMsvcButton" Content="{DynamicResource InstallMsvc}" />
+              <Button x:Name="VerifyButton" Content="{DynamicResource Verify}" Classes="quiet" />
+            </WrapPanel>
+          </StackPanel>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+
+    <WrapPanel Grid.Row="3" Margin="0,12,0,6">
+      <Button x:Name="InstallToolsButton" Content="{DynamicResource Install managed tools}" Classes="primary" />
+    </WrapPanel>
+
+  </Grid>
+</UserControl>

@@ -1,0 +1,483 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    WPF 版 App.xaml 里那批全量 ControlTemplate 的 Avalonia 等价物。
+
+    两条必须记住的语义差异（详见 docs/avalonia-migration-plan.md §3.1）：
+
+    1. Avalonia 没有 Trigger。WPF 的 `<Trigger Property="IsMouseOver"> + Setter TargetName="Frame"`
+       在这里变成「选择器 + 伪类 + /template/ 定位模板内部件」：
+         Button:pointerover /template/ Border#Frame
+       伪类名也换了：IsMouseOver→:pointerover、IsKeyboardFocused→:focus、
+       IsEnabled=False→:disabled、IsChecked→:checked、IsHighlighted→:pointerover、
+       IsExpanded→:expanded、IsSelected→:selected。
+    2. WPF 的 `FocusVisualStyle="{x:Null}"` 对应 Avalonia 的 `FocusAdorner="{x:Null}"`。
+
+    这里用 ControlTheme（x:Key 为 {x:Type T}）而不是普通 Style：ControlTheme 会**取代**
+    Fluent 主题里同名控件的整套模板，与 WPF 版「自己写全量模板」的取向一致；
+    类样式（Button.primary 之类）在 HubStyles.axaml 里叠加。
+  -->
+
+  <!-- ==================== Button ==================== -->
+  <ControlTheme x:Key="{x:Type Button}" TargetType="Button">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="5" />
+    <Setter Property="Padding" Value="14,9" />
+    <Setter Property="Margin" Value="0,0,8,0" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Frame"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+      <Setter Property="Opacity" Value="0.88" />
+    </Style>
+    <Style Selector="^:focus /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <!-- WPF 版没有按下态：模板整个换掉后按下与常态完全一样。这里补一档。 -->
+    <Style Selector="^:pressed /template/ Border#Frame">
+      <Setter Property="Opacity" Value="0.72" />
+    </Style>
+    <Style Selector="^:disabled /template/ Border#Frame">
+      <Setter Property="Opacity" Value="0.4" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== TextBox ====================
+       PasswordBox 在 Avalonia 里不存在：密码框就是 TextBox 加 PasswordChar，
+       因此那一份 WPF 样式不必单独重写，见 HubStyles.axaml 的 TextBox.password。 -->
+  <ControlTheme x:Key="{x:Type TextBox}" TargetType="TextBox">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="Margin" Value="0,6,0,0" />
+    <Setter Property="CaretBrush" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Hub.Accent}" />
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Hub.TextOnAccent}" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DataValidationErrors>
+          <Border Name="Frame"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <!-- 注意：Avalonia 12 的 TextBox **不再**用 WPF 那个 ScrollViewer#PART_ContentHost，
+                 必须的部件是一个 TextPresenter#PART_TextPresenter（缺了会编译失败 AVLN2205）。
+                 模板结构照官方 Fluent 主题裁到 Hub 实际用得到的最小集：
+                 这里不含 InnerLeftContent / InnerRightContent / 浮动占位符。
+                 另：Avalonia 12 把 Watermark 改名为 PlaceholderText。 -->
+            <ScrollViewer Name="PART_ScrollViewer"
+                          Margin="{TemplateBinding Padding}"
+                          HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
+                          VerticalScrollBarVisibility="{TemplateBinding (ScrollViewer.VerticalScrollBarVisibility)}">
+              <Panel>
+                <TextBlock Name="PART_Placeholder"
+                           Foreground="{TemplateBinding PlaceholderForeground}"
+                           Text="{TemplateBinding PlaceholderText}"
+                           TextAlignment="{TemplateBinding TextAlignment}"
+                           TextWrapping="{TemplateBinding TextWrapping}"
+                           HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                  <TextBlock.IsVisible>
+                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                      <Binding ElementName="PART_TextPresenter" Path="PreeditText" Converter="{x:Static StringConverters.IsNullOrEmpty}" />
+                      <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Text" Converter="{x:Static StringConverters.IsNullOrEmpty}" />
+                    </MultiBinding>
+                  </TextBlock.IsVisible>
+                </TextBlock>
+                <TextPresenter Name="PART_TextPresenter"
+                               Text="{TemplateBinding Text, Mode=TwoWay}"
+                               CaretBlinkInterval="{TemplateBinding CaretBlinkInterval}"
+                               CaretIndex="{TemplateBinding CaretIndex}"
+                               SelectionStart="{TemplateBinding SelectionStart}"
+                               SelectionEnd="{TemplateBinding SelectionEnd}"
+                               TextAlignment="{TemplateBinding TextAlignment}"
+                               TextWrapping="{TemplateBinding TextWrapping}"
+                               LineHeight="{TemplateBinding LineHeight}"
+                               LetterSpacing="{TemplateBinding LetterSpacing}"
+                               PasswordChar="{TemplateBinding PasswordChar}"
+                               RevealPassword="{TemplateBinding RevealPassword}"
+                               SelectionBrush="{TemplateBinding SelectionBrush}"
+                               SelectionForegroundBrush="{TemplateBinding SelectionForegroundBrush}"
+                               CaretBrush="{TemplateBinding CaretBrush}"
+                               HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+              </Panel>
+              <ScrollViewer.Styles>
+                <Style Selector="ScrollContentPresenter#PART_ContentPresenter">
+                  <Setter Property="Cursor" Value="IBeam" />
+                </Style>
+              </ScrollViewer.Styles>
+            </ScrollViewer>
+          </Border>
+        </DataValidationErrors>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:focus /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <Style Selector="^:disabled /template/ Border#Frame">
+      <Setter Property="Opacity" Value="0.55" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== ComboBoxItem ==================== -->
+  <ControlTheme x:Key="{x:Type ComboBoxItem}" TargetType="ComboBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Frame"
+                Background="{DynamicResource Hub.PopupSurface}"
+                Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+    </Style>
+    <Style Selector="^:selected /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== ComboBox ====================
+       模板结构照 Avalonia 官方 Fluent 主题改造。必须保留的部件：
+         PART_Popup（下拉宿主，IsLightDismissEnabled）、PART_ItemsPresenter、
+         以及内容区的 SelectionBoxItem / SelectionBoxItemTemplate 绑定。 -->
+  <ControlTheme x:Key="{x:Type ComboBox}" TargetType="ComboBox">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="Margin" Value="0,6,0,0" />
+    <Setter Property="MaxDropDownHeight" Value="260" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DataValidationErrors>
+          <Grid ColumnDefinitions="*,32">
+            <Border Name="Frame"
+                    Grid.Column="0" Grid.ColumnSpan="2"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{TemplateBinding CornerRadius}" />
+            <ContentControl Name="SelectionPresenter"
+                            Grid.Column="0"
+                            Margin="{TemplateBinding Padding}"
+                            Content="{TemplateBinding SelectionBoxItem}"
+                            ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                            IsHitTestVisible="False" />
+            <Path Name="DropDownGlyph"
+                  Grid.Column="1"
+                  Width="11" Height="11"
+                  Margin="0,0,11,0"
+                  HorizontalAlignment="Right" VerticalAlignment="Center"
+                  Stretch="Uniform"
+                  IsHitTestVisible="False"
+                  Fill="{DynamicResource Hub.TextSecondary}"
+                  Data="{StaticResource Hub.Icon.Chevron}" />
+            <Popup Name="PART_Popup"
+                   IsOpen="{TemplateBinding IsDropDownOpen, Mode=TwoWay}"
+                   PlacementTarget="Frame"
+                   MinWidth="{Binding Bounds.Width, RelativeSource={RelativeSource TemplatedParent}}"
+                   MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                   WindowManagerAddShadowHint="False"
+                   IsLightDismissEnabled="True"
+                   InheritsTransform="True">
+              <Border Name="PopupBorder"
+                      Background="{DynamicResource Hub.PopupSurface}"
+                      BorderBrush="{DynamicResource Hub.BorderStrong}"
+                      BorderThickness="1"
+                      CornerRadius="4"
+                      Padding="0">
+                <ScrollViewer IsScrollChainingEnabled="False"
+                              HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
+                              VerticalScrollBarVisibility="{TemplateBinding (ScrollViewer.VerticalScrollBarVisibility)}">
+                  <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" />
+                </ScrollViewer>
+              </Border>
+            </Popup>
+          </Grid>
+        </DataValidationErrors>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <Style Selector="^:focus /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Opacity" Value="0.55" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== CheckBox ==================== -->
+  <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DockPanel>
+          <Border Name="Box"
+                  Width="20" Height="20"
+                  Margin="0,0,12,0"
+                  VerticalAlignment="Center"
+                  Background="{DynamicResource Hub.CheckBoxFill}"
+                  BorderBrush="{DynamicResource Hub.CheckBoxBorder}"
+                  BorderThickness="1"
+                  CornerRadius="4">
+            <!-- WPF 用的是字体字形「✓」（Segoe UI 私有？不，是普通字符），
+                 换成矢量路径后不依赖任何字体的字形覆盖。 -->
+            <Path Name="Tick"
+                  Width="12" Height="12"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Stretch="Uniform"
+                  IsVisible="False"
+                  Fill="{DynamicResource Hub.CheckMark}"
+                  Data="{StaticResource Hub.Icon.Tick}" />
+          </Border>
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            VerticalAlignment="Center" />
+        </DockPanel>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:checked /template/ Border#Box">
+      <Setter Property="Background" Value="{DynamicResource Hub.AccentSoft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentSoftBorder}" />
+    </Style>
+    <Style Selector="^:checked /template/ Path#Tick">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="^:pointerover /template/ Border#Box">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Opacity" Value="0.65" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== RadioButton ==================== -->
+  <ControlTheme x:Key="{x:Type RadioButton}" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+    <Setter Property="Padding" Value="15,13" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Frame"
+                Background="Transparent"
+                CornerRadius="6"
+                Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            VerticalAlignment="Center" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="^:checked /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+    </Style>
+    <Style Selector="^:checked">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== Expander 头部 ====================
+       单独一个 ControlTheme，是为了让「展开时换箭头」能用标准的
+       `^:checked /template/ ...` 选择器表达 —— 若把它写在 Expander 自己的模板里，
+       就得用两层 /template/ 才能穿到 ToggleButton 模板内部。 -->
+  <ControlTheme x:Key="HubExpanderHeader" TargetType="ToggleButton">
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="HeaderFrame" Background="Transparent" Padding="2,4">
+          <DockPanel>
+            <Path Name="Arrow"
+                  Width="10" Height="10"
+                  Margin="0,0,10,0"
+                  VerticalAlignment="Center"
+                  Stretch="Uniform"
+                  Fill="{DynamicResource Hub.TextSecondary}"
+                  Data="{StaticResource Hub.Icon.ChevronRight}" />
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Foreground="{TemplateBinding Foreground}"
+                              VerticalAlignment="Center" />
+          </DockPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <!-- WPF 是换字形（› → ⌄），这里是同一个路径转 90°。 -->
+    <Style Selector="^:checked /template/ Path#Arrow">
+      <Setter Property="RenderTransform" Value="rotate(90deg)" />
+    </Style>
+    <Style Selector="^:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== Expander ==================== -->
+  <ControlTheme x:Key="{x:Type Expander}" TargetType="Expander">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="IsTabStop" Value="False" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DockPanel>
+          <ToggleButton Name="ExpanderHeader"
+                        DockPanel.Dock="Top"
+                        Theme="{StaticResource HubExpanderHeader}"
+                        IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}"
+                        IsEnabled="{TemplateBinding IsEnabled}"
+                        Foreground="{TemplateBinding Foreground}"
+                        Content="{TemplateBinding Header}"
+                        ContentTemplate="{TemplateBinding HeaderTemplate}" />
+          <Border Name="ExpanderBody"
+                  IsVisible="{TemplateBinding IsExpanded}"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}" />
+          </Border>
+        </DockPanel>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <!-- ==================== ScrollBar 的滑块 ====================
+       与 Expander 头部同理：单独一个 ControlTheme 让悬停态能用单层选择器表达。 -->
+  <ControlTheme x:Key="HubScrollThumb" TargetType="Thumb">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Bar" Background="{DynamicResource Hub.ScrollThumb}" CornerRadius="4" />
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Bar">
+      <Setter Property="Background" Value="{DynamicResource Hub.ScrollThumbHover}" />
+    </Style>
+    <Style Selector="^:pressed /template/ Border#Bar">
+      <Setter Property="Background" Value="{DynamicResource Hub.ScrollThumbHover}" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== ScrollBar ====================
+       WPF 版是固定的 10px 常驻条。Avalonia 的 Fluent 默认是悬浮自动隐藏的细条，
+       这里整体换掉，保持与 WPF 版一致的常驻外观。
+       部件：Track#PART_Track 需要 Minimum/Maximum/Value/ViewportSize/Orientation，
+       Thumb 直接挂在 Track.Thumb 上。Track 的 DecreaseButton/IncreaseButton 是
+       可空属性（已核对 Avalonia 12.1.3 的 Track.cs），WPF 版也没有翻页按钮，故一并省去。 -->
+  <ControlTheme x:Key="{x:Type ScrollBar}" TargetType="ScrollBar">
+    <Setter Property="Background" Value="{DynamicResource Hub.ScrollTrack}" />
+    <Setter Property="AllowAutoHide" Value="False" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+
+    <Style Selector="^:vertical">
+      <Setter Property="Width" Value="10" />
+      <Setter Property="MinWidth" Value="10" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Root" Background="{TemplateBinding Background}">
+            <Track Name="PART_Track"
+                   Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                   ViewportSize="{TemplateBinding ViewportSize}"
+                   Orientation="{TemplateBinding Orientation}"
+                   IsDirectionReversed="True">
+              <Track.Thumb>
+                <Thumb Name="PART_Thumb"
+                       Theme="{StaticResource HubScrollThumb}"
+                       HorizontalAlignment="Stretch"
+                       Margin="2" />
+              </Track.Thumb>
+            </Track>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <Style Selector="^:horizontal">
+      <Setter Property="Height" Value="10" />
+      <Setter Property="MinHeight" Value="10" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Root" Background="{TemplateBinding Background}">
+            <Track Name="PART_Track"
+                   Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                   ViewportSize="{TemplateBinding ViewportSize}"
+                   Orientation="{TemplateBinding Orientation}">
+              <Track.Thumb>
+                <Thumb Name="PART_Thumb"
+                       Theme="{StaticResource HubScrollThumb}"
+                       VerticalAlignment="Stretch"
+                       Margin="2" />
+              </Track.Thumb>
+            </Track>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+  </ControlTheme>
+
+</ResourceDictionary>

@@ -34,7 +34,8 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     {
         var target = BuildTargets.Get(project.Platform);
         if (target.Family != "android") throw new InvalidOperationException("Android packaging requires an Android target.");
-        if (engine.Version != "2.11.5") throw new InvalidOperationException("Android packaging profile is verified only for Axmol 2.11.5.");
+        // 版本验证边界来自 module-manifest.json 的 verifiedRecipes，不再硬编码某个版本号。
+        PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
         var stage = StageDirectory(project); Directory.CreateDirectory(stage);
         RejectLinks(stage);
         var source = Path.Combine(project.Path, "proj.android/app");

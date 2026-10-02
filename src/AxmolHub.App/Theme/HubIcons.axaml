@@ -1,0 +1,31 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    导航图标，取代 WPF 版的 Segoe MDL2 Assets 私有区字形
+    （&#xE8A5; 项目 / &#xE7B8; 引擎 / &#xE90F; 工具链 / &#xE713; 设置）。
+    那套字体只存在于 Windows，在 macOS / Linux 上会退化成方块。
+
+    改用矢量路径的三个附带好处：随应用分发、不依赖任何字体、HiDPI 下始终锐利。
+    坐标空间一律 0–24，用 Path 的 Stretch="Uniform" 缩放到需要的尺寸。
+  -->
+
+  <!-- 一个文件夹 -->
+  <StreamGeometry x:Key="Hub.Icon.Projects">M3 6.2A2 2 0 0 1 5 4.2H9.3L11.4 6.8H19A2 2 0 0 1 21 8.8V17.8A2 2 0 0 1 19 19.8H5A2 2 0 0 1 3 17.8Z</StreamGeometry>
+
+  <!-- 向下的箭头落进托盘 = 安装 -->
+  <StreamGeometry x:Key="Hub.Icon.Installs">M10.9 3H13.1V11.4H16.9L12 18L7.1 11.4H10.9ZM3.5 19.4H20.5V21.4H3.5Z</StreamGeometry>
+
+  <!-- 六角螺母（F0 = 奇偶填充规则，中间那个圆因此成为镂空） -->
+  <StreamGeometry x:Key="Hub.Icon.Toolchains">F0 M12 2.6L20 7.3V16.7L12 21.4L4 16.7V7.3ZM12 9A3 3 0 1 0 12 15A3 3 0 1 0 12 9Z</StreamGeometry>
+
+  <!-- 三条滑杆 = 设置 -->
+  <StreamGeometry x:Key="Hub.Icon.Settings">M3 6.6H21V8.6H3ZM7.6 4.4H11.6V10.8H7.6ZM3 11.6H21V13.6H3ZM12.4 9.4H16.4V15.8H12.4ZM3 16.6H21V18.6H3ZM7.6 14.4H11.6V20.8H7.6Z</StreamGeometry>
+
+  <StreamGeometry x:Key="Hub.Icon.Chevron">M6.4 9.5H17.6L12 16Z</StreamGeometry>
+
+  <StreamGeometry x:Key="Hub.Icon.Tick">M9.6 16.6L4.4 11.4L2.6 13.2L9.6 20.2L21.4 8.4L19.6 6.6Z</StreamGeometry>
+
+  <StreamGeometry x:Key="Hub.Icon.ChevronRight">M9 5L16.5 12L9 19L6.5 16.5L11.5 12L6.5 7.5Z</StreamGeometry>
+
+</ResourceDictionary>

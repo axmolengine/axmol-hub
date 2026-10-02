@@ -88,12 +88,13 @@
 
 | # | 议题 | 说明 |
 |---|---|---|
-| 1 | **多引擎版本绑定** | `module-manifest.json` 只有 `2.11.5` 一个 profile，Android 打包硬编码 `engine.Version != "2.11.5"` 即拒绝。**与 v3 发布直接冲突，建议最先解掉** |
+| 1 | **多引擎版本绑定** —— **代码级已解（2026-10-02）**，见 `docs/hub-development-plan.md` A1 落地记录 | `module-manifest.json` 只有 `2.11.5` 一个 profile，Android 打包硬编码 `engine.Version != "2.11.5"` 即拒绝。**与 v3 发布直接冲突，建议最先解掉** |
 | 2 | 项目内写入策略 | `.axmol-hub.json` 保留 / 改回零写入。`EngineIndex`、模块状态、图形后端注入都依赖此决定 |
 | 3 | 主窗口形态 | 四页导航 / 三栏 docking（原稿 §13 设想）——建议与 Avalonia 迁移合并做 |
 | 4 | Graphics backend 建模 | `BuildTarget` 目前无图形后端字段，原稿 §9 的上下文项无法满足 |
 
 > 注：第 1 项**与 AI 方案、与本 ADR 都正交**，但它会在 v3 发布当天变成阻塞，且改动很小。它应该是所有人手上的第一件事。
+> **2026-10-02 更新：其中的代码级部分已解。** 两处硬编码的版本闸门改为查 `module-manifest.json` 的 `verifiedRecipes`，于是为 v3 放行只需改数据、不用改 C#。**但"未验证的版本一律拒绝"这条纪律原样保留，并且没有添加任何新 profile** —— 在 v3 上真的验证 Android 打包仍是一件必须由人完成的验证工作，它不在代码范畴内。细节与顺带查出的 GUI `.Single()` 缺陷见 `docs/hub-development-plan.md` A1。
 
 ## 8. 实施顺序（引入 org 共建）
 

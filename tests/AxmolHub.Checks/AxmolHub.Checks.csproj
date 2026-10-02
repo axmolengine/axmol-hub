@@ -6,4 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/AxmolHub.Core/AxmolHub.Core.csproj" /></ItemGroup>
+  <!-- 与三个 exe 项目保持同一套部署布局：PackagingRecipes 从 AppContext.BaseDirectory/manifests 读验证边界，
+       行为检查必须和产品看到同一份清单，否则断言就测不到真实路径。 -->
+  <ItemGroup>
+    <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

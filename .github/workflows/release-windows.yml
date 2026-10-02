@@ -76,5 +76,5 @@ jobs:
 # 代码签名尚未接入。计划走 SignPath Foundation 的免费 OSS 签名，
 # 细节与前置条件见 docs/hub-development-plan.md §4 D5。
 #
-# 版本标签只影响 vpk 的 --packVersion（取自 AxmolHub.App.csproj），
+# 版本标签只影响 vpk 的 packVersion 参数（取自仓库根的 Directory.Build.props），
 # 不随打包器变化，因此 Windows 之外的平台接入后无需再改这个 workflow。
