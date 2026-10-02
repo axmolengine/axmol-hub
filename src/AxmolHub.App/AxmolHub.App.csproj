@@ -7,7 +7,17 @@
     <Nullable>enable</Nullable>
     <Version>0.1.6</Version>
     <ApplicationIcon>Assets/hub-icon.ico</ApplicationIcon>
+    <!-- Velopack 需要自定义 Main 来拦截 veloapp 生命周期钩子，因此不能再让 XAML 编译器生成入口点。 -->
+    <StartupObject>AxmolHub.App.App</StartupObject>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- 仓库唯一的 NuGet 依赖：Core 与 Cli 仍然零依赖、可离线构建。 -->
+    <PackageReference Include="Velopack" Version="1.2.161" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
   <ItemGroup>
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />

@@ -1,0 +1,17 @@
+{
+  "packId": "Axmol.Hub",
+  "note": "Velopack 的 vpk 打包器按固定版本 + 摘要下载后装进工作区，不修改 PATH，也不复用系统已装工具。packId 用 <公司>.<应用> 形式以保证跨应用唯一，并且刻意与用户数据目录 AxmolHub 区分开：Velopack 会整体删除安装目录，用户数据必须在它之外。",
+  "channel": {
+    "win": "win",
+    "linux": "linux",
+    "osx": "osx"
+  },
+  "packages": [
+    {
+      "id": "vpk",
+      "version": "1.2.161",
+      "url": "https://api.nuget.org/v3-flatcontainer/vpk/1.2.161/vpk.1.2.161.nupkg",
+      "sha256": "ac9be73846d9a7a76483f8684abd1503cd50703b992727429dcdc045589c5e08"
+    }
+  ]
+}

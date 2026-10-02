@@ -141,12 +141,12 @@ dotnet publish src/AxmolHub.App/AxmolHub.App.csproj -c Release -r win-x64 --self
 构建 Windows 安装包并进行隔离安装检查：
 
 ```powershell
-dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-installer
+dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-packaging
 ./installer/Build.ps1
 ./installer/Test.ps1 -Isolated
 ```
 
-安装包输出到 `artifacts/installer/AxmolHub-0.1.6-win-x64-setup.exe`，旁边保存 SHA-256。安装检查会临时登记自己的程序身份和快捷方式，结束后卸载测试实例，保留现有 Hub。打包工具说明见 [installer/README.md](installer/README.md)。
+安装包由 [Velopack](https://velopack.io) 生成，输出到 `artifacts/releases/win-x64/`：`Axmol.Hub-win-Setup.exe`、免安装的 `-Portable.zip`、自更新载荷 `.nupkg` 与更新索引。安装器是一键式的，等级为当前用户，无需管理员。安装检查会临时打包并登记自己的程序身份与快捷方式，验证安装、自包含启动、中文目录、跨版本升级保留数据及卸载保留数据，结束后卸载测试实例、保留现有 Hub。打包工具说明见 [installer/README.md](installer/README.md)。
 
 发布其他宿主的自包含 CLI：
 
@@ -164,7 +164,7 @@ src/
 tests/
   AxmolHub.Checks/    无外部测试框架的行为检查程序
 manifests/           固定工具版本、下载地址与 SHA-256
-installer/           Windows 打包、图标转换和安装检查脚本
+installer/           Velopack 打包、图标转换和安装检查脚本
 licenses/            第三方许可文本
 docs/images/         README 界面截图
 ```

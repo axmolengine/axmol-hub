@@ -6,6 +6,8 @@ data/
 *.user
 **/.axmol-hub.android-release.json
 
+.workbuddy
+
 # 本机设置、构建缓存与 IDE 状态
 **/hub-settings.json
 **/hub-state.json

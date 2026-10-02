@@ -4,13 +4,13 @@
 
 ## 随仓库保留的文件
 
-`installer/ChineseSimplified.isl` 原样来自 Inno Setup `is-6_7_3` 的官方源码树，维护者为 Zhenghan Yang。文件头、译者说明与来源保持不变，打包时校验 SHA-256。
+`licenses/Velopack.txt` 是 Velopack 的 MIT 许可原文（版权方 Caelan Sayler 与 Velopack Ltd.），原样保留：
 
-- [固定版本原文件](https://github.com/jrsoftware/issrc/blob/is-6_7_3/Files/Languages/Unofficial/ChineseSimplified.isl)
-- [上游许可](https://github.com/jrsoftware/issrc/blob/is-6_7_3/license.txt)
-- [保留的完整许可文本](licenses/Inno-Setup.txt)
+- [上游许可](https://github.com/velopack/velopack/blob/master/LICENSE)
 
-安装程序由 Inno Setup 构建。本项目的 MIT 不替代 Inno Setup 或其组件的条款，原版权说明与译者信息需保留。
+安装包、便携包与更新包由 [Velopack](https://velopack.io) 的 `vpk` 打包器生成（MIT）。本项目的 MIT 不替代 Velopack 或其组件的条款。打包器按 `installer/packaging-manifest.json` 锁定版本与 SHA-256，装进工作区运行，不复用系统上已装的工具。
+
+**为什么不是 Inno Setup**：Inno Setup 是 Windows 独占，且自 6.7 起要求商业使用购买许可。Velopack 同时提供 Windows / macOS / Linux 产物、自动更新与增量包，许可是 MIT，因此取代了原来的 Inno 链路。
 
 ## 下载与发布的组件
 
@@ -23,7 +23,7 @@
 | Emscripten / Node / Python / CMake / Ninja / Git / axslcc | 清单锁定版本及摘要，原许可与通知随工具保留，不以 Hub 的 MIT 重新许可 |
 | Apple Xcode 与 SDK | 由对应宿主准备，遵循 Apple 条款，不随本仓库分发 |
 
-下载地址、版本和摘要见 `manifests/` 与 `installer/compiler-manifest.json`。创建的游戏项目还包含引擎模板及自己的依赖，发布游戏时应保留相应许可和通知。
+下载地址、版本和摘要见 `manifests/` 与 `installer/packaging-manifest.json`。创建的游戏项目还包含引擎模板及自己的依赖，发布游戏时应保留相应许可和通知。
 
 ## 图标
 

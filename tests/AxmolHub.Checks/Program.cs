@@ -131,21 +131,26 @@ if (args.Contains("--prepare-android-verification"))
     Console.WriteLine("Maintainer dependency hashes generated from fixed official repositories. A strict production build is required next.");
     return;
 }
-if (args.Contains("--prepare-installer"))
+if (args.Contains("--prepare-packaging"))
 {
-    var manifest = PackageManifest.Read(Path.GetFullPath("installer/compiler-manifest.json")).Packages.Single();
+    var manifest = PackageManifest.Read(Path.GetFullPath("installer/packaging-manifest.json")).Packages.Single();
     using var clientEntry = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     var runnerEntry = new ProcessRunner(Console.WriteLine);
+    // DownloadManager 只有在摘要对得上时才返回路径，所以下面装的是已校验内容。
     var archive = await new DownloadManager(clientEntry, Console.WriteLine).DownloadAsync(new Uri(manifest.Url), manifest.Sha256, Path.Combine(root, "cache"));
-    var executable = Path.ChangeExtension(archive, ".exe");
-    File.Copy(archive, executable, overwrite: true);
-    var signature = await runnerEntry.RunAsync(ToolchainDetector.PowerShell,
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", Path.GetFullPath("installer/Verify-CompilerSignature.ps1"), "-InstallerPath", executable], root);
-    if (signature.ExitCode != 0) throw new InvalidDataException("Compiler installer signature rejected.");
-    var destination = Path.Combine(root, "inno");
-    var install = await runnerEntry.RunAsync(executable, ["/PORTABLE=1", "/CURRENTUSER", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOICONS", "/DIR=" + destination, "/TASKS="], root);
-    if (install.ExitCode != 0 || !File.Exists(Path.Combine(destination, "ISCC.exe"))) throw new IOException("Private compiler preparation failed.");
+    // NuGet 文件夹源要求 <id>.<version>.nupkg 这个命名，缓存里的名字是摘要。
+    var feed = Path.Combine(root, "feed");
+    Directory.CreateDirectory(feed);
+    var package = Path.Combine(feed, manifest.Id + "." + manifest.Version + ".nupkg");
+    File.Copy(archive, package, overwrite: true);
+    var destination = Path.Combine(root, "vpk");
+    // dotnet tool install 遇到已存在的工具会直接报错，先清掉让准备步骤可重复执行。
+    if (Directory.Exists(destination)) Directory.Delete(destination, true);
+    var install = await runnerEntry.RunAsync("dotnet", ["tool", "install", manifest.Id, "--tool-path", destination, "--version", manifest.Version, "--add-source", feed], root);
+    var tool = Path.Combine(destination, OperatingSystem.IsWindows() ? "vpk.exe" : "vpk");
+    if (install.ExitCode != 0 || !File.Exists(tool)) throw new IOException("Private packaging tool preparation failed.");
     StateStore.WriteJson(Path.Combine(destination, ".hub-install.json"), new { manifest.Id, manifest.Version, manifest.Url, manifest.Sha256 });
+    Console.WriteLine("Packaging tool ready: " + tool);
     return;
 }
 if (args.Contains("--build-game") || args.Contains("--run-game"))
