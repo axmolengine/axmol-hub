@@ -1,0 +1,80 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [v*]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_SDK_VERSION: 8.0.x
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  package:
+    name: Package and install acceptance
+    runs-on: windows-latest
+    steps:
+      # action 均取浮动主版本标签：这些主版本要求 Actions Runner >= 2.327.1（Node.js 24 运行时）。
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-release-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-release-
+
+      # 固定 1.2.161：先校验 installer/packaging-manifest.json 里的 SHA-256，
+      # 再从已校验的本地源把 vpk 装进工作区，不修改 PATH。
+      - name: Prepare pinned Velopack CLI
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+
+      # Build.ps1 发布自包含 App 并调用 vpk，产出 Setup.exe / Portable.zip / 更新包与 releases.<channel>.json。
+      - name: Build release artifacts
+        shell: pwsh
+        run: ./installer/Build.ps1
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release
+          path: |
+            artifacts/releases/win-x64/*-Setup.exe
+            artifacts/releases/win-x64/*-Portable.zip
+            artifacts/releases/win-x64/*.nupkg
+            artifacts/releases/win-x64/releases.*.json
+            artifacts/releases/win-x64/assets.*.json
+            artifacts/releases/win-x64/RELEASES
+            artifacts/releases/win-x64/*.sha256
+          if-no-files-found: error
+
+      # 一次性 packId / 程序名 / 安装目录 + 中文路径，验证安装、载荷完整、自包含启动、
+      # 跨版本升级保留用户数据、卸载移除载荷与注册项且保留用户数据；不触碰 runner 上其它状态。
+      - name: Isolated install acceptance
+        shell: pwsh
+        run: ./installer/Test.ps1 -Isolated
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-acceptance
+          path: artifacts/install-checks/
+          if-no-files-found: warn
+
+# 代码签名尚未接入。计划走 SignPath Foundation 的免费 OSS 签名，
+# 细节与前置条件见 docs/hub-development-plan.md §4 D5。
+#
+# 版本标签只影响 vpk 的 --packVersion（取自 AxmolHub.App.csproj），
+# 不随打包器变化，因此 Windows 之外的平台接入后无需再改这个 workflow。

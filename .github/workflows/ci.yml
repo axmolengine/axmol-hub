@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CONFIGURATION: Release
+  DOTNET_SDK_VERSION: 8.0.x
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  hosts:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            rid: win-x64
+            host: windows
+          - os: macos-latest
+            label: macOS arm64
+            rid: osx-arm64
+            host: macos
+          - os: ubuntu-latest
+            label: Linux x64
+            rid: linux-x64
+            host: linux
+    steps:
+      # action 均取浮动主版本标签：这些主版本要求 Actions Runner >= 2.327.1（Node.js 24 运行时），
+      # GitHub 托管 runner 满足。迁移到自托管 runner 时需先升级 runner。
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ matrix.rid }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ matrix.rid }}-
+
+      # 仓库没有解决方案文件：四个项目各自独立构建，一次只能接一个 csproj。
+      - name: Build Core
+        run: dotnet build src/AxmolHub.Core/AxmolHub.Core.csproj -c ${{ env.CONFIGURATION }}
+
+      - name: Build CLI
+        run: dotnet build src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }}
+
+      # 宿主判定（BuildTargets.Host）是 Core 里唯一按操作系统分叉的逻辑，
+      # 目标是否可在本机构建直接决定 GUI 给用户显示什么，因此三个平台都要断言。
+      - name: Verify host detection
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll targets | tr -d '\r' | tee targets.txt
+          expect() {
+            grep -qE "^$1[[:space:]]+.*current=$2$" targets.txt || { echo "::error::$1 expected current=$2"; exit 1; }
+          }
+          case "${{ matrix.host }}" in
+            windows)
+              expect windows-x64 True
+              expect uwp-x64 True
+              expect android-arm64 True
+              expect wasm32 True
+              expect linux-x64 False
+              expect macos-arm64 False
+              expect ios-arm64 False
+              ;;
+            macos)
+              expect macos-arm64 True
+              expect macos-x64 True
+              expect ios-arm64 True
+              expect tvos-arm64 True
+              expect android-arm64 True
+              expect wasm32 True
+              expect windows-x64 False
+              expect uwp-x64 False
+              expect linux-x64 False
+              ;;
+            linux)
+              expect linux-x64 True
+              expect android-arm64 True
+              expect wasm32 True
+              expect windows-x64 False
+              expect uwp-x64 False
+              expect macos-arm64 False
+              expect ios-arm64 False
+              ;;
+          esac
+
+      - name: Verify CLI help
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll help | tr -d '\r' | tee help.txt
+          grep -q 'install-tools' help.txt
+
+      # App 目前是 net8.0-windows + WPF，只能在 Windows 构建；Checks 依赖真实工具链同样留在 Windows。
+      # Avalonia 迁移完成后删掉这两步的 if，GUI 即进入三平台矩阵。
+      - name: Build WPF app and behavior checks
+        if: matrix.host == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
+          dotnet build tests/AxmolHub.Checks/AxmolHub.Checks.csproj -c ${{ env.CONFIGURATION }}
+
+      # 安装检查脚本依赖这一模式验证自包含版能启动，因此它必须一直在 CI 里跑。
+      - name: Headless GUI smoke
+        if: matrix.host == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/ci | Out-Null
+          $app = 'src/AxmolHub.App/bin/Release/net8.0-windows/AxmolHub.App.exe'
+          & $app --data-root ./artifacts/ci/data --preferences ./artifacts/ci/prefs.json --smoke ./artifacts/ci/smoke.png
+          if ($LASTEXITCODE -ne 0) { throw "GUI smoke exited with $LASTEXITCODE" }
+          $shot = Get-Item ./artifacts/ci/smoke.png -ErrorAction SilentlyContinue
+          if (-not $shot) { throw 'GUI smoke produced no screenshot' }
+          if ($shot.Length -lt 8192) { throw "GUI smoke screenshot is implausibly small: $($shot.Length) bytes" }
+          Write-Output "smoke screenshot: $($shot.Length) bytes"
+
+      - name: Publish self-contained CLI
+        run: dotnet publish src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }} -r ${{ matrix.rid }} --self-contained true -o artifacts/cli/${{ matrix.rid }}
+
+      # 交叉发布不等于可用：自包含产物必须在目标宿主上真的执行过。
+      - name: Run published CLI on this host
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.host }}" in
+            windows) exe=artifacts/cli/${{ matrix.rid }}/AxmolHub.Cli.exe ;;
+            *)       exe=artifacts/cli/${{ matrix.rid }}/AxmolHub.Cli ;;
+          esac
+          test -f "$exe" || { echo "::error::missing published host binary: $exe"; exit 1; }
+          ls -l "$exe"
+          "$exe" targets | tr -d '\r' | head -3
+
+      - name: Upload CLI host
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.rid }}
+          path: artifacts/cli/${{ matrix.rid }}
+          if-no-files-found: error
+
+      - name: Upload GUI smoke screenshot
+        if: matrix.host == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gui-smoke-windows
+          path: artifacts/ci/smoke.png
+          if-no-files-found: error
