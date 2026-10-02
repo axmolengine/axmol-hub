@@ -54,6 +54,16 @@ Hub 从「Windows 上跑得通的 WPF 工具」推进为「官方组织下的跨
 | 数据驱动 | 工具版本、URL、SHA-256、宿主声明全在 `manifests/`，代码内不散落版本号 |
 | 三条贯穿原则 | 固定版本（绝不回退系统工具）、环境隔离（`ProcessRunner` 先 `Environment.Clear()`）、先校验再落地（staging + 凭据文件） |
 
+> **第二条原则的例外已定（2026-10-02，用户决定，尚未实施）**：**Windows 上工具链首选系统已安装的
+> Visual Studio 2026**，**MSVC 的首选来源就是 Visual Studio ——与 axmol 引擎自身选取 MSVC 的方式一致**。
+> 即"绝不回退系统工具"这条对 **MSVC** 不再成立（其余工具如 cmake/ninja/axslcc 是否一并放宽待定）。
+>
+> 影响面：`ToolchainDetector` 现在写死 `toolsRoot/vs2022`（`DetectAsync` 第 20–26 行），
+> `WindowsToolchainInstaller` 整条"下载并安装一份 MSVC 到 data-root"的链路随之需要重新定位；
+> `BuildEnvironment` 里那套手工拼 `INCLUDE`/`LIB` 的做法也可能让位于直接用 VS 的环境。
+> **在这条改完之前，不要围绕"托管 MSVC"继续加验证** —— 那部分即将重写。
+> `--verify-ops` 因此**刻意没有**把"托管组件必须报 Missing"写成断言（见 `docs/avalonia-migration-plan.md` §5.9）。
+
 **四客户端共享一份工具定义**
 
 ```
@@ -71,10 +81,14 @@ Hub 从「Windows 上跑得通的 WPF 工具」推进为「官方组织下的跨
 
 | 项目 | 规模 | 目标框架 |
 |---|---|---|
-| `AxmolHub.Core` | 15 文件 / 1992 行 | `net8.0` |
-| `AxmolHub.Cli` | 1 文件 / 118 行，**12 个动词** | `net8.0` |
-| `AxmolHub.App` | 1457 行 C# + 99 行 XAML | `net8.0-windows`（WPF） |
-| `tests/AxmolHub.Checks` | 583 行 / **102 处断言** | `net8.0-windows` |
+| `AxmolHub.Core` | 17 文件 / 2347 行 | `net8.0` |
+| `AxmolHub.Cli` | 1 文件 / 259 行，**12 个动词** | `net8.0` |
+| `AxmolHub.App` | 6 文件 / 1312 行 C# + 2 文件 / 99 行 XAML | `net8.0-windows`（WPF） |
+| `src/AxmolHub.App` | 15 文件 / 2539 行 C# + 12 文件 / 1256 行 XAML | `net8.0`（P2 骨架 → P4 基础件 → **P5 外壳 + 引擎页 + 设置页**；P6 取代 WPF 版） |
+| `tests/AxmolHub.Checks` | 815 行 / **139 处断言**（主流程 105 + `--check-cli-json` 34） | `net8.0-windows` |
+
+> 数字随 P5 推进而变，别当成常量读；口径是"排除 `obj`/`bin` 的源码行数"。
+> Core 变大的一大块是 `HubTexts.cs`（190 条界面文案，从 WPF 的 `Texts.cs` 移过来 —— 见 §4.B 的进度说明）。
 
 CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `run` `serve` `devices` `deploy` `install-tools`。
 已有约定：`plan` 输出 JSON；**stdout 出数据 / stderr 出日志**；`verify` 失败返回 exit code 2。
@@ -91,10 +105,10 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 
 **可移植性**
 
-- **可移植**：Core 大部分、102 项行为检查、`manifests/` 数据、CLI 设计（`--json` / stdout-stderr 分离 / exit code 语义）、踩坑清单
+- **可移植**：Core 大部分、105 项行为检查、`manifests/` 数据、CLI 设计（`--json` / stdout-stderr 分离 / exit code 语义）、踩坑清单
 - **唯一不可移植**：**已验证的 Windows 端到端运行证据**
 
-> 102 项行为检查描述的是**需求**而非实现，换任何技术栈都能当验收清单用 —— 这是仓库里最值得先抢救的资产。
+> 105 项行为检查描述的是**需求**而非实现，换任何技术栈都能当验收清单用 —— 这是仓库里最值得先抢救的资产。
 
 ---
 
@@ -104,19 +118,80 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 
 | # | 工作项 | 说明 |
 |---|---|---|
-| **A1** | **解多引擎版本绑定** | `module-manifest.json` 只有 `2.11.5` 一个 profile；Android 打包硬编码 `engine.Version != "2.11.5"` 即拒绝。**v3 发布当天变成阻塞**，改动小，应最先做 |
-| **A2** | **v3 目录结构 / 构建系统耦合** | v3 若改目录或构建系统，`ValidateEngine` 的 4 个标志文件与 `manifests/` 需同步跟进 |
+| **A1** | **解多引擎版本绑定** —— **代码级已解，2026-10-02**，见下 | `module-manifest.json` 只有 `2.11.5` 一个 profile；Android 打包硬编码 `engine.Version != "2.11.5"` 即拒绝。**v3 发布当天变成阻塞**，改动小，应最先做 |
+| **A2** | **v3 目录结构 / 构建系统耦合** —— **已实测证实，2026-10-02**，见下 | v3 **确实**改了目录：`core/` → `axmol/`，`ValidateEngine` 的 4 个标志文件在 v3 上不成立。改动小但**必须同时接受两种布局** |
 | **A3** | **P0：CLI 统一 `--json` 契约** | 统一 `{ok, exitCode, data, log, artifacts}`，替换目前"多数命令输出文本"的状态 |
 | **A4** | **P1：MCP Server（stdio）** | 先用 Cursor / Claude Code 驱动 Hub 验证价值，再决定投入 UI |
 
 > A3 / A4 在定位决策后**优先级上升**：它们不再只是"为 AI 做的结构化输出"，而是 **Hub 与 Editor 之间的正式接口**，应排在任何 UI 工作之前，且与 UI 栈无关。
 
+#### A1 落地记录（2026-10-02）
+
+**做了什么。** 原先的版本绑定其实是三件事，只有一件是代码：
+
+| 位置 | 性质 | 处置 |
+| --- | --- | --- |
+| `AndroidPackageService.cs` 与 `PlatformBuildService.cs` 各一处 `engine.Version != "2.11.5"` | **代码级**，新增版本要改两处 C# 且两处会漂移 | 已改为查清单 |
+| `module-manifest.json` 单一 profile | 数据级 | **未动**（见下） |
+| `engine-manifest.json` 单一引擎 | 数据级 | **未动** |
+
+具体：`ModuleProfile` 增加 `verifiedRecipes`（当前值 `["android-packaging"]`），两处硬编码闸门改为调用 `PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging)`。于是**为 v3 放行 = 在 `module-manifest.json` 加一条 profile 并写上已验证的配方，不改任何 C#**。
+
+**刻意没有放宽的性质。** 这**不是**"让 v3 能跑"，而是把**验证边界从代码搬进数据**。三条失败关闭的纪律原样保留，并且都有断言守着：
+
+- 未声明的引擎版本一律拒绝，**不会回落到别的版本 profile**（`EngineModules.ForEngine`，断言 `Unverified engine version cannot use another version module profile`）；
+- 配方未对该版本声明 → 同样拒绝（新增断言）；
+- 清单文件读不到 → **也算验不过**（这是验证闸门，不能因为读不到证据就放行）。
+
+**因此没有加 2.11.6 profile。** 加 profile = 声称"这个版本上验过那条配方"，而在 v3 / 2.11.6 上真的验证 Android 打包是**人的验证工作**，不是代码工作。A1 能解掉的是"改代码"这一半。
+
+**顺带查出一个 v3 当天会让 GUI 直接抛异常的 bug**：`manifest.Packages.Single()`（原 `src/AxmolHub.App/MainWindow.xaml.cs:557`）。`engine-manifest.json` 一旦出现第二个引擎（v3 与 2.11.5 并存就是这样），这行抛 `InvalidOperationException: Sequence contains more than one element` —— 即"点『安装官方引擎』按钮即崩"。CLI 不读 `engine-manifest.json`，所以只影响 GUI。**处置：不在 WPF 版修**（P6 已删掉它），改在 P5 迁移 `MainWindow` 时一并解决 —— **已落地**：`HubWorkspace.InstallEngineAsync`（`src/AxmolHub.App/Services/HubWorkspace.cs:356`）改成"在 `official-lts` 通道里取版本最新的一个"，清单列多个版本不再抛异常。
+
+**另一半仍未做**：按钮文案还是硬编码的 `InstallOfficial` = "安装 Axmol 2.11.5 LTS"。正确做法是让按钮反映它**实际会装**的版本（从清单算），否则 v3 进清单那天按钮就在说谎。这与下面的 A1/A2 是同一个根因。
+
+#### A2 实测：v3 的目录结构确实变了（2026-10-02）
+
+`--verify-ops` 第一次真跑就把它撞出来了 —— 这件事实测一次就够，读代码看不出来（代码里只写死了路径，
+没有 v3 的样本可比）。本机两套引擎源码树：
+
+| 目录 | 版本 | 四个标志文件 |
+| --- | --- | --- |
+| `D:\dev\simdsoft\axmol2` | **2.11.6**（`git describe` 为 `v2.11.5-3-g07d8cef1b`） | 齐全 |
+| `D:\dev\simdsoft\axmol3` | 3.0.0-alpha33 | **缺 `core/axmolver.h.in`** |
+
+原因：**v3 把 `core/` 目录改名为 `axmol/`** —— 版本头现在位于 `axmol/axmolver.h.in`。
+另外三个标志文件（`tools/cmdline/axmol.ps1`、`templates/cpp/axproj-template.json`、`1k/1kiss.ps1`）位置未变。
+
+**含义：v3 支持的第一个障碍不是 module profile，而是 `ValidateEngine` 的标志文件清单。**
+在它修好之前，v3 引擎连"被导入"这一步都过不去，也就谈不上选模块或构建 —— 而 A1 那套
+`verifiedRecipes` 机制是**导入之后**才用到的。修它时要注意两点：① 必须**同时接受两种布局**
+（v3 与 2.11.x 会长期并存），不能简单地把 `core/` 换成 `axmol/`；② 版本头的路径一旦可变，
+"从哪里读版本"本身就是配置，不该再散在代码里。
+
+顺带一个正面结果：拒绝理由**点名了**缺失的具体文件（`Incomplete Axmol engine: missing core/axmolver.h.in`），
+这条在真跑时是有意义的 —— 否则用户只会看到一句"无效引擎"，无从下手。
+
 ### B. UI 迁移
 
 | # | 工作项 | 说明 |
 |---|---|---|
-| **B1** | 新建 `AxmolHub.App.Avalonia`，引用现有 Core，**Core 一行不改** | 先搬项目页 / 引擎页 / 工具链页，跑通 Windows，验证迁移路径是否成立 |
+| **B1** | 新建 `AxmolHub.App`，引用现有 Core，**Core 一行不改** | 先搬项目页 / 引擎页 / 工具链页，跑通 Windows，验证迁移路径是否成立 |
 | **B2** | 主窗口形态 | 现为**单窗口 + 四页导航**；创始设想为**三栏 docking + 右侧常驻 AI 面板**。**建议与 B1 合并做**，否则 AI 面板没有自然落点，先塞一页会返工 |
+
+**进度（2026-10-02）**：B1 已推进到 **P5** —— P1（两个 PowerShell 包装归位）、P2（Avalonia 骨架）、P3（主题层，`--verify-theme` 37/37）、P4（基础件：`HubDialog` / 选择器包装 / `--smoke`，`--verify-foundation` 25/25）均已落地；**C 的 P0（CLI `--json` 契约）也已落地并接进 CI**（`docs/ci.md` §2.6）。
+**P5 已完成四个增量**：① 本地化单一定义（`Core/HubTexts.cs`，现 190 条）、Avalonia 外壳（左侧导航 + 页面宿主 + 状态栏）、迁移引擎页；② 迁移设置页 —— 它同时是**本地化管线的活体验收台**（真切一次语言、读回已存在控件的文字）；③ **四页 1:1 复刻 WPF 版**（项目 / 引擎 / 工具链 / 设置 + 四个对话框窗口），编排整体搬进 `Services/HubWorkspace.cs`；④ **切换数据根**——做法改为"只重建工作区、不重建窗口"，因此不再依赖 B2。`--verify-shell` 从 31 条扩到 **68 条**。三次反向对照（去掉资源字典重灌 / 去掉导航高亮同步 / 去掉页面缓存丢弃）都证明这类失效**构建期拦不住**（0 error）而运行期断言能拦（6 / 3 / 3 条 FAIL）。详见 `docs/avalonia-migration-plan.md` §5.5–§5.8。
+
+**P5 第五个增量：真操作验收（`--verify-ops`）**。前面那些断言验的是**界面**，跑的却是 fixture；`HubWorkspace` 九百多行里真正被执行过的只有列表刷新、导入、选择这类轻量操作。于是新增 `--verify-ops <报告> <引擎目录>...`，在**真实引擎源码树**上跑不下载、不编译的那部分真操作：工具链探测、引擎导入/校验/设为默认/移除、状态落盘重载、三类无效输入。首次运行 **22/22 通过、4 条显式跳过、exit 0**，并**撞出了 A2 的真实形态**（见上）。跳过项（装引擎 / 装工具链 / 构建 / 运行 / Android 打包）写在报告的 `SKIP` 里并附原因 —— 一份让人以为跑过了的报告比没有报告更糟。详见 `docs/avalonia-migration-plan.md` §5.9。
+
+**P5 期间浮现的三件事（都影响后续排期）**：
+
+1. **B2 的问题变小了。** 侦察 WPF 版 `MainWindow.xaml` 后确认：**它的形态本来就是"单窗口 + 左侧 218px 固定导航 + 内容区四页"**，靠 `Visibility` 切换页面，**不是三栏 docking**；也没有独立的"设备页"（Android 设备面板嵌在项目页里）。所以 B2 的真实分歧不是"要不要重构外壳"，而是"**要不要在现有形态上追加一个 AI 面板**"。这使推荐结论从"设计偏好"变成"保留已交付并被验证过的 UX"。
+2. **本地化是 P5 的前置项，原计划没列。** WPF 的页面文字全走 `{DynamicResource}`，由 `Texts.cs`（206 行）在启动时灌进资源字典；Avalonia 侧必须先有等价机制，页面才谈得上"复制过来就能用"。已按"单一定义、多客户端"处理（数据进 Core，两侧各留一层薄适配），因此它不是障碍，但**它是页面迁移的前置条件**，排在页面之前。
+3. **"逐页截图的肉眼核对"是必要工序，不是可选调试。** 迁移设置页时它抓到了一个**所有断言都绿灯**的真错：`NavigateTo` 忘了同步左侧导航高亮，于是"显示 A 页、左边高亮 B 页"。编译期、绑定期、以及当时全部导航断言都发现不了它。结论：产品级验收 = 运行期断言 + 逐页 PNG + 人工看一眼，三者缺一不可。
+
+**仍未完成**：`--smoke-all/-run/-build` 三种无人值守模式的迁移、P6 删除 WPF 版；**CI 的三平台 GUI 烟雾仍未接线**——`Avalonia.Headless` 已实测可行（无显示沙箱里能渲染真实主窗口并产出非空白帧），缺的只是常驻 harness 项目与 `ci.yml` 的改动；`--verify-shell` 因此目前只能在开发机上跑。
+
+**P5 复刻的完成度该怎么说（2026-10-02 核对）**：WPF `MainWindow.xaml` 上的 **39 个 `Click=` 处理器，38 个已有对应接线**，唯一缺口是切换数据根（已在 §5.8 补齐）→ 现在 **39/39**。但"接线完成"只是**代码层面**的判断。`--verify-ops`（§5.9）把便宜的那部分补成了运行证据（引擎管理链路 + 工具链探测 + 无效输入），**仍然没跑过的是**：装引擎、装工具链、构建、运行、Android 打包 —— 它们要联网下载 GB 级数据或依赖完整工具链，成本不属于"便宜"。这与 ADR-0001 里"踩坑知识可移植、运行证据不可移植"是同一条：**P6 删 WPF 版之前，这几条至少要有一次真跑**，否则等于把 WPF 版那份"用过"的经验换成了没跑过的代码。
 
 ### C. AI 能力层
 
@@ -124,7 +199,7 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 
 | 阶段 | 产出 |
 |---|---|
-| P0 | CLI 全命令 `--json` |
+| P0 | CLI 全命令 `--json` —— **已落地（2026-10-02）**：契约见 `docs/cli-json-contract.md`，类型在 `src/AxmolHub.Core/CliContract.cs`，12 个动词全部接上；**34 条端到端契约断言已进 CI**（`--check-cli-json`，见 `docs/ci.md` §2.6）。这就是 Hub 与 Editor/MCP 之间的正式接口 |
 | P1 | MCP Server（stdio） |
 | P2 | `ProjectDigest` + 版本键控 `EngineIndex`（解析 `core/`、`extensions/` 头文件成符号表） |
 | P3 | 项目页内嵌聊天面板：流式 + 工具调用卡片 + diff 预览 |
@@ -199,7 +274,7 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 
 | # | 工作项 | 说明 |
 |---|---|---|
-| **E1** | 102 项行为检查接 CI | 不依赖任何测试框架，接入近乎零成本，官方仓库必须要有 |
+| **E1** | 105 项行为检查接 CI | 不依赖任何测试框架，接入近乎零成本，官方仓库必须要有 |
 | **E2** | README 顶部标注 **Windows-first** 初始范围 | 否则 macOS / Linux 用户会直接报"跑不起来" |
 | **E3** | 代码签名 | **已并入 D5**（签名属分发环节；跨平台后需同时处理 Windows 签名与 macOS 公证） |
 | **E4** | ~~`THIRD_PARTY_NOTICES.md` 补 Inno 许可说明~~ **已完成 2026-10-02** | Inno 已整体移除（含 `licenses/Inno-Setup.txt`），第三方声明改为 Velopack（MIT）+ `licenses/Velopack.txt`。原先那句悬置的"请检查商业使用要求"随之消失 |
@@ -215,7 +290,7 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 | 1 | `git init`，**以原作者身份**提交首个 commit | 当前目录无 git 历史，这是保留 authorship 的唯一机会 |
 | 2 | LICENSE 改 Axmol house style + 新建 `AUTHORS.md` | 用 `(see AUTHORS.md)` 承载原作者归属 |
 | 3 | `CONTRIBUTING.md`（指向 CLA）、`CODE_OF_CONDUCT.md`、`SECURITY.md`、PR / Issue 模板 | |
-| 4 | 102 项检查接 CI | E1 |
+| 4 | 105 项检查接 CI | E1 |
 | 5 | README 标注 Windows-first | E2 |
 | 6 | **解多引擎版本绑定** | A1 |
 | 7 | **Avalonia 迁移（Core 一行不改）** + 主窗口形态 | B1 / B2 |
@@ -241,7 +316,8 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 | # | 议题 | 影响面 | 备注 |
 |---|---|---|---|
 | 1 | **项目内写入策略**：`.axmol-hub.json` 保留 / 改回零写入 | `EngineIndex`、模块状态、图形后端注入都依赖它；也决定 UI 迁移时要不要动 Core | 牵动最多，**建议最先定** |
-| 2 | 主窗口形态：四页导航 / 三栏 docking | 决定 AI 面板落点 | 与 B1 合并做 |
+| 2 | 主窗口形态 | 已收窄：WPF 版本来就是**单窗口 + 左侧导航 + 页面宿主**（2026-10-02 核实），所以分歧只剩"**要不要追加 AI 面板**"。**结论：不引入 docking，AI 做成可折叠右侧抽屉**（页面是 `UserControl`，与宿主无关，故此决定不阻塞页面迁移） | 牵动 AI 面板落点 |
+| 2b | **本地化归属**（2026-10-02 新列） | 已定：文案数据进 `Core/HubTexts.cs`，WPF 与 Avalonia 各留一层薄适配。**是否继续维持中英双语**仍可再议 —— 目前两侧都保留，键数 183 | 迁移期两版并存，复制两份文案会让中英静默分叉 |
 | 3 | Graphics backend 建模 | `BuildTarget` 当前无图形后端字段，创始设想的上下文项无法满足 | 它是配置期 / 运行期选择，还随宿主平台变，需先建模 |
 | 4 | **Hub ↔ Editor 能力契约** | 决定 A3 / A4 的接口形状 | 需先问清 Editor 的 5 件事（`ADR-0001 §6`），否则边界只能靠猜 |
 
@@ -270,3 +346,50 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 | **用 NSIS 替代 Inno** | **已评估并排除。** NSIS 同样是 Windows 独占（`makensis` 仍是 32 位），许可也更杂（zlib/libpng + bzip2 + CPL-1.0 + LGPL-2.1，需向 `THIRD_PARTY_NOTICES.md` 补的条目反而比现在多）。它是"换一个 Windows 装器"，不是跨平台方案。D3 最终选的是 Velopack，此条保留作为"考虑过、为何不选"的记录 |
 | CLA / 许可证法律细节 | **不在计划内** —— 属入场流程，另处理。唯一现在生效的约束：**CLA 不得掺入对价** |
 | Axmol Editor 的开发计划 | **不在本文档范围** |
+
+---
+
+## 9. 可安装引擎列表的取数来源（2026-10-02 实测）
+
+用户给出并确认已上线的接口：
+
+```
+https://axmol.dev/versions/index.json        （本机实测 200，3474 字节，application/json）
+https://local.axmol.dev/versions/index.json  （同一份内容的本地镜像，用于本地联调）
+```
+
+**本机实测的两个坑（先记下来，免得下次重踩）**：
+
+- `curl` 直接拉会失败在 `CRYPT_E_NO_REVOCATION_CHECK (0x80092012)` —— Windows schannel
+  查不到吊销列表。加 `--ssl-no-revoke` 即可拿到 200。**这不是服务端的问题**，
+  换一台能查吊销的机器或加参数都能过；写进客户端的取数代码时也要考虑这类中间层差异。
+- 域名解析走的是内网 DNS（`172.16.23.168`），`nslookup` 第一次超时、重试才出结果。
+
+**当前索引的实际内容（2026-10-02 抓取）**：
+
+| 字段 | 实测值 |
+|---|---|
+| `schemaVersion` | `1.0`（`$schema` 指向 `https://axmol.dev/versions/schema/v1.json`） |
+| `project` | `axmol` |
+| `channels` | 只有一条：`lts`（`label=LTS`、`line=2.11`、`latest=2.11.5`） |
+| `versions` | 6 条：`2.11.5 / 2.11.4 / 2.11.3 / 2.11.2 / 2.11.1 / 2.11.0`，全部 `channel=lts`、`prerelease=false` |
+| 每条含 | `version` `tag` `channel` `line` `prerelease` `releaseDate` `releaseUrl` `archives{zip,tarball}` `artifacts[]` |
+| **`artifacts`** | **6 条全是空数组** |
+
+**对 Hub 意味着什么（关键差异）**：这份索引回答的是"**有哪些版本**"，而 Hub 的安装链需要的是
+"**装到哪、哈希是什么**" —— `PackageInstaller.InstallAsync` 的入参是
+`PackageEntry`（含 `url` / `sha256` / `destination` / `archiveRoot`），**索引里没有 `sha256`**。
+
+所以"直接照这份索引装引擎"目前**做不到**，缺的是带哈希的制品元数据。两条可行路径：
+
+1. **索引补 `artifacts`（含 `sha256`）** —— 最干净：Hub 侧只多一个"清单来源"，
+   安装链路一行不改。当前 `artifacts` 为空，说明这份数据是"申请中"的缺口而非设计冲突。
+2. Hub 侧在下载后自行计算并**首次信任** —— 会引入 TOFU 语义，与现有
+   "先校验哈希再解包"的设计相反，不建议。
+
+**已埋的接缝**：`HubWorkspace.InstallEngineAsync` 里取包的顺序改成了"官方 LTS 通道里版本最新的一个"
+（WPF 版写的是 `Packages.Single()`，清单多一个包就抛异常），并把接入点标在那一行。
+`manifests/engine-manifest.json` 仍是**真源**（它带哈希）；索引将来做的是**给清单补条目**，
+不是取代清单。**注意**：这条只解了"列得出哪些版本"，A1 的
+`module-manifest.json` 缺少 v3 profile 是另一件事，仍需人工验证。
+

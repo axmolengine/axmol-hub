@@ -114,29 +114,33 @@ jobs:
           dotnet src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll help | tr -d '\r' | tee help.txt
           grep -q 'install-tools' help.txt
 
-      # App 目前是 net8.0-windows + WPF，只能在 Windows 构建；Checks 依赖真实工具链同样留在 Windows。
-      # Avalonia 迁移完成后删掉这两步的 if，GUI 即进入三平台矩阵。
-      - name: Build WPF app and behavior checks
+      # Avalonia 版 GUI 是 net8.0，不含任何 Windows 专属目标框架，因此三平台都必须构建。
+      # 这是唯一的 GUI 构建步骤：P6 删掉 WPF 版后，App 就只剩 Avalonia 这一个实现了。
+      - name: Build Avalonia app
+        run: dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
+
+      # Checks 是 net8.0-windows（Core 里 Windows 特有的断言需要它），因此留在 Windows。
+      # 这里只做编译验证，不跑 GUI：无头截图环节已去掉，理由见 docs/ci.md §2.2。
+      - name: Build behavior checks
         if: matrix.host == 'windows'
         shell: bash
         run: |
           set -euo pipefail
-          dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
           dotnet build tests/AxmolHub.Checks/AxmolHub.Checks.csproj -c ${{ env.CONFIGURATION }}
 
-      # 安装检查脚本依赖这一模式验证自包含版能启动，因此它必须一直在 CI 里跑。
-      - name: Headless GUI smoke
+      # --json 是 Hub 对外契约的一部分（docs/cli-json-contract.md），它唯一的失败模式是
+      # "stdout 不再是恰好一份 JSON 文档" —— 编译期和形状断言都测不到那种错（help 就是这么漏过去的）。
+      # 该模式自带 return，不需要真实引擎与工具链，因此能在干净 runner 上跑。
+      # 只放 Windows 是因为 Checks 是 net8.0-windows（Core 里 Windows 特有的断言需要它），
+      # 不是因为这个契约只在 Windows 成立 —— CLI 本身三平台都发布。
+      # bin/Release 的写法与上面的"宿主判定"步骤一致。
+      - name: Verify CLI JSON contract
         if: matrix.host == 'windows'
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts/ci | Out-Null
-          $app = 'src/AxmolHub.App/bin/Release/net8.0-windows/AxmolHub.App.exe'
-          & $app --data-root ./artifacts/ci/data --preferences ./artifacts/ci/prefs.json --smoke ./artifacts/ci/smoke.png
-          if ($LASTEXITCODE -ne 0) { throw "GUI smoke exited with $LASTEXITCODE" }
-          $shot = Get-Item ./artifacts/ci/smoke.png -ErrorAction SilentlyContinue
-          if (-not $shot) { throw 'GUI smoke produced no screenshot' }
-          if ($shot.Length -lt 8192) { throw "GUI smoke screenshot is implausibly small: $($shot.Length) bytes" }
-          Write-Output "smoke screenshot: $($shot.Length) bytes"
+          set -euo pipefail
+          dotnet run --project tests/AxmolHub.Checks -c ${{ env.CONFIGURATION }} -- \
+            artifacts/checks --check-cli-json src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll
 
       - name: Publish self-contained CLI
         run: dotnet publish src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }} -r ${{ matrix.rid }} --self-contained true -o artifacts/cli/${{ matrix.rid }}
@@ -159,12 +163,4 @@ jobs:
         with:
           name: cli-${{ matrix.rid }}
           path: artifacts/cli/${{ matrix.rid }}
-          if-no-files-found: error
-
-      - name: Upload GUI smoke screenshot
-        if: matrix.host == 'windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: gui-smoke-windows
-          path: artifacts/ci/smoke.png
           if-no-files-found: error

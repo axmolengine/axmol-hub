@@ -1,0 +1,26 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AxmolHub.App.HubDialog"
+        Width="460"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Axmol Hub">
+
+  <!-- Avalonia 没有 MessageBox。这里自建一个而不是引第三方包：仓库本来就手写全部控件样式，
+       自建能直接复用 HubTokens / HubControls，且不增加依赖。见 docs/avalonia-migration-plan.md §3.2。
+
+       它必须能**在没有宿主窗口的情况下独立显示** —— WPF 版 App.xaml.cs 用 MessageBox 报
+       "启动失败"时主窗口还没建起来，那条路径在构造函数里就走通了 (owner 为 null)。 -->
+  <Border Classes="card" Margin="12">
+    <StackPanel Spacing="14">
+      <TextBlock Name="DialogTitle" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+      <!-- 长文本（异常堆栈）走滚动，不让对话框长到屏幕外。 -->
+      <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <TextBlock Name="DialogMessage" Classes="muted" TextWrapping="Wrap" />
+      </ScrollViewer>
+      <StackPanel Name="DialogButtons" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" />
+    </StackPanel>
+  </Border>
+</Window>

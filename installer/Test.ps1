@@ -6,11 +6,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
+# 版本单一来源 = 仓库根的 Directory.Build.props，与 Build.ps1 同源。
 if (-not $Version) {
-    [xml]$taskProject = Get-Content -LiteralPath "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj"
-    $Version = @($taskProject.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
+    [xml]$taskProduct = Get-Content -LiteralPath "$taskRoot/Directory.Build.props"
+    $Version = @($taskProduct.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
 }
-if (-not $Version) { throw 'Version was not supplied and could not be read from AxmolHub.App.csproj.' }
+if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
 $taskParts = $Version.Split('.')
 $taskUpgraded = '{0}.{1}.{2}' -f $taskParts[0], $taskParts[1], ([int]$taskParts[2] + 1)
 
@@ -61,7 +62,7 @@ try {
 
     # 2. 安装载荷完整：Velopack 把应用放在 current\ 下，外层是稳定路径的启动 stub。
     $taskCurrent = Join-Path $taskInstall 'current'
-    foreach ($taskFile in @('AxmolHub.App.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
+    foreach ($taskFile in @('AxmolHub.App.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Verify-MicrosoftSignature.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/toolchain-manifest.json', 'manifests/module-manifest.json', 'manifests/android-native-toolchain-windows.json',
             'manifests/android-packaging-toolchain-windows.json', 'manifests/android-gradle-verification.xml', 'manifests/web-toolchain-windows.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }

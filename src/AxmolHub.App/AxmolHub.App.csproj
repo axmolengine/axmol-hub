@@ -1,34 +1,58 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- WinExe 只是 Windows 下不弹控制台；在 macOS / Linux 上就是普通可执行文件。 -->
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <!-- 刻意不加 -windows：这个项目要在三平台构建。Avalonia 12.1.3 的 lib/ 同时提供 net8.0 与 net10.0，
+         与 Core / Cli 的 net8.0 对齐即可，不需要升 TFM。 -->
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- 本项目曾经叫 AxmolHub.App.Avalonia：那个后缀只在"与 WPF 版并行"期间有意义，
+         用来避免两个程序集的产物重名。P6 删掉 WPF 版后后缀失去理由，目录与项目名一并回归 AxmolHub.App。
+         做法是纯重命名，**没有改任何 namespace 或 x:Class** —— 它们一直是 AxmolHub.App，
+         .axaml 里的 avares:// 与 RootNamespace 因此都不用动。
+         AssemblyName 不再显式声明：项目名已是 AxmolHub.App，它就是默认值，
+         多写一份只会在将来改名时变成第二处要同步的地方。 -->
+    <RootNamespace>AxmolHub.App</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.1.6</Version>
+    <!-- Version 见仓库根的 Directory.Build.props：四个项目共用一个产品版本。 -->
+    <!-- Windows 下的 DPI / 透明窗口行为依赖这个清单；非 Windows 构建时该属性被 SDK 忽略。 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 与 ci.yml 的三平台矩阵一致。理由同 AxmolHub.Cli.csproj：锁文件要 RID 完整才稳定。 -->
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-arm64</RuntimeIdentifiers>
+    <!-- P6 起接管发行：图标随项目走（原先在 WPF 项目里，跨项目引用正是 P1 拆掉的那类耦合）。 -->
     <ApplicationIcon>Assets/hub-icon.ico</ApplicationIcon>
-    <!-- Velopack 需要自定义 Main 来拦截 veloapp 生命周期钩子，因此不能再让 XAML 编译器生成入口点。 -->
-    <StartupObject>AxmolHub.App.App</StartupObject>
   </PropertyGroup>
   <ItemGroup>
-    <!-- 仓库唯一的 NuGet 依赖：Core 与 Cli 仍然零依赖、可离线构建。 -->
+    <!-- 仓库仅有的 NuGet 依赖全部集中在这里：Avalonia 一组 + Velopack（P6 从 WPF 项目搬过来，
+         依赖集合没有变，只是换了宿主项目）。Core 与 Cli 仍保持零依赖、可离线构建。 -->
     <PackageReference Include="Velopack" Version="1.2.161" />
+    <PackageReference Include="Avalonia" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+    <!-- DataGrid 不在 Avalonia 核心里，必须单独引。这是 spike #2 的结论：
+         选包而不是 12.1 新增的内置 TableView —— WPF 版有 35 处 DataGrid 引用
+         （列定义 + 单元格模板），DataGrid 的 API 面与它最接近，P5 迁移才是机械替换。
+         注意这个包比核心慢一个补丁版本（12.1.2 vs 12.1.3），依赖约束是 >=，照常解析。 -->
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <!-- Avalonia.Fonts.Inter 刻意不加：Inter 不含 CJK 字形，而 Hub 的界面是中文优先，
+         字体选型属于 P3（见 docs/avalonia-migration-plan.md §3.4），在此处引入只会把错误默认值固化下来。 -->
+    <!-- 开发期的可视化树调试器。官方模板的写法：Release 下整包不参与编译。
+         注意 12.x 的包名是 AvaloniaUI.DiagnosticsSupport，Avalonia.Diagnostics 停在 11.3.22，12.x 一个都没发。 -->
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ApplicationDefinition Remove="App.xaml" />
-    <Page Include="App.xaml" />
-  </ItemGroup>
-  <ItemGroup>
+    <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
+    <!-- 内容清单与原 WPF 版逐行对齐；图标资源已在 P6 搬过来（见上面的 ApplicationIcon）。 -->
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*.txt" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    
-    <Resource Include="Assets/hub-icon.ico" />
-    <Resource Include="Assets/hub-icon.png" />
-    <Content Include="Invoke-Axmol.ps1" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Verify-MicrosoftSignature.ps1" CopyToOutputDirectory="PreserveNewest" />
-    <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
+    <Content Include="../AxmolHub.Core/Scripts/*.ps1" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 打包器要的是磁盘上的图标文件（vpk 的 icon 参数），不是嵌入资源；ApplicationIcon 已把它编进 exe。
+         这里刻意**不**再写 Resource / None —— 后者与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
   </ItemGroup>
 </Project>

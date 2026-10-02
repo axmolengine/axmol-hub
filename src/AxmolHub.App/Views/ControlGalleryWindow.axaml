@@ -1,0 +1,192 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:AxmolHub.App"
+        x:Class="AxmolHub.App.ControlGalleryWindow"
+        Title="Axmol Hub — 主题控件画廊 (Control gallery)"
+        Width="1000" Height="820"
+        WindowStartupLocation="CenterScreen">
+
+  <!--
+    P3 的验收工件：把 HubControls.axaml + HubStyles.axaml 里每个样式都摆出来，
+    用于三平台观感比对。它**不是产品界面**（产品界面在 P5 才迁），因此只有中文说明，
+    顶部一行英文副标题。
+
+    每个需要断言的元素都带 x:Name，主题自检模式（命令行开关 verify-theme）会遍历可视化树核对样式是否真的生效。
+  -->
+
+  <DockPanel>
+
+    <Border DockPanel.Dock="Top"
+            Background="{DynamicResource Hub.SurfaceAlt}"
+            BorderBrush="{DynamicResource Hub.BorderSubtle}"
+            BorderThickness="0,0,0,1"
+            Padding="24,18">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="主题变体" Margin="0,0,12,0" />
+          <RadioButton x:Name="VariantDark" GroupName="Variant" Content="深色" IsChecked="True" Padding="14,9" Margin="0,0,8,0" Click="OnVariantChanged" />
+          <RadioButton x:Name="VariantLight" GroupName="Variant" Content="浅色" Padding="14,9" Margin="0" Click="OnVariantChanged" />
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="主题层控件画廊" FontSize="22" FontWeight="SemiBold" />
+          <TextBlock Text="Phase 3 acceptance artifact. Every style in Theme/ rendered on one surface; not shipping UI."
+                     Classes="muted" Margin="0,6,0,0" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <ScrollViewer>
+      <StackPanel Margin="24" Spacing="18">
+
+        <!-- ============ 语义颜色 ============ -->
+        <TextBlock Text="语义颜色" FontSize="16" FontWeight="SemiBold" />
+        <Border Classes="card">
+          <WrapPanel x:Name="Swatches">
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.Background}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="Background" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.Surface}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="Surface" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.SurfaceAlt}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="SurfaceAlt" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.SurfaceRaised}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="Raised" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.SurfaceSunken}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="Sunken" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.Accent}" /><TextBlock Text="Accent" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.Success}" /><TextBlock Text="Success" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.Danger}" /><TextBlock Text="Danger" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.GridSurface}" BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" /><TextBlock Text="Grid" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.RowSelected}" /><TextBlock Text="RowSelected" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.ScrollThumb}" /><TextBlock Text="ScrollThumb" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Margin="0,0,18,12"><Border Width="54" Height="26" CornerRadius="4" Background="{DynamicResource Hub.BorderHover}" /><TextBlock Text="BorderHover" FontSize="11" Classes="muted" Margin="0,4,0,0" /></StackPanel>
+          </WrapPanel>
+        </Border>
+
+        <!-- ============ 按钮 ============ -->
+        <TextBlock Text="按钮：默认 / primary / quiet / 禁用" FontSize="16" FontWeight="SemiBold" />
+        <Border Classes="card">
+          <WrapPanel>
+            <Button x:Name="BtnDefault" Content="默认按钮" />
+            <Button x:Name="BtnPrimary" Classes="primary" Content="主操作" />
+            <Button x:Name="BtnQuiet" Classes="quiet" Content="次要操作" />
+            <Button Content="禁用" IsEnabled="False" />
+          </WrapPanel>
+        </Border>
+
+        <!-- ============ 输入 ============ -->
+        <TextBlock Text="输入：TextBox / 密码 / 只读 / 等宽 / ComboBox" FontSize="16" FontWeight="SemiBold" />
+        <Border Classes="card">
+          <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto">
+            <StackPanel Margin="0,0,16,0">
+              <TextBlock Text="普通" />
+              <TextBox x:Name="TxtNormal" Text="HelloAxmol" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Margin="0,0,16,0">
+              <TextBlock Text="密码（TextBox + PasswordChar）" Classes="muted" />
+              <TextBox x:Name="TxtPassword" Classes="password" PasswordChar="●" Text="secret" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Text="只读" />
+              <TextBox Text="C:\Axmol\engines\2.11.5" IsReadOnly="True" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,14,0,0">
+              <TextBlock Text="多行等宽（活动日志）" Classes="muted" />
+              <TextBox x:Name="TxtMono" Classes="mono" AcceptsReturn="True" Height="78"
+                       TextWrapping="NoWrap" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                       Text="[17:00:01] 引擎就绪：2.11.5&#x0a;[17:00:02] 工具链校验通过&#x0a;[17:00:03] 构建成功 → build/bin/HelloAxmol/" />
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <Border Classes="card">
+          <Grid ColumnDefinitions="Auto,*,Auto,*">
+            <TextBlock Text="ComboBox" VerticalAlignment="Center" Margin="0,0,12,0" />
+            <ComboBox x:Name="CmbEngine" SelectedIndex="1" Width="200" HorizontalAlignment="Left">
+              <ComboBoxItem Content="Axmol 2.11.5 (LTS)" />
+              <ComboBoxItem Content="Axmol 2.11.5 (dev)" />
+              <ComboBoxItem Content="Axmol 3.0.0" />
+            </ComboBox>
+            <TextBlock Grid.Column="2" Text="禁用态" VerticalAlignment="Center" Margin="24,0,12,0" />
+            <ComboBox Grid.Column="3" IsEnabled="False" Width="200" HorizontalAlignment="Left">
+              <ComboBoxItem Content="不可选" />
+            </ComboBox>
+          </Grid>
+        </Border>
+
+        <!-- ============ 选择 ============ -->
+        <TextBlock Text="CheckBox / RadioButton" FontSize="16" FontWeight="SemiBold" />
+        <Border Classes="card">
+          <Grid ColumnDefinitions="*,*">
+            <StackPanel>
+              <CheckBox x:Name="ChkChecked" Content="已勾选" IsChecked="True" />
+              <CheckBox Content="未勾选" />
+              <CheckBox Content="禁用" IsEnabled="False" IsChecked="True" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <RadioButton x:Name="RadChecked" GroupName="Gallery" Content="选中项" IsChecked="True" />
+              <RadioButton GroupName="Gallery" Content="未选中项" />
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- ============ 展开与滚动 ============ -->
+        <TextBlock Text="Expander（箭头应随展开旋转）/ ScrollBar（常驻 10px）" FontSize="16" FontWeight="SemiBold" />
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
+          <Expander x:Name="Exp" Header="组件详情" IsExpanded="False" Padding="0,12,0,0">
+            <StackPanel Spacing="8">
+              <TextBlock Text="展开后的内容区。箭头由 › 旋转 90° 变成 ⌄，与 WPF 版换字形的效果对应。" TextWrapping="Wrap" />
+              <CheckBox Content="扩展项" />
+            </StackPanel>
+          </Expander>
+          <Border Grid.Column="1" Classes="card" Width="240" Padding="12">
+            <ScrollViewer x:Name="Scroller" Height="150">
+              <StackPanel Spacing="6">
+                <TextBlock Text="滚动条样例 01" /><TextBlock Text="滚动条样例 02" /><TextBlock Text="滚动条样例 03" />
+                <TextBlock Text="滚动条样例 04" /><TextBlock Text="滚动条样例 05" /><TextBlock Text="滚动条样例 06" />
+                <TextBlock Text="滚动条样例 07" /><TextBlock Text="滚动条样例 08" /><TextBlock Text="滚动条样例 09" />
+                <TextBlock Text="滚动条样例 10" /><TextBlock Text="滚动条样例 11" /><TextBlock Text="滚动条样例 12" />
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+        </Grid>
+
+        <!-- ============ 表格 ============ -->
+        <TextBlock Text="DataGrid（Avalonia.Controls.DataGrid 12.1.2）" FontSize="16" FontWeight="SemiBold" />
+        <Border BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" CornerRadius="7" ClipToBounds="True">
+          <DataGrid x:Name="GalleryGrid" SelectionMode="Single" x:DataType="local:GalleryProject">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="项目" Binding="{Binding Name}" Width="*" />
+              <DataGridTextColumn Header="版本" Binding="{Binding Version}" Width="110" />
+              <DataGridTextColumn Header="构建状态" Binding="{Binding Status}" Width="140" />
+              <DataGridTextColumn Header="最后打开" Binding="{Binding LastOpened}" Width="170" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Border>
+
+        <!-- ============ 图标 ============ -->
+        <TextBlock Text="矢量图标（取代 Segoe MDL2 Assets 的四个私有区字形）" FontSize="16" FontWeight="SemiBold" />
+        <Border Classes="card">
+          <StackPanel Orientation="Horizontal" Spacing="30">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path x:Name="IconProjects" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Projects}" />
+              <TextBlock Text="项目" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path x:Name="IconInstalls" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Installs}" />
+              <TextBlock Text="引擎" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path x:Name="IconToolchains" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Toolchains}" />
+              <TextBlock Text="工具链" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path x:Name="IconSettings" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Settings}" />
+              <TextBlock Text="设置" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource Hub.TextSecondary}" Data="{StaticResource Hub.Icon.ChevronRight}" />
+              <TextBlock Text="小尺寸" Classes="muted" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+
+  </DockPanel>
+</Window>

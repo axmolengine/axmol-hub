@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="760" d:DesignHeight="440"
+        x:Class="AxmolHub.App.ShellCheckWindow"
+        Width="760" Height="440"
+        Title="P5 shell verification">
+  <!-- 断言的结果全部走 stdout 与报告文件，窗口本身只是"有个 TopLevel 能让内容渲染"。
+       留一块说明文字是为了人工打开时不至于是一片空白。 -->
+  <StackPanel Margin="28" Spacing="10">
+    <TextBlock FontSize="20" FontWeight="SemiBold" Text="P5 外壳与本地化运行期自检" />
+    <TextBlock Classes="muted" TextWrapping="Wrap"
+               Text="本窗口不做业务逻辑。它逐条断言外壳与本地化在**运行期**的行为：字符串是否真的进了资源字典、导航是否真的换掉了页面内容、真实渲染出的帧是否非空白。结果见 stdout 与报告文件。" />
+  </StackPanel>
+</Window>

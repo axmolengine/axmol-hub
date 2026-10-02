@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:core="using:AxmolHub.Core"
+             xmlns:local="using:AxmolHub.App"
+             x:Class="AxmolHub.App.InstallsPage"
+             x:DataType="local:InstallsPage">
+
+  <!--
+    引擎页。WPF 版叫 InstallsPage（导航文案 Key 同样是 "Installs"），这里沿用同一个名字。
+    结构照抄：标题行 → 引擎表格 → 七个操作按钮。
+  -->
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <DockPanel Grid.Row="0" Margin="0,0,0,22">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                  HorizontalAlignment="Right" VerticalAlignment="Center">
+        <Button x:Name="ImportButton" Content="{DynamicResource ImportEngine}" Classes="quiet" />
+        <Button x:Name="InstallButton" Content="{DynamicResource InstallOfficial}"
+                Classes="primary" Margin="8,0,0,0" />
+      </StackPanel>
+      <StackPanel>
+        <TextBlock Text="{DynamicResource Installs}" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock Text="{DynamicResource EnginesHint}" Classes="muted" Margin="0,8,12,0" />
+      </StackPanel>
+    </DockPanel>
+
+    <Border Grid.Row="1" BorderBrush="{DynamicResource Hub.Border}"
+            BorderThickness="1" CornerRadius="7">
+      <Grid>
+        <DataGrid x:Name="EnginesGrid">
+          <DataGrid.Columns>
+            <DataGridTextColumn Binding="{Binding Version}" Width="100" x:DataType="core:EngineEntry" />
+            <DataGridTextColumn Binding="{Binding Channel}" Width="140" x:DataType="core:EngineEntry" />
+            <DataGridTextColumn Binding="{Binding Path}" Width="*" x:DataType="core:EngineEntry" />
+          </DataGrid.Columns>
+        </DataGrid>
+        <TextBlock x:Name="EmptyEngines" Classes="muted"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+      </Grid>
+    </Border>
+
+    <WrapPanel Grid.Row="2" Margin="0,18,0,6">
+      <Button x:Name="ModulesButton" Content="{DynamicResource AddModules}" Classes="primary" />
+      <Button x:Name="DefaultButton" Content="{DynamicResource SetDefault}" />
+      <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
+      <Button x:Name="VerifyButton" Content="{DynamicResource VerifyEngine}" Classes="quiet" />
+      <Button x:Name="RepairButton" Content="{DynamicResource Repair}" Classes="quiet" />
+      <Button x:Name="UninstallButton" Content="{DynamicResource Uninstall}" Classes="quiet" />
+      <Button x:Name="RemoveButton" Content="{DynamicResource RemoveFromList}" Classes="quiet" />
+    </WrapPanel>
+
+  </Grid>
+</UserControl>

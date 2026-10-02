@@ -1,0 +1,42 @@
+<Project>
+
+  <!--
+    仓库级 MSBuild 默认值。这里没有 .sln，四个项目各自独立构建，
+    所以这个文件是它们唯一的共享配置点。
+
+    边界：只放"所有项目都该相同"的属性。任何与单个项目有关的属性仍留在各自的 csproj，
+    不要把它变成第二个堆放处。
+  -->
+
+  <PropertyGroup>
+
+    <!-- 产品版本的单一来源。
+         此前 0.1.6 被手工抄在 App / Cli / Avalonia 三份 csproj 里，而 Core 与 Checks
+         根本没写 Version —— 结果是同一份产物里 Core.dll 报 1.0.0、Cli.dll 报 0.1.6。
+         installer/Build.ps1 与 installer/Test.ps1 也从本文件读版本号，不要再往别处复制副本。 -->
+    <Version>0.1.6</Version>
+
+    <!-- 仓库既有的"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物：把每个项目的完整传递闭包
+         钉在 packages.lock.json 里，避免不同开发机解析出不同版本。
+
+         边界要说清，不要夸大：它解决的是**版本漂移**，不是篡改 —— NuGet 全局包本身已有
+         SHA-512 校验，锁文件不是签名。
+
+         刻意不在本文件开启 RestoreLockedMode：本机只有 SDK 10，net8.0 的 targeting pack
+         在本机走 NuGet 还原，而 CI 的 SDK 8 从 SDK 自带目录取，两者可能产出内容不同的锁文件；
+         直接锁定会让 CI 在锁文件校验上失败，而 CI 至今还没有真实跑过 = 埋一条无法当场验证的红线。
+         顺序：先提交锁文件 → 等 CI 真实跑绿一次 → 再决定是否切到锁定模式。
+
+         第二个风险（2026-10-02 发现，比上面这条更尖锐）：**锁文件的内容取决于最后一次 restore
+         用的 RID**。用 `dotnet publish -r osx-arm64` 还原会写进一段 `net8.0/osx-arm64` 专属
+         原生资产，而随后一次不带 RID 的 `dotnet build` 会把它抹掉 —— 于是锁文件在两次操作之间
+         自己"变了"。产物不是不一致，是锁文件在抖动。
+         对策是让锁文件 RID 完整而不是随操作漂移：会被 RID 发布的两个项目各自声明
+         RuntimeIdentifiers（Cli 四个、App 三个），列出实际会发布的全集。
+         Core 与 Checks 不发布，因此不声明。
+         新增/变更发布宿主时必须同步这里，否则锁文件又会退化成"只对某个 RID 正确"。 -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+  </PropertyGroup>
+
+</Project>

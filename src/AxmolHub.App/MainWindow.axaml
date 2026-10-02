@@ -1,0 +1,174 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AxmolHub.App.MainWindow"
+        Title="Axmol Hub"
+        Width="1280" Height="880" MinWidth="1080" MinHeight="740"
+        WindowStartupLocation="CenterScreen">
+
+  <!--
+    外壳形态**逐格照原 WPF 版**（该文件已在 P6 删除，当时的版本是 src/AxmolHub.App/MainWindow.xaml）：
+      左 218px 固定导航（品牌 + 副标题 + 四个 RadioButton），右内容区 Margin=30,30,30,22，
+      内容区三行：页面 / 状态栏（取消 + 状态点 + 状态文案）/ 底部日志面板（Expander）。
+    不要"顺手改版式"：原 WPF 版这套布局是已经交付并被验证过的 UX，
+    而 B2（要不要加 AI 面板）仍待定 —— 先把 1:1 保住，再谈改。
+
+    与原 WPF 版的**刻意差异**只有两处，都在注释里标了原因：
+      1) 导航图标用矢量 Path 而不是 Segoe MDL2 Assets 私有区字形（那套字体只存在于 Windows）；
+      2) 左下角第二行按真实宿主机算，不写死 "Windows x64"（Avalonia 版要跑三个平台）。
+  -->
+
+  <Window.Styles>
+    <!-- 导航项：WPF 版把图标与文字的 Foreground 绑到 RadioButton 的 Foreground，
+         于是选中/悬停时两者一起变色。Avalonia 里 Path 用的是 Fill 不是 Foreground，
+         没法照抄那句绑定，改成两条样式类 —— 效果一致，且不依赖运行时资源查找。 -->
+    <Style Selector="RadioButton.nav">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Padding" Value="9,11" />
+      <Setter Property="Margin" Value="0,0,0,2" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="RadioButton.nav:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="RadioButton.nav:checked">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+    </Style>
+    <Style Selector="RadioButton.nav Path.icon">
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="RadioButton.nav:pointerover Path.icon">
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="RadioButton.nav:checked Path.icon">
+      <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
+    </Style>
+  </Window.Styles>
+
+  <Grid ColumnDefinitions="218,*">
+
+    <!-- ==================== 左侧导航 ==================== -->
+    <Border Grid.Column="0"
+            Background="{DynamicResource Hub.SurfaceAlt}"
+            BorderBrush="{DynamicResource Hub.BorderSubtle}"
+            BorderThickness="0,0,1,0"
+            Padding="20,30,20,22">
+      <DockPanel>
+
+        <!-- 底部：品牌行 + 宿主机 -->
+        <StackPanel DockPanel.Dock="Bottom">
+          <Border BorderBrush="{DynamicResource Hub.Border}"
+                  BorderThickness="0,1,0,0"
+                  Padding="6,18,0,0">
+            <StackPanel>
+              <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
+                         FontSize="11" FontWeight="SemiBold" />
+              <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
+                         FontSize="11" Margin="0,5,0,0" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="4,0,0,12">
+            <Border Width="38" Height="38"
+                    Background="{DynamicResource Hub.SurfaceRaised}"
+                    CornerRadius="6">
+              <Path Data="{StaticResource Hub.Icon.Installs}"
+                    Width="22" Height="22" Stretch="Uniform"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Fill="{DynamicResource Hub.AccentBorder}" />
+            </Border>
+            <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+              <TextBlock Text="Axmol Hub" FontSize="22" FontWeight="SemiBold" />
+              <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
+                         FontSize="11" Margin="0,2,0,0" />
+            </StackPanel>
+          </StackPanel>
+
+          <TextBlock Text="{DynamicResource Subtitle}" Classes="muted" Margin="5,0,0,34" />
+
+          <RadioButton x:Name="NavProjects" Classes="nav" GroupName="Navigation">
+            <StackPanel Orientation="Horizontal">
+              <Path Classes="icon" Data="{StaticResource Hub.Icon.Projects}"
+                    Width="17" Height="17" Stretch="Uniform"
+                    VerticalAlignment="Center" Margin="0,0,13,0" />
+              <TextBlock Text="{DynamicResource Projects}" VerticalAlignment="Center" />
+            </StackPanel>
+          </RadioButton>
+
+          <RadioButton x:Name="NavInstalls" Classes="nav" GroupName="Navigation">
+            <StackPanel Orientation="Horizontal">
+              <Path Classes="icon" Data="{StaticResource Hub.Icon.Installs}"
+                    Width="17" Height="17" Stretch="Uniform"
+                    VerticalAlignment="Center" Margin="0,0,13,0" />
+              <TextBlock Text="{DynamicResource Installs}" VerticalAlignment="Center" />
+            </StackPanel>
+          </RadioButton>
+
+          <RadioButton x:Name="NavToolchains" Classes="nav" GroupName="Navigation">
+            <StackPanel Orientation="Horizontal">
+              <Path Classes="icon" Data="{StaticResource Hub.Icon.Toolchains}"
+                    Width="17" Height="17" Stretch="Uniform"
+                    VerticalAlignment="Center" Margin="0,0,13,0" />
+              <TextBlock Text="{DynamicResource Toolchains}" VerticalAlignment="Center" />
+            </StackPanel>
+          </RadioButton>
+
+          <RadioButton x:Name="NavSettings" Classes="nav" GroupName="Navigation">
+            <StackPanel Orientation="Horizontal">
+              <Path Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
+                    Width="17" Height="17" Stretch="Uniform"
+                    VerticalAlignment="Center" Margin="0,0,13,0" />
+              <TextBlock Text="{DynamicResource Settings}" VerticalAlignment="Center" />
+            </StackPanel>
+          </RadioButton>
+        </StackPanel>
+
+      </DockPanel>
+    </Border>
+
+    <!-- ==================== 右侧内容 ==================== -->
+    <Grid Grid.Column="1" Margin="30,30,30,22" RowDefinitions="*,Auto,Auto">
+
+      <ContentControl x:Name="PageHost" Grid.Row="0" />
+
+      <!-- 状态栏：取消按钮 + 状态点 + 状态文案。顺序刻意与 WPF 版一致
+           （Ellipse 是 DockPanel.Left，TextBlock 填空）。 -->
+      <DockPanel Grid.Row="1" Margin="0,16,0,12">
+        <Button x:Name="CancelButton" Content="{DynamicResource Cancel}" Classes="quiet"
+                DockPanel.Dock="Right" IsEnabled="False" Padding="12,5" Margin="8,0,0,0" />
+        <Ellipse Width="6" Height="6" Fill="{DynamicResource Hub.Success}"
+                 DockPanel.Dock="Left" Margin="0,0,8,0" />
+        <TextBlock x:Name="Status" Text="{DynamicResource Ready}"
+                   Foreground="{DynamicResource Hub.TextSecondary}"
+                   TextTrimming="CharacterEllipsis" />
+      </DockPanel>
+
+      <!-- 底部日志面板。WPF 版它是窗口的第三行；出错时自动展开（见 ExecuteAsync 的 Failed 事件）。 -->
+      <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
+              BorderThickness="1" CornerRadius="6"
+              Background="{DynamicResource Hub.SurfaceAlt}" Padding="12,8">
+        <Expander x:Name="LogPanel" Header="{DynamicResource LogTitle}" IsExpanded="False">
+          <Grid Height="190" Margin="0,10,0,0" RowDefinitions="Auto,*">
+            <StackPanel Grid.Row="0" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Margin="0,0,0,8">
+              <Button x:Name="CopyErrorButton" Content="{DynamicResource CopyError}"
+                      Classes="quiet" Padding="10,5" />
+              <Button x:Name="OpenLogsButton" Content="{DynamicResource OpenLogs}"
+                      Classes="quiet" Padding="10,5" Margin="8,0,0,0" />
+            </StackPanel>
+            <!-- Avalonia 的 TextBox 没有 ScrollBarVisibility 属性（滚动由内部 ScrollViewer 负责），
+                 横向滚动靠 TextWrapping="NoWrap" + 内部滚动条即可，不需要额外声明。 -->
+            <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
+                     IsReadOnly="True" TextWrapping="NoWrap"
+                     AcceptsReturn="True" />
+          </Grid>
+        </Expander>
+      </Border>
+
+    </Grid>
+  </Grid>
+</Window>

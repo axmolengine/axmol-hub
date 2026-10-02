@@ -1,0 +1,29 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AxmolHub.App.App"
+             RequestedThemeVariant="Default">
+
+  <!-- Default 跟随系统主题。WPF 版只有深色一套，浅色是 P3 补的（见 HubTokens.axaml 的
+       ThemeDictionaries），因此同一个窗口在 Windows / macOS 浅色环境下不再是黑底。
+       要强制某个变体，运行时改 Application.Current.RequestedThemeVariant，控件画廊就是这么做的。 -->
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!-- 顺序有意义：控件主题引用图标与颜色，须排在其后。 -->
+        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubTokens.axaml" />
+        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubIcons.axaml" />
+        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubControls.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+    <!-- DataGrid 的 Fluent 主题在单独的 NuGet 包里，必须显式 include。
+         放在 HubStyles 之前：HubStyles 里的 DataGrid 样式要能在它之上覆盖。 -->
+    <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+    <StyleInclude Source="avares://AxmolHub.App/Theme/HubStyles.axaml" />
+  </Application.Styles>
+
+</Application>

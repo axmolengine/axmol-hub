@@ -1,0 +1,171 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:core="using:AxmolHub.Core"
+             xmlns:local="using:AxmolHub.App"
+             x:Class="AxmolHub.App.ProjectsPage"
+             x:DataType="local:ProjectsPage">
+
+  <!--
+    项目页。WPF 版 MainWindow.xaml 里 <Grid x:Name="ProjectsPage"> 的移植，结构逐行照抄：
+      标题行 → 三张统计卡 → 新建项目面板（默认折叠）→ 项目表格 → Android 设备条 + 操作按钮行。
+    表头文案由代码在每次刷新时重设（换语言要跟着变），所以这里不写 Header 的固定中文。
+  -->
+
+  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+    <!-- ==================== 标题行 ==================== -->
+    <DockPanel Grid.Row="0" Margin="0,0,0,22">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                  HorizontalAlignment="Right" VerticalAlignment="Center">
+        <Button x:Name="OpenExistingButton" Content="{DynamicResource OpenExisting}" Classes="quiet" />
+        <Button x:Name="NewProjectButton" Content="{DynamicResource NewProject}"
+                Classes="primary" Margin="8,0,0,0" />
+      </StackPanel>
+      <StackPanel>
+        <TextBlock Text="{DynamicResource Projects}" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock Text="{DynamicResource ProjectsHint}" Classes="muted" Margin="0,8,12,0" />
+      </StackPanel>
+    </DockPanel>
+
+    <!-- ==================== 三张统计卡 ==================== -->
+    <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,20">
+      <Border Classes="card" Margin="0,0,12,0" Padding="18,14">
+        <StackPanel>
+          <TextBlock x:Name="ProjectCount" Text="0" FontSize="25" FontWeight="SemiBold" />
+          <TextBlock Text="{DynamicResource ProjectsCount}" Classes="muted" Margin="0,5,0,0" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Margin="0,0,12,0" Padding="18,14">
+        <StackPanel>
+          <TextBlock x:Name="EngineCount" Text="0" FontSize="25" FontWeight="SemiBold" />
+          <TextBlock Text="{DynamicResource EnginesCount}" Classes="muted" Margin="0,5,0,0" />
+        </StackPanel>
+      </Border>
+      <Border Classes="card" Padding="18,14">
+        <StackPanel>
+          <TextBlock Text="{DynamicResource LastBuildPlatform}" Classes="muted" />
+          <!-- 平台不是在这里选的：它跟着选中项目走，真正的入口是「生成」按钮弹出的对话框。
+               WPF 版同样把 ComboBox 折叠、只留一行文字。 -->
+          <TextBlock x:Name="BuildTargetName" FontSize="16" Margin="0,8,0,0" />
+          <TextBlock x:Name="BuildHostHint" Foreground="{DynamicResource Hub.TextSecondary}"
+                     FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,5,0,0" />
+        </StackPanel>
+      </Border>
+    </UniformGrid>
+
+    <!-- ==================== 新建项目（默认折叠） ==================== -->
+    <Border x:Name="NewProjectPanel" Grid.Row="2" Classes="card" Margin="0,0,0,20" IsVisible="False">
+      <StackPanel>
+        <DockPanel Margin="0,0,0,16">
+          <TextBlock Text="{DynamicResource Template}" Classes="muted"
+                     DockPanel.Dock="Right" HorizontalAlignment="Right" />
+          <TextBlock Text="{DynamicResource NewProject}" FontSize="16" FontWeight="SemiBold" />
+        </DockPanel>
+
+        <Grid ColumnDefinitions="180,*,225">
+          <StackPanel Grid.Column="0" Margin="0,0,16,0">
+            <TextBlock Text="{DynamicResource ProjectName}" />
+            <TextBox x:Name="ProjectNameBox" Text="HelloAxmol" Margin="0,6,0,0" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Margin="0,0,16,0">
+            <TextBlock Text="{DynamicResource Location}" />
+            <DockPanel Margin="0,6,0,0" Height="40">
+              <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
+                      DockPanel.Dock="Right" Margin="6,0,0,0" Padding="10,8" />
+              <TextBox x:Name="ProjectLocationBox" />
+            </DockPanel>
+          </StackPanel>
+          <StackPanel Grid.Column="2">
+            <TextBlock Text="{DynamicResource EngineVersion}" />
+            <ComboBox x:Name="ProjectEnginePicker" Margin="0,6,0,0"
+                      HorizontalAlignment="Stretch" />
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Margin="0,14,0,0">
+          <TextBlock Text="{DynamicResource Scripting}" />
+          <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+            <RadioButton x:Name="CppScripting" GroupName="ProjectScripting"
+                         Content="{DynamicResource cpp}" IsChecked="True" Margin="0,0,8,0" />
+            <RadioButton x:Name="LuaScripting" GroupName="ProjectScripting"
+                         Content="{DynamicResource lua}" />
+          </StackPanel>
+          <TextBlock Text="{DynamicResource ScriptingHint}" Classes="muted" Margin="0,8,0,0" />
+        </StackPanel>
+
+        <DockPanel Margin="0,14,0,0">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button x:Name="CancelNewProjectButton" Content="{DynamicResource Cancel}"
+                    Classes="quiet" Margin="16,0,8,0" />
+            <Button x:Name="CreateProjectButton" Content="{DynamicResource Create}"
+                    Classes="primary" />
+          </StackPanel>
+          <TextBlock Text="{DynamicResource BuildPlatformHint}" Classes="muted" />
+        </DockPanel>
+      </StackPanel>
+    </Border>
+
+    <!-- ==================== 项目表格 ==================== -->
+    <Border Grid.Row="3" BorderBrush="{DynamicResource Hub.Border}"
+            BorderThickness="1" CornerRadius="7" ClipToBounds="True">
+      <Grid>
+        <DataGrid x:Name="ProjectsGrid">
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Width="*">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="core:ProjectEntry">
+                  <StackPanel Margin="8,0">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Path}" Foreground="{DynamicResource Hub.TextSecondary}"
+                               FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"
+                               ToolTip.Tip="{Binding Path}" />
+                  </StackPanel>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <!-- DataGridTextColumn **不继承**所在页面的 x:DataType：编译绑定要求每一列自己声明行类型，
+                 否则会拿页面类型去找 Version/ProjectType，构建期直接报错（AVLN2000）。 -->
+            <DataGridTextColumn Binding="{Binding Version}" Width="85" x:DataType="core:ProjectEntry" />
+            <DataGridTextColumn Binding="{Binding ProjectType}" Width="110" x:DataType="core:ProjectEntry" />
+            <DataGridTextColumn Binding="{Binding BuildStatus}" Width="125" x:DataType="core:ProjectEntry" />
+            <DataGridTextColumn Binding="{Binding LastOpened, StringFormat=yyyy-MM-dd HH:mm}" Width="150" x:DataType="core:ProjectEntry" />
+          </DataGrid.Columns>
+        </DataGrid>
+        <TextBlock x:Name="EmptyProjects" Classes="muted"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+      </Grid>
+    </Border>
+
+    <!-- ==================== 设备条 + 操作按钮 ==================== -->
+    <StackPanel Grid.Row="4">
+      <Border x:Name="AndroidDevicePanel" IsVisible="False"
+              Background="{DynamicResource Hub.Surface}" CornerRadius="6"
+              Padding="14,12" Margin="0,14,0,0">
+        <StackPanel>
+          <DockPanel>
+            <Button x:Name="RefreshDevicesButton" Content="{DynamicResource RefreshDevices}"
+                    DockPanel.Dock="Right" Margin="12,0,0,0" />
+            <TextBlock Text="{DynamicResource AndroidDevice}" Margin="0,0,14,0" />
+            <ComboBox x:Name="AndroidDevicePicker" Width="310" HorizontalAlignment="Left" />
+            <TextBlock x:Name="AndroidDeviceStatus" Foreground="{DynamicResource Hub.TextSecondary}"
+                       Margin="14,0,0,0" />
+          </DockPanel>
+          <TextBlock Text="{DynamicResource AndroidDeviceHint}" Classes="muted" Margin="0,8,0,0" />
+        </StackPanel>
+      </Border>
+
+      <WrapPanel Margin="0,18,0,6">
+        <Button x:Name="BuildButton" Content="{DynamicResource Build}" Classes="primary" />
+        <Button x:Name="RunButton" Content="{DynamicResource Run}" />
+        <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet" />
+        <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet" />
+        <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
+        <Button x:Name="OpenOutputsButton" Content="{DynamicResource OpenOutputs}" Classes="quiet" />
+        <Button x:Name="VisualStudioButton" Content="Visual Studio" Classes="quiet" />
+        <Button x:Name="CodeButton" Content="VS Code" Classes="quiet" />
+        <Button x:Name="RemoveProjectButton" Content="{DynamicResource RemoveFromList}" Classes="quiet" />
+      </WrapPanel>
+    </StackPanel>
+
+  </Grid>
+</UserControl>

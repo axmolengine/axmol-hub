@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AxmolHub.App.FoundationCheckWindow"
+        Width="560" Height="320"
+        Title="Axmol Hub — P4 基础件自检">
+
+  <!-- 与控件画廊同一个角色：开发工件，不属于产品界面。它做两件事 ——
+       跑基础件断言，以及被真截一次图（"截图非空白"的判据必须拿一张真图验证过，否则判据本身没证据）。 -->
+  <StackPanel Margin="28" Spacing="10">
+    <TextBlock FontSize="18" FontWeight="SemiBold" Text="P4 基础件自检" />
+    <TextBlock Classes="muted"
+               Text="替 8 处 MessageBox 的 HubDialog、异步化的 StorageProvider 包装、以及带非空白判据的 --smoke。这三个是 P5 逐窗口迁移要反复用的东西，所以先单独验一遍。" />
+    <Border Classes="card" Name="ProbeCard">
+      <StackPanel Spacing="6">
+        <TextBlock Text="HubDialog · Pickers · SmokeCapture" />
+        <TextBlock Classes="muted" Text="断言结果写到 --verify-foundation 指定的报告路径，并按失败数决定退出码。" />
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</Window>

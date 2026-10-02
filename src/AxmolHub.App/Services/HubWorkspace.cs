@@ -1,0 +1,977 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Controls;
+using Avalonia.Threading;
+using AxmolHub.Core;
+
+namespace AxmolHub.App;
+
+/// <summary>
+/// WPF 版把「服务装配 + 全部操作」都放在 <c>MainWindow.xaml.cs</c> 里（823 行）——
+/// 因为四个页面是同一个窗口内的四个 <c>Grid</c>，字段天然共享，一个 <c>Refresh()</c>
+/// 就能同时更新项目页的计数和工具链页的表格。
+///
+/// Avalonia 版把页面拆成了 <c>UserControl</c>，那些共享字段就失去了落点。于是把
+/// **非视觉的那一半**整体搬到这里：服务装配、当前选择、<c>ExecuteAsync</c>、
+/// 以及每个按钮背后的操作。视觉那一半仍在 XAML 里，页面只把控件绑到这里的属性与事件。
+///
+/// 刻意**不**引 MVVM 框架：这里的状态是"选中的项目 / 正在跑的操作 / 检测到的组件"
+/// 这一类，用事件通知比搭一层绑定基础设施更短，也更贴近 WPF 版 <c>Refresh()</c> 的语义
+/// （一次操作结束，全量重画）。
+/// </summary>
+public sealed class HubWorkspace : IDisposable
+{
+    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly ProcessRunner _runner;
+    private readonly ToolchainDetector _detector;
+    private readonly ProjectService _projects;
+    private readonly PlatformBuildService _platformBuilds;
+    private readonly PackageInstaller _installer;
+    private readonly WindowsToolchainInstaller _windowsInstaller;
+
+    private CancellationTokenSource? _operation;
+    private BuildProgressWindow? _buildProgress;
+    private bool _windowsInstallationActive;
+
+    /// <summary>签名密码只在内存里，一次会话有效 —— 与 WPF 版一致，不落盘。</summary>
+    private readonly Dictionary<string, AndroidSigningPasswords> _androidPasswords = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>设备列表只在「项目 + 平台」这个组合变化时才失效，避免每选一次项目就清一次。</summary>
+    private string _deviceProject = "";
+
+    /// <summary>目标下拉的回环闸门。WPF 版叫 <c>targetReady</c>，作用完全一样。</summary>
+    private bool _targetReady;
+
+    public HubWorkspace(string root, HubPreferences preferences, PreferencesStore preferencesStore)
+    {
+        Preferences = preferences;
+        PreferencesStore = preferencesStore;
+
+        Store = new StateStore(root);
+        Directory.CreateDirectory(Store.Root);
+        ToolsRoot = Path.Combine(Store.Root, "tools");
+        Directory.CreateDirectory(ToolsRoot);
+        Manifests = Path.Combine(AppContext.BaseDirectory, "manifests");
+
+        State = Store.Load();
+
+        Log = new HubLog(Path.Combine(Store.Root, "logs"));
+        // HubLog 的回调来自**工作线程**（ProcessRunner 的输出泵）。WPF 版用 Dispatcher.BeginInvoke
+        // 切回 UI 线程，这里同理；少了这一步，往 TextBox 追加文本会抛跨线程异常。
+        Log.Written += line => Dispatcher.UIThread.Post(() =>
+        {
+            Logged?.Invoke(line);
+            _buildProgress?.Report(line[(line.IndexOf(' ') + 1)..]);
+        });
+
+        _runner = new ProcessRunner(Log.Write);
+        _detector = new ToolchainDetector(_runner, ToolsRoot);
+        _projects = new ProjectService(_runner, _detector, ToolsRoot, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+        _platformBuilds = new PlatformBuildService(_runner, ToolsRoot);
+        _installer = new PackageInstaller(new DownloadManager(_http, Log.Write), Store.Root, Log.Write);
+        _windowsInstaller = new WindowsToolchainInstaller(
+            new DownloadManager(_http, Log.Write), _runner, Store.Root,
+            Path.Combine(Manifests, "toolchain-manifest.json"),
+            Path.Combine(AppContext.BaseDirectory, "Verify-MicrosoftSignature.ps1"), Log.Write);
+
+        Modules = new EngineModules(Store.Root, Manifests);
+
+        ProjectDirectory = preferences.ProjectDirectory ?? Path.Combine(Store.Root, "projects");
+        _targetReady = true;
+        ToolTarget = BuildTargets.All[0];
+    }
+
+    // ───────────────────────── 服务与状态 ─────────────────────────
+
+    public StateStore Store { get; }
+    public HubState State { get; }
+    public HubLog Log { get; }
+    public HubPreferences Preferences { get; }
+    public PreferencesStore PreferencesStore { get; }
+    public EngineModules Modules { get; }
+    public string ToolsRoot { get; }
+    public string Manifests { get; }
+
+    /// <summary>对话框的宿主窗口。由主窗口在构造后填好；为空时对话框退化成非模态。</summary>
+    public Window? Owner { get; set; }
+
+    /// <summary>
+    /// 验收模式下关掉失败弹窗（<c>--verify-ops</c>）。
+    ///
+    /// 产品路径里操作失败**必须**弹框 —— 用户得看见。但自动化里没人点确认，
+    /// <see cref="HubDialog.ShowAsync"/> 返回的 Task 永远不会完成，于是"真跑"变成"挂死"。
+    /// 它只关掉**展示**：置忙、记日志、落盘、<see cref="LastError"/> 全部照旧，
+    /// 所以验收观察到的仍是产品行为，只是少了那个需要人点的窗口。
+    /// </summary>
+    public bool SuppressDialogs { get; set; }
+
+    /// <summary>一行日志（已在 UI 线程）。主窗口把它追加进日志面板。</summary>
+    public event Action<string>? Logged;
+
+    /// <summary>状态/列表变了，页面该重画。等价于 WPF 版结尾那个 <c>Refresh()</c>。</summary>
+    public event Action? Changed;
+
+    /// <summary>状态栏文案。</summary>
+    public event Action<string>? StatusChanged;
+
+    /// <summary>操作进行中（页面禁用 + 取消按钮可用）。</summary>
+    public event Action<bool>? BusyChanged;
+
+    /// <summary>操作失败：主窗口据此展开日志面板。</summary>
+    public event Action? Failed;
+
+    /// <summary>工具链检测结果更新。</summary>
+    public event Action? ComponentsChanged;
+
+    /// <summary>Android 设备列表更新。</summary>
+    public event Action? DevicesChanged;
+
+    // ───────────────────────── 共享选择 ─────────────────────────
+
+    public ProjectEntry? SelectedProject { get; set; }
+    public EngineEntry? SelectedEngine { get; set; }
+    public EngineEntry? ModuleEngine { get; set; }
+    public AndroidDevice? SelectedDevice { get; set; }
+
+    /// <summary>新建项目面板里的默认位置。WPF 版是 <c>ProjectLocation.Text</c>。</summary>
+    public string ProjectDirectory { get; set; }
+
+    private BuildTarget? _toolTarget;
+    public BuildTarget? ToolTarget
+    {
+        get => _toolTarget;
+        set
+        {
+            _toolTarget = value;
+            ToolTargetHint = DescribeToolTarget(value);
+        }
+    }
+
+    public List<ToolchainComponent> Components { get; private set; } = [];
+    public IReadOnlyList<AndroidDevice> Devices { get; private set; } = [];
+    public string LastError { get; private set; } = "";
+    public bool IsBusy => _operation is not null;
+    public string StatusText { get; private set; } = "";
+
+    /// <summary>项目页顶部"最近构建平台"那张卡里的第二行。</summary>
+    public string BuildHostHint { get; private set; } = "";
+
+    /// <summary>工具链页平台选择下方的说明。WPF 版叫 <c>ToolTargetHint</c>。</summary>
+    public string ToolTargetHint { get; private set; } = "";
+
+    // ───────────────────────── 通用外壳 ─────────────────────────
+
+    private void SetStatus(string text)
+    {
+        StatusText = text;
+        StatusChanged?.Invoke(text);
+    }
+
+    private IProgress<DownloadProgress> DownloadProgress() => new Progress<DownloadProgress>(p =>
+        SetStatus(string.Create(CultureInfo.InvariantCulture,
+            $"{HubStrings.Get("Download")} {p.Bytes / 1048576.0:F1} / {(p.Total.HasValue ? (p.Total.Value / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) : "?")} MB · {p.BytesPerSecond / 1048576.0:F1} MB/s")));
+
+    /// <summary>
+    /// 一个操作的完整生命周期：锁重入、置忙、记日志、成功落盘、失败展开日志并弹框。
+    /// 与 WPF 版逐句对应，只是把 <c>Pages.IsEnabled</c> 换成了 <see cref="BusyChanged"/> 事件。
+    /// </summary>
+    public async Task ExecuteAsync(string title, Func<CancellationToken, Task> action)
+    {
+        if (_operation is not null)
+        {
+            return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        _operation = cancellation;
+        LastError = "";
+        BusyChanged?.Invoke(true);
+        SetStatus(HubStrings.Get(title));
+        Log.Write(title);
+
+        try
+        {
+            await action(cancellation.Token);
+            Store.Save(State);
+            SetStatus(HubStrings.Get(title) + " · " + HubStrings.Get("Done"));
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus(HubStrings.Get(title) + " · " + HubStrings.Get("Cancelled"));
+            Log.Write(StatusText);
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.ToString();
+            Log.Write(LastError);
+            SetStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(ex.Message.Split('\n')[0]));
+            Failed?.Invoke();
+            // 验收模式下不弹框：ExpectedFailure 是这一组的常态（比如拿一个不完整的引擎去导入），
+            // 弹窗会让 await 永不返回（见 SuppressDialogs）。
+            if (!SuppressDialogs)
+            {
+                await ShowOperationErrorAsync(ex);
+            }
+        }
+        finally
+        {
+            CloseBuildProgress();
+            _operation = null;
+            BusyChanged?.Invoke(false);
+            Refresh();
+        }
+    }
+
+    public void Cancel() => _operation?.Cancel();
+
+    /// <summary>MSVC 安装需要跑一个外部安装器，此时取消按钮必须让位（见 WPF 版 Closing 处理）。</summary>
+    public bool CanCancel => _operation is not null && !_windowsInstallationActive;
+
+    private async Task ShowOperationErrorAsync(Exception error)
+    {
+        // 弹窗只展示用户可采取行动的原因，调用栈仍完整留在日志里。
+        var message = error is ProjectDestinationExistsException exists
+            ? HubStrings.Get("ProjectAlreadyExists") + "\n\n" + exists.Destination + "\n\n" + HubStrings.Get("ProjectAlreadyExistsAction")
+            : HubStrings.Get(error.Message) + "\n\n" + HubStrings.Get("ErrorHint");
+
+        await HubDialog.ShowAsync(Owner, HubStrings.Get("OperationFailed"), message);
+    }
+
+    private void CloseBuildProgress()
+    {
+        var dialog = _buildProgress;
+        _buildProgress = null;
+        dialog?.Finish();
+    }
+
+    /// <summary>
+    /// WPF 版 <c>Refresh()</c>：一次操作结束后把所有列表与派生文案重算一遍。
+    /// 刻意保留"全量重画"而不是增量通知 —— 这些列表都很小，而增量通知要维护的
+    /// 对应关系（谁依赖谁的选中项）比它省下的重画贵得多。
+    /// </summary>
+    public void Refresh()
+    {
+        var selectedProject = SelectedProject;
+        var selectedEngine = SelectedEngine;
+        var moduleEngine = ModuleEngine;
+
+        SelectedProject = State.Projects.FirstOrDefault(p => selectedProject is not null && p.Path == selectedProject.Path)
+                          ?? State.Projects.FirstOrDefault();
+        SelectedEngine = State.Engines.FirstOrDefault(e => selectedEngine is not null && e.Path == selectedEngine.Path)
+                         ?? State.Engines.FirstOrDefault();
+        ModuleEngine = State.Engines.FirstOrDefault(e => moduleEngine is not null && e.Path == moduleEngine.Path)
+                       ?? SelectedEngine;
+
+        SyncProjectTarget();
+        UpdateTargetHint();
+        UpdateDevicePicker();
+        Changed?.Invoke();
+    }
+
+    /// <summary>项目页顶部那张"最近构建平台"卡。WPF 里它由 <c>SyncProjectTarget</c> 维护。</summary>
+    public BuildTarget? ProjectTarget =>
+        SelectedProject is { } project ? BuildTargets.Get(project.Platform) : null;
+
+    private void SyncProjectTarget()
+    {
+        if (!_targetReady)
+        {
+            return;
+        }
+
+        _targetReady = false;
+        var project = SelectedProject;
+        if (project is not null)
+        {
+            if (project.Path + "|" + project.Platform != _deviceProject)
+            {
+                _deviceProject = project.Path + "|" + project.Platform;
+                Devices = [];
+            }
+        }
+
+        _targetReady = true;
+    }
+
+    private void UpdateTargetHint()
+    {
+        if (ProjectTarget is { } target)
+        {
+            var project = SelectedProject;
+            BuildHostHint = (project?.Configuration ?? "Debug") + " · "
+                + (target.Family == "uwp" ? HubStrings.Get("UwpPending")
+                   : target.CanBuildOn(BuildTargets.Host) ? HubStrings.Get("LocalHost")
+                   : HubStrings.Get("RequiresHost") + " " + string.Join(" / ", target.Hosts));
+        }
+        else
+        {
+            BuildHostHint = "";
+        }
+
+        if (ToolTarget is { } toolsTarget)
+        {
+            ToolTargetHint = DescribeToolTarget(toolsTarget);
+        }
+    }
+
+    private string DescribeToolTarget(BuildTarget? target) => target is null
+        ? ""
+        : HubStrings.Get("RequiresHost") + " " + string.Join(" / ", target.Hosts) + " · " + HubStrings.Get(
+            target.Family == "android" ? "AndroidNativeNote"
+            : target.Family == "uwp" ? "UwpPending"
+            : "PlatformToolsNote");
+
+    /// <summary>WPF 版 <c>SetHeaders</c> 的等价物：表头文案随语言走，所以每次刷新都重设。</summary>
+    public static string[] GridHeaders(string grid) => grid switch
+    {
+        "projects" => ["Name", "Version", "Scripting", "BuildStatus", "LastOpened"],
+        "engines" => ["Version", "Channel", "Path"],
+        "tools" => ["Component", "Status", "Details"],
+        _ => [],
+    };
+
+    // ───────────────────────── 引擎 ─────────────────────────
+
+    public async Task ImportEngineAsync(string? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        await ExecuteAsync("Import engine", _ =>
+        {
+            AddEngine(StateStore.ValidateEngine(path));
+            return Task.CompletedTask;
+        });
+    }
+
+    public async Task InstallEngineAsync()
+    {
+        await ExecuteAsync("Install official engine", async token =>
+        {
+            var manifest = PackageManifest.Read(Path.Combine(Manifests, "engine-manifest.json"));
+            // WPF 版这里写的是 Packages.Single()：清单只要多一个包就抛异常。
+            // 这里改成"取官方 LTS 通道里版本最新的一个"，既保留现状行为
+            // （今天清单里就一个包），也让清单将来能列多个版本。
+            //
+            // 接 https://axmol.dev/versions/index.json 的落点就在这一行：
+            // 那份索引给的是"有哪些版本可装"，这里给的是"装到哪、哈希是什么"。
+            var package = manifest.Packages
+                .OrderByDescending(p => p.Version, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(p => p.Channel == "official-lts") ?? manifest.Packages[0];
+            var path = await _installer.InstallAsync(package, DownloadProgress(), token);
+            AddEngine(StateStore.ValidateEngine(path, package.Channel));
+        });
+    }
+
+    private void AddEngine(EngineEntry engine)
+    {
+        if (!State.Engines.Any(e => e.Path.Equals(engine.Path, StringComparison.OrdinalIgnoreCase)))
+        {
+            State.Engines.Add(engine);
+        }
+
+        State.DefaultEnginePath ??= engine.Path;
+    }
+
+    public async Task SetDefaultEngineAsync() => await ExecuteAsync("Set default engine", _ =>
+    {
+        var engine = RequiredEngine();
+        State.DefaultEnginePath = engine.Path;
+        return Task.CompletedTask;
+    });
+
+    public async Task VerifyEngineAsync() => await ExecuteAsync("Verify engine", _ =>
+    {
+        var engine = RequiredEngine();
+        if (StateStore.ValidateEngine(engine.Path).Version != engine.Version)
+        {
+            throw new InvalidDataException("Engine version changed.");
+        }
+
+        return Task.CompletedTask;
+    });
+
+    public async Task RemoveEngineAsync() => await ExecuteAsync("Remove engine from list", _ =>
+    {
+        var engine = RequiredEngine();
+        State.Engines.Remove(engine);
+        if (State.DefaultEnginePath == engine.Path)
+        {
+            State.DefaultEnginePath = State.Engines.FirstOrDefault()?.Path;
+        }
+
+        return Task.CompletedTask;
+    });
+
+    private PackageEntry ManagedEnginePackage(EngineEntry engine)
+    {
+        var package = PackageManifest.Read(Path.Combine(Manifests, "engine-manifest.json")).Packages
+            .SingleOrDefault(p => p.Version == engine.Version && p.Channel == engine.Channel &&
+                PackageInstaller.SafePath(Store.Root, p.Destination).Equals(engine.Path, StringComparison.OrdinalIgnoreCase));
+
+        return package ?? throw new InvalidOperationException(HubStrings.Language == HubTexts.DefaultLanguage
+            ? "导入的外部引擎保持原样，只支持修复或卸载 Hub 安装的引擎。"
+            : "Only Hub-installed engines can be repaired or uninstalled. Imported folders are preserved.");
+    }
+
+    public async Task RepairEngineAsync() => await ExecuteAsync("Repair engine", async token =>
+    {
+        var engine = RequiredEngine();
+        await _installer.RepairAsync(ManagedEnginePackage(engine), DownloadProgress(), token);
+        StateStore.ValidateEngine(engine.Path, engine.Channel);
+        foreach (var project in State.Projects.Where(p => p.Version == engine.Version && p.Channel == engine.Channel))
+        {
+            project.BuildStatus = "Not built";
+        }
+    });
+
+    public async Task UninstallEngineAsync() => await ExecuteAsync("Uninstall engine", async _ =>
+    {
+        var engine = RequiredEngine();
+        var package = ManagedEnginePackage(engine);
+        if (State.Projects.Any(p => p.Version == engine.Version && p.Channel == engine.Channel))
+        {
+            throw new InvalidOperationException(HubStrings.Language == HubTexts.DefaultLanguage
+                ? "仍有项目使用此引擎，请先移出项目列表。项目文件会保留。"
+                : "Projects still use this engine. Remove them from the list first; project files are preserved.");
+        }
+
+        var prompt = HubStrings.Language == HubTexts.DefaultLanguage
+            ? $"卸载 Axmol {engine.Version}？安装文件会保留到数据目录的 trash 中，项目文件不受影响。"
+            : $"Uninstall Axmol {engine.Version}? Installation files are retained in the data directory's trash folder. Project files are preserved.";
+
+        if (await HubDialog.ShowAsync(Owner, HubStrings.Get("Uninstall"), prompt, HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok)
+        {
+            return;
+        }
+
+        _installer.Uninstall(package);
+        State.Engines.Remove(engine);
+        if (State.DefaultEnginePath == engine.Path)
+        {
+            State.DefaultEnginePath = State.Engines.FirstOrDefault()?.Path;
+        }
+    });
+
+    private EngineEntry RequiredEngine() => SelectedEngine
+        ?? throw new InvalidOperationException("Select an engine first.");
+
+    // ───────────────────────── 项目 ─────────────────────────
+
+    public async Task CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType)
+    {
+        await ExecuteAsync("Create project", async token =>
+        {
+            var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
+            var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType);
+            State.Projects.Add(project);
+            SelectedProject = project;
+        });
+    }
+
+    public async Task OpenProjectAsync(string? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        await ExecuteAsync("Open project", _ =>
+        {
+            var project = StateStore.ReadProject(path);
+            if (!File.Exists(StateStore.MetadataPath(path)))
+            {
+                StateStore.LockProject(project);
+            }
+
+            if (!State.Projects.Any(p => p.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                State.Projects.Add(project);
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    public async Task RemoveProjectAsync() => await ExecuteAsync("Remove project from list", _ =>
+    {
+        var project = RequiredProject();
+        State.Projects.Remove(project);
+        return Task.CompletedTask;
+    });
+
+    private ProjectEntry RequiredProject() => SelectedProject
+        ?? throw new InvalidOperationException("Select a project first.");
+
+    private EngineEntry RequiredEngine(ProjectEntry project) => State.Engines
+        .FirstOrDefault(e => e.Version == project.Version && e.Channel == project.Channel)
+        ?? throw new InvalidOperationException(HubStrings.Get("EngineMissing"));
+
+    /// <summary>
+    /// 构建/运行的入口。<paramref name="selection"/> 为空时先弹「选择构建平台」对话框
+    /// （对应 WPF 版 <c>PickBuildTarget</c>）；已经有选择时直接跑。
+    /// </summary>
+    public async Task BuildAsync(bool configureOnly, (BuildTarget Target, string Configuration)? selection = null)
+    {
+        if (_operation is not null)
+        {
+            return;
+        }
+
+        if (SelectedProject is not { } selected)
+        {
+            return;
+        }
+
+        var chosen = selection ?? await BuildTargetDialog.PickAsync(Owner, selected);
+        if (chosen is null)
+        {
+            return;
+        }
+
+        var (target, configuration) = chosen.Value;
+
+        // Android Release 必须先拿到签名配置，否则打出来的是未签名包。
+        if (target.Family == "android" && configuration == "Release" && !await EditAndroidReleaseAsync(selected))
+        {
+            return;
+        }
+
+        await ExecuteAsync(configureOnly ? "Configure CMake" : "Build project", async token =>
+        {
+            var project = RequiredProject();
+            BuildTargets.Select(project, target.Id, configuration);
+            var engine = RequiredEngine(project);
+
+            _buildProgress = new BuildProgressWindow(project.Name, target.Name, configuration, () => _operation?.Cancel());
+            if (Owner is null)
+            {
+                _buildProgress.Show();
+            }
+            else
+            {
+                _buildProgress.Show(Owner);
+            }
+
+            if (project.Platform == "windows-x64")
+            {
+                UpdateTools(await _detector.DetectAsync(token));
+            }
+
+            project.BuildStatus = configureOnly ? "Configuring" : "Building";
+            Store.Save(State);
+
+            try
+            {
+                _androidPasswords.TryGetValue(project.Path, out var passwords);
+                await _projects.BuildAsync(project, engine, configureOnly, token, passwords);
+                if (!configureOnly)
+                {
+                    _projects.FindExecutable(project);
+                }
+
+                project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
+            }
+            catch (OperationCanceledException)
+            {
+                project.BuildStatus = "Cancelled";
+                throw;
+            }
+            catch
+            {
+                project.BuildStatus = "Failed";
+                throw;
+            }
+            finally
+            {
+                Store.Save(State);
+            }
+
+            CloseBuildProgress();
+
+            if (!configureOnly)
+            {
+                var output = BuildOutputDirectory(project);
+                await HubDialog.ShowAsync(Owner, HubStrings.Get("BuildComplete"),
+                    HubStrings.Get("BuildComplete") + "\n\n" + target.Name + " · " + configuration + "\n" + output);
+                _runner.Open(output);
+            }
+        });
+    }
+
+    public async Task RunAsync()
+    {
+        await ExecuteAsync("Run project", async token =>
+        {
+            var project = RequiredProject();
+            if (project.BuildStatus != "Succeeded")
+            {
+                throw new InvalidOperationException("Build successfully before Run.");
+            }
+
+            if (project.Platform == "windows-x64")
+            {
+                UpdateTools(await _detector.DetectAsync(token));
+            }
+
+            if (BuildTargets.Get(project.Platform).Family == "android" && SelectedDevice?.State != "device")
+            {
+                throw new InvalidOperationException(HubStrings.Get("SelectAndroidDevice"));
+            }
+
+            project.LastOpened = DateTimeOffset.Now;
+            Store.Save(State);
+            var result = await _projects.RunAsync(project, RequiredEngine(project), token, SelectedDevice?.Serial);
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Game exited with code {result.ExitCode}.");
+            }
+        });
+    }
+
+    private string BuildOutputDirectory(ProjectEntry project) => BuildTargets.Get(project.Platform).Family == "android"
+        ? Path.Combine(AndroidPackageService.StageDirectory(project), "app/build/outputs")
+        : Path.GetDirectoryName(_projects.FindExecutable(project))!;
+
+    /// <summary>打开 Android 发行设置。项目页的「Android 发行设置」按钮直接调它。</summary>
+    public async Task<bool> EditAndroidReleaseAsync(ProjectEntry project)
+    {
+        try
+        {
+            _androidPasswords.TryGetValue(project.Path, out var previous);
+            var dialog = new AndroidReleaseWindow(project, ToolsRoot, _runner, previous);
+            var result = Owner is null ? await dialog.ShowDialog<HubDialogResult>(null!) : await dialog.ShowDialog<HubDialogResult>(Owner);
+            if (result != HubDialogResult.Ok)
+            {
+                return false;
+            }
+
+            _androidPasswords[project.Path] = dialog.Passwords!;
+            project.BuildStatus = "Not built";
+            Store.Save(State);
+            Refresh();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            await HubDialog.ShowAsync(Owner, HubStrings.Get("AndroidReleaseSettings"), ex.Message);
+            return false;
+        }
+    }
+
+    // ───────────────────────── 打开与编辑器 ─────────────────────────
+
+    public void Open(string path, params string[] arguments) => _runner.Open(path, arguments.Length == 0 ? null : arguments);
+
+    public async Task OpenProjectFolderAsync() => await ExecuteAsync("Open project folder", _ =>
+    {
+        Open(RequiredProject().Path);
+        return Task.CompletedTask;
+    });
+
+    public async Task OpenBuildOutputsAsync() => await ExecuteAsync("Open build outputs", _ =>
+    {
+        var project = RequiredProject();
+        var directory = BuildTargets.Get(project.Platform).Family == "android"
+            ? Path.Combine(AndroidPackageService.StageDirectory(project), "app/build/outputs")
+            : BuildTargets.BuildDirectory(project);
+        if (!Directory.Exists(directory))
+        {
+            throw new DirectoryNotFoundException(directory);
+        }
+
+        Open(directory);
+        return Task.CompletedTask;
+    });
+
+    public async Task OpenEngineFolderAsync() => await ExecuteAsync("Open engine folder", _ =>
+    {
+        Open(RequiredEngine().Path);
+        return Task.CompletedTask;
+    });
+
+    public async Task OpenEditorAsync(bool visualStudio) => await ExecuteAsync(
+        visualStudio ? "Open Visual Studio" : "Open VS Code", _ =>
+    {
+        var project = RequiredProject();
+        var executable = visualStudio ? State.VisualStudioExecutable : State.CodeExecutable;
+        if (executable is null || !File.Exists(executable))
+        {
+            throw new FileNotFoundException(visualStudio
+                ? "Select Visual Studio devenv.exe in Settings first."
+                : "Select VS Code executable in Settings first.");
+        }
+
+        Open(executable, visualStudio ? ["/OpenFolder", project.Path] : [project.Path]);
+        project.LastOpened = DateTimeOffset.Now;
+        return Task.CompletedTask;
+    });
+
+    /// <summary>选择编辑器可执行文件。WPF 版 <c>SelectEditor</c>，含文件名校验。</summary>
+    public async Task SelectEditorAsync(bool visualStudio, string? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+
+        var expected = visualStudio ? "devenv.exe" : "Code.exe";
+        if (!Path.GetFileName(path).Equals(expected, StringComparison.OrdinalIgnoreCase))
+        {
+            SetStatus($"Select {expected}.");
+            return;
+        }
+
+        if (visualStudio)
+        {
+            State.VisualStudioExecutable = path;
+        }
+        else
+        {
+            State.CodeExecutable = path;
+        }
+
+        Store.Save(State);
+        Log.Write($"Selected editor: {path}");
+        Refresh();
+        await Task.CompletedTask;
+    }
+
+    // ───────────────────────── 工具链 ─────────────────────────
+
+    private void UpdateTools(List<ToolchainComponent> values)
+    {
+        Components = values;
+        ComponentsChanged?.Invoke();
+    }
+
+    public Task<List<ToolchainComponent>> DetectAsync(CancellationToken token = default) =>
+        ToolTarget is { } target && target.Id != "windows-x64"
+            ? _platformBuilds.VerifyAsync(target.Id, token)
+            : _detector.DetectAsync(token);
+
+    public async Task VerifyToolchainsAsync() =>
+        await ExecuteAsync("Verify toolchains", async token => UpdateTools(await DetectAsync(token)));
+
+    public async Task ChangeToolTargetAsync(BuildTarget? target)
+    {
+        if (!_targetReady)
+        {
+            return;
+        }
+
+        ToolTarget = target;
+        UpdateTargetHint();
+        await ExecuteAsync("Verify toolchains", async token => UpdateTools(await DetectAsync(token)));
+    }
+
+    public async Task InstallToolsAsync()
+    {
+        await ExecuteAsync("Install managed tools", async token =>
+        {
+            var target = ToolTarget ?? throw new InvalidOperationException("Select a platform first.");
+            if (!target.CanBuildOn(BuildTargets.Host))
+            {
+                throw new PlatformNotSupportedException(HubStrings.Get("RequiresHost") + string.Join(" / ", target.Hosts));
+            }
+
+            var manifest = PackageManifest.Read(Path.Combine(Manifests, "toolchain-manifest.json"));
+            var packages = manifest.Packages.Where(p => target.Family is "windows" or "uwp" || p.Id != "nuget").ToList();
+            if (target.Family is "android" or "wasm")
+            {
+                packages.AddRange(PackageManifest.Read(Path.Combine(Manifests,
+                    target.Family == "wasm" ? "web-toolchain-windows.json" : "android-native-toolchain-windows.json")).Packages);
+            }
+
+            foreach (var package in packages)
+            {
+                var destination = PackageInstaller.SafePath(Store.Root, package.Destination);
+                if (Directory.Exists(destination))
+                {
+                    Log.Write($"Already present: {destination}. Verify its executable before use.");
+                    continue;
+                }
+
+                await _installer.InstallAsync(package, DownloadProgress(), token);
+            }
+
+            UpdateTools(await DetectAsync(token));
+        });
+    }
+
+    public async Task InstallSdkAsync() => await ExecuteAsync("Install Windows SDK", async token =>
+    {
+        await _windowsInstaller.InstallSdkAsync(DownloadProgress(), token);
+        UpdateTools(await _detector.DetectAsync(token));
+    });
+
+    public async Task InstallBuildToolsAsync() => await ExecuteAsync("Install MSVC Build Tools", async token =>
+    {
+        var prepared = await _windowsInstaller.PrepareBuildToolsAsync(DownloadProgress(), token);
+        token.ThrowIfCancellationRequested();
+        try
+        {
+            var exit = await _windowsInstaller.InstallBuildToolsAsync(prepared, () =>
+            {
+                _windowsInstallationActive = true;
+                SetStatus(HubStrings.Get("MsvcActive"));
+            });
+
+            UpdateTools(await _detector.DetectAsync(token));
+            if (exit == 3010)
+            {
+                Log.Write("Restart Windows before building.");
+            }
+        }
+        finally
+        {
+            _windowsInstallationActive = false;
+        }
+    });
+
+    /// <summary>模块安装。WPF 版 <c>ChooseModulesAsync</c>：先选模块，再按计划逐个装。</summary>
+    public async Task ChooseModulesAsync(EngineEntry? engine)
+    {
+        if (_operation is not null || engine is null)
+        {
+            return;
+        }
+
+        var dialog = new ModuleWindow(Modules, Store.Root, State.Engines, engine);
+        var result = Owner is null
+            ? await dialog.ShowDialog<HubDialogResult>(null!)
+            : await dialog.ShowDialog<HubDialogResult>(Owner);
+        if (result != HubDialogResult.Ok)
+        {
+            return;
+        }
+
+        var chosenEngine = dialog.SelectedEngine;
+        var ids = dialog.SelectedIds;
+
+        await ExecuteAsync("Install engine modules", async token =>
+        {
+            var validated = StateStore.ValidateEngine(chosenEngine.Path, chosenEngine.Channel);
+            if (validated.Version != chosenEngine.Version)
+            {
+                throw new InvalidDataException("Engine version changed.");
+            }
+
+            var service = Modules;
+            var plan = service.Plan(chosenEngine, ids);
+            service.Save(chosenEngine, ids);
+
+            foreach (var package in plan.Packages)
+            {
+                var destination = PackageInstaller.SafePath(Store.Root, package.Destination);
+                if (Directory.Exists(destination))
+                {
+                    await _installer.RepairAsync(package, DownloadProgress(), token);
+                }
+                else
+                {
+                    await _installer.InstallAsync(package, DownloadProgress(), token);
+                }
+            }
+
+            foreach (var id in plan.Installers)
+            {
+                if (id == "windows-sdk")
+                {
+                    await _windowsInstaller.InstallSdkAsync(DownloadProgress(), token);
+                }
+                else
+                {
+                    var prepared = await _windowsInstaller.PrepareBuildToolsAsync(DownloadProgress(), token);
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var exit = await _windowsInstaller.InstallBuildToolsAsync(prepared, () =>
+                        {
+                            _windowsInstallationActive = true;
+                            SetStatus(HubStrings.Get("MsvcActive"));
+                        });
+                        if (exit == 3010)
+                        {
+                            Log.Write("Restart Windows before building.");
+                        }
+                    }
+                    finally
+                    {
+                        _windowsInstallationActive = false;
+                    }
+                }
+            }
+
+            Log.Write(HubStrings.Get("ModuleSaved"));
+            foreach (var id in plan.DeferredModules)
+            {
+                Log.Write(ModuleWindow.ModuleName(id) + ": " + HubStrings.Get(id == "uwp" ? "UwpPending" : "ModuleExternal"));
+            }
+
+            UpdateTools(await DetectAsync(token));
+        });
+    }
+
+    // ───────────────────────── Android 设备 ─────────────────────────
+
+    private void UpdateDevicePicker()
+    {
+        SelectedDevice = Devices.FirstOrDefault(device => SelectedDevice is not null && device.Serial == SelectedDevice.Serial)
+                         ?? Devices.FirstOrDefault(device => device.State == "device");
+        DevicesChanged?.Invoke();
+    }
+
+    public async Task QueryDevicesAsync()
+    {
+        await ExecuteAsync("Refresh Android devices", async token =>
+        {
+            var project = RequiredProject();
+            var target = BuildTargets.Get(project.Platform);
+            if (target.Family != "android")
+            {
+                throw new InvalidOperationException("Select an Android project.");
+            }
+
+            var environment = _platformBuilds.CreateEnvironment(RequiredEngine(project), target);
+            Devices = await new AndroidDeviceService(_runner, ToolsRoot).DevicesAsync(environment, token);
+            _deviceProject = project.Path + "|" + project.Platform;
+            UpdateDevicePicker();
+        });
+    }
+
+    // ───────────────────────── 设置 ─────────────────────────
+
+    public void SetProjectDirectory(string directory)
+    {
+        var path = PreferencesStore.VerifyDirectory(directory);
+        var previous = Preferences.ProjectDirectory;
+        Preferences.ProjectDirectory = path;
+        try
+        {
+            PreferencesStore.Save(Preferences);
+        }
+        catch
+        {
+            Preferences.ProjectDirectory = previous;
+            throw;
+        }
+
+        ProjectDirectory = path;
+        Refresh();
+        SetStatus(HubStrings.Get("DefaultProjectsChanged"));
+    }
+
+    public void Dispose()
+    {
+        _http.Dispose();
+    }
+}

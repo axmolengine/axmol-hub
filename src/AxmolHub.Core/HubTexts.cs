@@ -1,11 +1,36 @@
-using System.Globalization;
-using System.Windows;
-using System.Windows.Data;
-namespace AxmolHub.App;
+namespace AxmolHub.Core;
 
-public static class Texts
+/// <summary>
+/// Hub 界面文案的**单一定义**。
+///
+/// 为什么在 Core 而不是某个 App：迁移期 WPF 版与 Avalonia 版**同时存在**（P6 才删 WPF），
+/// 而两侧都要本地化。把 190 条键值复制成两份，等于让中文/英文在迁移期间静默分叉 ——
+/// 恰恰是迁移期最容易顺手改文案。这与 ADR-0001 对"工具只定义一次"的要求是同一条道理：
+/// 数据放 Core，各客户端只留一层薄适配（WPF 写 Application.Resources，
+/// Avalonia 写 Avalonia 资源字典），任何一侧都不再拥有文案本身。
+///
+/// 这里**只有数据与查表**，不含任何 UI 框架类型，因此 Core 的零依赖、可离线冷构建
+/// 性质不受影响。文案与界面框架无关，界面框架只决定"怎么送进资源字典"。
+/// </summary>
+public static class HubTexts
 {
-    public static string Language { get; private set; } = "zh-CN";
+    public const string DefaultLanguage = "zh-CN";
+    public const string EnglishLanguage = "en-US";
+
+    /// <summary>未知语言一律回落到中文，而不是抛异常：语言来自设置文件，属于用户数据。</summary>
+    public static string Normalize(string? language)
+        => language == EnglishLanguage ? EnglishLanguage : DefaultLanguage;
+
+    public static bool IsSupported(string? language) => language is DefaultLanguage or EnglishLanguage;
+
+    /// <summary>键不存在时返回键本身，与 WPF 版既有行为一致（缺失文案会显式暴露，而不是显示空白）。</summary>
+    public static string Get(string key, string? language) => Values.TryGetValue(key, out var value)
+        ? (Normalize(language) == DefaultLanguage ? value.Chinese : value.English)
+        : key;
+
+    /// <summary>全部键。适配层靠它把文案灌进各自的资源字典。</summary>
+    public static IReadOnlyCollection<string> Keys => Values.Keys;
+
     private static readonly Dictionary<string, (string Chinese, string English)> Values = new()
     {
         ["BuildComplete"] = ("编译完成", "Build completed"),
@@ -191,16 +216,12 @@ public static class Texts
         ["Uninstall engine"] = ("卸载引擎", "Uninstall engine"),
         ["DataChanged"] = ("数据目录已切换", "Data directory changed"),
         ["DefaultProjectsChanged"] = ("默认项目目录已保存", "Default project directory saved"),
+        ["PageNotMigrated"] = ("该页面尚未迁移到 Avalonia 版（P5 进行中）。", "This page has not been migrated to the Avalonia build yet (P5 in progress)."),
+        ["WaitForOperation"] = ("请先等当前操作结束或取消它，再切换数据目录。", "Wait for the active operation to finish or cancel it before changing the data directory."),
+        ["LocalPathRequired"] = ("选中的位置没有本地路径，请选择本机磁盘上的位置。", "The selected location has no local path. Choose a location on this PC."),
+        ["Select devenv.exe"] = ("选择 devenv.exe", "Select devenv.exe"),
+        ["Select Code.exe"] = ("选择 Code.exe", "Select Code.exe"),
+        ["Choose devenv.exe"] = ("请选择 devenv.exe。", "Choose devenv.exe."),
+        ["Choose Code.exe"] = ("请选择 Code.exe。", "Choose Code.exe."),
     };
-    public static string Get(string key) => Values.TryGetValue(key, out var value) ? (Language == "zh-CN" ? value.Chinese : value.English) : key;
-    public static void Apply(string language)
-    {
-        Language = language == "en-US" ? "en-US" : "zh-CN";
-        foreach (var key in Values.Keys) Application.Current.Resources[key] = Get(key);
-    }
-}
-public sealed class LocalizedValueConverter : IValueConverter
-{
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) => Texts.Get(value?.ToString() ?? "");
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
