@@ -1,0 +1,13 @@
+* text=auto
+*.cs text eol=lf
+*.csproj text eol=lf
+*.xaml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+# 固定摘要校验文件：禁止 Git 换行转换
+*.isl -text
+*.png binary
+*.ico binary

@@ -1,0 +1,27 @@
+**/bin/
+**/obj/
+.vs/
+artifacts/
+data/
+*.user
+**/.axmol-hub.android-release.json
+
+# 本机设置、构建缓存与 IDE 状态
+**/hub-settings.json
+**/hub-state.json
+**/build-hub*/
+.idea/
+*.suo
+*.userosscache
+.DS_Store
+Thumbs.db
+
+# 凭据与签名材料
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.pfx
+*.p12
+*.key
