@@ -1,0 +1,14 @@
+{
+  "packages": [
+    {
+      "id": "axmol-2.11.5",
+      "version": "2.11.5",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.5/axmol-2.11.5.zip",
+      "sha256": "425bf1b2661b4488f1d62f24d2e7b8f0f5ce2154891820ce84c05219a5c0c0ee",
+      "archiveRoot": "axmol-2.11.5",
+      "destination": "engines/official-lts/2.11.5"
+    }
+  ]
+}
