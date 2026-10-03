@@ -3,6 +3,9 @@
 日期：2026-10-02
 关联：`.github/workflows/ci.yml`、`.github/workflows/release-windows.yml`、[installer/README.md](../installer/README.md)
 
+> **后续变更（2026-10-03）**：本文 §2 落地记录里出现的 `module-manifest.json` 已改名 `recipe-manifest.json`、
+> `EngineModules` 已改名 `PackagingRecipes`（模块概念整体移除）。历史叙述保留当时命名，不再逐字回改。
+
 ---
 
 ## 1. 两个 workflow 的分工

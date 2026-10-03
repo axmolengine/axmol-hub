@@ -5,6 +5,10 @@
 关联文档：[ADR-0001 Hub 技术栈与定位](adr/0001-hub-tech-stack-and-positioning.md)、[CI 设计](ci.md)
 关联基础设施：`.github/workflows/ci.yml`
 
+> **后续变更（2026-10-03）**：本文档中出现的 `ModuleWindow.cs`（「添加模块」窗口）已删除 ——
+> 模块概念整体移除，平台/架构由 `BuildTargets` 表达、工具链准备由引擎 `setup.ps1` 承担。
+> 历史叙述保留当时的窗口清单，不再逐字回改。
+
 ---
 
 ## 1. 目标与范围

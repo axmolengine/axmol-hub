@@ -80,7 +80,7 @@
 
 | 动词 | `data` |
 |---|---|
-| `targets` | `{ "targets": [ { id, name, family, architecture, hosts[], simulator, current } ] }` |
+| `targets` | `{ "targets": [ { id, name, family, architecture, hosts[], simulator, current, minimumEngineMajor } ] }` |
 | `verify <root> <target>` | `{ "target": "...", "components": [ { name, status, details, executable } ] }` |
 | `create <root> <name> <parent> [cpp\|lua]` | `{ "project": { …ProjectEntry… } }` |
 | `select <root> <project> <target>` | `{ "project": { …ProjectEntry… } }`（已含新平台） |
@@ -102,7 +102,7 @@
 `verify` 的"有组件缺失"**不是**异常，而是一次成功的查询得到了坏结果。因此：
 
 ```json
-{ "schema": 1, "command": "verify", "ok": false, "exitCode": 2,
+{ "schema": 2, "command": "verify", "ok": false, "exitCode": 2,
   "data": { "target": "windows-x64", "components": [ … ] } }
 ```
 
@@ -114,7 +114,7 @@
 这三个动词的退出码**故意就是被拉起程序的退出码**（既有行为），所以可能出现：
 
 ```json
-{ "schema": 1, "command": "run", "ok": true, "exitCode": 3, "data": { "exitCode": 3 } }
+{ "schema": 2, "command": "run", "ok": true, "exitCode": 3, "data": { "exitCode": 3 } }
 ```
 
 含义是：**Hub 正常完成了它的工作**（`ok:true`）——

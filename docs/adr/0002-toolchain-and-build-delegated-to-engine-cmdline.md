@@ -5,6 +5,10 @@
 
 > 本文档是**索引与排期**，不重复上述文档的论证。遇到分歧以 ADR-0001 为准。
 
+> **后续变更（2026-10-03）**：§8「影响面」清单里出现的 `EngineModules.cs` 已改名 `PackagingRecipes.cs`、
+> `ModuleWindow.cs` 已删除（模块概念整体移除，平台/架构由 `BuildTargets` 表达）、
+> `module-manifest.json` 已改名 `recipe-manifest.json`。历史叙述保留当时的命名，不再逐字回改。
+
 ---
 
 ## 1. 背景
@@ -154,7 +158,7 @@ axmol run -p win32 -a arm64 -t unit-tests -O3
   因为工具链由引擎自己找。
 - **不变**：C#/.NET + Avalonia、四客户端共享一份 Core、CLI `--json` 契约、
   「AI 能力层只有一份实现」、「Hub 不是自举应用」。
-- **数据驱动那条原则收窄**：`manifests/` 继续承载**引擎发行清单**与**模块/配方声明**，
+- **数据驱动那条原则收窄**：`manifests/` 继续承载**引擎发行清单**与**配方验证声明**（`recipe-manifest.json`），
   但不再承载工具版本、URL、SHA-256。
 
 ## 6. Hub 保留的增值
@@ -176,7 +180,7 @@ axmol run -p win32 -a arm64 -t unit-tests -O3
 | # | 风险 / 缺口 | 现状 |
 |---|---|---|
 | R1 | 每个引擎树各一份 GB 级工具 | 只对实际要构建的平台跑 `setup -p`；引擎导入**不自动** setup；UI 明示体积 |
-| R2 | `setup.ps1` 改全局环境 | 执行前显式确认（工具链页 / 模块窗口）；文档不再声称工具链隔离 |
+| R2 | `setup.ps1` 改全局环境 | 执行前显式确认（工具链页）；文档不再声称工具链隔离 |
 | R3 | 开发者模式未开时 `setup.ps1` **`exit 0`** 却什么都没装 | `EngineSetupService` 解析引擎原文判 `DeveloperModeBlocked`，按失败处理 |
 | R4 | 无网络 / 受限环境 | 失败关闭；`build.profiles` 与探测本身不联网 |
 | R5 | `axmol build` 的构建目录与 Hub 旧 `build-hub*` 不同 | 改为**发现**（`EngineBuildLayout`）；`build-hub*` 只剩 Hub 自己的 Android 暂存在用 |

@@ -12,6 +12,10 @@
 
 > 本文档是**索引与排期**，不重复上述文档的论证。遇到分歧以 ADR-0001 为准。
 
+> **后续变更（2026-10-03）**：本文档中「模块」概念（模块安装、`module-manifest.json`、`EngineModules`）
+> 已被删除 —— 平台/架构约束由 `BuildTargets` 表达、工具链准备由引擎 `setup.ps1` 承担；
+> `module-manifest.json` 改名 `recipe-manifest.json`（仅承载 Android 打包配方验证）。历史叙述保留当时命名。
+
 ---
 
 ## 0. 一句话

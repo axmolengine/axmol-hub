@@ -5,6 +5,11 @@
 - **决策人**：Axmol 作者（`axmolengine` 组织维护者）
 - **相关**：`docs/hub-development-plan.md`（排期索引）、`docs/ai-first-plan.md`、`docs/avalonia-migration-plan.md`
 
+> **后续变更（2026-10-03）**：本文档正文里「模块安装」的定位已删除 —— Hub 不再有独立的「模块」层，
+> 平台/架构约束由 `BuildTargets` 表达、工具链准备由引擎 `setup.ps1` 承担。历史落地记录中出现的
+> `module-manifest.json` 已改名为 `recipe-manifest.json`（承载 Android 打包的配方验证闸门），
+> `EngineModules` 类已改名为 `PackagingRecipes`。下文的历史叙述保留当时的命名，不再逐字回改。
+
 ---
 
 ## 1. 背景
@@ -26,8 +31,9 @@
 
 1. **Hub 技术栈 = C# / .NET 8+，UI 层由 WPF 迁移到 Avalonia**（取得 Windows / macOS / Linux 三平台 UI）
 2. **Hub 不是 Axmol 自举应用。** Axmol 自举由 **Axmol Editor** 承担；Hub 不需要为此负责
-3. **Hub 定位 = 「环境与构建服务」**：引擎生命周期（下载 / 导入 / 校验 / 修复 / 卸载）、模块安装、项目创建、目标选择、构建、运行、部署、设备管理；对外以 **CLI `--json` + MCP** 暴露
-   （**「工具链自持」一条已被 [ADR-0002](0002-toolchain-and-build-delegated-to-engine-cmdline.md) 取代**：工具链与构建交还引擎 cmdline，`1k/build.profiles` 为版本真源）
+3. **Hub 定位 = 「环境与构建服务」**：引擎生命周期（下载 / 导入 / 校验 / 修复 / 卸载）、工具链准备、项目创建、目标选择、构建、运行、部署、设备管理；对外以 **CLI `--json` + MCP** 暴露
+   （**「工具链自持」一条已被 [ADR-0002](0002-toolchain-and-build-delegated-to-engine-cmdline.md) 取代**：工具链与构建交还引擎 cmdline，`1k/build.profiles` 为版本真源；
+   **「模块安装」已删除（2026-10-03）**：平台/架构约束由 `BuildTargets` 表达，工具链准备由引擎 `setup.ps1` 承担，不再有独立的「模块」层）
 4. **Editor 是 Hub 的一个客户端**，与 GUI / CLI / MCP 并列。**AI 能力层全局只有一份实现**，不允许 Hub 与 Editor 各写一套
 5. **Hub 引入 `axmolengine/axmol-hub` 进行组织内共建**
 
