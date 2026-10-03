@@ -53,7 +53,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         return exitCode;
     }
 
-    const string help = "Axmol Hub CLI\n  targets\n  verify <data-root> <target>\n  create <data-root> <name> <parent> [cpp|lua] (legacy: <target> [cpp|lua])\n  select <data-root> <project> <target>\n  plan|configure|build <data-root> <project> [Debug|Release]\n  run|serve <data-root> <project>\n  devices <data-root> <android-target>\n  deploy <data-root> <project> <serial>\n  install-tools <data-root> <manifest>\nAll tools must be managed inside data-root/tools. No system developer tool fallback.";
+    const string help = "Axmol Hub CLI\n  targets\n  verify <data-root> <target>\n  create <data-root> <name> <parent> [cpp|lua] (legacy: <target> [cpp|lua])\n  select <data-root> <project> <target>\n  plan|configure|build <data-root> <project> [Debug|Release]\n  run|serve <data-root> <project>\n  devices <data-root> <android-target>\n  deploy <data-root> <project> <serial>\n  install-tools <data-root> [platform]\nToolchains live inside the Axmol engine tree (its own setup.ps1); Hub runs axmol build/run/deploy.";
 
     if (arguments.Length == 0 || verb == "help")
     {
@@ -115,8 +115,8 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     void Write(string message) { Console.Error.WriteLine(message); log.Write(message); }
     var runner = new ProcessRunner(Write);
     var tools = Path.Combine(store.Root, "tools");
-    var platform = new PlatformBuildService(runner, tools);
-    var detector = new ToolchainDetector(runner, tools);
+    var platform = new PlatformBuildService(runner);
+    var commandLine = new EngineCommandLine(runner, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
 
     if (verb == "create" && arguments.Length is >= 4 and <= 6)
     {
@@ -126,7 +126,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         var projectType = arguments.Length == 6 ? arguments[5] : arguments.Length == 5 && target == null ? arguments[4] : "cpp";
         var hub = store.Load();
         var selected = hub.Engines.FirstOrDefault(e => e.Path == hub.DefaultEnginePath) ?? throw new InvalidOperationException("Set a default engine in this data root first.");
-        var creator = new ProjectService(runner, detector, tools, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+        var creator = new ProjectService(runner, commandLine);
         var project = await creator.CreateAsync(arguments[2], arguments[3], selected, stop.Token, projectType);
         if (target != null) BuildTargets.Select(project, target);
         store.SaveProject(project);
@@ -140,31 +140,31 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (verb == "install-tools")
     {
-        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        var installer = new PackageInstaller(new DownloadManager(http, Write), store.Root, Write);
-        var installed = new List<string>();
-        var retained = new List<string>();
-        foreach (var package in PackageManifest.Read(arguments[2]).Packages)
+        // 语义已变：不再是「Hub 按清单下载安装」，而是**替你跑引擎自己的 setup.ps1**。
+        // 工具链落点是 <engine>/tools/external，版本真源是 <engine>/1k/build.profiles。
+        var hub = store.Load();
+        var installEngine = hub.Engines.FirstOrDefault(candidate => candidate.Path == hub.DefaultEnginePath) ?? hub.Engines.FirstOrDefault()
+            ?? throw new InvalidOperationException("Import an Axmol engine first (its setup.ps1 prepares the toolchain).");
+        var hostTarget = BuildTargets.All.FirstOrDefault(candidate => candidate.CanBuildOn(BuildTargets.Host)) ?? BuildTargets.All[0];
+        var platformArg = arguments.Length > 2 ? arguments[2] : AxmolCommandMap.Target(hostTarget).Platform;
+        var outcome = await new EngineSetupService(commandLine).RunAsync(installEngine, new SetupOptions(platformArg), stop.Token);
+        if (!asJson)
         {
-            var destination = PackageInstaller.SafePath(store.Root, package.Destination);
-            if (!Directory.Exists(destination))
-            {
-                await installer.InstallAsync(package, cancellation: stop.Token);
-                installed.Add(destination);
-            }
-            else
-            {
-                Write("Existing installation retained: " + destination);
-                retained.Add(destination);
-            }
+            Console.WriteLine($"{installEngine}: {outcome.Describe()}");
         }
 
-        return Emit(true, 0, new InstallToolsPayload(installed, retained));
+        return Emit(outcome.Succeeded, outcome.Succeeded ? 0 : 1,
+            new SetupPayload(installEngine.Version, platformArg, outcome.Outcome.ToString(), outcome.ExitCode));
     }
 
     if (verb == "verify")
     {
-        var rows = arguments[2] == "windows-x64" ? await detector.DetectAsync(stop.Token) : await platform.VerifyAsync(arguments[2], stop.Token);
+        // 工具链真源是引擎树：期望版本来自 <engine>/1k/build.profiles，实装落在 <engine>/tools/external。
+        var hub = store.Load();
+        var verifyEngine = hub.Engines.FirstOrDefault(candidate => candidate.Path == hub.DefaultEnginePath) ?? hub.Engines.FirstOrDefault();
+        var rows = verifyEngine is null
+            ? [new ToolchainComponent("Axmol engine", ComponentStatus.Missing, "No engine is registered in this data root. Import one and run its setup.ps1.")]
+            : await new EngineToolchain(runner).InspectAsync(verifyEngine, arguments[2], stop.Token);
         if (!asJson)
         {
             foreach (var row in rows) Console.WriteLine($"{row.Name}: {row.Status}\n{row.Details}");
@@ -182,12 +182,17 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     {
         var target = BuildTargets.Get(arguments[2]);
         if (target.Family != "android") throw new InvalidOperationException("Device query requires an Android target.");
-        var devices = await new AndroidDeviceService(runner, tools).DevicesAsync(platform.CreateEnvironment(new("", tools), target), stop.Token);
+        // adb 来自引擎树（<engine>/tools/external/adt/sdk/platform-tools），不再是 Hub 自持工具。
+        var deviceState = store.Load();
+        var deviceEngine = deviceState.Engines.FirstOrDefault(candidate => candidate.Path == deviceState.DefaultEnginePath)
+            ?? deviceState.Engines.FirstOrDefault()
+            ?? throw new InvalidOperationException("Import an Axmol engine first: adb comes from the engine tree.");
+        var deviceTools = EngineToolchain.ToolRoot(deviceEngine);
+        var devices = await new AndroidDeviceService(runner, deviceTools).DevicesAsync(platform.CreateEnvironment(deviceTools, target), stop.Token);
         if (!asJson)
         {
             foreach (var device in devices) Console.WriteLine($"{device.Serial}\t{device.State}\t{device.Details}");
         }
-
         return Emit(true, 0, new DevicesPayload(devices.Select(device => new DeviceDescriptor(device.Serial, device.State, device.Details)).ToArray()));
     }
 
@@ -202,23 +207,23 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     var state = store.Load();
     var engine = state.Engines.FirstOrDefault(e => e.Version == entry.Version && e.Channel == entry.Channel)
         ?? throw new InvalidOperationException("Required engine version/channel is not registered in this data root.");
-    var service = new ProjectService(runner, detector, tools, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+    var service = new ProjectService(runner, commandLine);
     switch (verb)
     {
         case "plan":
-            var plan = platform.Plan(entry, engine, false, checkFiles: false);
-            // 刻意保留：不带 --json 时 plan 仍输出**裸**的 plan JSON（既有约定）。
-            // 见 docs/cli-json-contract.md §6，该不对称在 schema 2 退役。
+            var plan = PlatformBuildService.Plan(entry, false);
+            // schema 2 起裸 JSON 形状退役（见 docs/cli-json-contract.md §6）：
+            // 不带 --json 时输出人读文本，与其他动词一致。
             if (!asJson)
             {
-                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(plan, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine($"{entry.Platform} · {entry.Configuration}");
+                Console.WriteLine(plan.ToString());
             }
 
             return Emit(true, 0, new PlanPayload(plan));
 
         case "configure":
         case "build":
-            if (entry.Platform == "windows-x64") await detector.DetectAsync(stop.Token);
             entry.BuildStatus = verb == "configure" ? "Configuring" : "Building"; store.SaveProject(entry);
             try
             {
@@ -238,19 +243,18 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
             return Emit(true, 0, new BuildPayload(entry, entry.BuildStatus, executable));
 
         case "run":
-            if (entry.Platform == "windows-x64") await detector.DetectAsync(stop.Token);
             // 退出码故意就是被拉起程序的退出码，所以 ok:true 与 exitCode 可以不同向。
             var runExit = (await service.RunAsync(entry, engine, stop.Token)).ExitCode;
             return Emit(true, runExit, new ChildExitPayload(runExit));
 
         case "serve":
             if (entry.Platform != "wasm32") throw new InvalidOperationException("serve is only available for WebAssembly.");
-            var serveExit = (await platform.RunAsync(entry, engine, stop.Token, openBrowser: false)).ExitCode;
+            var serveExit = (await platform.RunAsync(entry, engine, commandLine, stop.Token, openBrowser: false)).ExitCode;
             return Emit(true, serveExit, new ChildExitPayload(serveExit));
 
         case "deploy":
             if (arguments.Length != 4 || BuildTargets.Get(entry.Platform).Family != "android") throw new ArgumentException("deploy <data-root> <Android-project> <serial>");
-            var deployExit = (await platform.RunAsync(entry, engine, stop.Token, deviceSerial: arguments[3])).ExitCode;
+            var deployExit = (await platform.RunAsync(entry, engine, commandLine, stop.Token, deviceSerial: arguments[3])).ExitCode;
             return Emit(true, deployExit, new ChildExitPayload(deployExit));
 
         default:

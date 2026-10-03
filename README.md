@@ -14,8 +14,11 @@
 - **按版本添加模块**：选择引擎后勾选目标平台，自动合并公共工具依赖，显示组件状态和空间需求。
 - **项目管理**：通过 Axmol 自带 CLI 创建仅 C++ 或 C++ + Lua 项目，锁定引擎版本和脚本方式；支持选择项目目录和编辑器。
 - **构建与运行**：构建时选择平台、Debug / Release，输出分别保存；进度弹窗显示阶段、编译步骤、已用时间，可取消；成功后弹窗并打开产物目录。
-- **工具链管理**：使用 Hub 数据目录内的固定版本工具，下载校验 SHA-256，不自动回退到系统开发工具。
-  （**计划变更**：Windows 上 MSVC 将改为**首选系统已安装的 Visual Studio**，与 axmol 引擎自身选取 MSVC 的方式一致。）
+- **工具链**：状态判定与引擎一致 —— 期望版本读引擎自带的 `1k/build.profiles`，
+  查找顺序也按引擎的规则（`cmake`/`ninja`/`jdk`/`llvm`/`emsdk` **先看系统已装**，
+  `axslcc`/`nuget` 引擎树优先，`sdkmanager` 只看引擎树），版本不符时提示「引擎会装它自己那一份」。
+  安装交还引擎自己的 `setup.ps1`（工具落在引擎树内，**不是** Hub 数据目录）。
+  （**已落地**：`axmol build/run/deploy` 承担构建、运行与部署 —— 见 docs/adr/0002）
 - **日志**：构建与运行日志显示在应用中，同时保存到数据目录。
 - **中文 / English**：设置中即时切换语言，选择数据目录、默认项目目录和 Visual Studio / VS Code。
 
@@ -251,7 +254,7 @@ docs/images/         README 界面截图
 
 欢迎报告问题或提交改进。请提供 Hub / 引擎版本、操作系统、目标平台、Debug / Release、复现步骤及相关日志；发布日志前移除私人目录、设备序列号与凭据。
 
-修改保持范围明确：界面逻辑在 `AxmolHub.App`，构建与状态逻辑在 Core，CLI 复用 Core。运行时 PowerShell 脚本归 `Core/Scripts/`（`Invoke-Axmol.ps1`、`Verify-MicrosoftSignature.ps1` —— 它们是 Core 级资产），由各客户端以内容文件复制到自己的输出目录，不放进任何单个客户端项目——否则删除或替换该项目会连带断掉其他项目的引用。新增界面文案同时提供中文和 English；进程调用使用参数列表。新增工具版本必须固定来源和摘要，不回退到系统工具（**待定变更**：Windows 上 MSVC 将改为首选系统已安装的 Visual Studio —— 见 docs/hub-development-plan.md §2）。**第三方 NuGet 包只能进 `AxmolHub.App`**（目前 `Velopack` + `Avalonia.*`），Core、Cli、Checks 必须保持**零 NuGet 依赖**，其离线冷构建是刻意保留的性质。说明实际运行的检查，以及尚未验证的宿主或设备。
+修改保持范围明确：界面逻辑在 `AxmolHub.App`，构建与状态逻辑在 Core，CLI 复用 Core。运行时 PowerShell 脚本归 `Core/Scripts/`（`Invoke-Axmol.ps1` 转发 `axmol` 子命令、`Invoke-AxmolSetup.ps1` 转发 `setup.ps1` —— 它们是 Core 级资产），由各客户端以内容文件复制到自己的输出目录，不放进任何单个客户端项目——否则删除或替换该项目会连带断掉其他项目的引用。新增界面文案同时提供中文和 English；进程调用使用参数列表。**工具链版本不在 Hub 里**：真源是引擎自带的 `1k/build.profiles`，安装由引擎的 `setup.ps1` 完成（见 docs/adr/0002）。**第三方 NuGet 包只能进 `AxmolHub.App`**（目前 `Velopack` + `Avalonia.*`），Core、Cli、Checks 必须保持**零 NuGet 依赖**，其离线冷构建是刻意保留的性质。说明实际运行的检查，以及尚未验证的宿主或设备。
 
 ## 许可证
 

@@ -4,14 +4,14 @@
       "engineVersion": "2.11.5",
       "verifiedRecipes": ["android-packaging"],
       "modules": [
-        { "id": "windows", "hosts": ["windows"], "packages": ["cmake", "ninja", "git", "axslcc", "nuget"], "installers": ["windows-sdk", "msvc"] },
-        { "id": "android", "hosts": ["windows", "linux", "macos"], "packages": ["cmake", "ninja", "git", "axslcc", "android-ndk", "jdk", "gradle", "android-platform", "android-build-tools", "android-platform-tools"], "installers": [] },
-        { "id": "web", "hosts": ["windows", "linux", "macos"], "packages": ["cmake", "ninja", "git", "axslcc", "emscripten", "python-full", "node"], "installers": [] },
-        { "id": "ios", "hosts": ["macos"], "packages": [], "installers": [] },
-        { "id": "tvos", "hosts": ["macos"], "packages": [], "installers": [] },
-        { "id": "macos", "hosts": ["macos"], "packages": [], "installers": [] },
-        { "id": "linux", "hosts": ["linux"], "packages": [], "installers": [] },
-        { "id": "uwp", "hosts": ["windows"], "packages": [], "installers": [] }
+        { "id": "windows", "hosts": ["windows"] },
+        { "id": "android", "hosts": ["windows", "linux", "macos"] },
+        { "id": "web", "hosts": ["windows", "linux", "macos"] },
+        { "id": "ios", "hosts": ["macos"] },
+        { "id": "tvos", "hosts": ["macos"] },
+        { "id": "macos", "hosts": ["macos"] },
+        { "id": "linux", "hosts": ["linux"] },
+        { "id": "uwp", "hosts": ["windows"] }
       ]
     }
   ]

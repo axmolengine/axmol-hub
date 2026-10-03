@@ -131,6 +131,8 @@ public static class HubTexts
         ["Details"] = ("版本与目录", "Version and location"),
         ["Verify"] = ("重新检测", "Verify"),
         ["InstallTools"] = ("安装基础工具", "Install tools"),
+        ["RunEngineSetup"] = ("运行引擎 setup.ps1", "Run engine setup.ps1"),
+        ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。这一步会写入用户级 PATH 与 AX_ROOT，并可能请求提权（UAC）——与引擎官方流程一致。", "The engine installs its own toolchain into <engine>/tools/external. This writes the user PATH and AX_ROOT and may request elevation (UAC) — the same as the engine's official flow."),
         ["InstallSdk"] = ("安装 Windows SDK", "Install Windows SDK"),
         ["InstallMsvc"] = ("安装 MSVC", "Install MSVC"),
         ["SettingsHint"] = ("按你的习惯设置语言、存储目录与编辑器。", "Choose your language, storage and editors."),

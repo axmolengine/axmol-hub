@@ -37,7 +37,12 @@ public sealed class CliEnvelope
 /// </summary>
 public static class CliContract
 {
-    public const int SchemaVersion = 1;
+    /// <summary>
+    /// 破坏性变更时递增；消费方应先校验它再解析 <see cref="CliEnvelope.Data"/>。
+    /// 2：<c>plan</c> 的载荷从「Hub 自持的 CMake 命令计划」换成引擎 cmdline 调用
+    /// （<see cref="AxmolInvocation"/>）—— 构建已委派给 <c>axmol build</c>。
+    /// </summary>
+    public const int SchemaVersion = 2;
 
     // camelCase：JSON 的通行写法，也与仓库既有输出一致（.axmol-hub.json 用的就是
     // engine/version/platform 这些小写键）。System.Text.Json 默认是 PascalCase，
@@ -80,7 +85,8 @@ public sealed record VerifyPayload(string Target, IReadOnlyList<ComponentDescrip
 
 public sealed record ProjectPayload(ProjectEntry Project);
 
-public sealed record PlanPayload(PlatformBuildPlan Plan);
+/// <summary><c>plan</c> 的载荷：这次构建会执行的引擎命令（<c>axmol &lt;subcmd&gt; args</c>）。</summary>
+public sealed record PlanPayload(AxmolInvocation Plan);
 
 public sealed record BuildPayload(ProjectEntry Project, string Status, string? Executable);
 
@@ -91,6 +97,11 @@ public sealed record DeviceDescriptor(string Serial, string State, string Detail
 
 public sealed record DevicesPayload(IReadOnlyList<DeviceDescriptor> Devices);
 
-public sealed record InstallToolsPayload(IReadOnlyList<string> Installed, IReadOnlyList<string> Retained);
+/// <summary>
+/// <c>install-tools</c> 的载荷：跑一次引擎 <c>setup.ps1</c> 的结果。
+/// 注意 <c>outcome</c> 只取引擎原始输出里能对上号的结局 —— 开发者模式未开时 setup 会
+/// <c>exit 0</c> 却什么都没装，那种假成功会体现为 <c>DeveloperModeBlocked</c>。
+/// </summary>
+public sealed record SetupPayload(string Engine, string Platform, string Outcome, int ExitCode);
 
 public sealed record CommandsPayload(IReadOnlyList<string> Commands);

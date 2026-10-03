@@ -7,6 +7,9 @@ using AxmolHub.Core;
 
 var root = Path.GetFullPath(args.Length > 0 ? args[0] : "artifacts/checks");
 Directory.CreateDirectory(root);
+
+// 构建已委派给引擎 cmdline；Checks 里的 ProjectService 共用仓库内的包装脚本。
+EngineCommandLine EngineCli(ProcessRunner runner) => new(runner, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
 if (args.Contains("--check-release-receipt"))
 {
     var entry = new StateStore(root).Load().Projects.Single(p => p.Name == "HelloAndroidRelease");
@@ -32,7 +35,7 @@ if (args.Contains("--check-release-debug-key"))
 {
     var stateEntry = new StateStore(root).Load(); var toolsEntry = Path.Combine(root, "tools");
     var selectedEngine = stateEntry.Engines.Single(); var runnerEntry = new ProcessRunner(Console.WriteLine);
-    var environmentEntry = new PlatformBuildService(runnerEntry, toolsEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
+    var environmentEntry = new PlatformBuildService(runnerEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
     var clone = Path.Combine(root, "cache/android/debug-rejection-check.jks");
     File.Copy(Path.Combine(root, "cache/android/debug.keystore"), clone, overwrite: false);
     var passwords = new AndroidSigningPasswords("android", "android");
@@ -53,9 +56,9 @@ if (args.Contains("--prepare-release-check"))
     var stateEntry = new StateStore(root); var hubEntry = stateEntry.Load();
     var selectedEngine = hubEntry.Engines.Single(); var toolsEntry = Path.Combine(root, "tools");
     var messagesEntry = new List<string>(); var runnerEntry = new ProcessRunner(message => { messagesEntry.Add(message); Console.WriteLine(message); });
-    var environmentEntry = new PlatformBuildService(runnerEntry, toolsEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
+    var environmentEntry = new PlatformBuildService(runnerEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
     foreach (var name in new[] { "HOME", "TEMP" }) Directory.CreateDirectory(environmentEntry[name]);
-    var serviceEntry = new ProjectService(runnerEntry, new ToolchainDetector(runnerEntry, toolsEntry), toolsEntry, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
+    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry));
     var entry = hubEntry.Projects.FirstOrDefault(p => p.Name == "HelloAndroidRelease")
         ?? await serviceEntry.CreateAsync("HelloAndroidRelease", Path.Combine(root, "projects"), selectedEngine);
     var settings = new AndroidReleaseSettings { ApplicationId = "com.axmolhub.releasecheck", VersionCode = 7, VersionName = "0.1.3",
@@ -72,7 +75,7 @@ if (args.Contains("--prepare-release-check"))
     var missingAlias = new AndroidReleaseSettings { ApplicationId = settings.ApplicationId, KeyAlias = "missing", KeystorePath = settings.KeystorePath };
     await MustReject(() => signerEntry.ValidateAsync(missingAlias, passwords, environmentEntry), "Missing alias is rejected");
     settings.Save(entry); BuildTargets.Select(entry, "android-arm64", "Release"); stateEntry.SaveProject(entry);
-    var probe = await runnerEntry.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-Command", "[Console]::WriteLine($env:HUB_ANDROID_STORE_PASSWORD); [Console]::Error.WriteLine($env:HUB_ANDROID_KEY_PASSWORD)"], root,
+    var probe = await runnerEntry.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-Command", "[Console]::WriteLine($env:HUB_ANDROID_STORE_PASSWORD); [Console]::Error.WriteLine($env:HUB_ANDROID_KEY_PASSWORD)"], root,
         passwords.Environment(environmentEntry), sensitiveValues: passwords.SensitiveValues);
     if (probe.Output.Contains(passwords.StorePassword) || probe.Error.Contains(passwords.KeyPassword) || messagesEntry.Any(line => line.Contains(passwords.StorePassword) || line.Contains(passwords.KeyPassword))
         || File.ReadAllText(AndroidReleaseSettings.PathFor(entry)).Contains(passwords.StorePassword)) throw new Exception("Signing secret escaped redaction.");
@@ -86,7 +89,7 @@ if (args.Contains("--check-android-verification"))
     var hub = new StateStore(root).Load(); var entry = hub.Projects.Single(p => p.Name == "HelloAndroid");
     var selectedEngine = hub.Engines.Single(e => e.Version == entry.Version && e.Channel == entry.Channel);
     var packageRunner = new ProcessRunner(Console.WriteLine);
-    var environmentEntry = new PlatformBuildService(packageRunner, Path.Combine(root, "tools")).CreateEnvironment(selectedEngine, BuildTargets.Get(entry.Platform));
+    var environmentEntry = new PlatformBuildService(packageRunner).CreateEnvironment(selectedEngine, BuildTargets.Get(entry.Platform));
     var file = Path.Combine(AndroidPackageService.StageDirectory(entry), "gradle/verification-metadata.xml");
     var original = File.ReadAllText(file);
     try
@@ -104,34 +107,9 @@ if (args.Contains("--check-android-verification"))
     finally { File.WriteAllText(file, original); }
     return;
 }
-if (args.Contains("--prepare-android-verification"))
-{
-    var hub = new StateStore(root).Load();
-    var entry = hub.Projects.Single(p => p.Name == "HelloAndroid");
-    var selectedEngine = hub.Engines.Single(e => e.Version == entry.Version && e.Channel == entry.Channel);
-    var packageRunner = new ProcessRunner(Console.WriteLine);
-    var platform = new PlatformBuildService(packageRunner, Path.Combine(root, "tools"));
-    var plan = platform.Plan(entry, selectedEngine, false);
-    Directory.CreateDirectory(plan.OutputDirectory);
-    foreach (var key in new[] { "HOME", "TEMP", "APPDATA", "LOCALAPPDATA" }) if (plan.Environment.TryGetValue(key, out var path)) Directory.CreateDirectory(path);
-    File.WriteAllText(plan.Environment["GIT_CONFIG_GLOBAL"], "");
-    var complete = Path.Combine(plan.OutputDirectory, ".hub-build-complete.json");
-    if (File.Exists(complete)) File.Delete(complete);
-    foreach (var command in plan.Commands)
-    {
-        var nativeResult = await packageRunner.RunAsync(command.Executable, command.Arguments, command.WorkingDirectory, plan.Environment, timeout: TimeSpan.FromHours(2));
-        if (nativeResult.ExitCode != 0) throw new InvalidOperationException("Native Android preparation failed.");
-    }
-    var packaging = new AndroidPackageService(packageRunner, Path.Combine(root, "tools"));
-    await packaging.EnsureDebugKeyAsync(plan.Environment, default);
-    packaging.PrepareProject(entry, selectedEngine, plan.Environment);
-    var gradle = packaging.GradleCommand(entry, plan.Environment, "--write-verification-metadata", "sha256", "assembleDebug", "bundleDebug");
-    var build = await packageRunner.RunAsync(gradle.Executable, gradle.Arguments, gradle.WorkingDirectory, plan.Environment, timeout: TimeSpan.FromHours(1));
-    if (build.ExitCode != 0) throw new InvalidOperationException("Gradle verification bootstrap failed.");
-    File.Copy(Path.Combine(AndroidPackageService.StageDirectory(entry), "gradle/verification-metadata.xml"), Path.GetFullPath("manifests/android-gradle-verification.xml"), overwrite: true);
-    Console.WriteLine("Maintainer dependency hashes generated from fixed official repositories. A strict production build is required next.");
-    return;
-}
+// `--prepare-android-verification` 已随构建委派退役：它用 Hub 自己的 gradle 编排重新生成
+// `manifests/android-gradle-verification.xml`（依赖 Hub 托管的 JDK/gradle 与工程 staging）。
+// 构建现在由引擎完成，该清单只能由引擎的 Android 流程重新产出。
 if (args.Contains("--prepare-packaging"))
 {
     var manifest = PackageManifest.Read(Path.GetFullPath("installer/packaging-manifest.json")).Packages.Single();
@@ -159,13 +137,11 @@ if (args.Contains("--build-game") || args.Contains("--run-game"))
     var log = new HubLog(Path.Combine(root, "logs"));
     void Write(string line) { Console.WriteLine(line); log.Write(line); }
     var runnerEntry = new ProcessRunner(Write);
-    var detectorEntry = new ToolchainDetector(runnerEntry, Path.Combine(root, "tools"));
-    foreach (var component in await detectorEntry.DetectAsync()) Write($"{component.Name}: {component.Status}");
     var storeEntry = new StateStore(root);
     var hubState = storeEntry.Load();
     var projectEntry = hubState.Projects.Single(p => p.Name == "HelloAxmol");
     var engineEntry = hubState.Engines.Single(e => e.Version == projectEntry.Version && e.Channel == projectEntry.Channel);
-    var serviceEntry = new ProjectService(runnerEntry, detectorEntry, Path.Combine(root, "tools"), Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
+    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry));
     if (args.Contains("--build-game"))
     {
         projectEntry.BuildStatus = "Building";
@@ -187,33 +163,18 @@ if (args.Contains("--build-game") || args.Contains("--run-game"))
     }
     return;
 }
-if (args.Contains("--prepare-windows") || args.Contains("--install-msvc"))
-{
-    var log = new HubLog(Path.Combine(root, "logs"));
-    void Write(string line) { Console.WriteLine(line); log.Write(line); }
-    using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-    var runnerEntry = new ProcessRunner(Write);
-    var windows = new WindowsToolchainInstaller(new DownloadManager(http, Write), runnerEntry, root, Path.GetFullPath("manifests/toolchain-manifest.json"),
-        Path.GetFullPath("src/AxmolHub.Core/Scripts/Verify-MicrosoftSignature.ps1"), Write);
-    await windows.InstallSdkAsync();
-    var prepared = await windows.PrepareBuildToolsAsync();
-    if (args.Contains("--install-msvc")) await windows.InstallBuildToolsAsync(prepared);
-    Console.WriteLine("Windows SDK installed; signed MSVC installation plan prepared.");
-    return;
-}
+// `--prepare-windows` / `--install-msvc`（下载并安装托管 MSVC / Windows SDK）已随工具链自持退役：
+// 环境准备现在就是跑引擎自己的 setup.ps1，见下面的 --install-tools。
 if (args.Contains("--install-tools"))
 {
-    using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-    var packages = PackageManifest.Read("manifests/toolchain-manifest.json");
-    var installer = new PackageInstaller(new DownloadManager(http, Console.WriteLine), root, Console.WriteLine);
-    foreach (var package in packages.Packages)
-    {
-        var destination = PackageInstaller.SafePath(root, package.Destination);
-        if (Directory.Exists(destination)) continue;
-        await installer.InstallAsync(package);
-    }
-    var tools = await new ToolchainDetector(new ProcessRunner(Console.WriteLine), Path.Combine(root, "tools")).DetectAsync();
-    foreach (var tool in tools) Console.WriteLine($"{tool.Name}: {tool.Status}: {tool.Details}");
+    var hub = new StateStore(root).Load();
+    var engineEntry = hub.Engines.FirstOrDefault(candidate => candidate.Path == hub.DefaultEnginePath) ?? hub.Engines.FirstOrDefault()
+        ?? throw new InvalidOperationException("Import an Axmol engine first.");
+    var commandLine = EngineCli(new ProcessRunner(Console.WriteLine));
+    var platform = args.Length > 1 && !args[1].StartsWith("--") ? args[1] : "win32";
+    var outcome = await new EngineSetupService(commandLine).RunAsync(engineEntry, new SetupOptions(platform));
+    Console.WriteLine($"{engineEntry}: {outcome.Describe()}");
+    if (!outcome.Succeeded) throw new InvalidOperationException(outcome.Describe());
     return;
 }
 if (args.Contains("--install-engine"))
@@ -231,13 +192,10 @@ if (args.Contains("--install-engine"))
     var path = await installer.InstallAsync(package);
     var engineEntry = StateStore.ValidateEngine(path, package.Channel);
     var processRunner = new ProcessRunner(Console.WriteLine);
-    var toolsRoot = Path.Combine(root, "tools");
-    var detectorEntry = new ToolchainDetector(processRunner, toolsRoot);
-    await detectorEntry.DetectAsync();
-    var projectService = new ProjectService(processRunner, detectorEntry, toolsRoot, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
+    var projectService = new ProjectService(processRunner, EngineCli(processRunner));
     var created = await projectService.CreateAsync("HelloAxmol", Path.Combine(root, "projects"), engineEntry);
     new StateStore(root).Save(new HubState { Engines = [engineEntry], Projects = [created], DefaultEnginePath = path });
-    Console.WriteLine($"Axmol {release.Version} verified and project created. Game Build/Run still requires managed MSVC and Windows SDK.");
+    Console.WriteLine($"Axmol {release.Version} verified and project created. Run the engine's setup.ps1 to prepare its toolchain, then Build/Run.");
     return;
 }
 var count = 0;
@@ -251,6 +209,84 @@ async Task Reject<T>(Func<Task> action, string name) where T : Exception
 {
     try { await action(); } catch (T) { Check(true, name); return; }
     throw new Exception("FAILED: " + name);
+}
+
+// ---------------------------------------------------------------------------
+// 工具版本真源 + 引擎树工具链探测。自带 return、主机无关、不联网、不安装 ——
+// 因此可以在 CI 上对一棵真实引擎树跑。真源是引擎自带 1k/build.profiles，
+// 落点是官方 setup.ps1 的 tools/external。
+// ---------------------------------------------------------------------------
+if (args.Contains("--check-build-profiles"))
+{
+    var flagIndex = Array.IndexOf(args, "--check-build-profiles");
+    if (flagIndex + 1 >= args.Length || args[flagIndex + 1].StartsWith("--"))
+        throw new ArgumentException("--check-build-profiles requires the path to a real Axmol engine tree.");
+    var probeRoot = Path.GetFullPath(args[flagIndex + 1]);
+    if (!Directory.Exists(probeRoot)) throw new DirectoryNotFoundException(probeRoot);
+
+    var probeEngine = StateStore.ValidateEngine(probeRoot);
+    Check(File.Exists(BuildProfile.FileFor(probeRoot)), "Engine ships 1k/build.profiles as the tool version source of truth");
+
+    var probeProfile = BuildProfile.Load(probeRoot);
+    foreach (var key in new[] { "axslcc", "cmake", "ninja", "vs", "llvm", "jdk", "cmdlinetools", "ndk", "target_sdk", "min_sdk", "gradle", "agp", "buildtools", "emsdk" })
+        Check(probeProfile.Get(key) is { Length: > 0 }, $"build.profiles defines '{key}'");
+
+    // 版本真源必须**随引擎版本走**：这是 Hub 不再自持版本的核心理由。
+    var probePinned = probeEngine.Version.StartsWith("3.") ? (Ndk: "r27d", TargetSdk: "37") : (Ndk: "r23d", TargetSdk: "36");
+    Check(probeProfile.Ndk == probePinned.Ndk, $"Axmol {probeEngine.Version} pins NDK {probePinned.Ndk} (read {probeProfile.Ndk})");
+    Check(probeProfile.TargetSdk == probePinned.TargetSdk, $"Axmol {probeEngine.Version} pins target_sdk {probePinned.TargetSdk} (read {probeProfile.TargetSdk})");
+
+    var probeToolRoot = EngineToolchain.ToolRoot(probeEngine);
+    Check(probeToolRoot.StartsWith(probeRoot, StringComparison.OrdinalIgnoreCase) && probeToolRoot.Contains("tools"), "Tool detection targets the engine tree (setup.ps1 tools/external), not a Hub data-root");
+
+    // ---- 版本要求语义：必须与 1kiss 的 find_prog 一致（Hub 说"就绪"= 引擎不会再去装一份）----
+    // `x~y+`：以 '+' 结尾时引擎让**区间上界失效**，退化成 >= x。照抄，不"顺手修正"。
+    var rangeWithPlus = ToolRequirement.Parse("4.2.0~4.4.3+");
+    Check(rangeWithPlus.Satisfies("4.3.2") && rangeWithPlus.Satisfies("9.9.9") && !rangeWithPlus.Satisfies("4.1.9"),
+        "A requirement ending in '+' degrades to a lower bound (the engine drops the range's upper bound)");
+    // `x~y`（不带 +）：真正的闭区间。
+    var closedRange = ToolRequirement.Parse("17.0.10~17.0.20.1+".Replace("+", string.Empty));
+    Check(closedRange.Satisfies("17.0.15") && closedRange.Satisfies("17.0.20") && !closedRange.Satisfies("17.0.21"),
+        "A range without '+' is a closed interval");
+    // `x.y.*`：通配（引擎用 PowerShell 的 -like）。
+    var wildcard = ToolRequirement.Parse("5.5.1.*");
+    Check(wildcard.Satisfies("5.5.1.6542") && !wildcard.Satisfies("6.14.0.1"),
+        "A wildcard requirement matches by prefix and rejects a newer major");
+    // 纯版本号是**字符串相等**，不是数值相等。
+    var exact = ToolRequirement.Parse("22.0");
+    Check(exact.Satisfies("22.0") && !exact.Satisfies("22.0.0") && !exact.Satisfies("9.0"),
+        "A bare version requires exact string equality (22.0 does not accept 22.0.0)");
+    // `17.9+`：单段下限，VS 的 4 段版本要能比。
+    var lowerBound = ToolRequirement.Parse("17.9+");
+    Check(lowerBound.Satisfies("18.10.12224.181") && !lowerBound.Satisfies("17.8.0"),
+        "A lower bound compares numeric segments (17.9+ accepts 18.10.x, rejects 17.8)");
+    Check(ToolRequirement.Parse("19.0.0~19.1.7+").Satisfies("21.1.1"), "A lower bound accepts a much newer version");
+
+    var probeTarget = OperatingSystem.IsWindows() ? "windows-x64" : OperatingSystem.IsMacOS() ? "macos-arm64" : "linux-x64";
+    var probeToolchain = new EngineToolchain(new ProcessRunner(_ => { }));
+    var probeRows = await probeToolchain.InspectAsync(probeEngine, probeTarget);
+    Check(probeRows.Count >= 3, $"Engine toolchain probe reports components for {probeTarget}");
+    foreach (var name in new[] { "CMake", "Ninja", "Axmol shader compiler" })
+        Check(probeRows.Any(row => row.Name == name), $"Probe covers {name}");
+    Check(probeRows.All(row => row.Details.Length > 0), "Every probed component carries a status description");
+    Check(probeRows.Where(row => row.Status == ComponentStatus.Installed).All(row => row.Executable is not null),
+        "Reported installed components point at the executable that will actually be used");
+    // axslcc 在引擎里是 -mode BOTH（引擎树优先），而这棵树的 axslcc 版本恰好满足要求；
+    // 所以它必须解析到引擎树内 —— 这条能证明"查找顺序"不是想当然写的。
+    var axslcc = probeRows.Single(row => row.Name == "Axmol shader compiler");
+    Check(axslcc.Status != ComponentStatus.Installed
+          || axslcc.Executable!.StartsWith(probeToolRoot, StringComparison.OrdinalIgnoreCase),
+        "Engine-first tools resolve inside the engine tree (axslcc uses -mode BOTH)");
+    // NDK 代号 → revision 前两段：r27d → 27.3（major 取全部数字、minor = 字母 - 'a'）。
+    // 这是引擎 setup_android_sdk 里最容易抄错的位运算，单独钉住。
+    Check(EngineToolchain.NdkRevisionFor("r27d") == "27.3" && EngineToolchain.NdkRevisionFor("r23d") == "23.3"
+          && EngineToolchain.NdkRevisionFor("r25") == "25.0" && EngineToolchain.NdkRevisionFor("r27") == "27.0",
+        "NDK codenames map to the revision prefix the engine compares (r27d -> 27.3)");
+    if (OperatingSystem.IsWindows())
+        Check(probeRows.Any(row => row.Name == "Visual Studio"), "Visual Studio is detected (the engine detects it but never installs it)");
+
+    Console.WriteLine($"{count} build.profile checks passed for Axmol {probeEngine.Version}.");
+    return;
 }
 
 // ---------------------------------------------------------------------------
@@ -461,55 +497,64 @@ var runner = new ProcessRunner(message => { lock (messages) messages.Add(message
 var script = Path.Combine(root, "process fixture.ps1");
 File.WriteAllText(script, "param([string]$Value)\n[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n[Console]::WriteLine($Value)\n[Console]::Error.WriteLine('fixture stderr')\nexit 7\n");
 var hostile = "spaces ; & $() ` \" quote 中文";
-var result = await runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Value", hostile], root);
+var result = await runner.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Value", hostile], root);
 Check(result.ExitCode == 7 && result.Output.Trim() == hostile && result.Error.Contains("fixture stderr"), "ArgumentList, stdout, stderr, nonzero exit");
 var secretFixture = "fixture-secret-\"quoted\"";
-var redacted = await runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-File", script, "-Value", secretFixture], root, sensitiveValues: [secretFixture]);
+var redacted = await runner.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-File", script, "-Value", secretFixture], root, sensitiveValues: [secretFixture]);
 Check(redacted.Output.Trim() == "[REDACTED]" && !messages.Any(line => line.Contains(secretFixture) || line.Contains(System.Text.Json.JsonSerializer.Serialize(secretFixture)[1..^1])),
     "Secret argument with quotes is redacted from command logging and captured output");
 var sleeper = Path.Combine(root, "sleep.ps1");
 File.WriteAllText(sleeper, "Start-Sleep -Seconds 30");
-await Reject<TimeoutException>(() => runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-File", sleeper], root, timeout: TimeSpan.FromMilliseconds(300)), "Timeout stops process");
+await Reject<TimeoutException>(() => runner.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-File", sleeper], root, timeout: TimeSpan.FromMilliseconds(300)), "Timeout stops process");
 using (var cancellation = new CancellationTokenSource(300))
-    await Reject<OperationCanceledException>(() => runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-File", sleeper], root, cancellation: cancellation.Token), "Cancellation stops process");
+    await Reject<OperationCanceledException>(() => runner.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-File", sleeper], root, cancellation: cancellation.Token), "Cancellation stops process");
 
-var detector = new ToolchainDetector(runner, Path.Combine(root, "tools"));
-Directory.CreateDirectory(Path.Combine(root, "tools"));
-var components = await detector.DetectAsync();
-Check(components.All(c => c.Status == ComponentStatus.Missing), "Existing system tools never satisfy managed tools");
 var engineRoot = args.Length > 1 ? Path.GetFullPath(args[1]) : Path.GetFullPath("../axmol-2.11.5");
 var engine = StateStore.ValidateEngine(engineRoot);
-var environment = detector.BuildEnvironment(engine);
-// 断言原意是"构建 PATH 里不能有从宿主继承来的开发工具路径"，原先写成"不含 D 盘"只是它的一个
-// 代理判断 —— 只在本仓库不在 D 盘时成立，而 GitHub 的 Windows runner 工作目录正是 D:\a\...，
-// 所以那条断言在 CI 上必然失败。改成直接表达原意、并且与机器无关的写法：
-// 子环境 PATH 的每一项都必须能归到「受管工具根」或「操作系统目录」里，归不进去的就是继承来的。
+Directory.CreateDirectory(Path.Combine(root, "tools"));
+// 工具链真源已从「Hub 的 data-root/tools」换成**引擎树**：
+// 期望版本来自 <engine>/1k/build.profiles，落点是官方 setup.ps1 的 <engine>/tools/external。
 var managedTools = Path.GetFullPath(Path.Combine(root, "tools"));
-var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-var buildPath = environment["PATH"].Split(';', StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.TrimEnd('\\')).ToArray();
-bool Managed(string entry) => entry.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase);
-bool OperatingSystemOwned(string entry) => entry.StartsWith(windowsDirectory, StringComparison.OrdinalIgnoreCase);
-var leaked = buildPath.Where(entry => !Managed(entry) && !OperatingSystemOwned(entry)).ToArray();
-Check(leaked.Length == 0, "Build PATH contains no inherited developer directories (leaked: " + string.Join(", ", leaked) + ")");
-// 防退化：上面那条在 PATH 为空时也会通过，所以必须同时要求受管目录确实在起作用。
-Check(buildPath.Count(Managed) > 0, "Build PATH resolves tools from the managed root (" + buildPath.Count(Managed) + " entries)");
-Check(!environment["PATH"].Contains("Microsoft Visual Studio") && environment["INCLUDE"] == "" && environment["LIB"] == "", "Build environment excludes inherited developer paths");
-var oldSdk = Environment.GetEnvironmentVariable("DXSDK_DIR");
-try
-{
-    Environment.SetEnvironmentVariable("DXSDK_DIR", "D:\\must-not-inherit");
-    var isolated = await runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-Command", "[Console]::Write($env:DXSDK_DIR)"], root, environment);
-    Check(isolated.ExitCode == 0 && isolated.Output.Trim().Length == 0, "Complete child environment excludes inherited DXSDK_DIR");
-}
-finally { Environment.SetEnvironmentVariable("DXSDK_DIR", oldSdk); }
+var engineTools = EngineToolchain.ToolRoot(engine);
+Check(engineTools == Path.Combine(engine.Path, "tools", "external") && !engineTools.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase),
+    "Toolchain resolution targets the engine tree instead of a Hub-managed tools root");
+var engineComponents = await new EngineToolchain(runner).InspectAsync(engine, "windows-x64");
+Check(engineComponents.Count >= 3 && engineComponents.All(c => c.Status is not (ComponentStatus.Unknown or ComponentStatus.Checking)),
+    "Engine toolchain probe reports every component with a conclusive state");
+Check(engineComponents.All(c => c.Details.Length > 0) && engineComponents.Any(c => c.Name == "CMake"),
+    "Engine toolchain probe names components and explains their state");
+var profile = BuildProfile.Load(engine.Path);
+Check(profile.Cmake is { Length: > 0 } && profile.Ndk is { Length: > 0 } && profile.TargetSdk is { Length: > 0 },
+    "Engine build profile supplies the expected tool versions (source of truth)");
+// 辅助环境（Hub 直调 adb/keytool/emrun 时用）必须以引擎树为根，且不得再指向 Hub 的 tools 目录。
+var auxiliary = new PlatformBuildService(runner).CreateEnvironment(engine, BuildTargets.Get("wasm32"));
+Check(auxiliary["AX_ROOT"] == engine.Path && auxiliary["EMSDK"] == Path.Combine(engineTools, "emsdk")
+    && auxiliary["PATH"].Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+        .All(part => !part.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase)),
+    "Auxiliary environment is rooted at the engine tree, not at a Hub-managed tools root");
+Check(auxiliary.ContainsKey("HOME") && auxiliary.ContainsKey("TEMP"), "Auxiliary environment always exposes HOME/TEMP for child tools");
 
 var wrapper = Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1");
-var service = new ProjectService(runner, detector, Path.Combine(root, "tools"), wrapper);
+var service = new ProjectService(runner, EngineCli(runner));
 await Reject<ArgumentException>(() => service.CreateAsync("bad;name", root, engine), "Unsafe template name rejected");
 var parent = Path.Combine(root, "projects " + Guid.NewGuid().ToString("N"));
 var project = await service.CreateAsync("HelloAxmol", parent, engine);
 Check(File.Exists(Path.Combine(project.Path, "Source/AppDelegate.cpp")) && StateStore.ReadProject(project.Path).Version == engine.Version, "Real official CLI creates project and exact version lock");
 Check(StateStore.ReadProject(project.Path).ProjectType == "cpp", "Default creation uses the official C++ template");
+// 引擎从带 .git 的源码树创建工程时，engine_version 会带上短提交号（axmol.ps1 追加 -<hash>）。
+// 提交号不含兼容性信息，Hub 接受它并归一化到 x.y.z；但预发布标签仍然被拒 —— 精确版本纪律不放宽。
+{
+    var versionRoot = Path.Combine(root, "project-version-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(versionRoot);
+    File.WriteAllText(Path.Combine(versionRoot, "CMakeLists.txt"), "# fixture");
+    void WriteVersion(string value) => File.WriteAllText(Path.Combine(versionRoot, ".axproj"), $"engine_version={value}\nproject_type=cpp\n");
+    WriteVersion("3.0.0-30e6f4d");
+    Check(StateStore.ReadProject(versionRoot).Version == "3.0.0", "Engine source-tree commit suffix is accepted and normalized to x.y.z");
+    WriteVersion("3.0.0-alpha33");
+    await Reject<InvalidDataException>(() => Task.Run(() => StateStore.ReadProject(versionRoot)), "Prerelease tags are still rejected by the exact version rule");
+    WriteVersion("3.0");
+    await Reject<InvalidDataException>(() => Task.Run(() => StateStore.ReadProject(versionRoot)), "A short version is still rejected by the exact version rule");
+}
 await Reject<ArgumentException>(() => service.CreateAsync("InvalidScript", parent, engine, projectType: "../lua"), "Invalid scripting type is rejected before creating directories");
 Check(!Directory.Exists(Path.Combine(parent, "InvalidScript")), "Invalid scripting choice leaves no project destination");
 var luaProject = await service.CreateAsync("HelloLua", parent, engine, projectType: "lua");
@@ -538,11 +583,23 @@ preferences.Language = "unsupported";
 preferencesStore.Save(preferences);
 Check(preferencesStore.Load().Language == "zh-CN", "Unknown language falls back to Chinese");
 Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
-var buildFixture = Path.Combine(root, "engine-cache-" + Guid.NewGuid().ToString("N"));
-ProjectService.PrepareEngineBuildDirectory(buildFixture, "original-installation");
-File.WriteAllText(Path.Combine(buildFixture, "old-game.exe"), "stale binary");
-ProjectService.PrepareEngineBuildDirectory(buildFixture, "repaired-installation");
-Check(!File.Exists(Path.Combine(buildFixture, "old-game.exe")) && Directory.EnumerateDirectories(root, Path.GetFileName(buildFixture) + ".previous-*").Any(p => File.Exists(Path.Combine(p, "old-game.exe"))), "Engine repair invalidates stale build artifacts and retains recovery cache");
+// 构建目录已由引擎决定（不再是 Hub 的 build-hub*），所以断言的是**发现规则**：
+// 引擎在工程里生成的 run 脚本写着 BUILD_DIR，那是权威来源；没有它才扫描 build*。
+var buildFixture = Path.Combine(root, "engine-layout-" + Guid.NewGuid().ToString("N"));
+var layoutProject = new ProjectEntry { Name = "Fixture", Path = buildFixture, Platform = "windows-x64", Configuration = "Debug" };
+var scannedBuild = Path.Combine(buildFixture, "build_win32_x64");
+Directory.CreateDirectory(Path.Combine(scannedBuild, "bin", "Fixture", "Debug"));
+File.WriteAllText(Path.Combine(scannedBuild, "bin", "Fixture", "Debug", "Fixture.exe"), "binary");
+Check(EngineBuildLayout.FindBuildDirectory(layoutProject) == scannedBuild
+    && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "windows") is not null,
+    "Engine build directory and artifact are discovered from the engine's own layout");
+File.WriteAllText(Path.Combine(buildFixture, "run.bat"), "set BUILD_DIR=build_declared\n");
+Directory.CreateDirectory(Path.Combine(buildFixture, "build_declared"));
+Check(EngineBuildLayout.FindBuildDirectory(layoutProject)!.EndsWith("build_declared"),
+    "The engine's run script BUILD_DIR is the authoritative build directory");
+Check(EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Release", "windows") is null
+    && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "wasm") is null,
+    "Artifact discovery never borrows another configuration's or target's output");
 
 await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.SafePath(root, "../escape")), "Manifest path traversal rejected");
 await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.SafePath(root, "C:\\escape")), "Absolute manifest path rejected");
@@ -563,16 +620,14 @@ Check(handler.Requests == 1, "Verified cache reused");
 await Reject<InvalidDataException>(() => downloads.DownloadAsync(new Uri("https://fixture.test/file.zip"), new string('0', 64), cache), "Bad hash rejected");
 Check(!Directory.EnumerateFiles(cache, "*.partial").Any() && !File.Exists(Path.Combine(cache, new string('0', 64) + ".zip")), "Failed downloads leave no installed/cache artifact");
 await Reject<ArgumentException>(() => downloads.DownloadAsync(new Uri("http://fixture.test/file.zip"), sha, cache), "HTTP package rejected");
-var incompleteSdk = Path.Combine(root, "incomplete-sdk");
-Directory.CreateDirectory(incompleteSdk);
-await Reject<InvalidDataException>(() => Task.Run(() => WindowsToolchainInstaller.VerifySdk(incompleteSdk, "10.0.26100.0")), "Incomplete SDK rejected");
+// SDK 完整性判定已交还引擎（它在 CMake 配置阶段校验），Hub 不再自己拼装/校验一份 SDK。
 var cancelledScript = Path.Combine(root, "must-not-start.ps1");
 var startedMarker = Path.Combine(root, "unexpected-start.txt");
 File.WriteAllText(cancelledScript, "param([string]$Marker)\nSet-Content -LiteralPath $Marker -Value started");
 using (var cancelled = new CancellationTokenSource())
 {
     cancelled.Cancel();
-    await Reject<OperationCanceledException>(() => runner.RunAsync(ToolchainDetector.PowerShell, ["-NoProfile", "-File", cancelledScript, "-Marker", startedMarker], root, cancellation: cancelled.Token), "Already-cancelled process never starts");
+    await Reject<OperationCanceledException>(() => runner.RunAsync(WindowsShell.PowerShell, ["-NoProfile", "-File", cancelledScript, "-Marker", startedMarker], root, cancellation: cancelled.Token), "Already-cancelled process never starts");
 }
 Check(!File.Exists(startedMarker), "Cancellation prevents process side effects");
 {
@@ -606,39 +661,41 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
 {
     var assetRoot = Path.Combine(root, "windows-assets-fixture-" + Guid.NewGuid().ToString("N"));
     var assetsProject = new ProjectEntry { Name = "Assets", Path = assetRoot };
-    var assetsOutput = Path.Combine(BuildTargets.BuildDirectory(assetsProject), "bin/Assets");
+    // 引擎的布局：<buildDir>/bin/<App>/<Config>/<App>.exe 与 <buildDir>/runtime/axslc。
+    var assetsBuild = Path.Combine(assetRoot, "build_win32_x64");
+    var assetsOutput = Path.Combine(assetsBuild, "bin/Assets/Debug");
     var assetsExe = Path.Combine(assetsOutput, "Assets.exe");
     Directory.CreateDirectory(Path.Combine(assetRoot, "Content"));
     Directory.CreateDirectory(Path.Combine(assetsOutput, "Content"));
     Directory.CreateDirectory(Path.Combine(assetsOutput, "axslc"));
-    Directory.CreateDirectory(Path.Combine(BuildTargets.BuildDirectory(assetsProject), "runtime/axslc"));
+    Directory.CreateDirectory(Path.Combine(assetsBuild, "runtime/axslc"));
     foreach (var shader in new[] { "positionTextureColor_vs", "positionTextureColor_fs", "label_normal_fs", "positionColorLengthTexture_vs", "positionColorLengthTexture_fs", "positionColorTextureAsPointsize_vs", "positionColor_fs" })
     {
         File.WriteAllText(Path.Combine(assetsOutput, "axslc", shader), "#version 300 es\nvoid main(){}\n");
-        File.Copy(Path.Combine(assetsOutput, "axslc", shader), Path.Combine(BuildTargets.BuildDirectory(assetsProject), "runtime/axslc", shader));
+        File.Copy(Path.Combine(assetsOutput, "axslc", shader), Path.Combine(assetsBuild, "runtime/axslc", shader));
     }
     File.WriteAllText(Path.Combine(assetRoot, "Content/image.png"), "fixture");
     File.WriteAllText(Path.Combine(assetsOutput, "Content/image.png"), "fixture");
-    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsExe);
+    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe);
     Check(true, "Windows startup accepts complete deployed resources and matching shaders");
     var runtimeShader = Path.Combine(assetsOutput, "axslc/positionTextureColor_vs");
     File.WriteAllText(runtimeShader, "");
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsExe)), "Empty runtime shader is rejected before launching GL");
+    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Empty runtime shader is rejected before launching GL");
     File.WriteAllText(runtimeShader, "#version 300 es\nvoid main(){ }\n");
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsExe)), "Stale deployed shader is rejected");
-    File.Copy(Path.Combine(BuildTargets.BuildDirectory(assetsProject), "runtime/axslc/positionTextureColor_vs"), runtimeShader, true);
+    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Stale deployed shader is rejected");
+    File.Copy(Path.Combine(assetsBuild, "runtime/axslc/positionTextureColor_vs"), runtimeShader, true);
     File.Delete(Path.Combine(assetsOutput, "Content/image.png"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsExe)), "Missing deployed project resource is rejected");
+    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Missing deployed project resource is rejected");
     Directory.Delete(Path.Combine(assetsOutput, "Content"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsExe)), "Missing runtime resource directory is rejected");
+    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Missing runtime resource directory is rejected");
     File.WriteAllText(assetsExe, "compiled executable fixture");
-    var publishedExe = ProjectService.PublishWindowsRuntime(assetsProject, assetsExe);
-    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, publishedExe);
+    var publishedExe = ProjectService.PublishWindowsRuntime(assetsProject, assetsBuild, assetsExe);
+    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, publishedExe);
     Check(File.Exists(Path.Combine(Path.GetDirectoryName(publishedExe)!, "Content/image.png")) && (File.GetAttributes(Path.Combine(Path.GetDirectoryName(publishedExe)!, "axslc")) & FileAttributes.ReparsePoint) == 0,
         "Windows publication copies actual resources independently of missing CMake output links");
     var previousExe = File.ReadAllText(publishedExe);
-    File.Delete(Path.Combine(BuildTargets.BuildDirectory(assetsProject), "runtime/axslc/positionTextureColor_vs"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.PublishWindowsRuntime(assetsProject, assetsExe)), "Incomplete shader build cannot replace the published Windows runtime");
+    File.Delete(Path.Combine(assetsBuild, "runtime/axslc/positionTextureColor_vs"));
+    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.PublishWindowsRuntime(assetsProject, assetsBuild, assetsExe)), "Incomplete shader build cannot replace the published Windows runtime");
     Check(File.ReadAllText(publishedExe) == previousExe, "Failed Windows resource publication preserves previous runtime");
     var platformRoot = Path.Combine(root, "platform-fixture-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(platformRoot);
@@ -661,14 +718,16 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     await Reject<InvalidDataException>(() => Task.Run(() => BuildTargets.Select(entry, "windows-x64", "../../outside")), "Invalid build configuration cannot escape output directory");
     StateStore.WriteJson(StateStore.MetadataPath(platformRoot), new { engine = "axmol", version = "2.11.5", channel = "official-lts", platform = "windows-x64" });
     Check(StateStore.ReadProject(platformRoot).Configuration == "Debug", "Legacy project metadata defaults to Debug");
-    var mismatchedService = new ProjectService(new ProcessRunner(_ => { }), new ToolchainDetector(new ProcessRunner(_ => { }), root), root, "");
+    var mismatchedService = new ProjectService(new ProcessRunner(_ => { }), EngineCli(new ProcessRunner(_ => { })));
     await Reject<InvalidOperationException>(() => mismatchedService.RunAsync(entry, new("2.11.5", root, "official-lts")), "Run refuses configuration different from locked project before starting a process");
     entry.Platform = "wasm32";
-    var releasePlanService = new PlatformBuildService(new ProcessRunner(_ => { }), Path.Combine(platformRoot, "tools"));
-    var releasePlan = releasePlanService.Plan(entry, new("2.11.5", root, "official-lts"), false, checkFiles: false, host: "windows");
-    Check(releasePlan.Commands[0].Arguments.Contains("-DCMAKE_BUILD_TYPE=Release") && releasePlan.Commands[1].Arguments.Contains("Release") && releasePlan.OutputDirectory.EndsWith("-release"), "Release platform plan uses Release configuration and separate output");
+    entry.Configuration = "Release";
+    var releasePlan = PlatformBuildService.Plan(entry, false);
+    Check(releasePlan.SubCommand == "build" && releasePlan.Arguments.Contains("-O3")
+        && releasePlan.Arguments.Contains("wasm") && releasePlan.Arguments.Contains(platformRoot),
+        "Release plan maps to the engine's own axmol build invocation");
     entry.Platform = "android-arm64";
-    await Reject<InvalidOperationException>(() => Task.Run(() => releasePlanService.Plan(entry, new("2.11.5", root, "official-lts"), false, checkFiles: false)), "Android Release cannot silently use the debug signing profile");
+    await Reject<InvalidOperationException>(() => Task.Run(() => BuildConfigurations.ValidateTarget(entry)), "Android Release cannot silently use the debug signing profile");
     entry.Configuration = "Debug";
     var releaseSettings = new AndroidReleaseSettings { ApplicationId = "com.axmolhub.example", KeyAlias = "upload", KeystorePath = Path.GetFullPath(Path.Combine(root, "fixture.jks")) };
     releaseSettings.Validate(false);
@@ -687,26 +746,29 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var keyFingerprint = releaseSettings.Fingerprint(); File.AppendAllText(releaseSettings.KeystorePath, "changed");
     Check(releaseSettings.Fingerprint() != keyFingerprint, "Replacing a keystore invalidates its release receipt fingerprint");
     entry.Configuration = "Release";
-    var androidReleasePlan = releasePlanService.Plan(entry, new("2.11.5", root, "official-lts"), false, checkFiles: false);
-    Check(androidReleasePlan.Commands[0].Arguments.Contains("-DCMAKE_BUILD_TYPE=Release") && androidReleasePlan.OutputDirectory.EndsWith("-release"), "Configured Android Release reaches the isolated native build plan");
+    var androidReleasePlan = PlatformBuildService.Plan(entry, false);
+    Check(androidReleasePlan.Arguments.Contains("android") && androidReleasePlan.Arguments.Contains("-O3"), "Configured Android Release maps to the engine's release build invocation");
     entry.Configuration = "Debug";
     await Reject<InvalidDataException>(() => Task.Run(() => BuildTargets.Select(entry, "../../outside")), "Unknown target cannot escape build directories");
-    var platformService = new PlatformBuildService(new ProcessRunner(_ => { }), Path.Combine(platformRoot, "tools"));
+    var platformService = new PlatformBuildService(new ProcessRunner(_ => { }));
     entry.Platform = "ios-arm64";
-    await Reject<PlatformNotSupportedException>(() => Task.Run(() => platformService.Plan(entry, new("2.11.5", platformRoot), false, false, "windows")), "Apple build on Windows is rejected before any process");
+    Check(!BuildTargets.Get(entry.Platform).CanBuildOn("windows") && BuildTargets.Get(entry.Platform).Hosts.Contains("macos"),
+        "Apple targets declare macOS-only hosts, so an Apple build on Windows is rejected before any process");
     entry.Platform = "wasm32";
-    var wasmEnvironment = platformService.CreateEnvironment(new("2.11.5", platformRoot), BuildTargets.Get(entry.Platform));
-    // 同 "Build PATH contains no inherited developer directories"：这里原先也是拿 "D:" 当代理判断，
-    // 只在工作根不在 D 盘时成立。改为按受管根归一化。
-    var wasmTools = Path.GetFullPath(Path.Combine(platformRoot, "tools"));
-    var wasmPath = wasmEnvironment["PATH"].Split(';', StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.TrimEnd('\\')).ToArray();
-    var wasmLeaked = wasmPath.Where(entry => !entry.StartsWith(wasmTools, StringComparison.OrdinalIgnoreCase) && !entry.StartsWith(windowsDirectory, StringComparison.OrdinalIgnoreCase)).ToArray();
-    Check(!wasmEnvironment.ContainsKey("DXSDK_DIR") && wasmLeaked.Length == 0 && wasmEnvironment["EM_CONFIG"].StartsWith(platformRoot),
-        "Web build environment isolates developer paths and emsdk activation (leaked: " + string.Join(", ", wasmLeaked) + ")");
-    await Reject<InvalidOperationException>(() => Task.Run(() => platformService.Plan(entry, new("2.11.5", platformRoot), false)), "Missing target tools block build without system fallback");
-    Directory.CreateDirectory(BuildTargets.BuildDirectory(entry));
-    File.WriteAllText(Path.Combine(BuildTargets.BuildDirectory(entry), "Fixture.exe"), "wrong-target");
-    await Reject<FileNotFoundException>(() => Task.Run(() => PlatformBuildService.FindArtifact(entry)), "Windows executable cannot satisfy a WebAssembly build");
+    var wasmEngine = new EngineEntry("2.11.5", platformRoot);
+    var wasmEnvironment = platformService.CreateEnvironment(wasmEngine, BuildTargets.Get(entry.Platform));
+    // 工具链已交还引擎：辅助环境以**引擎树**为根（<engine>/tools/external），不再指向 Hub 的 data-root/tools。
+    var wasmTools = EngineToolchain.ToolRoot(wasmEngine);
+    var hubTools = Path.GetFullPath(Path.Combine(root, "tools"));
+    var wasmPath = wasmEnvironment["PATH"].Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+    Check(wasmEnvironment["AX_ROOT"] == platformRoot && wasmEnvironment["EMSDK"] == Path.Combine(wasmTools, "emsdk")
+        && wasmPath.All(part => !part.StartsWith(hubTools, StringComparison.OrdinalIgnoreCase)),
+        "Auxiliary environment is rooted at the engine tree instead of a Hub-managed tools root");
+    // 产物候选按目标族收窄：Windows 的 .exe 不能满足 WebAssembly 的构建。
+    var wasmNoise = Path.Combine(platformRoot, "build_wasm");
+    Directory.CreateDirectory(Path.Combine(wasmNoise, "bin", "Fixture"));
+    File.WriteAllText(Path.Combine(wasmNoise, "bin", "Fixture", "Fixture.exe"), "wrong-target");
+    await Reject<FileNotFoundException>(() => Task.Run(() => PlatformBuildService.FindArtifact(entry)), "A Windows executable cannot satisfy a WebAssembly build");
     var concurrentStore = new StateStore(Path.Combine(platformRoot, "concurrent-state"));
     await Task.WhenAll(Enumerable.Range(0, 8).Select(index => Task.Run(() => concurrentStore.SaveProject(new ProjectEntry { Name = "Concurrent" + index, Path = Path.Combine(platformRoot, index.ToString()), Version = "2.11.5" }))));
     Check(concurrentStore.Load().Projects.Count == 8, "Concurrent CLI project updates preserve other projects");
@@ -714,11 +776,9 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
 {
     var moduleRoot = Path.Combine(root, "modules-" + Guid.NewGuid().ToString("N"));
     var modules = new EngineModules(moduleRoot, Path.GetFullPath("manifests"));
-    var plan = modules.Plan(engine, ["android", "web"]);
-    Check(plan.Packages.Count(p => p.Id == "cmake") == 1 && plan.Packages.Count == 13, "Android and Web share dependencies without duplicate installs");
-    Check(plan.DownloadBytes > 0 && plan.InstalledBytes > plan.DownloadBytes && !plan.HasUnknownSize, "Module package sizes come from measured manifests");
-    var deferred = modules.Plan(engine, ["ios", "tvos", "linux", "uwp"]);
-    Check(deferred.Packages.Count == 0 && deferred.Installers.Length == 0 && deferred.DeferredModules.Length == 4, "Source-only and pending modules never install Windows packages");
+    Check(modules.ForEngine(engine).Select(module => module.Id).OrderBy(id => id)
+        .SequenceEqual(new[] { "android", "ios", "linux", "macos", "tvos", "uwp", "web", "windows" }),
+        "Module manifest lists the engine's supported platforms for the verified version");
     modules.Save(engine, ["android", "web", "android"]);
     Check(modules.Load(engine).ModuleIds.SequenceEqual(new[] { "android", "web" }), "Module choices persist with duplicate choices removed");
     var anotherEngine = engine with { Path = Path.Combine(moduleRoot, "other-engine") };
@@ -731,17 +791,10 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine with { Version = "99.0.0" }, PackagingRecipes.AndroidPackaging)), "Unverified engine version cannot borrow another version packaging recipe");
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine, "recipe-that-is-not-declared")), "Recipe not declared for the engine version is refused");
-    var package = modules.Packages()["cmake"];
-    var destination = PackageInstaller.SafePath(moduleRoot, package.Destination);
-    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(destination, package.VerifyFile))!);
-    File.WriteAllText(Path.Combine(destination, package.VerifyFile), "fixture");
-    Check(!modules.IsPackageInstalled(package), "Loose tool files never imply a managed module installation");
-    StateStore.WriteJson(Path.Combine(destination, ".hub-install.json"), new { package.Id, package.Version, package.Sha256 });
-    Check(modules.IsPackageInstalled(package) && modules.Plan(engine, ["web"]).Packages.All(p => p.Id != "cmake"), "Verified receipt excludes an installed dependency from the install plan");
-    StateStore.WriteJson(Path.Combine(destination, ".hub-install.json"), new { package.Id, package.Version, Sha256 = "invalid" });
-    Directory.CreateDirectory(Path.Combine(moduleRoot, "cache"));
-    File.WriteAllText(Path.Combine(moduleRoot, "cache", package.Sha256.ToLowerInvariant() + ".zip"), "corrupt cache");
-    Check(!modules.IsPackageInstalled(package) && modules.Plan(engine, ["web"]).DownloadBytes == modules.Plan(anotherEngine, ["web"]).Packages.Sum(p => p.DownloadBytes ?? 0), "Wrong receipt and corrupt cache cannot report installed or zero-download state");
+    // 模块模型已从「包 + 安装器」收敛为「平台 + 引擎命令」：勾选表达意图，安装由引擎的 setup.ps1 负责。
+    Check(modules.Platforms(engine, ["android", "web"]).SequenceEqual(new[] { "android", "wasm" }),
+        "Selected modules map to the engine's own platform names for setup.ps1");
+    Check(modules.Platforms(engine, ["unknown-module"]).Count == 0, "Unknown modules contribute no platform to prepare");
 }
 {
     var androidRoot = Path.Combine(root, "android-fixture-" + Guid.NewGuid().ToString("N"));
@@ -805,9 +858,13 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var devices = AndroidDeviceService.ParseDevices("* daemon started successfully\nList of devices attached\nusb123 device product:fixture\nusb456 unauthorized\nemulator-5554 offline\n");
     Check(devices.Count == 3 && devices.Select(device => device.State).SequenceEqual(new[] { "device", "unauthorized", "offline" }), "ADB authorization and offline states remain distinct");
     await Reject<ArgumentException>(() => new AndroidDeviceService(new ProcessRunner(_ => throw new Exception("Process must not start")), Path.Combine(root, "tools")).DeployAsync(entry, "bad;serial", new()), "Unsafe device serial cannot start a deployment process");
-    var androidPlan = new PlatformBuildService(runner, Path.Combine(root, "tools")).Plan(entry, engine, false, checkFiles: false);
-    Check(androidPlan.Commands[0].Arguments.Any(argument => argument.StartsWith("-D_AX_ANDROID_PROJECT_DIR=") && argument.Contains("build-hub-android-arm64/android/app"))
-        && androidPlan.Environment["JAVA_HOME"].StartsWith(root) && androidPlan.Environment["ANDROID_USER_HOME"].StartsWith(root), "Android shaders, Java and SDK authorization data stay in managed directories");
+    var androidPlan = PlatformBuildService.Plan(entry, false);
+    var androidEnvironment = new PlatformBuildService(runner).CreateEnvironment(engine, BuildTargets.Get(entry.Platform));
+    var androidTools = EngineToolchain.ToolRoot(engine);
+    Check(androidPlan.Arguments.Contains("android") && androidPlan.Arguments.Contains("arm64")
+        && androidEnvironment["JAVA_HOME"] == Path.Combine(androidTools, "jdk")
+        && androidEnvironment["ANDROID_HOME"] == Path.Combine(androidTools, "adt", "sdk"),
+        "Android build maps to axmol -p android and takes its JDK/SDK from the engine tree");
 }
 Console.WriteLine($"{count} checks passed. Real platform builds, device deployment and clean-host acceptance require separate evidence.");
 

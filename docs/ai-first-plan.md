@@ -143,7 +143,7 @@ MCP C# SDK 与 `Microsoft.Extensions.AI` 共用 `AIFunction` 抽象，
 
 | 工具 | 说明 |
 |---|---|
-| `build` / `configure` | 走 Hub 锁定工具链 |
+| `build` / `configure` | 走引擎 cmdline（`axmol build`，见 ADR-0002） |
 | `run` / `serve` / `deploy` | 运行、WASM 预览、按 serial 部署 |
 | `package.android` | APK/AAB 打包与签名校验 |
 

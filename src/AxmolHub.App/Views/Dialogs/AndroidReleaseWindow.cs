@@ -132,8 +132,8 @@ public sealed class AndroidReleaseWindow : Window
                 _create.IsEnabled = _save.IsEnabled = _browse.IsEnabled = false;
                 var settings = Read();
                 var passwords = ReadPasswords();
-                var environment = new PlatformBuildService(_runner, _toolsRoot)
-                    .CreateEnvironment(new EngineEntry(_project.Version, _project.Path), BuildTargets.Get("android-arm64"));
+                var environment = new PlatformBuildService(_runner)
+                    .CreateEnvironment(_toolsRoot, BuildTargets.Get("android-arm64"));
                 foreach (var name in new[] { "HOME", "TEMP" })
                 {
                     Directory.CreateDirectory(environment[name]);

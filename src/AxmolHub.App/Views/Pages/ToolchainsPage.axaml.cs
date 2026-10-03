@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -20,12 +21,11 @@ namespace AxmolHub.App;
 public sealed record ToolRow(string Name, string Status, string Details);
 
 /// <summary>
-/// 工具链页（WPF 的 ToolchainsPage）。
+/// 工具链页。
 ///
-/// 与 WPF 版有一个**刻意差异**：WPF 在进入这一页时会顺手跑一次工具链检测
-/// （<c>ShowToolchains</c> 里 <c>await ExecuteAsync("Verify toolchains", ...)</c>）。
-/// 那是"切换页面"隐式触发网络/子进程，代价不可见；这里改成只在选择平台变化时检测，
-/// 进页不再自动跑，用户想检测点「验证」。
+/// **这里只显示状态**：期望版本来自引擎自带的 <c>1k/build.profiles</c>，
+/// 实装状态来自官方安装落点 <c>&lt;engine&gt;/tools/external</c>。
+/// 安装不是 Hub 的事 —— 需要装时跑引擎自己的 <c>setup.ps1</c>（页面底部的按钮）。
 /// </summary>
 public partial class ToolchainsPage : UserControl
 {
@@ -58,25 +58,55 @@ public partial class ToolchainsPage : UserControl
             await _workspace.ChangeToolTargetAsync(ToolTargetPicker.SelectedItem as BuildTarget);
         };
 
-        ModuleEnginePicker.SelectionChanged += (_, _) =>
+        ModuleEnginePicker.SelectionChanged += async (_, _) =>
         {
             if (!_ready)
             {
                 return;
             }
 
-            _workspace.ModuleEngine = ModuleEnginePicker.SelectedItem as EngineEntry;
+            var engine = ModuleEnginePicker.SelectedItem as EngineEntry;
+            // 工具链属于具体引擎树；值没变就不要重新探测（否则会和 Reload 形成回环）。
+            if (ReferenceEquals(engine, _workspace.ModuleEngine))
+            {
+                return;
+            }
+
+            _workspace.ModuleEngine = engine;
             ReloadModules();
+            await _workspace.VerifyToolchainsAsync();
         };
 
         ManageModulesButton.Click += async (_, _) => await _workspace.ChooseModulesAsync(_workspace.ModuleEngine);
-        InstallSdkButton.Click += async (_, _) => await _workspace.InstallSdkAsync();
-        InstallMsvcButton.Click += async (_, _) => await _workspace.InstallBuildToolsAsync();
+        RunEngineSetupButton.Click += async (_, _) => await RunEngineSetupAsync();
         VerifyButton.Click += async (_, _) => await _workspace.VerifyToolchainsAsync();
-        InstallToolsButton.Click += async (_, _) => await _workspace.InstallToolsAsync();
 
         Reload();
         _ready = true;
+    }
+
+    /// <summary>
+    /// 跑引擎 setup 前**必须先确认**：它会写用户级 PATH / AX_ROOT，并可能请求提权。
+    /// 这些副作用是引擎官方流程的一部分，不是 Hub 偷偷加的，但用户有权先知道。
+    /// </summary>
+    private async Task RunEngineSetupAsync()
+    {
+        if (_workspace.Owner is null)
+        {
+            await _workspace.RunEngineSetupAsync();
+            return;
+        }
+
+        var engine = _workspace.ModuleEngine;
+        var prompt = engine is null
+            ? HubStrings.Get("EngineSetupHint")
+            : engine + "\n\n" + HubStrings.Get("EngineSetupHint");
+        if (await HubDialog.ShowAsync(_workspace.Owner, HubStrings.Get("RunEngineSetup"), prompt, HubDialogButtons.OkCancel) != HubDialogResult.Ok)
+        {
+            return;
+        }
+
+        await _workspace.RunEngineSetupAsync();
     }
 
     /// <summary>WPF 版 <c>Refresh()</c> 里属于工具链页的那一段。</summary>
@@ -97,11 +127,6 @@ public partial class ToolchainsPage : UserControl
 
         ToolTargetPicker.SelectedItem = _workspace.ToolTarget ?? BuildTargets.All[0];
         ToolTargetHint.Text = _workspace.ToolTargetHint;
-
-        // 两个 Windows 专属按钮只在 windows 平台下出现（WPF 版用 Visibility 切换）。
-        var windows = (_workspace.ToolTarget as BuildTarget)?.Family == "windows";
-        InstallSdkButton.IsVisible = windows;
-        InstallMsvcButton.IsVisible = windows;
 
         ReloadModules();
         ReloadTools();
@@ -125,9 +150,11 @@ public partial class ToolchainsPage : UserControl
     }
 
     /// <summary>
-    /// 模块概览。WPF 版 <c>RefreshModules</c>：一行一个模块，右边一个状态徽标。
-    /// 状态取自 Core 的判定（<c>IsPackageInstalled</c> / <c>IsInstallerPresent</c>），
-    /// 这里只负责把它画出来 —— 概览**不做**判定，判定只有一处。
+    /// 平台概览。一行一个平台：它在这台宿主上能不能准备、用户是否勾选过，
+    /// 以及等价的引擎命令（<c>setup.ps1 -p &lt;platform&gt;</c>）。
+    ///
+    /// 刻意**不再**显示下载体积/依赖清单：那些数据来自 Hub 自持的工具链包清单，
+    /// 而安装已经是引擎的事，Hub 手里没有也不该有一份会漂移的副本。
     /// </summary>
     private void ReloadModules()
     {
@@ -139,29 +166,34 @@ public partial class ToolchainsPage : UserControl
 
         try
         {
-            var service = _workspace.Modules;
-            var packages = service.Packages();
-
-            foreach (var module in service.ForEngine(engine))
+            var selected = _workspace.Modules.Load(engine).ModuleIds;
+            foreach (var module in _workspace.Modules.ForEngine(engine))
             {
-                var external = !module.Hosts.Contains(BuildTargets.Host) || module.Packages.Length + module.Installers.Length == 0;
-                var installed = !external && module.Packages.All(id => service.IsPackageInstalled(packages[id])) && module.Installers.All(service.IsInstallerPresent);
+                var hostReady = module.Hosts.Contains(BuildTargets.Host);
+                var chosen = selected.Contains(module.Id);
                 var status = module.Id == "uwp"
                     ? HubStrings.Get("UwpPending")
-                    : HubStrings.Get(external ? "ModuleExternal" : installed ? "ModuleInstalled" : "ModuleMissing");
+                    : HubStrings.Get(hostReady ? chosen ? "ModuleInstalled" : "ModuleMissing" : "ModuleExternal");
+
+                var caption = ModuleWindow.ModuleName(module.Id);
+                var platform = AxmolCommandMap.PlatformForModule(module.Id);
+                if (hostReady && platform is not null)
+                {
+                    caption += "   ·   setup.ps1 -p " + platform;
+                }
 
                 var row = new DockPanel();
                 var badge = new TextBlock
                 {
                     Text = status,
                     FontSize = 12,
-                    Foreground = Brush.Parse(installed ? "#70D7AF" : "#A8A8A8"),
+                    Foreground = Brush.Parse(chosen && hostReady ? "#70D7AF" : "#A8A8A8"),
                     Margin = new Thickness(16, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
                 DockPanel.SetDock(badge, Dock.Right);
                 row.Children.Add(badge);
-                row.Children.Add(new TextBlock { Text = ModuleWindow.ModuleName(module.Id), FontSize = 14 });
+                row.Children.Add(new TextBlock { Text = caption, FontSize = 14 });
 
                 ModuleOverview.Children.Add(new Border
                 {

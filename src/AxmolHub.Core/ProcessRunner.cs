@@ -10,7 +10,8 @@ public sealed class ProcessRunner(Action<string> log)
     public void Write(string message) => log(message);
     public async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
         string workingDirectory, IReadOnlyDictionary<string, string>? environment = null,
-        CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyList<string>? sensitiveValues = null)
+        CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyList<string>? sensitiveValues = null,
+        IReadOnlyDictionary<string, string>? overrides = null)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -24,6 +25,13 @@ public sealed class ProcessRunner(Action<string> log)
             // 传入环境即完整环境，禁止隐式继承 DXSDK_DIR 等开发机路径。
             start.Environment.Clear();
             foreach (var entry in environment) start.Environment[entry.Key] = entry.Value;
+        }
+
+        // overrides 作用在"上面选定的基线"之上：environment 为空时基线是继承来的父环境，
+        // 于是可以只改一两个变量（例如 ANDROID_SERIAL）而不必重建整份环境。
+        if (overrides != null)
+        {
+            foreach (var entry in overrides) start.Environment[entry.Key] = entry.Value;
         }
         var secrets = (sensitiveValues ?? []).Where(s => !string.IsNullOrEmpty(s))
             .SelectMany(s => new[] { s, System.Text.Json.JsonSerializer.Serialize(s)[1..^1] }).Distinct().OrderByDescending(s => s.Length).ToArray();

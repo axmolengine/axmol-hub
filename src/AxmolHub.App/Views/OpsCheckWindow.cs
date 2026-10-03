@@ -147,18 +147,15 @@ public sealed class OpsCheckWindow : Window
                 StringComparison.OrdinalIgnoreCase),
             "数据根不是用户自己的 %LocalAppData%\\AxmolHub（真实操作会写状态与日志，绝不能落在那里）");
         Check(workspace.ToolsRoot.StartsWith(workspace.Store.Root, StringComparison.OrdinalIgnoreCase),
-            "工具链目录在数据根内部（" + workspace.ToolsRoot + "）");
+            "Hub 自己的数据目录在数据根内部（" + workspace.ToolsRoot + "）");
     }
 
     /// <summary>
     /// 工具链探测。**刻意不断言方向**，只断言"每项都被评估过"，实测值写进 INFO。
     ///
-    /// 原因：当前策略是"Hub 只认自己 data-root 里的工具、不回退系统 PATH"（空数据根下
-    /// 托管组件必然是 Missing）。但这条策略正在被重新评估 —— Windows 上倾向**首选系统已
-    /// 安装的 Visual Studio**，与 axmol 引擎自身选取 MSVC 的方式一致。
-    ///
-    /// 断言一旦写死"必须是 Missing"，规则改的那天它就会以 FAIL 报出来，
-    /// 而那其实是**规则变了**，不是代码坏了。所以这里只守住"探测跑完了且给出了明确结论"。
+    /// 现在探测的真源是引擎树：期望版本来自 <c>&lt;engine&gt;/1k/build.profiles</c>，
+    /// 实装状态来自官方落点 <c>&lt;engine&gt;/tools/external</c>；VS 由 vswhere 检测（引擎只检测不安装）。
+    /// 断言仍然只守住"探测跑完了且给出了明确结论" —— 某台机器上缺哪个工具是**数据**，不是代码坏了。
     /// </summary>
     private async Task CheckToolchainProbeAsync(HubWorkspace workspace)
     {
@@ -166,19 +163,14 @@ public sealed class OpsCheckWindow : Window
 
         Check(components.Count > 0, "工具链探测返回 " + components.Count + " 个组件（不是空表）");
 
-        var managed = components.Where(c => c.Name.Contains("Managed", StringComparison.Ordinal)).ToArray();
-        Check(managed.Length == 2, "托管组件有 MSVC 与 Windows SDK 两项（实际 " + managed.Length + "）");
-
         // "被评估过"= 状态是结论性的（Missing/Installed/Broken…），不是 Unknown/Checking。
-        // 这条与策略方向无关，因此规则变更后它仍然成立。
+        // 这条与具体机器上装了什么无关，因此规则变更后它仍然成立。
         Check(components.All(c => c.Status is not (ComponentStatus.Unknown or ComponentStatus.Checking)),
             "每个组件都给出了结论性状态（没有停在 Unknown/Checking）");
+        Check(components.All(c => c.Details.Length > 0), "每个组件都给出了状态说明（含期望版本或落点）");
 
-        _lines.Add("INFO  托管组件实测: " + string.Join(" / ", managed.Select(c => c.Name + "=" + c.Status)));
-        _lines.Add("INFO  当前策略: 只用 data-root/tools 里的工具，不回退系统 PATH"
-                   + "（本机装有 VS 18 / CMake 4.3.2 / Ninja 1.12.1 且在 PATH 上，未被合并）");
-        _lines.Add("INFO  待定变更: Windows 上改为首选系统已安装的 Visual Studio（与 axmol 引擎选 MSVC 的方式一致）"
-                   + " —— 改了之后上面那条断言**不应**变红，实测值会变成 Installed");
+        _lines.Add("INFO  实测: " + string.Join(" / ", components.Select(c => c.Name + "=" + c.Status)));
+        _lines.Add("INFO  真源: <engine>/1k/build.profiles（期望版本）+ <engine>/tools/external（实装）");
     }
 
     /// <summary>
@@ -305,10 +297,10 @@ public sealed class OpsCheckWindow : Window
     private void ReportSkipped()
     {
         Skip("装官方引擎（--verify-ops 不联网下载；那条链是 DownloadManager + PackageInstaller + sha256 校验）");
-        Skip("装工具链（MSVC v143 / Windows SDK / cmake / ninja：GB 级下载，走 WindowsToolchainInstaller）"
-             + " —— 该链路即将改为 Windows 首选系统已安装的 Visual Studio，届时先改规则再验");
-        Skip("构建与运行（需要先装齐工具链；成本是分钟到小时级，不属于「便宜的真跑」）");
-        Skip("Android 打包（需要 Android SDK/NDK 与签名材料）");
+        Skip("环境准备 / 装工具链（跑引擎自己的 setup.ps1：GB 级下载，且会改用户级 PATH 与 AX_ROOT、可能弹 UAC）"
+             + " —— 全局副作用不适合放进自动化，由用户在工具链页手动确认执行");
+        Skip("构建与运行（需要先跑 setup.ps1 备好引擎树；成本是分钟到小时级，不属于「便宜的真跑」）");
+        Skip("Android 打包（构建交给引擎的 axmol build -p android；需要 Android SDK/NDK 与签名材料）");
     }
 
     /// <summary>引擎目录缺哪些标志文件。清单的唯一来源是 <see cref="StateStore.MissingEngineMarkers"/>，不在这里另写一份。</summary>

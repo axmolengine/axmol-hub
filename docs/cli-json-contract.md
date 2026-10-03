@@ -25,7 +25,7 @@
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "command": "verify",
   "ok": true,
   "exitCode": 0,
@@ -37,7 +37,7 @@
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "command": "build",
   "ok": false,
   "exitCode": 1,
@@ -84,15 +84,16 @@
 | `verify <root> <target>` | `{ "target": "...", "components": [ { name, status, details, executable } ] }` |
 | `create <root> <name> <parent> [cpp\|lua]` | `{ "project": { …ProjectEntry… } }` |
 | `select <root> <project> <target>` | `{ "project": { …ProjectEntry… } }`（已含新平台） |
-| `plan <root> <project> [cfg]` | `{ "plan": { …PlatformBuildPlan… } }` |
+| `plan <root> <project> [cfg]` | `{ "plan": { "subCommand": "build", "arguments": [ … ] } }` |
 | `configure` / `build` | `{ "project": {…}, "status": "Configured"\|"Succeeded", "executable": "…"\|null }` |
 | `run` / `serve` / `deploy` | `{ "exitCode": <子进程退出码> }` |
 | `devices <root> <target>` | `{ "devices": [ { serial, state, details } ] }` |
-| `install-tools <root> <manifest>` | `{ "installed": [ … ], "retained": [ … ] }` |
+| `install-tools <root> [platform]` | `{ "engine": "…", "platform": "…", "outcome": "…", "exitCode": 0 }` |
 | `help` | `{ "commands": [ … ] }` |
 
 `…ProjectEntry…` = `{ name, path, version, channel, platform, configuration, projectType, lastOpened, buildStatus }`。
-`…PlatformBuildPlan…` = 现有 `PlatformBuildPlan` 的形状（`target` / `outputDirectory` / `commands[]` / `environment`）。
+`plan` 的载荷是**引擎 cmdline 调用**（`subCommand` + `arguments`）：构建已委派给 `axmol build`，
+不是 Hub 自己拼的 CMake 命令计划 —— 见 docs/adr/0002。
 
 ## 5. 两个必须说清的例外
 
@@ -122,19 +123,12 @@
 
 ## 6. 一处刻意保留的不对称
 
-**`plan` 不带 `--json` 时仍然输出裸的 plan JSON**，而不是人类文本。
-这是仓库既有的约定（"`plan` 输出 JSON；stdout 出数据 / stderr 出日志"），
-本轮**故意不动它**，免得已经按该约定写的调用方被打断。
+**`plan` 的裸 JSON 形状已在 `schema 2` 退役。** 不带 `--json` 时它和别的动词一样输出人读文本
+（一行「平台 · 配置」+ 一行等价的 `axmol <subcmd> args`），不再往 stdout 打一份裸 JSON。
 
-于是 `plan` 有两种 JSON 形状：
-
-| 调用 | stdout |
-|---|---|
-| `plan <root> <project>` | 裸 `PlatformBuildPlan`（**旧约定，保留**） |
-| `plan <root> <project> --json` | §2 的完整信封（**新约定**） |
-
-计划：`schema 2` 时让裸形状退役，届时 `plan` 与其他动词一致。
-在那之前这条不对称必须写在这里，否则下一个人会以为是 bug。
+这条不对称是 `schema 1` 时期的遗留（早期 `plan` 直接序列化 `PlatformBuildPlan`）。
+退役它的同时，载荷也从「Hub 自拼的 CMake 命令计划」换成了引擎 cmdline 调用 —— 同一处破坏性变更，
+一并进 `schema 2`。
 
 ## 7. 兼容性与实现位置的约定
 

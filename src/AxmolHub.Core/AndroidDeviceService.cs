@@ -11,7 +11,7 @@ public sealed record AndroidDevice(string Serial, string State, string Details)
 
 public sealed class AndroidDeviceService(ProcessRunner runner, string toolsRoot)
 {
-    private string Adb => Path.GetFullPath(Path.Combine(toolsRoot, "android/sdk/platform-tools/adb" + (OperatingSystem.IsWindows() ? ".exe" : "")));
+    private string Adb => Path.GetFullPath(Path.Combine(toolsRoot, "adt/sdk/platform-tools/adb" + (OperatingSystem.IsWindows() ? ".exe" : "")));
     public static IReadOnlyList<AndroidDevice> ParseDevices(string output)
         => output.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0 && !line.StartsWith("List of devices") && !line.StartsWith('*'))
             .Select(line => line.Split((char[]?)null, 3, StringSplitOptions.RemoveEmptyEntries)).Where(parts => parts.Length >= 2)

@@ -136,7 +136,13 @@ public sealed class StateStore(string root)
             if (!File.Exists(profile)) throw new InvalidDataException("Axmol project requires .axproj or .axmol-hub.json.");
             project.Version = Regex.Match(profileText, @"(?m)^engine_version\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
         }
-        if (!Regex.IsMatch(project.Version, @"^\d+\.\d+\.\d+$")) throw new InvalidDataException("Project has no supported exact engine version.");
+        // 版本必须能精确落到 x.y.z —— 但引擎从**带 .git 的源码树**创建工程时会把提交号写进
+        // engine_version（axmol.ps1 给 $axmolVersion 追加 -<short-hash>），例如 `3.0.0-30e6f4d`。
+        // 提交号不含兼容性信息，所以只剥掉这一种后缀；预发布标签（`3.0.0-alpha33`）仍然被拒，
+        // “必须精确 x.y.z”这条纪律不放宽。
+        var version = Regex.Match(project.Version, @"^(\d+\.\d+\.\d+)(?:-[0-9a-fA-F]{7,})?$");
+        if (!version.Success) throw new InvalidDataException("Project has no supported exact engine version.");
+        project.Version = version.Groups[1].Value;
         BuildTargets.Get(project.Platform);
         BuildConfigurations.Validate(project.Configuration);
         ProjectService.ValidateProjectType(project.ProjectType);

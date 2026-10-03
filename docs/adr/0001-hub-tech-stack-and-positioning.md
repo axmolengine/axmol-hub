@@ -26,7 +26,8 @@
 
 1. **Hub 技术栈 = C# / .NET 8+，UI 层由 WPF 迁移到 Avalonia**（取得 Windows / macOS / Linux 三平台 UI）
 2. **Hub 不是 Axmol 自举应用。** Axmol 自举由 **Axmol Editor** 承担；Hub 不需要为此负责
-3. **Hub 定位 = 「环境与构建服务」**：引擎生命周期（下载 / 导入 / 校验 / 修复 / 卸载）、模块安装、工具链自持、项目创建、目标选择、构建、运行、部署、设备管理；对外以 **CLI `--json` + MCP** 暴露
+3. **Hub 定位 = 「环境与构建服务」**：引擎生命周期（下载 / 导入 / 校验 / 修复 / 卸载）、模块安装、项目创建、目标选择、构建、运行、部署、设备管理；对外以 **CLI `--json` + MCP** 暴露
+   （**「工具链自持」一条已被 [ADR-0002](0002-toolchain-and-build-delegated-to-engine-cmdline.md) 取代**：工具链与构建交还引擎 cmdline，`1k/build.profiles` 为版本真源）
 4. **Editor 是 Hub 的一个客户端**，与 GUI / CLI / MCP 并列。**AI 能力层全局只有一份实现**，不允许 Hub 与 Editor 各写一套
 5. **Hub 引入 `axmolengine/axmol-hub` 进行组织内共建**
 

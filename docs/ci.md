@@ -115,7 +115,7 @@ CI 固定 `8.0.x`（`README` 要求的就是 .NET 8 SDK）。开发机可能装�
 | `verify` 在组件缺失时 `ok:false` + `exitCode:2` 但 `data` 仍在 | 刻意的例外——"组件缺失"是数据不是异常 |
 | 未知动词的失败信封 | 参数错误与运行时错误走同一条失败路径 |
 
-**为什么只能放 Windows**：`AxmolHub.Checks` 是 `net8.0-windows`（Core 里 `WindowsToolchainInstaller` 的断言在 macOS/Linux 上无意义，见 §3）。**不是因为这个契约只在 Windows 成立** —— CLI 本身三平台都发布，契约三平台一致。想让它在三平台都跑，得把契约断言拆成一个主机无关的独立项目；在那之前，一个 Windows 上的绿灯好过零个。
+**为什么只能放 Windows**：`AxmolHub.Checks` 是 `net8.0-windows`（它带一批 Windows 专属断言，例如 PowerShell 子进程与 vswhere 检测，见 §3）。**不是因为这个契约只在 Windows 成立** —— CLI 本身三平台都发布，契约三平台一致。想让它在三平台都跑，得把契约断言拆成一个主机无关的独立项目；在那之前，一个 Windows 上的绿灯好过零个。
 
 **它是怎么被验证的**：本机实测 **34/34 通过**，并做了一次**负向对照** —— 故意把 `help` 的 `!asJson` 守卫去掉、重编译，检查确实在 `help --json writes exactly one parseable JSON document` 上失败并打印了 stdout 原文；恢复守卫后重跑回到 34/34。没有这一步，"34 条全绿"完全可能只是 34 条永不失败的断言。
 
@@ -131,14 +131,14 @@ CI 固定 `8.0.x`（`README` 要求的就是 .NET 8 SDK）。开发机可能装�
 
 - 一个已经准备好的 data root（引擎已安装、工具链已就位）；
 - 真实的 Axmol 2.11.5 完整源码；
-- 托管工具链（CMake / Ninja / MSVC / Android SDK / JDK 等），且明确**不允许回退到系统工具**；
+- 引擎树内的工具链（由引擎自己的 `setup.ps1` 装进 `<engine>/tools/external`）；
 - 若干子模式（`--prepare-release-check`、`--check-release-receipt`、`--check-android-verification`、`--prepare-packaging` 等）彼此有先后依赖，要按顺序跑。
 
-MSVC 的安装需要微软官方安装器与 UAC，GitHub 托管 runner 上无法按 Hub 的规则完成。因此把它塞进托管 CI，只会得到一条长期红着的必跑项，或者一堆 `continue-on-error` —— 两种都会让 CI 失去意义。
+`setup.ps1` 会写用户级 PATH / AX_ROOT，并可能请求提权；工具链下载是 GB 级。因此把它塞进托管 CI，只会得到一条长期红着的必跑项，或者一堆 `continue-on-error` —— 两种都会让 CI 失去意义。
 
 **结论**：105 项主流程检查继续按 `README` 的方式在维护者机器上跑；CI 承担的是"三平台构建与跨平台行为"这一层，两者互补而非替代。真要把它接进 CI，前置条件是**把主机无关的断言从这套验收工具里分出来**，而不是想办法让 MSVC 装进 runner —— **§2.6 的 `--check-cli-json` 就是这条路走通的第一步**：它不是"让 CI 跑整套"，而是"把不依赖引擎的那一段切出来，做成自带 `return` 的独立模式"。同一个手法可以继续用于其余任何一段主机无关的断言。
 
-`AxmolHub.Checks` 项目本身是 `net8.0-windows`，因为 Core 的 `WindowsToolchainInstaller` 相关断言在 macOS/Linux 上无意义。这也是它当前只能待在 Windows 矩阵里的原因之一。
+`AxmolHub.Checks` 项目本身是 `net8.0-windows`，因为它带一批 Windows 专属断言（PowerShell 子进程、vswhere 探测 VS）。这也是它当前只能待在 Windows 矩阵里的原因之一。
 
 #### 本机实跑发现的三处环境绑定（2026-10-02）
 

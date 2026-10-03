@@ -8,6 +8,10 @@ using System.Xml.Linq;
 namespace AxmolHub.Core;
 
 // CMake 管理原生构建，Gradle 只包装已有原生库和官方 Java 入口。所有生成文件留在目标输出目录。
+// 注意：**Android 打包已不在产品路径上** —— 构建（含 Gradle 打包）由引擎的 `axmol build -p android` 完成。
+// 本类保留两样东西：① 结构性校验器（ELF ABI/16KB 对齐、APK/AAB 布局、签名回执），它们与打包器无关、
+// 仍在验收里被使用；② 签名/对齐检查，等 Android Release 签名与引擎构建对接后再决定去留。
+// 因此类内路径按**引擎树**布局书写（tools/external/adt/sdk、jdk）。
 public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot)
 {
     private string Tool(string path) => Path.GetFullPath(Path.Combine(toolsRoot, path));
@@ -15,7 +19,21 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     public static string StageDirectory(ProjectEntry project) => Path.Combine(BuildTargets.BuildDirectory(project), "android");
     public static string ApkPath(ProjectEntry project) => Path.Combine(StageDirectory(project), "app/build/outputs/apk", project.Configuration.ToLowerInvariant(), "app-" + project.Configuration.ToLowerInvariant() + ".apk");
     public static string BundlePath(ProjectEntry project) => Path.Combine(StageDirectory(project), "app/build/outputs/bundle", project.Configuration.ToLowerInvariant(), "app-" + project.Configuration.ToLowerInvariant() + ".aab");
-    private string BuildTools => Tool("android/sdk/build-tools/35.0.0");
+    private string BuildTools => Tool("adt/sdk/build-tools/" + (BuildToolsVersion() ?? "36.0.0"));
+
+    /// <summary>引擎树里已装的 build-tools（取最高版本）；没有就返回 <c>null</c>。</summary>
+    private string? BuildToolsVersion()
+    {
+        var parent = Path.Combine(toolsRoot, "adt/sdk/build-tools");
+        return Directory.Exists(parent) ? Directory.EnumerateDirectories(parent).OrderDescending().Select(Path.GetFileName).FirstOrDefault() : null;
+    }
+
+    /// <summary>引擎树里已装的 NDK（取最高版本）；没有就返回 <c>null</c>。</summary>
+    private string? NewestNdk()
+    {
+        var parent = Path.Combine(toolsRoot, "adt/sdk/ndk");
+        return Directory.Exists(parent) ? Directory.EnumerateDirectories(parent).OrderDescending().Select(Path.GetFileName).FirstOrDefault() : null;
+    }
     private static string Suffix => OperatingSystem.IsWindows() ? ".exe" : "";
     private static string Groovy(string value) => "'" + value.Replace('\\', '/').Replace("'", "\\'") + "'";
     public static string PackageName(ProjectEntry project)
@@ -106,7 +124,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         var library = NativeLibrary(project);
         Directory.CreateDirectory(jni);
         var nativeFiles = new[] { library, Path.Combine(BuildTargets.BuildDirectory(project), "lib/libopenal.so"),
-            Tool("android/sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/" + (BuildTargets.Host == "macos" ? "darwin-x86_64" : BuildTargets.Host + "-x86_64") + "/sysroot/usr/lib/" + (target.Architecture == "arm64-v8a" ? "aarch64-linux-android" : "x86_64-linux-android") + "/libc++_shared.so") };
+            Tool("adt/sdk/ndk/" + (NewestNdk() ?? "27.3.13750724") + "/toolchains/llvm/prebuilt/" + (BuildTargets.Host == "macos" ? "darwin-x86_64" : BuildTargets.Host + "-x86_64") + "/sysroot/usr/lib/" + (target.Architecture == "arm64-v8a" ? "aarch64-linux-android" : "x86_64-linux-android") + "/libc++_shared.so") };
         foreach (var file in nativeFiles)
         {
             using (var native = File.OpenRead(file)) ValidateElf(native, target.Architecture);

@@ -29,15 +29,18 @@ public sealed class HubWorkspace : IDisposable
 {
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly ProcessRunner _runner;
-    private readonly ToolchainDetector _detector;
+    /// <summary>Hub → 引擎 cmdline 的唯一入口（构建/运行/部署都经它）。</summary>
+    private readonly EngineCommandLine _commandLine;
+    /// <summary>环境准备：跑引擎自己的 <c>setup.ps1</c>（Hub 不再下载安装任何工具）。</summary>
+    private readonly EngineSetupService _setup;
     private readonly ProjectService _projects;
     private readonly PlatformBuildService _platformBuilds;
+    /// <summary>引擎树内的工具链只读探测（真源 = 引擎自带 build.profiles + tools/external）。</summary>
+    private readonly EngineToolchain _engineToolchain;
     private readonly PackageInstaller _installer;
-    private readonly WindowsToolchainInstaller _windowsInstaller;
 
     private CancellationTokenSource? _operation;
     private BuildProgressWindow? _buildProgress;
-    private bool _windowsInstallationActive;
 
     /// <summary>
     /// 引擎版本目录。**必须是同一个实例**：远端索引拉下来后要存在它身上，
@@ -77,14 +80,12 @@ public sealed class HubWorkspace : IDisposable
         });
 
         _runner = new ProcessRunner(Log.Write);
-        _detector = new ToolchainDetector(_runner, ToolsRoot);
-        _projects = new ProjectService(_runner, _detector, ToolsRoot, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
-        _platformBuilds = new PlatformBuildService(_runner, ToolsRoot);
+        _commandLine = new EngineCommandLine(_runner, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+        _setup = new EngineSetupService(_commandLine);
+        _projects = new ProjectService(_runner, _commandLine);
+        _platformBuilds = new PlatformBuildService(_runner);
+        _engineToolchain = new EngineToolchain(_runner);
         _installer = new PackageInstaller(new DownloadManager(_http, Log.Write), Store.Root, Log.Write);
-        _windowsInstaller = new WindowsToolchainInstaller(
-            new DownloadManager(_http, Log.Write), _runner, Store.Root,
-            Path.Combine(Manifests, "toolchain-manifest.json"),
-            Path.Combine(AppContext.BaseDirectory, "Verify-MicrosoftSignature.ps1"), Log.Write);
 
         Modules = new EngineModules(Store.Root, Manifests);
 
@@ -148,6 +149,10 @@ public sealed class HubWorkspace : IDisposable
     public HubPreferences Preferences { get; }
     public PreferencesStore PreferencesStore { get; }
     public EngineModules Modules { get; }
+    /// <summary>
+    /// Hub 自己的数据目录（下载缓存、Android 打包暂存）。
+    /// **不是工具链根** —— 工具链在引擎树里（<c>&lt;engine&gt;/tools/external</c>），由引擎的 setup.ps1 准备。
+    /// </summary>
     public string ToolsRoot { get; }
     public string Manifests { get; }
 
@@ -283,8 +288,8 @@ public sealed class HubWorkspace : IDisposable
 
     public void Cancel() => _operation?.Cancel();
 
-    /// <summary>MSVC 安装需要跑一个外部安装器，此时取消按钮必须让位（见 WPF 版 Closing 处理）。</summary>
-    public bool CanCancel => _operation is not null && !_windowsInstallationActive;
+    /// <summary>操作进行中即可取消（原先要避开 MSVC 安装器这类的不可中断步骤；那条链路已交还引擎）。</summary>
+    public bool CanCancel => _operation is not null;
 
     private async Task ShowOperationErrorAsync(Exception error)
     {
@@ -641,7 +646,7 @@ public sealed class HubWorkspace : IDisposable
 
             if (project.Platform == "windows-x64")
             {
-                UpdateTools(await _detector.DetectAsync(token));
+                UpdateTools(await DetectAsync(token));
             }
 
             project.BuildStatus = configureOnly ? "Configuring" : "Building";
@@ -697,7 +702,7 @@ public sealed class HubWorkspace : IDisposable
 
             if (project.Platform == "windows-x64")
             {
-                UpdateTools(await _detector.DetectAsync(token));
+                UpdateTools(await DetectAsync(token));
             }
 
             if (BuildTargets.Get(project.Platform).Family == "android" && SelectedDevice?.State != "device")
@@ -715,9 +720,16 @@ public sealed class HubWorkspace : IDisposable
         });
     }
 
-    private string BuildOutputDirectory(ProjectEntry project) => BuildTargets.Get(project.Platform).Family == "android"
-        ? Path.Combine(AndroidPackageService.StageDirectory(project), "app/build/outputs")
-        : Path.GetDirectoryName(_projects.FindExecutable(project))!;
+    private string BuildOutputDirectory(ProjectEntry project)
+    {
+        if (BuildTargets.Get(project.Platform).Family == "android")
+        {
+            // 引擎用 Gradle 产出 APK，落在工程的构建目录里（不再是 Hub 的 staging 目录）。
+            return EngineBuildLayout.FindBuildDirectory(project) ?? AndroidPackageService.StageDirectory(project);
+        }
+
+        return Path.GetDirectoryName(_projects.FindExecutable(project))!;
+    }
 
     /// <summary>打开 Android 发行设置。项目页的「Android 发行设置」按钮直接调它。</summary>
     public async Task<bool> EditAndroidReleaseAsync(ProjectEntry project)
@@ -725,7 +737,7 @@ public sealed class HubWorkspace : IDisposable
         try
         {
             _androidPasswords.TryGetValue(project.Path, out var previous);
-            var dialog = new AndroidReleaseWindow(project, ToolsRoot, _runner, previous);
+            var dialog = new AndroidReleaseWindow(project, EngineTools(RequiredEngine(project)), _runner, previous);
             var result = Owner is null ? await dialog.ShowDialog<HubDialogResult>(null!) : await dialog.ShowDialog<HubDialogResult>(Owner);
             if (result != HubDialogResult.Ok)
             {
@@ -831,10 +843,33 @@ public sealed class HubWorkspace : IDisposable
         ComponentsChanged?.Invoke();
     }
 
-    public Task<List<ToolchainComponent>> DetectAsync(CancellationToken token = default) =>
-        ToolTarget is { } target && target.Id != "windows-x64"
-            ? _platformBuilds.VerifyAsync(target.Id, token)
-            : _detector.DetectAsync(token);
+    /// <summary>
+    /// 工具链页当前用于探测的引擎：页面上的引擎选择优先，其次默认引擎，再次第一个。
+    /// 工具链属于**某个引擎树**（每个版本一套），所以必须绑定到具体引擎而不是全局。
+    /// </summary>
+    /// <summary>引擎树内的工具根（<c>&lt;engine&gt;/tools/external</c>）—— Hub 自己还要直调的工具从这里取。</summary>
+    private static string EngineTools(EngineEntry engine) => EngineToolchain.ToolRoot(engine);
+
+    private EngineEntry? ToolEngine =>
+        ModuleEngine
+        ?? State.Engines.FirstOrDefault(engine => engine.Path == State.DefaultEnginePath)
+        ?? State.Engines.FirstOrDefault();
+
+    /// <summary>
+    /// 工具链探测。判定真源是引擎自带 <c>1k/build.profiles</c>（期望版本）+ 官方安装落点
+    /// <c>&lt;engine&gt;/tools/external</c>（实装）—— Hub 不再持有自己的工具版本清单。
+    /// </summary>
+    public Task<List<ToolchainComponent>> DetectAsync(CancellationToken token = default)
+    {
+        var target = ToolTarget ?? BuildTargets.All[0];
+        if (ToolEngine is not { } engine)
+        {
+            return Task.FromResult<List<ToolchainComponent>>(
+                [new("Axmol engine", ComponentStatus.Missing, "Import an Axmol engine to inspect its toolchain.")]);
+        }
+
+        return _engineToolchain.InspectAsync(engine, target.Id, token);
+    }
 
     public async Task VerifyToolchainsAsync() =>
         await ExecuteAsync("Verify toolchains", async token => UpdateTools(await DetectAsync(token)));
@@ -851,71 +886,37 @@ public sealed class HubWorkspace : IDisposable
         await ExecuteAsync("Verify toolchains", async token => UpdateTools(await DetectAsync(token)));
     }
 
-    public async Task InstallToolsAsync()
+    /// <summary>
+    /// 环境准备：跑引擎自己的 <c>setup.ps1</c>。
+    ///
+    /// **这不是「Hub 装工具」** —— 工具链由引擎的 <c>1k/1kiss.ps1</c> 装进
+    /// <c>&lt;engine&gt;/tools/external</c>。这一步会改全局环境（User PATH / AX_ROOT / 执行策略），
+    /// 与引擎官方流程一致，所以调用方必须**先向用户确认**。
+    /// </summary>
+    public async Task RunEngineSetupAsync(string? platform = null)
     {
-        await ExecuteAsync("Install managed tools", async token =>
+        await ExecuteAsync("Run engine setup", async token =>
         {
-            var target = ToolTarget ?? throw new InvalidOperationException("Select a platform first.");
-            if (!target.CanBuildOn(BuildTargets.Host))
+            var engine = ToolEngine ?? throw new InvalidOperationException("Import an Axmol engine first.");
+            var target = ToolTarget ?? BuildTargets.All[0];
+            if (platform is null && !target.CanBuildOn(BuildTargets.Host))
             {
                 throw new PlatformNotSupportedException(HubStrings.Get("RequiresHost") + string.Join(" / ", target.Hosts));
             }
 
-            var manifest = PackageManifest.Read(Path.Combine(Manifests, "toolchain-manifest.json"));
-            var packages = manifest.Packages.Where(p => target.Family is "windows" or "uwp" || p.Id != "nuget").ToList();
-            if (target.Family is "android" or "wasm")
-            {
-                packages.AddRange(PackageManifest.Read(Path.Combine(Manifests,
-                    target.Family == "wasm" ? "web-toolchain-windows.json" : "android-native-toolchain-windows.json")).Packages);
-            }
-
-            foreach (var package in packages)
-            {
-                var destination = PackageInstaller.SafePath(Store.Root, package.Destination);
-                if (Directory.Exists(destination))
-                {
-                    Log.Write($"Already present: {destination}. Verify its executable before use.");
-                    continue;
-                }
-
-                await _installer.InstallAsync(package, DownloadProgress(), token);
-            }
-
+            var effective = platform ?? AxmolCommandMap.Target(target).Platform;
+            var result = await _setup.RunAsync(engine, new SetupOptions(effective), token);
+            Log.Write($"{effective}: {result.Describe()}");
+            // 开发者模式未开时 setup.ps1 会 exit 0 却什么都没装 —— 这种假成功必须报失败。
+            if (!result.Succeeded) throw new InvalidOperationException(result.Describe());
             UpdateTools(await DetectAsync(token));
         });
     }
 
-    public async Task InstallSdkAsync() => await ExecuteAsync("Install Windows SDK", async token =>
-    {
-        await _windowsInstaller.InstallSdkAsync(DownloadProgress(), token);
-        UpdateTools(await _detector.DetectAsync(token));
-    });
-
-    public async Task InstallBuildToolsAsync() => await ExecuteAsync("Install MSVC Build Tools", async token =>
-    {
-        var prepared = await _windowsInstaller.PrepareBuildToolsAsync(DownloadProgress(), token);
-        token.ThrowIfCancellationRequested();
-        try
-        {
-            var exit = await _windowsInstaller.InstallBuildToolsAsync(prepared, () =>
-            {
-                _windowsInstallationActive = true;
-                SetStatus(HubStrings.Get("MsvcActive"));
-            });
-
-            UpdateTools(await _detector.DetectAsync(token));
-            if (exit == 3010)
-            {
-                Log.Write("Restart Windows before building.");
-            }
-        }
-        finally
-        {
-            _windowsInstallationActive = false;
-        }
-    });
-
-    /// <summary>模块安装。WPF 版 <c>ChooseModulesAsync</c>：先选模块，再按计划逐个装。</summary>
+    /// <summary>
+    /// 平台准备。WPF 版叫「添加模块」：选平台 → 下载安装各自工具链。
+    /// 现在后半步整个是引擎的：勾选的平台逐个跑 <c>setup.ps1 -p &lt;platform&gt;</c>。
+    /// </summary>
     public async Task ChooseModulesAsync(EngineEntry? engine)
     {
         if (_operation is not null || engine is null)
@@ -923,7 +924,7 @@ public sealed class HubWorkspace : IDisposable
             return;
         }
 
-        var dialog = new ModuleWindow(Modules, Store.Root, State.Engines, engine);
+        var dialog = new ModuleWindow(Modules, State.Engines, engine);
         var result = Owner is null
             ? await dialog.ShowDialog<HubDialogResult>(null!)
             : await dialog.ShowDialog<HubDialogResult>(Owner);
@@ -935,7 +936,7 @@ public sealed class HubWorkspace : IDisposable
         var chosenEngine = dialog.SelectedEngine;
         var ids = dialog.SelectedIds;
 
-        await ExecuteAsync("Install engine modules", async token =>
+        await ExecuteAsync("Prepare platforms", async token =>
         {
             var validated = StateStore.ValidateEngine(chosenEngine.Path, chosenEngine.Channel);
             if (validated.Version != chosenEngine.Version)
@@ -943,56 +944,14 @@ public sealed class HubWorkspace : IDisposable
                 throw new InvalidDataException("Engine version changed.");
             }
 
-            var service = Modules;
-            var plan = service.Plan(chosenEngine, ids);
-            service.Save(chosenEngine, ids);
-
-            foreach (var package in plan.Packages)
-            {
-                var destination = PackageInstaller.SafePath(Store.Root, package.Destination);
-                if (Directory.Exists(destination))
-                {
-                    await _installer.RepairAsync(package, DownloadProgress(), token);
-                }
-                else
-                {
-                    await _installer.InstallAsync(package, DownloadProgress(), token);
-                }
-            }
-
-            foreach (var id in plan.Installers)
-            {
-                if (id == "windows-sdk")
-                {
-                    await _windowsInstaller.InstallSdkAsync(DownloadProgress(), token);
-                }
-                else
-                {
-                    var prepared = await _windowsInstaller.PrepareBuildToolsAsync(DownloadProgress(), token);
-                    token.ThrowIfCancellationRequested();
-                    try
-                    {
-                        var exit = await _windowsInstaller.InstallBuildToolsAsync(prepared, () =>
-                        {
-                            _windowsInstallationActive = true;
-                            SetStatus(HubStrings.Get("MsvcActive"));
-                        });
-                        if (exit == 3010)
-                        {
-                            Log.Write("Restart Windows before building.");
-                        }
-                    }
-                    finally
-                    {
-                        _windowsInstallationActive = false;
-                    }
-                }
-            }
-
+            Modules.Save(chosenEngine, ids);
             Log.Write(HubStrings.Get("ModuleSaved"));
-            foreach (var id in plan.DeferredModules)
+
+            foreach (var platform in Modules.Platforms(chosenEngine, ids))
             {
-                Log.Write(ModuleWindow.ModuleName(id) + ": " + HubStrings.Get(id == "uwp" ? "UwpPending" : "ModuleExternal"));
+                var outcome = await _setup.RunAsync(chosenEngine, new SetupOptions(platform), token);
+                Log.Write($"{platform}: {outcome.Describe()}");
+                if (!outcome.Succeeded) throw new InvalidOperationException($"{platform}: {outcome.Describe()}");
             }
 
             UpdateTools(await DetectAsync(token));
@@ -1019,8 +978,9 @@ public sealed class HubWorkspace : IDisposable
                 throw new InvalidOperationException("Select an Android project.");
             }
 
-            var environment = _platformBuilds.CreateEnvironment(RequiredEngine(project), target);
-            Devices = await new AndroidDeviceService(_runner, ToolsRoot).DevicesAsync(environment, token);
+            var deviceEngine = RequiredEngine(project);
+            var environment = _platformBuilds.CreateEnvironment(deviceEngine, target);
+            Devices = await new AndroidDeviceService(_runner, EngineTools(deviceEngine)).DevicesAsync(environment, token);
             _deviceProject = project.Path + "|" + project.Platform;
             UpdateDevicePicker();
         });

@@ -28,7 +28,7 @@ Hub 从「Windows 上跑得通的 WPF 工具」推进为「官方组织下的跨
 |---|---|
 | 引擎生命周期：下载 / 导入 / 校验 / 修复 / 卸载 | 场景 / 资源 / 动画编辑与预览 |
 | 模块安装（按引擎版本勾选平台） | 内容创作工作流 |
-| 工具链自持（固定版本，不复用系统工具） | 引擎内实时预览 |
+| 工具链：**读取**引擎自带 `1k/build.profiles` + 探测 `tools/external` 显示状态（安装交还引擎 `setup.ps1`） | 引擎内实时预览 |
 | 项目创建、目标选择 | 自举 / dogfooding（Editor 自身即 Axmol 应用） |
 | 构建 / 运行 / 部署 / 设备管理 | |
 | **CLI `--json` 与 MCP 接口（单一定义）** | |
@@ -51,18 +51,17 @@ Hub 从「Windows 上跑得通的 WPF 工具」推进为「官方组织下的跨
 | UI | **WPF → Avalonia**（WPF 是 Windows 独占，两个候选分支里都必须换，故不是决策变量） |
 | 分层 | `Core`（业务，唯一资产）/ `Cli`（薄派发）/ `App`（UI） |
 | 新增项目 | `AxmolHub.Agent`（工具注册表 + `IChatClient` 管道）、`AxmolHub.Mcp`（MCP Server）。**两者都不引用 App**，保证可在 CI / 服务器 / 远程 agent 中运行 |
-| 数据驱动 | 工具版本、URL、SHA-256、宿主声明全在 `manifests/`，代码内不散落版本号 |
-| 三条贯穿原则 | 固定版本（绝不回退系统工具）、环境隔离（`ProcessRunner` 先 `Environment.Clear()`）、先校验再落地（staging + 凭据文件） |
+| 数据驱动 | 引擎发行清单、模块/配方声明在 `manifests/`；**工具版本不在这里** —— 真源是引擎自带的 `1k/build.profiles` |
+| 三条贯穿原则 | ~~固定版本（绝不回退系统工具）~~ **已由 ADR-0002 取代**、环境隔离（`ProcessRunner` 先 `Environment.Clear()`）、先校验再落地（staging + 凭据文件） |
 
-> **第二条原则的例外已定（2026-10-02，用户决定，尚未实施）**：**Windows 上工具链首选系统已安装的
-> Visual Studio 2026**，**MSVC 的首选来源就是 Visual Studio ——与 axmol 引擎自身选取 MSVC 的方式一致**。
-> 即"绝不回退系统工具"这条对 **MSVC** 不再成立（其余工具如 cmake/ninja/axslcc 是否一并放宽待定）。
+> **工具链自持与「绝不回退系统工具」已被 [ADR-0002](adr/0002-toolchain-and-build-delegated-to-engine-cmdline.md) 取代（2026-10-03，已落地）**：
+> 构建/运行/部署委派 `axmol build|run|deploy`，工具链安装委派官方 `setup.ps1`（落点 `<engine>/tools/external`），
+> 版本真源 = `<engine>/1k/build.profiles`。Hub 侧 `ToolchainDetector` / `WindowsToolchainInstaller` /
+> 四份工具链清单已删除；`ProcessRunner` 的「传入环境即完整环境」语义保留，但**构建进程改为继承父环境**，
+> 因为工具链由引擎自己去找（系统 VS + 引擎树内工具）。
 >
-> 影响面：`ToolchainDetector` 现在写死 `toolsRoot/vs2022`（`DetectAsync` 第 20–26 行），
-> `WindowsToolchainInstaller` 整条"下载并安装一份 MSVC 到 data-root"的链路随之需要重新定位；
-> `BuildEnvironment` 里那套手工拼 `INCLUDE`/`LIB` 的做法也可能让位于直接用 VS 的环境。
-> **在这条改完之前，不要围绕"托管 MSVC"继续加验证** —— 那部分即将重写。
-> `--verify-ops` 因此**刻意没有**把"托管组件必须报 Missing"写成断言（见 `docs/avalonia-migration-plan.md` §5.9）。
+> 环境隔离仍适用于 **Hub 自己的产物**（staging + 凭据 + `data-root` 内的缓存/日志），
+> 不再声称「工具链隔离」—— 全局副作用（用户 PATH / AX_ROOT / 执行策略）是引擎官方流程的一部分，已明确接受。
 
 **四客户端共享一份工具定义**
 
@@ -217,8 +216,8 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 
 | # | 工作项 | 说明 |
 |---|---|---|
-| **D1** | macOS 宿主后端 | `ToolchainDetector` 的 macOS 版 + 对应的**工具链安装器**。**从零写、从零验证** |
-| **D2** | Linux 宿主后端 | 同上 |
+| **D1** | macOS 宿主后端 | 已**大幅简化**（ADR-0002）：环境准备与构建都交还引擎，Hub 侧只需 `EngineToolchain` 的 macOS 分支 + 系统 Xcode 检测。**仍需在真机上验证** |
+| **D2** | Linux 宿主后端 | 同上（发行版自带 gcc/g++，引擎只检测不安装） |
 
 #### D-2 打包与签名（**安装器栈必须跨平台**）
 
@@ -328,7 +327,7 @@ CLI 动词：`targets` `verify` `create` `select` `plan` `configure` `build` `ru
 | 风险 | 等级 | 说明 |
 |---|---|---|
 | **Hub ↔ Editor 范围冲突** | **高** | 两者都会想做引擎管理、项目状态、工具链、构建运行、AI；由同一人的同一套 AI 流程产出、互不知情 → 会产生"两个半成品 Hub"。**只能靠契约约束，不能靠约定俗成** |
-| Core 里的 Windows 分支 | 中高 | 是**实质技术债**（`ToolchainDetector` 硬编码 `bin/Hostx64/x64/cl.exe`；`WindowsToolchainInstaller` 整文件 Windows 专属），非仅代码风格。macOS / Linux 需新增对应 detector + installer |
+| Core 里的 Windows 分支 | 低（已解） | ADR-0002 之前是实质技术债（`ToolchainDetector` 硬编码 `bin/Hostx64/x64/cl.exe`、`WindowsToolchainInstaller` 整文件 Windows 专属）。两者均已删除：探测按引擎树布局 + vswhere，安装交还 `setup.ps1` |
 | 组织新增 C# 维护责任 | 中 | `axmolengine` 此前只有 C++。**必须指定维护者**，否则成为孤儿代码 |
 | 单贡献者容量 | 中 | 同一人同时维护 Hub 与 Editor，属容量风险而非技术风险 |
 | **SignPath 的角色要求撞上单维护者** | 中 | 其行为准则要求指定 **Authors / Reviewers / Approvers** 三个角色且全部启用 MFA —— 单一维护者可以一人兼三角，但"每次签名请求需一名受团队信任的成员批准"意味着**发布链路里始终有一个人工步骤，且这个人不能出事**。与 CLA/CODEOWNERS 同批处理 |
