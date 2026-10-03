@@ -127,7 +127,7 @@ jobs:
 
       # Avalonia 版 GUI 是 net8.0，不含任何 Windows 专属目标框架，因此三平台都必须构建。
       # 这是唯一的 GUI 构建步骤：P6 删掉 WPF 版后，App 就只剩 Avalonia 这一个实现了。
-      - name: Build Avalonia app
+      - name: Build App (GUI)
         run: dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
 
       # Checks 是 net8.0-windows（Core 里 Windows 特有的断言需要它），因此留在 Windows。
