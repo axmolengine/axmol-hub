@@ -4,7 +4,7 @@
 
 ## 从源码运行界面
 
-界面在 `src/AxmolHub.App/`（`net8.0`，目标三平台）。准备 .NET 8 SDK 或兼容 SDK，然后在本仓库根目录执行：
+界面在 `src/AxmolHub.App/`（`net8.0`，目标三平台）。开发机需要装 **.NET 10 SDK**（最稳妥：`net8.0` 目标框架下，Avalonia 12.1.3 的分析器/源生成器是按编译器 4.14 编译的，而 SDK 8 的旧补丁——例如 Ubuntu 上 `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx——只带编译器 4.8，源生成器整个不产出，报一排 `CS0103: The name 'InitializeComponent' does not exist`。SDK 8 只有够新的补丁、编译器 ≥ 4.14 才够，.NET 10 一定够），然后在本仓库根目录执行：
 
 ```powershell
 dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c Release

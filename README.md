@@ -52,6 +52,8 @@ MSVC uses the Microsoft official installer, which requests UAC and registers a n
 
 The detailed guide — running the GUI from source, the runtime verification flags (`--verify-shell`, `--verify-theme`, `--verify-foundation`, `--smoke`, `--smoke-pages`, `--verify-ops`), the CLI contract, and packaging — lives in [docs/building-from-source.md](docs/building-from-source.md).
 
+**You need a .NET SDK, and it needs a recent enough compiler.** The projects target `net8.0`, but the Avalonia 12.1.3 analyzers/source-generators are compiled against compiler version 4.14 — an older SDK 8 patch (e.g. the 8.0.1xx that `apt install dotnet-sdk-8.0` gives you on Ubuntu) only carries compiler 4.8, which silently fails to run the source generator and the build errors out with `CS0103: The name 'InitializeComponent' does not exist`. **.NET 10 SDK always works** (it ships a far newer compiler), so it's the safest choice on a dev machine. The SDK version you install and the `net8.0` target in the build output are two different things — that's why a successful build still prints `AxmolHub.App -> .../net8.0/AxmolHub.App.dll`. See [docs/ci.md](docs/ci.md) §2.4 for how CI pins its own SDK (8.0.x) and why that differs from the dev-machine recommendation.
+
 Quick start:
 
 ```powershell
