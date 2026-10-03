@@ -39,6 +39,31 @@
         </Grid>
       </Border>
 
+      <!-- Appearance: the three-state theme picker (follow system / light / dark). Unlike the language
+           names, these three labels are localized; how they get their text is noted on the ComboBox. -->
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,240">
+          <StackPanel>
+            <TextBlock Text="{DynamicResource Appearance}" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Classes="muted" Margin="0,7,0,0" Text="{DynamicResource ThemeHint}" />
+          </StackPanel>
+          <!-- The value lives on Tag, exactly like the language picker: the index ↔ value mapping
+               (0 ↔ system …) would otherwise be scattered across XAML and code, and inserting a
+               value would silently misalign them.
+
+               The three labels are **not** {DynamicResource}: a ComboBoxItem sitting in Items isn't
+               attached to the logical tree until the dropdown opens, and DynamicResource resolves
+               through the resource host it is attached to — measured here, all three came back empty.
+               They are written in code instead (see LocalizeThemeItems), and the language switch
+               reaches them because MainWindow.ApplyLanguage reloads this page. -->
+          <ComboBox x:Name="ThemePicker" Grid.Column="1">
+            <ComboBoxItem Tag="system" />
+            <ComboBoxItem Tag="light" />
+            <ComboBoxItem Tag="dark" />
+          </ComboBox>
+        </Grid>
+      </Border>
+
       <!-- Storage and projects -->
       <Border Classes="card">
         <StackPanel Spacing="18">

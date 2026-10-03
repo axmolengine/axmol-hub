@@ -58,12 +58,23 @@ public partial class App : Application
         // default: that default is the "cold-start language", which was changed to English on
         // 2026-10-03 (see HubTexts.DefaultLanguage). Previously the two happened to both be Chinese,
         // so this constraint looked like "use the default" when it was actually two separate things.
-        if (Options.VerifyShellReport is not null || Options.VerifyOpsReport is not null)
+        // Widened from "shell/ops self-check only" to every automation mode: the theme now comes
+        // from the same settings file, and it changes what the assertions actually measure. The
+        // gallery asserts "switching the variant really changes the background", which only holds
+        // when the run starts from a known variant — on a machine whose system theme is light,
+        // "follow system" would start the run in light and the same binary would fail there.
+        // Pinning dark here is the same closure as pinning Chinese (and makes --smoke screenshots
+        // comparable across machines).
+        if (Options.IsAutomation)
         {
-            preferences = new HubPreferences { Language = HubTexts.ChineseLanguage };
+            preferences = new HubPreferences { Language = HubTexts.ChineseLanguage, Theme = HubTheme.Dark };
         }
 
         HubStrings.Apply(preferences.Language, this);
+
+        // Theme before the first window, for the same reason as the copy: the variant decides which
+        // side of every ThemeDictionaries token DynamicResource resolves to.
+        ThemeService.Apply(preferences.Theme, this);
 
         // P4's three self-check/verification modes each use a dedicated window; the product mode
         // opens the main window.

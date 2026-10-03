@@ -71,6 +71,7 @@ public partial class SettingsPage : UserControl
         _workspace.Changed += Reload;
 
         LanguagePicker.SelectionChanged += (_, _) => OnLanguageChanged();
+        ThemePicker.SelectionChanged += (_, _) => OnThemeChanged();
         ChooseDataDirectoryButton.Click += async (_, _) => await ChooseDataDirectoryAsync();
         ChooseProjectDirectoryButton.Click += async (_, _) => await ChooseProjectDirectoryAsync();
         OpenDataFolderButton.Click += (_, _) => _openFolder(_workspace.Store.Root);
@@ -95,6 +96,16 @@ public partial class SettingsPage : UserControl
             ? tag
             : HubTexts.DefaultLanguage;
 
+    /// <summary>The theme tags declared in XAML, in the order they appear. Assertions compare it against <see cref="HubTheme.All"/>.</summary>
+    internal string[] DeclaredThemes
+        => ThemePicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
+
+    /// <summary>The currently selected theme. Unknown/none fall back to following the system (same rule as <see cref="HubTheme.Normalize"/>).</summary>
+    internal string SelectedTheme
+        => ThemePicker.SelectedItem is ComboBoxItem { Tag: string tag } && HubTheme.IsSupported(tag)
+            ? HubTheme.Normalize(tag)
+            : HubTheme.DefaultTheme;
+
     /// <summary>
     /// The editor-executable validation rule (the WPF version wrote it once per branch).
     /// Extracted into a pure static function so it **can be asserted** — actually popping a file picker can't be automated,
@@ -113,7 +124,9 @@ public partial class SettingsPage : UserControl
         _ready = false;
         try
         {
+            LocalizeThemeItems();
             SelectLanguage(HubStrings.Language);
+            SelectTheme(_preferences.Theme);
             DataLocation.Text = _workspace.Store.Root;
             DefaultProjectLocation.Text = _preferences.ProjectDirectory ?? HubStrings.Get("NotSelected");
 
@@ -149,6 +162,55 @@ public partial class SettingsPage : UserControl
         }
 
         LanguagePicker.SelectedIndex = 0;
+    }
+
+    /// <summary>Copy key for a theme value. Kept next to the values so adding a theme can't leave its label behind.</summary>
+    internal static string ThemeTextKey(string theme) => HubTheme.Normalize(theme) switch
+    {
+        HubTheme.Light => "ThemeLight",
+        HubTheme.Dark => "ThemeDark",
+        _ => "ThemeSystem",
+    };
+
+    /// <summary>
+    /// Writes the three labels from the text table. It is imperative **on purpose**: a ComboBoxItem
+    /// inside <c>Items</c> is not attached to the logical tree until the dropdown opens, and
+    /// <c>DynamicResource</c> resolves through the resource host it is attached to — measured here,
+    /// all three labels silently came back empty. Reload runs on every language switch
+    /// (see <c>MainWindow.ApplyLanguage</c>), which is what keeps them in the current language.
+    /// Only the <c>Content</c> is touched, never the selection, so this can't re-enter
+    /// <see cref="OnThemeChanged"/>.
+    /// </summary>
+    private void LocalizeThemeItems()
+    {
+        foreach (var item in ThemePicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } theme && HubTheme.IsSupported(tag))
+            {
+                theme.Content = HubStrings.Get(ThemeTextKey(tag));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selects a theme item by the tag the item itself declares; not found → the first item (following
+    /// the system), never an empty "nothing selected" state. Same contract as <see cref="SelectLanguage"/>.
+    /// </summary>
+    internal void SelectTheme(string theme)
+    {
+        var index = 0;
+        foreach (var item in ThemePicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } && tag == HubTheme.Normalize(theme))
+            {
+                ThemePicker.SelectedIndex = index;
+                return;
+            }
+
+            index++;
+        }
+
+        ThemePicker.SelectedIndex = 0;
     }
 
     /// <summary>
@@ -190,6 +252,47 @@ public partial class SettingsPage : UserControl
             _preferences.Language = previous;
             HubStrings.Apply(previous, Application.Current!);
             SelectLanguage(previous);
+            _ready = true;
+            _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("OperationFailed"), ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Switches theme: write settings → apply the variant. Same order as the language path (persist
+    /// first), for the same reason: a failed write must leave the UI untouched rather than showing a
+    /// theme the settings file doesn't have — it would silently revert on the next launch.
+    ///
+    /// Unlike the language path there is **nothing to notify the shell about**: the theme has no
+    /// imperative copy, every token is a DynamicResource and re-resolves on its own, including in
+    /// windows built long before the switch.
+    /// </summary>
+    private void OnThemeChanged()
+    {
+        if (!_ready)
+        {
+            return;
+        }
+
+        var previous = ThemeService.Current;
+        var theme = SelectedTheme;
+        if (theme == previous)
+        {
+            return;
+        }
+
+        try
+        {
+            _preferences.Theme = theme;
+            _preferencesStore.Save(_preferences);
+            ThemeService.Apply(theme);
+        }
+        catch (Exception ex)
+        {
+            // On failure, revert the UI, otherwise it would show a theme that disagrees with the settings file.
+            _ready = false;
+            _preferences.Theme = previous;
+            ThemeService.Apply(previous);
+            SelectTheme(previous);
             _ready = true;
             _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("OperationFailed"), ex.Message);
         }

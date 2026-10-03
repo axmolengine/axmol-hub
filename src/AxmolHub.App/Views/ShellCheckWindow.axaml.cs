@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
@@ -618,6 +619,13 @@ public partial class ShellCheckWindow : Window
         Check(new PreferencesStore(preferencesPath).Load().Language == HubTexts.EnglishLanguage,
             "语言切换已写入设置文件（" + preferencesPath + "）");
 
+        // The theme labels are copy written in code rather than DynamicResource, so they only follow
+        // if the language switch really reloads the page — the failure mode is "the settings page is
+        // half English, half Chinese".
+        Check(ThemeLabels(settings) == string.Join("/", new[] { "ThemeSystem", "ThemeLight", "ThemeDark" }
+                  .Select(key => HubTexts.Get(key, HubTexts.EnglishLanguage))),
+            "切到英文后主题三项的文案也是英文（实际 " + ThemeLabels(settings) + "）");
+
         // --- 5.3 Another migrated page follows along too (cross-page, not just the settings page) ---
         var engines = (InstallsPage)shell.NavigateTo("Installs");
         shell.UpdateLayout();
@@ -652,6 +660,47 @@ public partial class ShellCheckWindow : Window
         Check(restoredHeaders == string.Join("/", new[] { "Version", "Channel", "Path" }.Select(key => HubTexts.Get(key, HubTexts.ChineseLanguage))),
             "切回中文后引擎页表头是中文（实际 " + restoredHeaders + "）");
 
+        // --- 5.6 Three-state theme picker ---
+        // Same three silent failure modes as 5.2, for the theme: the dropdown's Tag values drifting
+        // from HubTheme, "saved but never applied", and "applied but the tokens didn't follow".
+        Check(settings.DeclaredThemes.SequenceEqual(HubTheme.All),
+            "主题下拉项通过 Tag 声明的取值与 HubTheme 一致（实际 " + string.Join(", ", settings.DeclaredThemes) + "）");
+
+        Check(settings.SelectedTheme == new PreferencesStore(preferencesPath).Load().Theme,
+            "设置页打开时选中的就是设置文件里的主题（" + settings.SelectedTheme + "）");
+
+        // The theme labels are written in code (a ComboBoxItem inside Items can't resolve
+        // DynamicResource), so they probe the **other** half of the localization path: copy that only
+        // changes through a reload. Reading them back here proves the language switch reached them.
+        Check(ThemeLabels(settings) == string.Join("/", new[] { "ThemeSystem", "ThemeLight", "ThemeDark" }
+                  .Select(key => HubTexts.Get(key, HubStrings.Language))),
+            "切回中文后主题三项的文案也是中文（实际 " + ThemeLabels(settings) + "）");
+
+        var darkToken = TokenColor("Hub.Background");
+        settings.SelectTheme(HubTheme.Light);
+        shell.UpdateLayout();
+        settings.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        Check(Application.Current!.ActualThemeVariant == ThemeVariant.Light,
+            "选浅色后实际主题变体跟着变（实际 " + Application.Current!.ActualThemeVariant + "）");
+
+        // The variant name changing is not enough: what the user sees is the token **values**.
+        var lightToken = TokenColor("Hub.Background");
+        Check(lightToken is not null && lightToken != darkToken,
+            "切浅色后 Hub.Background 令牌换成另一组值（" + darkToken + " → " + lightToken + "）");
+
+        Check(new PreferencesStore(preferencesPath).Load().Theme == HubTheme.Light,
+            "主题切换已写入设置文件（" + preferencesPath + "）");
+
+        // Switch back to dark: reversible, and it leaves the run dark so the render captures below
+        // aren't shot in a light theme.
+        settings.SelectTheme(HubTheme.Dark);
+        Dispatcher.UIThread.RunJobs();
+        Check(Application.Current!.ActualThemeVariant == ThemeVariant.Dark
+              && new PreferencesStore(preferencesPath).Load().Theme == HubTheme.Dark,
+            "切回深色也落了盘（自检收尾不留浅色设置，否则后面的渲染断言会拍成浅色）");
+
         await Task.CompletedTask;
     }
 
@@ -685,6 +734,13 @@ public partial class ShellCheckWindow : Window
     // ---------------------------------------------------------------------
     /// <summary>The settings file lives **inside the data root**: all state of one self-check lands in the same temp directory and can be dropped wholesale.</summary>
     private static string PreferencesPathFor(string dataRoot) => System.IO.Path.Combine(dataRoot, "hub-settings.json");
+
+    /// <summary>Reads the three theme labels off the controls themselves: they are written in code,
+    /// so only reading them back proves they followed the language switch.</summary>
+    private static string ThemeLabels(SettingsPage settings)
+        => NamedDescendant<ComboBox>(settings, "ThemePicker") is { } picker
+            ? string.Join("/", picker.Items.OfType<ComboBoxItem>().Select(item => item.Content?.ToString() ?? ""))
+            : "";
 
     /// <summary>
     /// Self-check-specific shell: both the data root and the settings file use temp directories.

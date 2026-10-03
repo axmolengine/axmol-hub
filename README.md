@@ -4,7 +4,7 @@
 
 **A standalone desktop app that manages Axmol engines, projects, and build toolchains.**
 
-Current version **v0.2.0** — early stage. The GUI is C# / .NET 8 / **Avalonia** (`net8.0`, targeting three platforms; validated on Windows, macOS / Linux not yet verified). The currently validated engine baseline is **Axmol 2.11.5**.
+Current version **v0.2.1** — early stage. The GUI is C# / .NET 8 / **Avalonia** (`net8.0`, targeting three platforms; validated on Windows, macOS / Linux not yet verified). The currently validated engine baseline is **Axmol 2.11.5**.
 
 ![Axmol Hub main window](docs/images/hub.png)
 
