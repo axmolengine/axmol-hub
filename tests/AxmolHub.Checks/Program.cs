@@ -212,6 +212,65 @@ async Task Reject<T>(Func<Task> action, string name) where T : Exception
 }
 
 // ---------------------------------------------------------------------------
+// 下载契约：原子落盘、缓存复用、坏哈希拒绝、断点续传、流式 SHA-256。
+// 自带 return、主机无关、不联网（FixtureHandler 注入），可在 CI 上跑。
+// ---------------------------------------------------------------------------
+if (args.Contains("--check-download"))
+{
+    var downloadBytes = Encoding.UTF8.GetBytes("verified download fixture with enough content to exercise the streaming path");
+    var downloadHandler = new FixtureHandler(downloadBytes);
+    using var downloadClient = new HttpClient(downloadHandler);
+    var downloadManager = new DownloadManager(downloadClient, _ => { });
+    var downloadCache = Path.Combine(root, "cache-" + Guid.NewGuid().ToString("N"));
+    var downloadSha = Convert.ToHexString(SHA256.HashData(downloadBytes));
+
+    var downloadFile = await downloadManager.DownloadAsync(new Uri("https://fixture.test/file.zip"), downloadSha, downloadCache);
+    Check(File.ReadAllBytes(downloadFile).SequenceEqual(downloadBytes), "SHA-256 download and atomic final file");
+    await downloadManager.DownloadAsync(new Uri("https://fixture.test/file.zip"), downloadSha, downloadCache);
+    Check(downloadHandler.Requests == 1, "Verified cache reused");
+    await Reject<InvalidDataException>(() => downloadManager.DownloadAsync(new Uri("https://fixture.test/file.zip"), new string('0', 64), downloadCache), "Bad hash rejected");
+    Check(!Directory.EnumerateFiles(downloadCache, "*.partial").Any() && !File.Exists(Path.Combine(downloadCache, new string('0', 64) + ".zip")), "Failed downloads leave no installed/cache artifact");
+    await Reject<ArgumentException>(() => downloadManager.DownloadAsync(new Uri("http://fixture.test/file.zip"), downloadSha, downloadCache), "HTTP package rejected");
+
+    // 断点续传：第一次响应在传输中途截断，重试时用 Range 从断点续传，最终 sha256 正确。
+    var resumeBytes = Encoding.UTF8.GetBytes("resumable download fixture with enough bytes to split across two requests");
+    var resumeSha = Convert.ToHexString(SHA256.HashData(resumeBytes));
+    var resumeCache = Path.Combine(root, "cache-resume-" + Guid.NewGuid().ToString("N"));
+    var resumeHandler = new FixtureHandler(resumeBytes) { TruncateFirstResponseTo = resumeBytes.Length / 2 };
+    using var resumeClient = new HttpClient(resumeHandler);
+    var resumeDownloads = new DownloadManager(resumeClient, _ => { });
+    var resumeFile = await resumeDownloads.DownloadAsync(new Uri("https://fixture.test/resume.zip"), resumeSha, resumeCache);
+    Check(File.ReadAllBytes(resumeFile).SequenceEqual(resumeBytes), "Interrupted download resumes from the breakpoint and verifies the whole-file hash");
+    Check(resumeHandler.Requests >= 2 && resumeHandler.SawRange, "Resume issues a Range request after interruption");
+
+    // 服务器不支持 Range（返回 200）：从 0 重写，正确落盘。
+    var noRangeBytes = Encoding.UTF8.GetBytes("server ignores range and returns the full body");
+    var noRangeSha = Convert.ToHexString(SHA256.HashData(noRangeBytes));
+    var noRangeCache = Path.Combine(root, "cache-norange-" + Guid.NewGuid().ToString("N"));
+    var noRangeHandler = new FixtureHandler(noRangeBytes) { IgnoreRange = true };
+    using var noRangeClient = new HttpClient(noRangeHandler);
+    var noRangeDownloads = new DownloadManager(noRangeClient, _ => { });
+    var noRangeFile = await noRangeDownloads.DownloadAsync(new Uri("https://fixture.test/norange.zip"), noRangeSha, noRangeCache);
+    Check(File.ReadAllBytes(noRangeFile).SequenceEqual(noRangeBytes), "Server without Range support falls back to a clean full download");
+
+    // 坏 partial（续传后 sha256 不匹配）→ 删除重下 → 正确。
+    var corruptBytes = Encoding.UTF8.GetBytes("corrupted resume content that will not match its digest");
+    var corruptSha = Convert.ToHexString(SHA256.HashData(corruptBytes));
+    var corruptCache = Path.Combine(root, "cache-corrupt-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(corruptCache);
+    var corruptTarget = Path.Combine(corruptCache, corruptSha.ToLowerInvariant() + ".zip");
+    File.WriteAllBytes(corruptTarget + ".partial", Encoding.UTF8.GetBytes("leftover garbage that is not the right prefix"));
+    var corruptHandler = new FixtureHandler(corruptBytes);
+    using var corruptClient = new HttpClient(corruptHandler);
+    var corruptDownloads = new DownloadManager(corruptClient, _ => { });
+    var corruptFile = await corruptDownloads.DownloadAsync(new Uri("https://fixture.test/corrupt.zip"), corruptSha, corruptCache);
+    Check(File.ReadAllBytes(corruptFile).SequenceEqual(corruptBytes), "Corrupted resume content is discarded and re-downloaded cleanly");
+
+    Console.WriteLine($"{count} checks passed.");
+    return;
+}
+
+// ---------------------------------------------------------------------------
 // 工具版本真源 + 引擎树工具链探测。自带 return、主机无关、不联网、不安装 ——
 // 因此可以在 CI 上对一棵真实引擎树跑。真源是引擎自带 1k/build.profiles，
 // 落点是官方 setup.ps1 的 tools/external。
@@ -719,19 +778,6 @@ var badZip = Path.Combine(root, Guid.NewGuid() + ".zip");
 using (var zip = ZipFile.Open(badZip, ZipArchiveMode.Create)) zip.CreateEntry("../escape.txt");
 await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.ExtractSafely(badZip, Path.Combine(root, "extracted"))), "ZIP traversal rejected");
 
-var bytes = Encoding.UTF8.GetBytes("verified download fixture");
-var handler = new FixtureHandler(bytes);
-using var client = new HttpClient(handler);
-var downloads = new DownloadManager(client, _ => { });
-var cache = Path.Combine(root, "cache-" + Guid.NewGuid().ToString("N"));
-var sha = Convert.ToHexString(SHA256.HashData(bytes));
-var downloaded = await downloads.DownloadAsync(new Uri("https://fixture.test/file.zip"), sha, cache);
-Check(File.ReadAllBytes(downloaded).SequenceEqual(bytes), "SHA-256 download and atomic final file");
-await downloads.DownloadAsync(new Uri("https://fixture.test/file.zip"), sha, cache);
-Check(handler.Requests == 1, "Verified cache reused");
-await Reject<InvalidDataException>(() => downloads.DownloadAsync(new Uri("https://fixture.test/file.zip"), new string('0', 64), cache), "Bad hash rejected");
-Check(!Directory.EnumerateFiles(cache, "*.partial").Any() && !File.Exists(Path.Combine(cache, new string('0', 64) + ".zip")), "Failed downloads leave no installed/cache artifact");
-await Reject<ArgumentException>(() => downloads.DownloadAsync(new Uri("http://fixture.test/file.zip"), sha, cache), "HTTP package rejected");
 // SDK 完整性判定已交还引擎（它在 CMake 配置阶段校验），Hub 不再自己拼装/校验一份 SDK。
 var cancelledScript = Path.Combine(root, "must-not-start.ps1");
 var startedMarker = Path.Combine(root, "unexpected-start.txt");
@@ -953,9 +999,45 @@ Console.WriteLine($"{count} checks passed. Real platform builds, device deployme
 sealed class FixtureHandler(byte[] bytes) : HttpMessageHandler
 {
     public int Requests { get; private set; }
+    public bool IgnoreRange { get; set; }
+    public bool SawRange { get; private set; }
+    // When set, the first non-Range request returns only this many bytes while the
+    // Content-Length header still claims the full size, simulating a mid-transfer drop.
+    public int? TruncateFirstResponseTo { get; set; }
+    private bool _truncated;
+
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         Requests++;
+        var range = request.Headers.Range?.Ranges.FirstOrDefault();
+        if (range is not null && !IgnoreRange)
+        {
+            SawRange = true;
+            var from = range.From ?? 0;
+            var to = range.To ?? bytes.LongLength - 1;
+            if (from >= bytes.LongLength)
+            {
+                // Range start is past the end; a real server replies 416.
+                var unsatisfied = new HttpResponseMessage(HttpStatusCode.RequestedRangeNotSatisfiable) { RequestMessage = request };
+                unsatisfied.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(bytes.LongLength);
+                return Task.FromResult(unsatisfied);
+            }
+            var length = (int)(to - from + 1);
+            var slice = new byte[length];
+            Array.Copy(bytes, (int)from, slice, 0, length);
+            var partial = new HttpResponseMessage(HttpStatusCode.PartialContent) { RequestMessage = request, Content = new ByteArrayContent(slice) };
+            partial.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(from, to, bytes.LongLength);
+            return Task.FromResult(partial);
+        }
+        if (TruncateFirstResponseTo is { } cut && !_truncated)
+        {
+            _truncated = true;
+            var slice = new byte[cut];
+            Array.Copy(bytes, 0, slice, 0, cut);
+            var content = new ByteArrayContent(slice);
+            content.Headers.ContentLength = bytes.LongLength;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = content });
+        }
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new ByteArrayContent(bytes) });
     }
 }

@@ -153,6 +153,16 @@ jobs:
           dotnet run --project tests/AxmolHub.Checks -c ${{ env.CONFIGURATION }} -- \
             artifacts/checks --check-cli-json src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll
 
+      # 下载契约（原子落盘 / 缓存复用 / 坏哈希拒绝 / 断点续传 / 流式 SHA-256）自带 return、
+      # 用注入的 FixtureHandler、不联网、不依赖真实引擎，因此能在干净 runner 上跑。
+      - name: Verify download contract
+        if: matrix.host == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run --project tests/AxmolHub.Checks -c ${{ env.CONFIGURATION }} -- \
+            artifacts/checks --check-download
+
       - name: Publish self-contained CLI
         run: dotnet publish src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }} -r ${{ matrix.rid }} --self-contained true -o artifacts/cli/${{ matrix.rid }}
 
