@@ -35,7 +35,7 @@ Platform/architecture support is expressed by a single build-target model (`Buil
 
 The CLI cross-publishes `win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`; only the Windows host has actually been exercised. Android supports Debug / Release signed APK / AAB; Release uses the project key, and the ARM64 release package has been actually built and verified. See [docs/android-release-signing.md](docs/android-release-signing.md) for the full signing workflow.
 
-Installer packages are not code-signed, and first-install verification on a clean Windows 10 / 11 is not done yet.
+Installer packages are not yet code-signed (SignPath Foundation signing is being set up — see [Code signing policy](#code-signing-policy)), and first-install verification on a clean Windows 10 / 11 is not done yet.
 
 ## Quick start
 
@@ -89,6 +89,19 @@ Engine sources, SDKs, compilers, personal projects, caches, dev notes, and Git h
 Welcome. Please include the Hub / engine version, OS, target platform, Debug / Release, reproduction steps, and relevant logs; redact private directories, device serials, and credentials before posting.
 
 Keep changes scoped: UI logic in `AxmolHub.App`, build and state logic in `Core`, and the CLI reuses `Core`. Runtime PowerShell scripts belong to `Core/Scripts/` and are copied into each client's output, not into any single client project. New UI strings must provide both Chinese and English. **Toolchain versions do not live in Hub** — the source of truth is the engine's `1k/build.profiles`, and installation is the engine's `setup.ps1` (see [docs/adr/0002](docs/adr/0002-toolchain-and-build-delegated-to-engine-cmdline.md)). **Third-party NuGet packages may only go into `AxmolHub.App`** (currently `Velopack` + `Avalonia.*`); `Core`, `Cli`, and `Checks` must keep **zero NuGet dependencies** — their offline cold build is a deliberate property.
+
+## Privacy policy
+
+Axmol Hub does not collect telemetry or personal information. It accesses the network only to fetch engine and toolchain version information and to download engines, toolchains, and dependencies that you choose to install or update (from axmol.dev, GitHub, and configured mirrors). Log files written for troubleshooting stay on your machine.
+
+## Code signing policy
+
+Free code signing is provided by [SignPath.io](https://about.signpath.io), with the certificate issued by the [SignPath Foundation](https://signpath.org). SignPath signing for Axmol Hub is being set up; until it is active, installer packages are unsigned (see [docs/hub-development-plan.md](docs/hub-development-plan.md) §4 D5).
+
+- Committers and reviewers: [@halx99](https://github.com/halx99)
+- Approvers: [@halx99](https://github.com/halx99)
+
+Privacy: see [Privacy policy](#privacy-policy).
 
 ## License
 
