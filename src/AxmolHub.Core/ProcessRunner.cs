@@ -67,17 +67,26 @@ public sealed class ProcessRunner(Action<string> log)
         var output = ReadAsync(process.StandardOutput, false, Redact, MarkOutput);
         var error = ReadAsync(process.StandardError, true, Redact, MarkOutput);
 
-        var exit = process.WaitForExitAsync(cancellation);
-        Task? watchdog = null;
-        if (idleTimeout != Infinite)
+        if (idleTimeout == Infinite)
         {
-            // 空闲 watchdog：只要"距最近一次输出"超过 idleTimeout 就取消，触发下方 WhenAny 的超时分支。
+            // 完全不设超时（运行型长驻进程，如游戏）：只等进程退出或用户取消。
+            await process.WaitForExitAsync(cancellation);
+        }
+        else
+        {
+            // 空闲 watchdog 通过 idleCts 的取消来「终止」对进程退出的等待：
+            // - 进程正常退出 → WaitForExitAsync(idleCts.Token) 正常返回，走下面的正常收尾；
+            // - 连续无输出超时 → idleCts.Cancel() → WaitForExitAsync 抛 OperationCanceledException，
+            //   但此时用户的 cancellation 未必取消，据此区分「空闲超时」与「用户取消」。
             using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            watchdog = WatchIdleAsync(process, idleTimeout, idleCts, () => Interlocked.Read(ref lastOutputTicks));
-            var completed = await Task.WhenAny(exit, watchdog);
-            if (completed == watchdog)
+            _ = WatchIdleAsync(process, idleTimeout, idleCts, () => Interlocked.Read(ref lastOutputTicks));
+            try
             {
-                // 空闲超时：结束整个进程树，避免留下编译器或下载子进程。
+                await process.WaitForExitAsync(idleCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 结束整个进程树，避免留下编译器或下载子进程。
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
                 await Task.WhenAll(output, error);
@@ -89,13 +98,8 @@ public sealed class ProcessRunner(Action<string> log)
                 log($"Process stopped: idle timeout ({idleTimeout})");
                 throw new TimeoutException($"Process produced no output for {idleTimeout}: {executable}");
             }
-            // 进程先正常退出：叫停 watchdog（它下一次 Delay 会因取消立刻醒来），再走正常收尾。
-            idleCts.Cancel();
         }
 
-        // 正常退出（或用户取消）。取消在这里统一由 WaitForExitAsync(cancellation) 抛出。
-        await exit;
-        if (watchdog is not null) await watchdog;
         var result = new ProcessResult(process.ExitCode, await output, await error);
         log($"Exit code: {result.ExitCode}");
         return result;
@@ -103,8 +107,9 @@ public sealed class ProcessRunner(Action<string> log)
 
     /// <summary>
     /// 空闲 watchdog：周期性检查"距最近一次输出"是否超过 <paramref name="idleTimeout"/>，
-    /// 超过就取消 <paramref name="idleCts"/>。检查周期取 1 秒与 idleTimeout/10 的较小值，
-    /// 保证检测延迟对"分钟级"超时无感，同时不空转 CPU。
+    /// 超过就取消 <paramref name="idleCts"/>（进而取消调用方对进程退出的等待）。
+    /// 检查周期取 1 秒与 idleTimeout/10 的较小值，保证检测延迟对"分钟级"超时无感，同时不空转 CPU。
+    /// 注意：watchdog 检测到进程已退出就静默返回 —— 它**只负责超时判定**，进程退出的正常收尾由调用方负责。
     /// </summary>
     private static async Task WatchIdleAsync(Process process, TimeSpan idleTimeout, CancellationTokenSource idleCts, Func<long> lastOutputTicks)
     {

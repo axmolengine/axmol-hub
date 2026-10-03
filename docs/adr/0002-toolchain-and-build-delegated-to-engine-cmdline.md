@@ -161,8 +161,6 @@ axmol run -p win32 -a arm64 -t unit-tests -O3
 
 委派不等于什么都不做，以下仍然由 Hub 负责：
 
-- **Windows 控制台日志捕获**：官方入口是 GUI 子系统，Hub 在入口未被用户改动时经
-  `-xc -DCMAKE_PROJECT_INCLUDE=…` 注入一个把子系统改成控制台的补丁，运行日志才能进日志面板。
 - **运行期发布与校验**：`PublishWindowsRuntime` 把 exe/资源/编译好的着色器复制到独立运行目录，
   `ValidateWindowsRuntimeAssets` 在启动前校验资源与着色器不缺失、不过期。
 - **构建收据**：`<proj>/.hub/build.json` 记录本次构建对应的引擎安装与目标/配置，

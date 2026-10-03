@@ -18,7 +18,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     /// <summary>
     /// 这个目标会执行的引擎命令（<c>plan</c> 动词与日志都用它）。
     /// 与 <c>ProjectService.BuildAsync</c> **共用** <see cref="ProjectBuildOptions"/>，
-    /// 所以 plan 报出的 <c>-xc</c> 就是 build 实际会用的那一份（含日志捕获补丁与预编译库选项）。
+    /// 所以 plan 报出的 <c>-xc</c> 就是 build 实际会用的那一份（含预编译库选项）。
     /// </summary>
     public static AxmolInvocation Plan(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
     {

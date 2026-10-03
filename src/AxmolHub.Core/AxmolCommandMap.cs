@@ -5,7 +5,14 @@ namespace AxmolHub.Core;
 /// </summary>
 public sealed record AxmolInvocation(string SubCommand, string[] Arguments)
 {
-    /// <summary>仅用于日志与 <c>plan</c> 的人读输出。</summary>
+    /// <summary>
+    /// 仅用于日志与 <c>plan</c> 的人读输出。
+    ///
+    /// 含空格的值用 <c>"…"</c> 包起来：这既是给人读时看得清边界，也提醒后续任何「把
+    /// <see cref="Arguments"/> 重新拼回一条 shell 命令字符串」的代码——<c>-xc</c> 的值
+    /// **必须**用引号包裹，否则空格会在 shell 层把它拆碎，落到引擎 <c>build.ps1</c>
+    /// 的「一次只吃一个参数」上就只剩半截，导致莫名其妙的构建失败。
+    /// </summary>
     public override string ToString() => "axmol " + SubCommand + " " + string.Join(' ',
         Arguments.Select(argument => argument.Contains(' ') ? $"\"{argument}\"" : argument));
 }
@@ -60,11 +67,16 @@ public static class AxmolCommandMap
         _ => null,
     };
 
-    /// <summary>配置开关。引擎用 <c>-O3</c> 表示优化/Release；默认（不传）即 Debug。</summary>
+    /// <summary>
+    /// 配置开关。引擎用 <c>-O&lt;n&gt;</c> 的 <c>n</c> 作索引选构建类型
+    /// （<c>1k/1kiss.ps1</c>：<c>@('Debug','MinSizeRel','RelWithDebInfo','Release')[$options.O]</c>）：
+    /// <c>-O0</c>=Debug、<c>-O3</c>=Release。<b>不传 <c>-O</c> 时引擎默认 <c>RelWithDebInfo</c></b>，
+    /// 所以这里 <c>Debug</c> 必须显式传 <c>-O0</c>，否则 Hub 的「Debug」会静默构建成 RelWithDebInfo。
+    /// </summary>
     private static void AddConfiguration(ICollection<string> arguments, string configuration)
     {
         BuildConfigurations.Validate(configuration);
-        if (configuration == "Release") arguments.Add("-O3");
+        arguments.Add(configuration == "Release" ? "-O3" : "-O0");
     }
 
     private static void AddTarget(ICollection<string> arguments, BuildTarget target)
@@ -133,7 +145,17 @@ public static class AxmolCommandMap
         return new("deploy", arguments.ToArray());
     }
 
-    /// <summary><c>-xc</c> 只接一个参数：多个 cmake 选项用逗号连起来。</summary>
+    /// <summary>
+    /// <c>-xc</c> 只接**一个**参数：多个 cmake 选项用逗号连成一个字符串。
+    ///
+    /// **为什么必须是单参数**：引擎 <c>plugins/build.ps1</c> 的参数循环是「一次只吃一个」——
+    /// <c>-xc</c> 后面的第一个 token 被存进 <c>$options.xc</c>，再 <c>Split(',')</c> 拆开。
+    /// 一旦 <c>-xc</c> 的值被拆成多个 token（例如值里含空格、或被人当多个参数传入），
+    /// 只有第一个 token 进得了 <c>$options.xc</c>，其余变成 <c>$unhandled_args</c> 里的游离参数，
+    /// 最终拼出的 CMake 命令缺选项，表现为「莫名其妙的构建失败」且极难排查。
+    /// 因此这里务必 <c>string.Join(',', …)</c> 成一个不含空格的单参数；外层 shell 转义也靠
+    /// <see cref="AxmolInvocation.ToString"/> 的引号包裹来兜底（见其文档）。
+    /// </summary>
     private static void AddCmake(ICollection<string> arguments, IEnumerable<string>? options)
     {
         var values = (options ?? []).Where(option => option.Length > 0).ToArray();

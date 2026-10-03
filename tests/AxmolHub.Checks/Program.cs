@@ -771,44 +771,6 @@ var recovery = packages.Uninstall(package);
 Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/tool.exe")), "Uninstall removes managed installation and retains recovery files");
 }
 {
-    var assetRoot = Path.Combine(root, "windows-assets-fixture-" + Guid.NewGuid().ToString("N"));
-    var assetsProject = new ProjectEntry { Name = "Assets", Path = assetRoot };
-    // 引擎的布局：<buildDir>/bin/<App>/<Config>/<App>.exe 与 <buildDir>/runtime/axslc。
-    var assetsBuild = Path.Combine(assetRoot, "build_win32_x64");
-    var assetsOutput = Path.Combine(assetsBuild, "bin/Assets/Debug");
-    var assetsExe = Path.Combine(assetsOutput, "Assets.exe");
-    Directory.CreateDirectory(Path.Combine(assetRoot, "Content"));
-    Directory.CreateDirectory(Path.Combine(assetsOutput, "Content"));
-    Directory.CreateDirectory(Path.Combine(assetsOutput, "axslc"));
-    Directory.CreateDirectory(Path.Combine(assetsBuild, "runtime/axslc"));
-    foreach (var shader in new[] { "positionTextureColor_vs", "positionTextureColor_fs", "label_normal_fs", "positionColorLengthTexture_vs", "positionColorLengthTexture_fs", "positionColorTextureAsPointsize_vs", "positionColor_fs" })
-    {
-        File.WriteAllText(Path.Combine(assetsOutput, "axslc", shader), "#version 300 es\nvoid main(){}\n");
-        File.Copy(Path.Combine(assetsOutput, "axslc", shader), Path.Combine(assetsBuild, "runtime/axslc", shader));
-    }
-    File.WriteAllText(Path.Combine(assetRoot, "Content/image.png"), "fixture");
-    File.WriteAllText(Path.Combine(assetsOutput, "Content/image.png"), "fixture");
-    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe);
-    Check(true, "Windows startup accepts complete deployed resources and matching shaders");
-    var runtimeShader = Path.Combine(assetsOutput, "axslc/positionTextureColor_vs");
-    File.WriteAllText(runtimeShader, "");
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Empty runtime shader is rejected before launching GL");
-    File.WriteAllText(runtimeShader, "#version 300 es\nvoid main(){ }\n");
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Stale deployed shader is rejected");
-    File.Copy(Path.Combine(assetsBuild, "runtime/axslc/positionTextureColor_vs"), runtimeShader, true);
-    File.Delete(Path.Combine(assetsOutput, "Content/image.png"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Missing deployed project resource is rejected");
-    Directory.Delete(Path.Combine(assetsOutput, "Content"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, assetsExe)), "Missing runtime resource directory is rejected");
-    File.WriteAllText(assetsExe, "compiled executable fixture");
-    var publishedExe = ProjectService.PublishWindowsRuntime(assetsProject, assetsBuild, assetsExe);
-    ProjectService.ValidateWindowsRuntimeAssets(assetsProject, assetsBuild, publishedExe);
-    Check(File.Exists(Path.Combine(Path.GetDirectoryName(publishedExe)!, "Content/image.png")) && (File.GetAttributes(Path.Combine(Path.GetDirectoryName(publishedExe)!, "axslc")) & FileAttributes.ReparsePoint) == 0,
-        "Windows publication copies actual resources independently of missing CMake output links");
-    var previousExe = File.ReadAllText(publishedExe);
-    File.Delete(Path.Combine(assetsBuild, "runtime/axslc/positionTextureColor_vs"));
-    await Reject<InvalidDataException>(() => Task.Run(() => ProjectService.PublishWindowsRuntime(assetsProject, assetsBuild, assetsExe)), "Incomplete shader build cannot replace the published Windows runtime");
-    Check(File.ReadAllText(publishedExe) == previousExe, "Failed Windows resource publication preserves previous runtime");
     var platformRoot = Path.Combine(root, "platform-fixture-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(platformRoot);
     File.WriteAllText(Path.Combine(platformRoot, "CMakeLists.txt"), "# fixture");

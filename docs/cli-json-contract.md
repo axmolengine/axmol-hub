@@ -131,7 +131,7 @@
 一并进 `schema 2`。
 
 **`plan` 的 `-xc` 与 `build` 逐字一致。** 两者共用 `ProjectBuildOptions.CmakeOptions`，
-所以 plan 会如实报出 Windows 日志捕获补丁与项目的 `-DAX_PREBUILT_DIR` 选项。
+所以 plan 会如实报出项目的 `-DAX_PREBUILT_DIR` 选项。
 代价是：项目勾了预编译库但引擎那一份不可用时，**`plan` 也会与 `build` 一样失败**
 （`ok:false` + `error.type=PrebuiltUnavailableException`）—— 这是刻意的，
 plan 的职责就是预告 build 会做什么，而不是给出一个 build 会拒绝执行的计划。

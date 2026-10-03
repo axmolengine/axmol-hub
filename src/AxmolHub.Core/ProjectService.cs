@@ -15,11 +15,11 @@ public sealed class ProjectDestinationExistsException(string destination)
 /// Hub 不再拼 CMake 参数、不锁工具路径、不手工造 <c>INCLUDE</c>/<c>LIB</c>。
 /// 构建目录也由引擎决定（见 <see cref="EngineBuildLayout"/>），Hub 只负责发现它。
 ///
-/// Hub 保留的增值：Windows 控制台日志捕获补丁、运行目录发布、运行期资源与着色器校验。
+/// Hub 保留的增值：运行期 app-local 运行库（VC redist）补齐。运行直接启动引擎产物目录的 exe。
 /// </summary>
 public sealed class ProjectService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
-    /// <summary>Hub 写在工程目录下的标记目录（构建收据、日志捕获补丁）。不参与官方工程结构。</summary>
+    /// <summary>Hub 写在工程目录下的标记目录（构建收据等）。不参与官方工程结构。</summary>
     public const string MarkerDirectory = ".hub";
 
     public static void ValidateProjectType(string projectType)
@@ -67,46 +67,6 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         WriteBuildReceipt(project, engine);
     }
 
-    /// <summary>
-    /// Windows 控制台日志捕获补丁的 CMake include 路径。官方入口默认是 GUI 子系统，
-    /// Hub 的日志面板就看不到程序输出，所以只在 <c>proj.win32/main.cpp</c> 与官方模板**逐字相同**
-    /// （即用户没动过入口）时注入；用户自定义入口保留其初始化和控制台行为。
-    ///
-    /// <paramref name="prepareFiles"/> 为 <c>false</c> 时**只算路径、不写盘** —— 给 <c>plan</c> 用，
-    /// 让 plan 报出的 <c>-xc</c> 与真实 build 逐字一致，同时不产生磁盘副作用。
-    /// </summary>
-    public static string WindowsLogCaptureOption(ProjectEntry project, EngineEntry engine, bool prepareFiles)
-    {
-        var main = Path.Combine(project.Path, "proj.win32/main.cpp");
-        var template = Path.Combine(engine.Path, "templates/common/proj.win32/main.cpp");
-        if (!File.Exists(main) || !File.Exists(template) || File.ReadAllText(main).Replace("\r\n", "\n") != File.ReadAllText(template).Replace("\r\n", "\n")) return "";
-        // 构建目录已由引擎决定，补丁不能再写进去 —— 落在工程侧 Hub 标记目录里。
-        var directory = Path.Combine(project.Path, MarkerDirectory);
-        var include = Path.Combine(directory, "HubLogCapture.cmake");
-        if (!prepareFiles) return include;
-        Directory.CreateDirectory(directory);
-        File.WriteAllText(include, LogCaptureCmake);
-        return include;
-    }
-
-    private const string LogCaptureCmake = """
-            if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-              function(hub_configure_log_capture)
-                if(NOT TARGET "${APP_NAME}")
-                  return()
-                endif()
-                set_property(SOURCE "${CMAKE_SOURCE_DIR}/proj.win32/main.cpp" APPEND PROPERTY COMPILE_DEFINITIONS _CONSOLE=1)
-                get_target_property(hub_link_options "${APP_NAME}" LINK_OPTIONS)
-                if(hub_link_options)
-                  list(FILTER hub_link_options EXCLUDE REGEX "/(SUBSYSTEM|ENTRY):")
-                  set_property(TARGET "${APP_NAME}" PROPERTY LINK_OPTIONS "${hub_link_options}")
-                endif()
-                target_link_options("${APP_NAME}" PRIVATE "LINKER:/SUBSYSTEM:WINDOWS" "LINKER:/ENTRY:mainCRTStartup")
-              endfunction()
-              cmake_language(DEFER CALL hub_configure_log_capture)
-            endif()
-            """;
-
     /// <summary>构建收据：记录这次构建对应的引擎安装与目标/配置，供 Run 判断产物是否仍然有效。</summary>
     private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine)
     {
@@ -122,8 +82,6 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     public string FindExecutable(ProjectEntry project)
     {
         if (project.Platform != "windows-x64") return PlatformBuildService.FindArtifact(project);
-        var published = Path.Combine(BuildDirectory(project), "run", project.Name, project.Name + ".exe");
-        if (File.Exists(published)) return published;
         return EngineBuildLayout.FindArtifact(BuildDirectory(project), project.Name, project.Configuration, "windows")
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
     }
@@ -149,8 +107,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         var build = BuildDirectory(project);
         var executable = EngineBuildLayout.FindArtifact(build, project.Name, project.Configuration, "windows")
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
-        await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, cancellation);
-        executable = PublishWindowsRuntime(project, build, executable);
+        // 引擎产物目录（bin/<App>/<Config>/）已完整可运行：exe、dll、axslc 着色器、Content 都在同级。
+        // Hub 不再复制出一份独立运行目录，只补 app-local 运行库，然后直接启动产物目录里的 exe。
         await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, cancellation);
         // 官方 FileUtils 以工作目录作为资源根；明确使用 Content，避免启动位置影响查找。
         // 运行游戏 = 长驻进程，静默无输出是正常的 → 完全不设超时，只受用户取消控制。
@@ -168,83 +126,6 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new InvalidOperationException("Engine installation changed. Build again before Run.");
         if (root.GetProperty("platform").GetString() != project.Platform || root.GetProperty("configuration").GetString() != project.Configuration)
             throw new InvalidOperationException("Project target changed. Build again before Run.");
-    }
-
-    public static string PublishWindowsRuntime(ProjectEntry project, string buildDirectory, string compiledExecutable)
-    {
-        if (Path.GetFileName(project.Name) != project.Name || project.Name is "." or "..") throw new InvalidDataException("Invalid Windows runtime project name.");
-        var build = Path.GetFullPath(buildDirectory);
-        var run = Path.Combine(build, "run");
-        if ((File.GetAttributes(build) & FileAttributes.ReparsePoint) != 0 || (Directory.Exists(run) && (File.GetAttributes(run) & FileAttributes.ReparsePoint) != 0))
-            throw new InvalidDataException("Windows runtime output cannot be a directory link.");
-        var source = Path.GetFullPath(compiledExecutable);
-        if (!source.StartsWith(build + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Build executable is outside the project build directory.");
-        Directory.CreateDirectory(run);
-        var staging = Path.Combine(run, ".staging-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(staging);
-        // 官方构建输出仍由引擎管理；Hub 运行目录复制真实资源，不依赖同步脚本生成的 junction。
-        File.Copy(source, Path.Combine(staging, project.Name + ".exe"));
-        foreach (var dll in Directory.EnumerateFiles(Path.GetDirectoryName(source)!, "*.dll")) File.Copy(dll, Path.Combine(staging, Path.GetFileName(dll)));
-        CopyRuntimeTree(Path.Combine(project.Path, "Content"), Path.Combine(staging, "Content"));
-        CopyRuntimeTree(Path.Combine(build, "runtime/axslc"), Path.Combine(staging, "axslc"));
-        ValidateWindowsRuntimeAssets(project, build, Path.Combine(staging, project.Name + ".exe"));
-        var destination = Path.Combine(run, project.Name);
-        string? previous = null;
-        if (Directory.Exists(destination))
-        {
-            if ((File.GetAttributes(destination) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Published runtime cannot be a directory link.");
-            previous = Path.Combine(run, ".previous-" + Guid.NewGuid().ToString("N"));
-            Directory.Move(destination, previous);
-        }
-        try { Directory.Move(staging, destination); }
-        catch
-        {
-            if (previous != null && !Directory.Exists(destination)) Directory.Move(previous, destination);
-            throw;
-        }
-        return Path.Combine(destination, project.Name + ".exe");
-    }
-
-    private static void CopyRuntimeTree(string source, string destination)
-    {
-        if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Windows runtime source is missing: " + source);
-        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Runtime resource source cannot be a directory link: " + source);
-        Directory.CreateDirectory(destination);
-        foreach (var file in Directory.EnumerateFiles(source))
-        {
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Runtime resource file cannot be a link: " + file);
-            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
-        }
-        foreach (var directory in Directory.EnumerateDirectories(source)) CopyRuntimeTree(directory, Path.Combine(destination, Path.GetFileName(directory)));
-    }
-
-    public static void ValidateWindowsRuntimeAssets(ProjectEntry project, string buildDirectory, string executable)
-    {
-        var output = Path.GetDirectoryName(Path.GetFullPath(executable))!;
-        var content = Path.Combine(output, "Content");
-        var shaderDirectory = Path.Combine(output, "axslc");
-        // 链接存在不代表目标可读。编译成功和运行前都验证实际文件，避免空源码进入 GL 编译断言。
-        if (!Directory.Exists(content) || !Directory.Exists(shaderDirectory))
-            throw new InvalidDataException("Windows runtime Content or axslc is missing. Build again before Run.");
-        foreach (var name in new[] { "positionTextureColor_vs", "positionTextureColor_fs", "label_normal_fs", "positionColorLengthTexture_vs", "positionColorLengthTexture_fs", "positionColorTextureAsPointsize_vs", "positionColor_fs" })
-        {
-            var compiled = Path.Combine(buildDirectory, "runtime/axslc", name);
-            var deployed = Path.Combine(shaderDirectory, name);
-            if (!File.Exists(compiled) || !File.Exists(deployed) || new FileInfo(deployed).Length == 0)
-                throw new InvalidDataException("Windows runtime shader is missing or empty: " + name + ". Build again before Run.");
-            var source = File.ReadAllText(deployed);
-            if (!source.TrimStart('\uFEFF', ' ', '\r', '\n', '\t').StartsWith("#version", StringComparison.Ordinal)
-                || !System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(compiled)).SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(deployed))))
-                throw new InvalidDataException("Windows runtime shader is invalid or stale: " + name + ". Build again before Run.");
-        }
-        var sourceContent = Path.Combine(project.Path, "Content");
-        if (!Directory.Exists(sourceContent)) throw new InvalidDataException("Project Content directory is missing.");
-        foreach (var source in Directory.EnumerateFiles(sourceContent, "*", SearchOption.AllDirectories))
-        {
-            var deployed = Path.Combine(content, Path.GetRelativePath(sourceContent, source));
-            if (!File.Exists(deployed) || new FileInfo(deployed).Length != new FileInfo(source).Length)
-                throw new InvalidDataException("Windows runtime resource is missing or stale: " + Path.GetRelativePath(sourceContent, source) + ". Build again before Run.");
-        }
     }
 
     public static string EngineInstallationToken(EngineEntry engine)
