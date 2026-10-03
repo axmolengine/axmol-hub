@@ -111,8 +111,9 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         // Hub 不再复制出一份独立运行目录，只补 app-local 运行库，然后直接启动产物目录里的 exe。
         await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, cancellation);
         // 官方 FileUtils 以工作目录作为资源根；明确使用 Content，避免启动位置影响查找。
-        // 运行游戏 = 长驻进程，静默无输出是正常的 → 完全不设超时，只受用户取消控制。
-        return await runner.RunAsync(executable, [], Path.Combine(Path.GetDirectoryName(executable)!, "Content"), null, cancellation, ProcessRunner.Infinite);
+        // 运行游戏 = 长驻进程。用分离启动（等同双击）：让 exe 自己的 AllocConsole 拿到真控制台，
+        // 日志颜色与直接双击一致；Hub 不重定向其输出（长驻进程的日志本就走文件/自带控制台）。
+        return await runner.RunDetachedAsync(executable, Path.Combine(Path.GetDirectoryName(executable)!, "Content"), cancellation);
     }
 
     /// <summary>构建收据缺失或与当前引擎安装不符时，不允许用上一次的产物进入 Run。</summary>

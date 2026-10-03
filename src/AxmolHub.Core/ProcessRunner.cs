@@ -155,6 +155,21 @@ public sealed class ProcessRunner(Action<string> log)
         Process.Start(start)?.Dispose();
     }
 
+    /// <summary>
+    /// 分离启动：等价于用户在资源管理器里双击 exe。走 <c>UseShellExecute</c>、不重定向、不建隐藏窗口，
+    /// 子进程拿到的是真实控制台（<c>AllocConsole</c> + VT 模式），因此 axmol 的日志颜色与直接双击一致。
+    /// 代价是无法捕获 stdout/stderr —— 这对运行型长驻进程（游戏）无所谓：日志本就走文件/自带控制台。
+    /// </summary>
+    public async Task<ProcessResult> RunDetachedAsync(string executable, string workingDirectory, CancellationToken cancellation = default)
+    {
+        var start = new ProcessStartInfo(executable) { WorkingDirectory = workingDirectory, UseShellExecute = true };
+        log($"Detached: {executable}; cwd={workingDirectory}");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Game process did not start.");
+        await process.WaitForExitAsync(cancellation);
+        log($"Exit code: {process.ExitCode}");
+        return new ProcessResult(process.ExitCode, "", "");
+    }
+
     public async Task<int> RunElevatedAsync(string executable, IEnumerable<string> arguments, string workingDirectory)
     {
         var start = new ProcessStartInfo(executable) { WorkingDirectory = workingDirectory, UseShellExecute = true, Verb = "runas" };
