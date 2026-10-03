@@ -29,7 +29,10 @@ public partial class App : Application
         {
             // 这条路径上主窗口还建不起来，所以 HubDialog 必须支持 owner 为 null
             // （WPF 版这里用的 MessageBox 同样是自立的）。见 Views/HubDialog.axaml。
-            _ = HubDialog.ShowAsync(null, "Axmol Hub 启动失败", ex.ToString());
+            // 标题走文案表：这里写死中文的话，在没有 CJK 字体的 Linux 上就是一片空白，
+            // 而"启动失败"恰恰是最需要看清标题的一刻。此时 HubStrings.Language 还是
+            // 冷启动语言，拿得到值为英文的文案。
+            _ = HubDialog.ShowAsync(null, HubStrings.Get("StartupFailed"), ex.ToString());
             desktop.Shutdown(1);
         }
 
@@ -47,9 +50,13 @@ public partial class App : Application
         // 验收模式必须是**封闭**的：断言与报告里都是具体文案，若跟着用户的语言设置走，
         // 同一个二进制在这台机器上通过、在那台机器上失败。所以验收模式强制中文起步
         // （外壳自检内部会真切一次语言再切回来，那部分由它自己负责收尾）。
+        //
+        // 这里**必须显式写 ChineseLanguage**，不能靠 `new HubPreferences()` 的默认值：
+        // 默认值就是"冷启动语言"，2026-10-03 已改为英文（见 HubTexts.DefaultLanguage）。
+        // 之前两者恰好都是中文，于是这条约束看起来像"用默认值"，实则是两件事。
         if (Options.VerifyShellReport is not null || Options.VerifyOpsReport is not null)
         {
-            preferences = new HubPreferences();
+            preferences = new HubPreferences { Language = HubTexts.ChineseLanguage };
         }
 
         HubStrings.Apply(preferences.Language, this);

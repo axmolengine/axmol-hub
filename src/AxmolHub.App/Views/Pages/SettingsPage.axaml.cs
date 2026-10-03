@@ -86,7 +86,7 @@ public partial class SettingsPage : UserControl
     internal string[] DeclaredLanguages
         => LanguagePicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
 
-    /// <summary>当前选中的语言标记。未知/未选一律回落中文（与 <see cref="HubTexts.Normalize"/> 同规矩）。</summary>
+    /// <summary>当前选中的语言标记。未知/未选一律回落到默认语言（与 <see cref="HubTexts.Normalize"/> 同规矩）。</summary>
     internal string SelectedLanguage
         => LanguagePicker.SelectedItem is ComboBoxItem { Tag: string tag } && HubTexts.IsSupported(tag)
             ? tag

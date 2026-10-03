@@ -57,7 +57,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 ## 与原 Inno 链路的差异（有意接受）
 
-- **没有向导。** Velopack 的 Windows 安装器是一键式的：不提供安装目录选择页，也不提供安装语言选择。目录可用 `Setup.exe --installto <DIR>` 覆盖；安装语言不再存在，界面语言由应用内设置决定，默认 `zh-CN`。
+- **没有向导。** Velopack 的 Windows 安装器是一键式的：不提供安装目录选择页，也不提供安装语言选择。目录可用 `Setup.exe --installto <DIR>` 覆盖；安装语言不再存在，界面语言由应用内设置决定，冷启动默认 `en-US`（可切到 `zh-CN`；默认值单点定义在 `HubTexts.DefaultLanguage`）。
 - **桌面快捷方式固定为不创建。** Inno 里它是个默认不勾选的选项，而一键安装没有界面承载这个选项，因此打包时固定 `--shortcuts StartMenuRoot`。
 - **没有 MSVC/工具链相关行为变化**：安装包仍然只含自包含 Hub、清单与许可文件，不捆绑引擎、工具链、Debug CRT 或用户设置。
 

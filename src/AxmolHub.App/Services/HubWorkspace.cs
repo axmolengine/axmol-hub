@@ -444,7 +444,7 @@ public sealed class HubWorkspace : IDisposable
             // 等于下到一个用户没要求的引擎，而 Hub 直到构建失败才会发现。
             var release = version is null ? catalog.LatestLts()
                 : catalog.Find(version) ?? throw new InvalidOperationException(
-                    HubStrings.Language == HubTexts.DefaultLanguage
+                    HubStrings.Language == HubTexts.ChineseLanguage
                         ? $"清单里没有 Axmol {version} 这个可安装版本。"
                         : $"Axmol {version} is not an installable release in the manifest.");
 
@@ -500,7 +500,7 @@ public sealed class HubWorkspace : IDisposable
             .SingleOrDefault(p => p.Version == engine.Version && p.Channel == engine.Channel &&
                 PackageInstaller.SafePath(Store.Root, p.Destination).Equals(engine.Path, StringComparison.OrdinalIgnoreCase));
 
-        return package ?? throw new InvalidOperationException(HubStrings.Language == HubTexts.DefaultLanguage
+        return package ?? throw new InvalidOperationException(HubStrings.Language == HubTexts.ChineseLanguage
             ? "导入的外部引擎保持原样，只支持修复或卸载 Hub 安装的引擎。"
             : "Only Hub-installed engines can be repaired or uninstalled. Imported folders are preserved.");
     }
@@ -522,12 +522,12 @@ public sealed class HubWorkspace : IDisposable
         var package = ManagedEnginePackage(engine);
         if (State.Projects.Any(p => p.Version == engine.Version && p.Channel == engine.Channel))
         {
-            throw new InvalidOperationException(HubStrings.Language == HubTexts.DefaultLanguage
+            throw new InvalidOperationException(HubStrings.Language == HubTexts.ChineseLanguage
                 ? "仍有项目使用此引擎，请先移出项目列表。项目文件会保留。"
                 : "Projects still use this engine. Remove them from the list first; project files are preserved.");
         }
 
-        var prompt = HubStrings.Language == HubTexts.DefaultLanguage
+        var prompt = HubStrings.Language == HubTexts.ChineseLanguage
             ? $"卸载 Axmol {engine.Version}？安装文件会保留到数据目录的 trash 中，项目文件不受影响。"
             : $"Uninstall Axmol {engine.Version}? Installation files are retained in the data directory's trash folder. Project files are preserved.";
 

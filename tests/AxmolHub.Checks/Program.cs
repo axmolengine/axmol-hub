@@ -581,7 +581,7 @@ preferencesStore.Save(preferences);
 Check(preferencesStore.Load().Language == "en-US" && preferencesStore.Load().ProjectDirectory == preferences.ProjectDirectory && preferencesStore.Load().DataRoot == preferences.DataRoot, "Language and selected directories survive restart");
 preferences.Language = "unsupported";
 preferencesStore.Save(preferences);
-Check(preferencesStore.Load().Language == "zh-CN", "Unknown language falls back to Chinese");
+Check(preferencesStore.Load().Language == "en-US", "Unknown language falls back to the default (English)");
 Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
 // 构建目录已由引擎决定（不再是 Hub 的 build-hub*），所以断言的是**发现规则**：
 // 引擎在工程里生成的 run 脚本写着 BUILD_DIR，那是权威来源；没有它才扫描 build*。

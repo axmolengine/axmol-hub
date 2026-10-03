@@ -14,18 +14,31 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class HubTexts
 {
-    public const string DefaultLanguage = "zh-CN";
+    public const string ChineseLanguage = "zh-CN";
     public const string EnglishLanguage = "en-US";
 
-    /// <summary>未知语言一律回落到中文，而不是抛异常：语言来自设置文件，属于用户数据。</summary>
-    public static string Normalize(string? language)
-        => language == EnglishLanguage ? EnglishLanguage : DefaultLanguage;
+    /// <summary>
+    /// 没有设置、或设置里是一个不认识的值时使用的语言。
+    ///
+    /// **2026-10-03 由 <c>zh-CN</c> 改为 <c>en-US</c>**：起步语言是中文时，
+    /// 在没装 CJK 字体的 Linux（最小化安装的 Ubuntu 默认如此）上整片界面会显示成空白/方块，
+    /// 用户连"去设置里换成英文"都做不到 —— 设置页的语言下拉里那一项本身就是中文。
+    /// 英文在任何系统上都能显示，所以拿它当冷启动的兜底。
+    ///
+    /// 注意它**不等于"中文"**。判断"当前是不是中文"要用 <see cref="ChineseLanguage"/>：
+    /// 这两个常量以前是同一个值，混用无所谓；现在值不同了，混用会让中文界面上出现英文硬编码文案。
+    /// </summary>
+    public const string DefaultLanguage = EnglishLanguage;
 
-    public static bool IsSupported(string? language) => language is DefaultLanguage or EnglishLanguage;
+    /// <summary>未知语言一律回落到 <see cref="DefaultLanguage"/>，而不是抛异常：语言来自设置文件，属于用户数据。</summary>
+    public static string Normalize(string? language)
+        => language == ChineseLanguage ? ChineseLanguage : DefaultLanguage;
+
+    public static bool IsSupported(string? language) => language is ChineseLanguage or EnglishLanguage;
 
     /// <summary>键不存在时返回键本身，与 WPF 版既有行为一致（缺失文案会显式暴露，而不是显示空白）。</summary>
     public static string Get(string key, string? language) => Values.TryGetValue(key, out var value)
-        ? (Normalize(language) == DefaultLanguage ? value.Chinese : value.English)
+        ? (Normalize(language) == ChineseLanguage ? value.Chinese : value.English)
         : key;
 
     /// <summary>全部键。适配层靠它把文案灌进各自的资源字典。</summary>
@@ -233,5 +246,6 @@ public static class HubTexts
         ["Select Code.exe"] = ("选择 Code.exe", "Select Code.exe"),
         ["Choose devenv.exe"] = ("请选择 devenv.exe。", "Choose devenv.exe."),
         ["Choose Code.exe"] = ("请选择 Code.exe。", "Choose Code.exe."),
+        ["StartupFailed"] = ("Axmol Hub 启动失败", "Axmol Hub failed to start"),
     };
 }

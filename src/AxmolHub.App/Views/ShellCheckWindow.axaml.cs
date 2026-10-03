@@ -112,7 +112,9 @@ public partial class ShellCheckWindow : Window
     {
         // 起点必须是中文：下面的断言写死了"这是中文界面"。App 在验收模式下强制把它设成中文，
         // 若那条强制被删掉，这里会立刻炸，而不是等到某台把语言设成英文的机器上才炸。
-        Check(HubStrings.Language == HubTexts.DefaultLanguage,
+        // 注意断言的是 ChineseLanguage 而不是 DefaultLanguage：后者是**冷启动**语言，
+        // 2026-10-03 起是英文，与"自检起步语言"已经不是同一件事了。
+        Check(HubStrings.Language == HubTexts.ChineseLanguage,
             "自检起步语言被强制为中文（否则断言会随用户设置漂移，实测 " + HubStrings.Language + "）");
 
         CheckStringDefinition();
@@ -201,9 +203,17 @@ public partial class ShellCheckWindow : Window
               && missing.StartsWith("NoSuchKey-", StringComparison.Ordinal),
             "缺失的 key 返回 key 本身而不是空白（缺失必须显式暴露）");
 
-        Check(HubTexts.Normalize("en-US") == "en-US" && HubTexts.Normalize("fr-FR") == "zh-CN"
-              && HubTexts.Normalize(null) == "zh-CN" && !HubTexts.IsSupported("fr-FR"),
-            "未知语言回落到中文（语言来自设置文件，属用户数据，不能抛异常）");
+        Check(HubTexts.Normalize("zh-CN") == "zh-CN" && HubTexts.Normalize("en-US") == "en-US"
+              && HubTexts.Normalize("fr-FR") == HubTexts.DefaultLanguage
+              && HubTexts.Normalize(null) == HubTexts.DefaultLanguage && !HubTexts.IsSupported("fr-FR"),
+            "两种受支持语言原样通过，未知/空值回落到默认语言（"
+            + HubTexts.DefaultLanguage + "，语言来自设置文件，属用户数据，不能抛异常）");
+
+        // 冷启动语言（没有设置文件时的语言）。这里刻意写死字面量而不是引用 HubTexts.DefaultLanguage：
+        // 引用常量的话，"把默认语言改回中文"这个回归会让断言跟着一起改，等于没有断言。
+        Check(new HubPreferences().Language == "en-US",
+            "没有设置文件时冷启动语言是英文（没有 CJK 字体的 Linux 上中文起步会整片空白，实际 "
+            + new HubPreferences().Language + "）");
 
         // 逐条确认没有空值 —— 几百条里混进一条空串，界面上就是一个空白标签。
         var blankKeys = HubTexts.Keys
@@ -435,7 +445,7 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
 
         // --- 5.1 页面打开时的读数 ---
-        Check(settings.DeclaredLanguages.SequenceEqual(new[] { HubTexts.DefaultLanguage, HubTexts.EnglishLanguage }),
+        Check(settings.DeclaredLanguages.SequenceEqual(new[] { HubTexts.ChineseLanguage, HubTexts.EnglishLanguage }),
             "语言下拉项通过 Tag 声明的标记与受支持语言一致（实际 " + string.Join(", ", settings.DeclaredLanguages) + "）");
 
         Check(settings.SelectedLanguage == HubStrings.Language,
@@ -464,8 +474,8 @@ public partial class ShellCheckWindow : Window
         // --- 5.2 真切一次语言 ---
         var navBefore = NavLabel(shell.NavSettings);
         var noteBefore = NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text;
-        Check(navBefore == HubTexts.Get("Settings", HubTexts.DefaultLanguage)
-              && noteBefore == HubTexts.Get("DataHint", HubTexts.DefaultLanguage),
+        Check(navBefore == HubTexts.Get("Settings", HubTexts.ChineseLanguage)
+              && noteBefore == HubTexts.Get("DataHint", HubTexts.ChineseLanguage),
             "切换前外壳与设置页的文字都是中文（" + navBefore + " / " + noteBefore + "）");
 
         settings.SelectLanguage(HubTexts.EnglishLanguage);
@@ -503,16 +513,16 @@ public partial class ShellCheckWindow : Window
 
         // --- 5.5 切回中文：证明它是双向可逆的，而不是一次性的 ---
         shell.NavigateTo("Settings");
-        settings.SelectLanguage(HubTexts.DefaultLanguage);
+        settings.SelectLanguage(HubTexts.ChineseLanguage);
         shell.UpdateLayout();
         settings.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        Check(NavLabel(shell.NavSettings) == HubTexts.Get("Settings", HubTexts.DefaultLanguage)
-              && NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text == HubTexts.Get("DataHint", HubTexts.DefaultLanguage),
+        Check(NavLabel(shell.NavSettings) == HubTexts.Get("Settings", HubTexts.ChineseLanguage)
+              && NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text == HubTexts.Get("DataHint", HubTexts.ChineseLanguage),
             "切回中文后文字跟着回来（不是单向生效）");
 
-        Check(new PreferencesStore(preferencesPath).Load().Language == HubTexts.DefaultLanguage,
+        Check(new PreferencesStore(preferencesPath).Load().Language == HubTexts.ChineseLanguage,
             "切回中文也落了盘（自检收尾不留英文设置，否则后面的渲染断言会拍成英文）");
 
         var restoredEngines = (InstallsPage)shell.NavigateTo("Installs");
@@ -521,7 +531,7 @@ public partial class ShellCheckWindow : Window
         var restoredHeaders = NamedDescendant<DataGrid>(restoredEngines, "EnginesGrid") is { } gridZh
             ? string.Join("/", gridZh.Columns.Select(column => column.Header?.ToString() ?? "<null>"))
             : "";
-        Check(restoredHeaders == string.Join("/", new[] { "Version", "Channel", "Path" }.Select(key => HubTexts.Get(key, HubTexts.DefaultLanguage))),
+        Check(restoredHeaders == string.Join("/", new[] { "Version", "Channel", "Path" }.Select(key => HubTexts.Get(key, HubTexts.ChineseLanguage))),
             "切回中文后引擎页表头是中文（实际 " + restoredHeaders + "）");
 
         await Task.CompletedTask;

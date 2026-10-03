@@ -32,7 +32,7 @@ public sealed class ModuleWindow : Window
 
     public string[] SelectedIds => _choices.Where(pair => pair.Value.IsChecked == true).Select(pair => pair.Key).ToArray();
 
-    private static bool Chinese => HubStrings.Language == HubTexts.DefaultLanguage;
+    private static bool Chinese => HubStrings.Language == HubTexts.ChineseLanguage;
 
     public static string ModuleName(string id) => id switch
     {

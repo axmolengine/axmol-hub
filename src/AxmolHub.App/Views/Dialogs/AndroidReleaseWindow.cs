@@ -33,7 +33,7 @@ public sealed class AndroidReleaseWindow : Window
     private readonly string _toolsRoot;
     private readonly ProcessRunner _runner;
 
-    private static string L(string chinese, string english) => HubStrings.Language == HubTexts.DefaultLanguage ? chinese : english;
+    private static string L(string chinese, string english) => HubStrings.Language == HubTexts.ChineseLanguage ? chinese : english;
 
     public AndroidReleaseWindow(ProjectEntry project, string toolsRoot, ProcessRunner runner, AndroidSigningPasswords? previous = null)
     {
