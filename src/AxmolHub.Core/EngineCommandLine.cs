@@ -32,7 +32,9 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         runner.Write("axmol: " + invocation);
         // environment: null = 继承父进程环境。这是刻意的：引擎依赖系统 VS / 自己的 tools/external。
         // 传 environment 时它只作为**覆盖**（例如 ANDROID_SERIAL 选择设备），不重建整份环境。
-        var result = await runner.RunAsync(Shell, arguments, workingDirectory, environment: null, cancellation, timeout ?? TimeSpan.FromHours(2), overrides: environment);
+        // timeout 语义 = 连续无输出多久判卡死（默认 10 分钟），不是整条命令的墙钟上限；
+        // 编译整棵引擎只要还在吐字就永不超时，故此处不再传 2 小时这种拍脑袋的总时长。
+        var result = await runner.RunAsync(Shell, arguments, workingDirectory, environment: null, cancellation, timeout, overrides: environment);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"axmol {invocation.SubCommand} failed (exit {result.ExitCode}).\n{result.Error}\n{result.Output}");
@@ -46,7 +48,8 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     ///
     /// **刻意不抛**：调用方要按引擎的输出分类 —— 开发者模式未开时 setup.ps1 会
     /// <c>exit 0</c> 却什么都没装，只看异常是抓不到这种假成功的。
-    /// 超时给到 6 小时：这一步是真的在下 GB 级工具链。
+    /// 超时语义 = 连续无输出 10 分钟判卡死（<see cref="ProcessRunner"/> 默认）；setup 在下载 GB 级
+    /// 工具链时只要还在吐进度就永不超时，因此不设总时长上限。
     /// </summary>
     public Task<ProcessResult> RunSetupAsync(EngineEntry engine, SetupOptions options, CancellationToken cancellation = default)
     {
@@ -58,6 +61,6 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         if (options.UpdateAdt) arguments.Add("-updateAdt");
 
         runner.Write($"axmol setup: {string.Join(' ', arguments)}");
-        return runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation, TimeSpan.FromHours(6));
+        return runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation);
     }
 }

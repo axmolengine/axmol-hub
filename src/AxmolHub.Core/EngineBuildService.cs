@@ -20,9 +20,10 @@ public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine c
         BuildConfigurations.Validate(configuration);
         runner.Write($"Building Axmol {engine.Version} for {target.Name} ({configuration}); this compiles the whole engine.");
 
-        // 超时给 6 小时：这一步真的在编引擎（并可能在缺工具链时触发引擎自己的 setup）。
+        // 不设总时长上限：编译整棵引擎数分钟到数十分钟、产物数 GB，只要持续有输出就让它跑。
+        // 超时判定由 ProcessRunner 按「连续无输出 10 分钟」判卡死。
         await commandLine.RunAsync(engine, AxmolCommandMap.BuildEngine(target, configuration), engine.Path,
-            cancellation, TimeSpan.FromHours(6));
+            cancellation);
 
         // 构建目录由引擎决定，所以**发现**它；找不到就不记 —— 绝不写一条指向不存在目录的「已构建」。
         var directory = EnginePrebuilt.Discover(engine, configuration)

@@ -7,6 +7,14 @@ public sealed record ProcessResult(int ExitCode, string Output, string Error);
 
 public sealed class ProcessRunner(Action<string> log)
 {
+    /// <summary>传给 <see cref="RunAsync"/> 的 <c>timeout</c> 表示「完全不设超时」。
+    /// 用于运行型长驻进程（例如启动后的游戏）：它们可能长时间不往 stdout/stderr 吐任何东西，
+    /// 静默是正常行为，不能套用「连续无输出 N 分钟判卡死」的规则。</summary>
+    public static readonly TimeSpan Infinite = TimeSpan.FromMilliseconds(-1);
+
+    /// <summary>「连续无输出」判卡死的默认时长（10 分钟）。</summary>
+    public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(10);
+
     public void Write(string message) => log(message);
     public async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
         string workingDirectory, IReadOnlyDictionary<string, string>? environment = null,
@@ -43,36 +51,90 @@ public sealed class ProcessRunner(Action<string> log)
         }
         log(Redact($"Command: {executable} {string.Join(" ", start.ArgumentList.Select(a => System.Text.Json.JsonSerializer.Serialize(a)))}; cwd={workingDirectory}"));
         using var process = new Process { StartInfo = start };
-        using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromMinutes(30));
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, deadline.Token);
+
+        // 超时语义：**连续无输出的空闲时长**，不是整条命令的墙钟时长。
+        // 进程每产出一行 stdout/stderr 就重置空闲计时；只有连续 `timeout`（默认 10 分钟）
+        // 没有任何输出时才判为"卡死"并结束进程树。编译/下载这类长任务只要还在吐字就永不被误杀。
+        // 传 Infinite 表示完全不设超时（运行型长驻进程）。
+        var idleTimeout = timeout ?? DefaultIdleTimeout;
         cancellation.ThrowIfCancellationRequested();
         process.Start();
-        var output = ReadAsync(process.StandardOutput, false, Redact);
-        var error = ReadAsync(process.StandardError, true, Redact);
-        try
+
+        // 记录"最近一次有输出"的时间戳；两个读泵都会更新它（Interlocked 写 long 保持线程安全）。
+        var lastOutputTicks = Environment.TickCount64;
+        void MarkOutput() => Interlocked.Exchange(ref lastOutputTicks, Environment.TickCount64);
+
+        var output = ReadAsync(process.StandardOutput, false, Redact, MarkOutput);
+        var error = ReadAsync(process.StandardError, true, Redact, MarkOutput);
+
+        var exit = process.WaitForExitAsync(cancellation);
+        Task? watchdog = null;
+        if (idleTimeout != Infinite)
         {
-            await process.WaitForExitAsync(linked.Token);
+            // 空闲 watchdog：只要"距最近一次输出"超过 idleTimeout 就取消，触发下方 WhenAny 的超时分支。
+            using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            watchdog = WatchIdleAsync(process, idleTimeout, idleCts, () => Interlocked.Read(ref lastOutputTicks));
+            var completed = await Task.WhenAny(exit, watchdog);
+            if (completed == watchdog)
+            {
+                // 空闲超时：结束整个进程树，避免留下编译器或下载子进程。
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+                await Task.WhenAll(output, error);
+                if (cancellation.IsCancellationRequested)
+                {
+                    log($"Process stopped: cancelled");
+                    throw new OperationCanceledException(cancellation);
+                }
+                log($"Process stopped: idle timeout ({idleTimeout})");
+                throw new TimeoutException($"Process produced no output for {idleTimeout}: {executable}");
+            }
+            // 进程先正常退出：叫停 watchdog（它下一次 Delay 会因取消立刻醒来），再走正常收尾。
+            idleCts.Cancel();
         }
-        catch (OperationCanceledException)
-        {
-            // 取消时结束整个进程树，避免留下编译器或下载子进程。
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
-            await Task.WhenAll(output, error);
-            log($"Process stopped: {(cancellation.IsCancellationRequested ? "cancelled" : "timeout")}");
-            if (!cancellation.IsCancellationRequested) throw new TimeoutException($"Process timed out: {executable}");
-            throw;
-        }
+
+        // 正常退出（或用户取消）。取消在这里统一由 WaitForExitAsync(cancellation) 抛出。
+        await exit;
+        if (watchdog is not null) await watchdog;
         var result = new ProcessResult(process.ExitCode, await output, await error);
         log($"Exit code: {result.ExitCode}");
         return result;
     }
 
-    private async Task<string> ReadAsync(StreamReader reader, bool error, Func<string, string> redact)
+    /// <summary>
+    /// 空闲 watchdog：周期性检查"距最近一次输出"是否超过 <paramref name="idleTimeout"/>，
+    /// 超过就取消 <paramref name="idleCts"/>。检查周期取 1 秒与 idleTimeout/10 的较小值，
+    /// 保证检测延迟对"分钟级"超时无感，同时不空转 CPU。
+    /// </summary>
+    private static async Task WatchIdleAsync(Process process, TimeSpan idleTimeout, CancellationTokenSource idleCts, Func<long> lastOutputTicks)
+    {
+        var poll = TimeSpan.FromMilliseconds(Math.Min(1000, Math.Max(100, idleTimeout.TotalMilliseconds / 10)));
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(poll, idleCts.Token).ConfigureAwait(false);
+                if (process.HasExited) return;
+                var idle = Environment.TickCount64 - lastOutputTicks();
+                if (idle >= idleTimeout.TotalMilliseconds)
+                {
+                    idleCts.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户取消或进程已正常退出，watchdog 随之停下，不算超时。
+        }
+    }
+
+    private async Task<string> ReadAsync(StreamReader reader, bool error, Func<string, string> redact, Action? onOutput = null)
     {
         var text = new StringBuilder();
         while (await reader.ReadLineAsync() is { } line)
         {
+            onOutput?.Invoke();
             line = redact(line);
             text.AppendLine(line);
             log(error ? $"stderr: {line}" : line);

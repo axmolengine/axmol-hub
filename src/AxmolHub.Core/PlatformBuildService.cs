@@ -173,7 +173,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         socket.Stop();
         var url = $"http://127.0.0.1:{port}/{Uri.EscapeDataString(Path.GetFileName(artifact))}";
         var server = runner.RunAsync(python, ["-u", Path.Combine(emscripten, "emrun.py"), "--no-browser", "--hostname", "127.0.0.1", "--port", port.ToString(), artifact],
-            Path.GetDirectoryName(artifact)!, environment, serverStop.Token, TimeSpan.FromDays(1));
+            Path.GetDirectoryName(artifact)!, environment, serverStop.Token, ProcessRunner.Infinite);
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };

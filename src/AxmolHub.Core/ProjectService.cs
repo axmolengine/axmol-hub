@@ -153,7 +153,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         executable = PublishWindowsRuntime(project, build, executable);
         await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, cancellation);
         // 官方 FileUtils 以工作目录作为资源根；明确使用 Content，避免启动位置影响查找。
-        return await runner.RunAsync(executable, [], Path.Combine(Path.GetDirectoryName(executable)!, "Content"), null, cancellation, TimeSpan.FromDays(1));
+        // 运行游戏 = 长驻进程，静默无输出是正常的 → 完全不设超时，只受用户取消控制。
+        return await runner.RunAsync(executable, [], Path.Combine(Path.GetDirectoryName(executable)!, "Content"), null, cancellation, ProcessRunner.Infinite);
     }
 
     /// <summary>构建收据缺失或与当前引擎安装不符时，不允许用上一次的产物进入 Run。</summary>

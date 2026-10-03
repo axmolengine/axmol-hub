@@ -170,7 +170,8 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         if (release == null) await EnsureDebugKeyAsync(environment, cancellation);
         var signingEnvironment = release == null ? environment : passwords!.Environment(environment);
         var command = GradleCommand(project, environment, "--dependency-verification=strict", "assemble" + project.Configuration, "bundle" + project.Configuration);
-        RequireSuccess(await runner.RunAsync(command.Executable, command.Arguments, command.WorkingDirectory, signingEnvironment, cancellation, TimeSpan.FromHours(1), passwords?.SensitiveValues), "Android APK packaging");
+        // 不设总时长上限：gradle assemble/bundle 首次要拉依赖+编译，可能数十分钟，只要持续有输出就让它跑。
+        RequireSuccess(await runner.RunAsync(command.Executable, command.Arguments, command.WorkingDirectory, signingEnvironment, cancellation, sensitiveValues: passwords?.SensitiveValues), "Android APK packaging");
         var apk = ApkPath(project);
         ValidateApk(apk, project);
         var signer = await runner.RunAsync(Java, ["-jar", Path.Combine(BuildTools, "lib/apksigner.jar"), "verify", "--verbose", "--print-certs", apk], StageDirectory(project), environment, cancellation);
