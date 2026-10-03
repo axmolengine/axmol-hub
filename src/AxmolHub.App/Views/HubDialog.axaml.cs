@@ -61,22 +61,29 @@ public partial class HubDialog : Window
         return completion.Task;
     }
 
+    /// <summary>
+    /// 按钮文案走 <see cref="HubStrings"/>。**以前这四个字是写死的中文** ——
+    /// 那时界面以中文优先，看不出问题；英文界面上点开任何弹窗，按钮却还是"取消/确定"。
+    /// 更要紧的一处是 `CjkFontNotice` 那条"缺中文字体"提示：它唯一的按钮如果写死中文，
+    /// 在那个系统上本身就是个方框，提示就闭环不了。
+    /// 顺序与语义（哪个是 primary / cancel）**不变**：那部分有自检断言守着。
+    /// </summary>
     private void Build(HubDialogButtons buttons, bool danger)
     {
         switch (buttons)
         {
             case HubDialogButtons.OkCancel:
-                Add(HubDialogResult.Cancel, "取消", primary: false, cancel: true, danger: false);
-                Add(HubDialogResult.Ok, "确定", primary: true, cancel: false, danger: danger);
+                Add(HubDialogResult.Cancel, HubStrings.Get("Cancel"), primary: false, cancel: true, danger: false);
+                Add(HubDialogResult.Ok, HubStrings.Get("Ok"), primary: true, cancel: false, danger: danger);
                 break;
 
             case HubDialogButtons.YesNo:
-                Add(HubDialogResult.No, "否", primary: false, cancel: true, danger: false);
-                Add(HubDialogResult.Yes, "是", primary: true, cancel: false, danger: danger);
+                Add(HubDialogResult.No, HubStrings.Get("No"), primary: false, cancel: true, danger: false);
+                Add(HubDialogResult.Yes, HubStrings.Get("Yes"), primary: true, cancel: false, danger: danger);
                 break;
 
             default:
-                Add(HubDialogResult.Ok, "确定", primary: true, cancel: false, danger: danger);
+                Add(HubDialogResult.Ok, HubStrings.Get("Ok"), primary: true, cancel: false, danger: danger);
                 break;
         }
     }

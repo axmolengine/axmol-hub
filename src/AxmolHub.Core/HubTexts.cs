@@ -166,6 +166,11 @@ public static class HubTexts
         ["CopyError"] = ("复制错误", "Copy error"),
         ["OpenLogs"] = ("打开日志", "Open logs"),
         ["Cancel"] = ("取消", "Cancel"),
+        // 对话框按钮。以前这三条在 HubDialog 里是**写死的中文**，于是英文界面里点开任何弹窗，
+        // 按钮都是中文 —— 而"缺中文字体"那条提示恰恰要靠这个按钮收尾（见 CjkFontNotice）。
+        ["Ok"] = ("确定", "OK"),
+        ["Yes"] = ("是", "Yes"),
+        ["No"] = ("否", "No"),
         ["Ready"] = ("准备就绪", "Ready"),
         ["Done"] = ("已完成", "completed"),
         ["Cancelled"] = ("已取消", "cancelled"),

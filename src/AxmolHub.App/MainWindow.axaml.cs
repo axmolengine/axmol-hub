@@ -63,6 +63,38 @@ public partial class MainWindow : Window
 
         // 默认停在"项目"页，与 WPF 版一致（WPF 是 NavProjects IsChecked="True"）。
         NavigateTo("Projects");
+
+        // 字体结论要在**窗口已经在屏幕上**之后再处理：模态框的 owner 必须先显示出来。
+        Opened += (_, _) => ReportFonts();
+    }
+
+    /// <summary>
+    /// 启动时的字体自检。两件事分开做，因为受众不同：
+    ///
+    /// ① **日志**：只要探测到没有中文字体就写一行，不管界面是哪种语言 ——
+    ///    英文界面下的用户没受影响，但"中文为什么是方框"必须在日志里查得到。
+    /// ② **弹窗**：只在界面语言是中文时弹（判据在 <see cref="CjkFontNotice.ShouldWarn"/>）——
+    ///    那一刻用户看到的就是一片方框，不提示等于让人对着一个坏掉的界面猜。
+    ///
+    /// 探测放在**这一帧**而不是构造函数里：<c>FontManager.Current</c> 需要平台字体实现已就位。
+    /// </summary>
+    private void ReportFonts()
+    {
+        var availability = CjkFontProbe.Availability;
+        if (availability == CjkFontAvailability.Available)
+        {
+            return;
+        }
+
+        // Unknown 也记一行：这里区分得开"没有字体"和"没探测出来"，日志里同样要区分得开。
+        _workspace.Log.Write(availability == CjkFontAvailability.Missing
+            ? CjkFontNotice.LogLine
+            : "CJK font probe returned no result; Chinese rendering is unverified.");
+
+        if (availability == CjkFontAvailability.Missing)
+        {
+            CjkFontNotifier.NotifyIfNeeded(this);
+        }
     }
 
     /// <summary>装配好的页面键。验收程序靠它确认四个导航项都有落点。</summary>
@@ -214,6 +246,11 @@ public partial class MainWindow : Window
 
         // 页面里由代码算出的文案（表头、空态提示、按钮标签）都要重来一遍。
         _workspace.Refresh();
+
+        // 切语言是**第二个**该提示字体的时机，而且是更准的那个：用户主动选了中文，
+        // 这一刻他才真的会看到方框。放在最后 —— 先把界面文案重算完，用户点掉弹窗时
+        // 看到的就是已经切好的界面，而不是半新半旧的。
+        CjkFontNotifier.NotifyIfNeeded(this);
     }
 
     private void OnNavigated(RadioButton button, string name)

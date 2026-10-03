@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using AxmolHub.Core;
 using static AxmolHub.App.ThemeProbe;
 
 namespace AxmolHub.App;
@@ -267,16 +268,30 @@ public partial class FoundationCheckWindow : Window
         var buttons = dialog.GetVisualDescendants().OfType<Button>().ToList();
         check(buttons.Count == 2, "OkCancel 生成 2 个按钮（实际 " + buttons.Count + "）");
 
+        // 期望文案**从文案表取**，不写字面量。以前这里写死"取消/确定"，等于把这个窗口的自检
+        // 绑在"用户恰好把界面语言设成中文"上：`--verify-foundation` 不强制语言，
+        // 用户一切到英文，这条断言就会因为**正确**的行为而失败。
+        // 注意按钮顺序（取消在前、确定在后）仍被断言 —— 它是由 HubDialogResult 的取值顺序决定的，
+        // 与语言无关，不能因为换了种写法就漏掉。
+        var expectedLabels = string.Join("/", new[] { "Cancel", "Ok" }.Select(key => HubTexts.Get(key, HubStrings.Language)));
         var labels = string.Join("/", buttons.Select(b => b.Content?.ToString()));
-        check(labels == "取消/确定", "按钮顺序为 取消、确定（实际 " + labels + "）");
+        check(labels == expectedLabels, "按钮顺序为 取消、确定，文案来自 HubTexts（实际 " + labels + "）");
 
+        var okCaption = HubTexts.Get("Ok", HubStrings.Language);
+        var cancelCaption = HubTexts.Get("Cancel", HubStrings.Language);
         var primary = buttons.FirstOrDefault(b => b.Classes.Contains("primary"));
         var cancel = buttons.FirstOrDefault(b => b.IsCancel);
-        check(primary?.Content?.ToString() == "确定" && primary.IsDefault,
+        check(primary?.Content?.ToString() == okCaption && primary.IsDefault,
             "确定键带 primary 类且 IsDefault（回车生效）");
         check(primary is not null && primary.Classes.Contains("danger"),
             "danger: true 时确定键带 danger 类（WPF 版没有这一档，MessageBoxImage 只换图标）");
-        check(cancel?.Content?.ToString() == "取消", "取消键带 IsCancel（Esc 生效）");
+        check(cancel?.Content?.ToString() == cancelCaption, "取消键带 IsCancel（Esc 生效）");
+
+        // 这条防的是"又把它写回成一种语言"：只要中英两侧不同，就说明文案真的走了文案表。
+        check(HubTexts.Get("Ok", HubTexts.EnglishLanguage) != HubTexts.Get("Ok", HubTexts.ChineseLanguage)
+              && HubTexts.Get("Cancel", HubTexts.EnglishLanguage) != HubTexts.Get("Cancel", HubTexts.ChineseLanguage),
+            "对话框按钮文案是本地化的，而不是写死一种语言"
+            + "（写死中文的话，英文界面上点开任何弹窗按钮都是中文）");
 
         // 走一次真实点击，验证按钮到返回值的接线。
         primary?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -292,12 +307,14 @@ public partial class FoundationCheckWindow : Window
             Dispatcher.UIThread.RunJobs();
             var yesNoButtons = yesNo.GetVisualDescendants().OfType<Button>().ToList();
             var yesNoLabels = string.Join("/", yesNoButtons.Select(b => b.Content?.ToString()));
-            check(yesNoLabels == "否/是", "YesNo 生成 否、是（实际 " + yesNoLabels + "）");
+            check(yesNoLabels == string.Join("/", new[] { "No", "Yes" }.Select(key => HubTexts.Get(key, HubStrings.Language))),
+                "YesNo 生成 否、是，文案来自 HubTexts（实际 " + yesNoLabels + "）");
 
+            var yesCaption = HubTexts.Get("Yes", HubStrings.Language);
             var negative = yesNoButtons.FirstOrDefault(b => b.Classes.Contains("primary"));
-            check(negative?.Content?.ToString() == "是" && negative.IsDefault, "肯定键带 primary 类");
+            check(negative?.Content?.ToString() == yesCaption && negative.IsDefault, "肯定键带 primary 类");
 
-            yesNoButtons.FirstOrDefault(b => b.Content?.ToString() == "否")?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            yesNoButtons.FirstOrDefault(b => b.Content?.ToString() == HubTexts.Get("No", HubStrings.Language))?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var yesNoResult = await yesNoPending;
             check(yesNoResult == HubDialogResult.No, "点「否」→ 返回 No（实际 " + yesNoResult + "）");
         }

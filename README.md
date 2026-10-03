@@ -216,6 +216,11 @@ dotnet run --project tests/AxmolHub.Checks -c Release -- ./artifacts/checks --ch
 dotnet publish src/AxmolHub.App/AxmolHub.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
 ```
 
+> **Linux 另需一个中文字体。** 最小化安装的 Ubuntu 不带任何 CJK 字体，中文界面会整片显示成方框 ——
+> 界面语言默认是英文就是为了这个。Hub 会在启动时与切到中文时自行探测（判据是渲染器能不能匹配到
+> 汉字字形，不是"装没装某个包"），探测不到就提示 `sudo apt install fonts-noto-cjk`。
+> 任何 CJK 字体都行（思源黑体、文泉驿……），装完重启 Hub 即可。
+
 构建 Windows 安装包并进行隔离安装检查：
 
 ```powershell

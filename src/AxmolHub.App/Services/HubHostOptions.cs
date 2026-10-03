@@ -18,6 +18,19 @@ internal sealed record HubHostOptions(
     bool Gallery)
 {
     /// <summary>
+    /// 验收 / 截图模式。它们跑的是**产品窗口**（<c>--smoke</c>、<c>--smoke-pages</c>），
+    /// 但没有人在旁边点按钮 —— 任何模态对话框都会让"真跑"变成"挂死"。
+    /// 所以凡属"只为人眼存在"的动作（例如缺字体提示）在这里一律不触发。
+    ///
+    /// 与 <c>HubWorkspace.SuppressDialogs</c> 的分工：那个关的是**操作失败**弹窗（一次真操作里的），
+    /// 这个关的是**外壳自己的**告知性弹窗（没有对应操作可失败）。
+    /// </summary>
+    public bool IsAutomation =>
+        SmokeImagePath is not null || SmokePagesDirectory is not null
+        || VerifyThemeReport is not null || VerifyFoundationReport is not null
+        || VerifyShellReport is not null || VerifyOpsReport is not null || Gallery;
+
+    /// <summary>
     /// 设置与数据根放每用户目录，**不能**放 AppContext.BaseDirectory 旁边：
     /// Velopack 更新时整体替换安装目录下的 current\，卸载时删除整个安装目录。
     /// 引擎与工具链是 GB 级，所以用 LocalApplicationData 而不是漫游 AppData。

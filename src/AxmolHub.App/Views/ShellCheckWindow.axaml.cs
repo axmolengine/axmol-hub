@@ -1,8 +1,11 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AxmolHub.Core;
 using static AxmolHub.App.ThemeProbe;
 
@@ -118,6 +121,7 @@ public partial class ShellCheckWindow : Window
             "自检起步语言被强制为中文（否则断言会随用户设置漂移，实测 " + HubStrings.Language + "）");
 
         CheckStringDefinition();
+        await CheckCjkFontNoticeAsync();
         CheckEveryXamlResourceKeyResolves();
         var shell = CheckShell(scratchRoot);
         await CheckInstallsPageAsync(scratchRoot, shell);
@@ -238,6 +242,110 @@ public partial class ShellCheckWindow : Window
         Check(localized > HubTexts.Keys.Count / 2,
             "中英两侧确实存在不同文案（" + localized + "/" + HubTexts.Keys.Count + " 条不同，超过半数）");
     }
+
+    // ---------------------------------------------------------------------
+    // 1b. 缺中文字体的提示（Core 判定 + 本机真实探测）
+    // ---------------------------------------------------------------------
+    /// <summary>
+    /// 这一组防的是"提示看起来做了，而实际上永远不触发 / 永远触发"：
+    /// 决策判据写反、文案里忘了给安装命令、提示自己用了中文、对话框按钮是写死的中文，
+    /// 以及**探测根本没接通**（代码读起来完全正常，结论却永远是"不提示"，功能静静地不存在）。
+    /// </summary>
+    private async Task CheckCjkFontNoticeAsync()
+    {
+        // ① 决策：只有"确实没有字体 + 界面语言是中文"才打扰用户。
+        Check(CjkFontNotice.ShouldWarn(CjkFontAvailability.Missing, HubTexts.ChineseLanguage)
+              && !CjkFontNotice.ShouldWarn(CjkFontAvailability.Missing, HubTexts.EnglishLanguage)
+              && !CjkFontNotice.ShouldWarn(CjkFontAvailability.Available, HubTexts.ChineseLanguage)
+              && !CjkFontNotice.ShouldWarn(CjkFontAvailability.Unknown, HubTexts.ChineseLanguage),
+            "缺字体只在「确实没有字体 + 界面语言是中文」时提示（英文界面不打扰；探测失败不误报）");
+
+        // ② Linux 上必须给出一条能直接粘贴的命令 —— "提示用户安装"的分量全在这行上。
+        Check(CjkFontNotice.Message(linux: true).Contains(CjkFontNotice.DebianInstallCommand, StringComparison.Ordinal),
+            "Linux 的提示里给出了可直接粘贴的安装命令（" + CjkFontNotice.DebianInstallCommand + "）");
+
+        // ③ 反向对照：换个系统还印 apt 就是错的。少了这一条，②用一个恒真串也能过。
+        Check(!CjkFontNotice.Message(linux: false).Contains("apt", StringComparison.Ordinal),
+            "非 Linux 的提示不给 apt 命令（照抄 apt 在别的系统上是错的）");
+
+        // ④ 提示自己不能含 CJK 字符 —— 这一组的核心。提示出现的前提就是"中文渲染不出来"，
+        //    用中文写它，最需要看清它的人看到的是一屏方框：提示成了自己的反例。
+        var notice = string.Join("\n", CjkFontNotice.Title, CjkFontNotice.Message(true),
+            CjkFontNotice.Message(false), CjkFontNotice.LogLine);
+        var cjk = notice.Where(character => character >= 0x2E80).ToArray();
+        Check(cjk.Length == 0,
+            "缺字体提示的文案不含 CJK 字符（标题、两种正文、日志行都算）"
+            + (cjk.Length == 0 ? "" : "（发现 " + new string(cjk) + "）"));
+
+        // ⑤ 对话框按钮也得是英文。HubDialog 以前把这四个字写死成中文，而这条提示唯一的按钮
+        //    在缺字体的机器上就会是一个方框 —— 提示闭环不了。
+        var captions = new[] { "Ok", "Cancel", "Yes", "No" }
+            .Select(key => HubTexts.Get(key, HubTexts.EnglishLanguage)).ToArray();
+        Check(captions.All(caption => caption.All(character => character < 0x2E80)),
+            "对话框按钮的英文文案不含 CJK 字符（实际 " + string.Join("/", captions) + "）");
+
+        // ⑥ 真探测一次。前面五条全绿而探测没接通是很容易发生的：结论恒为 Unknown（不提示），
+        //    于是这个功能静静地不存在，谁也不会发现。
+        var availability = CjkFontProbe.Availability;
+        var family = CjkFontProbe.MatchedFamily is { Length: > 0 } name ? name : "（未匹配到）";
+        Check(availability != CjkFontAvailability.Unknown,
+            "字体探测在本机得出了结论，而不是 Unknown（实际 " + availability + "，匹配到 " + family + "）");
+
+        // ⑦ Windows / macOS 自带中文字体，在那里报 Missing 只可能是探测写错了。
+        //    Linux 允许 Missing —— 那正是这个功能存在的意义，所以按平台收紧，而不是一律要求 Available。
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+        {
+            Check(availability == CjkFontAvailability.Available,
+                "Windows/macOS 自带中文字体，探测结果应是 Available（实际 " + availability
+                + "，匹配到 " + family + "）");
+        }
+
+        // ⑧ 弹窗的抑制开关：缺字体提示在自动化里没人点，会把自检挂死，所以必须被
+        //    App.Options.IsAutomation 挡住；而产品路径必须**不**被挡住。
+        //    正反两条一起断言 —— 只写一条的话，一个恒真或恒假的实现都能骗过去。
+        Check(App.Options.IsAutomation && !HubHostOptions.Parse([]).IsAutomation,
+            "自动化模式（本次就是）关掉缺字体提示，裸启动不受影响（实际 "
+            + App.Options.IsAutomation + " / " + HubHostOptions.Parse([]).IsAutomation + "）");
+
+        // ⑨ 真的调一次入口，确认它在自动化下**确实不弹**。这一条不是⑧的重复：⑧读的是标志，
+        //    ⑨读的是"调用之后有没有多出一个窗口" —— 门装在别处（例如忘了判断、或判断写在异步之后）
+        //    时，只有⑨会红。缺字体提示弹在自检里就是挂死，代价最大。
+        var windowsBefore = HubDialogWindows().Length;
+        var notified = CjkFontNotifier.NotifyIfNeeded(this);
+        Check(!notified && HubDialogWindows().Length == windowsBefore,
+            "自动化模式下缺字体提示确实没有弹出来（返回 " + notified + "，弹窗数 "
+            + windowsBefore + " → " + HubDialogWindows().Length + "）");
+
+        // ⑩ 把要弹的那一份**原样**建出来，读回来的标题/正文/按钮都要对得上。
+        //    断言字符串常量和断言真正显示出来的东西不是一回事：HubDialog 的参数顺序
+        //    （标题、正文）反了的话，字符串断言照样全绿。
+        var pending = HubDialog.ShowAsync(null, CjkFontNotice.Title, CjkFontNotice.Message(linux: true));
+        var prompt = HubDialogWindows().LastOrDefault();
+        Dispatcher.UIThread.RunJobs();
+        var promptTitle = prompt is null ? null : NamedDescendant<TextBlock>(prompt, "DialogTitle")?.Text;
+        var promptBody = prompt is null ? null : NamedDescendant<TextBlock>(prompt, "DialogMessage")?.Text;
+        Check(prompt is not null && promptTitle == CjkFontNotice.Title,
+            "缺字体提示的标题写进了对话框（实际 " + promptTitle + "）");
+        Check(promptBody == CjkFontNotice.Message(linux: true)
+              && promptBody is not null && promptBody.Contains(CjkFontNotice.DebianInstallCommand, StringComparison.Ordinal),
+            "提示正文写进了对话框，且里面带着那条安装命令（" + CjkFontNotice.DebianInstallCommand + "）");
+
+        var promptButtons = prompt?.GetVisualDescendants().OfType<Button>().ToArray() ?? [];
+        Check(promptButtons.Length == 1 && promptButtons[0].Content?.ToString() == HubTexts.Get("Ok", HubStrings.Language),
+            "提示只有一个按钮，文案跟着界面语言走（实际 "
+            + string.Join("/", promptButtons.Select(b => b.Content?.ToString())) + "）");
+
+        // 关得掉 —— 记忆里那条"失败弹窗必须能关"：关不掉的告知框等于把用户锁在界面前。
+        promptButtons.FirstOrDefault()?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var promptResult = await pending;
+        Check(promptResult == HubDialogResult.Ok && HubDialogWindows().Length == windowsBefore,
+            "点掉提示后窗口真的关闭（结果 " + promptResult + "）");
+    }
+
+    /// <summary>当前这个进程里活着的对话框。用来判"有没有弹出来"，而不是问某个标志说没说谎。</summary>
+    private static HubDialog[] HubDialogWindows()
+        => (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Windows
+               .OfType<HubDialog>().ToArray() ?? [];
 
     // ---------------------------------------------------------------------
     // 2. XAML 里出现的每个 {DynamicResource X} 都必须解析得出
