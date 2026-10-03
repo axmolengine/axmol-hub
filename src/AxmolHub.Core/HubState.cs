@@ -67,12 +67,34 @@ public sealed class StateStore(string root)
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+    // 引擎核心目录在各版本间改过名：v2 是 core/，v3 改成 axmol/。两种布局都接受 ——
+    // 目录名从引擎目录自己反查，不写死任何一个，将来再改名只需要动这一处。
+    private static readonly string[] EngineCoreDirectories = ["axmol", "core"];
+
+    /// <summary>引擎核心目录名（v3 = <c>axmol</c>，v2 = <c>core</c>）；两种布局都没有版本头时返回 <c>null</c>。</summary>
+    public static string? FindEngineCoreDirectory(string enginePath)
+        => EngineCoreDirectories.FirstOrDefault(name => File.Exists(System.IO.Path.Combine(enginePath, name, "axmolver.h.in")));
+
+    /// <summary>
+    /// 引擎目录缺失的标志文件。导入校验与验收报告共用这一份清单，避免两处漂移。
+    /// 版本头那条会同时点名两个位置：只说其中一处会让人误以为另一种布局不被支持。
+    /// </summary>
+    public static IReadOnlyList<string> MissingEngineMarkers(string enginePath)
+    {
+        var missing = new List<string>();
+        if (FindEngineCoreDirectory(enginePath) is null) missing.Add("axmol/axmolver.h.in (v3) or core/axmolver.h.in (v2)");
+        foreach (var file in new[] { "tools/cmdline/axmol.ps1", "templates/cpp/axproj-template.json", "1k/1kiss.ps1" })
+            if (!File.Exists(System.IO.Path.Combine(enginePath, file))) missing.Add(file);
+        return missing;
+    }
+
     public static EngineEntry ValidateEngine(string path, string channel = "local")
     {
         path = System.IO.Path.GetFullPath(path);
-        foreach (var file in new[] { "core/axmolver.h.in", "tools/cmdline/axmol.ps1", "templates/cpp/axproj-template.json", "1k/1kiss.ps1" })
-            if (!File.Exists(System.IO.Path.Combine(path, file))) throw new InvalidDataException($"Incomplete Axmol engine: missing {file}");
-        var header = File.ReadAllText(System.IO.Path.Combine(path, "core/axmolver.h.in"));
+        var missing = MissingEngineMarkers(path);
+        if (missing.Count > 0) throw new InvalidDataException($"Incomplete Axmol engine: missing {missing[0]}");
+        var core = FindEngineCoreDirectory(path)!;
+        var header = File.ReadAllText(System.IO.Path.Combine(path, core, "axmolver.h.in"));
         var parts = new[] { "MAJOR", "MINOR", "PATCH" }.Select(part =>
         {
             var match = Regex.Match(header, $@"#define\s+AX_VERSION_{part}\s+(\d+)");

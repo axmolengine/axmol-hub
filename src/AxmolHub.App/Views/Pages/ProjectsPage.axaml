@@ -69,7 +69,11 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Margin="0,0,16,0">
             <TextBlock Text="{DynamicResource Location}" />
-            <DockPanel Margin="0,6,0,0" Height="40">
+            <!-- 不要给这个 DockPanel 写死 Height：主题里的 TextBox 自带 Margin 0,6,0,0 +
+                 Border 1px + Padding 10,9，40px 只够剩 14px 放文字，单行会被纵向裁掉
+                 （表现是"文字看不全、要在框里垂直滚动"）。让它按内容自适应，
+                 与 SettingsPage 的两处同款布局保持一致。 -->
+            <DockPanel>
               <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
                       DockPanel.Dock="Right" Margin="6,0,0,0" Padding="10,8" />
               <TextBox x:Name="ProjectLocationBox" />

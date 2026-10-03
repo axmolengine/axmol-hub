@@ -85,7 +85,18 @@ public partial class ProjectsPage : UserControl
 
     private void WireButtons()
     {
-        NewProjectButton.Click += (_, _) => NewProjectPanel.IsVisible = !NewProjectPanel.IsVisible;
+        NewProjectButton.Click += (_, _) =>
+        {
+            var opening = !NewProjectPanel.IsVisible;
+            if (opening && string.IsNullOrWhiteSpace(ProjectLocationBox.Text))
+            {
+                // 默认父目录只在**打开面板**时补一次。放进 Reload() 的话，用户把框清空后
+                // 任何一次刷新都会把它弹回默认值 —— 输入框就不再是"用户可以改的文本"了。
+                ProjectLocationBox.Text = _workspace.ProjectDirectory;
+            }
+
+            NewProjectPanel.IsVisible = opening;
+        };
         CancelNewProjectButton.Click += (_, _) => NewProjectPanel.IsVisible = false;
 
         OpenExistingButton.Click += async (_, _) =>
@@ -196,11 +207,8 @@ public partial class ProjectsPage : UserControl
         AndroidDevicePanel.IsVisible = target?.Family == "android";
         ReloadDevices();
 
-        if (ProjectLocationBox.Text is null or "")
-        {
-            ProjectLocationBox.Text = _workspace.ProjectDirectory;
-        }
-
+        // 这里**刻意不碰** ProjectLocationBox：父目录是可编辑的单行输入框，
+        // 刷新时改写它等于把用户正在敲的内容擦掉。默认值由 NewProjectButton 打开面板时补。
         _ready = true;
     }
 

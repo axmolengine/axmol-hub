@@ -45,7 +45,10 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         var template = Path.Combine(engine.Path, "templates/common/proj.android/app/build.gradle");
         if (File.ReadAllText(Path.Combine(source, "build.gradle")).Replace("\r\n", "\n") != File.ReadAllText(template).Replace("\r\n", "\n"))
             throw new InvalidOperationException("Custom Android app/build.gradle is not supported by this managed packaging profile.");
-        CopyTree(Path.Combine(engine.Path, "core/platform/android"), Path.Combine(stage, "engine-android"));
+        // v2 的引擎核心目录是 core/，v3 改名 axmol/ —— 与 ValidateEngine 用同一处反查，不写死。
+        var core = StateStore.FindEngineCoreDirectory(engine.Path)
+            ?? throw new InvalidDataException("Incomplete Axmol engine: missing " + string.Join(", ", StateStore.MissingEngineMarkers(engine.Path)));
+        CopyTree(Path.Combine(engine.Path, core, "platform/android"), Path.Combine(stage, "engine-android"));
         Directory.CreateDirectory(Path.Combine(stage, "app"));
         WriteChanged(Path.Combine(stage, "settings.gradle"), $"rootProject.name = {Groovy(project.Name)}\ninclude ':app', ':libaxmol'\nproject(':libaxmol').projectDir = file('engine-android/libaxmol')\n");
         WriteChanged(Path.Combine(stage, "build.gradle"), "buildscript { repositories { google(); mavenCentral() }; dependencies { classpath 'com.android.tools.build:gradle:8.11.1' } }\nallprojects { repositories { google(); mavenCentral() } }\n");

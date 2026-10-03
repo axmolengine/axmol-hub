@@ -220,7 +220,7 @@ public sealed class OpsCheckWindow : Window
                     // 版本必须来自引擎自己的版本头，而不是从目录名猜 —— 目录名是可以随便起的。
                     var parts = added.Version.Split('.');
                     Check(parts.Length == 3 && parts.All(part => int.TryParse(part, out _)),
-                        "引擎「" + name + "」的版本读出为 " + added.Version + "（三段点分，来自 core/axmolver.h.in）");
+                        "引擎「" + name + "」的版本读出为 " + added.Version + "（三段点分，来自引擎版本头 axmolver.h.in：v3 在 axmol/，v2 在 core/）");
                     _lines.Add("INFO  " + name + " → 版本 " + added.Version + "，通道 " + added.Channel);
                 }
             }
@@ -311,10 +311,6 @@ public sealed class OpsCheckWindow : Window
         Skip("Android 打包（需要 Android SDK/NDK 与签名材料）");
     }
 
-    /// <summary>引擎目录缺哪些标志文件。与 <see cref="StateStore.ValidateEngine"/> 用同一份清单。</summary>
-    private static string[] MissingMarkers(string engine)
-    {
-        string[] markers = ["core/axmolver.h.in", "tools/cmdline/axmol.ps1", "templates/cpp/axproj-template.json", "1k/1kiss.ps1"];
-        return [.. markers.Where(marker => !File.Exists(Path.Combine(engine, marker)))];
-    }
+    /// <summary>引擎目录缺哪些标志文件。清单的唯一来源是 <see cref="StateStore.MissingEngineMarkers"/>，不在这里另写一份。</summary>
+    private static string[] MissingMarkers(string engine) => [.. StateStore.MissingEngineMarkers(engine)];
 }
