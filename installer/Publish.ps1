@@ -119,7 +119,7 @@ if ($Stage -in @('All', 'Upload')) {
     # one check that proves it, so it runs after every publish.
     $taskAssets = @((& gh release view $taskTag --repo $taskSlug --json assets | ConvertFrom-Json).assets | ForEach-Object { $_.name })
     foreach ($taskFile in $taskUpload) {
-        $taskName = Split-Path -LiteralPath $taskFile -Leaf
+        $taskName = [System.IO.Path]::GetFileName($taskFile)
         if ($taskAssets -notcontains $taskName) { throw "Asset is missing from release $taskTag after upload: $taskName" }
     }
 
@@ -129,6 +129,6 @@ if ($Stage -in @('All', 'Upload')) {
         Channel = $Channel
         Runtime = $Runtime
         Delta = [bool](Test-Path -LiteralPath $taskDelta)
-        Assets = $taskUpload | ForEach-Object { Split-Path -LiteralPath $_ -Leaf }
+        Assets = $taskUpload | ForEach-Object { [System.IO.Path]::GetFileName($_) }
     } | ConvertTo-Json -Depth 4
 }
