@@ -15,9 +15,17 @@ public sealed record BuildCommand(string Executable, string[] Arguments, string 
 /// </summary>
 public sealed class PlatformBuildService(ProcessRunner runner)
 {
-    /// <summary>这个目标会执行的引擎命令（<c>plan</c> 动词与日志都用它）。</summary>
-    public static AxmolInvocation Plan(ProjectEntry project, bool configureOnly)
-        => AxmolCommandMap.Build(BuildTargets.Get(project.Platform), project.Path, project.Configuration, configureOnly);
+    /// <summary>
+    /// 这个目标会执行的引擎命令（<c>plan</c> 动词与日志都用它）。
+    /// 与 <c>ProjectService.BuildAsync</c> **共用** <see cref="ProjectBuildOptions"/>，
+    /// 所以 plan 报出的 <c>-xc</c> 就是 build 实际会用的那一份（含日志捕获补丁与预编译库选项）。
+    /// </summary>
+    public static AxmolInvocation Plan(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
+    {
+        var target = BuildTargets.Get(project.Platform);
+        return AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly,
+            ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: false, prebuiltState));
+    }
 
     /// <summary>
     /// 辅助工具环境：继承父进程，再前置引擎树里的工具目录。

@@ -300,6 +300,8 @@ public sealed class OpsCheckWindow : Window
         Skip("环境准备 / 装工具链（跑引擎自己的 setup.ps1：GB 级下载，且会改用户级 PATH 与 AX_ROOT、可能弹 UAC）"
              + " —— 全局副作用不适合放进自动化，由用户在工具链页手动确认执行");
         Skip("构建与运行（需要先跑 setup.ps1 备好引擎树；成本是分钟到小时级，不属于「便宜的真跑」）");
+        Skip("构建引擎预编译库（编译整棵引擎，数 GB、数十分钟）—— 由维护者在引擎页手动执行；"
+             + "判定逻辑本身另有主机无关的验收：Checks --check-prebuilt");
         Skip("Android 打包（构建交给引擎的 axmol build -p android；需要 Android SDK/NDK 与签名材料）");
     }
 

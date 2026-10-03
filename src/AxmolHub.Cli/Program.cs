@@ -126,7 +126,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         var projectType = arguments.Length == 6 ? arguments[5] : arguments.Length == 5 && target == null ? arguments[4] : "cpp";
         var hub = store.Load();
         var selected = hub.Engines.FirstOrDefault(e => e.Path == hub.DefaultEnginePath) ?? throw new InvalidOperationException("Set a default engine in this data root first.");
-        var creator = new ProjectService(runner, commandLine);
+        var creator = new ProjectService(runner, commandLine, new EnginePrebuiltState(store.Root));
         var project = await creator.CreateAsync(arguments[2], arguments[3], selected, stop.Token, projectType);
         if (target != null) BuildTargets.Select(project, target);
         store.SaveProject(project);
@@ -207,11 +207,11 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     var state = store.Load();
     var engine = state.Engines.FirstOrDefault(e => e.Version == entry.Version && e.Channel == entry.Channel)
         ?? throw new InvalidOperationException("Required engine version/channel is not registered in this data root.");
-    var service = new ProjectService(runner, commandLine);
+    var service = new ProjectService(runner, commandLine, new EnginePrebuiltState(store.Root));
     switch (verb)
     {
         case "plan":
-            var plan = PlatformBuildService.Plan(entry, false);
+            var plan = PlatformBuildService.Plan(entry, engine, false, new EnginePrebuiltState(store.Root));
             // schema 2 起裸 JSON 形状退役（见 docs/cli-json-contract.md §6）：
             // 不带 --json 时输出人读文本，与其他动词一致。
             if (!asJson)

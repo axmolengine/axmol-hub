@@ -10,7 +10,7 @@
     结构照抄：标题行 → 引擎表格 → 七个操作按钮。
   -->
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid RowDefinitions="Auto,*,Auto,Auto">
 
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
@@ -40,8 +40,13 @@
       </Grid>
     </Border>
 
-    <WrapPanel Grid.Row="2" Margin="0,18,0,6">
+    <!-- 预编译库状态读数：勾了「使用预编译库」的项目靠它对齐，所以放在按钮行上方、一眼可见。 -->
+    <TextBlock x:Name="PrebuiltStatus" Grid.Row="2" Classes="muted"
+               TextWrapping="Wrap" Margin="0,14,0,0" />
+
+    <WrapPanel Grid.Row="3" Margin="0,18,0,6">
       <Button x:Name="ModulesButton" Content="{DynamicResource AddModules}" Classes="primary" />
+      <Button x:Name="BuildEngineButton" Content="{DynamicResource BuildEngine}" />
       <Button x:Name="DefaultButton" Content="{DynamicResource SetDefault}" />
       <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
       <Button x:Name="VerifyButton" Content="{DynamicResource VerifyEngine}" Classes="quiet" />

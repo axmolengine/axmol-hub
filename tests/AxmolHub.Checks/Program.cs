@@ -58,7 +58,7 @@ if (args.Contains("--prepare-release-check"))
     var messagesEntry = new List<string>(); var runnerEntry = new ProcessRunner(message => { messagesEntry.Add(message); Console.WriteLine(message); });
     var environmentEntry = new PlatformBuildService(runnerEntry).CreateEnvironment(selectedEngine, BuildTargets.Get("android-arm64"));
     foreach (var name in new[] { "HOME", "TEMP" }) Directory.CreateDirectory(environmentEntry[name]);
-    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry));
+    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry), new EnginePrebuiltState(root));
     var entry = hubEntry.Projects.FirstOrDefault(p => p.Name == "HelloAndroidRelease")
         ?? await serviceEntry.CreateAsync("HelloAndroidRelease", Path.Combine(root, "projects"), selectedEngine);
     var settings = new AndroidReleaseSettings { ApplicationId = "com.axmolhub.releasecheck", VersionCode = 7, VersionName = "0.1.3",
@@ -141,7 +141,7 @@ if (args.Contains("--build-game") || args.Contains("--run-game"))
     var hubState = storeEntry.Load();
     var projectEntry = hubState.Projects.Single(p => p.Name == "HelloAxmol");
     var engineEntry = hubState.Engines.Single(e => e.Version == projectEntry.Version && e.Channel == projectEntry.Channel);
-    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry));
+    var serviceEntry = new ProjectService(runnerEntry, EngineCli(runnerEntry), new EnginePrebuiltState(root));
     if (args.Contains("--build-game"))
     {
         projectEntry.BuildStatus = "Building";
@@ -192,7 +192,7 @@ if (args.Contains("--install-engine"))
     var path = await installer.InstallAsync(package);
     var engineEntry = StateStore.ValidateEngine(path, package.Channel);
     var processRunner = new ProcessRunner(Console.WriteLine);
-    var projectService = new ProjectService(processRunner, EngineCli(processRunner));
+    var projectService = new ProjectService(processRunner, EngineCli(processRunner), new EnginePrebuiltState(root));
     var created = await projectService.CreateAsync("HelloAxmol", Path.Combine(root, "projects"), engineEntry);
     new StateStore(root).Save(new HubState { Engines = [engineEntry], Projects = [created], DefaultEnginePath = path });
     Console.WriteLine($"Axmol {release.Version} verified and project created. Run the engine's setup.ps1 to prepare its toolchain, then Build/Run.");
@@ -286,6 +286,118 @@ if (args.Contains("--check-build-profiles"))
         Check(probeRows.Any(row => row.Name == "Visual Studio"), "Visual Studio is detected (the engine detects it but never installs it)");
 
     Console.WriteLine($"{count} build.profile checks passed for Axmol {probeEngine.Version}.");
+    return;
+}
+
+// ---------------------------------------------------------------------------
+// 预编译引擎库（Windows 目标）。自带 return、主机无关 —— 全部用夹具，
+// 不需要真实引擎、不需要 Windows，所以可以进 CI。
+//
+// 这里守的是**引擎那边不会报错**的那些性质：AX_PREBUILT_DIR 指向的目录不合格时，
+// 引擎会静默退回源码构建（AXGameEngineSetup.cmake:22），所以「能不能用」必须 Hub 判准。
+// ---------------------------------------------------------------------------
+if (args.Contains("--check-prebuilt"))
+{
+    var prebuiltRoot = Path.Combine(root, "prebuilt-check-" + Guid.NewGuid().ToString("N"));
+    var enginePath = Path.Combine(prebuiltRoot, "engine");
+    var projectPath = Path.Combine(prebuiltRoot, "game");
+    Directory.CreateDirectory(enginePath);
+    Directory.CreateDirectory(projectPath);
+
+    var fixtureEngine = new EngineEntry("2.11.5", enginePath, "local");
+    var prebuiltState = new EnginePrebuiltState(prebuiltRoot);
+    var windowsTarget = BuildTargets.Get("windows-x64");
+    var fixtureProject = new ProjectEntry { Name = "game", Path = projectPath, Platform = "windows-x64", Configuration = "Debug", Version = "2.11.5" };
+
+    // 造一个「内容完整」的引擎构建目录：CMakeCache.txt + lib/<配置> + bin/<配置> + runtime/axslc + freetype 头。
+    var buildDirectory = Path.Combine(enginePath, "build");
+
+    /// 干净重来：每次都从零造，否则上一步留下的文件会让下一步的断言假绿
+    /// （例如「没有着色器」那一步会被上一步造出来的着色器文件救回来）。
+    void CompleteBuild(string configuration)
+    {
+        if (Directory.Exists(buildDirectory)) Directory.Delete(buildDirectory, recursive: true);
+        Directory.CreateDirectory(buildDirectory);
+        File.WriteAllText(Path.Combine(buildDirectory, "CMakeCache.txt"), "# fixture cache");
+        Directory.CreateDirectory(Path.Combine(buildDirectory, "bin", configuration));
+        Directory.CreateDirectory(Path.Combine(buildDirectory, "engine", "3rdparty", "freetype", "include"));
+        var shaders = Path.Combine(buildDirectory, "runtime", "axslc");
+        Directory.CreateDirectory(shaders);
+        File.WriteAllText(Path.Combine(shaders, "positionTextureColor_vs"), "fixture");
+        var libraries = Path.Combine(buildDirectory, "lib", configuration);
+        Directory.CreateDirectory(libraries);
+        File.WriteAllText(Path.Combine(libraries, "axmol.lib"), "fixture");
+    }
+
+    void SaveRecord(string target, string configuration, string token)
+        => prebuiltState.Save(fixtureEngine, new EngineBuildRecord
+        {
+            EnginePath = enginePath, EngineVersion = "2.11.5", Channel = "local",
+            Target = target, Platform = "win32", Architecture = "x64",
+            Configuration = configuration, BuildDirectory = "build",
+            EngineToken = token, BuiltAt = DateTimeOffset.Now,
+        });
+
+    var token = ProjectService.EngineInstallationToken(fixtureEngine);
+
+    // 1) 还没构建过 —— 最常见的初始状态。
+    Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState).Status == PrebuiltStatus.NotBuilt,
+        "Without a build record the prebuilt libraries are reported as not built");
+
+    // 2) 内容完整 + 记录匹配 → Ready，且相对路径是引擎根下的干净路径（正斜杠）。
+    CompleteBuild("Debug");
+    SaveRecord("windows-x64", "Debug", token);
+    var ready = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState);
+    Check(ready.Usable && ready.RelativeDirectory == "build" && !ready.RelativeDirectory!.Contains('\\'),
+        "A complete engine build is reported ready with an engine-root-relative path (build)");
+
+    // 3) 只有 Debug 库却要 Release：报出**实际存在哪些配置**，而不是只说"缺"。
+    var missingConfiguration = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState);
+    Check(missingConfiguration.Status == PrebuiltStatus.ConfigurationMissing && missingConfiguration.Detail.Contains("Debug"),
+        "A missing configuration reports the configurations the engine build actually has");
+
+    // 4) 内容不全（没有预编译着色器）→ 不算就绪。
+    CompleteBuild("Release");
+    File.Delete(Path.Combine(buildDirectory, "runtime", "axslc", "positionTextureColor_vs"));
+    Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.MissingContents,
+        "An engine build without runtime/axslc is not accepted as prebuilt");
+
+    // 5) 引擎被重装/修复过 → 记录失效，不能拿旧产物当真。
+    CompleteBuild("Release");
+    SaveRecord("windows-x64", "Release", "token-from-an-older-installation");
+    Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.EngineChanged,
+        "A record from an older engine installation is refused");
+
+    // 6) 记录里的目标与请求的不一致 → 拒绝（目录名本身判断不出平台，只认记录）。
+    SaveRecord("windows-arm64", "Release", token);
+    Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.TargetMismatch,
+        "A record built for another target is refused");
+
+    // 7) 平台闸门：预编译库只对 Windows 目标成立（引擎也只认 WIN32/LINUX）。
+    SaveRecord("windows-x64", "Release", token);
+    Check(!EnginePrebuilt.Supported(BuildTargets.Get("android-arm64"))
+          && EnginePrebuilt.Inspect(fixtureEngine, BuildTargets.Get("android-arm64"), "Release", prebuiltState).Status == PrebuiltStatus.PlatformUnsupported,
+        "Non-Windows targets are refused before reading the disk");
+
+    // 8) 每项目选项的存取（写项目目录内的独立 JSON，不动 .axmol-hub.json）。
+    new PrebuiltSettings { Enabled = true }.Save(fixtureProject);
+    Check(PrebuiltSettings.Load(fixtureProject)?.Enabled == true
+          && File.Exists(Path.Combine(projectPath, ".axmol-hub.prebuilt.json"))
+          && !File.Exists(Path.Combine(projectPath, ".axmol-hub.json")),
+        "Prebuilt settings persist in the project directory without touching the project metadata");
+
+    // 9) 开关打开且就绪 → 交给 CMake 的就是引擎根的相对路径；否则**明确失败**而不是静默退回源码构建。
+    //    夹具项目是 Debug，所以这里要让引擎那一份也回到 Debug 才算就绪。
+    CompleteBuild("Debug");
+    SaveRecord("windows-x64", "Debug", token);
+    var options = ProjectBuildOptions.CmakeOptions(fixtureProject, fixtureEngine, windowsTarget, prepareFiles: false, prebuiltState);
+    Check(options.Contains("-DAX_PREBUILT_DIR=build"), "An enabled, ready prebuilt build contributes -DAX_PREBUILT_DIR=build");
+    prebuiltState.Clear(fixtureEngine);
+    await Reject<PrebuiltUnavailableException>(
+        () => Task.Run(() => ProjectBuildOptions.CmakeOptions(fixtureProject, fixtureEngine, windowsTarget, prepareFiles: false, prebuiltState)),
+        "An enabled but unavailable prebuilt build fails the build instead of silently compiling from source");
+
+    Console.WriteLine($"{count} prebuilt checks passed.");
     return;
 }
 
@@ -535,7 +647,7 @@ Check(auxiliary["AX_ROOT"] == engine.Path && auxiliary["EMSDK"] == Path.Combine(
 Check(auxiliary.ContainsKey("HOME") && auxiliary.ContainsKey("TEMP"), "Auxiliary environment always exposes HOME/TEMP for child tools");
 
 var wrapper = Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1");
-var service = new ProjectService(runner, EngineCli(runner));
+var service = new ProjectService(runner, EngineCli(runner), new EnginePrebuiltState(root));
 await Reject<ArgumentException>(() => service.CreateAsync("bad;name", root, engine), "Unsafe template name rejected");
 var parent = Path.Combine(root, "projects " + Guid.NewGuid().ToString("N"));
 var project = await service.CreateAsync("HelloAxmol", parent, engine);
@@ -718,11 +830,11 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     await Reject<InvalidDataException>(() => Task.Run(() => BuildTargets.Select(entry, "windows-x64", "../../outside")), "Invalid build configuration cannot escape output directory");
     StateStore.WriteJson(StateStore.MetadataPath(platformRoot), new { engine = "axmol", version = "2.11.5", channel = "official-lts", platform = "windows-x64" });
     Check(StateStore.ReadProject(platformRoot).Configuration == "Debug", "Legacy project metadata defaults to Debug");
-    var mismatchedService = new ProjectService(new ProcessRunner(_ => { }), EngineCli(new ProcessRunner(_ => { })));
+    var mismatchedService = new ProjectService(new ProcessRunner(_ => { }), EngineCli(new ProcessRunner(_ => { })), new EnginePrebuiltState(root));
     await Reject<InvalidOperationException>(() => mismatchedService.RunAsync(entry, new("2.11.5", root, "official-lts")), "Run refuses configuration different from locked project before starting a process");
     entry.Platform = "wasm32";
     entry.Configuration = "Release";
-    var releasePlan = PlatformBuildService.Plan(entry, false);
+    var releasePlan = PlatformBuildService.Plan(entry, engine, false, new EnginePrebuiltState(root));
     Check(releasePlan.SubCommand == "build" && releasePlan.Arguments.Contains("-O3")
         && releasePlan.Arguments.Contains("wasm") && releasePlan.Arguments.Contains(platformRoot),
         "Release plan maps to the engine's own axmol build invocation");
@@ -746,7 +858,7 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var keyFingerprint = releaseSettings.Fingerprint(); File.AppendAllText(releaseSettings.KeystorePath, "changed");
     Check(releaseSettings.Fingerprint() != keyFingerprint, "Replacing a keystore invalidates its release receipt fingerprint");
     entry.Configuration = "Release";
-    var androidReleasePlan = PlatformBuildService.Plan(entry, false);
+    var androidReleasePlan = PlatformBuildService.Plan(entry, engine, false, new EnginePrebuiltState(root));
     Check(androidReleasePlan.Arguments.Contains("android") && androidReleasePlan.Arguments.Contains("-O3"), "Configured Android Release maps to the engine's release build invocation");
     entry.Configuration = "Debug";
     await Reject<InvalidDataException>(() => Task.Run(() => BuildTargets.Select(entry, "../../outside")), "Unknown target cannot escape build directories");
@@ -858,7 +970,7 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var devices = AndroidDeviceService.ParseDevices("* daemon started successfully\nList of devices attached\nusb123 device product:fixture\nusb456 unauthorized\nemulator-5554 offline\n");
     Check(devices.Count == 3 && devices.Select(device => device.State).SequenceEqual(new[] { "device", "unauthorized", "offline" }), "ADB authorization and offline states remain distinct");
     await Reject<ArgumentException>(() => new AndroidDeviceService(new ProcessRunner(_ => throw new Exception("Process must not start")), Path.Combine(root, "tools")).DeployAsync(entry, "bad;serial", new()), "Unsafe device serial cannot start a deployment process");
-    var androidPlan = PlatformBuildService.Plan(entry, false);
+    var androidPlan = PlatformBuildService.Plan(entry, engine, false, new EnginePrebuiltState(root));
     var androidEnvironment = new PlatformBuildService(runner).CreateEnvironment(engine, BuildTargets.Get(entry.Platform));
     var androidTools = EngineToolchain.ToolRoot(engine);
     Check(androidPlan.Arguments.Contains("android") && androidPlan.Arguments.Contains("arm64")

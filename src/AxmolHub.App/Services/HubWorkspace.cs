@@ -37,6 +37,10 @@ public sealed class HubWorkspace : IDisposable
     private readonly PlatformBuildService _platformBuilds;
     /// <summary>引擎树内的工具链只读探测（真源 = 引擎自带 build.profiles + tools/external）。</summary>
     private readonly EngineToolchain _engineToolchain;
+    /// <summary>预编译库记录（存 Hub 数据根，按引擎身份哈希）。</summary>
+    private readonly EnginePrebuiltState _prebuiltState;
+    /// <summary>把引擎编译成预编译库（<c>axmol-sdk</c>）。</summary>
+    private readonly EngineBuildService _engineBuild;
     private readonly PackageInstaller _installer;
 
     private CancellationTokenSource? _operation;
@@ -82,7 +86,9 @@ public sealed class HubWorkspace : IDisposable
         _runner = new ProcessRunner(Log.Write);
         _commandLine = new EngineCommandLine(_runner, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
         _setup = new EngineSetupService(_commandLine);
-        _projects = new ProjectService(_runner, _commandLine);
+        _prebuiltState = new EnginePrebuiltState(Store.Root);
+        _engineBuild = new EngineBuildService(_runner, _commandLine, _prebuiltState);
+        _projects = new ProjectService(_runner, _commandLine, _prebuiltState);
         _platformBuilds = new PlatformBuildService(_runner);
         _engineToolchain = new EngineToolchain(_runner);
         _installer = new PackageInstaller(new DownloadManager(_http, Log.Write), Store.Root, Log.Write);
@@ -190,6 +196,12 @@ public sealed class HubWorkspace : IDisposable
     /// <summary>Android 设备列表更新。</summary>
     public event Action? DevicesChanged;
 
+    /// <summary>
+    /// 请求切到某一页（页键同 <c>MainWindow.PageKeys</c>）。由主窗口订阅。
+    /// 对话框不能直接引用主窗口，所以「去引擎页构建」这类跳转经它转发。
+    /// </summary>
+    public event Action<string>? NavigateRequested;
+
     // ───────────────────────── 共享选择 ─────────────────────────
 
     public ProjectEntry? SelectedProject { get; set; }
@@ -294,9 +306,17 @@ public sealed class HubWorkspace : IDisposable
     private async Task ShowOperationErrorAsync(Exception error)
     {
         // 弹窗只展示用户可采取行动的原因，调用栈仍完整留在日志里。
-        var message = error is ProjectDestinationExistsException exists
-            ? HubStrings.Get("ProjectAlreadyExists") + "\n\n" + exists.Destination + "\n\n" + HubStrings.Get("ProjectAlreadyExistsAction")
-            : HubStrings.Get(error.Message) + "\n\n" + HubStrings.Get("ErrorHint");
+        var message = error switch
+        {
+            PrebuiltUnavailableException prebuilt =>
+                HubStrings.Get("PrebuiltUnavailable") + "\n\n"
+                + string.Format(HubStrings.Get("PrebuiltUnavailableFormat"), prebuilt.TargetName, prebuilt.Configuration) + "\n"
+                + HubStrings.Get(prebuilt.Availability.TextKey) + "\n\n"
+                + HubStrings.Get("PrebuiltUnavailableAction"),
+            ProjectDestinationExistsException exists =>
+                HubStrings.Get("ProjectAlreadyExists") + "\n\n" + exists.Destination + "\n\n" + HubStrings.Get("ProjectAlreadyExistsAction"),
+            _ => HubStrings.Get(error.Message) + "\n\n" + HubStrings.Get("ErrorHint"),
+        };
 
         await HubDialog.ShowAsync(Owner, HubStrings.Get("OperationFailed"), message);
     }
@@ -549,12 +569,18 @@ public sealed class HubWorkspace : IDisposable
 
     // ───────────────────────── 项目 ─────────────────────────
 
-    public async Task CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType)
+    public async Task CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType, bool usePrebuilt = false)
     {
         await ExecuteAsync("Create project", async token =>
         {
             var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
             var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType);
+            if (usePrebuilt)
+            {
+                // 每项目选项写项目目录内的独立文件（与 AndroidReleaseSettings 同族）。
+                new PrebuiltSettings { Enabled = true }.Save(project);
+            }
+
             State.Projects.Add(project);
             SelectedProject = project;
         });
@@ -787,6 +813,104 @@ public sealed class HubWorkspace : IDisposable
         Open(RequiredEngine().Path);
         return Task.CompletedTask;
     });
+
+    // ───────────────────────── 预编译引擎库 ─────────────────────────
+
+    /// <summary>
+    /// 当前选中引擎能不能在本机构建预编译库；不能（非 Windows 宿主）时返回 <c>null</c>。
+    /// 引擎自身也允许 Linux 消费预编译库，但本项目只做 Windows 目标。
+    /// </summary>
+    public BuildTarget? PrebuiltHostTarget => EnginePrebuilt.HostTarget();
+
+    /// <summary>当前选中引擎在本机目标下的预编译库状态（供引擎页状态读数）。</summary>
+    public PrebuiltAvailability? PrebuiltStatusOf(EngineEntry? engine)
+    {
+        if (engine is null || PrebuiltHostTarget is not { } host) return null;
+        var configuration = _prebuiltState.Load(engine)?.Configuration ?? "Release";
+        return EnginePrebuilt.Inspect(engine, host, configuration, _prebuiltState);
+    }
+
+    /// <summary>
+    /// 把引擎编译成项目可复用的预编译库。
+    ///
+    /// 这是**长任务**（编译整棵引擎，数分钟到数十分钟、数 GB 磁盘），而且缺工具链时
+    /// 引擎可能顺手触发自己的 setup（会改全局环境），所以先弹确认窗口让用户选配置并知情。
+    /// </summary>
+    public async Task BuildEngineAsync()
+    {
+        if (_operation is not null)
+        {
+            return;
+        }
+
+        var engine = RequiredEngine();
+        var host = PrebuiltHostTarget ?? throw new InvalidOperationException(HubStrings.Get("PrebuiltUnsupportedHost"));
+
+        var configuration = await EngineBuildWindow.PickAsync(Owner, engine, host);
+        if (configuration is null)
+        {
+            return;
+        }
+
+        await ExecuteAsync("Build engine", async token =>
+        {
+            if (Owner is null)
+            {
+                _buildProgress = new BuildProgressWindow("Axmol " + engine.Version, host.Name, configuration, () => _operation?.Cancel());
+                _buildProgress.Show();
+            }
+            else
+            {
+                _buildProgress = new BuildProgressWindow("Axmol " + engine.Version, host.Name, configuration, () => _operation?.Cancel());
+                _buildProgress.Show(Owner);
+            }
+
+            await _engineBuild.BuildAsync(engine, host, configuration, token);
+        });
+
+        Refresh();
+    }
+
+    /// <summary>
+    /// 打开项目的「预编译库设置」。链接方式变了会让旧产物失效，所以保存后把构建状态重置。
+    /// </summary>
+    public async Task<bool> EditPrebuiltAsync(ProjectEntry project)
+    {
+        try
+        {
+            var engine = RequiredEngine(project);
+            var target = BuildTargets.Get(project.Platform);
+            var availability = EnginePrebuilt.Supported(target)
+                ? EnginePrebuilt.Inspect(engine, target, project.Configuration, _prebuiltState)
+                : new PrebuiltAvailability(PrebuiltStatus.PlatformUnsupported,
+                    $"Prebuilt engine libraries are only supported for Windows targets; {target.Id} is a '{target.Family}' target.");
+
+            var enabled = PrebuiltSettings.Load(project)?.Enabled == true;
+            var dialog = new PrebuiltWindow(project, engine, target, availability, enabled, NavigateTo);
+            var result = Owner is null
+                ? await dialog.ShowDialog<HubDialogResult>(null!)
+                : await dialog.ShowDialog<HubDialogResult>(Owner);
+            if (result != HubDialogResult.Ok)
+            {
+                return false;
+            }
+
+            new PrebuiltSettings { Enabled = dialog.Enabled }.Save(project);
+            // 链接方式变了：既有的产物不再代表当前配置，必须重编。
+            project.BuildStatus = "Not built";
+            Store.Save(State);
+            Log.Write(HubStrings.Get("PrebuiltSaved"));
+            Refresh();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            await HubDialog.ShowAsync(Owner, HubStrings.Get("PrebuiltSettings"), ex.Message);
+            return false;
+        }
+    }
+
+    private void NavigateTo(string page) => NavigateRequested?.Invoke(page);
 
     public async Task OpenEditorAsync(bool visualStudio) => await ExecuteAsync(
         visualStudio ? "Open Visual Studio" : "Open VS Code", _ =>

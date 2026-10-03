@@ -285,6 +285,15 @@ public partial class MainWindow : Window
         };
 
         _workspace.Failed += () => LogPanel.IsExpanded = true;
+
+        // 对话框（如「预编译库设置」）不能直接引用主窗口，跳页经工作区转发到这里。
+        _workspace.NavigateRequested += key =>
+        {
+            if (PageKeys.Contains(key))
+            {
+                NavigateTo(key);
+            }
+        };
     }
 
     private void WireChrome()

@@ -130,6 +130,13 @@
 退役它的同时，载荷也从「Hub 自拼的 CMake 命令计划」换成了引擎 cmdline 调用 —— 同一处破坏性变更，
 一并进 `schema 2`。
 
+**`plan` 的 `-xc` 与 `build` 逐字一致。** 两者共用 `ProjectBuildOptions.CmakeOptions`，
+所以 plan 会如实报出 Windows 日志捕获补丁与项目的 `-DAX_PREBUILT_DIR` 选项。
+代价是：项目勾了预编译库但引擎那一份不可用时，**`plan` 也会与 `build` 一样失败**
+（`ok:false` + `error.type=PrebuiltUnavailableException`）—— 这是刻意的，
+plan 的职责就是预告 build 会做什么，而不是给出一个 build 会拒绝执行的计划。
+`arguments` 里多一段取值**不算破坏性变更**（§7），所以 `schema` 仍是 2。
+
 ## 7. 兼容性与实现位置的约定
 
 - **形状只在 `schema` 递增时破坏。** 新增字段不算破坏（消费方应忽略未知字段）。

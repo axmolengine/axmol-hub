@@ -123,9 +123,13 @@ public partial class ProjectsPage : UserControl
                 ProjectNameBox.Text ?? "",
                 ProjectLocationBox.Text ?? "",
                 ProjectEnginePicker.SelectedItem as EngineEntry,
-                LuaScripting.IsChecked == true ? "lua" : "cpp");
+                LuaScripting.IsChecked == true ? "lua" : "cpp",
+                usePrebuilt: PrebuiltCheck.IsChecked == true);
             NewProjectPanel.IsVisible = false;
         };
+
+        // 换引擎会改变「这一棵有没有预编译库」，提示要跟着走。
+        ProjectEnginePicker.SelectionChanged += (_, _) => RefreshPrebuiltChoice();
 
         BuildButton.Click += async (_, _) => await _workspace.BuildAsync(configureOnly: false);
         ConfigureButton.Click += async (_, _) => await _workspace.BuildAsync(configureOnly: true);
@@ -136,6 +140,14 @@ public partial class ProjectsPage : UserControl
             if (_workspace.SelectedProject is { } project)
             {
                 await _workspace.EditAndroidReleaseAsync(project);
+            }
+        };
+
+        PrebuiltSettingsButton.Click += async (_, _) =>
+        {
+            if (_workspace.SelectedProject is { } project)
+            {
+                await _workspace.EditPrebuiltAsync(project);
             }
         };
 
@@ -209,7 +221,35 @@ public partial class ProjectsPage : UserControl
 
         // 这里**刻意不碰** ProjectLocationBox：父目录是可编辑的单行输入框，
         // 刷新时改写它等于把用户正在敲的内容擦掉。默认值由 NewProjectButton 打开面板时补。
+        // 同上：预编译开关与它一样属于"用户的选择"，刷新只改可用性和提示文案，不动勾选状态。
+        RefreshPrebuiltChoice();
         _ready = true;
+    }
+
+    /// <summary>
+    /// 「使用预编译库」开关的可用性与提示。
+    ///
+    /// 两个刻意的取舍：
+    /// <list type="number">
+    /// <item>引擎还没构建时**仍然允许勾选** —— 用户可以先建项目、再去引擎页构建；
+    /// 真正不可用会在构建时明确失败（而不是偷偷退回源码构建）。</item>
+    /// <item>宿主不支持（非 Windows）时**强制不勾选并禁用** —— 那个组合永远不可能生效，留着只会骗人。</item>
+    /// </list>
+    /// </summary>
+    private void RefreshPrebuiltChoice()
+    {
+        var hint = HubStrings.Get("PrebuiltHint");
+        if (_workspace.PrebuiltHostTarget is null)
+        {
+            PrebuiltCheck.IsChecked = false;
+            PrebuiltCheck.IsEnabled = false;
+            PrebuiltHint.Text = hint + "\n" + HubStrings.Get("PrebuiltUnsupportedHost");
+            return;
+        }
+
+        PrebuiltCheck.IsEnabled = true;
+        var availability = _workspace.PrebuiltStatusOf(ProjectEnginePicker.SelectedItem as EngineEntry);
+        PrebuiltHint.Text = hint + "\n" + HubStrings.Get(availability?.Usable == true ? "PrebuiltReadyHint" : "PrebuiltNotBuiltHint");
     }
 
     private void ReloadDevices()

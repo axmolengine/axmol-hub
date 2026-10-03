@@ -35,6 +35,7 @@ public partial class InstallsPage : UserControl
             }
 
             _workspace.SelectedEngine = EnginesGrid.SelectedItem as EngineEntry;
+            ReloadPrebuiltStatus();
         };
 
         ImportButton.Click += async (_, _) =>
@@ -48,6 +49,7 @@ public partial class InstallsPage : UserControl
 
         InstallButton.Click += async (_, _) => await _workspace.ChooseAndInstallEngineAsync();
         ModulesButton.Click += async (_, _) => await _workspace.ChooseModulesAsync(_workspace.SelectedEngine);
+        BuildEngineButton.Click += async (_, _) => await _workspace.BuildEngineAsync();
         DefaultButton.Click += async (_, _) => await _workspace.SetDefaultEngineAsync();
         OpenFolderButton.Click += async (_, _) => await _workspace.OpenEngineFolderAsync();
         VerifyButton.Click += async (_, _) => await _workspace.VerifyEngineAsync();
@@ -97,6 +99,35 @@ public partial class InstallsPage : UserControl
             EnginesGrid.Columns[index].Header = HubStrings.Get(headers[index]);
         }
 
+        ReloadPrebuiltStatus();
         _ready = true;
+    }
+
+    /// <summary>
+    /// 预编译库状态读数。判定的真源是 <see cref="EnginePrebuilt"/>（记录 + 目录内容校验），
+    /// 这里只负责说给用户听。宿主不支持时（非 Windows）按钮直接禁用 —— 点了必然会失败。
+    /// </summary>
+    private void ReloadPrebuiltStatus()
+    {
+        var host = _workspace.PrebuiltHostTarget;
+        BuildEngineButton.IsEnabled = host is not null;
+
+        var engine = _workspace.SelectedEngine;
+        if (host is null)
+        {
+            PrebuiltStatus.Text = HubStrings.Get("PrebuiltStatus") + "：" + HubStrings.Get("PrebuiltUnsupportedHost");
+            return;
+        }
+
+        if (engine is null)
+        {
+            PrebuiltStatus.Text = HubStrings.Get("PrebuiltStatus") + "：" + HubStrings.Get("PrebuiltNone");
+            return;
+        }
+
+        var availability = _workspace.PrebuiltStatusOf(engine) ?? throw new InvalidOperationException("Prebuilt inspection is unavailable on this host.");
+        PrebuiltStatus.Text = HubStrings.Get("PrebuiltStatus") + "：" + (availability.Usable
+            ? string.Format(HubStrings.Get("PrebuiltReadyFormat"), availability.Label, availability.RelativeDirectory)
+            : HubStrings.Get(availability.TextKey));
     }
 }

@@ -17,7 +17,7 @@ public sealed class ProjectDestinationExistsException(string destination)
 ///
 /// Hub 保留的增值：Windows 控制台日志捕获补丁、运行目录发布、运行期资源与着色器校验。
 /// </summary>
-public sealed class ProjectService(ProcessRunner runner, EngineCommandLine commandLine)
+public sealed class ProjectService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
     /// <summary>Hub 写在工程目录下的标记目录（构建收据、日志捕获补丁）。不参与官方工程结构。</summary>
     public const string MarkerDirectory = ".hub";
@@ -61,33 +61,35 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (locked.Version != project.Version || locked.Channel != project.Channel || locked.Platform != project.Platform || locked.Configuration != project.Configuration) throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
         StateStore.ValidateEngine(engine.Path, engine.Channel);
 
-        var extraCmake = new List<string>();
-        if (target.Family == "windows")
-        {
-            // Hub 的日志捕获补丁：只在工程入口未被用户改动时注入，经引擎的 -xc 传进 CMake。
-            var capture = PrepareWindowsLogCapture(project, engine);
-            if (capture.Length > 0) extraCmake.Add("-DCMAKE_PROJECT_INCLUDE=" + capture.Replace('\\', '/'));
-        }
-
+        // -xc 的唯一组装点在 ProjectBuildOptions —— build 与 plan 共用它，否则 plan 会漏报选项。
+        var extraCmake = ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: true, prebuiltState);
         await commandLine.RunAsync(engine, AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly, extraCmake), project.Path, cancellation);
         WriteBuildReceipt(project, engine);
     }
 
     /// <summary>
-    /// Windows 控制台日志捕获。官方入口默认是 GUI 子系统，Hub 的日志面板就看不到程序输出，
-    /// 所以只在 <c>proj.win32/main.cpp</c> 与官方模板**逐字相同**（即用户没动过入口）时注入；
-    /// 用户自定义入口保留其初始化和控制台行为。
+    /// Windows 控制台日志捕获补丁的 CMake include 路径。官方入口默认是 GUI 子系统，
+    /// Hub 的日志面板就看不到程序输出，所以只在 <c>proj.win32/main.cpp</c> 与官方模板**逐字相同**
+    /// （即用户没动过入口）时注入；用户自定义入口保留其初始化和控制台行为。
+    ///
+    /// <paramref name="prepareFiles"/> 为 <c>false</c> 时**只算路径、不写盘** —— 给 <c>plan</c> 用，
+    /// 让 plan 报出的 <c>-xc</c> 与真实 build 逐字一致，同时不产生磁盘副作用。
     /// </summary>
-    public static string PrepareWindowsLogCapture(ProjectEntry project, EngineEntry engine)
+    public static string WindowsLogCaptureOption(ProjectEntry project, EngineEntry engine, bool prepareFiles)
     {
         var main = Path.Combine(project.Path, "proj.win32/main.cpp");
         var template = Path.Combine(engine.Path, "templates/common/proj.win32/main.cpp");
         if (!File.Exists(main) || !File.Exists(template) || File.ReadAllText(main).Replace("\r\n", "\n") != File.ReadAllText(template).Replace("\r\n", "\n")) return "";
         // 构建目录已由引擎决定，补丁不能再写进去 —— 落在工程侧 Hub 标记目录里。
         var directory = Path.Combine(project.Path, MarkerDirectory);
-        Directory.CreateDirectory(directory);
         var include = Path.Combine(directory, "HubLogCapture.cmake");
-        File.WriteAllText(include, """
+        if (!prepareFiles) return include;
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(include, LogCaptureCmake);
+        return include;
+    }
+
+    private const string LogCaptureCmake = """
             if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
               function(hub_configure_log_capture)
                 if(NOT TARGET "${APP_NAME}")
@@ -103,9 +105,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
               endfunction()
               cmake_language(DEFER CALL hub_configure_log_capture)
             endif()
-            """);
-        return include;
-    }
+            """;
 
     /// <summary>构建收据：记录这次构建对应的引擎安装与目标/配置，供 Run 判断产物是否仍然有效。</summary>
     private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine)

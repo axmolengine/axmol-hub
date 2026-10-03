@@ -98,6 +98,21 @@ public static class AxmolCommandMap
         return new("build", arguments.ToArray());
     }
 
+    /// <summary>
+    /// **引擎根构建**：把引擎编译成可被项目复用的预编译库（聚合目标 <c>axmol-sdk</c>）。
+    ///
+    /// 刻意**不复用 <see cref="Build"/>**：那个总是追加 <c>-d &lt;project&gt;</c>，而引擎根构建没有工程目录
+    /// （CI 黄金路径就是 `axmol -p win32 -a x64 -xc '…' -O3`，不带 <c>-d</c>）。
+    /// 工作目录由调用方设为引擎根。
+    /// </summary>
+    public static AxmolInvocation BuildEngine(BuildTarget target, string configuration)
+    {
+        var arguments = new List<string>();
+        AddTarget(arguments, target);               // -p win32 -a x64
+        AddConfiguration(arguments, configuration); // Release → -O3；Debug → 不传
+        return new("build", arguments.ToArray());
+    }
+
     public static AxmolInvocation Run(BuildTarget target, string projectDirectory, string configuration)
     {
         var arguments = new List<string>();

@@ -60,6 +60,28 @@ ADR-0001 把 Hub 定位成「环境与构建服务」，其中一条是**工具�
 | 引擎导入判据 | `StateStore.FindEngineCoreDirectory` / `StateStore.MissingEngineMarkers`（v2 `core/`、v3 `axmol/`） |
 | 构建目录 | **引擎决定**，Hub 只发现：先读引擎生成的 `run.bat` 的 `BUILD_DIR`，再扫 `build*`（`EngineBuildLayout`） |
 | 产物位置 | `<buildDir>/bin/<App>/<Config>/<App>[.exe]`（引擎 `run.bat` 的口径） |
+| 预编译引擎库 | **引擎自己的 CMake 构建目录**（含 `CMakeCache.txt`），由项目 CMake 配置时以 `-DAX_PREBUILT_DIR=<相对引擎根>` 消费 |
+
+## 3.0 预编译引擎库（仅 Windows 构建目标）
+
+Axmol 的「预编译引擎」不是一份单独导出的 SDK，而是**直接复用引擎自己的 CMake 构建目录**：
+`templates/common/cmake/modules/AXGameEngineSetup.cmake:22-30` 在
+`WIN32 OR LINUX` 且 `${AX_ROOT}/${AX_PREBUILT_DIR}` 是目录时置 `_AX_USE_PREBUILT=TRUE`，
+于是**跳过 `add_subdirectory(axmol)`**，改为 `load_cache` 该目录并链接其中的
+`lib/<Config>`、`bin/<Config>`、`runtime/axslc`；**头文件仍来自引擎源码树**。
+
+- **产出它的命令**：在引擎根跑 `axmol build -p win32 -a x64 [-O3]`（聚合目标 `axmol-sdk`）。
+  与项目构建的区别只有一点：**不带 `-d`**（CI 黄金路径即如此）。
+- **消费它的口径**：值必须是**相对引擎根**的路径（`Path.GetRelativePath(engine, buildDir)`），
+  由 `ProjectBuildOptions` 在项目 CMake 配置时拼进 `-xc`。
+- **范围收窄**：引擎本身也允许 `LINUX` 消费，但**本项目只做 Windows 目标** ——
+  闸门只在 `EnginePrebuilt.Supported` 一处，别处不得各写一份。
+- **必须由 Hub 自己判准**：目录不合格时引擎会**静默退回源码构建、不报错**，
+  所以只有 `PrebuiltStatus.Ready` 才把 `-DAX_PREBUILT_DIR` 交给 CMake，否则明确失败并指向引擎页。
+- **多配置陷阱**：引擎侧链接用的是 `lib/${CMAKE_BUILD_TYPE}`，而 VS 多配置下真实目录是 `lib/<Config>` ——
+  Hub 一律**发现 `lib/*`** 并报出实际存在的配置名，绝不假定目录名。
+- 构建记录存在 Hub 数据根（`prebuilt/<引擎身份哈希>.json`），不在引擎树里 ——
+  这样引擎被移出列表再加入仍能命中，且不会往第三方引擎树写入。
 
 ## 3.1 工具链状态判定：照抄 `1kiss`，不是"扫目录"
 

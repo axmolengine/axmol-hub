@@ -97,6 +97,16 @@
           <TextBlock Text="{DynamicResource ScriptingHint}" Classes="muted" Margin="0,8,0,0" />
         </StackPanel>
 
+        <!--
+          预编译引擎库。面板里没有目标/配置选择器（那是 BuildTargetDialog 的事），所以这里
+          只能按**宿主目标**判断引擎有没有可用的预编译库；真正「目标 + 配置」的一致性由
+          Core 在构建时强制（不一致会构建失败并指路），提示文案必须把这一点写出来。
+        -->
+        <StackPanel Margin="0,14,0,0">
+          <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
+          <TextBlock x:Name="PrebuiltHint" Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
+        </StackPanel>
+
         <DockPanel Margin="0,14,0,0">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button x:Name="CancelNewProjectButton" Content="{DynamicResource Cancel}"
@@ -163,6 +173,7 @@
         <Button x:Name="RunButton" Content="{DynamicResource Run}" />
         <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet" />
         <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet" />
+        <Button x:Name="PrebuiltSettingsButton" Content="{DynamicResource PrebuiltSettings}" Classes="quiet" />
         <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
         <Button x:Name="OpenOutputsButton" Content="{DynamicResource OpenOutputs}" Classes="quiet" />
         <Button x:Name="VisualStudioButton" Content="Visual Studio" Classes="quiet" />
