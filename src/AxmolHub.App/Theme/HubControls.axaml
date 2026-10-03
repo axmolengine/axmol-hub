@@ -41,12 +41,27 @@
                 BorderThickness="{TemplateBinding BorderThickness}"
                 CornerRadius="{TemplateBinding CornerRadius}"
                 Padding="{TemplateBinding Padding}">
-          <ContentPresenter Name="PART_ContentPresenter"
-                            Content="{TemplateBinding Content}"
-                            ContentTemplate="{TemplateBinding ContentTemplate}"
-                            Foreground="{TemplateBinding Foreground}"
-                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+          <!-- The label and the ellipsis affordance share one row, so the horizontal content alignment
+               now lands on the StackPanel (a ContentPresenter alone used to carry it).
+               PART_MoreAffordance deliberately carries **no** IsVisible here: an inline value is a local
+               value and would outrank every style, making it impossible for Button.more to switch it on.
+               Its default (visible) is turned off by a rule in HubStyles.axaml instead.
+               Foreground is bound inline on purpose: the app-wide TextBlock style paints Hub.TextPrimary,
+               which would leave a dark ellipsis on top of a Button.primary's white label. -->
+          <StackPanel Orientation="Horizontal"
+                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Foreground="{TemplateBinding Foreground}"
+                              VerticalAlignment="Center" />
+            <TextBlock Name="PART_MoreAffordance"
+                       Text="…"
+                       VerticalAlignment="Center"
+                       Foreground="{TemplateBinding Foreground}"
+                       Margin="1,0,0,1" />
+          </StackPanel>
         </Border>
       </ControlTemplate>
     </Setter>

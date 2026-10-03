@@ -59,12 +59,15 @@
         </Border>
 
         <!-- ============ Buttons ============ -->
-        <TextBlock Text="按钮：默认 / primary / quiet / 禁用" FontSize="16" FontWeight="SemiBold" />
+        <TextBlock Text="按钮：默认 / primary / quiet / 先弹框 / 危险 / 禁用" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <WrapPanel>
             <Button x:Name="BtnDefault" Content="默认按钮" />
             <Button x:Name="BtnPrimary" Classes="primary" Content="主操作" />
             <Button x:Name="BtnQuiet" Classes="quiet" Content="次要操作" />
+            <Button x:Name="BtnMore" Classes="more" Content="先弹框" />
+            <Button x:Name="BtnMorePrimary" Classes="primary more" Content="主操作·先弹框" />
+            <Button x:Name="BtnDestructive" Classes="destructive" Content="立即执行" />
             <Button Content="禁用" IsEnabled="False" />
           </WrapPanel>
         </Border>

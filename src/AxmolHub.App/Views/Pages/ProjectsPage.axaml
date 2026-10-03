@@ -42,7 +42,7 @@
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
                   HorizontalAlignment="Right" VerticalAlignment="Center">
-        <Button x:Name="OpenExistingButton" Content="{DynamicResource OpenExisting}" Classes="quiet" />
+        <Button x:Name="OpenExistingButton" Content="{DynamicResource OpenExisting}" Classes="quiet more" />
         <Button x:Name="NewProjectButton" Content="{DynamicResource NewProject}"
                 Classes="primary" Margin="8,0,0,0" />
       </StackPanel>
@@ -100,7 +100,7 @@
                  clipped vertically (showing "text is cut off and needs vertical scrolling inside the box").
                  Let it size to its content, consistent with the two same-shaped layouts in SettingsPage. -->
             <DockPanel>
-              <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
+              <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}" Classes="more"
                       DockPanel.Dock="Right" Margin="6,0,0,0" Padding="10,8" />
               <TextBox x:Name="ProjectLocationBox" />
             </DockPanel>
@@ -215,17 +215,22 @@
         two-row layout look crowded.
       -->
       <StackPanel Margin="0,18,0,6" Spacing="8">
+        <!-- "more" marks a button that opens a dialog or picker first, so the click does not act yet:
+             Build / Configure pop the target picker, the other two open project settings windows.
+             Run is deliberately left unmarked — it really does launch straight away. -->
         <WrapPanel Classes="actions" ItemSpacing="8" LineSpacing="8">
-          <Button x:Name="BuildButton" Content="{DynamicResource Build}" Classes="primary" />
+          <Button x:Name="BuildButton" Content="{DynamicResource Build}" Classes="primary more" />
           <Button x:Name="RunButton" Content="{DynamicResource Run}" />
-          <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet" />
+          <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet more" />
           <Border Classes="sep" />
-          <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet" />
-          <Button x:Name="PrebuiltSettingsButton" Content="{DynamicResource PrebuiltSettings}" Classes="quiet" />
+          <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet more" />
+          <Button x:Name="PrebuiltSettingsButton" Content="{DynamicResource PrebuiltSettings}" Classes="quiet more" />
         </WrapPanel>
 
         <DockPanel>
-          <Button x:Name="RemoveProjectButton" Content="{DynamicResource RemoveFromList}" Classes="quiet"
+          <!-- destructive: acts on click with no dialog, so it carries the red ink instead of an ellipsis. -->
+          <Button x:Name="RemoveProjectButton" Content="{DynamicResource RemoveFromList}" Classes="destructive"
+                  ToolTip.Tip="{DynamicResource RemoveProjectHint}"
                   DockPanel.Dock="Right" Margin="16,0,0,0" />
           <WrapPanel Classes="actions" ItemSpacing="8" LineSpacing="8">
             <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />

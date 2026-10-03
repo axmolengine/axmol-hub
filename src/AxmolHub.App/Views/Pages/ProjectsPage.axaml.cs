@@ -225,6 +225,11 @@ public partial class ProjectsPage : UserControl
         AndroidDevicePanel.IsVisible = target?.Family == "android";
         ReloadDevices();
 
+        // Visual Studio is Windows-only (devenv.exe). VS Code is cross-platform, so it always shows.
+        // Without this gate the button would appear on macOS/Linux and fail only when clicked,
+        // after the user has already gone looking for a devenv.exe that can never exist there.
+        VisualStudioButton.IsVisible = OperatingSystem.IsWindows();
+
         // Deliberately **doesn't touch** ProjectLocationBox here: the parent directory is an editable single-line input, and rewriting it on refresh erases what the user is typing. The default is filled by NewProjectButton when the panel opens.
         // Same as above: the prebuilt toggle is likewise "the user's choice"; refresh only changes availability and hint copy, never the checked state.
         RefreshPrebuiltChoice();

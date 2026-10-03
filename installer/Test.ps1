@@ -52,7 +52,11 @@ try {
         $taskOutput = Join-Path $taskWork ("releases/" + $taskVersion)
         & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $taskVersion -PackId $taskPackId -PackTitle $taskTitle -OutputDir $taskOutput
         if ($LASTEXITCODE -ne 0) { throw "Packaging $taskVersion failed." }
-        $taskReleases[$taskVersion] = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*Setup.exe')[0].FullName
+        # Build.ps1 renames the installer to axmol-hub-<version>-<runtime>.exe, so the
+        # vpk-native *-Setup.exe name no longer exists by the time we look for it.
+        $taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.exe')
+        if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput, found $($taskSetup.Count)." }
+        $taskReleases[$taskVersion] = $taskSetup[0].FullName
     }
 
     # 1. 静默安装（Velopack 的 Setup.exe 是一键安装，没有向导，--installto 覆盖安装目录）。

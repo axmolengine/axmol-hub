@@ -483,13 +483,19 @@ public partial class ShellCheckWindow : Window
         var commands = new[]
         {
             "BuildButton", "RunButton", "ConfigureButton", "AndroidReleaseButton", "PrebuiltSettingsButton",
-            "OpenFolderButton", "OpenOutputsButton", "VisualStudioButton", "CodeButton", "RemoveProjectButton",
+            "OpenFolderButton", "OpenOutputsButton", "CodeButton", "RemoveProjectButton",
         };
         var missing = commands
             .Where(name => NamedDescendant<Button>(projects, name) is not { IsVisible: true })
             .ToArray();
         Check(missing.Length == 0,
             "项目页动作条十项命令都还在且可见（重排成两行不能丢按钮，缺：" + string.Join(", ", missing) + "）");
+
+        // Visual Studio is Windows-only, so unlike the other nine it is shown conditionally — assert the
+        // gate itself rather than assume it is always visible (it isn't on macOS/Linux).
+        var vsButton = NamedDescendant<Button>(projects, "VisualStudioButton");
+        Check(vsButton is not null && vsButton.IsVisible == OperatingSystem.IsWindows(),
+            "Visual Studio 按钮仅 Windows 显示（devenv.exe 是 Windows 专属）");
 
         Check(NamedDescendant<Button>(projects, "RemoveProjectButton") is { } removeProject
               && DockPanel.GetDock(removeProject) == Dock.Right,

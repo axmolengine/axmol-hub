@@ -189,10 +189,11 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 链路（已在本机完整跑通，见 §5）：
 
 1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `artifacts/packaging-tools/vpk`，**不修改 PATH**。
-2. `installer/Build.ps1`：发布自包含 App（`AxmolHub.App`）→ `vpk pack` 产出 `Setup.exe` / `Portable.zip` / `.nupkg` / `releases.win.json` → 给用户可下载的产物写 `.sha256`。版本号读自仓库根的 `Directory.Build.props`，脚本里没有第二份副本。
-3. 上传上述产物与更新索引。
-4. `installer/Test.ps1 -Isolated`：一次性 packId / 程序名 / 安装目录 + 两个相邻版本，验证静默安装、载荷完整、自包含启动、中文与空格路径、跨版本升级保留用户数据、卸载移除载荷与注册项且保留用户数据，结束后自行清理。
-5. 上传验收证据到 `artifacts/install-checks/`。
+2. `installer/Publish.ps1 -Stage Build`：`vpk download github` 拉回上一版（供 delta）→ `installer/Build.ps1 -NoClean` 发布自包含 App 并 `vpk pack`，产出安装器 / `Portable.zip` / `.nupkg` / `releases.win.json`，安装包改名为 `axmol-hub-<version>-<runtime>.exe` 并写 `.sha256`。版本号读自仓库根的 `Directory.Build.props`，脚本里没有第二份副本。
+3. 上传上述产物与更新索引（CI 证据，与 release 页无关）。
+4. `installer/Test.ps1 -Isolated`：一次性 packId / 程序名 / 安装目录 + 两个相邻版本，验证静默安装、载荷完整、自包含启动、中文与空格路径、跨版本升级保留用户数据、卸载移除载荷与注册项且保留用户数据，结束后自行清理。**排在发布之前**：验收不过就不该有新 release。
+5. `installer/Publish.ps1 -Stage Upload`（仅 tag push）：裁剪 `releases.win.json` 只留本版条目 → `gh release create` / `gh release upload`（安装包 + sha256 + full/delta nupkg + 更新索引）→ 回读 release 资产清单确认每一件都在。需要 `permissions: contents: write` 与 `GH_TOKEN`。
+6. 上传验收证据到 `artifacts/install-checks/`。
 
 ---
 

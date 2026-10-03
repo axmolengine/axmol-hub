@@ -4,7 +4,11 @@ param(
     [string]$Channel,
     [string]$PackId,
     [string]$PackTitle,
-    [string]$OutputDir
+    [string]$OutputDir,
+    # delta 包的前提是打包时输出目录里已经有上一版的 .nupkg。Publish.ps1 先用
+    # `vpk download github` 把上一版取回来，再以 -NoClean 调本脚本；默认仍然清空，
+    # 因为 releases.<channel>.json 是单一索引，残留的旧版本会一并列进发布内容。
+    [switch]$NoClean
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
@@ -39,10 +43,14 @@ if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CL
 if ($Runtime -notlike 'win-*') { throw "The $Runtime release channel is not wired up yet (see docs/hub-development-plan.md D1/D2)." }
 
 $taskPublish = Join-Path $taskRoot "artifacts/app/$Runtime"
-# 必须清空：releases.<channel>.json 是单一索引，残留的旧版本会一并列进发布内容。
-# 一次性验收包（见 Test.ps1）因此必须用 -OutputDir 指向独立目录，否则会把真索引覆盖成验收包。
 $taskOutput = if ($OutputDir) { $OutputDir } else { Join-Path $taskRoot "artifacts/releases/$Runtime" }
-Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $taskOutput
+if ($NoClean) {
+    # 目录里已有的上一版 .nupkg 必须留下：vpk 靠它生成 delta，并把上一版并进 feed。
+    # 只有在 Publish.ps1 先跑过 `vpk download github` 时才安全。
+    New-Item -ItemType Directory -Force -Path $taskOutput | Out-Null
+} else {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $taskOutput
+}
 # publish 目录只覆盖不清理，与旧的 Inno 链路一致：假定 artifacts/ 是干净的。
 # 已被删名的文件不会被 publish 清掉，需要彻底重来时手工删除 artifacts/app。
 dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish
@@ -70,6 +78,17 @@ $taskArguments = @(
 )
 & $taskVpk @taskArguments
 if ($LASTEXITCODE -ne 0) { throw 'Velopack packaging failed.' }
+
+# 用户直接下载的安装包换成自定义名：axmol-hub-<version>-<runtime>.exe。
+# vpk 的原生名是 {packId}-{channel}-Setup.exe —— 里面既没有版本也没有架构，
+# 在 GitHub Release 页上只能靠 release 标题分辨版本，而同名文件在每次发布里都会重复出现。
+# 只改这一个文件：自动更新读的是 releases.<channel>.json 与它引用的 .nupkg，
+# 与安装包叫什么无关。副作用是 assets.<channel>.json 里仍记着 vpk 原生名 ——
+# 那是 `vpk upload` 的上传清单，本项目用 gh release upload 自己列文件，因此不消费它。
+$taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*-Setup.exe')
+if ($taskSetup.Count -ne 1) { throw "Expected exactly one *-Setup.exe in $taskOutput, found $($taskSetup.Count)." }
+$taskSetupName = 'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
+Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 
 # 只给用户直接下载的产物写摘要；.nupkg 是更新载荷，由 releases.<channel>.json 引用。
 $taskAssets = @(Get-ChildItem -LiteralPath $taskOutput -File | Where-Object {

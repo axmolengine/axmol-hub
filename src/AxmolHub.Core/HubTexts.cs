@@ -151,6 +151,14 @@ public static class HubTexts
         ["VerifyEngine"] = ("验证", "Verify"),
         ["Repair"] = ("修复", "Repair"),
         ["Uninstall"] = ("卸载", "Uninstall"),
+        // Confirmation prompts and consequence hints. The uninstall wording used to be a C# inline
+        // ternary; it lives here now so both languages are editable in one place.
+        ["UninstallPrompt"] = ("卸载 Axmol {0}？安装文件会保留到数据目录的 trash 中，项目文件不受影响。", "Uninstall Axmol {0}? Installation files are retained in the data directory's trash folder. Project files are preserved."),
+        ["RepairPrompt"] = ("重新下载并覆盖 Axmol {0} 的引擎文件？使用此引擎的项目会被重置为“未构建”。", "Re-download and overwrite the Axmol {0} engine files? Projects using this engine are reset to Not built."),
+        ["RepairHint"] = ("重新下载并覆盖整棵引擎树，使用此引擎的项目会回到“未构建”", "Re-downloads and overwrites the whole engine tree; projects using it go back to Not built"),
+        ["RemoveProjectHint"] = ("把项目移出 Hub 列表，磁盘上的项目文件保留", "Removes the project from Hub's list; the project files on disk are kept"),
+        ["RemoveEngineHint"] = ("把引擎移出 Hub 列表，磁盘上的引擎目录保留", "Removes the engine from Hub's list; the engine directory on disk is kept"),
+        ["SwitchDataRootPrompt"] = ("把数据目录切换到 {0}？Hub 会重建工作区并清空当前页面缓存。", "Switch the data directory to {0}? Hub rebuilds the workspace and clears the current page cache."),
         ["ToolsTitle"] = ("平台构建支持", "Platform build support"),
         ["ToolsHint"] = ("按引擎版本管理平台模块和配套工具。", "Manage platform modules and tools for each engine version."),
         ["ToolsNote"] = ("MSVC 使用微软官方安装器，需要 Windows 管理员授权。", "MSVC uses Microsoft's installer and requires Windows administrator approval."),

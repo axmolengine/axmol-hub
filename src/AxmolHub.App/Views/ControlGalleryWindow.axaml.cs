@@ -157,6 +157,27 @@ public partial class ControlGalleryWindow : Window
         check(buttonFrame is not null && Math.Abs(buttonFrame.CornerRadius.TopLeft - 5) < 0.001,
             "Button 模板为 Hub 版本（Border#Frame，圆角 = 5）");
 
+        // ---- The "asks before acting" affordance: an ellipsis that only .more turns on ----
+        // Read through the template rather than the label: the whole point of the marker is that it is
+        // NOT part of the string (Build / Uninstall / PrebuiltSettings are reused as dialog titles, so
+        // the ellipsis must never leak into them).
+        var defaultAffordance = NamedDescendant<TextBlock>(BtnDefault, "PART_MoreAffordance");
+        var moreAffordance = NamedDescendant<TextBlock>(BtnMore, "PART_MoreAffordance");
+        var morePrimaryAffordance = NamedDescendant<TextBlock>(BtnMorePrimary, "PART_MoreAffordance");
+        string Shown(TextBlock? part) => part is null ? "找不到角标" : part.IsVisible.ToString();
+        check(defaultAffordance is { IsVisible: false },
+            "普通按钮不显示省略号（实际 " + Shown(defaultAffordance) + "）");
+        check(moreAffordance is { IsVisible: true },
+            "Button.more 显示省略号（实际 " + Shown(moreAffordance) + "）");
+        check(morePrimaryAffordance is { IsVisible: true }
+              && IsToken(morePrimaryAffordance.Foreground, "Hub.TextOnAccent"),
+            "primary + more 的省略号跟着按钮前景色走，不被全局 TextBlock 样式染成正文色（实际 "
+            + Describe(morePrimaryAffordance?.Foreground) + "）");
+        check(IsToken(BtnDestructive.Foreground, "Hub.DangerText")
+              && ColorOf(BtnDestructive.Background) == Colors.Transparent,
+            "Button.destructive = 透明底 + Hub.DangerText 文字（实际前景 "
+            + Describe(BtnDestructive.Foreground) + " / 背景 " + Describe(BtnDestructive.Background) + "）");
+
         // ---- TextBox: Avalonia 12's required part is PART_TextPresenter, not WPF's PART_ContentHost ----
         check(NamedDescendant<TextPresenter>(TxtNormal, "PART_TextPresenter") is not null,
             "TextBox 模板包含 TextPresenter#PART_TextPresenter");

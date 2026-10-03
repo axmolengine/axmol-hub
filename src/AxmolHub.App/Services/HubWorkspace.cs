@@ -570,6 +570,12 @@ public sealed class HubWorkspace : IDisposable
     public async Task RepairEngineAsync() => await ExecuteAsync("Repair engine", async token =>
     {
         var engine = RequiredEngine();
+        var prompt = string.Format(HubStrings.Get("RepairPrompt"), engine.Version);
+        if (await HubDialog.ShowAsync(Owner, HubStrings.Get("Repair"), prompt, HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok)
+        {
+            return;
+        }
+
         await _installer.RepairAsync(WithDownloadSource(ManagedEnginePackage(engine)), DownloadProgress(), token);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         foreach (var project in State.Projects.Where(p => p.Version == engine.Version && p.Channel == engine.Channel))
@@ -589,9 +595,7 @@ public sealed class HubWorkspace : IDisposable
                 : "Projects still use this engine. Remove them from the list first; project files are preserved.");
         }
 
-        var prompt = HubStrings.Language == HubTexts.ChineseLanguage
-            ? $"卸载 Axmol {engine.Version}？安装文件会保留到数据目录的 trash 中，项目文件不受影响。"
-            : $"Uninstall Axmol {engine.Version}? Installation files are retained in the data directory's trash folder. Project files are preserved.";
+        var prompt = string.Format(HubStrings.Get("UninstallPrompt"), engine.Version);
 
         if (await HubDialog.ShowAsync(Owner, HubStrings.Get("Uninstall"), prompt, HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok)
         {

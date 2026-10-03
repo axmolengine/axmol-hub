@@ -24,9 +24,9 @@
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
                   HorizontalAlignment="Right" VerticalAlignment="Center">
-        <Button x:Name="ImportButton" Content="{DynamicResource ImportEngine}" Classes="quiet" />
+        <Button x:Name="ImportButton" Content="{DynamicResource ImportEngine}" Classes="quiet more" />
         <Button x:Name="InstallButton" Content="{DynamicResource InstallOfficial}"
-                Classes="primary" Margin="8,0,0,0" />
+                Classes="primary more" Margin="8,0,0,0" />
       </StackPanel>
       <StackPanel>
         <TextBlock Text="{DynamicResource Installs}" FontSize="28" FontWeight="SemiBold" />
@@ -56,15 +56,29 @@
       <TextBlock x:Name="PrebuiltStatus" Classes="muted" TextWrapping="Wrap" Margin="0,4,0,0" />
     </StackPanel>
 
+    <!--
+      Eight buttons used to be indistinguishable here, which is exactly the problem this bar is the
+      worst case for: Repair re-downloads the whole engine tree, Uninstall asks first, and Remove
+      just drops the entry — three different behaviours behind one look.
+
+        more         the click opens a dialog first: mirror and engine build need configuration,
+                     repair and uninstall need a confirmation (both pop one now).
+        destructive  acts on click. Remove is the only one left in that tier, and it is marked so
+                     its silence is visible rather than assumed.
+
+      Verify / Open folder / Set default are unmarked because they really do just run and are cheap.
+    -->
     <WrapPanel Grid.Row="3" Classes="actions" ItemSpacing="8" LineSpacing="8" Margin="0,18,0,6">
-      <Button x:Name="MirrorButton" Content="{DynamicResource SwitchMirror}" />
-      <Button x:Name="BuildEngineButton" Content="{DynamicResource BuildEngine}" />
+      <Button x:Name="MirrorButton" Content="{DynamicResource SwitchMirror}" Classes="more" />
+      <Button x:Name="BuildEngineButton" Content="{DynamicResource BuildEngine}" Classes="more" />
       <Button x:Name="DefaultButton" Content="{DynamicResource SetDefault}" />
       <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
       <Button x:Name="VerifyButton" Content="{DynamicResource VerifyEngine}" Classes="quiet" />
-      <Button x:Name="RepairButton" Content="{DynamicResource Repair}" Classes="quiet" />
-      <Button x:Name="UninstallButton" Content="{DynamicResource Uninstall}" Classes="quiet" />
-      <Button x:Name="RemoveButton" Content="{DynamicResource RemoveFromList}" Classes="quiet" />
+      <Button x:Name="RepairButton" Content="{DynamicResource Repair}" Classes="quiet more"
+              ToolTip.Tip="{DynamicResource RepairHint}" />
+      <Button x:Name="UninstallButton" Content="{DynamicResource Uninstall}" Classes="quiet more" />
+      <Button x:Name="RemoveButton" Content="{DynamicResource RemoveFromList}" Classes="destructive"
+              ToolTip.Tip="{DynamicResource RemoveEngineHint}" />
     </WrapPanel>
 
   </Grid>

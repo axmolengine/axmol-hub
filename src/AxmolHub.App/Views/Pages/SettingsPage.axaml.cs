@@ -142,6 +142,9 @@ public partial class SettingsPage : UserControl
             DefaultEngine.Text = engine?.ToString() ?? HubStrings.Get("NoDefault");
             VisualStudioLocation.Text = Display(state.VisualStudioExecutable);
             CodeLocation.Text = Display(state.CodeExecutable);
+            // Visual Studio (devenv.exe) is Windows-only; hide its row on other hosts so the user isn't
+            // offered an editor that can never be installed there.
+            VisualStudioRow.IsVisible = OperatingSystem.IsWindows();
         }
         finally
         {
@@ -428,6 +431,14 @@ public partial class SettingsPage : UserControl
             // After a successful switch **this page instance is discarded** (the shell clears the page cache and rebuilds),
             // so here we must not touch any of our own controls: that would read an already-disposed workspace.
             // The success path ends here; only the failure path needs a dialog — and this page is still alive then.
+            // The whole workspace is rebuilt on switch (page cache cleared), so confirm first: it is the one
+            // "Browse" on this page that really re-homes Hub rather than just storing a path.
+            var confirm = string.Format(HubStrings.Get("SwitchDataRootPrompt"), picked.Path);
+            if (await HubDialog.ShowAsync(top as Window, HubStrings.Get("DataDirectory"), confirm, HubDialogButtons.OkCancel) != HubDialogResult.Ok)
+            {
+                return;
+            }
+
             _switchDataRoot(picked.Path!);
         }
         catch (Exception ex)

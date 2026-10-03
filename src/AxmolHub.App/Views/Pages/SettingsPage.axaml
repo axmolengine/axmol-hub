@@ -100,7 +100,7 @@
             <DockPanel>
               <Button x:Name="OpenDataFolderButton" DockPanel.Dock="Right" Classes="quiet"
                       Margin="12,0,0,0" Content="{DynamicResource OpenFolder}" />
-              <Button x:Name="ChooseDataDirectoryButton" DockPanel.Dock="Right"
+              <Button x:Name="ChooseDataDirectoryButton" DockPanel.Dock="Right" Classes="more"
                       Margin="12,0,0,0" Content="{DynamicResource Browse}" />
               <TextBox x:Name="DataLocation" IsReadOnly="True" />
             </DockPanel>
@@ -114,7 +114,7 @@
           <StackPanel Spacing="6">
             <TextBlock Text="{DynamicResource DefaultProjectDirectory}" FontWeight="SemiBold" />
             <DockPanel>
-              <Button x:Name="ChooseProjectDirectoryButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+              <Button x:Name="ChooseProjectDirectoryButton" DockPanel.Dock="Right" Classes="more" Margin="12,0,0,0"
                       Content="{DynamicResource Browse}" />
               <TextBox x:Name="DefaultProjectLocation" IsReadOnly="True" />
             </DockPanel>
@@ -134,8 +134,9 @@
           <TextBlock Text="{DynamicResource Editors}" FontSize="16" FontWeight="SemiBold" />
           <TextBlock Classes="muted" Text="{DynamicResource EditorHint}" />
 
-          <DockPanel>
-            <Button x:Name="SelectVisualStudioButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+          <!-- Visual Studio is Windows-only; the row is hidden on macOS/Linux by SettingsPage.Reload(). -->
+          <DockPanel x:Name="VisualStudioRow">
+            <Button x:Name="SelectVisualStudioButton" DockPanel.Dock="Right" Margin="12,0,0,0" Classes="more"
                     Content="{DynamicResource SelectEditor}" />
             <StackPanel>
               <TextBlock Text="Visual Studio" FontWeight="SemiBold" />
@@ -144,7 +145,7 @@
           </DockPanel>
 
           <DockPanel>
-            <Button x:Name="SelectCodeButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+            <Button x:Name="SelectCodeButton" DockPanel.Dock="Right" Margin="12,0,0,0" Classes="more"
                     Content="{DynamicResource SelectEditor}" />
             <StackPanel>
               <TextBlock Text="VS Code" FontWeight="SemiBold" />

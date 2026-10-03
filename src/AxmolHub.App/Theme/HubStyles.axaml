@@ -83,6 +83,45 @@
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
+  <!--
+    Added in P6: two orthogonal affordances that say what a click will do **before** it happens.
+    Before this, every page button looked identical and the only way to learn that Uninstall asked
+    first while Repair went straight ahead was to click them and find out.
+
+      more         a trailing ellipsis. The universal convention: the click opens a dialog or a
+                   picker first, so the button does not act yet. Never decoration, and never applied
+                   to a button that really does act on click.
+      destructive  acts immediately and either is not undoable or has a wide blast radius. Kept one
+                   weight below .danger on purpose: .danger fills the whole button and belongs to the
+                   confirm key of a dialog, where the warning should dominate. A page button that
+                   shouts that loudly would compete with the action bar's primary button.
+
+    The two are mutually exclusive in practice: an action that already has a confirmation dialog takes
+    .more and lets that dialog's danger styled confirm key carry the warning, so .destructive stays
+    reserved for what runs without asking.
+
+    The ellipsis is switched on by selector specificity, not by a value in the template: the
+    default-hide rule below and the .more rule come from the same source, and a class selector simply
+    outranks a type selector there. (HubControls.axaml explains why the part carries no IsVisible.)
+  -->
+  <Style Selector="Button /template/ TextBlock#PART_MoreAffordance">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+  <Style Selector="Button.more /template/ TextBlock#PART_MoreAffordance">
+    <Setter Property="IsVisible" Value="True" />
+  </Style>
+
+  <Style Selector="Button.destructive">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerBorder}" />
+  </Style>
+  <!-- Without this the shared hover rule would repaint a destructive button's frame in the accent blue
+       on hover, which reads as if the warning had been withdrawn. -->
+  <Style Selector="Button.destructive:pointerover /template/ Border#Frame">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerText}" />
+  </Style>
+
   <!-- ==================== Inputs ==================== -->
   <!-- The WPF PasswordBox style. Avalonia has no PasswordBox: password box = TextBox + PasswordChar,
          so this is just a class, not a template. -->
