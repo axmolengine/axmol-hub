@@ -51,6 +51,17 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
+      # 上面的 env 只是"申请 8.0.x"，setup-dotnet 实际解析到哪个补丁版本才决定编译器版本。
+      # 这个差异已经真实咬过一次（2026-10-03）：本机 Ubuntu 用 apt 装 dotnet-sdk-8.0
+      # 只能拿到 8.0.1xx（编译器 4.8.0.0），而 Avalonia 12.1.3 的分析器与生成器是按
+      # 4.14 编译的，源生成器整个不产出，表现为一排
+      # `CS0103: The name 'InitializeComponent' does not exist`。
+      # 以后本机与 CI 构建结果不一致时，先比这一行，不要靠猜。
+      - name: Print .NET SDK version
+        run: |
+          dotnet --version
+          dotnet --info
+
       - name: Cache NuGet packages
         uses: actions/cache@v6
         with:
