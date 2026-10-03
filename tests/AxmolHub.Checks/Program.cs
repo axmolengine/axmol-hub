@@ -777,11 +777,35 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var entry = new ProjectEntry { Name = "Fixture", Path = platformRoot, Version = "2.11.5", Channel = "official-lts", BuildStatus = "Succeeded" };
     StateStore.LockProject(entry);
     var directories = new HashSet<string>();
+    // 遍历全部目标需要一个 v3 引擎（v3 才含 arm64/wasm64 等专属目标）。
+    entry.Version = "3.0.0";
+    StateStore.LockProject(entry);
     foreach (var target in BuildTargets.All)
     {
         BuildTargets.Select(entry, target.Id);
         Check(StateStore.ReadProject(platformRoot).Platform == target.Id && directories.Add(BuildTargets.BuildDirectory(entry)), "Target persists and build directory is isolated: " + target.Id);
     }
+    // v2 引擎不得选中 v3 专属目标（win32 arm64 / linux arm64 / wasm64）。
+    entry.Version = "2.11.5";
+    StateStore.LockProject(entry);
+    await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "windows-arm64")), "A v2 engine cannot target Windows ARM64");
+    await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "linux-arm64")), "A v2 engine cannot target Linux ARM64");
+    await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "wasm64")), "A v2 engine cannot target wasm64");
+
+    // 交叉编译与运行规则（用户 2026-10-03）：Windows 可交叉编译 arm64 但运行需 arm64 宿主；
+    // Linux 不支持交叉编译，v3 的 linux arm64 只能在 arm64 机器上构建。
+    Check(BuildTargets.Get("windows-arm64").CanCrossBuild("x64") && !BuildTargets.Get("windows-arm64").CanRunLocally("x64")
+        && BuildTargets.Get("windows-arm64").CanRunLocally("arm64"),
+        "Windows ARM64 cross-compiles on x64 but only runs on an arm64 host");
+    Check(!BuildTargets.Get("linux-arm64").CanCrossBuild("x64") && BuildTargets.Get("linux-arm64").CanCrossBuild("arm64"),
+        "Linux ARM64 builds only on an arm64 host (no cross-compile)");
+    Check(BuildTargets.Get("linux-x64").CanCrossBuild("x64") && !BuildTargets.Get("linux-x64").CanCrossBuild("arm64"),
+        "Linux x64 builds on x64 but not cross-compiled on arm64");
+    Check(BuildTargets.SameArch("x86_64", "x64") && BuildTargets.SameArch("aarch64", "arm64") && !BuildTargets.SameArch("x64", "arm64"),
+        "x86_64/x64 and aarch64/arm64 are the same arch; x64 vs arm64 differ");
+    Check(BuildTargets.Get("windows-x64").CanRunLocally("x64") && BuildTargets.Get("android-arm64").CanCrossBuild("x64"),
+        "Windows x64 runs locally; Android cross-compiles regardless of host arch");
+
     Check(entry.BuildStatus == "Not built", "Target switch never reuses another target success status");
     BuildTargets.Select(entry, "windows-x64", "Debug");
     var debugDirectory = BuildTargets.BuildDirectory(entry);

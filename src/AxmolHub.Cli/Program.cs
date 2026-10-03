@@ -76,7 +76,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         var descriptors = BuildTargets.All
             .Select(target => new TargetDescriptor(
                 target.Id, target.Name, target.Family, target.Architecture,
-                target.Hosts, target.Simulator, target.CanBuildOn(BuildTargets.Host)))
+                target.Hosts, target.Simulator, target.CanBuildOn(BuildTargets.Host), target.MinimumMajorVersion))
             .ToArray();
 
         if (!asJson)

@@ -74,7 +74,8 @@ public sealed record TargetDescriptor(
     string Architecture,
     string[] Hosts,
     bool Simulator,
-    bool Current);
+    bool Current,
+    int MinimumEngineMajor = 2);
 
 public sealed record TargetsPayload(IReadOnlyList<TargetDescriptor> Targets);
 

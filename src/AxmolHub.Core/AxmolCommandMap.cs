@@ -37,10 +37,12 @@ public static class AxmolCommandMap
     public static (string Platform, string Architecture) Target(BuildTarget target) => target.Id switch
     {
         "windows-x64" => ("win32", "x64"),
+        "windows-arm64" => ("win32", "arm64"),
         "uwp-x64" => ("winuwp", "x64"),
         "android-arm64" => ("android", "arm64"),
         "android-x64" => ("android", "x64"),
         "linux-x64" => ("linux", "x64"),
+        "linux-arm64" => ("linux", "arm64"),
         "macos-arm64" => ("osx", "arm64"),
         "macos-x64" => ("osx", "x64"),
         "ios-arm64" => ("ios", "arm64"),
@@ -50,6 +52,7 @@ public static class AxmolCommandMap
         "tvos-simulator-arm64" => ("tvos", "arm64"),
         "tvos-simulator-x64" => ("tvos", "x64"),
         "wasm32" => ("wasm", ""),
+        "wasm64" => ("wasm64", ""),
         _ => throw new InvalidDataException($"No axmol platform is mapped for target: {target.Id}"),
     };
 

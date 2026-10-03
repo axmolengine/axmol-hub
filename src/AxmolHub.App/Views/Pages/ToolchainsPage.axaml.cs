@@ -47,7 +47,6 @@ public partial class ToolchainsPage : UserControl
         _workspace.Changed += Reload;
         _workspace.ComponentsChanged += ReloadTools;
 
-        ToolTargetPicker.ItemsSource = BuildTargets.All;
         ToolTargetPicker.SelectionChanged += async (_, _) =>
         {
             if (!_ready)
@@ -73,6 +72,12 @@ public partial class ToolchainsPage : UserControl
             }
 
             _workspace.ModuleEngine = engine;
+            var engineVersion = engine?.Version ?? "";
+            var available = BuildTargets.ForVersion(engineVersion);
+            ToolTargetPicker.ItemsSource = available;
+            ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
+                ? current
+                : available[0];
             ReloadModules();
             await _workspace.VerifyToolchainsAsync();
         };
@@ -125,7 +130,14 @@ public partial class ToolchainsPage : UserControl
                                           ?? _workspace.State.Engines.FirstOrDefault();
         _workspace.ModuleEngine = ModuleEnginePicker.SelectedItem as EngineEntry;
 
-        ToolTargetPicker.SelectedItem = _workspace.ToolTarget ?? BuildTargets.All[0];
+        // 工具链探测目标随引擎版本走：v3 才露出 arm64/wasm64 这些专属目标。
+        // 之前选的 ToolTarget 若已不在该版本的可选列表里（如 v3 的 arm64 换到 v2），回退到首个。
+        var engineVersion = (_workspace.ModuleEngine?.Version) ?? "";
+        var available = BuildTargets.ForVersion(engineVersion);
+        ToolTargetPicker.ItemsSource = available;
+        ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
+            ? current
+            : available[0];
         ToolTargetHint.Text = _workspace.ToolTargetHint;
 
         ReloadModules();

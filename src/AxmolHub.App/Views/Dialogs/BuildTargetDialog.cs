@@ -57,7 +57,7 @@ public sealed class BuildTargetDialog : Window
 
         Content = new Border { Child = panel, Padding = new Thickness(24) };
 
-        _picker.ItemsSource = BuildTargets.All;
+        _picker.ItemsSource = BuildTargets.ForVersion(project.Version);
         _picker.SelectedItem = BuildTargets.Get(project.Platform);
         _picker.SelectionChanged += (_, _) => RefreshConfigurations();
         RefreshConfigurations();

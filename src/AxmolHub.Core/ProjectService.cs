@@ -56,6 +56,10 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         var target = BuildTargets.Get(project.Platform);
         if (!target.CanBuildOn(BuildTargets.Host))
             throw new PlatformNotSupportedException($"{target.Name} requires {string.Join(" / ", target.Hosts)}. Current host: {BuildTargets.Host}.");
+        if (target.RequiresMajor(BuildTargets.MajorVersion(project.Version)))
+            throw new PlatformNotSupportedException($"{target.Name} requires Axmol {target.MinimumMajorVersion}+ (project is on Axmol {project.Version}).");
+        if (!target.CanCrossBuild(BuildTargets.HostArch))
+            throw new PlatformNotSupportedException($"{target.Name} cannot be cross-compiled on {BuildTargets.Host}/{BuildTargets.HostArch} (its target arch is {target.Architecture}).");
         if (project.Version != engine.Version || project.Channel != engine.Channel) throw new InvalidOperationException("Required Axmol version/channel is not installed.");
         var locked = StateStore.ReadProject(project.Path);
         if (locked.Version != project.Version || locked.Channel != project.Channel || locked.Platform != project.Platform || locked.Configuration != project.Configuration) throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
@@ -81,7 +85,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
     public string FindExecutable(ProjectEntry project)
     {
-        if (project.Platform != "windows-x64") return PlatformBuildService.FindArtifact(project);
+        if (BuildTargets.Get(project.Platform).Family != "windows") return PlatformBuildService.FindArtifact(project);
         return EngineBuildLayout.FindArtifact(BuildDirectory(project), project.Name, project.Configuration, "windows")
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
     }
@@ -93,12 +97,16 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
     public Task<ProcessResult> RunAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation = default, string? androidDevice = null)
     {
-        if (project.Platform != "windows-x64") return new PlatformBuildService(runner).RunAsync(project, engine, commandLine, cancellation, deviceSerial: androidDevice);
+        if (BuildTargets.Get(project.Platform).Family != "windows") return new PlatformBuildService(runner).RunAsync(project, engine, commandLine, cancellation, deviceSerial: androidDevice);
         return RunWindowsAsync(project, engine, cancellation);
     }
 
     private async Task<ProcessResult> RunWindowsAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation)
     {
+        var target = BuildTargets.Get(project.Platform);
+        // Windows 可交叉编译 arm64，但 arm64 原生映像只能由 arm64 宿主启动。
+        if (!target.CanRunLocally(BuildTargets.HostArch))
+            throw new PlatformNotSupportedException($"{target.Name} was built for {target.Architecture}; a {target.Architecture} host is required to run it (current host: {BuildTargets.Host}/{BuildTargets.HostArch}).");
         var locked = StateStore.ReadProject(project.Path);
         if (locked.Platform != project.Platform || locked.Configuration != project.Configuration || locked.Version != project.Version || locked.Channel != project.Channel)
             throw new InvalidOperationException("Project metadata changed. Reopen the project before Run.");
@@ -109,7 +117,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
         // 引擎产物目录（bin/<App>/<Config>/）已完整可运行：exe、dll、axslc 着色器、Content 都在同级。
         // Hub 不再复制出一份独立运行目录，只补 app-local 运行库，然后直接启动产物目录里的 exe。
-        await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, cancellation);
+        await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, target.Architecture, cancellation);
         // 官方 FileUtils 以工作目录作为资源根；明确使用 Content，避免启动位置影响查找。
         // 运行游戏 = 长驻进程。用分离启动（等同双击）：让 exe 自己的 AllocConsole 拿到真控制台，
         // 日志颜色与直接双击一致；Hub 不重定向其输出（长驻进程的日志本就走文件/自带控制台）。
@@ -140,7 +148,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     /// 改为**系统 Visual Studio 的 redist**；找不到就跳过 —— 引擎构建出的程序本来也依赖
     /// 系统已装的 VC 运行库，这里只是为本机 Debug 输出补一份 app-local 副本。
     /// </summary>
-    private async Task PrepareRuntime(string output, string configuration, CancellationToken cancellation)
+    private async Task PrepareRuntime(string output, string configuration, string architecture, CancellationToken cancellation)
     {
         var redist = await VisualStudioRedistAsync(cancellation);
         if (redist is null)
@@ -149,18 +157,19 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             return;
         }
 
+        // CRT 目录按目标架构选（windows 目标架构是 x64/arm64，与 redist 子目录同名）。
         var version = Directory.EnumerateDirectories(redist).OrderDescending().FirstOrDefault(path =>
-            File.Exists(Path.Combine(path, "x64/Microsoft.VC143.CRT/msvcp140.dll")));
+            File.Exists(Path.Combine(path, architecture + "/Microsoft.VC143.CRT/msvcp140.dll")));
         if (version is null)
         {
-            runner.Write("App-local runtime: skipped (Visual Studio redist has no x64 CRT).");
+            runner.Write($"App-local runtime: skipped (Visual Studio redist has no {architecture} CRT).");
             return;
         }
 
-        var sources = Directory.EnumerateFiles(Path.Combine(version, "x64/Microsoft.VC143.CRT"), "*.dll").ToList();
+        var sources = Directory.EnumerateFiles(Path.Combine(version, architecture + "/Microsoft.VC143.CRT"), "*.dll").ToList();
         if (configuration == "Debug")
         {
-            var debug = Path.Combine(version, "debug_nonredist/x64/Microsoft.VC143.DebugCRT");
+            var debug = Path.Combine(version, "debug_nonredist/" + architecture + "/Microsoft.VC143.DebugCRT");
             if (!Directory.Exists(debug)) runner.Write("App-local runtime: Debug CRT is not present; the published app uses the machine's runtime.");
             else sources.AddRange(Directory.EnumerateFiles(debug, "*.dll"));
         }
