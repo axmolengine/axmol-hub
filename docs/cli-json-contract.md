@@ -89,11 +89,17 @@
 | `run` / `serve` / `deploy` | `{ "exitCode": <子进程退出码> }` |
 | `devices <root> <target>` | `{ "devices": [ { serial, state, details } ] }` |
 | `install-tools <root> [platform]` | `{ "engine": "…", "platform": "…", "outcome": "…", "exitCode": 0 }` |
+| `mirror <root> [mirror-id]` | `{ "engine": "…", "path": "…", "mirror": "…", "available": [ … ] }` |
 | `help` | `{ "commands": [ … ] }` |
 
 `…ProjectEntry…` = `{ name, path, version, channel, platform, configuration, projectType, lastOpened, buildStatus }`。
 `plan` 的载荷是**引擎 cmdline 调用**（`subCommand` + `arguments`）：构建已委派给 `axmol build`，
 不是 Hub 自己拼的 CMake 命令计划 —— 见 docs/adr/0002。
+
+`mirror` 的 `available` 是**从引擎树读出的数据**（v3 取自 `1k/sources.json` 里声明的镜像名，
+v2 固定为 `github` / `gitee`），不是 Hub 的常量表；不带 `mirror-id` 时只查询，`available`
+为空表示该引擎的镜像方式无法识别（既没有 `1k/.env` 也没有 `1k/.gitee` 的对应布局）。
+写入发生在**引擎目录里**，不属于 Hub 数据目录 —— 与"工具链由引擎自持"是同一条边界。
 
 ## 5. 两个必须说清的例外
 

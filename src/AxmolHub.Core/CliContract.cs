@@ -109,4 +109,10 @@ public sealed record DevicesPayload(IReadOnlyList<DeviceDescriptor> Devices);
 /// </summary>
 public sealed record SetupPayload(string Engine, string Platform, string Outcome, int ExitCode);
 
+/// <summary>
+/// The <c>mirror</c> payload. <c>Available</c> is read out of the engine tree (v3: the mirror names
+/// declared in <c>1k/sources.json</c>), so it is data rather than a constant list.
+/// </summary>
+public sealed record MirrorPayload(string Engine, string Path, string Mirror, IReadOnlyList<string> Available);
+
 public sealed record CommandsPayload(IReadOnlyList<string> Commands);

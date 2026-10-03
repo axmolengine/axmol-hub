@@ -459,7 +459,7 @@ public sealed class HubWorkspace : IDisposable
         // Pre-select the currently selected engine version: when installing the same version twice,
         // the second time at least doesn't require hunting from scratch.
         var preferred = SelectedEngine?.Version;
-        var release = await EngineVersionDialog.PickAsync(Owner, _releases, preferred);
+        var release = await EngineVersionDialog.PickAsync(Owner, _releases, preferred, Preferences.DownloadSource);
         if (release is null)
         {
             return;
@@ -490,10 +490,30 @@ public sealed class HubWorkspace : IDisposable
                         ? $"清单里没有 Axmol {version} 这个可安装版本。"
                         : $"Axmol {version} is not an installable release in the manifest.");
 
-            var package = release.Package;
+            var package = WithDownloadSource(release.Package);
             var path = await _installer.InstallAsync(package, DownloadProgress(), token);
             AddEngine(StateStore.ValidateEngine(path, package.Channel));
         });
+    }
+
+    /// <summary>
+    /// Points a manifest package at the configured download source.
+    ///
+    /// The rewrite happens **here and only here**: the manifest (and the remote index) stays the
+    /// description of *what* an engine is, while "where it comes from" is a user choice applied at
+    /// download time. The digest is untouched — a mirror that serves different bytes must fail.
+    /// </summary>
+    private PackageEntry WithDownloadSource(PackageEntry package)
+    {
+        var source = Preferences.DownloadSource;
+        var custom = Preferences.CustomDownloadSource;
+        // Invalid custom input is rejected before a single byte is downloaded: silently falling back
+        // to GitHub would look exactly like "the mirror worked".
+        if (DownloadSources.Validate(source, custom) is { } problem) throw new InvalidOperationException(problem);
+
+        var resolved = DownloadSources.Apply(package, source, custom);
+        if (!ReferenceEquals(resolved, package)) Log.Write($"Download source '{source}': {resolved.Url}");
+        return resolved;
     }
 
     private void AddEngine(EngineEntry engine)
@@ -550,7 +570,7 @@ public sealed class HubWorkspace : IDisposable
     public async Task RepairEngineAsync() => await ExecuteAsync("Repair engine", async token =>
     {
         var engine = RequiredEngine();
-        await _installer.RepairAsync(ManagedEnginePackage(engine), DownloadProgress(), token);
+        await _installer.RepairAsync(WithDownloadSource(ManagedEnginePackage(engine)), DownloadProgress(), token);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         foreach (var project in State.Projects.Where(p => p.Version == engine.Version && p.Channel == engine.Channel))
         {
@@ -588,6 +608,38 @@ public sealed class HubWorkspace : IDisposable
 
     private EngineEntry RequiredEngine() => SelectedEngine
         ?? throw new InvalidOperationException("Select an engine first.");
+
+    // ───────────────────────── Engine mirror ─────────────────────────
+
+    /// <summary>
+    /// The mirror an engine currently uses, in the form the status line prints.
+    ///
+    /// Not a Hub setting: the value lives in the engine tree (<c>1k/.env</c> or <c>1k/.gitee</c>),
+    /// so it travels with the engine and survives reinstalling Hub. An engine Hub can't map to
+    /// either mechanism reports that instead of guessing.
+    /// </summary>
+    public string MirrorOf(EngineEntry? engine)
+    {
+        if (engine is null) return HubStrings.Get("MirrorNoEngine");
+        return EngineMirror.IsSupported(engine) ? EngineMirror.Current(engine) : HubStrings.Get("MirrorUnknown");
+    }
+
+    /// <summary>The mirrors this engine offers; empty when the tree is neither v2 nor v3.</summary>
+    public IReadOnlyList<MirrorOption> MirrorOptionsOf(EngineEntry? engine)
+        => engine is null ? [] : EngineMirror.Options(engine);
+
+    /// <summary>
+    /// Writes the mirror into the engine tree. Nothing is re-downloaded here: the engine reads the
+    /// setting the next time it fetches (setup / configure / build), which is exactly why the dialog
+    /// says so.
+    /// </summary>
+    public async Task ApplyEngineMirrorAsync(string mirror) => await ExecuteAsync("SwitchEngineMirror", _ =>
+    {
+        var engine = RequiredEngine();
+        EngineMirror.Apply(engine, mirror);
+        Log.Write($"Engine mirror: {engine.Path} -> {mirror} (now {EngineMirror.Current(engine)})");
+        return Task.CompletedTask;
+    });
 
     // ───────────────────────── Projects ─────────────────────────
 

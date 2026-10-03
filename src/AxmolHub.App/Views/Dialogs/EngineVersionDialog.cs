@@ -30,11 +30,13 @@ public sealed class EngineVersionDialog : Window
     private readonly TextBlock _detail = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
     private readonly TextBlock _warning = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 16) };
     private readonly Button _install;
+    private readonly string _downloadSource;
 
     public EngineRelease? Selected => _versions.SelectedItem as EngineRelease;
 
-    private EngineVersionDialog(IReadOnlyList<EngineRelease> releases, string? preferredVersion, bool fromRemoteIndex)
+    private EngineVersionDialog(IReadOnlyList<EngineRelease> releases, string? preferredVersion, bool fromRemoteIndex, string downloadSource)
     {
+        _downloadSource = downloadSource;
         Title = HubStrings.Get("ChooseEngineVersion");
         Width = 520;
         SizeToContent = SizeToContent.Height;
@@ -99,6 +101,9 @@ public sealed class EngineVersionDialog : Window
         _detail.Text = string.Join("\n", new[]
         {
             HubStrings.Get("Channel") + "：" + release.Channel,
+            // Where the download will come from — stated before the download starts, because on a
+            // slow network the difference between GitHub and a mirror is the whole experience.
+            HubStrings.Get("DownloadSource") + "：" + HubStrings.Get(DownloadSources.TextKey(_downloadSource)),
             HubStrings.Get("DownloadSize") + "：" + Size(release.Package.DownloadBytes),
             HubStrings.Get(release.Installed ? "Installed" : "Missing"),
         });
@@ -114,11 +119,12 @@ public sealed class EngineVersionDialog : Window
         ? string.Create(CultureInfo.InvariantCulture, $"{value / (1024d * 1024 * 1024):0.00} GB")
         : string.Create(CultureInfo.InvariantCulture, $"{value / (1024d * 1024):0.00} MB");
 
-    public static async Task<EngineRelease?> PickAsync(Window? owner, EngineReleases catalog, string? preferredVersion)
+    public static async Task<EngineRelease?> PickAsync(Window? owner, EngineReleases catalog, string? preferredVersion,
+        string downloadSource = DownloadSources.GitHubId)
     {
         var releases = catalog.All();
         if (releases.Count == 0) return null;
-        var dialog = new EngineVersionDialog(releases, preferredVersion, catalog.UsingRemoteIndex);
+        var dialog = new EngineVersionDialog(releases, preferredVersion, catalog.UsingRemoteIndex, downloadSource);
         var result = owner is null
             ? await dialog.ShowDialog<HubDialogResult>(null!)
             : await dialog.ShowDialog<HubDialogResult>(owner);

@@ -580,7 +580,7 @@ if (args.Contains("--check-cli-json"))
         using (helpDocument)
         {
             var commands = helpDocument.RootElement.GetProperty("data").GetProperty("commands");
-            Judge(commands.GetArrayLength() == 12 && commands.EnumerateArray().Any(command => command.GetString() == "install-tools"),
+            Judge(commands.GetArrayLength() == 13 && commands.EnumerateArray().Any(command => command.GetString() == "install-tools"),
                 "help enumerates every verb as data instead of printing prose to stdout");
         }
     }

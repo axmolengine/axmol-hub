@@ -36,6 +36,7 @@ public partial class InstallsPage : UserControl
             }
 
             _workspace.SelectedEngine = EnginesGrid.SelectedItem as EngineEntry;
+            ReloadMirrorStatus();
             ReloadPrebuiltStatus();
         };
 
@@ -49,6 +50,7 @@ public partial class InstallsPage : UserControl
         };
 
         InstallButton.Click += async (_, _) => await _workspace.ChooseAndInstallEngineAsync();
+        MirrorButton.Click += async (_, _) => await SwitchMirrorAsync();
         BuildEngineButton.Click += async (_, _) => await _workspace.BuildEngineAsync();
         DefaultButton.Click += async (_, _) => await _workspace.SetDefaultEngineAsync();
         OpenFolderButton.Click += async (_, _) => await _workspace.OpenEngineFolderAsync();
@@ -99,8 +101,50 @@ public partial class InstallsPage : UserControl
             EnginesGrid.Columns[index].Header = HubStrings.Get(headers[index]);
         }
 
+        ReloadMirrorStatus();
         ReloadPrebuiltStatus();
         _ready = true;
+    }
+
+    /// <summary>
+    /// Opens the mirror dialog for the selected engine. An engine whose layout Hub can't map to a
+    /// mirror mechanism (neither <c>1k/.env</c> nor <c>1k/.gitee</c>) gets told so instead of a
+    /// dialog that would fail on apply.
+    /// </summary>
+    private async System.Threading.Tasks.Task SwitchMirrorAsync()
+    {
+        var engine = _workspace.SelectedEngine;
+        if (engine is null)
+        {
+            return;
+        }
+
+        var options = _workspace.MirrorOptionsOf(engine);
+        if (options.Count == 0)
+        {
+            await HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window,
+                HubStrings.Get("OperationFailed"), HubStrings.Get("MirrorUnknown"));
+            return;
+        }
+
+        var picked = await EngineMirrorDialog.PickAsync(TopLevel.GetTopLevel(this) as Window, engine, options);
+        if (picked is null)
+        {
+            return;
+        }
+
+        await _workspace.ApplyEngineMirrorAsync(picked.Id);
+    }
+
+    /// <summary>
+    /// The mirror readout. Only the **current value** is shown — the list of choices belongs to the
+    /// dialog, because it is engine-specific data (v3 reads it out of <c>1k/sources.json</c>).
+    /// </summary>
+    private void ReloadMirrorStatus()
+    {
+        var engine = _workspace.SelectedEngine;
+        MirrorStatus.Text = string.Format(HubStrings.Get("MirrorStatusFormat"), _workspace.MirrorOf(engine));
+        MirrorButton.IsEnabled = engine is not null && _workspace.MirrorOptionsOf(engine).Count > 0;
     }
 
     /// <summary>

@@ -64,6 +64,29 @@
         </Grid>
       </Border>
 
+      <!-- Engine download source: where the engine release package comes from. It is **not** the
+           engine's own dependency mirror (that lives in the engine tree, switched on the engines
+           page) — this only decides the host Hub downloads the zip from.
+           The three labels are written in code (LocalizeDownloadSourceItems) for the same reason as
+           the theme labels: a ComboBoxItem inside Items is not attached to the logical tree until
+           the dropdown opens, so {DynamicResource} resolves empty. -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock Text="{DynamicResource DownloadSource}" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource DownloadSourceHint}" />
+
+          <ComboBox x:Name="DownloadSourcePicker" HorizontalAlignment="Stretch">
+            <ComboBoxItem Tag="github" />
+            <ComboBoxItem Tag="atomgit" />
+            <ComboBoxItem Tag="custom" />
+          </ComboBox>
+
+          <TextBlock Text="{DynamicResource CustomDownloadSource}" FontWeight="SemiBold" />
+          <TextBox x:Name="CustomDownloadSourceBox" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource CustomDownloadSourceHint}" />
+        </StackPanel>
+      </Border>
+
       <!-- Storage and projects -->
       <Border Classes="card">
         <StackPanel Spacing="18">

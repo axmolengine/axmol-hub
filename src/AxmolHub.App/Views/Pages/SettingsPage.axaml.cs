@@ -72,6 +72,10 @@ public partial class SettingsPage : UserControl
 
         LanguagePicker.SelectionChanged += (_, _) => OnLanguageChanged();
         ThemePicker.SelectionChanged += (_, _) => OnThemeChanged();
+        // The custom URL is committed on focus loss rather than on every keystroke: each commit
+        // writes the settings file, and "typed half a URL" is not a state worth persisting.
+        DownloadSourcePicker.SelectionChanged += (_, _) => OnDownloadSourceChanged();
+        CustomDownloadSourceBox.LostFocus += (_, _) => OnCustomDownloadSourceChanged();
         ChooseDataDirectoryButton.Click += async (_, _) => await ChooseDataDirectoryAsync();
         ChooseProjectDirectoryButton.Click += async (_, _) => await ChooseProjectDirectoryAsync();
         OpenDataFolderButton.Click += (_, _) => _openFolder(_workspace.Store.Root);
@@ -125,8 +129,11 @@ public partial class SettingsPage : UserControl
         try
         {
             LocalizeThemeItems();
+            LocalizeDownloadSourceItems();
             SelectLanguage(HubStrings.Language);
             SelectTheme(_preferences.Theme);
+            SelectDownloadSource(_preferences.DownloadSource);
+            CustomDownloadSourceBox.Text = _preferences.CustomDownloadSource ?? "";
             DataLocation.Text = _workspace.Store.Root;
             DefaultProjectLocation.Text = _preferences.ProjectDirectory ?? HubStrings.Get("NotSelected");
 
@@ -162,6 +169,105 @@ public partial class SettingsPage : UserControl
         }
 
         LanguagePicker.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// Writes the three download-source labels from the text table. Imperative for the same reason as
+    /// <see cref="LocalizeThemeItems"/>: <c>DynamicResource</c> on a ComboBoxItem inside <c>Items</c>
+    /// resolves empty, and <see cref="Reload"/> runs on every language switch.
+    /// </summary>
+    private void LocalizeDownloadSourceItems()
+    {
+        foreach (var item in DownloadSourcePicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } source && DownloadSources.IsKnown(tag))
+            {
+                source.Content = HubStrings.Get(DownloadSources.TextKey(tag));
+            }
+        }
+    }
+
+    /// <summary>The download-source tags declared in XAML, in order. Same contract as <see cref="DeclaredThemes"/>.</summary>
+    internal string[] DeclaredDownloadSources
+        => DownloadSourcePicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
+
+    /// <summary>The selected download source; unknown tags fall back to the official host (same rule as <see cref="DownloadSources.Normalize"/>).</summary>
+    internal string SelectedDownloadSource
+        => DownloadSourcePicker.SelectedItem is ComboBoxItem { Tag: string tag } && DownloadSources.IsKnown(tag)
+            ? DownloadSources.Normalize(tag)
+            : DownloadSources.GitHubId;
+
+    /// <summary>Selects a source by the tag the item declares; not found → the first (GitHub).</summary>
+    internal void SelectDownloadSource(string source)
+    {
+        var index = 0;
+        foreach (var item in DownloadSourcePicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } && tag == DownloadSources.Normalize(source))
+            {
+                DownloadSourcePicker.SelectedIndex = index;
+                return;
+            }
+
+            index++;
+        }
+
+        DownloadSourcePicker.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// Commits a download-source change. Invalid custom input is refused **before** the preference is
+    /// written, and the UI is reverted: saving "custom" with a URL we can't use would make the next
+    /// install fail with an error the user has no way to connect back to this page.
+    /// </summary>
+    private void OnDownloadSourceChanged()
+    {
+        if (!_ready) return;
+
+        var source = SelectedDownloadSource;
+        var custom = CustomText;
+        // The value must really have changed: Reload re-selects on every refresh, and SelectionChanged
+        // fires for that too (the WPF version's `preferencesReady` gate exists for the same reason).
+        if (source == _preferences.DownloadSource && custom == (_preferences.CustomDownloadSource ?? "")) return;
+
+        if (TrySaveDownloadSource(source, custom)) return;
+
+        _ready = false;
+        SelectDownloadSource(_preferences.DownloadSource);
+        _ready = true;
+    }
+
+    private void OnCustomDownloadSourceChanged()
+    {
+        if (!_ready) return;
+
+        var custom = CustomText;
+        if (custom == (_preferences.CustomDownloadSource ?? "")) return;
+        // While another source is selected the text is just a draft; committing it would save a
+        // preference that isn't in effect yet.
+        if (SelectedDownloadSource != DownloadSources.CustomId) return;
+
+        if (TrySaveDownloadSource(SelectedDownloadSource, custom)) return;
+
+        _ready = false;
+        CustomDownloadSourceBox.Text = _preferences.CustomDownloadSource ?? "";
+        _ready = true;
+    }
+
+    private string CustomText => (CustomDownloadSourceBox.Text ?? "").Trim();
+
+    private bool TrySaveDownloadSource(string source, string custom)
+    {
+        if (DownloadSources.Validate(source, custom) is { } problem)
+        {
+            _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("OperationFailed"), HubStrings.Get(problem));
+            return false;
+        }
+
+        _preferences.DownloadSource = source;
+        _preferences.CustomDownloadSource = custom.Length == 0 ? null : custom;
+        _preferencesStore.Save(_preferences);
+        return true;
     }
 
     /// <summary>Copy key for a theme value. Kept next to the values so adding a theme can't leave its label behind.</summary>

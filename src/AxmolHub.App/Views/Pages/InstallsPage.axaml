@@ -10,6 +10,15 @@
     same name is kept here. Structure copied verbatim: title row → engine table → seven action buttons.
   -->
 
+  <UserControl.Styles>
+    <!-- Same rule as the projects page action bar: the theme puts Margin 0,0,8,0 on every Button, so
+         the bar zeroes it and lets ItemSpacing/LineSpacing own both gaps (a wrapped second line had
+         none before, which read as cramped). -->
+    <Style Selector="WrapPanel.actions > Button">
+      <Setter Property="Margin" Value="0" />
+    </Style>
+  </UserControl.Styles>
+
   <Grid RowDefinitions="Auto,*,Auto,Auto">
 
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
@@ -40,12 +49,15 @@
       </Grid>
     </Border>
 
-    <!-- Prebuilt library status readout: projects with "Use prebuilt library" checked align to it, so it sits
-         above the button row and is visible at a glance. -->
-    <TextBlock x:Name="PrebuiltStatus" Grid.Row="2" Classes="muted"
-               TextWrapping="Wrap" Margin="0,14,0,0" />
+    <!-- Two status readouts above the action bar: the engine's dependency mirror (which the user can
+         change here) and the prebuilt-library state that projects align to. -->
+    <StackPanel Grid.Row="2" Margin="0,14,0,0">
+      <TextBlock x:Name="MirrorStatus" Classes="muted" TextWrapping="Wrap" />
+      <TextBlock x:Name="PrebuiltStatus" Classes="muted" TextWrapping="Wrap" Margin="0,4,0,0" />
+    </StackPanel>
 
-    <WrapPanel Grid.Row="3" Margin="0,18,0,6">
+    <WrapPanel Grid.Row="3" Classes="actions" ItemSpacing="8" LineSpacing="8" Margin="0,18,0,6">
+      <Button x:Name="MirrorButton" Content="{DynamicResource SwitchMirror}" />
       <Button x:Name="BuildEngineButton" Content="{DynamicResource BuildEngine}" />
       <Button x:Name="DefaultButton" Content="{DynamicResource SetDefault}" />
       <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />

@@ -53,7 +53,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         return exitCode;
     }
 
-    const string help = "Axmol Hub CLI\n  targets\n  verify <data-root> <target>\n  create <data-root> <name> <parent> [cpp|lua] (legacy: <target> [cpp|lua])\n  select <data-root> <project> <target>\n  plan|configure|build <data-root> <project> [Debug|Release]\n  run|serve <data-root> <project>\n  devices <data-root> <android-target>\n  deploy <data-root> <project> <serial>\n  install-tools <data-root> [platform]\nToolchains live inside the Axmol engine tree (its own setup.ps1); Hub runs axmol build/run/deploy.";
+    const string help = "Axmol Hub CLI\n  targets\n  verify <data-root> <target>\n  create <data-root> <name> <parent> [cpp|lua] (legacy: <target> [cpp|lua])\n  select <data-root> <project> <target>\n  plan|configure|build <data-root> <project> [Debug|Release]\n  run|serve <data-root> <project>\n  devices <data-root> <android-target>\n  deploy <data-root> <project> <serial>\n  install-tools <data-root> [platform]\n  mirror <data-root> [mirror-id]\nToolchains live inside the Axmol engine tree (its own setup.ps1); Hub runs axmol build/run/deploy.";
 
     if (arguments.Length == 0 || verb == "help")
     {
@@ -67,7 +67,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         return Emit(true, 0, new CommandsPayload(
         [
             "targets", "verify", "create", "select", "plan", "configure", "build",
-            "run", "serve", "devices", "deploy", "install-tools",
+            "run", "serve", "devices", "deploy", "install-tools", "mirror",
         ]));
     }
 
@@ -102,6 +102,29 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         }
 
         return Emit(true, 0, new ProjectPayload(project));
+    }
+
+    // Reads or switches the engine's own dependency/tool mirror. Handled before the arity check
+    // below because the query form takes only the data root.
+    if (verb == "mirror" && arguments.Length is 2 or 3)
+    {
+        var mirrorStore = new StateStore(arguments[1]);
+        var mirrorHub = mirrorStore.Load();
+        var mirrorEngine = mirrorHub.Engines.FirstOrDefault(candidate => candidate.Path == mirrorHub.DefaultEnginePath)
+            ?? mirrorHub.Engines.FirstOrDefault()
+            ?? throw new InvalidOperationException("No engine is registered in this data root. Import one first.");
+
+        // An unknown mirror id must throw rather than "write something close": EngineMirror.Apply
+        // validates against the mirrors the engine itself declares.
+        if (arguments.Length == 3) EngineMirror.Apply(mirrorEngine, arguments[2]);
+
+        var available = EngineMirror.Options(mirrorEngine).Select(option => option.Id).ToArray();
+        if (!asJson)
+        {
+            Console.WriteLine($"{mirrorEngine}: {EngineMirror.Current(mirrorEngine)} (available: {string.Join(", ", available)})");
+        }
+
+        return Emit(true, 0, new MirrorPayload(mirrorEngine.Version, mirrorEngine.Path, EngineMirror.Current(mirrorEngine), available));
     }
 
     if (arguments.Length < 3)
