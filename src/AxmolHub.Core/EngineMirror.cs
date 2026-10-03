@@ -8,8 +8,10 @@ namespace AxmolHub.Core;
 /// <paramref name="Storage"/> is the **technical** answer to "what does switching actually write" —
 /// it is a path, not copy, so it is deliberately not localized (same reasoning as the executable
 /// paths shown on the settings page).
+/// <paramref name="NoteKey"/> is optional copy appended to the label in parentheses when a mirror
+/// isn't general-purpose — see <see cref="EngineMirror.NoteKey"/>. Empty = no note.
 /// </summary>
-public sealed record MirrorOption(string Id, string TextKey, string Storage);
+public sealed record MirrorOption(string Id, string TextKey, string Storage, string NoteKey = "");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Engine mirror switching: where an already-installed engine fetches its dependencies and tools.
@@ -44,6 +46,13 @@ public static class EngineMirror
 
     public const string AtomGitId = "atomgit";
     public const string GiteeId = "gitee";
+
+    /// <summary>
+    /// Only ever declared under <c>devtools/gradle</c> — i.e. it serves the Android Gradle download
+    /// and nothing else. Every other dependency has to fall back to origin, so picking it is not a
+    /// general "make everything fast in China" switch and the UI says so.
+    /// </summary>
+    public const string TencentId = "tencent";
 
     private const string EnvFile = ".env";
     private const string GiteeMarker = ".gitee";
@@ -80,7 +89,7 @@ public static class EngineMirror
         }
 
         return DeclaredMirrors(engine)
-            .Select(id => new MirrorOption(id, TextKey(id), EnvRelativePath + " · " + MirrorKey + "=" + id))
+            .Select(id => new MirrorOption(id, TextKey(id), EnvRelativePath + " · " + MirrorKey + "=" + id, NoteKey(id)))
             .ToArray();
     }
 
@@ -143,6 +152,19 @@ public static class EngineMirror
         GiteeId => "MirrorGitee",
         GithubId => "MirrorGithub",
         OriginId => "MirrorOrigin",
+        TencentId => "MirrorTencent",
+        _ => "",
+    };
+
+    /// <summary>
+    /// Extra copy key appended to a mirror's label, or <c>""</c> when the mirror needs none.
+    /// A mirror can be declared by only a slice of <c>1k/sources.json</c>; without this note the
+    /// list presents every entry as an equal, general-purpose choice. <see cref="TencentId"/> is the
+    /// one we know about today: it appears solely under <c>devtools/gradle</c>.
+    /// </summary>
+    public static string NoteKey(string id) => id switch
+    {
+        TencentId => "MirrorNoteAndroidGradle",
         _ => "",
     };
 

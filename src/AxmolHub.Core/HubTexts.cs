@@ -138,6 +138,11 @@ public static class HubTexts
         ["MirrorAtomGit"] = ("atomgit（AtomGit 镜像）", "atomgit (AtomGit mirror)"),
         ["MirrorGitee"] = ("gitee（Gitee 镜像）", "gitee (Gitee mirror)"),
         ["MirrorGithub"] = ("github（官方源）", "github (official)"),
+        ["MirrorTencent"] = ("tencent（腾讯云镜像）", "tencent (Tencent Cloud mirror)"),
+        // Extra clause appended to a mirror's label when the engine only honors it for one thing.
+        // Parentheses differ per language on purpose: Chinese uses full-width ones with no leading
+        // space, English uses half-width ones preceded by a space.
+        ["MirrorNoteAndroidGradle"] = ("（仅用于 Android Gradle）", " (Android Gradle only)"),
         ["MirrorStoragePrefix"] = ("写入位置", "Writes"),
         ["Apply"] = ("应用", "Apply"),
         ["ImportEngine"] = ("导入引擎", "Import engine"),

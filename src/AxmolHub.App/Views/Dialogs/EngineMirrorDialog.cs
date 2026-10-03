@@ -98,7 +98,13 @@ public sealed class EngineMirrorDialog : Window
     /// </summary>
     private sealed record Choice(MirrorOption Option)
     {
-        public override string ToString() => Option.TextKey.Length == 0 ? Option.Id : HubStrings.Get(Option.TextKey);
+        // The note carries its own parentheses per language (Chinese full-width, English half-width
+        // with a leading space), so appending it here needs no separator logic of its own.
+        public override string ToString()
+        {
+            var label = Option.TextKey.Length == 0 ? Option.Id : HubStrings.Get(Option.TextKey);
+            return Option.NoteKey.Length == 0 ? label : label + HubStrings.Get(Option.NoteKey);
+        }
     }
 
     public static async Task<MirrorOption?> PickAsync(Window? owner, EngineEntry engine, IReadOnlyList<MirrorOption> options)
