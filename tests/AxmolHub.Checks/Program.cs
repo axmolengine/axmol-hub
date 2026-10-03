@@ -5,7 +5,10 @@ using System.Text;
 using System.Text.Json;
 using AxmolHub.Core;
 
-var root = Path.GetFullPath(args.Length > 0 ? args[0] : "artifacts/checks");
+// args[0] is the data root ONLY when it is an actual path. A leading "--" means the caller passed a
+// flag in first position, in which case we fall back to the default so flags never get turned into
+// directory names (that was how "--check-cli-json"/"--check-build-profiles" ended up as empty folders).
+var root = Path.GetFullPath(args.Length > 0 && !args[0].StartsWith("--") ? args[0] : "artifacts/checks");
 Directory.CreateDirectory(root);
 
 // 构建已委派给引擎 cmdline；Checks 里的 ProjectService 共用仓库内的包装脚本。
