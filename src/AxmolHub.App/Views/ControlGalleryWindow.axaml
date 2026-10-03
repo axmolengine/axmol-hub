@@ -7,11 +7,12 @@
         WindowStartupLocation="CenterScreen">
 
   <!--
-    P3 的验收工件：把 HubControls.axaml + HubStyles.axaml 里每个样式都摆出来，
-    用于三平台观感比对。它**不是产品界面**（产品界面在 P5 才迁），因此只有中文说明，
-    顶部一行英文副标题。
+    P3's acceptance artifact: lays out every style from HubControls.axaml + HubStyles.axaml
+    for cross-platform look-and-feel comparison. It is **not shipping UI** (shipping UI is only
+    migrated in P5), which is why it is Chinese-only, with a single line of English subtitle at the top.
 
-    每个需要断言的元素都带 x:Name，主题自检模式（命令行开关 verify-theme）会遍历可视化树核对样式是否真的生效。
+    Every element that needs asserting carries an x:Name; the theme self-check mode (command-line
+    switch verify-theme) walks the visual tree to verify the styles actually take effect.
   -->
 
   <DockPanel>
@@ -38,7 +39,7 @@
     <ScrollViewer>
       <StackPanel Margin="24" Spacing="18">
 
-        <!-- ============ 语义颜色 ============ -->
+        <!-- ============ Semantic colors ============ -->
         <TextBlock Text="语义颜色" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <WrapPanel x:Name="Swatches">
@@ -57,7 +58,7 @@
           </WrapPanel>
         </Border>
 
-        <!-- ============ 按钮 ============ -->
+        <!-- ============ Buttons ============ -->
         <TextBlock Text="按钮：默认 / primary / quiet / 禁用" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <WrapPanel>
@@ -68,7 +69,7 @@
           </WrapPanel>
         </Border>
 
-        <!-- ============ 输入 ============ -->
+        <!-- ============ Inputs ============ -->
         <TextBlock Text="输入：TextBox / 密码 / 只读 / 等宽 / ComboBox" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto">
@@ -108,7 +109,7 @@
           </Grid>
         </Border>
 
-        <!-- ============ 选择 ============ -->
+        <!-- ============ Selection ============ -->
         <TextBlock Text="CheckBox / RadioButton" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <Grid ColumnDefinitions="*,*">
@@ -124,7 +125,7 @@
           </Grid>
         </Border>
 
-        <!-- ============ 展开与滚动 ============ -->
+        <!-- ============ Expand and scroll ============ -->
         <TextBlock Text="Expander（箭头应随展开旋转）/ ScrollBar（常驻 10px）" FontSize="16" FontWeight="SemiBold" />
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
           <Expander x:Name="Exp" Header="组件详情" IsExpanded="False" Padding="0,12,0,0">
@@ -145,7 +146,7 @@
           </Border>
         </Grid>
 
-        <!-- ============ 表格 ============ -->
+        <!-- ============ Table ============ -->
         <TextBlock Text="DataGrid（Avalonia.Controls.DataGrid 12.1.2）" FontSize="16" FontWeight="SemiBold" />
         <Border BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" CornerRadius="7" ClipToBounds="True">
           <DataGrid x:Name="GalleryGrid" SelectionMode="Single" x:DataType="local:GalleryProject">
@@ -158,7 +159,7 @@
           </DataGrid>
         </Border>
 
-        <!-- ============ 图标 ============ -->
+        <!-- ============ Icons ============ -->
         <TextBlock Text="矢量图标（取代 Segoe MDL2 Assets 的四个私有区字形）" FontSize="16" FontWeight="SemiBold" />
         <Border Classes="card">
           <StackPanel Orientation="Horizontal" Spacing="30">

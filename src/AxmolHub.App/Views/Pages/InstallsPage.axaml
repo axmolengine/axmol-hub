@@ -6,8 +6,8 @@
              x:DataType="local:InstallsPage">
 
   <!--
-    引擎页。WPF 版叫 InstallsPage（导航文案 Key 同样是 "Installs"），这里沿用同一个名字。
-    结构照抄：标题行 → 引擎表格 → 七个操作按钮。
+    Engines page. The WPF version called it InstallsPage (the nav text Key is likewise "Installs"), and the
+    same name is kept here. Structure copied verbatim: title row → engine table → seven action buttons.
   -->
 
   <Grid RowDefinitions="Auto,*,Auto,Auto">
@@ -40,7 +40,8 @@
       </Grid>
     </Border>
 
-    <!-- 预编译库状态读数：勾了「使用预编译库」的项目靠它对齐，所以放在按钮行上方、一眼可见。 -->
+    <!-- Prebuilt library status readout: projects with "Use prebuilt library" checked align to it, so it sits
+         above the button row and is visible at a glance. -->
     <TextBlock x:Name="PrebuiltStatus" Grid.Row="2" Classes="muted"
                TextWrapping="Wrap" Margin="0,14,0,0" />
 

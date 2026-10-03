@@ -8,22 +8,27 @@ using Avalonia.Threading;
 namespace AxmolHub.App;
 
 /// <summary>
-/// <c>--smoke-pages &lt;目录&gt;</c>：把四个页面在两种语言下各截一张图，共 8 张 PNG。
+/// <c>--smoke-pages &lt;directory&gt;</c>: screenshots each of the four pages in both languages,
+/// for 8 PNGs total.
 ///
-/// 它接的是 WPF 版 <c>--smoke-all</c> 里"逐页截图"那一半。随 WPF 一起删掉的三种模式去向如下：
+/// It carries over the "per-page screenshot" half of WPF's <c>--smoke-all</c>. The three modes that
+/// were dropped together with WPF went as follows:
 /// <list type="bullet">
-/// <item><c>--smoke-run</c> / <c>--smoke-build</c>：由 <c>--verify-ops</c> 完整接管 ——
-/// 后者真的跑操作、有断言、出报告，比"跑完截一张图"更能说明问题。</item>
-/// <item><c>--smoke-all</c> 里"把构建进度 / 模块 / Android 发布三个对话框也截下来"的那部分：
-/// 依赖真实设备与签名配置，无人值守下拿不到稳定画面，故不复刻。</item>
+/// <item><c>--smoke-run</c> / <c>--smoke-build</c>: fully taken over by <c>--verify-ops</c> —
+/// the latter really runs operations, has assertions, and emits a report, which says more than "a
+/// screenshot after running".</item>
+/// <item>The part of <c>--smoke-all</c> that "also screenshots the build progress / modules /
+/// Android release dialogs": it depends on a real device and signing configuration, so it can't get
+/// a stable frame unattended and isn't replicated.</item>
 /// </list>
 ///
-/// 与 <see cref="SmokeRunner"/> 共用一个判据（<see cref="SmokeCapture.FrameStats.IsBlank"/>）：
-/// 只断言"进程退出 0"是躺着也能过的假绿 —— 八张纯色图同样满足。
+/// Shares one criterion with <see cref="SmokeRunner"/> (<see cref="SmokeCapture.FrameStats.IsBlank"/>):
+/// asserting only "process exits 0" is a fake green that passes lying down — eight solid-color
+/// images satisfy it too.
 /// </summary>
 internal static class PageShots
 {
-    /// <summary>两种语言都截，是因为中英文案长度差得远，只截一种看不出换行与截断。</summary>
+    /// <summary>Both languages are captured because Chinese and English copy differ greatly in length; capturing only one wouldn't reveal line wrapping or truncation.</summary>
     private static readonly string[] Languages = ["zh-CN", "en-US"];
 
     public static void Attach(MainWindow window, IClassicDesktopStyleApplicationLifetime lifetime, string directory)
@@ -40,7 +45,7 @@ internal static class PageShots
             finished = true;
             Console.WriteLine(line);
 
-            // App 是 WinExe，没有控制台可写；把结论留在目录里，失败时才有东西可查。
+            // The app is a WinExe with no console to write to; leave the conclusion in the directory so there's something to inspect on failure.
             try
             {
                 File.WriteAllText(Path.Combine(directory, "smoke-pages.evidence.txt"), line);
@@ -59,9 +64,10 @@ internal static class PageShots
             {
                 Directory.CreateDirectory(directory);
 
-                // 截图会真实切语言并落盘（DynamicResource 是就地重解析的，
-                // 不真的切就看不到英文版面），所以结束后必须切回用户的语言，
-                // 否则跑一次截图就把界面语言悄悄改了。
+                // Capturing really switches the language and persists it (DynamicResource is
+                // re-resolved in place; without actually switching you never see the English
+                // layout), so the user's language must be switched back afterwards — otherwise one
+                // screenshot run silently changes the UI language.
                 var original = window.PreferredLanguage;
                 var blanks = new List<string>();
                 var digests = new HashSet<string>();
@@ -75,7 +81,7 @@ internal static class PageShots
                     {
                         window.NavigateTo(key);
 
-                        // 导航只换了 PageHost.Content，布局要下一帧才算完；截早了会拿到上一页。
+                        // Navigation only swaps PageHost.Content; the layout isn't done until the next frame. Capturing too early gets the previous page.
                         window.UpdateLayout();
                         Dispatcher.UIThread.RunJobs();
 
@@ -92,9 +98,11 @@ internal static class PageShots
 
                 window.UseLanguage(original);
 
-                // 第二道判据，防的是"非空白但全都一样"：
-                // 导航静默失效 → 只剩 2 张不同（每种语言一张）；切语言静默失效 → 只剩 4 张。
-                // 两种情况都能让上面那条"非空白"全绿，所以必须另外数一遍不同内容的张数。
+                // The second criterion guards against "non-blank but all identical":
+                // navigation silently failing → only 2 distinct (one per language); language switch
+                // silently failing → only 4 distinct.
+                // Both cases would still pass the "non-blank" check above, so the count of distinct
+                // images must be tallied separately.
                 var duplicated = digests.Count < count;
 
                 Finish(
@@ -110,7 +118,7 @@ internal static class PageShots
             }
         }, DispatcherPriority.Loaded);
 
-        // 兜底：八次渲染比单次慢，超时给到 30 秒。自动化里挂住比失败更难查。
+        // Fallback: eight renders are slower than one, so allow 30 seconds. In automation, hanging is harder to diagnose than failing.
         DispatcherTimer.RunOnce(() => Finish(1, "FAIL  窗口在 30 秒内没有触发 Opened"), TimeSpan.FromSeconds(30));
     }
 }

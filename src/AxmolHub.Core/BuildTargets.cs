@@ -5,23 +5,25 @@ public sealed record BuildTarget(string Id, string Name, string Family, string A
     public override string ToString() => Name;
     public bool CanBuildOn(string host) => Hosts.Contains(host);
 
-    /// <summary>该目标是否需要某个主版本号起的引擎（v3 相对 v2 新增的架构只对 3+ 可用）。</summary>
+    /// <summary>Whether this target requires an engine at or above a given major version (architectures added in v3 are only available for 3+).</summary>
     public bool RequiresMajor(int major) => MinimumMajorVersion > major;
 
     /// <summary>
-    /// 在给定宿主架构上能否**交叉构建**这个目标。
+    /// Whether this target can be <b>cross-built</b> on the given host architecture.
     ///
-    /// 规则（用户 2026-10-03 给）：Windows 允许交叉编译 arm64；**Linux 不支持交叉编译**
-    /// （目标架构必须等于宿主架构，v3 的 linux arm64 只能在 arm64 机器上构建）。
-    /// 其余家族（android/wasm/macos/ios/tvos）交叉编译本就是常态，不在此约束。
+    /// Rule (from the user, 2026-10-03): Windows allows cross-compiling arm64; <b>Linux does not support
+    /// cross-compilation</b> (the target architecture must equal the host architecture, so v3's linux arm64
+    /// can only be built on an arm64 machine). Every other family (android/wasm/macos/ios/tvos) cross-compiles
+    /// by design and is not constrained here.
     /// </summary>
     public bool CanCrossBuild(string hostArch) => Family != "linux" || BuildTargets.SameArch(Architecture, hostArch);
 
     /// <summary>
-    /// 本机能否**直接运行**该目标的产物。
+    /// Whether this target's output can be <b>run locally</b> on this machine.
     ///
-    /// 规则：Windows 可以交叉编译 arm64，但要启动 arm64 exe 本机也必须是 arm64
-    /// （x64 无法执行 arm64 原生映像）。Linux 因「不可交叉编译」已经保证架构一致，无需再查。
+    /// Rule: Windows can cross-compile arm64, but launching an arm64 exe still requires an arm64 host
+    /// (x64 cannot execute arm64 native images). Linux needs no extra check because "no cross-compilation"
+    /// already guarantees matching architectures.
     /// </summary>
     public bool CanRunLocally(string hostArch) => Family != "windows" || BuildTargets.SameArch(Architecture, hostArch);
 }
@@ -30,7 +32,7 @@ public static class BuildTargets
 {
     public static string Host => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux" : "unknown";
 
-    /// <summary>宿主 CPU 架构，归一化为 <c>x64</c>/<c>arm64</c>（<see cref="BuildTarget.Architecture"/> 用同款词）。</summary>
+    /// <summary>The host CPU architecture, normalized to <c>x64</c>/<c>arm64</c> (same vocabulary as <see cref="BuildTarget.Architecture"/>).</summary>
     public static string HostArch => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
     {
         System.Runtime.InteropServices.Architecture.X64 => "x64",
@@ -40,8 +42,9 @@ public static class BuildTargets
     };
 
     /// <summary>
-    /// 架构名等价判断：目标里 Linux/macOS/Android 的 x64 写作 <c>x86_64</c>，而宿主是 <c>x64</c> ——
-    /// 两者指同一架构。这里统一后再比，避免「linux-x64 目标（x86_64）对不上 x64 宿主」这种误判。
+    /// Architecture-name equivalence: Linux/macOS/Android targets write x64 as <c>x86_64</c> while the host is <c>x64</c> —
+    /// both mean the same architecture. Normalize before comparing to avoid false mismatches such as
+    /// "the linux-x64 target (x86_64) does not match the x64 host".
     /// </summary>
     public static bool SameArch(string left, string right)
     {
@@ -57,7 +60,7 @@ public static class BuildTargets
     public static IReadOnlyList<BuildTarget> All { get; } = new BuildTarget[]
     {
         new("windows-x64", "Windows x64", "windows", "x64", ["windows"]),
-        // v3 新增：win32 支持 arm64、linux 支持 arm64、wasm 支持 wasm64。
+        // Added in v3: win32 gains arm64, linux gains arm64, wasm gains wasm64.
         new("windows-arm64", "Windows ARM64", "windows", "arm64", ["windows"], false, 3),
         new("android-arm64", "Android ARM64", "android", "arm64-v8a", ["windows", "linux", "macos"]),
         new("android-x64", "Android x64", "android", "x86_64", ["windows", "linux", "macos"]),
@@ -78,11 +81,11 @@ public static class BuildTargets
     public static BuildTarget Get(string id) => All.FirstOrDefault(t => t.Id == id)
         ?? throw new InvalidDataException($"Unknown build target: {id}");
 
-    /// <summary>取某个引擎版本的 major（无法解析时按 2 处理，保守地不外露 v3 专属目标）。</summary>
+    /// <summary>Returns the major version of an engine version (falls back to 2 when it cannot be parsed, so v3-only targets stay hidden).</summary>
     public static int MajorVersion(string version)
         => int.TryParse(version.Split('-', '.')[0], out var major) && major > 0 ? major : 2;
 
-    /// <summary>某引擎版本可构建的目标（过滤掉 v3 专属目标）。</summary>
+    /// <summary>The targets an engine version can build (v3-only targets filtered out).</summary>
     public static IReadOnlyList<BuildTarget> ForVersion(string version)
     {
         var major = MajorVersion(version);
@@ -107,7 +110,7 @@ public static class BuildTargets
         project.Configuration = configuration;
         try { StateStore.LockProject(project); }
         catch { project.Platform = previous; project.Configuration = previousConfiguration; throw; }
-        // 成功状态不能跨目标沿用；各目标的实际产物独立保存。
+        // Success status must not carry over across targets; each target's output is stored independently.
         project.BuildStatus = "Not built";
     }
 }

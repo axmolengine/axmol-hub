@@ -2,12 +2,14 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
   <!--
-    语义化颜色词汇表。WPF 版把这些值以字面量散在 App.xaml 的 18 个 ControlTemplate 里
-    （#1E1E1E / #E4E4E4 / #A8A8A8 …），同一个含义在不同控件里写着不同的相近色。
-    这里每个含义只出现一次，控件层只引用名字，不写字面量。
+    Semantic color vocabulary. The WPF version scattered these values as literals across the 18
+    ControlTemplates in App.xaml (#1E1E1E / #E4E4E4 / #A8A8A8 …), with the same meaning written as
+    different near-matching colors in different controls. Here each meaning appears exactly once;
+    the control layer only references names, never writes literals.
 
-    主题变体用 ThemeDictionaries 表达：应用跑在哪个变体下由 RequestedThemeVariant 决定，
-    运行时切换变体会让所有 DynamicResource 引用自动重取。WPF 版只有深色一套。
+    Theme variants are expressed with ThemeDictionaries: which variant the app runs under is decided
+    by RequestedThemeVariant, and switching variants at runtime makes all DynamicResource references
+    re-resolve automatically. The WPF version only had the dark theme.
   -->
 
   <ResourceDictionary.ThemeDictionaries>
@@ -61,8 +63,9 @@
 
     <ResourceDictionary x:Key="Light">
 
-      <!-- 浅色不是把深色反相，而是重新定的一套值：卡片比页面更亮（白），
-           侧栏比页面更暗一点，与 macOS / Windows 浅色习惯一致。 -->
+      <!-- Light is not the inverse of dark but a separately chosen set of values: cards are brighter
+           than the page (white), and the sidebar is slightly darker than the page, matching the
+           light-theme conventions of macOS / Windows. -->
       <SolidColorBrush x:Key="Hub.Background" Color="#F4F5F7" />
       <SolidColorBrush x:Key="Hub.Surface" Color="#FFFFFF" />
       <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#EDEEF2" />

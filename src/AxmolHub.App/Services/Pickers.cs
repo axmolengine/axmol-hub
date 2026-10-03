@@ -3,18 +3,19 @@ using Avalonia.Platform.Storage;
 
 namespace AxmolHub.App;
 
-/// <summary>文件 / 文件夹选择的结果。</summary>
+/// <summary>The result of a file / folder picker.</summary>
 public enum PickOutcome
 {
-    /// <summary>用户取消，或选择器没有返回任何项。</summary>
+    /// <summary>The user cancelled, or the picker returned nothing.</summary>
     Cancelled,
 
-    /// <summary>选中了一个本地路径。</summary>
+    /// <summary>A local path was picked.</summary>
     Picked,
 
     /// <summary>
-    /// 选中了一项，但它没有本地文件系统路径（云端盘、虚拟位置、内容提供程序）。
-    /// Hub 的语义是"本地目录"，这类位置不能当路径用，必须显式拒绝而不是当成取消。
+    /// An item was picked, but it has no local filesystem path (cloud drive, virtual location,
+    /// content provider). Hub's semantics are "local directory", so such a location can't be used as
+    /// a path and must be rejected explicitly rather than treated as a cancel.
     /// </summary>
     NotLocal,
 }
@@ -29,18 +30,20 @@ public readonly record struct PickResult(PickOutcome Outcome, string? Path)
 }
 
 /// <summary>
-/// WPF 的 <c>OpenFileDialog</c> / <c>OpenFolderDialog</c> 在 Avalonia 里统一成
-/// <see cref="IStorageProvider"/>，而且**只有异步签名**。返回值语义也变了：WPF 直接给
-/// <c>string?</c>，Avalonia 给 <c>IStorageFolder</c>/<c>IStorageFile</c>，本地路径要用
-/// <c>TryGetLocalPath()</c> 取回来，取不到（云端位置）时为 null。
-/// 见 docs/avalonia-migration-plan.md §3.3。
+/// WPF's <c>OpenFileDialog</c> / <c>OpenFolderDialog</c> are unified into
+/// <see cref="IStorageProvider"/> in Avalonia, and **only async signatures exist**. The return
+/// semantics changed too: WPF gives <c>string?</c> directly, Avalonia gives
+/// <c>IStorageFolder</c>/<c>IStorageFile</c>; the local path must be recovered via
+/// <c>TryGetLocalPath()</c>, which is null when it can't be recovered (cloud location).
+/// See docs/avalonia-migration-plan.md §3.3.
 /// </summary>
 public static class Pickers
 {
     /// <summary>
-    /// 决定逻辑本身。抽成不碰 Avalonia 的纯函数，唯一理由是它**能被断言**：
-    /// 真去弹一个选择器没法进自动化，而"取消 / 选中 / 选中了非本地位置"这三种结果的区分
-    /// 恰恰是最容易写错、也最难在人工点几次里发现的地方。
+    /// The decision logic itself. Extracted into a pure function that doesn't touch Avalonia, for
+    /// the sole reason that it **can be asserted**: actually popping a picker can't be automated,
+    /// and distinguishing "cancelled / picked / picked a non-local location" is exactly the kind of
+    /// thing that's easy to get wrong and hard to spot in a few manual clicks.
     /// </summary>
     public static PickResult Resolve(bool itemPresent, string? localPath)
     {
@@ -52,7 +55,7 @@ public static class Pickers
         return string.IsNullOrEmpty(localPath) ? PickResult.NotLocal : PickResult.Picked(localPath);
     }
 
-    /// <summary>把选择器返回的项翻译成结果。</summary>
+    /// <summary>Translates the picker's returned item into a result.</summary>
     public static PickResult Translate(IStorageItem? item)
         => Resolve(item is not null, item?.TryGetLocalPath());
 

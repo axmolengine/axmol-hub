@@ -1,11 +1,13 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 引擎根构建：把引擎编译成项目可复用的**预编译库**。
+/// Engine root build: compiles the engine into **prebuilt libraries** reusable by projects.
 ///
-/// 与 <see cref="EngineSetupService"/> 同构 —— 都只是「替用户跑引擎自己的命令」，判定与记录留在 Hub。
-/// 区别是这一步是**长任务**（编译整棵引擎，数分钟到数十分钟，产物数 GB），
-/// 而且缺工具链时引擎可能顺手触发自己的 setup（会改全局环境），所以调用方必须先向用户确认。
+/// Structurally parallel to <see cref="EngineSetupService"/> — both just "run the engine's own command on
+/// the user's behalf", with the judgment and recording kept in the Hub. The difference is that this step is
+/// a **long task** (compiling the whole engine, minutes to tens of minutes, several GB of artifacts), and
+/// when the toolchain is missing the engine may trigger its own setup as a side effect (which changes the
+/// global environment), so the caller must confirm with the user first.
 /// </summary>
 public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
@@ -20,12 +22,13 @@ public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine c
         BuildConfigurations.Validate(configuration);
         runner.Write($"Building Axmol {engine.Version} for {target.Name} ({configuration}); this compiles the whole engine.");
 
-        // 不设总时长上限：编译整棵引擎数分钟到数十分钟、产物数 GB，只要持续有输出就让它跑。
-        // 超时判定由 ProcessRunner 按「连续无输出 10 分钟」判卡死。
+        // No total time cap: compiling the whole engine takes minutes to tens of minutes and several GB of
+        // artifacts, so let it run as long as it keeps producing output. The timeout judgment is done by
+        // ProcessRunner as "10 minutes with no output" = a stall.
         await commandLine.RunAsync(engine, AxmolCommandMap.BuildEngine(target, configuration), engine.Path,
             cancellation);
 
-        // 构建目录由引擎决定，所以**发现**它；找不到就不记 —— 绝不写一条指向不存在目录的「已构建」。
+        // The build directory is decided by the engine, so **discover** it; if not found, don't record — never write a "built" entry pointing at a nonexistent directory.
         var directory = EnginePrebuilt.Discover(engine, configuration)
             ?? throw new InvalidOperationException(
                 $"The engine build finished but produced no usable prebuilt directory under {engine.Path} " +

@@ -9,17 +9,19 @@ public sealed class ProjectDestinationExistsException(string destination)
 }
 
 /// <summary>
-/// 工程生命周期。
+/// Project lifecycle.
 ///
-/// **构建/运行已委派给引擎自己的 cmdline**（<c>axmol build|run|deploy</c>）：
-/// Hub 不再拼 CMake 参数、不锁工具路径、不手工造 <c>INCLUDE</c>/<c>LIB</c>。
-/// 构建目录也由引擎决定（见 <see cref="EngineBuildLayout"/>），Hub 只负责发现它。
+/// **Build/run has been delegated to the engine's own command line** (<c>axmol build|run|deploy</c>):
+/// the Hub no longer assembles CMake arguments, pins tool paths, or hand-builds <c>INCLUDE</c>/<c>LIB</c>.
+/// The build directory is also decided by the engine (see <see cref="EngineBuildLayout"/>); the Hub only
+/// discovers it.
 ///
-/// Hub 保留的增值：运行期 app-local 运行库（VC redist）补齐。运行直接启动引擎产物目录的 exe。
+/// The value the Hub retains: filling in the runtime app-local runtime library (VC redist). Run directly
+/// launches the exe in the engine's artifact directory.
 /// </summary>
 public sealed class ProjectService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
-    /// <summary>Hub 写在工程目录下的标记目录（构建收据等）。不参与官方工程结构。</summary>
+    /// <summary>The marker directory the Hub writes into the project directory (build receipt etc.). Not part of the official project structure.</summary>
     public const string MarkerDirectory = ".hub";
 
     public static void ValidateProjectType(string projectType)
@@ -32,7 +34,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         ValidateProjectType(projectType);
         if (!File.Exists(Path.Combine(engine.Path, "templates", projectType, "axproj-template.json")))
             throw new InvalidDataException("Selected engine does not contain the requested project template.");
-        // 名称进入官方模板替换逻辑，限制为安全的 C++ / CMake 标识符。
+        // The name enters the official template substitution logic, so restrict it to a safe C++ / CMake identifier.
         if (!Regex.IsMatch(name, @"^[A-Za-z][A-Za-z0-9_]{0,63}$")) throw new ArgumentException("Project name must start with a letter and contain only letters, digits or underscores (max 64).");
         parent = Path.GetFullPath(parent);
         var path = Path.Combine(parent, name);
@@ -65,13 +67,13 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (locked.Version != project.Version || locked.Channel != project.Channel || locked.Platform != project.Platform || locked.Configuration != project.Configuration) throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
         StateStore.ValidateEngine(engine.Path, engine.Channel);
 
-        // -xc 的唯一组装点在 ProjectBuildOptions —— build 与 plan 共用它，否则 plan 会漏报选项。
+        // The single assembly point for -xc is ProjectBuildOptions — build and plan share it, otherwise plan would omit options.
         var extraCmake = ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: true, prebuiltState);
         await commandLine.RunAsync(engine, AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly, extraCmake), project.Path, cancellation);
         WriteBuildReceipt(project, engine);
     }
 
-    /// <summary>构建收据：记录这次构建对应的引擎安装与目标/配置，供 Run 判断产物是否仍然有效。</summary>
+    /// <summary>Build receipt: records which engine installation and target/configuration this build corresponds to, so Run can judge whether the artifacts are still valid.</summary>
     private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine)
     {
         var directory = Path.Combine(project.Path, MarkerDirectory);
@@ -90,7 +92,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
     }
 
-    /// <summary>引擎决定构建目录，这里只是把它找出来；找不到说明还没构建过。</summary>
+    /// <summary>The engine decides the build directory; this just locates it. Not found means it hasn't been built yet.</summary>
     public static string BuildDirectory(ProjectEntry project)
         => EngineBuildLayout.FindBuildDirectory(project)
            ?? throw new DirectoryNotFoundException($"No build directory was produced under {project.Path}. Build this target first.");
@@ -104,7 +106,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     private async Task<ProcessResult> RunWindowsAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation)
     {
         var target = BuildTargets.Get(project.Platform);
-        // Windows 可交叉编译 arm64，但 arm64 原生映像只能由 arm64 宿主启动。
+        // Windows can cross-compile arm64, but an arm64 native image can only be launched by an arm64 host.
         if (!target.CanRunLocally(BuildTargets.HostArch))
             throw new PlatformNotSupportedException($"{target.Name} was built for {target.Architecture}; a {target.Architecture} host is required to run it (current host: {BuildTargets.Host}/{BuildTargets.HostArch}).");
         var locked = StateStore.ReadProject(project.Path);
@@ -115,16 +117,20 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         var build = BuildDirectory(project);
         var executable = EngineBuildLayout.FindArtifact(build, project.Name, project.Configuration, "windows")
             ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
-        // 引擎产物目录（bin/<App>/<Config>/）已完整可运行：exe、dll、axslc 着色器、Content 都在同级。
-        // Hub 不再复制出一份独立运行目录，只补 app-local 运行库，然后直接启动产物目录里的 exe。
+        // The engine artifact directory (bin/<App>/<Config>/) is already fully runnable: exe, dll, axslc
+        // shaders and Content all sit at the same level. The Hub no longer copies out a separate run
+        // directory; it only fills in the app-local runtime library and then launches the exe in the
+        // artifact directory directly.
         await PrepareRuntime(Path.GetDirectoryName(executable)!, project.Configuration, target.Architecture, cancellation);
-        // 官方 FileUtils 以工作目录作为资源根；明确使用 Content，避免启动位置影响查找。
-        // 运行游戏 = 长驻进程。用分离启动（等同双击）：让 exe 自己的 AllocConsole 拿到真控制台，
-        // 日志颜色与直接双击一致；Hub 不重定向其输出（长驻进程的日志本就走文件/自带控制台）。
+        // The official FileUtils treats the working directory as the resource root; explicitly use Content
+        // so the launch location doesn't affect resolution.
+        // Running the game = a long-running process. Use a detached launch (equivalent to double-clicking):
+        // the exe's own AllocConsole gets a real console and log colors match a direct double-click; the Hub
+        // doesn't redirect its output (a long-running process's logs go to a file / its own console anyway).
         return await runner.RunDetachedAsync(executable, Path.Combine(Path.GetDirectoryName(executable)!, "Content"), cancellation);
     }
 
-    /// <summary>构建收据缺失或与当前引擎安装不符时，不允许用上一次的产物进入 Run。</summary>
+    /// <summary>When the build receipt is missing or doesn't match the current engine installation, the previous artifacts must not be used to enter Run.</summary>
     public static void ValidateBuildReceipt(ProjectEntry project, EngineEntry engine)
     {
         var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
@@ -144,9 +150,10 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     }
 
     /// <summary>
-    /// app-local 运行库。工具链已交还引擎（系统 VS），所以来源也从「Hub 托管的 MSVC」
-    /// 改为**系统 Visual Studio 的 redist**；找不到就跳过 —— 引擎构建出的程序本来也依赖
-    /// 系统已装的 VC 运行库，这里只是为本机 Debug 输出补一份 app-local 副本。
+    /// The app-local runtime library. The toolchain has been handed back to the engine (system VS), so the
+    /// source changed from "Hub-managed MSVC" to the **system Visual Studio redist**; if not found, skip —
+    /// programs built by the engine already depend on the system-installed VC runtime anyway, so this only
+    /// adds an app-local copy for local Debug output.
     /// </summary>
     private async Task PrepareRuntime(string output, string configuration, string architecture, CancellationToken cancellation)
     {
@@ -157,7 +164,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             return;
         }
 
-        // CRT 目录按目标架构选（windows 目标架构是 x64/arm64，与 redist 子目录同名）。
+        // The CRT directory is chosen by target architecture (the windows target arch is x64/arm64, matching the redist subdirectory names).
         var version = Directory.EnumerateDirectories(redist).OrderDescending().FirstOrDefault(path =>
             File.Exists(Path.Combine(path, architecture + "/Microsoft.VC143.CRT/msvcp140.dll")));
         if (version is null)
@@ -192,7 +199,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         StateStore.WriteJson(Path.Combine(output, configuration == "Debug" ? ".hub-debug-runtime.json" : ".hub-release-runtime.json"), receipt);
     }
 
-    /// <summary>用 vswhere 定位系统 Visual Studio 的 redist 目录（与引擎选取 MSVC 的口径一致）。</summary>
+    /// <summary>Uses vswhere to locate the system Visual Studio redist directory (the same criterion the engine uses to pick MSVC).</summary>
     private async Task<string?> VisualStudioRedistAsync(CancellationToken cancellation)
     {
         if (!OperatingSystem.IsWindows()) return null;

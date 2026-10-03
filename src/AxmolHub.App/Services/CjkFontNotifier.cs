@@ -4,18 +4,20 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 把 <see cref="CjkFontProbe"/> 的结论变成一次提示。
+/// Turns <see cref="CjkFontProbe"/>'s conclusion into a single prompt.
 ///
-/// 触发点只有两个，都在 <see cref="MainWindow"/> 里：**窗口出现之后**与**切到中文之后**。
-/// 这两个点都等价于"用户马上要看到方框了"，而不是"每次启动都拦一下"。
+/// There are only two trigger points, both in <see cref="MainWindow"/>: **after the window
+/// appears** and **after switching to Chinese**. Both are equivalent to "the user is about to see
+/// boxes", not "interrupt on every startup".
 /// </summary>
 internal static class CjkFontNotifier
 {
-    /// <summary>一个进程只提示一次。用户已经被告知过，再拦就是骚扰。</summary>
+    /// <summary>Prompt at most once per process. The user has already been told; interrupting again is harassment.</summary>
     private static bool _shown;
 
     /// <summary>
-    /// 该提示就提示。返回是否真的弹了 —— 自检靠它区分"没弹"是**判断的结果**还是**代码没走到**。
+    /// Prompt when it should. Returns whether it actually popped — self-checks rely on it to
+    /// distinguish "didn't pop" as the **result of the decision** vs. **the code never ran**.
     /// </summary>
     public static bool NotifyIfNeeded(Window? owner)
     {
@@ -31,8 +33,9 @@ internal static class CjkFontNotifier
 
         _shown = true;
 
-        // 不等用户点确认：这是一条告知，调用方（启动流程 / 语言切换）没有"确认之后才继续"的后半段。
-        // 等待会让设置页的语言切换卡在这里 —— 而那一步早就完成了。
+        // Don't wait for the user to confirm: this is informational, and the caller (startup flow /
+        // language switch) has no "continue after confirmation" second half.
+        // Waiting would stall the settings page's language switch here — which already completed.
         _ = HubDialog.ShowAsync(owner, CjkFontNotice.Title, CjkFontNotice.Message(CjkFontNotice.RunningOnLinux));
         return true;
     }

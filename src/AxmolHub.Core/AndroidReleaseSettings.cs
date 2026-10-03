@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace AxmolHub.Core;
 
-// 只保存非密码配置；密码显式传入本次调用，不写入 metadata、Gradle 文件或日志。
+// Only stores non-password configuration; passwords are passed explicitly to each call and never written to metadata, Gradle files, or logs.
 public sealed class AndroidReleaseSettings
 {
     public string ApplicationId { get; set; } = "";
@@ -88,7 +88,7 @@ public sealed class AndroidSigningService(ProcessRunner runner, string toolsRoot
         try
         {
             var signingEnvironment = passwords.Environment(environment);
-            // certreq 必须解锁私钥；仅列出证书无法发现错误 keyPassword 或证书-only alias。
+            // certreq must unlock the private key; merely listing certificates cannot detect a wrong keyPassword or a certificate-only alias.
             foreach (var operation in new[] { new[] { "-certreq", "-file", Path.Combine(directory, "request.csr"), "-keypass:env", "HUB_ANDROID_KEY_PASSWORD" },
                 new[] { "-exportcert", "-file", Path.Combine(directory, "certificate.der") } })
             {

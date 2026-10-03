@@ -9,15 +9,18 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 设置页（WPF 版的 <c>SettingsPage</c>）。
+/// The settings page (WPF's <c>SettingsPage</c>).
 ///
-/// 除了"把设置搬过来"，它还承担一个验证职责：**本地化到底是不是真的生效**。
-/// 语言切换要求就地重灌资源字典，并让**已经存在的控件**换文字 ——
-/// 这件事读代码判断不了（Avalonia 的 <c>DynamicResource</c> 会不会跟着资源字典变更
-/// 重新解析，只能实测），所以 <c>--verify-shell</c> 会真切一次语言并读回控件的文字。
+/// Beyond "porting the settings over", it also carries a verification duty: **does localization
+/// actually take effect**. Switching language requires reloading the resource dictionary in place
+/// and updating **already-existing controls**' text — this can't be judged by reading code (whether
+/// Avalonia's <c>DynamicResource</c> re-resolves when the resource dictionary changes can only be
+/// verified empirically), so <c>--verify-shell</c> really switches the language once and reads back
+/// the controls' text.
 ///
-/// 切换数据根由外壳接管（<see cref="MainWindow.SwitchDataRoot"/>）：它只重建工作区与页面，
-/// **不重建窗口** —— 因此这件事不依赖外壳形态。页面在这里只负责"问用户要一个目录"。
+/// Switching the data root is handled by the shell (<see cref="MainWindow.SwitchDataRoot"/>): it
+/// only rebuilds the workspace and pages, **not the window** — so this doesn't depend on the shell
+/// shape. The page here only "asks the user for a directory".
 /// </summary>
 public partial class SettingsPage : UserControl
 {
@@ -26,16 +29,16 @@ public partial class SettingsPage : UserControl
     private readonly HubPreferences _preferences;
     private readonly Action<string> _openFolder;
 
-    /// <summary>换语言后外壳需要重算自己那些**命令式**的文案（标题、左下角版本行）。</summary>
+    /// <summary>After a language change the shell must recompute its own **imperative** copy (title, bottom-left version line).</summary>
     private readonly Action _languageChanged;
 
-    /// <summary>请求外壳切换数据根。返回是否真的换了。</summary>
+    /// <summary>Asks the shell to switch the data root. Returns whether it actually switched.</summary>
     private readonly Func<string, bool> _switchDataRoot;
 
-    /// <summary>抑制初始化期间的 <c>SelectionChanged</c>：WPF 版同样有一个 <c>preferencesReady</c> 闸门。</summary>
+    /// <summary>Suppresses <c>SelectionChanged</c> during initialization: the WPF version likewise had a <c>preferencesReady</c> gate.</summary>
     private bool _ready;
 
-    /// <summary>供 XAML 加载器与设计预览使用（缺它会报 AVLN3001）。</summary>
+    /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public SettingsPage()
     {
         _workspace = null!;
@@ -74,28 +77,28 @@ public partial class SettingsPage : UserControl
         SelectVisualStudioButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: true);
         SelectCodeButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: false);
 
-        // DataRootNote 的文案走 XAML 的 {DynamicResource}，**不要**在这里命令式赋值：
-        // 命令式赋的值在换语言时不会自己变，而自检正是靠读这个控件的文字来判断本地化生不生效的。
+        // DataRootNote's copy goes through XAML's {DynamicResource}; **don't** assign it imperatively here:
+        // an imperative value won't change on language switch, and the self-check reads this control's text to judge whether localization works.
         Reload();
     }
 
     /// <summary>
-    /// XAML 里声明的语言标记。语言映射住在 XAML 的 <c>Tag</c> 上，这里只是把它读出来 ——
-    /// 断言靠它确认"下拉项声明的语言"和"代码认识的受支持语言"没有分叉。
+    /// The language tags declared in XAML. The language mapping lives on XAML's <c>Tag</c>; here we just read it out —
+    /// assertions rely on it to confirm "the languages the dropdown items declare" and "the supported languages the code knows" haven't diverged.
     /// </summary>
     internal string[] DeclaredLanguages
         => LanguagePicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
 
-    /// <summary>当前选中的语言标记。未知/未选一律回落到默认语言（与 <see cref="HubTexts.Normalize"/> 同规矩）。</summary>
+    /// <summary>The currently selected language tag. Unknown/none fall back to the default language (same rule as <see cref="HubTexts.Normalize"/>).</summary>
     internal string SelectedLanguage
         => LanguagePicker.SelectedItem is ComboBoxItem { Tag: string tag } && HubTexts.IsSupported(tag)
             ? tag
             : HubTexts.DefaultLanguage;
 
     /// <summary>
-    /// 编辑器可执行文件的校验规则（WPF 版在每个分支里各写一遍）。
-    /// 抽成纯静态函数是为了**能被断言** —— 真去弹文件选择器没法进自动化，
-    /// 而"选错文件要拒绝"恰是最容易漏、也最难在人工点几次里发现的分支。
+    /// The editor-executable validation rule (the WPF version wrote it once per branch).
+    /// Extracted into a pure static function so it **can be asserted** — actually popping a file picker can't be automated,
+    /// and "rejecting the wrong file" is exactly the branch most easily missed and hardest to spot in a few manual clicks.
     /// </summary>
     internal static bool MatchesEditorExecutable(bool visualStudio, string path)
         => System.IO.Path.GetFileName(path).Equals(visualStudio ? "devenv.exe" : "Code.exe", StringComparison.OrdinalIgnoreCase);
@@ -127,9 +130,9 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// 按下拉项自己声明的标记选中一项。找不到就选第一项，不留一个"什么都没选"的空状态。
-    /// 验收代码直接调它 —— 与导航用 <c>NavSettings.IsChecked = true</c> 同理：
-    /// 走真实事件路径，而不是绕开事件去改内部状态。
+    /// Selects an item by the tag the dropdown item itself declares. If not found, selects the first item — never leaves an empty "nothing selected" state.
+    /// Verification code calls it directly — same idea as navigation using <c>NavSettings.IsChecked = true</c>:
+    /// go through the real event path rather than bypassing the event to mutate internal state.
     /// </summary>
     internal void SelectLanguage(string language)
     {
@@ -149,12 +152,12 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// 切换语言：写设置 → 重灌资源字典 → 已存在的控件跟着换文字。
+    /// Switches language: write settings → reload the resource dictionary → existing controls follow with new text.
     ///
-    /// 顺序不能反：先灌字典再写设置，写失败时会留下"界面已换语言但设置没存"的状态，
-    /// 下次启动又变回去，看起来像设置丢失。
+    /// The order can't be reversed: reload the dictionary before writing settings, otherwise a failed write leaves "UI switched language but settings not saved",
+    /// reverting on the next launch and looking like a lost setting.
     ///
-    /// 重灌之后再通知外壳：外壳与页面里有**命令式**写入的文案，DynamicResource 管不到它们。
+    /// Notify the shell after reloading: the shell and pages have **imperatively** written copy that DynamicResource doesn't cover.
     /// </summary>
     private void OnLanguageChanged()
     {
@@ -175,14 +178,14 @@ public partial class SettingsPage : UserControl
             _preferences.Language = language;
             _preferencesStore.Save(_preferences);
 
-            // 就地重灌：DynamicResource 会跟着资源字典变更重新解析，因此
-            // 已经建好的控件（以及别的窗口）也会换文字，不需要重建窗口。
+            // Reload in place: DynamicResource re-resolves when the resource dictionary changes, so
+            // already-built controls (and other windows) also swap text — no window rebuild needed.
             HubStrings.Apply(language, Application.Current!);
             _languageChanged();
         }
         catch (Exception ex)
         {
-            // 失败要把界面扳回去，否则会显示一个与设置文件不符的语言。
+            // On failure, revert the UI, otherwise it would show a language that disagrees with the settings file.
             _ready = false;
             _preferences.Language = previous;
             HubStrings.Apply(previous, Application.Current!);
@@ -213,9 +216,9 @@ public partial class SettingsPage : UserControl
 
         try
         {
-            // 切换成功后**本页实例就废弃了**（外壳清空页面缓存并重建），
-            // 所以这里不能再去碰自己的任何控件：那会读到一个已经 Dispose 的工作区。
-            // 成功路径到此为止，失败路径才需要弹窗 —— 那时本页还活着。
+            // After a successful switch **this page instance is discarded** (the shell clears the page cache and rebuilds),
+            // so here we must not touch any of our own controls: that would read an already-disposed workspace.
+            // The success path ends here; only the failure path needs a dialog — and this page is still alive then.
             _switchDataRoot(picked.Path!);
         }
         catch (Exception ex)
@@ -245,8 +248,8 @@ public partial class SettingsPage : UserControl
 
         try
         {
-            // 与数据根不同，项目父目录**只存路径不切换**：它不承载状态，切换不需要重建窗口。
-            // 落盘与校验都在工作区里，失败时它会把偏好回滚到上一个值。
+            // Unlike the data root, the project parent directory **only stores a path, no switch**: it carries no state, so switching needs no window rebuild.
+            // Persistence and validation both happen in the workspace; on failure it rolls the preference back to the previous value.
             _workspace.SetProjectDirectory(picked.Path!);
             Reload();
         }
@@ -264,7 +267,7 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        // 标题与拒绝文案都点名具体可执行文件：选错了要一眼看出该选哪个，而不是只被告知"选错了"。
+        // Both the title and the rejection copy name the concrete executable: when picked wrong, the user should see at a glance which one to choose, not just be told "wrong pick".
         var title = HubStrings.Get(visualStudio ? "Select devenv.exe" : "Select Code.exe");
         var picked = await Pickers.PickFileAsync(top, title,
             [new FilePickerFileType(visualStudio ? "devenv.exe" : "Code.exe") { Patterns = ["*.exe"] }]);

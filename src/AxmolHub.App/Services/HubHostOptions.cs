@@ -3,7 +3,8 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 命令行与宿主目录。对应 WPF 版 App.xaml.cs 里那段参数解析，默认值逐条对齐。
+/// Command line and host directory. Counterpart of the argument parsing in WPF's App.xaml.cs,
+/// with each default aligned one by one.
 /// </summary>
 internal sealed record HubHostOptions(
     string? DataRootArgument,
@@ -18,12 +19,14 @@ internal sealed record HubHostOptions(
     bool Gallery)
 {
     /// <summary>
-    /// 验收 / 截图模式。它们跑的是**产品窗口**（<c>--smoke</c>、<c>--smoke-pages</c>），
-    /// 但没有人在旁边点按钮 —— 任何模态对话框都会让"真跑"变成"挂死"。
-    /// 所以凡属"只为人眼存在"的动作（例如缺字体提示）在这里一律不触发。
+    /// Verification / screenshot modes. They run the **product window** (<c>--smoke</c>,
+    /// <c>--smoke-pages</c>) but with no one around to click buttons — any modal dialog would turn
+    /// "really running" into "hanging". So anything that exists only for a human (e.g. the missing
+    /// font prompt) never fires here.
     ///
-    /// 与 <c>HubWorkspace.SuppressDialogs</c> 的分工：那个关的是**操作失败**弹窗（一次真操作里的），
-    /// 这个关的是**外壳自己的**告知性弹窗（没有对应操作可失败）。
+    /// Split of duties with <c>HubWorkspace.SuppressDialogs</c>: that one silences **operation
+    /// failure** dialogs (inside a real operation), this one silences the **shell's own**
+    /// informational dialogs (with no corresponding operation to fail).
     /// </summary>
     public bool IsAutomation =>
         SmokeImagePath is not null || SmokePagesDirectory is not null
@@ -31,9 +34,11 @@ internal sealed record HubHostOptions(
         || VerifyShellReport is not null || VerifyOpsReport is not null || Gallery;
 
     /// <summary>
-    /// 设置与数据根放每用户目录，**不能**放 AppContext.BaseDirectory 旁边：
-    /// Velopack 更新时整体替换安装目录下的 current\，卸载时删除整个安装目录。
-    /// 引擎与工具链是 GB 级，所以用 LocalApplicationData 而不是漫游 AppData。
+    /// Settings and data root live in the per-user directory, **not** next to
+    /// AppContext.BaseDirectory: Velopack replaces the whole current\ under the install directory
+    /// on update, and deletes the entire install directory on uninstall.
+    /// Engines and toolchains are gigabyte-scale, so use LocalApplicationData rather than roaming
+    /// AppData.
     /// </summary>
     public static string UserDirectory => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create),
@@ -44,9 +49,10 @@ internal sealed record HubHostOptions(
     public static string DefaultDataRoot => System.IO.Path.Combine(UserDirectory, "data");
 
     /// <summary>
-    /// 数据根的三级优先：命令行 &gt; 设置文件 &gt; 默认目录（与 WPF 版一致）。
-    /// 因此这里**不做**兜底解析 —— 一旦在解析阶段就填上默认值，
-    /// 就没法区分"用户显式传了 --data-root"和"没传"，设置文件里的值会永远被默认值压住。
+    /// Three-tier data-root priority: command line &gt; settings file &gt; default directory (same as
+    /// the WPF version). Therefore this does **not** fall back here — once the default is filled in
+    /// at parse time, we can no longer tell "the user explicitly passed --data-root" from "not
+    /// passed", and the settings file value would be permanently overridden by the default.
     /// </summary>
     public string ResolveDataRoot(HubPreferences preferences)
         => System.IO.Path.GetFullPath(DataRootArgument ?? preferences.DataRoot ?? DefaultDataRoot);
@@ -67,9 +73,10 @@ internal sealed record HubHostOptions(
     }
 
     /// <summary>
-    /// <c>--verify-ops &lt;报告&gt; &lt;引擎目录&gt;...</c>：报告路径之后的、不以 <c>--</c>
-    /// 开头的参数都算引擎目录。用位置参数而不是重复的 <c>--engine</c>，
-    /// 是因为这条命令天生要一次给好几个引擎（一个完整的、一个不完整的）。
+    /// <c>--verify-ops &lt;report&gt; &lt;engine dir&gt;...</c>: after the report path, any argument
+    /// not starting with <c>--</c> counts as an engine directory. Positional arguments are used
+    /// instead of repeated <c>--engine</c> flags because this command inherently takes several
+    /// engines at once (a complete one and an incomplete one).
     /// </summary>
     private static string[] Trailing(string[] args, string flag)
     {
@@ -89,8 +96,9 @@ internal sealed record HubHostOptions(
     }
 
     /// <summary>
-    /// 取 `--flag value` 里的值。刻意不把"标志后面跟着另一个标志"当值：
-    /// 传成 `--smoke --gallery` 时应视为缺参，而不是把 `--gallery` 当文件名用。
+    /// Reads the value of `--flag value`. Deliberately does not treat "a flag followed by another
+    /// flag" as a value: `--smoke --gallery` should be treated as a missing argument, not use
+    /// `--gallery` as a file name.
     /// </summary>
     private static string? Value(string[] args, string flag)
     {

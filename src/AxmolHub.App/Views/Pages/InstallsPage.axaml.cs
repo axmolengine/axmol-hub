@@ -5,15 +5,16 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 引擎页（WPF 的 InstallsPage）。七个按钮逐一对应 WPF 版 WrapPanel 里的七个按钮，
-/// 顺序都不变：添加模块 / 设为默认 / 打开目录 / 验证 / 修复 / 卸载 / 移出列表。
+/// The engines page (WPF's InstallsPage). The seven buttons map one-to-one to the seven buttons in
+/// the WPF version's WrapPanel, same order: add module / set default / open folder / verify /
+/// repair / uninstall / remove from list.
 /// </summary>
 public partial class InstallsPage : UserControl
 {
     private readonly HubWorkspace _workspace;
     private bool _ready;
 
-    /// <summary>供 XAML 加载器与设计预览使用（缺它会报 AVLN3001）。</summary>
+    /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public InstallsPage()
     {
         _workspace = null!;
@@ -72,7 +73,7 @@ public partial class InstallsPage : UserControl
         return result.Outcome == PickOutcome.Picked ? result.Path : null;
     }
 
-    /// <summary>WPF 版 <c>Refresh()</c> 里属于引擎页的那一段。</summary>
+    /// <summary>The engines-page portion of the WPF <c>Refresh()</c>.</summary>
     public void Reload()
     {
         if (_workspace is null)
@@ -103,8 +104,10 @@ public partial class InstallsPage : UserControl
     }
 
     /// <summary>
-    /// 预编译库状态读数。判定的真源是 <see cref="EnginePrebuilt"/>（记录 + 目录内容校验），
-    /// 这里只负责说给用户听。宿主不支持时（非 Windows）按钮直接禁用 —— 点了必然会失败。
+    /// The prebuilt-library status readout. The source of truth for the judgment is
+    /// <see cref="EnginePrebuilt"/> (records + directory content check); here we only tell the user.
+    /// When the host doesn't support it (non-Windows) the button is disabled — clicking would fail
+    /// for sure.
     /// </summary>
     private void ReloadPrebuiltStatus()
     {

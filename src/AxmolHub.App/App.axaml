@@ -3,14 +3,15 @@
              x:Class="AxmolHub.App.App"
              RequestedThemeVariant="Default">
 
-  <!-- Default 跟随系统主题。WPF 版只有深色一套，浅色是 P3 补的（见 HubTokens.axaml 的
-       ThemeDictionaries），因此同一个窗口在 Windows / macOS 浅色环境下不再是黑底。
-       要强制某个变体，运行时改 Application.Current.RequestedThemeVariant，控件画廊就是这么做的。 -->
+  <!-- Default follows the system theme. The WPF version only had the dark theme; light was added in P3
+       (see ThemeDictionaries in HubTokens.axaml), so the same window is no longer black-backed under the
+       Windows / macOS light environment. To force a variant, change Application.Current.RequestedThemeVariant
+       at runtime — that's what the control gallery does. -->
 
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
-        <!-- 顺序有意义：控件主题引用图标与颜色，须排在其后。 -->
+        <!-- Order matters: the control theme references icons and colors, so it must come after them. -->
         <ResourceInclude Source="avares://AxmolHub.App/Theme/HubTokens.axaml" />
         <ResourceInclude Source="avares://AxmolHub.App/Theme/HubIcons.axaml" />
         <ResourceInclude Source="avares://AxmolHub.App/Theme/HubControls.axaml" />
@@ -20,8 +21,8 @@
 
   <Application.Styles>
     <FluentTheme />
-    <!-- DataGrid 的 Fluent 主题在单独的 NuGet 包里，必须显式 include。
-         放在 HubStyles 之前：HubStyles 里的 DataGrid 样式要能在它之上覆盖。 -->
+    <!-- DataGrid's Fluent theme lives in a separate NuGet package and must be included explicitly.
+         Placed before HubStyles: the DataGrid styles in HubStyles need to override on top of it. -->
     <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
     <StyleInclude Source="avares://AxmolHub.App/Theme/HubStyles.axaml" />
   </Application.Styles>

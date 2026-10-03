@@ -5,8 +5,8 @@
              x:DataType="local:ToolchainsPage">
 
   <!--
-    工具链页。标题行 → 引擎版本条 → 组件详情（工具链表格）。
-    平台/架构的可构建性由 BuildTargets 表达，不再有独立的「模块」概念。
+    Toolchains page. Title row → engine version bar → component details (toolchain table).
+    Platform/architecture buildability is expressed by BuildTargets; there is no longer a separate "module" concept.
   -->
 
   <Grid RowDefinitions="Auto,Auto,*,Auto">

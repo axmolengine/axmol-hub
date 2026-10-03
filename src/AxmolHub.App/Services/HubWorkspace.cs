@@ -13,33 +13,36 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// WPF 版把「服务装配 + 全部操作」都放在 <c>MainWindow.xaml.cs</c> 里（823 行）——
-/// 因为四个页面是同一个窗口内的四个 <c>Grid</c>，字段天然共享，一个 <c>Refresh()</c>
-/// 就能同时更新项目页的计数和工具链页的表格。
+/// The WPF version put "service wiring + all operations" in <c>MainWindow.xaml.cs</c> (823 lines)
+/// — because the four pages were four <c>Grid</c>s in one window, fields were naturally shared, and
+/// a single <c>Refresh()</c> could update both the projects-page counts and the toolchains-page
+/// table at once.
 ///
-/// Avalonia 版把页面拆成了 <c>UserControl</c>，那些共享字段就失去了落点。于是把
-/// **非视觉的那一半**整体搬到这里：服务装配、当前选择、<c>ExecuteAsync</c>、
-/// 以及每个按钮背后的操作。视觉那一半仍在 XAML 里，页面只把控件绑到这里的属性与事件。
+/// The Avalonia version splits pages into <c>UserControl</c>s, so those shared fields lost their
+/// home. Hence the **non-visual half** is moved here wholesale: service wiring, current selection,
+/// <c>ExecuteAsync</c>, and the operation behind every button. The visual half stays in XAML;
+/// pages only bind controls to the properties and events here.
 ///
-/// 刻意**不**引 MVVM 框架：这里的状态是"选中的项目 / 正在跑的操作 / 检测到的组件"
-/// 这一类，用事件通知比搭一层绑定基础设施更短，也更贴近 WPF 版 <c>Refresh()</c> 的语义
-/// （一次操作结束，全量重画）。
+/// Deliberately does **not** pull in an MVVM framework: the state here is "selected project /
+/// running operation / detected components" and the like, so notifying via events is shorter than
+/// building a binding infrastructure, and it stays closer to the WPF <c>Refresh()</c> semantics
+/// (full repaint when an operation ends).
 /// </summary>
 public sealed class HubWorkspace : IDisposable
 {
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly ProcessRunner _runner;
-    /// <summary>Hub → 引擎 cmdline 的唯一入口（构建/运行/部署都经它）。</summary>
+    /// <summary>The single entry point for Hub → engine command lines (build/run/deploy all go through it).</summary>
     private readonly EngineCommandLine _commandLine;
-    /// <summary>环境准备：跑引擎自己的 <c>setup.ps1</c>（Hub 不再下载安装任何工具）。</summary>
+    /// <summary>Environment prep: runs the engine's own <c>setup.ps1</c> (Hub no longer downloads or installs any tools).</summary>
     private readonly EngineSetupService _setup;
     private readonly ProjectService _projects;
     private readonly PlatformBuildService _platformBuilds;
-    /// <summary>引擎树内的工具链只读探测（真源 = 引擎自带 build.profiles + tools/external）。</summary>
+    /// <summary>Read-only toolchain probe inside the engine tree (source of truth = the engine's bundled build.profiles + tools/external).</summary>
     private readonly EngineToolchain _engineToolchain;
-    /// <summary>预编译库记录（存 Hub 数据根，按引擎身份哈希）。</summary>
+    /// <summary>Prebuilt library records (stored in Hub's data root, hashed by engine identity).</summary>
     private readonly EnginePrebuiltState _prebuiltState;
-    /// <summary>把引擎编译成预编译库（<c>axmol-sdk</c>）。</summary>
+    /// <summary>Compiles the engine into a prebuilt library (<c>axmol-sdk</c>).</summary>
     private readonly EngineBuildService _engineBuild;
     private readonly PackageInstaller _installer;
 
@@ -47,18 +50,19 @@ public sealed class HubWorkspace : IDisposable
     private BuildProgressWindow? _buildProgress;
 
     /// <summary>
-    /// 引擎版本目录。**必须是同一个实例**：远端索引拉下来后要存在它身上，
-    /// 每次调用 new 一个的话，采纳结果会被立刻丢掉，列表永远停在内置清单。
+    /// The engine version catalog. **Must be the same instance**: after the remote index is pulled
+    /// it has to be stored on it. Newing one up on every call would drop the adopted result right
+    /// away, leaving the list stuck at the built-in manifest.
     /// </summary>
     private EngineReleases _releases;
 
-    /// <summary>签名密码只在内存里，一次会话有效 —— 与 WPF 版一致，不落盘。</summary>
+    /// <summary>Signing passwords live only in memory, valid for one session — same as the WPF version, never persisted.</summary>
     private readonly Dictionary<string, AndroidSigningPasswords> _androidPasswords = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>设备列表只在「项目 + 平台」这个组合变化时才失效，避免每选一次项目就清一次。</summary>
+    /// <summary>The device list is invalidated only when the "project + platform" combination changes, to avoid clearing it on every project selection.</summary>
     private string _deviceProject = "";
 
-    /// <summary>目标下拉的回环闸门。WPF 版叫 <c>targetReady</c>，作用完全一样。</summary>
+    /// <summary>Reentrancy gate for the target dropdown. The WPF version calls it <c>targetReady</c>; it does exactly the same job.</summary>
     private bool _targetReady;
 
     public HubWorkspace(string root, HubPreferences preferences, PreferencesStore preferencesStore)
@@ -75,8 +79,9 @@ public sealed class HubWorkspace : IDisposable
         State = Store.Load();
 
         Log = new HubLog(Path.Combine(Store.Root, "logs"));
-        // HubLog 的回调来自**工作线程**（ProcessRunner 的输出泵）。WPF 版用 Dispatcher.BeginInvoke
-        // 切回 UI 线程，这里同理；少了这一步，往 TextBox 追加文本会抛跨线程异常。
+        // HubLog's callbacks come from a **worker thread** (ProcessRunner's output pump). The WPF
+        // version switches back to the UI thread with Dispatcher.BeginInvoke; here is the same.
+        // Without this step, appending text to a TextBox throws a cross-thread exception.
         Log.Written += line => Dispatcher.UIThread.Post(() =>
         {
             Logged?.Invoke(line);
@@ -96,8 +101,9 @@ public sealed class HubWorkspace : IDisposable
         _releases = new EngineReleases(Store.Root, Manifests);
         RefreshEngineIndexAsync();
 
-        // 卡顿记录器：用户报"窗口无响应"时，日志里要能读出卡了多久、什么时候卡的。
-        // 常开、只在真卡住时写日志（阈值 2 秒 —— 1 秒级抖动不值得记）。
+        // Stall recorder: when the user reports "window not responding", the log must show how long
+        // and when it stalled. Always on, and only writes when genuinely stalled (2-second threshold
+        // — sub-second jitter isn't worth logging).
         new UiStallWatch(Log.Write, TimeSpan.FromSeconds(2)).Start();
 
         ProjectDirectory = preferences.ProjectDirectory ?? Path.Combine(Store.Root, "projects");
@@ -106,21 +112,27 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// 启动时拉一次远端版本索引，失败就继续用内置清单。
+    /// Pulls the remote version index once at startup; on failure it keeps using the built-in
+    /// manifest.
     ///
-    /// **不 await**：主窗口必须立刻出来。索引只影响"引擎页列出哪些版本"，
-    /// 让用户为了一个可选信息等网络是不可接受的（而离线环境下它会等到超时）。
-    /// 所以这里 fire-and-forget，完成后经 <see cref="Changed"/> 让界面重画一次。
+    /// **Not awaited**: the main window must come up immediately. The index only affects "which
+    /// versions the engines page lists", and making the user wait on the network for optional
+    /// information is unacceptable (offline it would wait until timeout). So this is
+    /// fire-and-forget, and once done it repaints the UI via <see cref="Changed"/>.
     ///
-    /// 超时给死：<see cref="_http"/> 刻意是 <see cref="Timeout.InfiniteTimeSpan"/>（GB 级下载要能慢慢下），
-    /// 索引这种小请求必须自己套一层，否则一个半死不活的连接能把后台任务挂到天荒地老。
+    /// Timeout is hard-capped: <see cref="_http"/> is deliberately
+    /// <see cref="Timeout.InfiniteTimeSpan"/> (gigabyte-scale downloads must be able to crawl), but
+    /// a small request like the index must wrap its own, otherwise a half-dead connection could
+    /// hang the background task forever.
     ///
-    /// **整个请求跑在线程池上**（<see cref="Task.Run{TResult}(Func{TResult}, CancellationToken)"/>）。
-    /// 这不是为了并行 —— 是为了让"第一次 HTTP 请求"的**同步段**离开 UI 线程：
-    /// `HttpClient` 首次发请求时要解析代理（Windows 上会去问 WinINET，企业网里
-    /// WPAD/自动检测可能要好几秒）并做 DNS。这段同步代码跑在调用者线程上，
-    /// 而调用者就是 UI 线程 —— 于是窗口会出现"未响应"。本机测出来只有几十毫秒，
-    /// 但在有代理的环境里可以放大到秒级，且完全不体现在日志里。
+    /// **The whole request runs on the thread pool**
+    /// (<see cref="Task.Run{TResult}(Func{TResult}, CancellationToken)"/>). This isn't for
+    /// parallelism — it's to move the **synchronous part** of the "first HTTP request" off the UI
+    /// thread: on its first request `HttpClient` resolves the proxy (on Windows it asks WinINET;
+    /// on corporate networks WPAD/auto-detection can take seconds) and does DNS. That synchronous
+    /// code runs on the caller thread, and the caller is the UI thread — hence the "not responding"
+    /// window. Locally it measures tens of milliseconds, but in proxied environments it can blow up
+    /// to seconds, and none of it shows in the log.
     /// </summary>
     private async void RefreshEngineIndexAsync()
     {
@@ -137,15 +149,17 @@ public sealed class HubWorkspace : IDisposable
         }
         catch (Exception ex)
         {
-            // 契约上 EngineIndex.FetchAsync 不抛；真抛了也不该让启动失败。
+            // By contract EngineIndex.FetchAsync doesn't throw; and if it does, it still shouldn't
+            // fail startup.
             Log.Write("Engine index failed: " + ex.Message);
         }
 
-        // 后台线程 → UI 线程。跨线程碰控件会抛，所以经 Dispatcher 回去。
+        // Background thread → UI thread. Touching controls cross-thread throws, so go back via
+        // Dispatcher.
         Dispatcher.UIThread.Post(() => Refresh());
     }
 
-    // ───────────────────────── 服务与状态 ─────────────────────────
+    // ───────────────────────── Services and state ─────────────────────────
 
     public StateStore Store { get; }
     public HubState State { get; }
@@ -153,60 +167,64 @@ public sealed class HubWorkspace : IDisposable
     public HubPreferences Preferences { get; }
     public PreferencesStore PreferencesStore { get; }
     /// <summary>
-    /// Hub 自己的数据目录（下载缓存、Android 打包暂存）。
-    /// **不是工具链根** —— 工具链在引擎树里（<c>&lt;engine&gt;/tools/external</c>），由引擎的 setup.ps1 准备。
+    /// Hub's own data directory (download cache, Android packaging staging).
+    /// **Not the toolchain root** — toolchains live in the engine tree
+    /// (<c>&lt;engine&gt;/tools/external</c>), prepared by the engine's setup.ps1.
     /// </summary>
     public string ToolsRoot { get; }
     public string Manifests { get; }
 
-    /// <summary>对话框的宿主窗口。由主窗口在构造后填好；为空时对话框退化成非模态。</summary>
+    /// <summary>The dialogs' host window. Filled in by the main window after construction; when null, dialogs degrade to non-modal.</summary>
     public Window? Owner { get; set; }
 
     /// <summary>
-    /// 验收模式下关掉失败弹窗（<c>--verify-ops</c>）。
+    /// Silences failure dialogs in verification mode (<c>--verify-ops</c>).
     ///
-    /// 产品路径里操作失败**必须**弹框 —— 用户得看见。但自动化里没人点确认，
-    /// <see cref="HubDialog.ShowAsync"/> 返回的 Task 永远不会完成，于是"真跑"变成"挂死"。
-    /// 它只关掉**展示**：置忙、记日志、落盘、<see cref="LastError"/> 全部照旧，
-    /// 所以验收观察到的仍是产品行为，只是少了那个需要人点的窗口。
+    /// On the product path an operation failure **must** pop up — the user has to see it. But in
+    /// automation no one clicks confirm, and the Task returned by
+    /// <see cref="HubDialog.ShowAsync"/> never completes, turning "really running" into "hanging".
+    /// It only silences **presentation**: busy state, logging, persistence, and
+    /// <see cref="LastError"/> all stay unchanged, so verification still observes product behavior
+    /// — just without the window that needs a human.
     /// </summary>
     public bool SuppressDialogs { get; set; }
 
-    /// <summary>一行日志（已在 UI 线程）。主窗口把它追加进日志面板。</summary>
+    /// <summary>A single log line (already on the UI thread). The main window appends it to the log panel.</summary>
     public event Action<string>? Logged;
 
-    /// <summary>状态/列表变了，页面该重画。等价于 WPF 版结尾那个 <c>Refresh()</c>。</summary>
+    /// <summary>State/lists changed and pages should repaint. Equivalent to the WPF version's trailing <c>Refresh()</c>.</summary>
     public event Action? Changed;
 
-    /// <summary>状态栏文案。</summary>
+    /// <summary>Status bar text.</summary>
     public event Action<string>? StatusChanged;
 
-    /// <summary>操作进行中（页面禁用 + 取消按钮可用）。</summary>
+    /// <summary>An operation is running (pages disabled + cancel button enabled).</summary>
     public event Action<bool>? BusyChanged;
 
-    /// <summary>操作失败：主窗口据此展开日志面板。</summary>
+    /// <summary>An operation failed: the main window expands the log panel in response.</summary>
     public event Action? Failed;
 
-    /// <summary>工具链检测结果更新。</summary>
+    /// <summary>Toolchain detection results updated.</summary>
     public event Action? ComponentsChanged;
 
-    /// <summary>Android 设备列表更新。</summary>
+    /// <summary>Android device list updated.</summary>
     public event Action? DevicesChanged;
 
     /// <summary>
-    /// 请求切到某一页（页键同 <c>MainWindow.PageKeys</c>）。由主窗口订阅。
-    /// 对话框不能直接引用主窗口，所以「去引擎页构建」这类跳转经它转发。
+    /// Requests a switch to a page (page keys match <c>MainWindow.PageKeys</c>). Subscribed by the
+    /// main window. Dialogs can't reference the main window directly, so jumps like "go to the
+    /// engines page to build" are forwarded through it.
     /// </summary>
     public event Action<string>? NavigateRequested;
 
-    // ───────────────────────── 共享选择 ─────────────────────────
+    // ───────────────────────── Shared selection ─────────────────────────
 
     public ProjectEntry? SelectedProject { get; set; }
     public EngineEntry? SelectedEngine { get; set; }
     public EngineEntry? ToolchainEngine { get; set; }
     public AndroidDevice? SelectedDevice { get; set; }
 
-    /// <summary>新建项目面板里的默认位置。WPF 版是 <c>ProjectLocation.Text</c>。</summary>
+    /// <summary>The default location in the new-project panel. The WPF version is <c>ProjectLocation.Text</c>.</summary>
     public string ProjectDirectory { get; set; }
 
     private BuildTarget? _toolTarget;
@@ -226,13 +244,13 @@ public sealed class HubWorkspace : IDisposable
     public bool IsBusy => _operation is not null;
     public string StatusText { get; private set; } = "";
 
-    /// <summary>项目页顶部"最近构建平台"那张卡里的第二行。</summary>
+    /// <summary>The second line of the "recent build platform" card at the top of the projects page.</summary>
     public string BuildHostHint { get; private set; } = "";
 
-    /// <summary>工具链页平台选择下方的说明。WPF 版叫 <c>ToolTargetHint</c>。</summary>
+    /// <summary>The caption below the platform selection on the toolchains page. The WPF version calls it <c>ToolTargetHint</c>.</summary>
     public string ToolTargetHint { get; private set; } = "";
 
-    // ───────────────────────── 通用外壳 ─────────────────────────
+    // ───────────────────────── Common shell ─────────────────────────
 
     private void SetStatus(string text)
     {
@@ -245,8 +263,10 @@ public sealed class HubWorkspace : IDisposable
             $"{HubStrings.Get("Download")} {p.Bytes / 1048576.0:F1} / {(p.Total.HasValue ? (p.Total.Value / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) : "?")} MB · {p.BytesPerSecond / 1048576.0:F1} MB/s")));
 
     /// <summary>
-    /// 一个操作的完整生命周期：锁重入、置忙、记日志、成功落盘、失败展开日志并弹框。
-    /// 与 WPF 版逐句对应，只是把 <c>Pages.IsEnabled</c> 换成了 <see cref="BusyChanged"/> 事件。
+    /// The full lifecycle of one operation: lock against reentry, set busy, log, persist on
+    /// success, and expand the log plus pop up a dialog on failure.
+    /// Maps sentence-by-sentence to the WPF version, just swapping <c>Pages.IsEnabled</c> for the
+    /// <see cref="BusyChanged"/> event.
     /// </summary>
     public async Task ExecuteAsync(string title, Func<CancellationToken, Task> action)
     {
@@ -279,8 +299,9 @@ public sealed class HubWorkspace : IDisposable
             Log.Write(LastError);
             SetStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(ex.Message.Split('\n')[0]));
             Failed?.Invoke();
-            // 验收模式下不弹框：ExpectedFailure 是这一组的常态（比如拿一个不完整的引擎去导入），
-            // 弹窗会让 await 永不返回（见 SuppressDialogs）。
+            // In verification mode don't pop up: ExpectedFailure is the norm for this group (e.g.
+            // importing an incomplete engine), and a dialog would make the await never return (see
+            // SuppressDialogs).
             if (!SuppressDialogs)
             {
                 await ShowOperationErrorAsync(ex);
@@ -297,12 +318,12 @@ public sealed class HubWorkspace : IDisposable
 
     public void Cancel() => _operation?.Cancel();
 
-    /// <summary>操作进行中即可取消（原先要避开 MSVC 安装器这类的不可中断步骤；那条链路已交还引擎）。</summary>
+    /// <summary>Cancellable while an operation is running (previously had to avoid non-interruptible steps like the MSVC installer; that path has been handed back to the engine).</summary>
     public bool CanCancel => _operation is not null;
 
     private async Task ShowOperationErrorAsync(Exception error)
     {
-        // 弹窗只展示用户可采取行动的原因，调用栈仍完整留在日志里。
+        // The dialog shows only the reason the user can act on; the full stack trace stays in the log.
         var message = error switch
         {
             PrebuiltUnavailableException prebuilt =>
@@ -326,9 +347,10 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// WPF 版 <c>Refresh()</c>：一次操作结束后把所有列表与派生文案重算一遍。
-    /// 刻意保留"全量重画"而不是增量通知 —— 这些列表都很小，而增量通知要维护的
-    /// 对应关系（谁依赖谁的选中项）比它省下的重画贵得多。
+    /// The WPF version's <c>Refresh()</c>: after an operation ends, recompute all lists and derived
+    /// copy. Deliberately keeps "full repaint" over incremental notification — these lists are
+    /// tiny, and the correspondences incremental notification must maintain (who depends on whose
+    /// selection) cost far more than the repaint it saves.
     /// </summary>
     public void Refresh()
     {
@@ -349,7 +371,7 @@ public sealed class HubWorkspace : IDisposable
         Changed?.Invoke();
     }
 
-    /// <summary>项目页顶部那张"最近构建平台"卡。WPF 里它由 <c>SyncProjectTarget</c> 维护。</summary>
+    /// <summary>The "recent build platform" card at the top of the projects page. In WPF it's maintained by <c>SyncProjectTarget</c>.</summary>
     public BuildTarget? ProjectTarget =>
         SelectedProject is { } project ? BuildTargets.Get(project.Platform) : null;
 
@@ -402,7 +424,7 @@ public sealed class HubWorkspace : IDisposable
             : target.Family == "uwp" ? "UwpPending"
             : "PlatformToolsNote");
 
-    /// <summary>WPF 版 <c>SetHeaders</c> 的等价物：表头文案随语言走，所以每次刷新都重设。</summary>
+    /// <summary>Equivalent of the WPF <c>SetHeaders</c>: header copy follows the language, so it is reset on every refresh.</summary>
     public static string[] GridHeaders(string grid) => grid switch
     {
         "projects" => ["Name", "Version", "Scripting", "BuildStatus", "LastOpened"],
@@ -411,7 +433,7 @@ public sealed class HubWorkspace : IDisposable
         _ => [],
     };
 
-    // ───────────────────────── 引擎 ─────────────────────────
+    // ───────────────────────── Engines ─────────────────────────
 
     public async Task ImportEngineAsync(string? path)
     {
@@ -434,7 +456,8 @@ public sealed class HubWorkspace : IDisposable
             return;
         }
 
-        // 预选当前选中的引擎版本：连装两次同一版本时，第二次至少不用从头找。
+        // Pre-select the currently selected engine version: when installing the same version twice,
+        // the second time at least doesn't require hunting from scratch.
         var preferred = SelectedEngine?.Version;
         var release = await EngineVersionDialog.PickAsync(Owner, _releases, preferred);
         if (release is null)
@@ -445,20 +468,22 @@ public sealed class HubWorkspace : IDisposable
         await InstallEngineAsync(release.Version);
     }
 
-    /// <summary>可安装的官方引擎版本。远端索引优先，拉取失败时是内置清单。</summary>
+    /// <summary>The installable official engine versions. Remote index first; the built-in manifest when the pull fails.</summary>
     public EngineReleases Releases() => _releases;
 
     /// <summary>
-    /// 安装指定版本的官方引擎。<paramref name="version"/> 为空时取清单里最新的 LTS ——
-    /// CLI 与验收程序按这条默认路径走，交互界面则先让人选。
+    /// Installs the specified official engine version. When <paramref name="version"/> is null it
+    /// picks the latest LTS in the manifest — the CLI and verification programs follow this default
+    /// path, while the interactive UI lets the user pick first.
     /// </summary>
     public async Task InstallEngineAsync(string? version = null)
     {
         await ExecuteAsync("Install official engine", async token =>
         {
             var catalog = Releases();
-            // 版本号写错时必须在这里停住：清单里有 id/url/sha256，随便挑一个"最接近的"
-            // 等于下到一个用户没要求的引擎，而 Hub 直到构建失败才会发现。
+            // A mistyped version must stop here: the manifest has id/url/sha256, and picking an
+            // arbitrary "closest" one means downloading an engine the user didn't ask for — which
+            // Hub wouldn't discover until the build fails.
             var release = version is null ? catalog.LatestLts()
                 : catalog.Find(version) ?? throw new InvalidOperationException(
                     HubStrings.Language == HubTexts.ChineseLanguage
@@ -564,7 +589,7 @@ public sealed class HubWorkspace : IDisposable
     private EngineEntry RequiredEngine() => SelectedEngine
         ?? throw new InvalidOperationException("Select an engine first.");
 
-    // ───────────────────────── 项目 ─────────────────────────
+    // ───────────────────────── Projects ─────────────────────────
 
     public async Task CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType, bool usePrebuilt = false)
     {
@@ -574,7 +599,7 @@ public sealed class HubWorkspace : IDisposable
             var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType);
             if (usePrebuilt)
             {
-                // 每项目选项写项目目录内的独立文件（与 AndroidReleaseSettings 同族）。
+                // Per-project options are written to a standalone file inside the project directory (same family as AndroidReleaseSettings).
                 new PrebuiltSettings { Enabled = true }.Save(project);
             }
 
@@ -622,8 +647,9 @@ public sealed class HubWorkspace : IDisposable
         ?? throw new InvalidOperationException(HubStrings.Get("EngineMissing"));
 
     /// <summary>
-    /// 构建/运行的入口。<paramref name="selection"/> 为空时先弹「选择构建平台」对话框
-    /// （对应 WPF 版 <c>PickBuildTarget</c>）；已经有选择时直接跑。
+    /// Entry point for build/run. When <paramref name="selection"/> is null it first pops the
+    /// "select build platform" dialog (corresponding to WPF's <c>PickBuildTarget</c>); when a
+    /// selection already exists it runs directly.
     /// </summary>
     public async Task BuildAsync(bool configureOnly, (BuildTarget Target, string Configuration)? selection = null)
     {
@@ -645,7 +671,7 @@ public sealed class HubWorkspace : IDisposable
 
         var (target, configuration) = chosen.Value;
 
-        // Android Release 必须先拿到签名配置，否则打出来的是未签名包。
+        // Android Release must first obtain the signing configuration, otherwise the output is an unsigned package.
         if (target.Family == "android" && configuration == "Release" && !await EditAndroidReleaseAsync(selected))
         {
             return;
@@ -747,14 +773,14 @@ public sealed class HubWorkspace : IDisposable
     {
         if (BuildTargets.Get(project.Platform).Family == "android")
         {
-            // 引擎用 Gradle 产出 APK，落在工程的构建目录里（不再是 Hub 的 staging 目录）。
+            // The engine produces the APK via Gradle into the project's build directory (no longer Hub's staging directory).
             return EngineBuildLayout.FindBuildDirectory(project) ?? AndroidPackageService.StageDirectory(project);
         }
 
         return Path.GetDirectoryName(_projects.FindExecutable(project))!;
     }
 
-    /// <summary>打开 Android 发行设置。项目页的「Android 发行设置」按钮直接调它。</summary>
+    /// <summary>Opens the Android release settings. The projects page's "Android release settings" button calls it directly.</summary>
     public async Task<bool> EditAndroidReleaseAsync(ProjectEntry project)
     {
         try
@@ -780,7 +806,7 @@ public sealed class HubWorkspace : IDisposable
         }
     }
 
-    // ───────────────────────── 打开与编辑器 ─────────────────────────
+    // ───────────────────────── Open and editors ─────────────────────────
 
     public void Open(string path, params string[] arguments) => _runner.Open(path, arguments.Length == 0 ? null : arguments);
 
@@ -811,15 +837,16 @@ public sealed class HubWorkspace : IDisposable
         return Task.CompletedTask;
     });
 
-    // ───────────────────────── 预编译引擎库 ─────────────────────────
+    // ───────────────────────── Prebuilt engine libraries ─────────────────────────
 
     /// <summary>
-    /// 当前选中引擎能不能在本机构建预编译库；不能（非 Windows 宿主）时返回 <c>null</c>。
-    /// 引擎自身也允许 Linux 消费预编译库，但本项目只做 Windows 目标。
+    /// Whether the currently selected engine can build a prebuilt library on this machine; returns
+    /// <c>null</c> when it can't (non-Windows host). The engine itself also allows Linux to consume
+    /// prebuilt libraries, but this project only targets Windows.
     /// </summary>
     public BuildTarget? PrebuiltHostTarget => EnginePrebuilt.HostTarget();
 
-    /// <summary>当前选中引擎在本机目标下的预编译库状态（供引擎页状态读数）。</summary>
+    /// <summary>The selected engine's prebuilt-library status on the local target (for the engines page status readout).</summary>
     public PrebuiltAvailability? PrebuiltStatusOf(EngineEntry? engine)
     {
         if (engine is null || PrebuiltHostTarget is not { } host) return null;
@@ -828,10 +855,12 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// 把引擎编译成项目可复用的预编译库。
+    /// Compiles the engine into a prebuilt library reusable by projects.
     ///
-    /// 这是**长任务**（编译整棵引擎，数分钟到数十分钟、数 GB 磁盘），而且缺工具链时
-    /// 引擎可能顺手触发自己的 setup（会改全局环境），所以先弹确认窗口让用户选配置并知情。
+    /// This is a **long task** (compiling the whole engine, minutes to tens of minutes, gigabytes of
+    /// disk), and when the toolchain is missing the engine may trigger its own setup on the way
+    /// (which changes the global environment), so a confirmation window first lets the user pick a
+    /// configuration and be informed.
     /// </summary>
     public async Task BuildEngineAsync()
     {
@@ -869,7 +898,8 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// 打开项目的「预编译库设置」。链接方式变了会让旧产物失效，所以保存后把构建状态重置。
+    /// Opens the project's "prebuilt library settings". Changing the link mode invalidates old
+    /// artifacts, so the build status is reset after saving.
     /// </summary>
     public async Task<bool> EditPrebuiltAsync(ProjectEntry project)
     {
@@ -893,7 +923,7 @@ public sealed class HubWorkspace : IDisposable
             }
 
             new PrebuiltSettings { Enabled = dialog.Enabled }.Save(project);
-            // 链接方式变了：既有的产物不再代表当前配置，必须重编。
+            // The link mode changed: existing artifacts no longer represent the current configuration, so a rebuild is required.
             project.BuildStatus = "Not built";
             Store.Save(State);
             Log.Write(HubStrings.Get("PrebuiltSaved"));
@@ -926,7 +956,7 @@ public sealed class HubWorkspace : IDisposable
         return Task.CompletedTask;
     });
 
-    /// <summary>选择编辑器可执行文件。WPF 版 <c>SelectEditor</c>，含文件名校验。</summary>
+    /// <summary>Selects an editor executable. WPF's <c>SelectEditor</c>, including filename validation.</summary>
     public async Task SelectEditorAsync(bool visualStudio, string? path)
     {
         if (path is null)
@@ -956,7 +986,7 @@ public sealed class HubWorkspace : IDisposable
         await Task.CompletedTask;
     }
 
-    // ───────────────────────── 工具链 ─────────────────────────
+    // ───────────────────────── Toolchains ─────────────────────────
 
     private void UpdateTools(List<ToolchainComponent> values)
     {
@@ -965,10 +995,12 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// 工具链页当前用于探测的引擎：页面上的引擎选择优先，其次默认引擎，再次第一个。
-    /// 工具链属于**某个引擎树**（每个版本一套），所以必须绑定到具体引擎而不是全局。
+    /// The engine currently used for probing on the toolchains page: the page's engine selection
+    /// first, then the default engine, then the first one.
+    /// A toolchain belongs to a **specific engine tree** (one set per version), so it must bind to a
+    /// concrete engine rather than being global.
     /// </summary>
-    /// <summary>引擎树内的工具根（<c>&lt;engine&gt;/tools/external</c>）—— Hub 自己还要直调的工具从这里取。</summary>
+    /// <summary>The tool root inside the engine tree (<c>&lt;engine&gt;/tools/external</c>) — where Hub gets the tools it still calls directly.</summary>
     private static string EngineTools(EngineEntry engine) => EngineToolchain.ToolRoot(engine);
 
     private EngineEntry? ToolEngine =>
@@ -977,8 +1009,9 @@ public sealed class HubWorkspace : IDisposable
         ?? State.Engines.FirstOrDefault();
 
     /// <summary>
-    /// 工具链探测。判定真源是引擎自带 <c>1k/build.profiles</c>（期望版本）+ 官方安装落点
-    /// <c>&lt;engine&gt;/tools/external</c>（实装）—— Hub 不再持有自己的工具版本清单。
+    /// Toolchain probing. The source of truth is the engine's bundled <c>1k/build.profiles</c>
+    /// (expected versions) + the official install location <c>&lt;engine&gt;/tools/external</c>
+    /// (what's actually installed) — Hub no longer keeps its own tool version manifest.
     /// </summary>
     public Task<List<ToolchainComponent>> DetectAsync(CancellationToken token = default)
     {
@@ -1008,11 +1041,12 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// 环境准备：跑引擎自己的 <c>setup.ps1</c>。
+    /// Environment prep: runs the engine's own <c>setup.ps1</c>.
     ///
-    /// **这不是「Hub 装工具」** —— 工具链由引擎的 <c>1k/1kiss.ps1</c> 装进
-    /// <c>&lt;engine&gt;/tools/external</c>。这一步会改全局环境（User PATH / AX_ROOT / 执行策略），
-    /// 与引擎官方流程一致，所以调用方必须**先向用户确认**。
+    /// **This is not "Hub installing tools"** — the toolchain is installed by the engine's
+    /// <c>1k/1kiss.ps1</c> into <c>&lt;engine&gt;/tools/external</c>. This step changes the global
+    /// environment (User PATH / AX_ROOT / execution policy), matching the engine's official flow,
+    /// so callers must **confirm with the user first**.
     /// </summary>
     public async Task RunEngineSetupAsync(string? platform = null)
     {
@@ -1028,13 +1062,13 @@ public sealed class HubWorkspace : IDisposable
             var effective = platform ?? AxmolCommandMap.Target(target).Platform;
             var result = await _setup.RunAsync(engine, new SetupOptions(effective), token);
             Log.Write($"{effective}: {result.Describe()}");
-            // 开发者模式未开时 setup.ps1 会 exit 0 却什么都没装 —— 这种假成功必须报失败。
+            // When developer mode is off, setup.ps1 exits 0 but installs nothing — that fake success must be reported as failure.
             if (!result.Succeeded) throw new InvalidOperationException(result.Describe());
             UpdateTools(await DetectAsync(token));
         });
     }
 
-    // ───────────────────────── Android 设备 ─────────────────────────
+    // ───────────────────────── Android devices ─────────────────────────
 
     private void UpdateDevicePicker()
     {
@@ -1062,7 +1096,7 @@ public sealed class HubWorkspace : IDisposable
         });
     }
 
-    // ───────────────────────── 设置 ─────────────────────────
+    // ───────────────────────── Settings ─────────────────────────
 
     public void SetProjectDirectory(string directory)
     {

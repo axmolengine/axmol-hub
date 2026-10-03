@@ -3,19 +3,20 @@ using System.Text.RegularExpressions;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 版本串解析与比较 —— 逐条复刻 <c>1k/1kiss.ps1</c> 的 <c>find_prog</c> 与
-/// <c>1k/extensions.ps1</c> 的 <c>VersionEx</c>。**刻意照抄而不是"写得更合理"**：
-/// Hub 报的结论必须和引擎自己会不会去装一份能对上，否则界面说"就绪"、引擎却去下载。
+/// Version string parsing and comparison — faithfully reproduces <c>find_prog</c> in <c>1k/1kiss.ps1</c> and
+/// <c>VersionEx</c> in <c>1k/extensions.ps1</c>. **Deliberately copied rather than "written more sensibly"**:
+/// the conclusion the Hub reports must line up with whether the engine itself would install a copy;
+/// otherwise the UI says "ready" while the engine goes and downloads.
 /// </summary>
 public static class ToolVersion
 {
-    // find_prog 就是用它从 `--version` 的输出里抠版本：'(\d+\.)+(\*|\d+)'
+    // find_prog uses this to extract the version from the output of `--version`: '(\d+\.)+(\*|\d+)'
     private static readonly Regex VersionPattern = new(@"(\d+\.)+(\*|\d+)", RegexOptions.Compiled);
 
-    // find_prog 在解析要求串时会先去掉预发布后缀：'-[a-z0-9]+$'
+    // find_prog first strips the prerelease suffix when parsing the requirement string: '-[a-z0-9]+$'
     private static readonly Regex PreRelease = new(@"-[a-z0-9]+$", RegexOptions.Compiled);
 
-    /// <summary>从工具输出里抠出版本（等价 <c>[Regex]::Match($verStr, '(\d+\.)+(\*|\d+)')</c>）。</summary>
+    /// <summary>Extracts the version from tool output (equivalent to <c>[Regex]::Match($verStr, '(\d+\.)+(\*|\d+)')</c>).</summary>
     public static string? Extract(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
@@ -26,8 +27,10 @@ public static class ToolVersion
     public static string StripPreRelease(string value) => PreRelease.Replace(value, "");
 
     /// <summary>
-    /// 4 段数值比较，缺位补 0 —— 对应 <c>VersionEx.CompareTo</c>（它按 _Major/_Minor/_Build/_Revision 逐段比）。
-    /// 非数字段按 0 处理：引擎那边会抛异常，但 Hub 宁可给个结论也不要因为一个畸形版本中断整页探测。
+    /// Four-segment numeric comparison, padding missing segments with 0 — corresponds to
+    /// <c>VersionEx.CompareTo</c> (which compares segment by segment via _Major/_Minor/_Build/_Revision).
+    /// Non-numeric segments are treated as 0: the engine would throw, but the Hub prefers to give a
+    /// verdict rather than abort the whole page's probe over one malformed version.
     /// </summary>
     public static int Compare(string left, string right)
     {
@@ -54,7 +57,7 @@ public static class ToolVersion
         return parts;
     }
 
-    /// <summary>PowerShell <c>-like</c> 的等价物：大小写不敏感的 <c>*</c> / <c>?</c> / <c>[...]</c>。</summary>
+    /// <summary>The equivalent of PowerShell <c>-like</c>: case-insensitive <c>*</c> / <c>?</c> / <c>[...]</c>.</summary>
     public static bool Like(string value, string pattern)
     {
         var builder = new System.Text.StringBuilder("^");
@@ -81,17 +84,18 @@ public static class ToolVersion
 }
 
 /// <summary>
-/// 一条工具版本要求（来自 <c>&lt;engine&gt;/1k/build.profiles</c> 的值），解析规则与
-/// <c>find_prog</c> 逐分支对应。
+/// A single tool version requirement (a value from <c>&lt;engine&gt;/1k/build.profiles</c>), with parsing
+/// rules corresponding branch-for-branch to <c>find_prog</c>.
 ///
-/// 支持的形式（都是引擎在用的）：
+/// Supported forms (all of which the engine uses):
 /// <list type="bullet">
-/// <item><c>*</c> —— 任意版本</item>
-/// <item><c>21.1.8</c> —— **字符串相等**（不是数值相等）</item>
-/// <item><c>5.5.1.*</c> —— 通配</item>
-/// <item><c>17.9+</c> —— <c>&gt;= 17.9</c></item>
-/// <item><c>4.2.0~4.4.3+</c> —— 注意：引擎在 preferred 以 <c>+</c> 结尾时会让**区间上界失效**，
-/// 退化成 <c>&gt;= 4.2.0</c>。这是引擎的实际行为，Hub 照抄（并在说明里写清楚），不"顺手修正"。</item>
+/// <item><c>*</c> — any version</item>
+/// <item><c>21.1.8</c> — **string equality** (not numeric equality)</item>
+/// <item><c>5.5.1.*</c> — wildcard</item>
+/// <item><c>17.9+</c> — <c>&gt;= 17.9</c></item>
+/// <item><c>4.2.0~4.4.3+</c> — note: when preferred ends with <c>+</c>, the engine makes the **range upper
+/// bound ineffective**, degrading to <c>&gt;= 4.2.0</c>. This is the engine's actual behavior; the Hub
+/// reproduces it (and states it clearly in the description) rather than "conveniently fixing" it.</item>
 /// </list>
 /// </summary>
 public sealed class ToolRequirement
@@ -104,7 +108,7 @@ public sealed class ToolRequirement
 
     public string Raw { get; }
 
-    /// <summary>引擎在版本不符时会去安装的那个具体版本（用于说明文案）。</summary>
+    /// <summary>The concrete version the engine installs when the found version doesn't match (used for description text).</summary>
     public string? Preferred { get; }
 
     private ToolRequirement(string raw, bool any, string? minimal = null, string? maximal = null, string? exact = null, string? wildcard = null, string? preferred = null)
@@ -132,7 +136,7 @@ public sealed class ToolRequirement
 
         if (preferred.EndsWith('+'))
         {
-            // 与引擎一致：以 '+' 结尾时只留下限，区间上界被丢弃。
+            // Matches the engine: when it ends with '+', only the lower bound remains and the range upper bound is discarded.
             return new(raw, any: false, minimal: minimal.TrimEnd('+'), preferred: preferred.TrimEnd('+'));
         }
 
@@ -153,8 +157,9 @@ public sealed class ToolRequirement
     }
 
     /// <summary>
-    /// 给界面看的一句话。优先显示 <c>build.profiles</c> 里的**原文**（那才是引擎的判断依据），
-    /// 只有归一化后的语义与原文不同才补一个括号说明 —— 例如 <c>4.2.0~4.4.3+</c> 实际是「&gt;= 4.2.0」。
+    /// A one-line description for the UI. Prefer showing the **original text** from <c>build.profiles</c>
+    /// (that is what the engine actually judges by); only add a parenthetical note when the normalized
+    /// semantics differ from the original — e.g. <c>4.2.0~4.4.3+</c> actually means "&gt;= 4.2.0".
     /// </summary>
     public string Describe()
     {
@@ -162,7 +167,7 @@ public sealed class ToolRequirement
         var normalized = _wildcard is not null ? $"matching {_wildcard}"
             : _maximal is not null ? $"{_minimal} .. {_maximal}"
             : $">= {_minimal}";
-        // 纯版本号（字符串相等）时"i.e. exactly X"只是把原文念一遍，不补。
+        // For a plain version number (string equality), "i.e. exactly X" would just repeat the original, so don't add it.
         if (_exact is not null) return Raw;
         return string.Equals(normalized, Raw, StringComparison.OrdinalIgnoreCase) ? Raw : $"{Raw} (i.e. {normalized})";
     }

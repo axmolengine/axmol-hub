@@ -1,29 +1,29 @@
 namespace AxmolHub.Core;
 
-/// <summary>预编译库的可用性结论。刻意区分得细：每种「不可用」对应一句可操作的提示。</summary>
+/// <summary>The availability verdict for prebuilt libraries. Deliberately fine-grained: each "unavailable" maps to one actionable message.</summary>
 public enum PrebuiltStatus
 {
     Ready,
 
-    /// <summary>目标平台不支持（引擎只在 WIN32/LINUX 消费预编译库，本项目只做 Windows）。</summary>
+    /// <summary>Target platform unsupported (the engine only consumes prebuilt libraries on WIN32/LINUX, and this project only supports Windows).</summary>
     PlatformUnsupported,
 
-    /// <summary>没有构建记录 —— 还没在引擎页构建过。</summary>
+    /// <summary>No build record — the engine has not been built from the Engines page yet.</summary>
     NotBuilt,
 
-    /// <summary>引擎被修复/重装过，记录里的产物可能已过期。</summary>
+    /// <summary>The engine was repaired/reinstalled; the artifacts in the record may be stale.</summary>
     EngineChanged,
 
-    /// <summary>记录里的目标与当前请求的目标不是同一个。</summary>
+    /// <summary>The recorded target differs from the currently requested target.</summary>
     TargetMismatch,
 
-    /// <summary>目录不是引擎的 CMake 构建目录（缺 CMakeCache.txt）。</summary>
+    /// <summary>The directory is not an engine CMake build directory (missing CMakeCache.txt).</summary>
     MissingCache,
 
-    /// <summary>缺少该**配置**的库（引擎按配置分目录，见下）。</summary>
+    /// <summary>The libraries for this **configuration** are missing (the engine splits directories per configuration, see below).</summary>
     ConfigurationMissing,
 
-    /// <summary>缺少其它必需内容（DLL / 预编译着色器 / freetype 头）。</summary>
+    /// <summary>Other required contents are missing (DLLs / precompiled shaders / freetype headers).</summary>
     MissingContents,
 }
 
@@ -32,7 +32,8 @@ public sealed record PrebuiltAvailability(PrebuiltStatus Status, string Detail, 
     public bool Usable => Status == PrebuiltStatus.Ready;
 
     /// <summary>
-    /// 不可用时对应的文案键（<see cref="HubTexts"/>）。放在这里而不是各处 UI —— 映射只该有一份。
+    /// The message key (<see cref="HubTexts"/>) for the unavailable state. Kept here rather than scattered
+    /// across the UI — the mapping should exist in exactly one place.
     /// </summary>
     public string TextKey => Status switch
     {
@@ -46,10 +47,11 @@ public sealed record PrebuiltAvailability(PrebuiltStatus Status, string Detail, 
 }
 
 /// <summary>
-/// 项目勾了「使用预编译库」、但引擎那一份还不能用时抛出。
+/// Thrown when the project checks "use prebuilt libraries" but the engine's copy is not usable yet.
 ///
-/// 刻意带出结构化原因（<see cref="Availability"/>），让 UI 能给出**可操作**的提示
-/// （去引擎页构建 / 换配置 / 关掉开关），而不是把引擎的英文原文丢给用户。
+/// Deliberately carries a structured reason (<see cref="Availability"/>) so the UI can give an
+/// **actionable** message (build from the Engines page / change configuration / turn the switch off),
+/// rather than dumping the engine's English original text on the user.
 /// </summary>
 public sealed class PrebuiltUnavailableException(string targetName, string configuration, PrebuiltAvailability availability)
     : InvalidOperationException(availability.Detail)
@@ -60,30 +62,34 @@ public sealed class PrebuiltUnavailableException(string targetName, string confi
 }
 
 /// <summary>
-/// 预编译引擎库的**发现与校验**。
+/// **Discovery and validation** of prebuilt engine libraries.
 ///
-/// 引擎侧（<c>templates/common/cmake/modules/AXGameEngineSetup.cmake:22-30</c>）判定条件是
-/// 「<c>WIN32 OR LINUX</c> 且 <c>${AX_ROOT}/${AX_PREBUILT_DIR}</c> 是目录」—— 也就是说
-/// **目录不存在时引擎会静默退回源码构建、不报错**。所以「能不能用」必须由 Hub 自己判准：
-/// 只有 <see cref="PrebuiltStatus.Ready"/> 才可以把 <c>-DAX_PREBUILT_DIR</c> 交给 CMake。
+/// The engine side (<c>templates/common/cmake/modules/AXGameEngineSetup.cmake:22-30</c>) judges by
+/// "<c>WIN32 OR LINUX</c> and <c>${AX_ROOT}/${AX_PREBUILT_DIR}</c> is a directory" — that is, **when the
+/// directory doesn't exist the engine silently falls back to a source build without erroring**. So "usable
+/// or not" must be judged precisely by the Hub itself: only <see cref="PrebuiltStatus.Ready"/> may hand
+/// <c>-DAX_PREBUILT_DIR</c> to CMake.
 ///
-/// 注意与 <see cref="EngineBuildLayout"/> 的分工：那个扫的是**项目目录**找**App 产物**，
-/// 这里扫的是**引擎根**找**引擎库**，两者不共用判定。
+/// Note the division of labor with <see cref="EngineBuildLayout"/>: that one scans the **project directory**
+/// for **app artifacts**, whereas this one scans the **engine root** for **engine libraries**; the two do not
+/// share a determination.
 /// </summary>
 public static class EnginePrebuilt
 {
     /// <summary>
-    /// 只认 Windows 目标。引擎自身也允许 LINUX，但本项目按需求只支持 Windows ——
-    /// 判定收窄在这里，别处不要再各写一份。
+    /// Only Windows targets are recognized. The engine itself also allows LINUX, but this project only
+    /// supports Windows by requirement — the determination is narrowed here, so don't write it again
+    /// elsewhere.
     /// </summary>
     public static bool Supported(BuildTarget target) => target.Family == "windows";
 
-    /// <summary>本机可构建预编译库的目标：Windows 宿主 → <c>windows-x64</c>；其它宿主 → <c>null</c>。</summary>
+    /// <summary>The target this host can build prebuilt libraries for: Windows host → <c>windows-x64</c>; other hosts → <c>null</c>.</summary>
     public static BuildTarget? HostTarget() => OperatingSystem.IsWindows() ? BuildTargets.Get("windows-x64") : null;
 
     /// <summary>
-    /// 给定引擎 + 目标 + 配置，返回可用的预编译目录或**精确原因**。
-    /// 记录里的平台/架构/目标被当作权威 —— 只靠扫描目录名无法判断它属于哪个平台。
+    /// Given an engine + target + configuration, returns the usable prebuilt directory or the **precise
+    /// reason**. The platform/architecture/target in the record are treated as authoritative — scanning
+    /// directory names alone cannot tell which platform one belongs to.
     /// </summary>
     public static PrebuiltAvailability Inspect(EngineEntry engine, BuildTarget target, string configuration, EnginePrebuiltState state)
     {
@@ -112,7 +118,7 @@ public static class EnginePrebuilt
                 $"The engine was built for {record.Target}, but this project targets {target.Id}. Rebuild the engine for {target.Id}.");
         }
 
-        // 记录里的路径必须留在引擎树内：它要作为 -DAX_PREBUILT_DIR 交给 CMake。
+        // The recorded path must stay inside the engine tree: it is handed to CMake as -DAX_PREBUILT_DIR.
         var relative = record.BuildDirectory.Replace('\\', '/').Trim();
         if (relative.Length == 0 || Path.IsPathRooted(relative) || relative.Split('/').Contains(".."))
         {
@@ -128,8 +134,9 @@ public static class EnginePrebuilt
     }
 
     /// <summary>
-    /// 刚构建完、还没有记录时用的**发现**：在引擎根下扫 <c>build*</c>，找第一个内容完整的目录。
-    /// 返回引擎根下的相对路径（正斜杠）；找不到返回 <c>null</c>。
+    /// **Discovery** for right after a build, before a record exists: scan <c>build*</c> under the engine
+    /// root for the first complete directory. Returns the relative path under the engine root (forward
+    /// slashes); returns <c>null</c> when not found.
     /// </summary>
     public static string? Discover(EngineEntry engine, string configuration)
     {
@@ -145,7 +152,8 @@ public static class EnginePrebuilt
     }
 
     /// <summary>
-    /// 绝对目录 → 引擎根的干净相对路径（正斜杠）。越界即抛 —— 调用方不该把引擎树外的目录交给 CMake。
+    /// Absolute directory → clean relative path under the engine root (forward slashes). Throws on escape —
+    /// callers should never hand CMake a directory outside the engine tree.
     /// </summary>
     public static string RelativeDirectory(string enginePath, string buildDirectory)
     {
@@ -158,7 +166,7 @@ public static class EnginePrebuilt
         return relative;
     }
 
-    /// <summary>引擎根下的候选构建目录：含 <c>CMakeCache.txt</c> 的优先，其次目录名带 build 前缀的，最后按写入时间倒序。</summary>
+    /// <summary>Candidate build directories under the engine root: those with <c>CMakeCache.txt</c> first, then directories with a build prefix, finally by last write time descending.</summary>
     private static IEnumerable<string> CandidateBuildDirectories(string enginePath)
     {
         if (!Directory.Exists(enginePath)) return [];
@@ -169,7 +177,7 @@ public static class EnginePrebuilt
             .ToArray();
     }
 
-    /// <summary>内容校验。返回 <c>null</c> 表示这个目录可以当预编译目录用。</summary>
+    /// <summary>Content validation. Returns <c>null</c> when the directory can be used as a prebuilt directory.</summary>
     private static PrebuiltAvailability? Validate(string directory, string configuration)
     {
         if (!File.Exists(Path.Combine(directory, "CMakeCache.txt")))
@@ -183,8 +191,9 @@ public static class EnginePrebuilt
             && (Directory.EnumerateFiles(libraries, "*.lib").Any() || Directory.EnumerateFiles(libraries, "*.a").Any());
         if (!hasLibraries)
         {
-            // 引擎那边用的是 lib/${CMAKE_BUILD_TYPE}，而 VS 多配置下真实目录是 lib/<Config> ——
-            // 所以**报出实际存在哪些配置**，而不是假定目录名一定等于请求的配置。
+            // The engine uses lib/${CMAKE_BUILD_TYPE}, but under VS multi-config the real directory is
+            // lib/<Config> — so **report which configurations actually exist**, rather than assuming the
+            // directory name equals the requested configuration.
             var lib = Path.Combine(directory, "lib");
             var present = Directory.Exists(lib)
                 ? string.Join(", ", Directory.EnumerateDirectories(lib).Select(Path.GetFileName))

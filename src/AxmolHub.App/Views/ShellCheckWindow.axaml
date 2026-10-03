@@ -6,8 +6,9 @@
         x:Class="AxmolHub.App.ShellCheckWindow"
         Width="760" Height="440"
         Title="P5 shell verification">
-  <!-- 断言的结果全部走 stdout 与报告文件，窗口本身只是"有个 TopLevel 能让内容渲染"。
-       留一块说明文字是为了人工打开时不至于是一片空白。 -->
+  <!-- All assertion results go to stdout and the report file; the window itself only exists so that
+       there is a TopLevel for content to render into. The explanatory text is kept so a human opening
+       it doesn't see a blank surface. -->
   <StackPanel Margin="28" Spacing="10">
     <TextBlock FontSize="20" FontWeight="SemiBold" Text="P5 外壳与本地化运行期自检" />
     <TextBlock Classes="muted" TextWrapping="Wrap"

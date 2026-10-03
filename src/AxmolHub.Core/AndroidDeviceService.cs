@@ -25,7 +25,7 @@ public sealed class AndroidDeviceService(ProcessRunner runner, string toolsRoot)
         Directory.CreateDirectory(environment["ANDROID_USER_HOME"]);
         Directory.CreateDirectory(environment["HOME"]); Directory.CreateDirectory(environment["TEMP"]);
         environment.Remove("ADB_SERVER_SOCKET"); environment.Remove("ANDROID_ADB_SERVER_PORT");
-        // 使用独立端口和私有授权密钥，不触碰用户已有 5037 服务。
+        // Use a dedicated port and private authorization key, so the user's existing 5037 service is left untouched.
         var started = false;
         try
         {

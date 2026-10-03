@@ -12,20 +12,26 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 真操作验收（<c>--verify-ops</c>）：在**真实引擎源码树**上跑 Hub 的引擎管理链路。
+/// Real-operation verification (<c>--verify-ops</c>): runs Hub's engine-management pipeline on a
+/// **real engine source tree**.
 ///
-/// 与 <c>--verify-shell</c> 的分工是明确的：外壳自检验"界面结构与本地化"，跑在 fixture 上；
-/// 这里验"操作真的能跑通"，用的是真实的引擎目录，而且不再是"读代码判断"。
+/// The split of duties with <c>--verify-shell</c> is clear: the shell self-check verifies "UI
+/// structure and localization" on fixtures; here we verify "operations really run through", using
+/// real engine directories, and no longer "judging by reading code".
 ///
-/// 它要回答的是一个此前只能靠推断的问题：<c>HubWorkspace</c> 九百多行里，哪些路径真的被执行过？
-/// 答案是"只有列表刷新、导入、选择这类轻量操作"。
+/// It answers a question that could previously only be inferred: of <c>HubWorkspace</c>'s nine
+/// hundred-odd lines, which paths have actually been executed? The answer was "only lightweight
+/// operations like list refresh, import, and selection".
 ///
-/// **成本边界（刻意划的）**：只跑**不下载、不编译**的操作。装引擎、装工具链、构建、运行
-/// 会拉 GB 级数据或需要完整工具链，不属于"便宜"，因此那些明确写进报告的"跳过"一节，
-/// 而不是假装验过 —— 一份让人以为跑过了的报告比没有报告更糟。
+/// **Cost boundary (deliberately drawn)**: only run operations that **don't download and don't
+/// compile**. Installing engines, installing toolchains, building, and running pull gigabyte-scale
+/// data or need a full toolchain — not "cheap" — so those are written explicitly into the report's
+/// "skipped" section rather than pretending to be verified. A report that makes people think it ran
+/// is worse than no report at all.
 ///
-/// 用法：<c>--verify-ops &lt;报告&gt; [引擎目录...]</c>。不传引擎目录时，依赖引擎的那几组
-/// 会记为跳过（其余照跑），因此它在一台没有引擎的机器上也能给出有意义的结果。
+/// Usage: <c>--verify-ops &lt;report&gt; [engine dir...]</c>. When no engine dir is given, the
+/// engine-dependent groups are recorded as skipped (the rest still run), so it yields meaningful
+/// results even on a machine without engines.
 /// </summary>
 public sealed class OpsCheckWindow : Window
 {
@@ -36,8 +42,8 @@ public sealed class OpsCheckWindow : Window
 
     public void Run(IClassicDesktopStyleApplicationLifetime lifetime, string reportPath, string[] engines)
     {
-        // 真实操作会写状态、写日志、写设置 —— 因此数据根必须是隔离的，
-        // 绝不能用用户自己的 %LocalAppData%\AxmolHub\data。
+        // Real operations write state, logs, and settings — so the data root must be isolated,
+        // never the user's own %LocalAppData%\AxmolHub\data.
         var scratchRoot = ScratchDirectory.Resolve("ops-check", Guid.NewGuid().ToString("N"));
 
         var finished = false;
@@ -88,8 +94,8 @@ public sealed class OpsCheckWindow : Window
         {
             if (!finished)
             {
-                // 措辞要覆盖两种成因：窗口没打开，**或**某个 await 没有返回
-                // （比如失败弹窗在等一个不会有人点的确认）。只写"窗口没打开"会把后一种误报成前一种。
+                // The wording must cover two causes: the window didn't open, **or** some await never returned
+                // (e.g. a failure dialog waiting for a confirmation no one will click). Writing only "window didn't open" would misreport the latter as the former.
                 Check(false, "验收在 10 秒内没有结束（窗口未打开，或某个异步调用没有返回）");
                 Finish();
             }
@@ -110,7 +116,7 @@ public sealed class OpsCheckWindow : Window
         }
     }
 
-    /// <summary>明确记下"这条没跑"。跳过必须是**可见**的，否则报告读起来像是全跑通了。</summary>
+    /// <summary>Explicitly records "this didn't run". Skips must be **visible**, otherwise the report reads as if everything ran.</summary>
     private void Skip(string message)
     {
         _skipped++;
@@ -123,7 +129,7 @@ public sealed class OpsCheckWindow : Window
         var preferencesStore = new PreferencesStore(Path.Combine(scratchRoot, "hub-settings.json"));
         using var workspace = new HubWorkspace(scratchRoot, preferences, preferencesStore)
         {
-            // 失败弹窗在自动化里没人点，会让 await 永不返回。关掉的只是展示，见 SuppressDialogs。
+            // Failure dialogs have no one to click them in automation, so the await never returns. Only presentation is silenced; see SuppressDialogs.
             SuppressDialogs = true,
         };
 
@@ -135,8 +141,8 @@ public sealed class OpsCheckWindow : Window
     }
 
     /// <summary>
-    /// 第一道闸门，也是最重要的一条：确认这次验收**不可能**碰到用户的数据。
-    /// 顺序放在最前面 —— 后面每条都会写盘，而"写错地方"这件事出错时是静默的。
+    /// The first gate, and the most important: confirm this verification **cannot** touch the user's data.
+    /// It runs first — everything after writes to disk, and "writing to the wrong place" fails silently.
     /// </summary>
     private void CheckAllOpsAreInsideTheScratchRoot(HubWorkspace workspace, string scratchRoot)
     {
@@ -151,11 +157,15 @@ public sealed class OpsCheckWindow : Window
     }
 
     /// <summary>
-    /// 工具链探测。**刻意不断言方向**，只断言"每项都被评估过"，实测值写进 INFO。
+    /// Toolchain probing. **Deliberately doesn't assert direction**, only that "each item was
+    /// evaluated"; measured values go into INFO.
     ///
-    /// 现在探测的真源是引擎树：期望版本来自 <c>&lt;engine&gt;/1k/build.profiles</c>，
-    /// 实装状态来自官方落点 <c>&lt;engine&gt;/tools/external</c>；VS 由 vswhere 检测（引擎只检测不安装）。
-    /// 断言仍然只守住"探测跑完了且给出了明确结论" —— 某台机器上缺哪个工具是**数据**，不是代码坏了。
+    /// The probe's source of truth is now the engine tree: expected versions come from
+    /// <c>&lt;engine&gt;/1k/build.profiles</c>, installed status from the official location
+    /// <c>&lt;engine&gt;/tools/external</c>; VS is detected via vswhere (the engine only detects,
+    /// never installs).
+    /// The assertion still only holds "the probe ran and gave a definite conclusion" — which tool a
+    /// machine lacks is **data**, not broken code.
     /// </summary>
     private async Task CheckToolchainProbeAsync(HubWorkspace workspace)
     {
@@ -163,8 +173,8 @@ public sealed class OpsCheckWindow : Window
 
         Check(components.Count > 0, "工具链探测返回 " + components.Count + " 个组件（不是空表）");
 
-        // "被评估过"= 状态是结论性的（Missing/Installed/Broken…），不是 Unknown/Checking。
-        // 这条与具体机器上装了什么无关，因此规则变更后它仍然成立。
+        // "Was evaluated" = the status is conclusive (Missing/Installed/Broken…), not Unknown/Checking.
+        // This is independent of what a specific machine has installed, so it still holds after rule changes.
         Check(components.All(c => c.Status is not (ComponentStatus.Unknown or ComponentStatus.Checking)),
             "每个组件都给出了结论性状态（没有停在 Unknown/Checking）");
         Check(components.All(c => c.Details.Length > 0), "每个组件都给出了状态说明（含期望版本或落点）");
@@ -174,11 +184,13 @@ public sealed class OpsCheckWindow : Window
     }
 
     /// <summary>
-    /// 引擎生命周期：导入 → 校验 → 设为默认 → 移除。用的是真实引擎源码树，不是 fixture。
+    /// Engine lifecycle: import → verify → set default → remove. Uses a real engine source tree,
+    /// not a fixture.
     ///
-    /// 这里**不预设**哪个目录"应该成功"：先看目录客观缺什么，再断言 Hub 的行为与之一致。
-    /// 写死期望值会让断言在换一台机器时变成噪音，而"Hub 怎么对待一个不完整的引擎"
-    /// 恰恰是这一组最想知道的。
+    /// This does **not** presuppose which directory "should succeed": first look at what the
+    /// directory objectively lacks, then assert Hub behaves consistently with it.
+    /// Hard-coding expected values would turn the assertion into noise on another machine, and "how
+    /// does Hub treat an incomplete engine" is exactly what this group wants to know most.
     /// </summary>
     private async Task CheckEngineLifecycleAsync(HubWorkspace workspace, string[] engines)
     {
@@ -209,7 +221,7 @@ public sealed class OpsCheckWindow : Window
                     "完整引擎「" + name + "」被导入并进入列表");
                 if (added is not null)
                 {
-                    // 版本必须来自引擎自己的版本头，而不是从目录名猜 —— 目录名是可以随便起的。
+                    // The version must come from the engine's own version header, not guessed from the directory name — the directory name is arbitrary.
                     var parts = added.Version.Split('.');
                     Check(parts.Length == 3 && parts.All(part => int.TryParse(part, out _)),
                         "引擎「" + name + "」的版本读出为 " + added.Version + "（三段点分，来自引擎版本头 axmolver.h.in：v3 在 axmol/，v2 在 core/）");
@@ -218,8 +230,8 @@ public sealed class OpsCheckWindow : Window
             }
             else
             {
-                // 不完整的引擎必须被**拒绝**，且拒绝理由要点名缺哪个文件 ——
-                // 只说"不是有效引擎"会让人无从下手。
+                // An incomplete engine must be **rejected**, and the reason must name the missing file —
+                // saying only "not a valid engine" leaves no way forward.
                 Check(added is null && after == before,
                     "不完整引擎「" + name + "」没有被加进列表（缺 " + string.Join(", ", missing) + "）");
                 Check(workspace.LastError.Contains(missing[0], StringComparison.Ordinal),
@@ -238,7 +250,7 @@ public sealed class OpsCheckWindow : Window
         var target = workspace.State.Engines.First();
         workspace.SelectedEngine = target;
 
-        // 校验：真读一遍引擎目录，确认版本头与登记值一致。
+        // Verify: really read the engine directory once and confirm the version header matches the recorded value.
         await workspace.VerifyEngineAsync();
         Check(workspace.LastError.Length == 0,
             "校验引擎「" + Path.GetFileName(target.Path) + "」成功（LastError 为空）");
@@ -247,14 +259,14 @@ public sealed class OpsCheckWindow : Window
         Check(workspace.State.DefaultEnginePath == target.Path,
             "设为默认引擎后 DefaultEnginePath 指向它");
 
-        // 落盘 + 重新加载：只改内存不落盘的 bug，只有从磁盘读回来才能发现。
+        // Persist + reload: a bug that only changes memory without persisting can only be caught by reading back from disk.
         var reloaded = new StateStore(workspace.Store.Root).Load();
         Check(reloaded.Engines.Count == workspace.State.Engines.Count,
             "重新加载后引擎数一致（" + reloaded.Engines.Count + "）");
         Check(reloaded.DefaultEnginePath == target.Path, "重新加载后默认引擎仍是它");
         Check(File.Exists(Path.Combine(workspace.Store.Root, "hub-state.json")), "状态文件真的写在数据根里");
 
-        // 移除：只移出列表，**不能**动磁盘上的引擎目录。
+        // Remove: only take it out of the list, must **not** touch the engine directory on disk.
         var folderBefore = Directory.Exists(target.Path);
         await workspace.RemoveEngineAsync();
         Check(workspace.State.Engines.All(e => !e.Path.Equals(target.Path, StringComparison.OrdinalIgnoreCase)),
@@ -266,8 +278,8 @@ public sealed class OpsCheckWindow : Window
     }
 
     /// <summary>
-    /// 无效输入。这几条是"用户手滑"的常态：选错目录、选了单个文件、路径根本不存在。
-    /// 期望是**明确的异常**且状态不受影响 —— 而不是把垃圾写进引擎列表。
+    /// Invalid input. These are the norm for "user slips": wrong directory, a single file, or a path that doesn't exist.
+    /// The expectation is a **clear exception** with state unaffected — not garbage written into the engine list.
     /// </summary>
     private async Task CheckInvalidEngineInputAsync(HubWorkspace workspace, string scratchRoot)
     {
@@ -287,13 +299,13 @@ public sealed class OpsCheckWindow : Window
         await workspace.ImportEngineAsync(gone);
         Check(workspace.State.Engines.Count == before, "导入不存在的路径被拒绝");
 
-        // 校验一个**已卸载**的引擎目录：目录先删掉再校验，必须报告而不是崩掉。
+        // Verify an **already-removed** engine directory: delete the directory first then verify; it must report, not crash.
         Check(workspace.LastError.Length > 0,
             "三次无效导入都留下了可读的错误（最近一次: "
             + workspace.LastError.Split('\n')[0].Replace("System.IO.IOException: ", "", StringComparison.Ordinal) + "）");
     }
 
-    /// <summary>把"这次没验什么、以及为什么"写进报告 —— 报告必须能区分"验过"和"没跑"。</summary>
+    /// <summary>Writes "what wasn't verified this run, and why" into the report — the report must distinguish "verified" from "didn't run".</summary>
     private void ReportSkipped()
     {
         Skip("装官方引擎（--verify-ops 不联网下载；那条链是 DownloadManager + PackageInstaller + sha256 校验）");
@@ -305,6 +317,6 @@ public sealed class OpsCheckWindow : Window
         Skip("Android 打包（构建交给引擎的 axmol build -p android；需要 Android SDK/NDK 与签名材料）");
     }
 
-    /// <summary>引擎目录缺哪些标志文件。清单的唯一来源是 <see cref="StateStore.MissingEngineMarkers"/>，不在这里另写一份。</summary>
+    /// <summary>Which marker files an engine directory lacks. The list's only source is <see cref="StateStore.MissingEngineMarkers"/>, not written again here.</summary>
     private static string[] MissingMarkers(string engine) => [.. StateStore.MissingEngineMarkers(engine)];
 }

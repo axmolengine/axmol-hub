@@ -3,9 +3,10 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $env:AX_ROOT = $EngineRoot
 
-# 官方环境准备入口。**它会改全局状态**：写 User 级 AX_ROOT、把 <engine>/tools/cmdline 插进
-# User PATH、必要时把执行策略设为 Bypass（弹 UAC）—— 这与引擎官方流程完全一致，是刻意的。
-# 它自己不会再拉起交互式 pause（只有从资源管理器双击才会）。
+# Official environment setup entry point. **It changes global state**: writes a User-level AX_ROOT,
+# inserts <engine>/tools/cmdline into the User PATH, and when necessary sets the execution policy to
+# Bypass (popping a UAC prompt) — this matches the engine's official flow exactly, and is deliberate.
+# It does not itself raise another interactive pause (that only happens when double-clicked from Explorer).
 try {
     & (Join-Path $EngineRoot 'setup.ps1') @args
     exit $LASTEXITCODE

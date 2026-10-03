@@ -1,26 +1,28 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 一次引擎 cmdline 调用的形状。调用规则是 <c>axmol &lt;subcmd&gt; args</c>。
+/// The shape of a single engine cmdline invocation. The invocation rule is <c>axmol &lt;subcmd&gt; args</c>.
 /// </summary>
 public sealed record AxmolInvocation(string SubCommand, string[] Arguments)
 {
     /// <summary>
-    /// 仅用于日志与 <c>plan</c> 的人读输出。
+    /// Used only for logging and <c>plan</c>'s human-readable output.
     ///
-    /// 含空格的值用 <c>"…"</c> 包起来：这既是给人读时看得清边界，也提醒后续任何「把
-    /// <see cref="Arguments"/> 重新拼回一条 shell 命令字符串」的代码——<c>-xc</c> 的值
-    /// **必须**用引号包裹，否则空格会在 shell 层把它拆碎，落到引擎 <c>build.ps1</c>
-    /// 的「一次只吃一个参数」上就只剩半截，导致莫名其妙的构建失败。
+    /// Values containing spaces are wrapped in <c>"…"</c>: it both makes boundaries clear to a human reader
+    /// and reminds any future code that "reassembles <see cref="Arguments"/> back into a single shell command
+    /// string" — the <c>-xc</c> value **must** be quoted, otherwise spaces would split it at the shell layer,
+    /// and by the time it reaches the engine <c>build.ps1</c>'s "consume one argument at a time" loop only half
+    /// would remain, causing mysterious build failures.
     /// </summary>
     public override string ToString() => "axmol " + SubCommand + " " + string.Join(' ',
         Arguments.Select(argument => argument.Contains(' ') ? $"\"{argument}\"" : argument));
 }
 
 /// <summary>
-/// Hub 的构建目标 → 引擎 cmdline 参数。
+/// The Hub's build target → engine cmdline arguments.
 ///
-/// 参数口径**不来自猜测**，来自引擎自身的 CI 调用（<c>.github/workflows/build.yml</c>）：
+/// The argument conventions do **not come from guessing**, but from the engine's own CI invocations
+/// (<c>.github/workflows/build.yml</c>):
 /// <code>
 ///   axmol -p win32 -a x64 -xc '-DAX_ENABLE_VR=ON,-DAX_ENABLE_OPENXR=ON' -O3 -t cpp-tests
 ///   axmol -d .\HelloCpp -xc '-DAX_PREBUILT_DIR=build' -O3
@@ -28,12 +30,12 @@ public sealed record AxmolInvocation(string SubCommand, string[] Arguments)
 ///   ./tools/cmdline/axmol -p ios -a arm64 -sdk simulator -t cpp-tests
 ///   ./tools/cmdline/axmol -p android -a arm64 -t cpp-tests
 /// </code>
-/// 两条易错点：<c>-xc</c> 收的是**一个**逗号分隔的字符串（不是多个参数）；
-/// Release 用 <c>-O3</c>（不是 <c>-DCMAKE_BUILD_TYPE</c>）。
+/// Two easy mistakes: <c>-xc</c> takes **one** comma-separated string (not multiple arguments);
+/// Release uses <c>-O3</c> (not <c>-DCMAKE_BUILD_TYPE</c>).
 /// </summary>
 public static class AxmolCommandMap
 {
-    /// <summary>Hub 目标 → <c>-p</c> 平台名、<c>-a</c> 架构（空串表示不传 <c>-a</c>）。</summary>
+    /// <summary>Hub target → the <c>-p</c> platform name and <c>-a</c> architecture (an empty string means <c>-a</c> is not passed).</summary>
     public static (string Platform, string Architecture) Target(BuildTarget target) => target.Id switch
     {
         "windows-x64" => ("win32", "x64"),
@@ -56,12 +58,13 @@ public static class AxmolCommandMap
         _ => throw new InvalidDataException($"No axmol platform is mapped for target: {target.Id}"),
     };
 
-    /// <summary>平台模块 id → 引擎 <c>-p</c> 平台名（模块准备 = <c>setup.ps1 -p &lt;platform&gt;</c>）。</summary>
+    /// <summary>Platform module id → the engine <c>-p</c> platform name (module preparation = <c>setup.ps1 -p &lt;platform&gt;</c>).</summary>
     /// <summary>
-    /// 配置开关。引擎用 <c>-O&lt;n&gt;</c> 的 <c>n</c> 作索引选构建类型
-    /// （<c>1k/1kiss.ps1</c>：<c>@('Debug','MinSizeRel','RelWithDebInfo','Release')[$options.O]</c>）：
-    /// <c>-O0</c>=Debug、<c>-O3</c>=Release。<b>不传 <c>-O</c> 时引擎默认 <c>RelWithDebInfo</c></b>，
-    /// 所以这里 <c>Debug</c> 必须显式传 <c>-O0</c>，否则 Hub 的「Debug」会静默构建成 RelWithDebInfo。
+    /// The configuration switch. The engine uses the <c>n</c> in <c>-O&lt;n&gt;</c> as an index to pick the
+    /// build type (<c>1k/1kiss.ps1</c>: <c>@('Debug','MinSizeRel','RelWithDebInfo','Release')[$options.O]</c>):
+    /// <c>-O0</c>=Debug, <c>-O3</c>=Release. <b>Without <c>-O</c> the engine defaults to <c>RelWithDebInfo</c></b>,
+    /// so here <c>Debug</c> must explicitly pass <c>-O0</c>, otherwise the Hub's "Debug" would silently build
+    /// as RelWithDebInfo.
     /// </summary>
     private static void AddConfiguration(ICollection<string> arguments, string configuration)
     {
@@ -80,7 +83,7 @@ public static class AxmolCommandMap
             arguments.Add(architecture);
         }
 
-        // 引擎不会把 iOS arm64 猜成模拟器，必须显式声明。
+        // The engine won't guess an iOS arm64 as the simulator; it must be declared explicitly.
         if (target.Simulator)
         {
             arguments.Add("-sdk");
@@ -101,17 +104,19 @@ public static class AxmolCommandMap
     }
 
     /// <summary>
-    /// **引擎根构建**：把引擎编译成可被项目复用的预编译库（聚合目标 <c>axmol-sdk</c>）。
+    /// **Engine root build**: compiles the engine into prebuilt libraries reusable by projects (the aggregate
+    /// target <c>axmol-sdk</c>).
     ///
-    /// 刻意**不复用 <see cref="Build"/>**：那个总是追加 <c>-d &lt;project&gt;</c>，而引擎根构建没有工程目录
-    /// （CI 黄金路径就是 `axmol -p win32 -a x64 -xc '…' -O3`，不带 <c>-d</c>）。
-    /// 工作目录由调用方设为引擎根。
+    /// Deliberately does **not reuse <see cref="Build"/>**: that one always appends <c>-d &lt;project&gt;</c>,
+    /// whereas an engine root build has no project directory (the CI golden path is
+    /// `axmol -p win32 -a x64 -xc '…' -O3`, without <c>-d</c>). The working directory is set to the engine
+    /// root by the caller.
     /// </summary>
     public static AxmolInvocation BuildEngine(BuildTarget target, string configuration)
     {
         var arguments = new List<string>();
         AddTarget(arguments, target);               // -p win32 -a x64
-        AddConfiguration(arguments, configuration); // Release → -O3；Debug → 不传
+        AddConfiguration(arguments, configuration); // Release → -O3; Debug → not passed
         return new("build", arguments.ToArray());
     }
 
@@ -136,15 +141,18 @@ public static class AxmolCommandMap
     }
 
     /// <summary>
-    /// <c>-xc</c> 只接**一个**参数：多个 cmake 选项用逗号连成一个字符串。
+    /// <c>-xc</c> takes **one** argument: multiple cmake options are joined into a single comma-separated
+    /// string.
     ///
-    /// **为什么必须是单参数**：引擎 <c>plugins/build.ps1</c> 的参数循环是「一次只吃一个」——
-    /// <c>-xc</c> 后面的第一个 token 被存进 <c>$options.xc</c>，再 <c>Split(',')</c> 拆开。
-    /// 一旦 <c>-xc</c> 的值被拆成多个 token（例如值里含空格、或被人当多个参数传入），
-    /// 只有第一个 token 进得了 <c>$options.xc</c>，其余变成 <c>$unhandled_args</c> 里的游离参数，
-    /// 最终拼出的 CMake 命令缺选项，表现为「莫名其妙的构建失败」且极难排查。
-    /// 因此这里务必 <c>string.Join(',', …)</c> 成一个不含空格的单参数；外层 shell 转义也靠
-    /// <see cref="AxmolInvocation.ToString"/> 的引号包裹来兜底（见其文档）。
+    /// **Why it must be a single argument**: the engine <c>plugins/build.ps1</c> argument loop "consumes one
+    /// at a time" — the first token after <c>-xc</c> is stored into <c>$options.xc</c>, then split by
+    /// <c>Split(',')</c>. The moment the <c>-xc</c> value is split into multiple tokens (e.g. the value
+    /// contains spaces, or someone passes it as multiple arguments), only the first token makes it into
+    /// <c>$options.xc</c>, and the rest become orphan arguments in <c>$unhandled_args</c>. The final CMake
+    /// command ends up missing options, showing up as "mysterious build failures" that are extremely hard to
+    /// diagnose. Therefore this must <c>string.Join(',', …)</c> into a single argument without spaces; the
+    /// outer shell escaping is also backstopped by the quoting in <see cref="AxmolInvocation.ToString"/> (see
+    /// its docs).
     /// </summary>
     private static void AddCmake(ICollection<string> arguments, IEnumerable<string>? options)
     {

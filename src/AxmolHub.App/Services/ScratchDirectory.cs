@@ -4,17 +4,20 @@ using System.IO;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 自检与验收产物的落点。
+/// Where self-check and verification artifacts land.
 ///
-/// 约定：**临时产物只写仓库根的 <c>tmp/</c>**，cache 类产物写 <c>cache/</c>（两者都已在 .gitignore 里），
-/// 不去外面的目录散落文件 —— 报告、截图、夹具状态集中在一处，删起来是一刀而不是翻遍 %TEMP%。
+/// Convention: **temporary artifacts only go to the repo root's <c>tmp/</c>**, cache-type artifacts
+/// to <c>cache/</c> (both already in .gitignore) — no files scattered into outside directories.
+/// Reports, screenshots, and fixture state stay in one place, so cleanup is a single cut rather
+/// than hunting through %TEMP%.
 ///
-/// 安装后的自包含产物里没有仓库根，此时退回系统临时目录：那些路径上没有 git 仓库可写，
-/// 而自检也不该因为"找不到仓库"就失败。
+/// The installed self-contained artifacts have no repo root, in which case fall back to the system
+/// temp directory: those paths have no git repo to write to, and self-checks shouldn't fail just
+/// because "no repo found".
 /// </summary>
 internal static class ScratchDirectory
 {
-    /// <summary>仓库根。从程序集位置往上找 <c>src/AxmolHub.App</c>，找不到返回 null。</summary>
+    /// <summary>The repo root. Walks up from the assembly location looking for <c>src/AxmolHub.App</c>; returns null when not found.</summary>
     public static string? RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -31,7 +34,7 @@ internal static class ScratchDirectory
         return null;
     }
 
-    /// <summary>项目内 <c>tmp/</c>（找不到仓库时是系统临时目录）。</summary>
+    /// <summary>The in-project <c>tmp/</c> (the system temp directory when no repo is found).</summary>
     public static string TmpRoot()
     {
         var root = RepositoryRoot();
@@ -40,7 +43,7 @@ internal static class ScratchDirectory
         return path;
     }
 
-    /// <summary>一个（会被创建的）子目录。</summary>
+    /// <summary>A subdirectory (which will be created).</summary>
     public static string Resolve(params string[] segments)
     {
         var path = Path.Combine([TmpRoot(), .. segments]);
@@ -48,7 +51,7 @@ internal static class ScratchDirectory
         return path;
     }
 
-    /// <summary>一个文件路径。所在目录会先建好，文件本身不创建。</summary>
+    /// <summary>A file path. The containing directory is created first; the file itself is not.</summary>
     public static string FilePath(params string[] segments)
     {
         var path = Path.Combine([TmpRoot(), .. segments]);

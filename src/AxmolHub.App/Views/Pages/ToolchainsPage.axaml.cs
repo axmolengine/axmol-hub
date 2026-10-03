@@ -10,29 +10,30 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 工具链表格的一行。WPF 版用匿名类型塞进 ItemsSource；Avalonia 的
-/// <c>DataGridTextColumn</c> 走编译绑定，列上必须写 <c>x:DataType</c>，
-/// 所以这里得有一个具名类型。
+/// One row of the toolchains table. The WPF version stuffed an anonymous type into ItemsSource; Avalonia's
+/// <c>DataGridTextColumn</c> uses compiled binding, requiring <c>x:DataType</c> on the column,
+/// so a named type is needed here.
 ///
-/// Status 是**已经本地化过的字符串**而不是枚举：WPF 版靠
-/// <c>LocalizedValueConverter</c> 在渲染时转换，而转换后的值在换语言时不会自己变，
-/// 于是每次 Reload 重算一遍 —— 这也是页面刷新时整表重建的原因。
+/// Status is an **already-localized string**, not an enum: the WPF version relied on
+/// <c>LocalizedValueConverter</c> to convert at render time, but the converted value won't change by itself on a language switch,
+/// so it's recomputed on every Reload — which is also why the whole table is rebuilt on refresh.
 /// </summary>
 public sealed record ToolRow(string Name, string Status, string Details);
 
 /// <summary>
-/// 工具链页。
+/// The toolchains page.
 ///
-/// **这里只显示状态**：期望版本来自引擎自带的 <c>1k/build.profiles</c>，
-/// 实装状态来自官方安装落点 <c>&lt;engine&gt;/tools/external</c>。
-/// 安装不是 Hub 的事 —— 需要装时跑引擎自己的 <c>setup.ps1</c>（页面底部的按钮）。
+/// **This only displays status**: expected versions come from the engine's bundled
+/// <c>1k/build.profiles</c>, installed status from the official install location
+/// <c>&lt;engine&gt;/tools/external</c>. Installation isn't Hub's job — when needed, run the
+/// engine's own <c>setup.ps1</c> (the button at the bottom of the page).
 /// </summary>
 public partial class ToolchainsPage : UserControl
 {
     private readonly HubWorkspace _workspace;
     private bool _ready;
 
-    /// <summary>供 XAML 加载器与设计预览使用（缺它会报 AVLN3001）。</summary>
+    /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public ToolchainsPage()
     {
         _workspace = null!;
@@ -65,7 +66,7 @@ public partial class ToolchainsPage : UserControl
             }
 
             var engine = EnginePicker.SelectedItem as EngineEntry;
-            // 工具链属于具体引擎树；值没变就不要重新探测（否则会和 Reload 形成回环）。
+            // A toolchain belongs to a specific engine tree; don't re-probe if the value is unchanged (otherwise it forms a loop with Reload).
             if (ReferenceEquals(engine, _workspace.ToolchainEngine))
             {
                 return;
@@ -89,8 +90,8 @@ public partial class ToolchainsPage : UserControl
     }
 
     /// <summary>
-    /// 跑引擎 setup 前**必须先确认**：它会写用户级 PATH / AX_ROOT，并可能请求提权。
-    /// 这些副作用是引擎官方流程的一部分，不是 Hub 偷偷加的，但用户有权先知道。
+    /// Running the engine setup **requires confirmation first**: it writes user-level PATH / AX_ROOT and may request elevation.
+    /// These side effects are part of the engine's official flow, not something Hub sneaks in, but the user has a right to know first.
     /// </summary>
     private async Task RunEngineSetupAsync()
     {
@@ -112,7 +113,7 @@ public partial class ToolchainsPage : UserControl
         await _workspace.RunEngineSetupAsync();
     }
 
-    /// <summary>WPF 版 <c>Refresh()</c> 里属于工具链页的那一段。</summary>
+    /// <summary>The toolchains-page portion of the WPF <c>Refresh()</c>.</summary>
     public void Reload()
     {
         if (_workspace is null)
@@ -128,8 +129,8 @@ public partial class ToolchainsPage : UserControl
                                           ?? _workspace.State.Engines.FirstOrDefault();
         _workspace.ToolchainEngine = EnginePicker.SelectedItem as EngineEntry;
 
-        // 工具链探测目标随引擎版本走：v3 才露出 arm64/wasm64 这些专属目标。
-        // 之前选的 ToolTarget 若已不在该版本的可选列表里（如 v3 的 arm64 换到 v2），回退到首个。
+        // The toolchain probe target follows the engine version: only v3 exposes dedicated targets like arm64/wasm64.
+        // If the previously chosen ToolTarget is no longer in this version's list (e.g. v3's arm64 switched to v2), fall back to the first.
         var engineVersion = (_workspace.ToolchainEngine?.Version) ?? "";
         var available = BuildTargets.ForVersion(engineVersion);
         ToolTargetPicker.ItemsSource = available;

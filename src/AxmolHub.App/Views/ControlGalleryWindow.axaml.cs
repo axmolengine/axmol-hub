@@ -16,15 +16,17 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using ShapePath = Avalonia.Controls.Shapes.Path;
-// 断言用的小工具（TokenColor / IsToken / Descendant / NamedDescendant …）已抽到
-// Services/ThemeProbe.cs，与 P4 的基础件自检共用一份实现。
+// The small assertion helpers (TokenColor / IsToken / Descendant / NamedDescendant …) have been
+// extracted to Services/ThemeProbe.cs and shared with P4's foundation self-check.
 using static AxmolHub.App.ThemeProbe;
 
 namespace AxmolHub.App;
 
 /// <summary>
-/// P3 的验收工具窗口：把 Theme/ 下的每个样式摆在一个界面上，用于三平台观感比对。
-/// 只有中文说明，因为它是开发工件而不是产品界面（产品界面在 P5 才迁移）。
+/// P3's verification tool window: lays out every style under Theme/ on a single surface for
+/// three-platform visual comparison.
+/// The captions are Chinese only, because this is a development artifact rather than a product UI
+/// (the product UI is migrated in P5).
 /// </summary>
 public partial class ControlGalleryWindow : Window
 {
@@ -54,9 +56,11 @@ public partial class ControlGalleryWindow : Window
     }
 
     /// <summary>
-    /// 核对每个 ControlTheme / 类样式是否**真的**生效。存在的理由：样式表写错时 Avalonia
-    /// 不会报错，只会静默地用默认外观渲染 —— 那种失败既编译不过不了也抛不出异常，只能靠断言。
-    /// 结果写成文件而不是 stdout：App 是 WinExe，没有控制台可写。
+    /// Verifies that each ControlTheme / class style **actually** takes effect. It exists because:
+    /// when a stylesheet is wrong, Avalonia doesn't error — it just silently renders with the
+    /// default appearance. That failure neither fails compilation nor throws, so it can only be
+    /// caught by assertions.
+    /// Results are written to a file rather than stdout: the app is a WinExe with no console.
     /// </summary>
     public void RunThemeVerification(IClassicDesktopStyleApplicationLifetime lifetime, string reportPath)
     {
@@ -89,7 +93,7 @@ public partial class ControlGalleryWindow : Window
             lifetime.Shutdown(failed == 0 ? 0 : 1);
         }
 
-        // 挂在 Opened 而不是直接 Post：窗口显示之后可视化树才存在，之前跑断言会得到一堆假失败。
+        // Hook Opened rather than posting directly: the visual tree only exists after the window is shown; running assertions before that yields a pile of false failures.
         Opened += (_, _) => Dispatcher.UIThread.Post(() =>
         {
             var lines = new List<string>();
@@ -125,7 +129,7 @@ public partial class ControlGalleryWindow : Window
             Finish(lines, passed, failed);
         }, DispatcherPriority.Background);
 
-        // 兜底：窗口没能显示时不要让进程一直挂着（自动化里挂住比失败更难查）。
+        // Fallback: don't let the process hang forever if the window never shows (in automation, hanging is harder to diagnose than failing).
         DispatcherTimer.RunOnce(() =>
         {
             if (!finished)
@@ -137,12 +141,12 @@ public partial class ControlGalleryWindow : Window
 
     private void RunChecks(Action<bool, string> check)
     {
-        // ---- 先确认断言自己没坏：语义色必须能解析出来，否则下面每一条都会假失败 ----
+        // ---- First confirm the assertion itself isn't broken: the semantic color must resolve, otherwise every line below fails spuriously ----
         var probe = TokenColor("Hub.SurfaceRaised");
         check(probe is not null,
             "语义色可从 Application.Resources 解析（Hub.SurfaceRaised = " + (probe?.ToString() ?? "null") + "）");
 
-        // ---- 按钮：ControlTheme 是否取代了 Fluent 默认 ----
+        // ---- Buttons: did the ControlTheme replace the Fluent default ----
         check(IsToken(BtnDefault.Background, "Hub.SurfaceRaised"),
             "Button 默认背景 = Hub.SurfaceRaised（实际 " + Describe(BtnDefault.Background) + "）");
         check(IsToken(BtnPrimary.Background, "Hub.Accent"),
@@ -153,7 +157,7 @@ public partial class ControlGalleryWindow : Window
         check(buttonFrame is not null && Math.Abs(buttonFrame.CornerRadius.TopLeft - 5) < 0.001,
             "Button 模板为 Hub 版本（Border#Frame，圆角 = 5）");
 
-        // ---- TextBox：Avalonia 12 的必需要件是 PART_TextPresenter，不是 WPF 的 PART_ContentHost ----
+        // ---- TextBox: Avalonia 12's required part is PART_TextPresenter, not WPF's PART_ContentHost ----
         check(NamedDescendant<TextPresenter>(TxtNormal, "PART_TextPresenter") is not null,
             "TextBox 模板包含 TextPresenter#PART_TextPresenter");
         check(IsToken(TxtNormal.Background, "Hub.SurfaceSunken"),
@@ -164,15 +168,15 @@ public partial class ControlGalleryWindow : Window
               || TxtMono.FontFamily?.ToString().Contains("Consolas", StringComparison.OrdinalIgnoreCase) == true,
             "TextBox.mono 用了等宽字体回退链（实际 " + (TxtMono.FontFamily?.ToString() ?? "null") + "）");
 
-        // ---- ComboBox：PART_Popup / PART_ItemsPresenter 都在 ----
-        // 先展开：Popup 的内容在未打开时根本没有实例化，直接找会得到假失败。
+        // ---- ComboBox: PART_Popup / PART_ItemsPresenter are both present ----
+        // Expand first: the Popup's content isn't instantiated until opened; searching directly yields false failures.
         CmbEngine.IsDropDownOpen = true;
         UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
         var comboPopup = NamedDescendant<Popup>(CmbEngine, "PART_Popup");
         check(comboPopup is not null, "ComboBox 模板包含 Popup#PART_Popup");
-        // Popup 的内容不在 ComboBox 的可视化子树里（它有自己的 popup root），必须从 Popup 内部往下找。
+        // The Popup's content isn't in the ComboBox's visual subtree (it has its own popup root); search downward from inside the Popup.
         var popupContent = comboPopup?.Child as Visual
                            ?? comboPopup?.GetVisualDescendants().OfType<Visual>().FirstOrDefault();
         var comboItems = popupContent is null
@@ -200,7 +204,7 @@ public partial class ControlGalleryWindow : Window
         check(radioFrame is not null && IsToken(radioFrame.Background, "Hub.SurfaceSelected"),
             "RadioButton 选中态底色 = Hub.SurfaceSelected（实际 " + Describe(radioFrame?.Background) + "）");
 
-        // ---- Expander：这条覆盖 ControlTheme 里的 ^:checked 选择器 ----
+        // ---- Expander: this covers the ^:checked selector in the ControlTheme ----
         var header = NamedDescendant<ToggleButton>(Exp, "ExpanderHeader");
         check(header is not null, "Expander 模板包含 ToggleButton#ExpanderHeader（复用 HubExpanderHeader 主题）");
         if (header is not null)
@@ -210,8 +214,8 @@ public partial class ControlGalleryWindow : Window
             UpdateLayout();
             Dispatcher.UIThread.RunJobs();
             var arrowAfter = NamedDescendant<ShapePath>(header, "Arrow");
-            // rotate(90deg) 解析出来的是 TransformOperations（矩阵），不是 RotateTransform 实例；
-            // 矩阵挂在 .Value 上（12.1.3 源：public Matrix Value { get; }）。
+            // rotate(90deg) parses to TransformOperations (a matrix), not a RotateTransform instance;
+            // the matrix lives on .Value (12.1.3 source: public Matrix Value { get; }).
             var expectedRotation = TransformOperations.Parse("rotate(90deg)");
             var actualTransform = arrowAfter?.RenderTransform;
             check(actualTransform is TransformOperations operations && operations.Value == expectedRotation.Value,
@@ -221,8 +225,8 @@ public partial class ControlGalleryWindow : Window
                 "展开后内容区可见");
         }
 
-        // ---- ScrollBar：换掉了 Fluent 的悬浮自动隐藏细条 ----
-        // 按方向取：垂直条只设了 Width，水平条只设了 Height；拿错方向会得到一串假失败。
+        // ---- ScrollBar: replaced Fluent's hover auto-hide thin bar ----
+        // Take by orientation: the vertical bar only sets Width, the horizontal only Height; taking the wrong orientation yields a string of false failures.
         var scrollBars = Scroller.GetVisualDescendants().OfType<ScrollBar>().ToList();
         check(scrollBars.Count > 0, "ScrollViewer 内已生成 ScrollBar（" + scrollBars.Count + " 条）");
 
@@ -240,7 +244,7 @@ public partial class ControlGalleryWindow : Window
         check(horizontalBar is null || Math.Abs(horizontalBar.Height - 10) < 0.001,
             "横向 ScrollBar 高度 = 10（实际 " + (horizontalBar is null ? "无横向条" : horizontalBar.Height.ToString(CultureInfo.InvariantCulture)) + "）");
 
-        // ---- DataGrid：只覆盖属性与选中色，不换模板 ----
+        // ---- DataGrid: only covers properties and selection color, no template swap ----
         GalleryGrid.SelectedIndex = 0;
         UpdateLayout();
         Dispatcher.UIThread.RunJobs();
@@ -256,7 +260,7 @@ public partial class ControlGalleryWindow : Window
         }
         check(Descendant<DataGridColumnHeader>(GalleryGrid) is not null, "DataGrid 生成了列头");
 
-        // ---- 类样式：Border.card / TextBlock.muted ----
+        // ---- Class styles: Border.card / TextBlock.muted ----
         var card = this.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains("card"));
         check(card is not null && IsToken(card.Background, "Hub.Surface"),
             "Border.card 背景 = Hub.Surface（实际 " + Describe(card?.Background) + "）");
@@ -269,14 +273,14 @@ public partial class ControlGalleryWindow : Window
         check(muted is not null && Math.Abs(muted.FontSize - 12) < 0.001,
             "TextBlock.muted 字号 = 12");
 
-        // ---- 矢量图标：StaticResource 是否真的解析到了 ----
+        // ---- Vector icons: did StaticResource actually resolve ----
         check(IconProjects.Data is not null && IconInstalls.Data is not null
               && IconToolchains.Data is not null && IconSettings.Data is not null,
             "四个导航图标几何解析成功（StaticResource 未失效）");
         check(IsToken(IconProjects.Fill, "Hub.TextPrimary"),
             "图标填充 = Hub.TextPrimary（实际 " + Describe(IconProjects.Fill) + "）");
 
-        // ---- 主题变体切换 ----
+        // ---- Theme variant switching ----
         var darkBackground = ColorOf(Background);
         if (Application.Current is not null)
         {

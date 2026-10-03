@@ -1,12 +1,13 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 每项目选项：是否链接引擎的**预编译库**（<c>-DAX_PREBUILT_DIR=…</c>）。
+/// Per-project option: whether to link the engine's **prebuilt libraries** (<c>-DAX_PREBUILT_DIR=…</c>).
 ///
-/// 存放位置刻意跟随 <see cref="AndroidReleaseSettings"/>：写项目目录内的**独立** JSON，
-/// 而不是塞进 <c>.axmol-hub.json</c> —— 后者被 <c>StateStore.ReadProject</c>、
-/// <c>ProjectService.BuildAsync</c> 与 <c>RunWindowsAsync</c> 逐字段校验，
-/// 加字段要同步改四处（改漏一处就是静默忽略），代价不值。
+/// The storage location deliberately follows <see cref="AndroidReleaseSettings"/>: a **separate** JSON file
+/// in the project directory, rather than being stuffed into <c>.axmol-hub.json</c> — the latter is validated
+/// field by field in <c>StateStore.ReadProject</c>, <c>ProjectService.BuildAsync</c> and <c>RunWindowsAsync</c>,
+/// so adding a field would require changing four places in lockstep (missing one means silently ignored),
+/// a cost that isn't worth it.
 /// </summary>
 public sealed class PrebuiltSettings
 {

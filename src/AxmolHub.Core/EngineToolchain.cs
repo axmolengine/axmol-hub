@@ -2,38 +2,43 @@ using System.Text.RegularExpressions;
 
 namespace AxmolHub.Core;
 
-/// <summary>工具链组件状态。原先是 <c>ToolchainDetector</c> 的一部分，检测器退役后由这里承载。</summary>
+/// <summary>Toolchain component status. Originally part of <c>ToolchainDetector</c>; it now lives here after the detector was retired.</summary>
 public enum ComponentStatus { Unknown, Checking, Missing, Installing, Installed, Broken, UpdateAvailable }
 
-/// <summary>一行工具链状态：名字、结论性状态、说明（含期望版本与实装版本）、可执行文件。</summary>
+/// <summary>One row of toolchain status: name, conclusive status, details (including expected and installed versions), and executable.</summary>
 public sealed record ToolchainComponent(string Name, ComponentStatus Status, string Details, string? Executable = null);
 
 /// <summary>
-/// 只读探测引擎树的工具链状态。**判定规则照抄 axmol 自己的 <c>1k/1kiss.ps1</c>**，不是按目录猜：
+/// Read-only probing of the engine tree's toolchain status. **The determination rules faithfully
+/// reproduce axmol's own <c>1k/1kiss.ps1</c>** — not guessing by directory:
 ///
 /// <list type="number">
-/// <item><b>查找顺序不是"只看 tools/external"。</b> 引擎的 <c>setup_*</c> 会先找**系统已装**的同名工具，
-/// 版本满足要求就直接用、**不往引擎树里装**；只有不满足（或根本没装）才装到 <c>&lt;prefix&gt;</c>。
-/// 逐工具的差别来自 <c>find_prog</c> 有没有传 <c>-path</c> / <c>-mode</c>：
+/// <item><b>The lookup order is not "only tools/external".</b> The engine's <c>setup_*</c> first looks for a
+/// **system-installed** tool of the same name; if its version satisfies the requirement it is used directly
+/// and **not installed into the engine tree**; only when it doesn't satisfy (or isn't installed at all) is
+/// it installed into <c>&lt;prefix&gt;</c>. The per-tool differences come from whether <c>find_prog</c> is
+/// called with <c>-path</c> / <c>-mode</c>:
 /// <list type="bullet">
-/// <item>系统优先：<c>cmake</c> / <c>ninja</c> / <c>jdk(javac)</c> / <c>llvm(clang)</c> / <c>emsdk(emcc)</c></item>
-/// <item>引擎树优先（<c>-mode BOTH</c>）：<c>axslcc</c> / <c>nuget</c> / <c>nasm</c></item>
-/// <item>只在引擎树内：<c>cmdlinetools(sdkmanager)</c></item>
-/// <item>只检测不安装：Visual Studio（vswhere）、Xcode</item>
+/// <item>System first: <c>cmake</c> / <c>ninja</c> / <c>jdk(javac)</c> / <c>llvm(clang)</c> / <c>emsdk(emcc)</c></item>
+/// <item>Engine tree first (<c>-mode BOTH</c>): <c>axslcc</c> / <c>nuget</c> / <c>nasm</c></item>
+/// <item>Engine tree only: <c>cmdlinetools(sdkmanager)</c></item>
+/// <item>Detect but never install: Visual Studio (vswhere), Xcode</item>
 /// </list>
 /// </item>
-/// <item><b>版本算不算"满足"要按引擎的语义判</b>（<see cref="ToolRequirement"/>）——
-/// 不满足它就会去装自己那一份，所以 Hub 报"就绪"与引擎的行为必须一致。</item>
+/// <item><b>Whether a version "satisfies" is judged by the engine's own semantics</b>
+/// (<see cref="ToolRequirement"/>) — if it doesn't, the engine installs its own copy, so the Hub's "ready"
+/// verdict must match the engine's actual behavior.</item>
 /// </list>
 ///
-/// Hub 不安装、不下载、不联网 —— 它只回答「这棵树现在能构建吗、还差什么」。
+/// The Hub does not install, download, or go online — it only answers "can this tree build now, and what
+/// is missing".
 /// </summary>
 public sealed class EngineToolchain(ProcessRunner runner)
 {
-    /// <summary>官方安装落点（<c>setup.ps1</c> 的 <c>-prefix</c>）。</summary>
+    /// <summary>The official install destination (the <c>-prefix</c> of <c>setup.ps1</c>).</summary>
     public static string ToolRoot(EngineEntry engine) => Path.Combine(engine.Path, "tools", "external");
 
-    /// <summary>查找顺序，对应 <c>find_prog</c> 的调用方式。</summary>
+    /// <summary>The lookup order, corresponding to how <c>find_prog</c> is called.</summary>
     private enum Lookup { SystemFirst, EngineFirst, EngineOnly }
 
     private sealed record ToolSpec(string Name, string Key, string Command, string[] Probe, Lookup Lookup, string[] EngineDirectories);
@@ -64,7 +69,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
         {
             case "windows":
             case "uwp":
-                // nuget 是 -mode BOTH（引擎树优先）；llvm 先查系统 clang。
+                // nuget uses -mode BOTH (engine tree first); llvm checks the system clang first.
                 rows.Add(await ResolveAsync(new ToolSpec("NuGet", "nuget", "nuget", ["help"], Lookup.EngineFirst, ["nuget"]), profile, root, cancellation));
                 rows.Add(await ResolveAsync(new ToolSpec("LLVM (clang-format/genbindings)", "llvm", "clang", ["--version"], Lookup.SystemFirst, ["LLVM/bin"]), profile, root, cancellation));
                 rows.Add(await VisualStudioAsync(profile, cancellation));
@@ -82,7 +87,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
                 rows.Add(await XcodeAsync(cancellation));
                 break;
             case "linux":
-                // Linux 构建依赖发行版自带工具，不由引擎安装，也不由 Hub 托管。
+                // Linux builds rely on tools shipped with the distribution; neither installed by the engine nor managed by the Hub.
                 rows.Add(new("Linux system toolchain", ComponentStatus.Unknown,
                     "Provided by the distribution (gcc/g++/make). The engine detects it; Hub does not manage it."));
                 break;
@@ -91,7 +96,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
         return rows;
     }
 
-    // ───────────────────────── 通用「按版本要求查找可执行文件」 ─────────────────────────
+    // ───────────────────────── Common "find an executable by version requirement" ─────────────────────────
 
     private async Task<ToolchainComponent> ResolveAsync(ToolSpec spec, BuildProfile? profile, string root, CancellationToken cancellation)
     {
@@ -143,7 +148,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
     private static string Origin(string path, string[] engineDirectories) =>
         engineDirectories.Any(directory => path.StartsWith(directory, StringComparison.OrdinalIgnoreCase)) ? "engine tree" : "system PATH";
 
-    /// <summary>按 PATH + PATHEXT 找可执行文件（等价 <c>Get-Command</c> 的解析）。</summary>
+    /// <summary>Find executables via PATH + PATHEXT (equivalent to <c>Get-Command</c> resolution).</summary>
     private static IEnumerable<string> ExecutablesOnPath(string command)
     {
         var path = Environment.GetEnvironmentVariable("PATH");
@@ -161,8 +166,9 @@ public sealed class EngineToolchain(ProcessRunner runner)
     }
 
     /// <summary>
-    /// 取版本：等价 <c>find_prog</c> 的 `(. $cmd @params 2&gt;$null) | Select-Object -First 1` 再正则抠版本。
-    /// 抠不出数字时退回**文件版本**并格式化成 <c>Major.Minor.Build</c> —— 引擎也是这么兜底的。
+    /// Obtain the version: equivalent to <c>find_prog</c>'s `(. $cmd @params 2&gt;$null) | Select-Object -First 1`
+    /// followed by extracting the version with a regex. When no digits can be extracted, fall back to the
+    /// **file version** formatted as <c>Major.Minor.Build</c> — the engine falls back the same way.
     /// </summary>
     private async Task<string?> ProbeVersionAsync(string executable, string[] parameters, string name, CancellationToken cancellation)
     {
@@ -190,7 +196,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
         }
     }
 
-    // ───────────────────────── Visual Studio / Xcode（只检测，不安装） ─────────────────────────
+    // ───────────────────────── Visual Studio / Xcode (detect only, never install) ─────────────────────────
 
     private async Task<ToolchainComponent> VisualStudioAsync(BuildProfile? profile, CancellationToken cancellation)
     {
@@ -225,7 +231,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
             : new("Xcode", ComponentStatus.Installed, $"Using {version} (xcodebuild).", "xcodebuild");
     }
 
-    // ───────────────────────── Android SDK 组件（照抄 setup_android_sdk） ─────────────────────────
+    // ───────────────────────── Android SDK components (mirrors setup_android_sdk) ─────────────────────────
 
     private async Task<List<ToolchainComponent>> AndroidSdkComponentsAsync(EngineEntry engine, BuildProfile? profile, CancellationToken cancellation)
     {
@@ -236,7 +242,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
             PropertyComponent("Android platform-tools (ADB)", sdkRoot, "platform-tools", "platform-tools"),
         };
 
-        // cmdline-tools：引擎只在 <sdk>/cmdline-tools/<preferred>/bin 里找（find_prog 的 mode 是默认 ONLY）。
+        // cmdline-tools: the engine only looks in <sdk>/cmdline-tools/<preferred>/bin (find_prog's default mode is ONLY).
         var cmdline = ToolRequirement.Parse(profile?.CmdlineTools);
         var cmdlineDirectory = Path.Combine(sdkRoot, "cmdline-tools", cmdline.Preferred ?? "", "bin");
         rows.Add(await InspectAsync(
@@ -246,7 +252,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
             [cmdlineDirectory],
             cancellation));
 
-        // platforms：target_sdk >= 37 且没写小版本时，引擎会补一个 ".0"。
+        // platforms: when target_sdk >= 37 and no minor version is written, the engine appends a ".0".
         var api = profile?.TargetSdk ?? "";
         var digits = new string(api.TakeWhile(char.IsDigit).ToArray());
         if (api.Length > 0 && !api.Contains('.') && int.TryParse(digits, out var major) && major >= 37) api += ".0";
@@ -258,9 +264,9 @@ public sealed class EngineToolchain(ProcessRunner runner)
     }
 
     /// <summary>
-    /// SDK 根目录解析顺序与引擎一致：<c>1k/.env</c> 的 <c>android_sdk_root</c> → <c>ANDROID_HOME</c>
+    /// SDK root resolution order matches the engine: <c>android_sdk_root</c> in <c>1k/.env</c> → <c>ANDROID_HOME</c>
     /// → <c>ANDROID_SDK_ROOT</c> → <c>&lt;prefix&gt;/android-sdk</c> → <c>&lt;prefix&gt;/adt/sdk</c>
-    /// （最后一个算旧布局，引擎下次 setup 会迁到 <c>android-sdk</c>）。
+    /// (the last one counts as a legacy layout; the engine's next setup migrates it to <c>android-sdk</c>).
     /// </summary>
     public static string ResolveAndroidSdkRoot(EngineEntry engine)
     {
@@ -290,13 +296,13 @@ public sealed class EngineToolchain(ProcessRunner runner)
     }
 
     /// <summary>
-    /// NDK：<c>r27d</c> 这类代号要换算成 <c>27.3</c>（major 取全部数字、minor = 字母 - 'a'），
-    /// 再拿 <c>&lt;sdk&gt;/ndk/*/source.properties</c> 里 <c>Pkg.Revision</c> 的**前两段**去比。
+    /// NDK: codenames like <c>r27d</c> are converted to <c>27.3</c> (major takes all digits, minor = letter - 'a'),
+    /// then compared against the **first two segments** of <c>Pkg.Revision</c> in <c>&lt;sdk&gt;/ndk/*/source.properties</c>.
     /// </summary>
     /// <summary>
-    /// NDK 代号 → 引擎用来比对的 revision 前两段（<c>r27d</c> → <c>27.3</c>）。
-    /// 与 <c>setup_android_sdk</c> 的算法一致：major 取代号里的全部数字，minor = 后缀字母 − <c>'a'</c>，
-    /// 没有后缀字母则为 0。
+    /// NDK codename → the first two segments of the revision the engine compares against (<c>r27d</c> → <c>27.3</c>).
+    /// Matches the <c>setup_android_sdk</c> algorithm: major takes all digits in the codename, minor = suffix
+    /// letter − <c>'a'</c>, and 0 when there is no suffix letter.
     /// </summary>
     public static string NdkRevisionFor(string codename)
     {
@@ -336,7 +342,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
             : new("Android NDK", ComponentStatus.Installed, $"Expected {codename} (revision {required}.*); using {Path.GetFileName(revisions[match])}.", revisions[match]);
     }
 
-    /// <summary>SDK 组件判定与引擎一致：看 <c>source.properties</c> 在不在。</summary>
+    /// <summary>SDK component determination matches the engine: check whether <c>source.properties</c> is present.</summary>
     private static ToolchainComponent PropertyComponent(string name, string sdkRoot, string relative, string directoryName)
     {
         var directory = Path.Combine(sdkRoot, relative);

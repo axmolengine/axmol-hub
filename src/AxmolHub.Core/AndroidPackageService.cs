@@ -7,11 +7,14 @@ using System.Xml.Linq;
 
 namespace AxmolHub.Core;
 
-// CMake 管理原生构建，Gradle 只包装已有原生库和官方 Java 入口。所有生成文件留在目标输出目录。
-// 注意：**Android 打包已不在产品路径上** —— 构建（含 Gradle 打包）由引擎的 `axmol build -p android` 完成。
-// 本类保留两样东西：① 结构性校验器（ELF ABI/16KB 对齐、APK/AAB 布局、签名回执），它们与打包器无关、
-// 仍在验收里被使用；② 签名/对齐检查，等 Android Release 签名与引擎构建对接后再决定去留。
-// 因此类内路径按**引擎树**布局书写（tools/external/adt/sdk、jdk）。
+// CMake manages the native build; Gradle only wraps the existing native libraries and the official Java
+// entry point. All generated files stay in the target output directory.
+// Note: **Android packaging is no longer on the product path** — the build (including Gradle packaging) is
+// done by the engine's `axmol build -p android`. This class keeps two things: ① the structural validators
+// (ELF ABI/16 KB alignment, APK/AAB layout, signing receipt), which are unrelated to the packager and still
+// used in acceptance; ② signing/alignment checks, whose fate will be decided once Android Release signing is
+// hooked up to the engine build. Therefore paths inside this class are written against the **engine tree**
+// layout (tools/external/adt/sdk, jdk).
 public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot)
 {
     private string Tool(string path) => Path.GetFullPath(Path.Combine(toolsRoot, path));
@@ -21,14 +24,14 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     public static string BundlePath(ProjectEntry project) => Path.Combine(StageDirectory(project), "app/build/outputs/bundle", project.Configuration.ToLowerInvariant(), "app-" + project.Configuration.ToLowerInvariant() + ".aab");
     private string BuildTools => Tool("adt/sdk/build-tools/" + (BuildToolsVersion() ?? "36.0.0"));
 
-    /// <summary>引擎树里已装的 build-tools（取最高版本）；没有就返回 <c>null</c>。</summary>
+    /// <summary>The build-tools installed in the engine tree (highest version); returns <c>null</c> when none.</summary>
     private string? BuildToolsVersion()
     {
         var parent = Path.Combine(toolsRoot, "adt/sdk/build-tools");
         return Directory.Exists(parent) ? Directory.EnumerateDirectories(parent).OrderDescending().Select(Path.GetFileName).FirstOrDefault() : null;
     }
 
-    /// <summary>引擎树里已装的 NDK（取最高版本）；没有就返回 <c>null</c>。</summary>
+    /// <summary>The NDK installed in the engine tree (highest version); returns <c>null</c> when none.</summary>
     private string? NewestNdk()
     {
         var parent = Path.Combine(toolsRoot, "adt/sdk/ndk");
@@ -52,18 +55,18 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     {
         var target = BuildTargets.Get(project.Platform);
         if (target.Family != "android") throw new InvalidOperationException("Android packaging requires an Android target.");
-        // 版本验证边界来自 recipe-manifest.json 的 verifiedRecipes，不再硬编码某个版本号。
+        // The version-validation boundary comes from verifiedRecipes in recipe-manifest.json, no longer a hard-coded version number.
         PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
         var stage = StageDirectory(project); Directory.CreateDirectory(stage);
         RejectLinks(stage);
         var source = Path.Combine(project.Path, "proj.android/app");
         var packageName = PackageName(project);
         var release = project.Configuration == "Release" ? AndroidReleaseSettings.Require(project) : null;
-        // 尚未接入项目自定义 Gradle 插件时明确阻止，避免悄悄忽略用户的打包配置。
+        // Explicitly block when a custom project Gradle plugin isn't yet hooked up, to avoid silently ignoring the user's packaging configuration.
         var template = Path.Combine(engine.Path, "templates/common/proj.android/app/build.gradle");
         if (File.ReadAllText(Path.Combine(source, "build.gradle")).Replace("\r\n", "\n") != File.ReadAllText(template).Replace("\r\n", "\n"))
             throw new InvalidOperationException("Custom Android app/build.gradle is not supported by this managed packaging profile.");
-        // v2 的引擎核心目录是 core/，v3 改名 axmol/ —— 与 ValidateEngine 用同一处反查，不写死。
+        // v2's engine core directory is core/, v3 renames it to axmol/ — same reverse lookup as ValidateEngine, not hard-coded.
         var core = StateStore.FindEngineCoreDirectory(engine.Path)
             ?? throw new InvalidDataException("Incomplete Axmol engine: missing " + string.Join(", ", StateStore.MissingEngineMarkers(engine.Path)));
         CopyTree(Path.Combine(engine.Path, core, "platform/android"), Path.Combine(stage, "engine-android"));
@@ -130,7 +133,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
             using (var native = File.OpenRead(file)) ValidateElf(native, target.Architecture);
             CopyChanged(file, Path.Combine(jni, Path.GetFileName(file)));
         }
-        // 只清理 Hub 生成目录中的旧 JNI 文件，源码目录不受影响。
+        // Only clean up stale JNI files in the Hub-generated directory; the source directory is untouched.
         foreach (var file in Directory.EnumerateFiles(jni)) if (!nativeFiles.Any(input => Path.GetFileName(input) == Path.GetFileName(file))) File.Delete(file);
     }
     public static string NativeLibrary(ProjectEntry project)
@@ -170,7 +173,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         if (release == null) await EnsureDebugKeyAsync(environment, cancellation);
         var signingEnvironment = release == null ? environment : passwords!.Environment(environment);
         var command = GradleCommand(project, environment, "--dependency-verification=strict", "assemble" + project.Configuration, "bundle" + project.Configuration);
-        // 不设总时长上限：gradle assemble/bundle 首次要拉依赖+编译，可能数十分钟，只要持续有输出就让它跑。
+        // No total time cap: the first gradle assemble/bundle pulls dependencies and compiles, possibly tens of minutes, so let it run as long as it keeps producing output.
         RequireSuccess(await runner.RunAsync(command.Executable, command.Arguments, command.WorkingDirectory, signingEnvironment, cancellation, sensitiveValues: passwords?.SensitiveValues), "Android APK packaging");
         var apk = ApkPath(project);
         ValidateApk(apk, project);
@@ -214,7 +217,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         => ValidateArchive(apk, project, false);
     private async Task CanonicalizeReleaseBundleAsync(string bundle, AndroidReleaseSettings settings, AndroidSigningPasswords passwords, Dictionary<string, string> environment, CancellationToken cancellation)
     {
-        // AGP 的 ZIP 条目顺序可能使 JarInputStream 无法验证；由 JDK 重签并将 META-INF 放到标准位置。
+        // AGP's ZIP entry order can make JarInputStream fail to verify; re-sign with the JDK and place META-INF in the standard position.
         var temporary = bundle + "." + Guid.NewGuid().ToString("N") + ".signed.aab";
         try
         {

@@ -6,15 +6,17 @@ using Avalonia.VisualTree;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 运行期核对主题与可视化树的小工具集。
+/// A small toolkit for verifying theme and visual tree at runtime.
 ///
-/// 它存在的前提是一条 Avalonia 的性质：**样式写错不会报错，只会静默地用默认外观渲染**。
-/// 所以"构建通过"对样式层毫无证据价值，只能靠在运行期读真实可视化树。
-/// P3 的控件画廊与 P4 的基础件自检共用这里的实现，避免两处各写一份、然后各自漂移。
+/// It exists because of an Avalonia property: **a wrong style doesn't error, it just silently
+/// renders with the default appearance**. So "build passes" has zero evidentiary value for the
+/// style layer — only reading the real visual tree at runtime can prove it.
+/// P3's control gallery and P4's foundation self-check share this implementation to avoid each
+/// writing its own and then drifting apart.
 /// </summary>
 internal static class ThemeProbe
 {
-    /// <summary>按 key 取当前变体下的语义色。</summary>
+    /// <summary>Gets the semantic color for a key under the current variant.</summary>
     public static Color? TokenColor(string key)
     {
         if (Application.Current is not { } app)
@@ -22,9 +24,10 @@ internal static class ThemeProbe
             return null;
         }
 
-        // 走 IResourceHost 接口而不用 Window 上的扩展方法：Application.Resources 里的
-        // ThemeDictionaries 必须带变体查，否则在 Default 变体下拿不到 Dark/Light 的值
-        // —— 那样每个 token 都会解析成 null，断言会集体假失败（第一次跑就踩到了）。
+        // Go through the IResourceHost interface rather than Window's extension methods: the
+        // ThemeDictionaries in Application.Resources must be queried with a variant, otherwise the
+        // Dark/Light values aren't reachable under the Default variant — every token would resolve
+        // to null and the assertions would fail en masse for the wrong reason (hit on the first run).
         var variant = app.ActualThemeVariant;
         if (((IResourceHost)app).TryGetResource(key, variant, out var value) && value is ISolidColorBrush brush)
         {
@@ -43,8 +46,9 @@ internal static class ThemeProbe
         => TokenColor(token) is { } expected && ColorOf(brush) == expected;
 
     /// <summary>
-    /// 资源字典里有没有这个 key。比 <see cref="TokenColor"/> 宽：色值 token 之外也适用
-    /// —— 文案是字符串、图标是几何，它们同样会因为少一个 key 而**静默显示空白**。
+    /// Whether the resource dictionary has this key. Broader than <see cref="TokenColor"/>: it
+    /// applies beyond color tokens — copy is a string, icons are geometries, and they too would
+    /// **silently show blank** when a key is missing.
     /// </summary>
     public static bool Resolves(string key)
     {

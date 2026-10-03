@@ -6,21 +6,25 @@
         WindowStartupLocation="CenterScreen">
 
   <!--
-    外壳形态**逐格照原 WPF 版**（该文件已在 P6 删除，当时的版本是 src/AxmolHub.App/MainWindow.xaml）：
-      左 218px 固定导航（品牌 + 副标题 + 四个 RadioButton），右内容区 Margin=30,30,30,22，
-      内容区三行：页面 / 状态栏（取消 + 状态点 + 状态文案）/ 底部日志面板（Expander）。
-    不要"顺手改版式"：原 WPF 版这套布局是已经交付并被验证过的 UX，
-    而 B2（要不要加 AI 面板）仍待定 —— 先把 1:1 保住，再谈改。
+    The shell layout matches the original WPF version cell for cell (that file was deleted in P6; the
+    version at the time was src/AxmolHub.App/MainWindow.xaml):
+      left fixed 218px navigation (brand + subtitle + four RadioButtons), right content area
+      Margin=30,30,30,22, content area three rows: page / status bar (cancel + status dot + status
+      text) / bottom log panel (Expander).
+    Don't "fix the layout on the way": the original WPF version's layout is already-delivered, verified
+    UX, and B2 (whether to add an AI panel) is still undecided — keep the 1:1 first, then talk about changes.
 
-    与原 WPF 版的**刻意差异**只有两处，都在注释里标了原因：
-      1) 导航图标用矢量 Path 而不是 Segoe MDL2 Assets 私有区字形（那套字体只存在于 Windows）；
-      2) 左下角第二行按真实宿主机算，不写死 "Windows x64"（Avalonia 版要跑三个平台）。
+    There are only two **deliberate differences** from the original WPF version, both annotated with reasons:
+      1) navigation icons use vector Paths instead of Segoe MDL2 Assets private-use glyphs (that font only exists on Windows);
+      2) the second line at the bottom-left is computed from the real host machine, not hard-coded to "Windows x64"
+         (the Avalonia version runs on three platforms).
   -->
 
   <Window.Styles>
-    <!-- 导航项：WPF 版把图标与文字的 Foreground 绑到 RadioButton 的 Foreground，
-         于是选中/悬停时两者一起变色。Avalonia 里 Path 用的是 Fill 不是 Foreground，
-         没法照抄那句绑定，改成两条样式类 —— 效果一致，且不依赖运行时资源查找。 -->
+    <!-- Nav items: the WPF version bound the icon and text Foreground to the RadioButton's Foreground,
+         so both changed color together on selection/hover. In Avalonia, Path uses Fill rather than Foreground,
+         so that binding cannot be copied verbatim; two style classes are used instead — same effect, and no
+         runtime resource lookup. -->
     <Style Selector="RadioButton.nav">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="14" />
@@ -49,7 +53,7 @@
 
   <Grid ColumnDefinitions="218,*">
 
-    <!-- ==================== 左侧导航 ==================== -->
+    <!-- ==================== Left navigation ==================== -->
     <Border Grid.Column="0"
             Background="{DynamicResource Hub.SurfaceAlt}"
             BorderBrush="{DynamicResource Hub.BorderSubtle}"
@@ -57,7 +61,7 @@
             Padding="20,30,20,22">
       <DockPanel>
 
-        <!-- 底部：品牌行 + 宿主机 -->
+        <!-- Bottom: brand line + host machine -->
         <StackPanel DockPanel.Dock="Bottom">
           <Border BorderBrush="{DynamicResource Hub.Border}"
                   BorderThickness="0,1,0,0"
@@ -130,13 +134,13 @@
       </DockPanel>
     </Border>
 
-    <!-- ==================== 右侧内容 ==================== -->
+    <!-- ==================== Right content ==================== -->
     <Grid Grid.Column="1" Margin="30,30,30,22" RowDefinitions="*,Auto,Auto">
 
       <ContentControl x:Name="PageHost" Grid.Row="0" />
 
-      <!-- 状态栏：取消按钮 + 状态点 + 状态文案。顺序刻意与 WPF 版一致
-           （Ellipse 是 DockPanel.Left，TextBlock 填空）。 -->
+      <!-- Status bar: cancel button + status dot + status text. Order deliberately matches the WPF version
+           (Ellipse is DockPanel.Left, TextBlock fills the rest). -->
       <DockPanel Grid.Row="1" Margin="0,16,0,12">
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}" Classes="quiet"
                 DockPanel.Dock="Right" IsEnabled="False" Padding="12,5" Margin="8,0,0,0" />
@@ -147,7 +151,7 @@
                    TextTrimming="CharacterEllipsis" />
       </DockPanel>
 
-      <!-- 底部日志面板。WPF 版它是窗口的第三行；出错时自动展开（见 ExecuteAsync 的 Failed 事件）。 -->
+      <!-- Bottom log panel. In the WPF version it was the window's third row; it auto-expands on error (see the Failed event of ExecuteAsync). -->
       <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
               BorderThickness="1" CornerRadius="6"
               Background="{DynamicResource Hub.SurfaceAlt}" Padding="12,8">
@@ -160,8 +164,9 @@
               <Button x:Name="OpenLogsButton" Content="{DynamicResource OpenLogs}"
                       Classes="quiet" Padding="10,5" Margin="8,0,0,0" />
             </StackPanel>
-            <!-- Avalonia 的 TextBox 没有 ScrollBarVisibility 属性（滚动由内部 ScrollViewer 负责），
-                 横向滚动靠 TextWrapping="NoWrap" + 内部滚动条即可，不需要额外声明。 -->
+            <!-- Avalonia's TextBox has no ScrollBarVisibility property (scrolling is handled by the internal
+                 ScrollViewer); horizontal scrolling comes from TextWrapping="NoWrap" + the internal scrollbar,
+                 no extra declaration needed. -->
             <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
                      IsReadOnly="True" TextWrapping="NoWrap"
                      AcceptsReturn="True" />

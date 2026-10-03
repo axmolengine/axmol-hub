@@ -11,11 +11,12 @@ using Avalonia.Threading;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 构建进度窗口。WPF 版 <c>BuildProgressWindow.cs</c> 的移植：它整个是**代码构建**的
-/// （没有 XAML），所以移植只是把 WPF 类型换成 Avalonia 类型。
+/// The build progress window. A port of WPF's <c>BuildProgressWindow.cs</c>: it's entirely
+/// **code-built** (no XAML), so the port is just swapping WPF types for Avalonia types.
 ///
-/// 阶段判断（编译 / 打包 / 签名）靠解析子进程输出的命令行，与 WPF 版逐行一致 ——
-/// 这套正则是对着 CMake / Gradle / apksigner 的实际输出调出来的，改动前先看 WPF 版注释。
+/// Stage detection (compile / package / sign) relies on parsing the subprocess command lines, line
+/// for line identical to the WPF version — these regexes were tuned against real CMake / Gradle /
+/// apksigner output, so read the WPF comments before changing them.
 /// </summary>
 public sealed class BuildProgressWindow : Window
 {
@@ -31,7 +32,7 @@ public sealed class BuildProgressWindow : Window
     };
     private readonly Button _cancel = new();
     private readonly Stopwatch _watch = Stopwatch.StartNew();
-    // 不是 readonly：Closed 回调注册得比计时器创建更早，编译器据此认为它可能还是 null。
+    // Not readonly: the Closed callback is registered earlier than the timer creation, so the compiler considers it possibly null.
     private Timer? _timer;
     private readonly Action _cancelBuild;
     private bool _finished;
@@ -95,8 +96,8 @@ public sealed class BuildProgressWindow : Window
             _watch.Stop();
         };
 
-        // Avalonia 没有 WPF 的 DispatcherTimer，用普通 Timer + UI 线程投递。
-        // 少这层投递就会从后台线程改 TextBlock，属于跨线程访问。
+        // Avalonia has no WPF DispatcherTimer, so use a plain Timer + UI-thread post.
+        // Without that post you'd be mutating a TextBlock from a background thread — a cross-thread access.
         _timer = new Timer(_ => Dispatcher.UIThread.Post(() =>
             _elapsed.Text = HubStrings.Get("BuildElapsed") + " " + _watch.Elapsed.ToString(@"hh\:mm\:ss")),
             null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -151,7 +152,7 @@ public sealed class BuildProgressWindow : Window
                 SetStage("BuildConfiguring");
             }
 
-            // 完整命令留在主窗口日志中，不挤占当前步骤。
+            // The full command stays in the main window's log; don't crowd the current step.
             return;
         }
 

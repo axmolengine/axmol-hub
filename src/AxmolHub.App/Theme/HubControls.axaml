@@ -2,21 +2,22 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
   <!--
-    WPF 版 App.xaml 里那批全量 ControlTemplate 的 Avalonia 等价物。
+    Avalonia equivalents of the full set of ControlTemplates from the WPF version's App.xaml.
 
-    两条必须记住的语义差异（详见 docs/avalonia-migration-plan.md §3.1）：
+    Two semantic differences to keep in mind (see docs/avalonia-migration-plan.md §3.1):
 
-    1. Avalonia 没有 Trigger。WPF 的 `<Trigger Property="IsMouseOver"> + Setter TargetName="Frame"`
-       在这里变成「选择器 + 伪类 + /template/ 定位模板内部件」：
+    1. Avalonia has no Trigger. WPF's `<Trigger Property="IsMouseOver"> + Setter TargetName="Frame"`
+       becomes here "selector + pseudo-class + /template/ to target a template-internal part":
          Button:pointerover /template/ Border#Frame
-       伪类名也换了：IsMouseOver→:pointerover、IsKeyboardFocused→:focus、
-       IsEnabled=False→:disabled、IsChecked→:checked、IsHighlighted→:pointerover、
-       IsExpanded→:expanded、IsSelected→:selected。
-    2. WPF 的 `FocusVisualStyle="{x:Null}"` 对应 Avalonia 的 `FocusAdorner="{x:Null}"`。
+       The pseudo-class names changed too: IsMouseOver→:pointerover, IsKeyboardFocused→:focus,
+       IsEnabled=False→:disabled, IsChecked→:checked, IsHighlighted→:pointerover,
+       IsExpanded→:expanded, IsSelected→:selected.
+    2. WPF's `FocusVisualStyle="{x:Null}"` corresponds to Avalonia's `FocusAdorner="{x:Null}"`.
 
-    这里用 ControlTheme（x:Key 为 {x:Type T}）而不是普通 Style：ControlTheme 会**取代**
-    Fluent 主题里同名控件的整套模板，与 WPF 版「自己写全量模板」的取向一致；
-    类样式（Button.primary 之类）在 HubStyles.axaml 里叠加。
+    Here we use ControlTheme (x:Key as {x:Type T}) instead of a plain Style: ControlTheme **replaces**
+    the entire template of the same-named control in the Fluent theme, consistent with the WPF
+    version's "write full templates ourselves" approach; class styles (Button.primary and the like)
+    are layered on in HubStyles.axaml.
   -->
 
   <!-- ==================== Button ==================== -->
@@ -56,7 +57,7 @@
     <Style Selector="^:focus /template/ Border#Frame">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
     </Style>
-    <!-- WPF 版没有按下态：模板整个换掉后按下与常态完全一样。这里补一档。 -->
+    <!-- The WPF version had no pressed state: after replacing the whole template, pressed looked exactly like normal. Here we add one. -->
     <Style Selector="^:pressed /template/ Border#Frame">
       <Setter Property="Opacity" Value="0.72" />
     </Style>
@@ -66,8 +67,8 @@
   </ControlTheme>
 
   <!-- ==================== TextBox ====================
-       PasswordBox 在 Avalonia 里不存在：密码框就是 TextBox 加 PasswordChar，
-       因此那一份 WPF 样式不必单独重写，见 HubStyles.axaml 的 TextBox.password。 -->
+       PasswordBox does not exist in Avalonia: a password box is just a TextBox with PasswordChar,
+       so that WPF style does not need a separate rewrite; see TextBox.password in HubStyles.axaml. -->
   <ControlTheme x:Key="{x:Type TextBox}" TargetType="TextBox">
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -89,11 +90,11 @@
                   BorderBrush="{TemplateBinding BorderBrush}"
                   BorderThickness="{TemplateBinding BorderThickness}"
                   CornerRadius="{TemplateBinding CornerRadius}">
-            <!-- 注意：Avalonia 12 的 TextBox **不再**用 WPF 那个 ScrollViewer#PART_ContentHost，
-                 必须的部件是一个 TextPresenter#PART_TextPresenter（缺了会编译失败 AVLN2205）。
-                 模板结构照官方 Fluent 主题裁到 Hub 实际用得到的最小集：
-                 这里不含 InnerLeftContent / InnerRightContent / 浮动占位符。
-                 另：Avalonia 12 把 Watermark 改名为 PlaceholderText。 -->
+            <!-- Note: Avalonia 12's TextBox **no longer** uses WPF's ScrollViewer#PART_ContentHost;
+                 the required part is a TextPresenter#PART_TextPresenter (missing it fails to compile, AVLN2205).
+                 The template structure is trimmed from the official Fluent theme down to the minimal set Hub actually uses:
+                 it omits InnerLeftContent / InnerRightContent / the floating placeholder.
+                 Also: Avalonia 12 renamed Watermark to PlaceholderText. -->
             <ScrollViewer Name="PART_ScrollViewer"
                           Margin="{TemplateBinding Padding}"
                           HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
@@ -177,9 +178,9 @@
   </ControlTheme>
 
   <!-- ==================== ComboBox ====================
-       模板结构照 Avalonia 官方 Fluent 主题改造。必须保留的部件：
-         PART_Popup（下拉宿主，IsLightDismissEnabled）、PART_ItemsPresenter、
-         以及内容区的 SelectionBoxItem / SelectionBoxItemTemplate 绑定。 -->
+       Template structure adapted from Avalonia's official Fluent theme. Parts that must be kept:
+         PART_Popup (the dropdown host, IsLightDismissEnabled), PART_ItemsPresenter,
+         and the SelectionBoxItem / SelectionBoxItemTemplate bindings in the content area. -->
   <ControlTheme x:Key="{x:Type ComboBox}" TargetType="ComboBox">
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -275,8 +276,8 @@
                   BorderBrush="{DynamicResource Hub.CheckBoxBorder}"
                   BorderThickness="1"
                   CornerRadius="4">
-            <!-- WPF 用的是字体字形「✓」（Segoe UI 私有？不，是普通字符），
-                 换成矢量路径后不依赖任何字体的字形覆盖。 -->
+            <!-- WPF used the font glyph "✓" (a Segoe UI private-use glyph? no, an ordinary character);
+                 switching to a vector path no longer depends on any font's glyph coverage. -->
             <Path Name="Tick"
                   Width="12" Height="12"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -338,10 +339,10 @@
     </Style>
   </ControlTheme>
 
-  <!-- ==================== Expander 头部 ====================
-       单独一个 ControlTheme，是为了让「展开时换箭头」能用标准的
-       `^:checked /template/ ...` 选择器表达 —— 若把它写在 Expander 自己的模板里，
-       就得用两层 /template/ 才能穿到 ToggleButton 模板内部。 -->
+  <!-- ==================== Expander header ====================
+       A separate ControlTheme so that "swap the arrow when expanded" can be expressed with the standard
+       `^:checked /template/ ...` selector — if it were written inside Expander's own template,
+       two levels of /template/ would be needed to reach inside the ToggleButton template. -->
   <ControlTheme x:Key="HubExpanderHeader" TargetType="ToggleButton">
     <Setter Property="FocusAdorner" Value="{x:Null}" />
     <Setter Property="HorizontalContentAlignment" Value="Left" />
@@ -366,7 +367,7 @@
         </Border>
       </ControlTemplate>
     </Setter>
-    <!-- WPF 是换字形（› → ⌄），这里是同一个路径转 90°。 -->
+    <!-- WPF swapped the glyph (› → ⌄); here the same path is rotated 90°. -->
     <Style Selector="^:checked /template/ Path#Arrow">
       <Setter Property="RenderTransform" Value="rotate(90deg)" />
     </Style>
@@ -403,8 +404,8 @@
     </Setter>
   </ControlTheme>
 
-  <!-- ==================== ScrollBar 的滑块 ====================
-       与 Expander 头部同理：单独一个 ControlTheme 让悬停态能用单层选择器表达。 -->
+  <!-- ==================== ScrollBar thumb ====================
+       Same reasoning as the Expander header: a separate ControlTheme lets the hover state be expressed with a single-level selector. -->
   <ControlTheme x:Key="HubScrollThumb" TargetType="Thumb">
     <Setter Property="Template">
       <ControlTemplate>
@@ -420,11 +421,12 @@
   </ControlTheme>
 
   <!-- ==================== ScrollBar ====================
-       WPF 版是固定的 10px 常驻条。Avalonia 的 Fluent 默认是悬浮自动隐藏的细条，
-       这里整体换掉，保持与 WPF 版一致的常驻外观。
-       部件：Track#PART_Track 需要 Minimum/Maximum/Value/ViewportSize/Orientation，
-       Thumb 直接挂在 Track.Thumb 上。Track 的 DecreaseButton/IncreaseButton 是
-       可空属性（已核对 Avalonia 12.1.3 的 Track.cs），WPF 版也没有翻页按钮，故一并省去。 -->
+       The WPF version was a fixed, always-visible 10px bar. Avalonia's Fluent default is a floating,
+       auto-hiding thin bar; here it is replaced entirely to keep the always-visible look of the WPF version.
+       Parts: Track#PART_Track needs Minimum/Maximum/Value/ViewportSize/Orientation;
+       Thumb hangs directly off Track.Thumb. Track's DecreaseButton/IncreaseButton are
+       nullable properties (verified against Track.cs in Avalonia 12.1.3), and the WPF version had no
+       paging buttons either, so they are omitted as well. -->
   <ControlTheme x:Key="{x:Type ScrollBar}" TargetType="ScrollBar">
     <Setter Property="Background" Value="{DynamicResource Hub.ScrollTrack}" />
     <Setter Property="AllowAutoHide" Value="False" />

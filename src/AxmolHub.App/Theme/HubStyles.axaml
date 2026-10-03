@@ -2,52 +2,54 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
   <!--
-    WPF 里用 x:Key 命名的 Style（Muted / Card / Primary / Quiet）在 Avalonia 的对应物是
-    **样式类**：控件上写 Classes="muted" / "card" / "primary" / "quiet"。
-    类样式叠加在 ControlTheme 之上，所以不再需要 WPF 那句
-    `BasedOn="{StaticResource {x:Type Button}}"` —— 两条样式都会生效。
+    The Avalonia counterpart of WPF's x:Key-named styles (Muted / Card / Primary / Quiet) is the
+    **style class**: controls carry Classes="muted" / "card" / "primary" / "quiet".
+    Class styles layer on top of ControlTheme, so WPF's
+    `BasedOn="{StaticResource {x:Type Button}}"` is no longer needed — both styles take effect.
 
-    本文件另一部分是从 App.xaml 搬来的、本来就不带模板的样式（DataGrid 一族的属性设置）。
+    The other part of this file is the template-less styles moved over from App.xaml
+    (the DataGrid family's property settings).
   -->
 
   <Styles.Resources>
 
-    <!-- 字体回退链。WPF 版写死 "Segoe UI, Microsoft YaHei UI"，在 macOS / Linux 上前一个不存在，
-         中文因此只能靠系统兜底。这里三平台的常见字体各给一个，且都排在通用族之前。 -->
+    <!-- Font fallback chain. The WPF version hard-coded "Segoe UI, Microsoft YaHei UI"; on macOS / Linux
+         the first of these does not exist, so Chinese fell back to whatever the system provides. Here we
+         give one common font per platform, all ranked before the generic family. -->
     <FontFamily x:Key="Hub.Font.Ui">Segoe UI, Microsoft YaHei UI, PingFang SC, Hiragino Sans GB, Source Han Sans SC, Noto Sans CJK SC, DejaVu Sans, sans-serif</FontFamily>
     <FontFamily x:Key="Hub.Font.Mono">Cascadia Mono, Consolas, SF Mono, Menlo, DejaVu Sans Mono, Noto Sans Mono CJK SC, monospace</FontFamily>
 
   </Styles.Resources>
 
-  <!-- ==================== 窗口与正文 ==================== -->
+  <!-- ==================== Window and body text ==================== -->
   <Style Selector="Window">
     <Setter Property="FontFamily" Value="{StaticResource Hub.Font.Ui}" />
     <Setter Property="Background" Value="{DynamicResource Hub.Background}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
   </Style>
 
-  <!-- WPF 版的 TextBlock 默认样式（前景色 + 垂直居中）在这里保持原样。
-         注意这是全局的：它的前景色会盖过从父级继承来的颜色，与 WPF 行为一致。 -->
+  <!-- The WPF version's TextBlock default style (foreground + vertical centering) is kept as-is here.
+         Note this is global: its foreground overrides colors inherited from the parent, matching WPF's behavior. -->
   <Style Selector="TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
 
-  <!-- WPF 的 Style x:Key="Muted" -->
+  <!-- WPF's Style x:Key="Muted" -->
   <Style Selector="TextBlock.muted">
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     <Setter Property="FontSize" Value="12" />
     <Setter Property="TextWrapping" Value="Wrap" />
   </Style>
 
-  <!-- 活动日志用的等宽字体（WPF 是内联 FontFamily="Consolas"） -->
+  <!-- Monospace font for the activity log (WPF inlined FontFamily="Consolas") -->
   <Style Selector="TextBox.mono">
     <Setter Property="FontFamily" Value="{StaticResource Hub.Font.Mono}" />
     <Setter Property="FontSize" Value="11" />
   </Style>
 
-  <!-- ==================== 容器 ==================== -->
-  <!-- WPF 的 Style x:Key="Card" -->
+  <!-- ==================== Containers ==================== -->
+  <!-- WPF's Style x:Key="Card" -->
   <Style Selector="Border.card">
     <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
@@ -56,8 +58,8 @@
     <Setter Property="Padding" Value="20" />
   </Style>
 
-  <!-- ==================== 按钮变体 ==================== -->
-  <!-- WPF 的 Style x:Key="Primary" -->
+  <!-- ==================== Button variants ==================== -->
+  <!-- WPF's Style x:Key="Primary" -->
   <Style Selector="Button.primary">
     <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
@@ -65,14 +67,15 @@
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
-  <!-- WPF 的 Style x:Key="Quiet" -->
+  <!-- WPF's Style x:Key="Quiet" -->
   <Style Selector="Button.quiet">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
   </Style>
 
-  <!-- P4 新增。WPF 版没有"危险操作"按钮变体：那里 MessageBoxImage.Warning/Error 只换图标，
-       卸载 / 删除这类确认框的确认键与普通确认键长得一样。HubDialog 把这一档补成按钮变体。 -->
+  <!-- Added in P4. The WPF version had no "dangerous action" button variant: there MessageBoxImage.Warning/Error
+       only swapped the icon, and the confirm button of uninstall / delete confirmation dialogs looked exactly
+       like a normal confirm button. HubDialog adds this tier as a button variant. -->
   <Style Selector="Button.danger">
     <Setter Property="Background" Value="{DynamicResource Hub.Danger}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
@@ -80,22 +83,23 @@
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
-  <!-- ==================== 输入 ==================== -->
-  <!-- WPF 的 PasswordBox 样式。Avalonia 没有 PasswordBox：密码框 = TextBox + PasswordChar，
-         因此这里只是一个类，而不是一套模板。 -->
+  <!-- ==================== Inputs ==================== -->
+  <!-- The WPF PasswordBox style. Avalonia has no PasswordBox: password box = TextBox + PasswordChar,
+         so this is just a class, not a template. -->
   <Style Selector="TextBox.password">
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
   </Style>
 
-  <!-- ==================== DataGrid 一族 ====================
-       WPF 版在 App.xaml 里给 DataGrid / DataGridColumnHeader / DataGridCell / DataGridRow
-       各写了一份样式。这里只覆盖属性与状态色，**不替换 DataGrid 自己的模板**：
-       DataGrid 的单元格/行模板部件比手写模板能覆盖的多，P5 迁移 35 处引用时更需要它稳定。
+  <!-- ==================== DataGrid family ====================
+       The WPF version wrote one style each for DataGrid / DataGridColumnHeader / DataGridCell / DataGridRow
+       in App.xaml. Here we only override properties and state colors, **without replacing DataGrid's own template**:
+       DataGrid's cell/row template parts cover more than a hand-written template could, and stability matters
+       even more for the 35 references migrated in P5.
 
-       与 WPF 的差异（Avalonia 的 DataGrid 没有对应属性，故无法照搬）：
-         RowHeight / ColumnHeaderHeight → 改用行的 MinHeight（见下）
-         AlternatingRowBackground（斑马行）→ 无对应属性，暂缺
-         SelectionUnit / CanUserResizeRows → 无对应属性，默认行为已接近 -->
+       Differences from WPF (Avalonia's DataGrid has no corresponding property, so they cannot be ported verbatim):
+         RowHeight / ColumnHeaderHeight → use the row's MinHeight instead (see below)
+         AlternatingRowBackground (zebra rows) → no corresponding property, missing for now
+         SelectionUnit / CanUserResizeRows → no corresponding property; default behavior is already close -->
   <Style Selector="DataGrid">
     <Setter Property="Background" Value="{DynamicResource Hub.GridSurface}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -119,7 +123,7 @@
   <Style Selector="DataGridCell">
     <Setter Property="Padding" Value="14,8" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    <!-- WPF 的 `FocusVisualStyle="{x:Null}"` 在 Avalonia 是 FocusAdorner。 -->
+    <!-- WPF's `FocusVisualStyle="{x:Null}"` is FocusAdorner in Avalonia. -->
     <Setter Property="FocusAdorner" Value="{x:Null}" />
   </Style>
 
@@ -127,8 +131,9 @@
     <Setter Property="MinHeight" Value="56" />
   </Style>
 
-  <!-- 悬停与选中都画在行模板里的 Rectangle#BackgroundRectangle 上（已核对 Avalonia 的
-       DataGrid Fluent 主题），所以要用 /template/ 定位到那个部件，并显式压掉主题给的透明度。 -->
+  <!-- Hover and selection are both painted on Rectangle#BackgroundRectangle in the row template
+       (verified against Avalonia's DataGrid Fluent theme), so /template/ is used to target that part,
+       and the theme-provided opacity is explicitly overridden. -->
   <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
     <Setter Property="Fill" Value="{DynamicResource Hub.RowHover}" />
     <Setter Property="Opacity" Value="1" />

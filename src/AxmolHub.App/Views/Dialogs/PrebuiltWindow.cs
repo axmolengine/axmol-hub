@@ -8,16 +8,18 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 「预编译库设置」对话框（每项目）。纯代码构建，跟随 <see cref="AndroidReleaseWindow"/> 的路子。
+/// The "prebuilt library settings" dialog (per project). Pure code-built, following the
+/// <see cref="AndroidReleaseWindow"/> approach.
 ///
-/// 它要回答用户的三个问题：
+/// It answers three questions the user has:
 /// <list type="number">
-/// <item>现在这个项目到底链不链预编译库；</item>
-/// <item>引擎那一份在**当前目标 + 配置**下能不能用、在哪个目录；</item>
-/// <item>不能用的话该怎么办（去引擎页构建）。</item>
+/// <item>whether this project currently links prebuilt libraries;</item>
+/// <item>whether the engine's copy is usable under the **current target + configuration**, and in which directory;</item>
+/// <item>what to do when it's unusable (build it from the engines page).</item>
 /// </list>
-/// 第 2 条尤其重要：引擎在目录不可用时会**静默退回源码构建**（不报错），
-/// 所以「我勾了但到底生效没有」必须在这里说清楚，而不是等构建完才发现慢得离谱。
+/// Point 2 matters especially: when the directory is unusable the engine **silently falls back to
+/// source build** (no error), so "I checked it but did it actually take effect" must be made clear
+/// here, not discovered after the build runs absurdly slowly.
 /// </summary>
 public sealed class PrebuiltWindow : Window
 {
@@ -52,7 +54,7 @@ public sealed class PrebuiltWindow : Window
             Content = HubStrings.Get("UsePrebuilt"),
             IsChecked = enabled,
             Margin = new Thickness(0, 16, 0, 0),
-            // 目标平台不支持时不给勾：勾了也只会让构建失败。
+            // Don't allow checking when the target platform is unsupported: checking would only make the build fail.
             IsEnabled = availability.Status != PrebuiltStatus.PlatformUnsupported,
         };
         panel.Children.Add(_enabled);
@@ -65,7 +67,7 @@ public sealed class PrebuiltWindow : Window
             Margin = new Thickness(0, 8, 0, 0),
         });
 
-        // 解析结论：就绪时给「平台 架构 配置 → 目录」，否则给精确原因。
+        // The resolution conclusion: when ready, "platform architecture configuration → directory", otherwise the precise reason.
         var status = availability.Usable
             ? string.Format(HubStrings.Get("PrebuiltReadyFormat"), availability.Label, availability.RelativeDirectory)
             : HubStrings.Get(availability.TextKey);
@@ -81,7 +83,7 @@ public sealed class PrebuiltWindow : Window
         ok.Click += (_, _) => Close(HubDialogResult.Ok);
         var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
 
-        // 不可用时把「怎么办」和入口一起给出来，省得用户自己找。
+        // When unusable, give the "what to do" along with the entry point so the user doesn't have to hunt for it.
         if (!availability.Usable)
         {
             panel.Children.Add(new TextBlock

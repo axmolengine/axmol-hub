@@ -4,8 +4,9 @@
         Width="560" Height="320"
         Title="Axmol Hub — P4 基础件自检">
 
-  <!-- 与控件画廊同一个角色：开发工件，不属于产品界面。它做两件事 ——
-       跑基础件断言，以及被真截一次图（"截图非空白"的判据必须拿一张真图验证过，否则判据本身没证据）。 -->
+  <!-- Same role as the control gallery: a development artifact, not part of shipping UI. It does two
+       things — runs the foundation assertions, and gets actually screenshotted once (the "screenshot is
+       non-blank" criterion must be verified against a real image, otherwise the criterion itself has no evidence). -->
   <StackPanel Margin="28" Spacing="10">
     <TextBlock FontSize="18" FontWeight="SemiBold" Text="P4 基础件自检" />
     <TextBlock Classes="muted"

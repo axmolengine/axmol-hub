@@ -50,7 +50,7 @@ public sealed class PackageInstaller(DownloadManager downloads, string root, Act
             else if (!File.Exists(SafePath(contents, package.VerifyFile))) throw new InvalidDataException("Package executable is missing.");
             StateStore.WriteJson(Path.Combine(contents, ".hub-install.json"), new { package.Id, package.Version, package.Sha256, package.Url, InstallationId = Guid.NewGuid().ToString("N") });
             cancellation.ThrowIfCancellationRequested();
-            // 全部校验通过后才将安装目录发布，半包永远不成为 Installed。
+            // Only publish the install directory after all validation passes; a half-installed package never becomes Installed.
             Directory.Move(contents, destination);
             log($"Installed: {destination}");
             return destination;
@@ -79,7 +79,7 @@ public sealed class PackageInstaller(DownloadManager downloads, string root, Act
     public string Uninstall(PackageEntry package)
     {
         var destination = VerifyOwned(package);
-        // 只撤下 Hub 管理的安装；保留恢复目录，不递归删除用户可能添加的文件。
+        // Only remove Hub-managed installs; keep a recovery directory and never recursively delete files the user may have added.
         var recovery = SafePath(root, "trash/" + package.Id + "-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.GetDirectoryName(recovery)!);
         Directory.Move(destination, recovery);

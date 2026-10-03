@@ -11,12 +11,14 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 外壳。形态与 WPF 版逐格一致（见 MainWindow.axaml 顶部注释），职责也只有三件：
-/// 装配导航、把页面放进 <c>PageHost</c>、把 <see cref="HubWorkspace"/> 的事件翻译成
-/// 状态栏 / 日志面板 / 取消按钮。
+/// The shell. Its shape matches the WPF version pixel for pixel (see the comment at the top of
+/// MainWindow.axaml), and it has exactly three responsibilities: wiring navigation, placing pages
+/// into <c>PageHost</c>, and translating <see cref="HubWorkspace"/> events into the status bar /
+/// log panel / cancel button.
 ///
-/// **业务逻辑一行都不在这里**：引擎、模块、构建、运行、设备全在 Core，
-/// 编排在 <see cref="HubWorkspace"/>（它是 WPF <c>MainWindow.xaml.cs</c> 非视觉那一半的整体搬运）。
+/// **Not a single line of business logic lives here**: engines, modules, build, run, and devices
+/// are all in Core, orchestrated by <see cref="HubWorkspace"/> (a wholesale port of the non-visual
+/// half of WPF <c>MainWindow.xaml.cs</c>).
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -28,16 +30,18 @@ public partial class MainWindow : Window
     private string _currentKey = "";
 
     /// <summary>
-    /// 供 XAML 加载器与设计预览使用（不加会报 AVLN3001"无法通过运行时加载器取得"）。
-    /// 用默认数据根是安全的：**构造只读不写** —— 只有用户点按钮才会落盘。
+    /// For the XAML loader and design-time preview (without it Avalonia reports AVLN3001 "not
+    /// available via the runtime loader"). Using the default data root is safe: **construction
+    /// only reads, never writes** — nothing is persisted until the user clicks a button.
     /// </summary>
     public MainWindow() : this(HubHostOptions.DefaultDataRoot)
     {
     }
 
     /// <summary>
-    /// 数据根与设置文件都走默认位置。**验收程序不要用这个重载**：
-    /// 切语言会写设置文件，而默认设置文件是用户自己的那一份。
+    /// Data root and settings file both use their default locations. **Verification programs must
+    /// not use this overload**: switching language writes the settings file, and the default
+    /// settings file is the user's own.
     /// </summary>
     public MainWindow(string dataRoot)
         : this(dataRoot, new PreferencesStore(HubHostOptions.DefaultPreferencesPath), new HubPreferences())
@@ -61,22 +65,27 @@ public partial class MainWindow : Window
         NavToolchains.IsCheckedChanged += (_, _) => OnNavigated(NavToolchains, "Toolchains");
         NavSettings.IsCheckedChanged += (_, _) => OnNavigated(NavSettings, "Settings");
 
-        // 默认停在"项目"页，与 WPF 版一致（WPF 是 NavProjects IsChecked="True"）。
+        // Default to the "Projects" page, matching the WPF version (WPF uses NavProjects IsChecked="True").
         NavigateTo("Projects");
 
-        // 字体结论要在**窗口已经在屏幕上**之后再处理：模态框的 owner 必须先显示出来。
+        // Font conclusions must be handled only after the window is on screen: a modal's owner
+        // must be shown first.
         Opened += (_, _) => ReportFonts();
     }
 
     /// <summary>
-    /// 启动时的字体自检。两件事分开做，因为受众不同：
+    /// Startup font self-check. Two things are done separately because they have different
+    /// audiences:
     ///
-    /// ① **日志**：只要探测到没有中文字体就写一行，不管界面是哪种语言 ——
-    ///    英文界面下的用户没受影响，但"中文为什么是方框"必须在日志里查得到。
-    /// ② **弹窗**：只在界面语言是中文时弹（判据在 <see cref="CjkFontNotice.ShouldWarn"/>）——
-    ///    那一刻用户看到的就是一片方框，不提示等于让人对着一个坏掉的界面猜。
+    /// ① **Log**: write a line whenever a missing Chinese font is detected, regardless of the UI
+    ///    language — users on the English UI aren't affected, but "why is Chinese rendering as
+    ///    boxes" must be findable in the log.
+    /// ② **Dialog**: only pop up when the UI language is Chinese (criterion in
+    ///    <see cref="CjkFontNotice.ShouldWarn"/>) — at that moment the user sees nothing but boxes,
+    ///    and not prompting means leaving them to guess at a broken UI.
     ///
-    /// 探测放在**这一帧**而不是构造函数里：<c>FontManager.Current</c> 需要平台字体实现已就位。
+    /// The probe runs in this frame rather than the constructor: <c>FontManager.Current</c> needs
+    /// the platform font implementation to be in place.
     /// </summary>
     private void ReportFonts()
     {
@@ -86,7 +95,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Unknown 也记一行：这里区分得开"没有字体"和"没探测出来"，日志里同样要区分得开。
+        // Log a line for Unknown too: here we can tell "no font" apart from "probe failed", and the
+        // log should make the same distinction.
         _workspace.Log.Write(availability == CjkFontAvailability.Missing
             ? CjkFontNotice.LogLine
             : "CJK font probe returned no result; Chinese rendering is unverified.");
@@ -97,14 +107,16 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>装配好的页面键。验收程序靠它确认四个导航项都有落点。</summary>
+    /// <summary>The assembled page keys. Verification programs rely on it to confirm all four
+    /// navigation items have a destination.</summary>
     internal static string[] PageKeys => ["Projects", "Installs", "Toolchains", "Settings"];
 
     internal HubWorkspace Workspace => _workspace;
 
     /// <summary>
-    /// 切换页面并把结果返回给调用方，供运行期断言使用。
-    /// 页面**按需构造并缓存**：每次导航都重建会丢掉选择与滚动位置。
+    /// Switches pages and returns the result to the caller for runtime assertions.
+    /// Pages are **constructed on demand and cached**: rebuilding on every navigation would lose
+    /// selection and scroll position.
     /// </summary>
     internal Control NavigateTo(string name)
     {
@@ -128,8 +140,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 让左侧导航高亮与当前页面一致。WPF 版在 <c>SelectPage</c> 里做的正是这件事。
-    /// 漏掉它会出现"显示 A 页、高亮 B 页"—— 编译期、绑定期都看不出来，只能靠截图核对。
+    /// Keeps the left navigation highlight in sync with the current page. This is exactly what the
+    /// WPF version does in <c>SelectPage</c>.
+    /// Skipping it yields "showing page A but highlighting page B" — invisible at compile time and
+    /// at binding time, only catchable by screenshot review.
     /// </summary>
     private void SyncNavigation(string name)
     {
@@ -152,17 +166,22 @@ public partial class MainWindow : Window
     internal void SetStatus(string text) => Status.Text = text;
 
     /// <summary>
-    /// 切换数据根。**刻意不重建窗口** —— WPF 版是 new 一个 <c>MainWindow</c> 再 Close 旧的那个，
-    /// 因为它的状态、页面、日志全绑在根上。这里只重建 <see cref="HubWorkspace"/> 并丢弃页面缓存：
-    /// 页面持有工作区引用，而换根之后旧的选择（选中项目、设备列表、展开的新建面板）本来就该失效。
+    /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
+    /// up a <c>MainWindow</c> and closes the old one because its state, pages, and log are all bound
+    /// to the root. Here we only rebuild <see cref="HubWorkspace"/> and drop the page cache: pages
+    /// hold workspace references, and after a root switch the old selections (selected project,
+    /// device list, expanded new-project panel) should be invalid anyway.
     ///
-    /// 换来的是：切换数据根不再依赖外壳形态，也就不必等主窗口形态定稿。
+    /// The payoff: switching the data root no longer depends on the shell shape, so we don't have
+    /// to wait for the main window shape to be finalized.
     /// </summary>
-    /// <returns>是否真的换了。目标与当前根相同时什么也不做。</returns>
+    /// <returns>Whether it actually switched. Does nothing when the target equals the current
+    /// root.</returns>
     internal bool SwitchDataRoot(string directory)
     {
-        // 有操作在跑时禁止切换：操作持有旧根的下载器、日志与工具链目录，
-        // 中途换根会让它往一个已经不属于当前会话的目录里写。
+        // Switching is forbidden while an operation is running: the operation holds the old root's
+        // downloader, log, and toolchain directories, and switching mid-run would make it write into
+        // a directory that no longer belongs to the current session.
         if (_workspace.IsBusy)
         {
             throw new InvalidOperationException(HubStrings.Get("WaitForOperation"));
@@ -174,8 +193,10 @@ public partial class MainWindow : Window
             return false;
         }
 
-        // 先落盘再换。换完就回不到旧实例了，写失败必须能**在旧状态上**就地报错，
-        // 否则会出现"界面指向新根、设置文件还写着旧根"，下次启动悄悄变回去。
+        // Persist first, then switch. Once switched there's no going back to the old instance, so a
+        // failed write must surface the error in place, on the old state — otherwise the UI would
+        // point at the new root while the settings file still says the old root, silently reverting
+        // on the next launch.
         var previous = _preferences.DataRoot;
         _preferences.DataRoot = path;
         try
@@ -199,13 +220,15 @@ public partial class MainWindow : Window
         _workspace = next;
         _workspace.Owner = this;
 
-        // 事件挂在新实例上，因此这里重复订阅不会让日志被追加两遍。
+        // Events are wired on the new instance, so re-subscribing here won't append the log twice.
         WireWorkspace();
 
-        // 旧页面持有旧工作区，必须整体丢弃；下一次 NavigateTo 会重新构造。
+        // Old pages hold the old workspace and must be dropped wholesale; the next NavigateTo will
+        // reconstruct them.
         _pages.Clear();
 
-        // 日志面板里是上一个根的内容，留着会把人引到已经不看的目录里去。
+        // The log panel holds the previous root's content; leaving it would point people at a
+        // directory no one is looking at anymore.
         ActivityLog.Text = "";
         LogPanel.IsExpanded = false;
 
@@ -213,15 +236,18 @@ public partial class MainWindow : Window
         NavigateTo(_currentKey);
     }
 
-    /// <summary>设置里的语言。<see cref="PageShots"/> 切完语言要靠它切回来。</summary>
+    /// <summary>The language in settings. <see cref="PageShots"/> relies on it to switch back after
+    /// changing language.</summary>
     internal string PreferredLanguage => _preferences.Language;
 
     /// <summary>
-    /// 切语言并让界面立刻重绘。与设置页点语言下拉是同一条路径，
-    /// 只是调用方从人变成了 <c>--smoke-pages</c>。
+    /// Switches language and repaints the UI immediately. This is the same path as picking a
+    /// language in the settings page dropdown; only the caller changes from a person to
+    /// <c>--smoke-pages</c>.
     ///
-    /// **会写设置文件**：语言是用户偏好，不落盘就跟"设置页里的当前选择"分叉。
-    /// 用 <c>--preferences</c> 指向临时文件即可避免动到用户那一份。
+    /// **Writes the settings file**: language is a user preference, and not persisting it would
+    /// diverge from the current selection in the settings page. Point <c>--preferences</c> at a
+    /// temporary file to avoid touching the user's own.
     /// </summary>
     internal void UseLanguage(string language)
     {
@@ -231,7 +257,8 @@ public partial class MainWindow : Window
         ApplyLanguage();
     }
 
-    /// <summary>换语言后重算所有**命令式**写入的文案（DynamicResource 管不到它们）。</summary>
+    /// <summary>Recomputes all **imperatively** written copy after a language change (DynamicResource
+    /// doesn't cover them).</summary>
     internal void ApplyLanguage()
     {
         InitializeChrome();
@@ -244,12 +271,14 @@ public partial class MainWindow : Window
             }
         }
 
-        // 页面里由代码算出的文案（表头、空态提示、按钮标签）都要重来一遍。
+        // Copy computed in code inside pages (headers, empty-state hints, button labels) must all be
+        // recomputed.
         _workspace.Refresh();
 
-        // 切语言是**第二个**该提示字体的时机，而且是更准的那个：用户主动选了中文，
-        // 这一刻他才真的会看到方框。放在最后 —— 先把界面文案重算完，用户点掉弹窗时
-        // 看到的就是已经切好的界面，而不是半新半旧的。
+        // Switching language is the second moment to warn about fonts — and the more accurate one:
+        // the user has actively chosen Chinese, and only now will they actually see boxes. Do it
+        // last — recompute the UI copy first, so when the user dismisses the dialog they see the
+        // fully switched UI rather than a half-new, half-old one.
         CjkFontNotifier.NotifyIfNeeded(this);
     }
 
@@ -271,13 +300,15 @@ public partial class MainWindow : Window
                 ActivityLog.Text = text[^80000..];
             }
 
-            // 把光标移到末尾即"滚到底"。Avalonia 的 TextBox 没有 ScrollToEnd。
+            // Moving the caret to the end is how we "scroll to bottom". Avalonia's TextBox has no
+            // ScrollToEnd.
             ActivityLog.CaretIndex = ActivityLog.Text?.Length ?? 0;
         };
 
         _workspace.StatusChanged += text => Status.Text = text;
 
-        // 操作期间页面禁用、取消可用 —— 对应 WPF 版的 Pages.IsEnabled / CancelButton.IsEnabled。
+        // During an operation pages are disabled and cancel is enabled — matching WPF's
+        // Pages.IsEnabled / CancelButton.IsEnabled.
         _workspace.BusyChanged += busy =>
         {
             PageHost.IsEnabled = !busy;
@@ -286,7 +317,8 @@ public partial class MainWindow : Window
 
         _workspace.Failed += () => LogPanel.IsExpanded = true;
 
-        // 对话框（如「预编译库设置」）不能直接引用主窗口，跳页经工作区转发到这里。
+        // Dialogs (e.g. "prebuilt library settings") can't reference the main window directly, so
+        // page navigation is forwarded here through the workspace.
         _workspace.NavigateRequested += key =>
         {
             if (PageKeys.Contains(key))
@@ -312,7 +344,8 @@ public partial class MainWindow : Window
 
         OpenLogsButton.Click += (_, _) => _workspace.Open(_workspace.Log.Folder);
 
-        // 有操作在跑时不许关窗（WPF 版 Closing 处理），否则子进程会被丢下。
+        // Closing is forbidden while an operation is running (handled in WPF's Closing), otherwise
+        // child processes would be left behind.
         Closing += (_, e) =>
         {
             if (!_workspace.IsBusy)
@@ -334,20 +367,24 @@ public partial class MainWindow : Window
         BrandVersion.Text = "v" + version;
         Title = "Axmol Hub " + BrandVersion.Text;
 
-        // WPF 版左下角写死 "AXMOL 2.11 LTS"。Avalonia 版改成按**默认引擎**现算：
-        // 写死版本号会在 v3 发布当天变成错的 —— 这正是 A1（单引擎版本绑定）那类问题。
+        // The WPF version hard-codes "AXMOL 2.11 LTS" in the bottom-left. The Avalonia version
+        // computes it from the **default engine** at runtime: hard-coding the version number would
+        // become wrong the day v3 ships — exactly the A1 (single-engine version binding) class of bug.
         var state = _workspace.State;
         var engine = state.Engines.FirstOrDefault(candidate => candidate.Path == state.DefaultEnginePath);
         BrandLine.Text = engine is null ? "AXMOL" : "AXMOL " + engine.Version;
 
-        // WPF 版写死 "Windows x64"。Avalonia 版要跑三个平台，按真实宿主算。
+        // The WPF version hard-codes "Windows x64". The Avalonia version runs on three platforms and
+        // computes it from the real host.
         var os = OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";
         HostLine.Text = os + " " + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
     }
 
     /// <summary>
-    /// 把目录交给系统 shell 打开。Avalonia 没有 WPF <c>Process.Start(UseShellExecute)</c> 的封装，
-    /// 直接起进程即可。失败写进状态栏而不是向上抛：点一下"打开目录"不该让整个程序炸掉。
+    /// Hands a directory to the system shell to open. Avalonia has no wrapper for WPF's
+    /// <c>Process.Start(UseShellExecute)</c>, so just start the process directly. Failures go to
+    /// the status bar instead of being thrown: clicking "open directory" shouldn't blow up the
+    /// whole program.
     /// </summary>
     private void OpenFolder(string path)
     {

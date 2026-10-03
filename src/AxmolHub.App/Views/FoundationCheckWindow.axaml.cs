@@ -11,12 +11,12 @@ using static AxmolHub.App.ThemeProbe;
 namespace AxmolHub.App;
 
 /// <summary>
-/// P4 基础件的运行期自检。现在断言的是：替换 MessageBox 的 HubDialog、异步化的选择器包装、
-/// 以及 <c>--smoke</c> 的"非空白"判据。
+/// P4 foundation runtime self-check. What it asserts now: the MessageBox-replacing HubDialog, the
+/// async picker wrappers, and <c>--smoke</c>'s "non-blank" criterion.
 ///
-/// 为什么非要运行期断言：Avalonia 的样式与模板写错**不会报错**，只会静默退化
-/// （见 Services/ThemeProbe.cs 的说明）；而"截图是空白的"这个失效模式更隐蔽 ——
-/// 进程照样退出 0、PNG 照样存在。
+/// Why runtime assertions are necessary: a wrong Avalonia style or template **doesn't error**, it
+/// just silently degrades (see Services/ThemeProbe.cs); and the "screenshot is blank" failure mode
+/// is even more subtle — the process still exits 0 and the PNG still exists.
 /// </summary>
 public partial class FoundationCheckWindow : Window
 {
@@ -88,7 +88,7 @@ public partial class FoundationCheckWindow : Window
             Finish(lines, passed, failed);
         }, DispatcherPriority.Background);
 
-        // 兜底：窗口没能显示时不要让进程一直挂着（自动化里挂住比失败更难查）。
+        // Fallback: don't let the process hang forever if the window never shows (in automation, hanging is harder to diagnose than failing).
         DispatcherTimer.RunOnce(() =>
         {
             if (!finished)
@@ -109,11 +109,12 @@ public partial class FoundationCheckWindow : Window
     }
 
     /// <summary>
-    /// 负向对照：让"非空白"判据面对一张**真的纯色窗口截图**。
+    /// Negative control: faces the "non-blank" criterion with a **real solid-color window capture**.
     ///
-    /// 上面用合成缓冲验的是判据的算术，这里验的是整条管线 —— 真正要防的失效模式是
-    /// "截早了/渲染没起来 → 纯色图 → 仍然退出 0"。只证明判据能放行好图是不够的，
-    /// 还得证明它**真的会拦下坏图**，否则这条防线只是装饰。
+    /// The synthetic buffer above verified the criterion's arithmetic; this verifies the whole
+    /// pipeline — the failure mode we really guard against is "captured too early / rendering not
+    /// up → solid image → still exits 0". Proving the criterion lets good images through isn't
+    /// enough; it must also **actually reject bad ones**, otherwise the defense is just decoration.
     /// </summary>
     private static void CheckBlankFrameIsRejected(Action<bool, string> check)
     {
@@ -123,7 +124,7 @@ public partial class FoundationCheckWindow : Window
         {
             Width = 200,
             Height = 120,
-            // 12.1.3 里 SystemDecorations 已过时，改名成 WindowDecorations（枚举同名）。
+            // In 12.1.3 SystemDecorations is obsolete, renamed WindowDecorations (same enum name).
             WindowDecorations = WindowDecorations.None,
             Background = Brushes.Black,
         };
@@ -146,8 +147,9 @@ public partial class FoundationCheckWindow : Window
     }
 
     /// <summary>
-    /// 选择器结果的判定逻辑。"选中的是云端/虚拟位置"必须与"用户取消"区分开：
-    /// 前者把 null 当路径用会静默地创建一个相对路径工程，后者才是正常的放弃。
+    /// The picker-result decision logic. "Picked a cloud/virtual location" must be distinguished
+    /// from "user cancelled": the former treats null as a path and silently creates a relative-path
+    /// project, while the latter is a normal give-up.
     /// </summary>
     private static void CheckPickerDecision(Action<bool, string> check)
     {
@@ -168,9 +170,10 @@ public partial class FoundationCheckWindow : Window
     }
 
     /// <summary>
-    /// 用真实 <see cref="Avalonia.Platform.Storage.IStorageProvider"/> 跑一次往返，
-    /// 证明 <c>TryGetLocalPath()</c> 这条扩展真的接得上 —— 上面那组只验了判定逻辑，
-    /// 验不到"平台实现是否按约定返回本地路径"。
+    /// Runs one round-trip with a real <see cref="Avalonia.Platform.Storage.IStorageProvider"/> to
+    /// prove the <c>TryGetLocalPath()</c> extension really hooks up — the group above only verified
+    /// the decision logic, and can't verify "does the platform implementation return a local path
+    /// as promised".
     /// </summary>
     private async Task CheckRealStorageProviderAsync(Action<bool, string> check)
     {
@@ -200,8 +203,9 @@ public partial class FoundationCheckWindow : Window
     }
 
     /// <summary>
-    /// "非空白"判据本身。合成的像素缓冲足够说明问题：纯色必须被判为空白，
-    /// 有条纹的必须不被判为空白。否则这条判据不是在保护证据，而是在制造假绿。
+    /// The "non-blank" criterion itself. A synthetic pixel buffer suffices: a solid color must be
+    /// judged blank, a striped one must not. Otherwise the criterion isn't protecting evidence —
+    /// it's manufacturing fake greens.
     /// </summary>
     private static void CheckBlankDetector(Action<bool, string> check)
     {
@@ -240,7 +244,7 @@ public partial class FoundationCheckWindow : Window
 
     private static async Task CheckDialogAsync(IClassicDesktopStyleApplicationLifetime lifetime, Action<bool, string> check)
     {
-        // ---- OkCancel + danger：WPF 版"卸载"确认框的那一档 ----
+        // ---- OkCancel + danger: the tier of the WPF "uninstall" confirmation box ----
         var pending = HubDialog.ShowAsync(null, "卸载", "将删除安装目录与快捷方式。", HubDialogButtons.OkCancel, danger: true);
         var dialog = lifetime.Windows.OfType<HubDialog>().LastOrDefault();
         check(dialog is not null, "owner 为 null 时对话框也能显示（启动失败路径，WPF 的 MessageBox 同样支持）");
@@ -268,11 +272,13 @@ public partial class FoundationCheckWindow : Window
         var buttons = dialog.GetVisualDescendants().OfType<Button>().ToList();
         check(buttons.Count == 2, "OkCancel 生成 2 个按钮（实际 " + buttons.Count + "）");
 
-        // 期望文案**从文案表取**，不写字面量。以前这里写死"取消/确定"，等于把这个窗口的自检
-        // 绑在"用户恰好把界面语言设成中文"上：`--verify-foundation` 不强制语言，
-        // 用户一切到英文，这条断言就会因为**正确**的行为而失败。
-        // 注意按钮顺序（取消在前、确定在后）仍被断言 —— 它是由 HubDialogResult 的取值顺序决定的，
-        // 与语言无关，不能因为换了种写法就漏掉。
+        // The expected copy is **taken from the text table**, not written as literals. Previously this
+        // hard-coded "取消/确定", tying the window's self-check to "the user happens to have the UI
+        // in Chinese": `--verify-foundation` doesn't force a language, so the moment the user
+        // switches to English, this assertion fails because of **correct** behavior.
+        // Note the button order (cancel first, ok second) is still asserted — it's determined by the
+        // HubDialogResult value order, independent of language, so it can't be dropped just because
+        // the wording changed.
         var expectedLabels = string.Join("/", new[] { "Cancel", "Ok" }.Select(key => HubTexts.Get(key, HubStrings.Language)));
         var labels = string.Join("/", buttons.Select(b => b.Content?.ToString()));
         check(labels == expectedLabels, "按钮顺序为 取消、确定，文案来自 HubTexts（实际 " + labels + "）");
@@ -287,18 +293,18 @@ public partial class FoundationCheckWindow : Window
             "danger: true 时确定键带 danger 类（WPF 版没有这一档，MessageBoxImage 只换图标）");
         check(cancel?.Content?.ToString() == cancelCaption, "取消键带 IsCancel（Esc 生效）");
 
-        // 这条防的是"又把它写回成一种语言"：只要中英两侧不同，就说明文案真的走了文案表。
+        // This guards against "writing it back as one language again": as long as the Chinese and English sides differ, the copy really goes through the text table.
         check(HubTexts.Get("Ok", HubTexts.EnglishLanguage) != HubTexts.Get("Ok", HubTexts.ChineseLanguage)
               && HubTexts.Get("Cancel", HubTexts.EnglishLanguage) != HubTexts.Get("Cancel", HubTexts.ChineseLanguage),
             "对话框按钮文案是本地化的，而不是写死一种语言"
             + "（写死中文的话，英文界面上点开任何弹窗按钮都是中文）");
 
-        // 走一次真实点击，验证按钮到返回值的接线。
+        // Do a real click to verify the wiring from button to return value.
         primary?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var result = await pending;
         check(result == HubDialogResult.Ok, "点「确定」→ ShowAsync 返回 Ok（实际 " + result + "）");
 
-        // ---- YesNo：选否 ----
+        // ---- YesNo: choose No ----
         var yesNoPending = HubDialog.ShowAsync(null, "确认", "继续吗？", HubDialogButtons.YesNo);
         var yesNo = lifetime.Windows.OfType<HubDialog>().LastOrDefault();
         if (yesNo is not null)
@@ -324,7 +330,7 @@ public partial class FoundationCheckWindow : Window
         }
     }
 
-    /// <summary>拿本窗口真截一张图，让"非空白"判据面对一次真实渲染。</summary>
+    /// <summary>Really capture this window, facing the "non-blank" criterion with one real render.</summary>
     private void CheckRealCapture(Action<bool, string> check)
     {
         var directory = ScratchDirectory.Resolve("foundation-check");

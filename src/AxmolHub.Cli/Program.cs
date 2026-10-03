@@ -2,9 +2,9 @@ using AxmolHub.Core;
 
 Console.OutputEncoding = new System.Text.UTF8Encoding(false);
 
-// --json 是**全局**标志，可出现在任意位置。必须先摘掉它再按索引取参数，
-// 否则 `create <root> <name> <parent> --json` 会让索引错位。
-// 契约：docs/cli-json-contract.md
+// --json is a **global** flag and may appear anywhere. Strip it before indexing into arguments,
+// otherwise `create <root> <name> <parent> --json` would misalign the indices.
+// Contract: docs/cli-json-contract.md
 var json = Array.Exists(args, argument => argument == "--json");
 if (json)
 {
@@ -28,7 +28,7 @@ catch (Exception ex)
     return Fail(ex.ToString(), 1, ex);
 }
 
-// 失败也必须给 JSON，否则消费方就得去解析 stderr —— 那正是这份契约要消除的东西。
+// Failures must also produce JSON, otherwise consumers would have to parse stderr — exactly what this contract exists to eliminate.
 int Fail(string humanMessage, int exitCode, Exception exception)
 {
     if (json)
@@ -42,7 +42,7 @@ int Fail(string humanMessage, int exitCode, Exception exception)
 
 async Task<int> RunAsync(string[] arguments, string verb, bool asJson, CancellationTokenSource stop)
 {
-    // 统一出口：JSON 模式下由这里写出唯一一份信封；人读模式下各分支自己写文本。
+    // Single exit point: in JSON mode exactly one envelope is written here; in human mode each branch writes its own text.
     int Emit(bool ok, int exitCode, object? data = null)
     {
         if (asJson)
@@ -57,8 +57,8 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (arguments.Length == 0 || verb == "help")
     {
-        // 这条必须也判 asJson：help 文本打头会让 stdout 变成"文本 + JSON"，
-        // 严格解析器立刻失败 —— 契约 §3 第 1 条。第一次跑就是在这里踩到的。
+        // This must also check asJson: leading help text would make stdout "text + JSON", failing a strict
+        // parser immediately — contract §3 rule 1. The first run tripped right here.
         if (!asJson)
         {
             Console.WriteLine(help);
@@ -120,7 +120,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (verb == "create" && arguments.Length is >= 4 and <= 6)
     {
-        // 保留旧版显式目标参数，新建流程可只指定脚本方式，目标在构建前选择。
+        // Keep the legacy explicit-target argument; the new flow may specify only the script kind, with the target chosen at build time.
         var target = arguments.Length > 4 && arguments[4] is not ("cpp" or "lua") ? arguments[4] : null;
         if (target != null) BuildTargets.Get(target);
         var projectType = arguments.Length == 6 ? arguments[5] : arguments.Length == 5 && target == null ? arguments[4] : "cpp";
@@ -140,8 +140,8 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (verb == "install-tools")
     {
-        // 语义已变：不再是「Hub 按清单下载安装」，而是**替你跑引擎自己的 setup.ps1**。
-        // 工具链落点是 <engine>/tools/external，版本真源是 <engine>/1k/build.profiles。
+        // The semantics changed: no longer "Hub downloads and installs per a manifest", but **runs the engine's own setup.ps1 for you**.
+        // The toolchain lands in <engine>/tools/external and its version source of truth is <engine>/1k/build.profiles.
         var hub = store.Load();
         var installEngine = hub.Engines.FirstOrDefault(candidate => candidate.Path == hub.DefaultEnginePath) ?? hub.Engines.FirstOrDefault()
             ?? throw new InvalidOperationException("Import an Axmol engine first (its setup.ps1 prepares the toolchain).");
@@ -159,7 +159,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (verb == "verify")
     {
-        // 工具链真源是引擎树：期望版本来自 <engine>/1k/build.profiles，实装落在 <engine>/tools/external。
+        // The toolchain source of truth is the engine tree: expected versions come from <engine>/1k/build.profiles, installed ones land in <engine>/tools/external.
         var hub = store.Load();
         var verifyEngine = hub.Engines.FirstOrDefault(candidate => candidate.Path == hub.DefaultEnginePath) ?? hub.Engines.FirstOrDefault();
         var rows = verifyEngine is null
@@ -170,7 +170,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
             foreach (var row in rows) Console.WriteLine($"{row.Name}: {row.Status}\n{row.Details}");
         }
 
-        // "有组件缺失"是**数据**不是异常：ok:false + exitCode:2，但 data 仍然给出清单。
+        // "Some components missing" is **data**, not an exception: ok:false + exitCode:2, but data still carries the list.
         var broken = rows.Any(row => row.Status is ComponentStatus.Missing or ComponentStatus.Broken);
         var payload = new VerifyPayload(
             arguments[2],
@@ -182,7 +182,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     {
         var target = BuildTargets.Get(arguments[2]);
         if (target.Family != "android") throw new InvalidOperationException("Device query requires an Android target.");
-        // adb 来自引擎树（<engine>/tools/external/adt/sdk/platform-tools），不再是 Hub 自持工具。
+        // adb comes from the engine tree (<engine>/tools/external/adt/sdk/platform-tools), no longer a Hub-owned tool.
         var deviceState = store.Load();
         var deviceEngine = deviceState.Engines.FirstOrDefault(candidate => candidate.Path == deviceState.DefaultEnginePath)
             ?? deviceState.Engines.FirstOrDefault()
@@ -212,8 +212,8 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     {
         case "plan":
             var plan = PlatformBuildService.Plan(entry, engine, false, new EnginePrebuiltState(store.Root));
-            // schema 2 起裸 JSON 形状退役（见 docs/cli-json-contract.md §6）：
-            // 不带 --json 时输出人读文本，与其他动词一致。
+            // The bare-JSON shape retired with schema 2 (see docs/cli-json-contract.md §6):
+            // without --json it prints human-readable text, consistent with the other verbs.
             if (!asJson)
             {
                 Console.WriteLine($"{entry.Platform} · {entry.Configuration}");
@@ -243,7 +243,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
             return Emit(true, 0, new BuildPayload(entry, entry.BuildStatus, executable));
 
         case "run":
-            // 退出码故意就是被拉起程序的退出码，所以 ok:true 与 exitCode 可以不同向。
+            // The exit code is deliberately the launched program's own exit code, so ok:true and exitCode can point in different directions.
             var runExit = (await service.RunAsync(entry, engine, stop.Token)).ExitCode;
             return Emit(true, runExit, new ChildExitPayload(runExit));
 

@@ -3,24 +3,24 @@ using System.Text.RegularExpressions;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 构建目录与产物位置。
+/// Build directory and artifact locations.
 ///
-/// **构建目录由引擎决定，不由 Hub 决定** —— 所以这里只「发现」，不假定名字。
-/// 权威来源是引擎在工程目录里生成的 <c>run.bat</c>：它写着
-/// <c>set BUILD_DIR=&lt;CMAKE_BUILD_RELATIVE_DIR&gt;</c>，即 <c>PROJECT_BINARY_DIR</c>
-/// 相对工程目录的路径（见 <c>templates/common/run.bat.in</c> 与
-/// <c>templates/common/cmake/modules/AXGamePlatformSetup.cmake</c>）。
-/// 兜底才在工程目录下扫描 <c>build*</c>。
+/// **The build directory is decided by the engine, not the Hub** — so this only "discovers" it and
+/// never assumes a name. The authoritative source is the <c>run.bat</c> the engine generates in the
+/// project directory: it contains <c>set BUILD_DIR=&lt;CMAKE_BUILD_RELATIVE_DIR&gt;</c>, i.e. the path of
+/// <c>PROJECT_BINARY_DIR</c> relative to the project directory (see <c>templates/common/run.bat.in</c> and
+/// <c>templates/common/cmake/modules/AXGamePlatformSetup.cmake</c>). Only as a fallback do we scan for
+/// <c>build*</c> under the project directory.
 ///
-/// 产物口径同样是引擎的（<c>run.bat</c>）：<c>&lt;buildDir&gt;/bin/&lt;App&gt;/&lt;Config&gt;/&lt;App&gt;[.exe]</c>；
-/// 实测引擎自身的构建（<c>&lt;engine&gt;/build</c>）也是这个形状。
+/// The artifact layout is likewise the engine's (<c>run.bat</c>): <c>&lt;buildDir&gt;/bin/&lt;App&gt;/&lt;Config&gt;/&lt;App&gt;[.exe]</c>;
+/// the engine's own build (<c>&lt;engine&gt;/build</c>) is observed to use the same shape.
 /// </summary>
 public static class EngineBuildLayout
 {
-    // `set BUILD_DIR=xxx`（Windows 模板）与 `BUILD_DIR=xxx`（Unix 模板）。
+    // `set BUILD_DIR=xxx` (Windows template) and `BUILD_DIR=xxx` (Unix template).
     private static readonly Regex BuildDirectory = new(@"(?i)^\s*(?:set\s+)?BUILD_DIR\s*=\s*(.+?)\s*$", RegexOptions.Compiled);
 
-    /// <summary>发现工程的构建目录；找不到返回 <c>null</c>（调用方决定这是不是错误）。</summary>
+    /// <summary>Discovers the project's build directory; returns <c>null</c> when not found (the caller decides whether that is an error).</summary>
     public static string? FindBuildDirectory(ProjectEntry project)
     {
         if (DeclaredBuildDirectory(project.Path) is { } declared) return declared;
@@ -35,7 +35,7 @@ public static class EngineBuildLayout
             ?? builds.FirstOrDefault();
     }
 
-    /// <summary>读引擎生成的 run 脚本里的 <c>BUILD_DIR</c>。</summary>
+    /// <summary>Reads <c>BUILD_DIR</c> from the engine-generated run script.</summary>
     private static string? DeclaredBuildDirectory(string projectPath)
     {
         foreach (var name in new[] { "run.bat", "run.sh" })
@@ -56,14 +56,16 @@ public static class EngineBuildLayout
         return null;
     }
 
-    /// <summary>在指定构建目录里找产物；找不到返回 <c>null</c>。</summary>
+    /// <summary>Finds the artifact in the given build directory; returns <c>null</c> when not found.</summary>
     public static string? FindArtifact(string buildDirectory, string projectName, string configuration, string family)
         => Candidates(buildDirectory, projectName, configuration, family).FirstOrDefault(File.Exists);
 
     /// <summary>
-    /// 产物候选路径，**先配置匹配、再单配置布局**。多配置生成器（VS/Xcode）把配置写进路径，
-    /// 单配置生成器不写 —— 两种都要认，否则换生成器就要改 Hub。
-    /// 候选按目标族收窄：Windows 的 <c>.exe</c> 不能满足 WebAssembly 或 Android 的构建。
+    /// Candidate artifact paths — **configuration-matched first, then the single-configuration layout**.
+    /// Multi-config generators (VS/Xcode) put the configuration in the path; single-config generators
+    /// don't — both must be recognized, otherwise switching generators would force changes to the Hub.
+    /// Candidates are narrowed by target family: a Windows <c>.exe</c> cannot satisfy a WebAssembly or
+    /// Android build.
     /// </summary>
     public static IEnumerable<string> Candidates(string buildDirectory, string projectName, string configuration, string family)
     {
@@ -75,7 +77,7 @@ public static class EngineBuildLayout
             "wasm" => new[] { projectName + ".html", projectName + ".wasm", projectName + ".js" },
             _ => new[] { projectName },
         };
-        // 多配置生成器把配置写进路径：bin/<App>/<Config>/<App>[.exe]，先试它。
+        // Multi-config generators put the configuration in the path: bin/<App>/<Config>/<App>[.exe]; try it first.
         foreach (var executable in executables)
         {
             yield return Path.Combine(bin, configuration, executable);

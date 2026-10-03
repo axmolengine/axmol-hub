@@ -5,14 +5,17 @@ using Avalonia.Threading;
 namespace AxmolHub.App;
 
 /// <summary>
-/// <c>--smoke &lt;png&gt;</c>：渲染主窗口存成 PNG，然后按退出码报告成败。
-/// 安装验收脚本靠它判断"自包含版能不能起来"（installer/Test.ps1 第 3 步）。
+/// <c>--smoke &lt;png&gt;</c>: renders the main window to PNG, then reports pass/fail via exit code.
+/// The installation verification script relies on it to decide "can the self-contained build come
+/// up" (installer/Test.ps1 step 3).
 ///
-/// 与 WPF 版的两处关键差别：
-/// 1. **WPF 专有的 <c>Window.ContentRendered</c> 在 Avalonia 里不存在**，首帧信号要自己搭。
-///    这里用 Opened + Post(Loaded) 让布局与渲染先跑完；截早了会得到纯色图。
-/// 2. **补了一条"截图非空白"的断言**。原实现只断言"进程能启动并退出 0"，而一张空白窗口
-///    完全满足这个条件 —— 那是躺着也能过的假绿。判据见 SmokeCapture.FrameStats.IsBlank。
+/// Two key differences from the WPF version:
+/// 1. **WPF's <c>Window.ContentRendered</c> doesn't exist in Avalonia**, so the first-frame signal
+///    has to be built by hand. Here Opened + Post(Loaded) lets layout and render finish first;
+///    capturing too early yields a solid-color image.
+/// 2. **An added "screenshot is non-blank" assertion**. The original only asserted "the process can
+///    start and exit 0", and a blank window fully satisfies that — a fake green that passes lying
+///    down. The criterion is SmokeCapture.FrameStats.IsBlank.
 /// </summary>
 internal static class SmokeRunner
 {
@@ -30,7 +33,7 @@ internal static class SmokeRunner
             finished = true;
             Console.WriteLine(line);
 
-            // App 是 WinExe，没有控制台可写；把结论留在 PNG 旁边，失败时才有东西可查。
+            // The app is a WinExe with no console to write to; leave the conclusion next to the PNG so there's something to inspect on failure.
             try
             {
                 System.IO.File.WriteAllText(imagePath + ".evidence.txt", line);
@@ -62,7 +65,7 @@ internal static class SmokeRunner
             }
         }, DispatcherPriority.Loaded);
 
-        // 兜底：窗口没能显示时不要让进程一直挂着（自动化里挂住比失败更难查）。
+        // Fallback: don't let the process hang forever if the window never shows (in automation, hanging is harder to diagnose than failing).
         DispatcherTimer.RunOnce(() => Finish(1, "FAIL  窗口在 15 秒内没有触发 Opened"), TimeSpan.FromSeconds(15));
     }
 }

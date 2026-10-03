@@ -5,7 +5,8 @@ using System.Text.Json;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 一次成功的**引擎根构建**记录 —— 引擎被编译出的那份预编译库（<c>axmol-sdk</c>）。
+/// A record of one successful **engine root build** — the prebuilt libraries compiled from the engine
+/// (<c>axmol-sdk</c>).
 /// </summary>
 public sealed class EngineBuildRecord
 {
@@ -13,37 +14,41 @@ public sealed class EngineBuildRecord
     public string EngineVersion { get; set; } = "";
     public string Channel { get; set; } = "";
 
-    /// <summary>Hub 目标 id（当前只支持 <c>windows-x64</c>）。</summary>
+    /// <summary>The Hub target id (currently only <c>windows-x64</c> is supported).</summary>
     public string Target { get; set; } = "";
 
-    /// <summary>引擎 <c>-p</c> 平台名，如 <c>win32</c>。这是 <c>-DAX_PREBUILT_DIR</c> 是否适用的依据。</summary>
+    /// <summary>The engine <c>-p</c> platform name, e.g. <c>win32</c>. This is the basis for whether <c>-DAX_PREBUILT_DIR</c> applies.</summary>
     public string Platform { get; set; } = "";
 
-    /// <summary>引擎 <c>-a</c> 架构，如 <c>x64</c>。</summary>
+    /// <summary>The engine <c>-a</c> architecture, e.g. <c>x64</c>.</summary>
     public string Architecture { get; set; } = "";
 
-    /// <summary>构建配置（Release / Debug）。预编译库是按配置分目录的。</summary>
+    /// <summary>The build configuration (Release / Debug). Prebuilt libraries are split into directories per configuration.</summary>
     public string Configuration { get; set; } = "";
 
-    /// <summary>构建目录相对**引擎根**的路径，正斜杠（就是 <c>-DAX_PREBUILT_DIR</c> 的值）。</summary>
+    /// <summary>The build directory path relative to the **engine root**, with forward slashes (this is the value of <c>-DAX_PREBUILT_DIR</c>).</summary>
     public string BuildDirectory { get; set; } = "";
 
-    /// <summary>构建时的引擎安装标识；引擎被修复/重装后与当前不符，记录即失效。</summary>
+    /// <summary>The engine installation token at build time; after the engine is repaired/reinstalled it no longer matches, and the record becomes invalid.</summary>
     public string EngineToken { get; set; } = "";
 
     public DateTimeOffset BuiltAt { get; set; }
 }
 
 /// <summary>
-/// 引擎构建记录的存放位置：**Hub 数据根内**，按「引擎路径|版本|通道」的哈希落一个文件。
+/// Where engine build records are stored: **inside the Hub data root**, one file per hash of
+/// "engine path | version | channel".
 ///
-/// 放在数据根而不是引擎树里有两个理由：
+/// Storing in the data root rather than the engine tree has two reasons:
 /// <list type="number">
-/// <item>记录描述的是「磁盘上这棵树被构建过」，把引擎移出列表再加入仍能命中同一条记录；</item>
-/// <item>导入进来的引擎目前是**只读**的（只有 <c>PackageInstaller</c> 对 Hub 安装的引擎写
-/// <c>.hub-install.json</c>），预编译记录不该破坏这条约定。</item>
+/// <item>The record describes "this tree on disk has been built"; removing the engine from the list and
+/// re-adding it still hits the same record;</item>
+/// <item>Imported engines are currently **read-only** (only <c>PackageInstaller</c> writes
+/// <c>.hub-install.json</c> for Hub-installed engines), and the prebuilt record must not break that
+/// convention.</item>
 /// </list>
-/// 引擎被移动则哈希失配 → 视为没有记录（失败关闭，不会误信一条过期声明）。
+/// If the engine is moved, the hash no longer matches → treated as having no record (fail closed, never
+/// trusting a stale claim).
 /// </summary>
 public sealed class EnginePrebuiltState(string root)
 {
@@ -66,7 +71,7 @@ public sealed class EnginePrebuiltState(string root)
 
     public void Save(EngineEntry engine, EngineBuildRecord record) => StateStore.WriteJson(PathFor(engine), record);
 
-    /// <summary>引擎被修复/重装/卸载时清掉，避免留下一条指向过期产物的「已构建」声明。</summary>
+    /// <summary>Cleared when the engine is repaired/reinstalled/uninstalled, to avoid leaving a "built" claim pointing at stale artifacts.</summary>
     public void Clear(EngineEntry engine)
     {
         var path = PathFor(engine);

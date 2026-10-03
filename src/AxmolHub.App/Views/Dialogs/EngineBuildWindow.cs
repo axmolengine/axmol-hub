@@ -9,16 +9,20 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 「构建引擎」确认窗口。纯代码构建，与 <see cref="EngineVersionDialog"/> 同一个路子。
+/// The "build engine" confirmation window. Pure code-built, same approach as
+/// <see cref="EngineVersionDialog"/>.
 ///
-/// 为什么必须先确认：这一步编译**整棵引擎**（数分钟到数十分钟、产物数 GB），
-/// 而且引擎在缺工具链时会顺手触发自己的 setup —— 那会改用户级 PATH / AX_ROOT 并可能弹 UAC。
-/// 这些代价不写出来，用户只会看到一个按钮点了没反应。
+/// Why a confirmation is required first: this step compiles the **whole engine** (minutes to tens
+/// of minutes, gigabytes of output), and when the toolchain is missing the engine triggers its own
+/// setup on the way — which changes user-level PATH / AX_ROOT and may pop UAC. If these costs
+/// aren't spelled out, the user just sees a button that does nothing when clicked.
 ///
-/// 同时让用户选配置：预编译库**按配置分目录**（<c>lib/&lt;Config&gt;</c>），
-/// 项目构建时的配置必须与引擎构建的配置一致才能链接上。默认 Release（与引擎 CI 的 <c>-O3</c> 一致）。
+/// It also lets the user pick a configuration: prebuilt libraries are **split into directories by
+/// configuration** (<c>lib/&lt;Config&gt;</c>), and the project's build configuration must match the
+/// engine's build configuration to link. Defaults to Release (matching the engine CI's <c>-O3</c>).
 ///
-/// 返回所选配置；<c>null</c> = 用户取消（此时一个字节都不该编译）。
+/// Returns the chosen configuration; <c>null</c> = user cancelled (in which case not a single byte
+/// should be compiled).
 /// </summary>
 public sealed class EngineBuildWindow : Window
 {
@@ -51,7 +55,7 @@ public sealed class EngineBuildWindow : Window
         };
         panel.Children.Add(engineLabel);
 
-        // 代价必须显式说出来 —— 这是本次点击真正会发生的事。
+        // The cost must be stated explicitly — this is what really happens on this click.
         panel.Children.Add(new TextBlock
         {
             Text = HubStrings.Get("EngineBuildCost"),
@@ -81,7 +85,7 @@ public sealed class EngineBuildWindow : Window
         Content = new Border { Child = panel, Padding = new Thickness(24) };
     }
 
-    /// <summary>返回所选配置；用户取消返回 <c>null</c>。</summary>
+    /// <summary>Returns the chosen configuration; <c>null</c> when the user cancels.</summary>
     public static async Task<string?> PickAsync(Window? owner, EngineEntry engine, BuildTarget target)
     {
         var dialog = new EngineBuildWindow(engine, target);

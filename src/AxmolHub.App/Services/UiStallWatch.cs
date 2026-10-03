@@ -5,18 +5,23 @@ using Avalonia.Threading;
 namespace AxmolHub.App;
 
 /// <summary>
-/// UI 线程卡顿记录器。
+/// UI-thread stall recorder.
 ///
-/// 为什么需要它：Windows 标题栏出现"（未响应）"的判据是**主窗口消息泵超过约 5 秒没转**，
-/// 但这句话只说"卡了"，不说"卡在哪"。而这类问题在开发机上往往复现不出来
-/// （网络/代理/磁盘/杀软任何一个不同就变了），于是只能靠猜 —— 猜出来的修法通常不对。
+/// Why it's needed: Windows shows "（Not responding）" in the title bar when the **main window's
+/// message pump hasn't turned for about 5 seconds**, but that only says "it stalled", not "where".
+/// And such problems often can't be reproduced on a dev machine (any difference in
+/// network/proxy/disk/antivirus changes it), so one can only guess — and guessed fixes are usually
+/// wrong.
 ///
-/// 做法：后台线程每 250 ms 往 UI 线程投一个探针，量它多久被消化。
-/// 超过阈值就记两条日志（"开始卡"与"恢复后总时长"），时间戳能与其它日志行对照，
-/// 于是"卡的那几秒里在干什么"就从日志里读得出来。
+/// Approach: a background thread posts a probe to the UI thread every 250 ms and measures how long
+/// it takes to be digested. Past the threshold it logs two lines ("started stalling" and "total
+/// duration after recovery"), whose timestamps can be cross-referenced with other log lines — so
+/// "what was happening during those stalled seconds" can be read out of the log.
 ///
-/// 刻意**常开**：卡顿发生在用户正常启动的那一次，要求他带开关复现等于没有证据。
-/// 成本是每 250 ms 一次空投递，可以忽略；只有真卡住才会写日志，平时零噪音。
+/// Deliberately **always on**: a stall happens on the one startup where the user isn't running
+/// with a special flag, so asking them to reproduce with a switch is asking for no evidence at all.
+/// The cost is one empty post per 250 ms, negligible; it only writes when genuinely stalled, so
+/// zero noise normally.
 /// </summary>
 internal sealed class UiStallWatch
 {
@@ -25,9 +30,10 @@ internal sealed class UiStallWatch
     private readonly Action<Action> _post;
 
     /// <param name="post">
-    /// 把探针投到 UI 线程上。默认就是 <see cref="Dispatcher.UIThread"/>；
-    /// 单独留出这个口子是为了**能验证它真的会报警** —— 仪器不报警比没有仪器更糟，
-    /// 因为它会让人以为"没卡"，而注入一个可控的投递口就能在测试里制造卡顿。
+    /// Posts the probe onto the UI thread. Defaults to <see cref="Dispatcher.UIThread"/>; the
+    /// separate hook exists so we can **verify it actually alarms** — an instrument that never
+    /// alarms is worse than none, because it makes people think "no stall", whereas injecting a
+    /// controllable post lets a test manufacture a stall.
     /// </param>
     public UiStallWatch(Action<string> log, TimeSpan threshold, Action<Action>? post = null)
     {
@@ -38,7 +44,7 @@ internal sealed class UiStallWatch
 
     public void Start()
     {
-        // 后台线程：UI 线程真卡住时，只有另一个线程还能记账。
+        // Background thread: when the UI thread really stalls, only another thread can keep the books.
         var thread = new Thread(Loop)
         {
             IsBackground = true,
@@ -59,7 +65,7 @@ internal sealed class UiStallWatch
             }
             catch (Exception)
             {
-                // 调度器已关闭（正常退出）。静默结束，退出路径上不制造噪音。
+                // The dispatcher has shut down (normal exit). End silently; don't add noise on the exit path.
                 return;
             }
 
@@ -70,9 +76,9 @@ internal sealed class UiStallWatch
                 continue;
             }
 
-            // 到这一步 UI 线程已经被占住超过阈值。
+            // By this point the UI thread has been held past the threshold.
             _log($"UI thread unresponsive for more than {_threshold.TotalSeconds:F1}s (probe posted {watch.ElapsedMilliseconds} ms ago).");
-            // 再等它真的转起来，记下总时长 —— 用来区分"卡一下"和"永久死锁"。
+            // Wait for it to actually turn again and record the total duration — to tell "a brief stall" from "permanent deadlock".
             probe.Wait();
             _log($"UI thread recovered after {watch.ElapsedMilliseconds} ms.");
             probe.Dispose();

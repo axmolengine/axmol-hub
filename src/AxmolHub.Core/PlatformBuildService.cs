@@ -1,24 +1,26 @@
 namespace AxmolHub.Core;
 
-/// <summary>一条要执行的外部命令（Android 打包侧的 gradle/keytool 等仍用它描述命令）。</summary>
+/// <summary>An external command to execute (still used to describe gradle/keytool and similar commands on the Android packaging side).</summary>
 public sealed record BuildCommand(string Executable, string[] Arguments, string WorkingDirectory);
 
 /// <summary>
-/// 引擎已完成构建之后的事情：运行、部署、WebAssembly 本地预览，以及产物查找。
+/// What happens after the engine has finished building: run, deploy, local WebAssembly preview, and artifact
+/// discovery.
 ///
-/// **构建本身已委派给引擎**（<c>axmol build</c>）—— 这里不再拼 CMake 命令、
-/// 不再在 C# 里硬编码 NDK / gradle / build-tools 版本（那些版本的真源是
-/// <see cref="BuildProfile"/>，安装由官方 <c>setup.ps1</c> 负责）。
+/// **The build itself has been delegated to the engine** (<c>axmol build</c>) — this no longer assembles CMake
+/// commands, nor hard-codes NDK / gradle / build-tools versions in C# (the source of truth for those versions
+/// is <see cref="BuildProfile"/>, and installation is handled by the official <c>setup.ps1</c>).
 ///
-/// 保留的<b>辅助</b>环境构造：仅用于 Hub 自己还要直接调的工具（<c>adb</c>、<c>keytool</c>、
-/// <c>emrun</c>），来源是**引擎树内的工具目录**，不是 Hub 自持安装。
+/// The retained <b>auxiliary</b> environment construction is only for tools the Hub still invokes directly
+/// (<c>adb</c>, <c>keytool</c>, <c>emrun</c>), sourced from the **tool directories inside the engine tree**,
+/// not a Hub-managed installation.
 /// </summary>
 public sealed class PlatformBuildService(ProcessRunner runner)
 {
     /// <summary>
-    /// 这个目标会执行的引擎命令（<c>plan</c> 动词与日志都用它）。
-    /// 与 <c>ProjectService.BuildAsync</c> **共用** <see cref="ProjectBuildOptions"/>，
-    /// 所以 plan 报出的 <c>-xc</c> 就是 build 实际会用的那一份（含预编译库选项）。
+    /// The engine command this target will execute (used by both the <c>plan</c> verb and logging).
+    /// **Shares** <see cref="ProjectBuildOptions"/> with <c>ProjectService.BuildAsync</c>, so the <c>-xc</c>
+    /// that plan reports is exactly the one build will actually use (including the prebuilt-library option).
     /// </summary>
     public static AxmolInvocation Plan(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
     {
@@ -28,8 +30,9 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     }
 
     /// <summary>
-    /// 辅助工具环境：继承父进程，再前置引擎树里的工具目录。
-    /// **不用于构建**（构建由引擎自己准备环境）；只给 Hub 直接调用的 adb/keytool/emrun 用。
+    /// The auxiliary tool environment: inherit the parent process, then prepend the tool directories inside
+    /// the engine tree. **Not used for builds** (the engine prepares its own build environment); only for the
+    /// adb/keytool/emrun that the Hub invokes directly.
     /// </summary>
     public Dictionary<string, string> CreateEnvironment(EngineEntry engine, BuildTarget target)
         => CreateEnvironment(EngineToolchain.ToolRoot(engine), target);
@@ -43,7 +46,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
             environment[entry.Key.ToString()!] = entry.Value?.ToString() ?? "";
         }
 
-        // 工具根的上一级上两级就是引擎树（<engine>/tools/external）。
+        // Two levels up from the tool root is the engine tree (<engine>/tools/external).
         var engineRoot = Path.GetFullPath(Path.Combine(toolRoot, "..", ".."));
         environment["AX_ROOT"] = engineRoot;
         environment["AXMOL_ROOT"] = engineRoot;
@@ -87,7 +90,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
             AddPath(emsdk, "upstream", "bin");
         }
 
-        // 调用方会直接 CreateDirectory(environment["HOME"])，所以这两项必须存在。
+        // Callers directly CreateDirectory(environment["HOME"]), so both of these must exist.
         foreach (var name in new[] { "HOME", "TEMP" })
         {
             if (!environment.TryGetValue(name, out var value) || value.Length == 0)
@@ -115,8 +118,9 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     {
         var target = BuildTargets.Get(project.Platform);
         var build = ProjectService.BuildDirectory(project);
-        // Android 的产物是 Gradle 产出的 APK，落在引擎的构建目录里 —— 做一次受控发现，
-        // 不允许原生库（lib<App>.so）冒充产物。优先当前配置。
+        // The Android artifact is the Gradle-produced APK, which lands in the engine's build directory — do a
+        // controlled discovery, and don't allow the native library (lib<App>.so) to masquerade as the artifact.
+        // Prefer the current configuration.
         if (target.Family == "android")
         {
             var apks = Directory.EnumerateFiles(build, "*.apk", SearchOption.AllDirectories)
@@ -143,7 +147,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         if (target.Family == "android")
         {
             if (string.IsNullOrEmpty(deviceSerial)) throw new InvalidOperationException("Select an authorized Android device before Run. CLI: deploy <data-root> <project> <serial>.");
-            // 引擎的 deploy 走 adb，设备选择沿用 adb 自己的环境变量约定。
+            // The engine's deploy goes through adb; device selection follows adb's own environment-variable convention.
             overrides["ANDROID_SERIAL"] = deviceSerial;
         }
 
@@ -154,9 +158,10 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     }
 
     /// <summary>
-    /// WebAssembly 本地预览。刻意**不走** <c>axmol run</c>：引擎的 run 会直接拉起浏览器，
-    /// 而 Hub 的 <c>serve</c> 要的是「起服务 → 打印地址 → 等就绪 → 由调用方决定是否打开」。
-    /// 除这一点外都用引擎树的 emsdk。
+    /// Local WebAssembly preview. Deliberately does **not** go through <c>axmol run</c>: the engine's run
+    /// launches the browser directly, whereas the Hub's <c>serve</c> wants "start the server → print the
+    /// address → wait for readiness → let the caller decide whether to open". Aside from that, it uses the
+    /// engine tree's emsdk.
     /// </summary>
     private async Task<ProcessResult> PreviewWebAsync(ProjectEntry project, EngineEntry engine, bool openBrowser, CancellationToken cancellation)
     {
@@ -165,7 +170,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         var python = OperatingSystem.IsWindows() ? "python" : "python3";
         var environment = CreateEnvironment(engine, BuildTargets.Get(project.Platform));
 
-        // emrun 官方提供 wasm MIME 与 COOP/COEP；浏览器由操作系统打开，取消只停止自己的服务。
+        // emrun officially provides the wasm MIME type and COOP/COEP; the browser is opened by the OS, and cancel only stops our own server.
         using var serverStop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var socket = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
         socket.Start();

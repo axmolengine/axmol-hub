@@ -13,10 +13,11 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// Android 发行（签名）设置。WPF 版 <c>AndroidReleaseWindow.cs</c> 的移植。
+/// Android release (signing) settings. A port of WPF's <c>AndroidReleaseWindow.cs</c>.
 ///
-/// 两条照抄 WPF 版的约束：配置**按项目**保存在 <c>.axmol-hub.android-release.json</c>；
-/// 密码**只留在当前会话**，不落盘 —— 所以每次都要重新输入，这是刻意的。
+/// Two constraints copied from the WPF version: the configuration is saved **per project** in
+/// <c>.axmol-hub.android-release.json</c>; passwords stay **only in the current session** and are
+/// never persisted — so they must be re-entered every time, deliberately.
 /// </summary>
 public sealed class AndroidReleaseWindow : Window
 {

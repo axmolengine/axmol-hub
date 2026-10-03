@@ -5,21 +5,25 @@ namespace AxmolHub.App;
 
 internal static class Program
 {
-    // Avalonia 的入门代码必须在 AppMain 之前完成，入口本身是 STA。
-    // 与 WPF 版的差别：官方模板天生就是 [STAThread] Main，不必像 WPF 那样把 App.xaml 从
-    // ApplicationDefinition 改成 Page 再手工设 StartupObject。
+    // Avalonia's startup code must complete before AppMain; the entry point itself is STA.
+    // Difference from the WPF version: the official template is natively a [STAThread] Main,
+    // so we don't need to change App.xaml from ApplicationDefinition to Page and set
+    // StartupObject by hand the way WPF does.
     [STAThread]
     public static void Main(string[] args)
     {
-        // Velopack 安装/更新/卸载时会用 --veloapp-* 拉起本进程做钩子回调，
-        // 必须在任何 UI 初始化之前处理并退出，否则安装过程中会弹出主窗口。
-        // 放在最前面（连编码设置都要排在它后面）：这条路径不能有任何副作用。
+        // Velopack launches this process with --veloapp-* flags for install/update/uninstall
+        // hook callbacks; we must handle and exit before any UI initialization, otherwise the
+        // main window pops up during installation.
+        // Put it first (even before the encoding setup): this path must have no side effects.
         VelopackApp.Build().Run();
 
-        // 验收模式的报告走 stdout，内容含中文。不设成 UTF-8 的话在 Windows 上是乱码
-        // （P5 自检第一次跑就踩到了：断言结果整段不可读，等于没有证据）。
-        // WinExe 在没有控制台时（双击启动）设置编码会抛 IOException，所以这里必须兜住 ——
-        // 拿不到可读日志是遗憾，因此起不来就是故障了。
+        // Verification-mode reports go to stdout and contain Chinese. Without UTF-8 they are
+        // garbled on Windows (hit on the very first P5 self-check run: the assertion results
+        // were entirely unreadable, i.e. no evidence).
+        // A WinExe launched by double-clicking has no console, so setting the encoding throws
+        // IOException here and must be swallowed — losing readable logs is a pity, but failing to
+        // start is a real fault.
         try
         {
             Console.OutputEncoding = new System.Text.UTF8Encoding(false);
@@ -28,12 +32,12 @@ internal static class Program
         {
         }
 
-        // 参数解析必须在 AppBuilder 之前：窗口选型由它决定。
+        // Argument parsing must happen before AppBuilder: it decides which window to show.
         App.Options = HubHostOptions.Parse(args);
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 
-    // 视觉设计器也会调用这个方法，不要删。
+    // The visual designer also calls this method; do not delete.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()

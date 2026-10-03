@@ -3,18 +3,20 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $env:AX_ROOT = $EngineRoot
 
-# 1k/1kiss.ps1 在 CMake configure 阶段调用 Get-FileHash（`$1k.hash(...)`）算缓存哈希。
-# Get-FileHash 是 Microsoft.PowerShell.Utility 里的 cmdlet，PS 5.1 下靠惰性模块自动加载解析；
-# 但自动加载在「-NoProfile + 输出重定向 + 点源长脚本」的组合下会因时机/状态而失效，
-# 表现为 CommandNotFoundException: The term 'Get-FileHash' is not recognized。
-# 手动在终端跑不触发，是因为交互式会话的自动加载上下文是完整的。
-# 这里在点源引擎脚本前显式导入该模块，把 Get-FileHash 钉住，不再依赖脆弱的自动加载。
+# 1k/1kiss.ps1 calls Get-FileHash (`$1k.hash(...)`) during the CMake configure phase to compute the cache hash.
+# Get-FileHash is a cmdlet in Microsoft.PowerShell.Utility, resolved on PS 5.1 via lazy module auto-loading;
+# but auto-loading fails under the "no profile + output redirection + dot-sourced long script" combination
+# due to timing/state, surfacing as CommandNotFoundException: The term 'Get-FileHash' is not recognized.
+# Running it manually in a terminal does not trigger it because an interactive session's auto-loading context is complete.
+# Here we explicitly import that module before dot-sourcing the engine script to pin down Get-FileHash and stop
+# relying on the fragile auto-loading.
 Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
 
-# 引擎 cmdline 在开头会用 git 反查提交号（axmol.ps1 里的 `git -C $AX_ROOT branch --show-current`）。
-# 发行 ZIP 的引擎树没有 .git，git 会失败并污染 $LASTEXITCODE，最终可能被结尾的
-# `exit $LASTEXITCODE` 当成"命令失败"。这里在没有 .git 时把 git 从 PATH 上遮掉，
-# 让引擎走它自己的"没有 git 就跳过"分支 —— 比事后猜退出码可靠。
+# The engine cmdline uses git at the start to look up the commit id (`git -C $AX_ROOT branch --show-current`
+# in axmol.ps1). The engine tree in a release ZIP has no .git, so git fails and pollutes $LASTEXITCODE,
+# which the trailing `exit $LASTEXITCODE` may end up treating as "command failed". Here, when there is no
+# .git, we mask git off PATH so the engine takes its own "no git, skip" branch — more reliable than
+# guessing the exit code after the fact.
 if (-not (Test-Path (Join-Path $EngineRoot '.git'))) {
     $separator = [System.IO.Path]::PathSeparator
     $parts = $env:PATH.Split($separator) | Where-Object {

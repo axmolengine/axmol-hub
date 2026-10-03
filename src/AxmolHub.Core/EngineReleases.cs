@@ -3,62 +3,67 @@ using System.Text.Json;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 可安装的官方引擎版本。
+/// The installable official engine versions.
 ///
-/// 数据源有**两份**，优先级明确：
+/// There are **two** data sources, with a clear priority:
 /// <list type="number">
-/// <item>远端索引 <c>https://axmol.dev/versions/index.json</c>（启动时拉取，见 <see cref="EngineIndex"/>）</item>
-/// <item>随 exe 分发的内置清单 <c>manifests/engine-manifest.json</c> —— 拉取失败、或索引一条都不合格时用它</item>
+/// <item>The remote index <c>https://axmol.dev/versions/index.json</c> (fetched at startup, see
+/// <see cref="EngineIndex"/>)</item>
+/// <item>The built-in manifest shipped with the exe, <c>manifests/engine-manifest.json</c> — used when the
+/// fetch fails or when not a single index entry is acceptable</item>
 /// </list>
 ///
-/// 内置清单不是"旧的索引"，它是**离线兜底**：CI、离线机、内网启动时仍要能列出可装版本。
-/// 回落必须是静默且完整的 —— 拿不到索引是常态，不是故障。
+/// The built-in manifest is not "an older index"; it is the **offline fallback**: CI, offline machines, and
+/// intranet startups must still be able to list installable versions. Falling back must be silent and
+/// complete — not getting the index is normal, not a failure.
 ///
-/// 以前这个选择是**写死**的：<c>InstallEngineAsync</c> 取"official-lts 通道里版本号最大的一个"，
-/// 按钮文案直接印着 2.11.5。清单里一旦列出第二个版本，界面仍然只会装最新的那个，
-/// 其余的下载不到 —— 而"每个项目锁定自己的引擎版本"这条前提要求旧版本随时能装。
-/// 所以把"有哪些版本可装"从代码里搬进数据，界面只负责选。
+/// Previously this choice was **hard-coded**: <c>InstallEngineAsync</c> took "the highest version number in
+/// the official-lts channel", and the button text literally printed 2.11.5. Once a second version appeared in
+/// the manifest, the UI would still only install the newest one, and the rest couldn't be downloaded — while
+/// the "each project pins its own engine version" premise requires older versions to be installable at any
+/// time. So "which versions are installable" was moved from code into data, and the UI only picks.
 /// </summary>
-/// <param name="root">Hub 数据根。用于判定某个版本是否已经装在这棵数据目录里。</param>
-/// <param name="manifests">清单目录。内置引擎清单与模块清单都在这里。</param>
+/// <param name="root">The Hub data root. Used to determine whether a version is already installed in this data directory.</param>
+/// <param name="manifests">The manifest directory. The built-in engine manifest and module manifests both live here.</param>
 public sealed class EngineReleases(string root, string manifests)
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
-    /// <summary>官方 LTS 通道。与清单里各包的 <c>channel</c> 字段比对。</summary>
+    /// <summary>The official LTS channel. Compared against each package's <c>channel</c> field in the manifest.</summary>
     public const string LtsChannel = "official-lts";
 
     private PackageManifest? _remote;
     private IReadOnlyList<string> _remoteProblems = [];
 
-    /// <summary>当前是否在用远端索引。界面上如实告诉用户列表的出处。</summary>
+    /// <summary>Whether the remote index is currently in use. The UI truthfully tells the user where the list comes from.</summary>
     public bool UsingRemoteIndex => _remote is not null;
 
     /// <summary>
-    /// 采纳远端索引。<paramref name="result"/> 的 <c>Manifest</c> 为 null 时**不改任何状态** ——
-    /// 调用方不需要判断成败，也不该在这里做回落。
+    /// Adopts the remote index. When <paramref name="result"/>'s <c>Manifest</c> is null, **no state is
+    /// changed** — the caller doesn't need to judge success/failure, and shouldn't do the fallback here.
     /// </summary>
     public void Adopt(EngineIndexResult result)
     {
         if (result.Manifest is not { } manifest) return;
         _remoteProblems = result.Problems;
-        // 只有真的装得上版本才替换当前清单。空清单会让引擎页变成"没有可安装版本"，
-        // 比"列表旧了一点"糟得多。
+        // Only replace the current manifest with versions that are actually installable. An empty manifest
+        // would turn the Engines page into "no installable versions", far worse than "a slightly stale list".
         if (manifest.Packages.Count == 0) return;
         _remote = manifest;
     }
 
-    /// <summary>拉取失败或被拒绝时的原因，供日志与界面提示。成功时也可能非空（个别版本被丢弃）。</summary>
+    /// <summary>Reasons for a failed or rejected fetch, for logging and UI hints. Can also be non-empty on success (individual versions dropped).</summary>
     public IReadOnlyList<string> Problems => _remoteProblems;
 
     private PackageManifest Active => _remote ?? PackageManifest.Read(Path.Combine(manifests, "engine-manifest.json"));
 
     /// <summary>
-    /// 全部可安装版本，按版本号**从新到旧**。
+    /// All installable versions, ordered **newest to oldest** by version number.
     ///
-    /// 排序刻意不用 <c>StringComparer.Ordinal</c>：那样"2.11.10"会排在"2.11.9"前面
-    /// （逐字符比，"1" &lt; "9"）。今天的版本都是 2.11.x 所以看不出来，等 2.11.10 发布
-    /// 就会静默把"最新 LTS"选错 —— 而这个错误要等到用户拿到旧引擎、构建失败时才显形。
+    /// The sort deliberately does not use <c>StringComparer.Ordinal</c>: that would put "2.11.10" before
+    /// "2.11.9" (character-by-character, "1" &lt; "9"). Today's versions are all 2.11.x so it isn't visible,
+    /// but once 2.11.10 ships, the "latest LTS" would be silently chosen wrong — and the mistake wouldn't
+    /// surface until the user receives an old engine and the build fails.
     /// </summary>
     public IReadOnlyList<EngineRelease> All()
     {
@@ -73,20 +78,20 @@ public sealed class EngineReleases(string root, string manifests)
             .ToArray();
     }
 
-    /// <summary>按精确版本号取一个；清单里没有则为 <c>null</c>。</summary>
+    /// <summary>Gets one by exact version number; <c>null</c> when not in the manifest.</summary>
     public EngineRelease? Find(string version) =>
         All().FirstOrDefault(release => release.Version == version);
 
-    /// <summary>最新 LTS。清单为空时抛异常 —— 那是数据缺失，不是用户能选择的结果。</summary>
+    /// <summary>The latest LTS. Throws when the manifest is empty — that's missing data, not a result the user can choose.</summary>
     public EngineRelease LatestLts() => All().FirstOrDefault(release => release.Channel == LtsChannel)
         ?? throw new InvalidDataException("Engine manifest declares no official LTS release.");
 
     /// <summary>
-    /// 已有验证过打包配方的引擎版本。
+    /// Engine versions that have a verified packaging recipe.
     ///
-    /// 清单缺失时返回空集合而**不**抛异常：这里只用来在选择界面上提示一句，
-    /// 真正的闸门在 <see cref="PackagingRecipes.RequireVerified"/>，那里仍然是失败关闭。
-    /// 提示位不该有能力把整个选择界面卡死。
+    /// When the manifest is missing, returns an empty set and does **not** throw: this is only used to show a
+    /// hint on the selection UI; the real gate is in <see cref="PackagingRecipes.RequireVerified"/>, which
+    /// remains fail closed. A hint position should not be able to freeze the whole selection UI.
     /// </summary>
     private HashSet<string> VerifiedEngineVersions()
     {
@@ -96,7 +101,7 @@ public sealed class EngineReleases(string root, string manifests)
         return (catalogue?.Profiles ?? []).Select(profile => profile.EngineVersion).ToHashSet();
     }
 
-    /// <summary>逐段按整数比较版本号；非数字段按 0 处理，因此"2.11"等价于"2.11.0"。</summary>
+    /// <summary>Compares version numbers segment by segment as integers; non-numeric segments are treated as 0, so "2.11" is equivalent to "2.11.0".</summary>
     public static int CompareVersions(string left, string right)
     {
         var a = Segments(left);
@@ -116,12 +121,12 @@ public sealed class EngineReleases(string root, string manifests)
     private static int Segment(int[] segments, int index) => index < segments.Length ? segments[index] : 0;
 }
 
-/// <summary>清单里的一个引擎版本，连同"装没装"和"打包配方验没验过"两个只读事实。</summary>
+/// <summary>One engine version in the manifest, together with the two read-only facts of "installed or not" and "packaging recipe verified or not".</summary>
 public sealed record EngineRelease(PackageEntry Package, bool Installed, bool RecipesVerified)
 {
     public string Version => Package.Version;
     public string Channel => Package.Channel;
 
-    /// <summary>紧凑标识，给下拉框用。详情（通道、大小、配方状态）由界面另行显示。</summary>
+    /// <summary>Compact identifier for the dropdown. Details (channel, size, recipe status) are shown separately by the UI.</summary>
     public override string ToString() => $"{Version} · {Channel}";
 }

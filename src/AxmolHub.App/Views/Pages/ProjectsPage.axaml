@@ -6,14 +6,16 @@
              x:DataType="local:ProjectsPage">
 
   <!--
-    项目页。WPF 版 MainWindow.xaml 里 <Grid x:Name="ProjectsPage"> 的移植，结构逐行照抄：
-      标题行 → 三张统计卡 → 新建项目面板（默认折叠）→ 项目表格 → Android 设备条 + 操作按钮行。
-    表头文案由代码在每次刷新时重设（换语言要跟着变），所以这里不写 Header 的固定中文。
+    Projects page. A port of <Grid x:Name="ProjectsPage"> from the WPF version's MainWindow.xaml, copied
+    line by line in structure: title row → three stat cards → new-project panel (collapsed by default) →
+    project table → Android device bar + action button row.
+    The header text is reset by code on every refresh (it must follow language changes), so no fixed
+    Chinese Header is written here.
   -->
 
   <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
 
-    <!-- ==================== 标题行 ==================== -->
+    <!-- ==================== Title row ==================== -->
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
                   HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -27,7 +29,7 @@
       </StackPanel>
     </DockPanel>
 
-    <!-- ==================== 三张统计卡 ==================== -->
+    <!-- ==================== Three stat cards ==================== -->
     <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,20">
       <Border Classes="card" Margin="0,0,12,0" Padding="18,14">
         <StackPanel>
@@ -44,8 +46,9 @@
       <Border Classes="card" Padding="18,14">
         <StackPanel>
           <TextBlock Text="{DynamicResource LastBuildPlatform}" Classes="muted" />
-          <!-- 平台不是在这里选的：它跟着选中项目走，真正的入口是「生成」按钮弹出的对话框。
-               WPF 版同样把 ComboBox 折叠、只留一行文字。 -->
+          <!-- The platform is not chosen here: it follows the selected project, and the real entry point is
+               the dialog popped by the "Build" button. The WPF version likewise collapsed the ComboBox and
+               kept only a single line of text. -->
           <TextBlock x:Name="BuildTargetName" FontSize="16" Margin="0,8,0,0" />
           <TextBlock x:Name="BuildHostHint" Foreground="{DynamicResource Hub.TextSecondary}"
                      FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,5,0,0" />
@@ -53,7 +56,7 @@
       </Border>
     </UniformGrid>
 
-    <!-- ==================== 新建项目（默认折叠） ==================== -->
+    <!-- ==================== New project (collapsed by default) ==================== -->
     <Border x:Name="NewProjectPanel" Grid.Row="2" Classes="card" Margin="0,0,0,20" IsVisible="False">
       <StackPanel>
         <DockPanel Margin="0,0,0,16">
@@ -69,10 +72,10 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Margin="0,0,16,0">
             <TextBlock Text="{DynamicResource Location}" />
-            <!-- 不要给这个 DockPanel 写死 Height：主题里的 TextBox 自带 Margin 0,6,0,0 +
-                 Border 1px + Padding 10,9，40px 只够剩 14px 放文字，单行会被纵向裁掉
-                 （表现是"文字看不全、要在框里垂直滚动"）。让它按内容自适应，
-                 与 SettingsPage 的两处同款布局保持一致。 -->
+            <!-- Don't hard-code a Height on this DockPanel: the themed TextBox carries Margin 0,6,0,0 +
+                 Border 1px + Padding 10,9, so 40px leaves only 14px for text and a single line would be
+                 clipped vertically (showing "text is cut off and needs vertical scrolling inside the box").
+                 Let it size to its content, consistent with the two same-shaped layouts in SettingsPage. -->
             <DockPanel>
               <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
                       DockPanel.Dock="Right" Margin="6,0,0,0" Padding="10,8" />
@@ -98,9 +101,10 @@
         </StackPanel>
 
         <!--
-          预编译引擎库。面板里没有目标/配置选择器（那是 BuildTargetDialog 的事），所以这里
-          只能按**宿主目标**判断引擎有没有可用的预编译库；真正「目标 + 配置」的一致性由
-          Core 在构建时强制（不一致会构建失败并指路），提示文案必须把这一点写出来。
+          Prebuilt engine library. The panel has no target/configuration selector (that's BuildTargetDialog's
+          job), so here the availability of a prebuilt library can only be judged by the **host target**; the real
+          "target + configuration" consistency is enforced by Core at build time (a mismatch fails the build and
+          points the way), and the hint text must spell this out.
         -->
         <StackPanel Margin="0,14,0,0">
           <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
@@ -119,7 +123,7 @@
       </StackPanel>
     </Border>
 
-    <!-- ==================== 项目表格 ==================== -->
+    <!-- ==================== Project table ==================== -->
     <Border Grid.Row="3" BorderBrush="{DynamicResource Hub.Border}"
             BorderThickness="1" CornerRadius="7" ClipToBounds="True">
       <Grid>
@@ -137,8 +141,9 @@
                 </DataTemplate>
               </DataGridTemplateColumn.CellTemplate>
             </DataGridTemplateColumn>
-            <!-- DataGridTextColumn **不继承**所在页面的 x:DataType：编译绑定要求每一列自己声明行类型，
-                 否则会拿页面类型去找 Version/ProjectType，构建期直接报错（AVLN2000）。 -->
+            <!-- DataGridTextColumn does **not inherit** the page's x:DataType: compiled bindings require each
+                 column to declare its own row type, otherwise the page type is used to look up Version/ProjectType
+                 and the build errors out (AVLN2000). -->
             <DataGridTextColumn Binding="{Binding Version}" Width="85" x:DataType="core:ProjectEntry" />
             <DataGridTextColumn Binding="{Binding ProjectType}" Width="110" x:DataType="core:ProjectEntry" />
             <DataGridTextColumn Binding="{Binding BuildStatus}" Width="125" x:DataType="core:ProjectEntry" />
@@ -150,7 +155,7 @@
       </Grid>
     </Border>
 
-    <!-- ==================== 设备条 + 操作按钮 ==================== -->
+    <!-- ==================== Device bar + action buttons ==================== -->
     <StackPanel Grid.Row="4">
       <Border x:Name="AndroidDevicePanel" IsVisible="False"
               Background="{DynamicResource Hub.Surface}" CornerRadius="6"

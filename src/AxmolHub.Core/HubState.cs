@@ -67,17 +67,20 @@ public sealed class StateStore(string root)
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
-    // 引擎核心目录在各版本间改过名：v2 是 core/，v3 改成 axmol/。两种布局都接受 ——
-    // 目录名从引擎目录自己反查，不写死任何一个，将来再改名只需要动这一处。
+    // The engine core directory has been renamed across versions: core/ in v2, axmol/ in v3. Both layouts
+    // are accepted — the directory name is derived from the engine directory itself rather than hard-coded
+    // to either one, so a future rename only needs to change this one place.
     private static readonly string[] EngineCoreDirectories = ["axmol", "core"];
 
-    /// <summary>引擎核心目录名（v3 = <c>axmol</c>，v2 = <c>core</c>）；两种布局都没有版本头时返回 <c>null</c>。</summary>
+    /// <summary>The engine core directory name (v3 = <c>axmol</c>, v2 = <c>core</c>); returns <c>null</c> when neither layout has the version header.</summary>
     public static string? FindEngineCoreDirectory(string enginePath)
         => EngineCoreDirectories.FirstOrDefault(name => File.Exists(System.IO.Path.Combine(enginePath, name, "axmolver.h.in")));
 
     /// <summary>
-    /// 引擎目录缺失的标志文件。导入校验与验收报告共用这一份清单，避免两处漂移。
-    /// 版本头那条会同时点名两个位置：只说其中一处会让人误以为另一种布局不被支持。
+    /// Marker files that indicate an incomplete engine directory. Import validation and acceptance
+    /// reports share this single list to avoid the two drifting apart.
+    /// The version-header entry names both locations: mentioning only one would mislead readers into
+    /// thinking the other layout is unsupported.
     /// </summary>
     public static IReadOnlyList<string> MissingEngineMarkers(string enginePath)
     {
@@ -136,10 +139,11 @@ public sealed class StateStore(string root)
             if (!File.Exists(profile)) throw new InvalidDataException("Axmol project requires .axproj or .axmol-hub.json.");
             project.Version = Regex.Match(profileText, @"(?m)^engine_version\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
         }
-        // 版本必须能精确落到 x.y.z —— 但引擎从**带 .git 的源码树**创建工程时会把提交号写进
-        // engine_version（axmol.ps1 给 $axmolVersion 追加 -<short-hash>），例如 `3.0.0-30e6f4d`。
-        // 提交号不含兼容性信息，所以只剥掉这一种后缀；预发布标签（`3.0.0-alpha33`）仍然被拒，
-        // “必须精确 x.y.z”这条纪律不放宽。
+        // The version must resolve exactly to x.y.z — but when the engine creates a project from a
+        // **git-backed source tree** it writes the commit id into engine_version (axmol.ps1 appends
+        // -<short-hash> to $axmolVersion), e.g. `3.0.0-30e6f4d`. The commit id carries no compatibility
+        // information, so only this suffix is stripped; prerelease tags (`3.0.0-alpha33`) are still rejected,
+        // and the "must be exactly x.y.z" discipline is not relaxed.
         var version = Regex.Match(project.Version, @"^(\d+\.\d+\.\d+)(?:-[0-9a-fA-F]{7,})?$");
         if (!version.Success) throw new InvalidDataException("Project has no supported exact engine version.");
         project.Version = version.Groups[1].Value;

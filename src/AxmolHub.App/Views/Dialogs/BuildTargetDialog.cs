@@ -10,12 +10,14 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 「选择构建平台」对话框。WPF 版是 <c>MainWindow.PickBuildTarget</c> 里现场堆出来的窗口，
-/// 这里独立成文件，因为它同时被「生成 / 运行」和验收程序用到。
+/// The "choose build platform" dialog. In the WPF version this window was stacked up inline inside
+/// <c>MainWindow.PickBuildTarget</c>; here it's its own file because both "generate / run" and the
+/// verification programs use it.
 ///
-/// 返回 <c>null</c> 表示用户取消 —— 与 WPF 版一致，**取消不允许改动项目元数据**：
-/// 选平台本身会写 <c>.axmol-hub.json</c>，所以落笔推迟到真正开始构建时
-/// （见 <see cref="HubWorkspace.BuildAsync"/> 里的 <c>BuildTargets.Select</c>）。
+/// Returning <c>null</c> means the user cancelled — same as the WPF version, and **cancelling must
+/// not change project metadata**: choosing a platform itself writes <c>.axmol-hub.json</c>, so the
+/// write is deferred until the build actually starts (see <c>BuildTargets.Select</c> inside
+/// <see cref="HubWorkspace.BuildAsync"/>).
 /// </summary>
 public sealed class BuildTargetDialog : Window
 {

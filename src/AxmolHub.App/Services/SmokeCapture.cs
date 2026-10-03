@@ -6,41 +6,46 @@ using Avalonia.Platform;
 
 namespace AxmolHub.App;
 
-/// <summary>一帧截图的统计量。</summary>
+/// <summary>Statistics of one captured frame.</summary>
 public sealed record FrameStats(int Width, int Height, int DistinctColors, double LuminanceVariance)
 {
     /// <summary>
-    /// 判断这一帧是不是"空白"。
+    /// Determines whether this frame is "blank".
     ///
-    /// 存在的理由是一个**会静默降低证据强度**的坑：管线里只要有一环写错（截得太早、渲染后端
-    /// 没起来、窗口尺寸为 0），产物就是一张纯色 PNG，而"进程启动成功并退出 0 + 文件存在"
-    /// 这两个断言**照样通过**。安装验收与 CI 都会因此得到一条假的绿线。
+    /// It exists because of a trap that **silently weakens evidence**: if any step in the pipeline
+    /// is wrong (captured too early, rendering backend not up, window size 0), the output is a
+    /// solid-color PNG, and the two assertions "process started and exited 0" + "file exists" still
+    /// pass. Installation verification and CI would both get a fake green line from that.
     ///
-    /// 判据以**亮度方差**为主：纯色图方差为 0，任何有内容（文字、描边、分隔线）的界面都远大于 1。
-    /// 颜色种数只当一个**弱兜底**（&lt; 2，即整幅只有一种颜色），不能当主判据 ——
-    /// 一开始把下限写成 8，结果一张只有黑底白字的图会被误判成空白：极简界面完全可能只用两种颜色。
-    /// 这个误判是自检抓出来的，不是推理出来的。
+    /// The criterion leans on **luminance variance**: a solid image has variance 0, and any UI with
+    /// content (text, borders, separators) is far above 1. Distinct color count is only a **weak
+    /// fallback** (&lt; 2, i.e. the whole image is one color), not the primary criterion — the lower
+    /// bound was initially written as 8, and a black-background/white-text image got misjudged as
+    /// blank: a minimal UI can perfectly well use only two colors. That misjudgment was caught by
+    /// the self-check, not by reasoning.
     /// </summary>
     public bool IsBlank(double minVariance = 1.0)
         => Width <= 0 || Height <= 0 || LuminanceVariance < minVariance || DistinctColors < 2;
 }
 
 /// <summary>
-/// <c>--smoke</c> 的实现：把窗口渲染成 PNG，并给出"这一帧是不是空白"的判据。
-/// 对应 WPF 版 App.xaml.cs 的 RenderTargetBitmap + PngBitmapEncoder 那一段，
-/// 但 WPF 专有的 <c>Window.ContentRendered</c> 在 Avalonia 里不存在，首帧信号得自己搭
-/// （见 docs/avalonia-migration-plan.md §3.5）。
+/// The <c>--smoke</c> implementation: renders the window to PNG and provides the "is this frame
+/// blank" criterion.
+/// Corresponds to the RenderTargetBitmap + PngBitmapEncoder section of WPF's App.xaml.cs, but
+/// WPF's <c>Window.ContentRendered</c> doesn't exist in Avalonia, so the first-frame signal must
+/// be built by hand (see docs/avalonia-migration-plan.md §3.5).
 /// </summary>
 public static class SmokeCapture
 {
-    /// <summary>渲染 <paramref name="window"/> 并存成 PNG，返回该帧的统计量。</summary>
+    /// <summary>Renders <paramref name="window"/>, saves it as PNG, and returns the frame's statistics.</summary>
     public static FrameStats Capture(Window window, string path)
     {
         var size = window.ClientSize;
         if (size.Width < 1 || size.Height < 1)
         {
-            // 尺寸为 0 时 RenderTargetBitmap 会抛，而"抛异常"在这里是个不准确的信号：
-            // 真正的问题是窗口还没布局，交给 IsBlank 去报，报告里能看到具体数字。
+            // At size 0 RenderTargetBitmap throws, and "throwing" is an inaccurate signal here: the
+            // real problem is the window hasn't been laid out yet. Hand it to IsBlank to report, so
+            // the report shows concrete numbers.
             size = new Size(1, 1);
         }
 
@@ -50,22 +55,23 @@ public static class SmokeCapture
 
         using var target = new RenderTargetBitmap(pixelSize, new Vector(96, 96));
         target.Render(window);
-        // Save(string, int?) 已标记过时；PNG 走显式编码器选项（12.1.3 提供 PngBitmapEncoderOptions.Default）。
+        // Save(string, int?) is obsolete; PNG goes through explicit encoder options (12.1.3 provides PngBitmapEncoderOptions.Default).
         target.Save(path, PngBitmapEncoderOptions.Default);
 
-        // 从磁盘上回读，而不是继续用内存里的 target：这样断言的是**落到文件里的那张图**，
-        // 编码器写坏或写空也能被发现。
+        // Read back from disk rather than continuing with the in-memory target: this asserts the
+        // image that actually landed in the file, so a corrupt or empty encoder write is caught.
         using var decoded = new Bitmap(path);
         return Measure(decoded);
     }
 
-    /// <summary>把一张解码后的位图读回托管内存再统计。</summary>
+    /// <summary>Reads a decoded bitmap back into managed memory and measures it.</summary>
     public static FrameStats Measure(Bitmap bitmap)
     {
         var size = bitmap.PixelSize;
 
-        // RenderTargetBitmap 没有公开的 CopyPixels(PixelRect, IntPtr, ...)；唯一可用的读像素入口是
-        // Bitmap.CopyPixels(ILockedFramebuffer)，所以先开一个 WriteableBitmap 拿到可锁定的帧缓冲。
+        // RenderTargetBitmap exposes no CopyPixels(PixelRect, IntPtr, ...); the only usable pixel-read
+        // entry point is Bitmap.CopyPixels(ILockedFramebuffer), so open a WriteableBitmap first to get
+        // a lockable framebuffer.
         using var staging = new WriteableBitmap(size, bitmap.Dpi, PixelFormat.Bgra8888, AlphaFormat.Premul);
         using var framebuffer = staging.Lock();
         bitmap.CopyPixels(framebuffer);
@@ -78,8 +84,9 @@ public static class SmokeCapture
     }
 
     /// <summary>
-    /// 统计一条 BGRA 像素缓冲。**纯函数**，所以空白判据本身可以用合成缓冲断言 ——
-    /// 否则"判据到底会不会误判"只能靠真的渲染出一张白图来试。
+    /// Measures a BGRA pixel buffer. A **pure function**, so the blank criterion itself can be
+    /// asserted with a synthetic buffer — otherwise "will the criterion misjudge" could only be
+    /// tested by actually rendering a white image.
     /// </summary>
     public static FrameStats Analyze(byte[] pixels, int width, int height, int stride)
     {
@@ -88,7 +95,7 @@ public static class SmokeCapture
             return new FrameStats(0, 0, 0, 0);
         }
 
-        // 逐点统计没必要，大图上还会让 HashSet 膨胀；抽稀到大约 4 万个采样点。
+        // Per-pixel measurement is unnecessary and bloats the HashSet on large images; thin it out to roughly 40k samples.
         var step = Math.Max(1, (int)Math.Sqrt((double)width * height / 40000));
         var colors = new HashSet<uint>();
         double sum = 0;
@@ -112,7 +119,7 @@ public static class SmokeCapture
 
                 colors.Add(((uint)alpha << 24) | ((uint)red << 16) | ((uint)green << 8) | blue);
 
-                // Rec.601 亮度。只关心"有没有变化"，系数不精确无所谓。
+                // Rec.601 luma. We only care about "is there variation", so imprecise coefficients are fine.
                 var luma = (0.114 * blue) + (0.587 * green) + (0.299 * red);
                 sum += luma;
                 sumOfSquares += luma * luma;

@@ -8,7 +8,7 @@ namespace AxmolHub.App;
 
 public partial class App : Application
 {
-    /// <summary>命令行与宿主目录。由 <see cref="Program.Main"/> 在 AppBuilder 之前填好。</summary>
+    /// <summary>Command line and host directory. Filled in by <see cref="Program.Main"/> before AppBuilder.</summary>
     internal static HubHostOptions Options { get; set; } = HubHostOptions.Parse([]);
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -27,11 +27,12 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            // 这条路径上主窗口还建不起来，所以 HubDialog 必须支持 owner 为 null
-            // （WPF 版这里用的 MessageBox 同样是自立的）。见 Views/HubDialog.axaml。
-            // 标题走文案表：这里写死中文的话，在没有 CJK 字体的 Linux 上就是一片空白，
-            // 而"启动失败"恰恰是最需要看清标题的一刻。此时 HubStrings.Language 还是
-            // 冷启动语言，拿得到值为英文的文案。
+            // The main window can't be built on this path, so HubDialog must support a null owner
+            // (the WPF version's MessageBox here is standalone too). See Views/HubDialog.axaml.
+            // The title comes from the text table: hard-coding Chinese here would render blank on a
+            // Linux machine without CJK fonts, and "startup failed" is exactly when the title matters
+            // most. At this point HubStrings.Language is still the cold-start language, so the
+            // English copy is available.
             _ = HubDialog.ShowAsync(null, HubStrings.Get("StartupFailed"), ex.ToString());
             desktop.Shutdown(1);
         }
@@ -41,19 +42,22 @@ public partial class App : Application
 
     private void Start(IClassicDesktopStyleApplicationLifetime desktop)
     {
-        // 读设置要在**任何窗口构造之前**，因为 HubStrings.Apply 必须先把文案灌进资源字典：
-        // DynamicResource 是按 key 现查的，窗口先建好再灌会留下一批解析为 null 的标签，
-        // 而且不会报错，只显示空白。WPF 版是同样的顺序。
+        // Settings must be read before any window is constructed, because HubStrings.Apply must
+        // first load the copy into the resource dictionary: DynamicResource resolves by key on
+        // demand, so building the window first and loading after would leave a batch of labels
+        // resolved to null — with no error, just blank. The WPF version uses the same order.
         var preferencesStore = new PreferencesStore(Options.PreferencesPath);
         var preferences = preferencesStore.Load();
 
-        // 验收模式必须是**封闭**的：断言与报告里都是具体文案，若跟着用户的语言设置走，
-        // 同一个二进制在这台机器上通过、在那台机器上失败。所以验收模式强制中文起步
-        // （外壳自检内部会真切一次语言再切回来，那部分由它自己负责收尾）。
+        // Verification mode must be closed: assertions and reports contain concrete copy, so if it
+        // followed the user's language setting, the same binary would pass on one machine and fail
+        // on another. That's why verification mode forces Chinese from the start (the shell
+        // self-check switches the language for real and back internally, and handles its own cleanup).
         //
-        // 这里**必须显式写 ChineseLanguage**，不能靠 `new HubPreferences()` 的默认值：
-        // 默认值就是"冷启动语言"，2026-10-03 已改为英文（见 HubTexts.DefaultLanguage）。
-        // 之前两者恰好都是中文，于是这条约束看起来像"用默认值"，实则是两件事。
+        // ChineseLanguage must be written explicitly here — don't rely on the `new HubPreferences()`
+        // default: that default is the "cold-start language", which was changed to English on
+        // 2026-10-03 (see HubTexts.DefaultLanguage). Previously the two happened to both be Chinese,
+        // so this constraint looked like "use the default" when it was actually two separate things.
         if (Options.VerifyShellReport is not null || Options.VerifyOpsReport is not null)
         {
             preferences = new HubPreferences { Language = HubTexts.ChineseLanguage };
@@ -61,7 +65,8 @@ public partial class App : Application
 
         HubStrings.Apply(preferences.Language, this);
 
-        // P4 的三种自检/验收模式各用一个专用窗口；产品模式才开主窗口。
+        // P4's three self-check/verification modes each use a dedicated window; the product mode
+        // opens the main window.
         if (Options.VerifyThemeReport is { } themeReport)
         {
             var gallery = new ControlGalleryWindow();
@@ -100,14 +105,17 @@ public partial class App : Application
             return;
         }
 
-        // 数据根的三级优先（命令行 > 设置文件 > 默认）与 WPF 版一致，见 HubHostOptions.ResolveDataRoot。
-        // 设置存储与设置对象一起交给外壳：设置页改语言要落盘，必须写回**同一个**存储与对象，
-        // 否则外壳里缓存的 preferences 会与磁盘分叉。
+        // The three-tier data-root priority (command line > settings file > default) matches the
+        // WPF version; see HubHostOptions.ResolveDataRoot.
+        // The settings store and settings object are handed to the shell together: changing the
+        // language in the settings page must be persisted back to the same store and object,
+        // otherwise the preferences cached in the shell would diverge from disk.
         var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences);
         desktop.MainWindow = window;
 
-        // 两个截图开关互斥：--smoke 截完就退出，--smoke-pages 要连着切八次页面。
-        // 同时传时以 --smoke-pages 为准（它覆盖面更大），不报错。
+        // The two screenshot switches are mutually exclusive: --smoke exits right after one shot,
+        // while --smoke-pages switches pages eight times in a row.
+        // When both are passed, --smoke-pages wins (broader coverage) without an error.
         if (Options.SmokePagesDirectory is { } pagesDirectory)
         {
             PageShots.Attach(window, desktop, pagesDirectory);

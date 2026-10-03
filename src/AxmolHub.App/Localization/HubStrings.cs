@@ -6,11 +6,14 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// Avalonia 侧的本地化适配层。**文案本体不在这里**，在 <see cref="HubTexts"/>（Core）。
+/// The Avalonia-side localization adapter. **The copy itself is not here** — it lives in
+/// <see cref="HubTexts"/> (Core).
 ///
-/// 这一层只做一件事：把 <see cref="HubTexts.Keys"/> 灌进 Avalonia 的资源字典，使页面 XAML 里的
-/// <c>{DynamicResource Projects}</c> 与 WPF 版逐字一致 —— P5 迁移才可能做到"页面复制过来就能用"。
-/// 两侧的差别只剩"写进哪个资源字典"，文案与语言回落规则是同一份实现。
+/// This layer does exactly one thing: load <see cref="HubTexts.Keys"/> into Avalonia's resource
+/// dictionary so that <c>{DynamicResource Projects}</c> in page XAML is verbatim identical to the
+/// WPF version — only then can the P5 migration achieve "pages work the moment they're copied over".
+/// The only remaining difference between the two sides is "which resource dictionary to write
+/// into"; the copy and the language fallback rules are the same implementation.
 /// </summary>
 public static class HubStrings
 {
@@ -19,8 +22,9 @@ public static class HubStrings
     public static string Get(string key) => HubTexts.Get(key, Language);
 
     /// <summary>
-    /// 必须在**任何窗口构造之前**调用：<c>DynamicResource</c> 是按 key 现查的，
-    /// 窗口先建好再灌文案会留下一批解析为 null 的标签（且不会报错，只会显示空白）。
+    /// Must be called before any window is constructed: <c>DynamicResource</c> resolves by key on
+    /// demand, and loading copy after the window is built would leave a batch of labels resolved to
+    /// null (with no error, just blank).
     /// </summary>
     public static void Apply(string language, Application application)
     {
@@ -33,9 +37,10 @@ public static class HubStrings
 }
 
 /// <summary>
-/// 对应 WPF 版的 <c>LocalizedValueConverter</c>：把数据里的英文标识
-/// （<c>device</c> / <c>Missing</c> / <c>Succeeded</c> …）翻成界面文字。
-/// 之所以要有它，是因为这些值来自 Core 的领域模型，不能为了显示而在 Core 里存中文。
+/// Counterpart of WPF's <c>LocalizedValueConverter</c>: translates the English identifiers in the
+/// data (<c>device</c> / <c>Missing</c> / <c>Succeeded</c> …) into UI text.
+/// It exists because these values come from Core's domain model, and Core can't store Chinese just
+/// for display purposes.
 /// </summary>
 public sealed class LocalizedValueConverter : IValueConverter
 {

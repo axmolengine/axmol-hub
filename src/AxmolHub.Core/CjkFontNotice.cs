@@ -1,69 +1,77 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// 系统字体能不能把中文画出来。**三态而不是 bool**：<see cref="Unknown"/> 表示探测本身没得出结论
-/// （字体管理器还没起来、查询抛异常……）。它必须与"确实没有字体"分开 ——
-/// 并成一档就等于让"探测失败"变成一条"你缺字体"的假警报，而假警报比不报警更糟。
+/// Whether the system fonts can render Chinese. **Three states, not a bool**: <see cref="Unknown"/> means
+/// the probe itself reached no conclusion (the font manager isn't up yet, the query threw, ...). It must be
+/// kept separate from "there really is no font" — collapsing them into one state would turn "probe failed"
+/// into a false "you're missing fonts" alarm, and a false alarm is worse than no alarm.
 /// </summary>
 public enum CjkFontAvailability
 {
-    /// <summary>匹配得到覆盖汉字字形的字体。</summary>
+    /// <summary>A font covering Chinese (CJK) glyphs was matched.</summary>
     Available,
 
-    /// <summary>系统里没有任何字体覆盖汉字字形 —— 中文界面会显示成方框或空白。</summary>
+    /// <summary>No system font covers Chinese glyphs — the Chinese interface would render as boxes or blank.</summary>
     Missing,
 
-    /// <summary>没探测出结论（不据此打扰用户）。</summary>
+    /// <summary>No conclusion was reached (the user is not bothered based on this).</summary>
     Unknown,
 }
 
 /// <summary>
-/// "这台机器显示不了中文"的提示。
+/// The "this machine can't display Chinese" notice.
 ///
-/// 三条刻意的选择，都不是顺手写的：
+/// Three deliberate choices, none of them accidental:
 ///
-/// **① 判据是"能不能渲染"，不是"装没装某个包"。** 装了文泉驿、思源黑体一样能显示中文；
-/// 反过来，`fonts-noto-cjk` 装上了但字体缓存没刷新，照样显示不出来。所以
-/// <c>fonts-noto-cjk</c> 只出现在**提示的操作建议**里，不参与判断。
+/// **① The criterion is "can it render", not "is some package installed".** Installing WenQuanYi or
+/// Source Han Sans also makes Chinese render; conversely, `fonts-noto-cjk` may be installed but the font
+/// cache not refreshed, and it still won't render. So <c>fonts-noto-cjk</c> appears only in the notice's
+/// **actionable suggestion**, never in the judgment.
 ///
-/// **② 文案固定英文，不进 <see cref="HubTexts"/>。** 这条提示出现的前提恰恰是"中文渲染不出来"，
-/// 用中文写它，最需要看清它的人看到的是一片方框 —— 提示本身成了它的反例。
-/// 这里有一条断言守着（<c>--verify-shell</c>：标题与正文不得含 CJK 字符）。
+/// **② The text is fixed English, not in <see cref="HubTexts"/>.** This notice appears precisely when
+/// "Chinese can't render" — writing it in Chinese would mean the person who most needs to read it sees
+/// nothing but boxes, making the notice its own counterexample. An assertion guards this
+/// (<c>--verify-shell</c>: title and body must not contain CJK characters).
 ///
-/// **③ 只在界面语言是中文时才打扰用户。** 英文界面下用户根本没受影响，
-/// 每次启动都拦一下只会让人烦；而"切到中文"这个动作本身就是那一刻的判据。
+/// **③ Only bother the user when the interface language is Chinese.** Under an English interface the user
+/// is not affected at all, and blocking every launch would just annoy them; the very act of "switching to
+/// Chinese" is the criterion for that moment.
 /// </summary>
 public static class CjkFontNotice
 {
     /// <summary>
-    /// Debian / Ubuntu 上最省事的那条命令。写在这里而不是拼在文案里，是为了让断言能直接引用它 ——
-    /// "提示用户安装"的分量全在这行可粘贴的命令上，它要是被改坏了，提示就只剩一句空话。
+    /// The simplest command on Debian / Ubuntu. Written here rather than inlined into the message so the
+    /// assertion can reference it directly — the whole weight of "tell the user to install" rests on this
+    /// one copy-pasteable command; if it gets broken, the notice is reduced to empty words.
     /// </summary>
     public const string DebianInstallCommand = "sudo apt install fonts-noto-cjk";
 
     public const string Title = "Chinese font not found";
 
     /// <summary>
-    /// 写进日志那一行。**英文界面的用户不该被弹窗拦**，但"中文为什么是方框"必须留下可查的痕迹 ——
-    /// 一句日志正好：不打扰，且故障报告里能看见。内容不区分平台（命令在弹窗里按平台给）。
+    /// The line written to the log. **Users of the English interface should not be blocked by a popup**, but
+    /// "why is the Chinese showing as boxes" must leave a trace that can be inspected — a single log line
+    /// is just right: unobtrusive, yet visible in bug reports. The content is not platform-specific (the
+    /// command is chosen per platform in the popup).
     /// </summary>
     public const string LogLine = "No CJK font detected; Chinese text will not render on this system.";
 
     /// <summary>
-    /// Hub 进程是否跑在 Linux 上。抽成属性是为了让 <see cref="Message"/> 的两种取值都能被断言到 ——
-    /// 直接在里面调 <c>OperatingSystem.IsLinux()</c> 的话，非 Linux 那半边文案永远没人读过。
+    /// Whether the Hub process runs on Linux. Extracted into a property so both branches of
+    /// <see cref="Message"/> can be reached by the assertion — calling <c>OperatingSystem.IsLinux()</c>
+    /// inline would mean the non-Linux half of the text is never exercised.
     /// </summary>
     public static bool RunningOnLinux => OperatingSystem.IsLinux();
 
     /// <summary>
-    /// 什么时候该打扰用户：**确实探测到没有中文字体**，且**当前界面语言就是中文**。
-    /// <see cref="CjkFontAvailability.Unknown"/> 一律不提示。
+    /// When to bother the user: **a missing Chinese font was actually detected**, and **the current interface
+    /// language is Chinese**. <see cref="CjkFontAvailability.Unknown"/> never warns.
     /// </summary>
     public static bool ShouldWarn(CjkFontAvailability availability, string? language)
         => availability == CjkFontAvailability.Missing
            && HubTexts.Normalize(language) == HubTexts.ChineseLanguage;
 
-    /// <summary>完整的提示正文。<paramref name="linux"/> 只影响"装什么"那几行。</summary>
+    /// <summary>The full notice body. <paramref name="linux"/> only affects the "what to install" lines.</summary>
     public static string Message(bool linux)
     {
         var lines = new List<string>

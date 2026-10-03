@@ -7,20 +7,22 @@ using AxmolHub.Core;
 namespace AxmolHub.App;
 
 /// <summary>
-/// 项目页。WPF 版这一页的逻辑散在 <c>MainWindow.xaml.cs</c> 的若干 <c>async void</c> 事件处理器里，
-/// 这里收拢到一个 UserControl，操作本身仍全部转发给 <see cref="HubWorkspace"/>。
+/// The projects page. In the WPF version this page's logic was scattered across several
+/// <c>async void</c> event handlers in <c>MainWindow.xaml.cs</c>; here it's gathered into one
+/// UserControl, with the operations themselves still all forwarded to <see cref="HubWorkspace"/>.
 ///
-/// 这一页是四页里唯一有**跨页联动**的：选中项目会同时决定顶部"最近构建平台"卡、
-/// Android 设备条是否出现、以及工具链页的目标下拉。联动的落点是
-/// <see cref="HubWorkspace.SelectedProject"/>，不是某个控件 —— 否则又要回到 WPF 那种
-/// "一个窗口里的字段互相引用"的写法。
+/// This is the only one of the four pages with **cross-page coupling**: selecting a project decides
+/// both the top "recent build platform" card and whether the Android device bar appears, as well as
+/// the toolchains page's target dropdown. The coupling lands on
+/// <see cref="HubWorkspace.SelectedProject"/>, not some control — otherwise we'd be back to WPF's
+/// "fields in one window referencing each other" style.
 /// </summary>
 public partial class ProjectsPage : UserControl
 {
     private readonly HubWorkspace _workspace;
     private bool _ready;
 
-    /// <summary>供 XAML 加载器与设计预览使用（缺它会报 AVLN3001）。</summary>
+    /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public ProjectsPage()
     {
         _workspace = null!;
@@ -43,28 +45,33 @@ public partial class ProjectsPage : UserControl
             }
 
             var picked = ProjectsGrid.SelectedItem as ProjectEntry;
-            // 「没有真的换项目」必须直接返回 —— 否则与 Reload() 构成闭环，UI 线程被占死：
+            // "The project didn't really change" must return immediately — otherwise it forms a loop
+            // with Reload() and pins the UI thread:
             //
             //   SelectionChanged → Refresh() → Changed → Reload()
-            //     → 重建 ItemsSource（新数组，选中项先被清空）
-            //     → 重设 SelectedItem（再选回来，又一次变化）
+            //     → rebuild ItemsSource (new array, selection first cleared)
+            //     → reset SelectedItem (re-selected, another change)
             //     → _ready = true → SelectionChanged → …
             //
-            // 为什么 _ready 闸门挡不住：Reload() 里那两次赋值同时发出选中变化事件，
-            // 而它们并不保证在赋值语句内同步回调（ItemsSource 换数组后选中项要经
-            // 选型模型/布局重算），于是事件落到 _ready 已经恢复成 true 之后 —— 闸门形同虚设。
-            // 实测：45 秒内 Reload 被调 4701 次，窗口"未响应" 33 秒。
+            // Why the _ready gate can't stop it: the two assignments inside Reload() fire selection
+            // change events that aren't guaranteed to call back synchronously within the assignment
+            // statement (after ItemsSource swaps arrays, the selection goes through the selection
+            // model / layout recompute), so the event lands after _ready has already been restored to
+            // true — the gate is useless.
+            // Measured: Reload was called 4701 times in 45 seconds, and the window was "not
+            // responding" for 33 seconds.
             //
-            // 判据用"选中项没变"而不是再设一道闸门：Reload() 总会把工作区的
-            // SelectedProject 同步成表格当前选中项，所以重入时这里必然相等，
-            // 闭环在**第一圈**就断开；而用户真的点了另一行时两者不等，照常刷新。
+            // The criterion is "selection unchanged" rather than another gate: Reload() always syncs
+            // the workspace's SelectedProject to the grid's current selection, so on reentry they are
+            // necessarily equal here and the loop breaks on the **first turn**; when the user really
+            // clicked another row they differ, and refresh proceeds as normal.
             if (ReferenceEquals(picked, _workspace.SelectedProject))
             {
                 return;
             }
 
             _workspace.SelectedProject = picked;
-            // 选中项变了，平台卡与设备条都要跟着走；WPF 版在这里调的是 SyncProjectTarget。
+            // The selection changed, so the platform card and device bar must follow; the WPF version called SyncProjectTarget here.
             _workspace.Refresh();
         };
 
@@ -76,8 +83,8 @@ public partial class ProjectsPage : UserControl
         _ready = true;
     }
 
-    /// <summary>设备下拉的一项。WPF 版用匿名类型 + DisplayMemberPath；Avalonia 的 ComboBox
-    /// 没有 DisplayMemberPath，靠 ToString() 渲染，所以包成一个带 ToString 的小记录。</summary>
+    /// <summary>One entry of the device dropdown. The WPF version used an anonymous type + DisplayMemberPath; Avalonia's ComboBox
+    /// has no DisplayMemberPath and renders via ToString(), so wrap it in a small record with ToString.</summary>
     private sealed record DeviceChoice(AndroidDevice Device)
     {
         public override string ToString() => Device.Serial + " · " + HubStrings.Get(Device.State);
@@ -90,8 +97,7 @@ public partial class ProjectsPage : UserControl
             var opening = !NewProjectPanel.IsVisible;
             if (opening && string.IsNullOrWhiteSpace(ProjectLocationBox.Text))
             {
-                // 默认父目录只在**打开面板**时补一次。放进 Reload() 的话，用户把框清空后
-                // 任何一次刷新都会把它弹回默认值 —— 输入框就不再是"用户可以改的文本"了。
+                // The default parent directory is filled once only when the panel opens. Putting it in Reload() would mean any refresh after the user clears the box bounces it back to the default — the input is no longer "text the user can edit".
                 ProjectLocationBox.Text = _workspace.ProjectDirectory;
             }
 
@@ -128,7 +134,7 @@ public partial class ProjectsPage : UserControl
             NewProjectPanel.IsVisible = false;
         };
 
-        // 换引擎会改变「这一棵有没有预编译库」，提示要跟着走。
+        // Changing the engine changes "does this tree have a prebuilt library", so the hint must follow.
         ProjectEnginePicker.SelectionChanged += (_, _) => RefreshPrebuiltChoice();
 
         BuildButton.Click += async (_, _) => await _workspace.BuildAsync(configureOnly: false);
@@ -178,7 +184,7 @@ public partial class ProjectsPage : UserControl
         return result.Outcome == PickOutcome.Picked ? result.Path : null;
     }
 
-    /// <summary>WPF 版 <c>Refresh()</c> 里属于项目页的那一段。</summary>
+    /// <summary>The projects-page portion of the WPF <c>Refresh()</c>.</summary>
     public void Reload()
     {
         if (_workspace is null)
@@ -205,7 +211,7 @@ public partial class ProjectsPage : UserControl
         EmptyProjects.Text = HubStrings.Get("EmptyProjects");
         EmptyProjects.IsVisible = state.Projects.Count == 0;
 
-        // 表头随语言走，所以每次刷新都重设 —— WPF 版的 SetHeaders 就是这个作用。
+        // Headers follow the language, so they're reset on every refresh — that's what WPF's SetHeaders did.
         var headers = HubWorkspace.GridHeaders("projects");
         for (var index = 0; index < headers.Length && index < ProjectsGrid.Columns.Count; index++)
         {
@@ -219,21 +225,19 @@ public partial class ProjectsPage : UserControl
         AndroidDevicePanel.IsVisible = target?.Family == "android";
         ReloadDevices();
 
-        // 这里**刻意不碰** ProjectLocationBox：父目录是可编辑的单行输入框，
-        // 刷新时改写它等于把用户正在敲的内容擦掉。默认值由 NewProjectButton 打开面板时补。
-        // 同上：预编译开关与它一样属于"用户的选择"，刷新只改可用性和提示文案，不动勾选状态。
+        // Deliberately **doesn't touch** ProjectLocationBox here: the parent directory is an editable single-line input, and rewriting it on refresh erases what the user is typing. The default is filled by NewProjectButton when the panel opens.
+        // Same as above: the prebuilt toggle is likewise "the user's choice"; refresh only changes availability and hint copy, never the checked state.
         RefreshPrebuiltChoice();
         _ready = true;
     }
 
     /// <summary>
-    /// 「使用预编译库」开关的可用性与提示。
+    /// Availability and hint of the "use prebuilt library" toggle.
     ///
-    /// 两个刻意的取舍：
+    /// Two deliberate trade-offs:
     /// <list type="number">
-    /// <item>引擎还没构建时**仍然允许勾选** —— 用户可以先建项目、再去引擎页构建；
-    /// 真正不可用会在构建时明确失败（而不是偷偷退回源码构建）。</item>
-    /// <item>宿主不支持（非 Windows）时**强制不勾选并禁用** —— 那个组合永远不可能生效，留着只会骗人。</item>
+    /// <item>When the engine isn't built yet, checking is **still allowed** — the user can create the project first and build from the engines page later; true unavailability fails clearly at build time (rather than silently falling back to source build).</item>
+    /// <item>When the host doesn't support it (non-Windows), **force unchecked and disable** — that combination can never work, and leaving it only deceives.</item>
     /// </list>
     /// </summary>
     private void RefreshPrebuiltChoice()
