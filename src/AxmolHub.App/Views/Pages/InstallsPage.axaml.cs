@@ -46,7 +46,7 @@ public partial class InstallsPage : UserControl
             }
         };
 
-        InstallButton.Click += async (_, _) => await _workspace.InstallEngineAsync();
+        InstallButton.Click += async (_, _) => await _workspace.ChooseAndInstallEngineAsync();
         ModulesButton.Click += async (_, _) => await _workspace.ChooseModulesAsync(_workspace.SelectedEngine);
         DefaultButton.Click += async (_, _) => await _workspace.SetDefaultEngineAsync();
         OpenFolderButton.Click += async (_, _) => await _workspace.OpenEngineFolderAsync();

@@ -108,7 +108,15 @@ public static class HubTexts
         ["EnginesCount"] = ("已安装引擎", "Installed engines"),
         ["Platform"] = ("目标平台", "Target platform"),
         ["EnginesHint"] = ("版本独立安装，项目始终锁定自己的引擎。", "Separate installations. Each project keeps its engine version."),
-        ["InstallOfficial"] = ("安装 Axmol 2.11.5 LTS", "Install Axmol 2.11.5 LTS"),
+        // 刻意不写死版本号：清单里现在有六个版本，按钮上印"安装 2.11.5"会在
+        // 清单变更后变成一句假话，而它旁边就是版本选择器。
+        ["InstallOfficial"] = ("安装官方引擎", "Install official engine"),
+        ["ChooseEngineVersion"] = ("选择引擎版本", "Choose engine version"),
+        ["EngineVersionHint"] = ("每个版本独立安装到 Hub 数据目录，项目始终锁定创建时的版本。", "Each version installs independently into Hub storage. Projects keep the version they were created with."),
+        ["EngineVersionNone"] = ("清单里没有可安装的引擎版本。", "The manifest declares no installable engine release."),
+        ["EngineIndexRemote"] = ("版本列表来自 axmol.dev 索引。", "Version list from the axmol.dev index."),
+        ["EngineIndexBuiltIn"] = ("未能获取 axmol.dev 索引，正在使用 Hub 内置列表。", "axmol.dev index unavailable. Using the built-in list."),
+        ["EngineModulesUnverified"] = ("该版本尚无经过验证的模块清单：引擎可用，但“添加模块”与 Android 打包会被拒绝。", "This version has no verified module profile: the engine works, but Add modules and Android packaging are refused."),
         ["ImportEngine"] = ("导入引擎", "Import engine"),
         ["Channel"] = ("通道", "Channel"),
         ["SetDefault"] = ("设为默认", "Set default"),

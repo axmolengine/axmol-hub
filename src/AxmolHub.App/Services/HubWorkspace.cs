@@ -39,6 +39,12 @@ public sealed class HubWorkspace : IDisposable
     private BuildProgressWindow? _buildProgress;
     private bool _windowsInstallationActive;
 
+    /// <summary>
+    /// 引擎版本目录。**必须是同一个实例**：远端索引拉下来后要存在它身上，
+    /// 每次调用 new 一个的话，采纳结果会被立刻丢掉，列表永远停在内置清单。
+    /// </summary>
+    private EngineReleases _releases;
+
     /// <summary>签名密码只在内存里，一次会话有效 —— 与 WPF 版一致，不落盘。</summary>
     private readonly Dictionary<string, AndroidSigningPasswords> _androidPasswords = new(StringComparer.OrdinalIgnoreCase);
 
@@ -82,9 +88,56 @@ public sealed class HubWorkspace : IDisposable
 
         Modules = new EngineModules(Store.Root, Manifests);
 
+        _releases = new EngineReleases(Store.Root, Manifests);
+        RefreshEngineIndexAsync();
+
+        // 卡顿记录器：用户报"窗口无响应"时，日志里要能读出卡了多久、什么时候卡的。
+        // 常开、只在真卡住时写日志（阈值 2 秒 —— 1 秒级抖动不值得记）。
+        new UiStallWatch(Log.Write, TimeSpan.FromSeconds(2)).Start();
+
         ProjectDirectory = preferences.ProjectDirectory ?? Path.Combine(Store.Root, "projects");
         _targetReady = true;
         ToolTarget = BuildTargets.All[0];
+    }
+
+    /// <summary>
+    /// 启动时拉一次远端版本索引，失败就继续用内置清单。
+    ///
+    /// **不 await**：主窗口必须立刻出来。索引只影响"引擎页列出哪些版本"，
+    /// 让用户为了一个可选信息等网络是不可接受的（而离线环境下它会等到超时）。
+    /// 所以这里 fire-and-forget，完成后经 <see cref="Changed"/> 让界面重画一次。
+    ///
+    /// 超时给死：<see cref="_http"/> 刻意是 <see cref="Timeout.InfiniteTimeSpan"/>（GB 级下载要能慢慢下），
+    /// 索引这种小请求必须自己套一层，否则一个半死不活的连接能把后台任务挂到天荒地老。
+    ///
+    /// **整个请求跑在线程池上**（<see cref="Task.Run{TResult}(Func{TResult}, CancellationToken)"/>）。
+    /// 这不是为了并行 —— 是为了让"第一次 HTTP 请求"的**同步段**离开 UI 线程：
+    /// `HttpClient` 首次发请求时要解析代理（Windows 上会去问 WinINET，企业网里
+    /// WPAD/自动检测可能要好几秒）并做 DNS。这段同步代码跑在调用者线程上，
+    /// 而调用者就是 UI 线程 —— 于是窗口会出现"未响应"。本机测出来只有几十毫秒，
+    /// 但在有代理的环境里可以放大到秒级，且完全不体现在日志里。
+    /// </summary>
+    private async void RefreshEngineIndexAsync()
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var url = new Uri(EngineIndex.DefaultUrl);
+            var result = await Task.Run(() => EngineIndex.FetchAsync(_http, url, timeout.Token), timeout.Token);
+            _releases.Adopt(result);
+            foreach (var problem in _releases.Problems) Log.Write("Engine index: " + problem);
+            Log.Write(result.Manifest is null
+                ? "Engine index unavailable; using the built-in manifest."
+                : $"Engine index applied: {_releases.All().Count} release(s).");
+        }
+        catch (Exception ex)
+        {
+            // 契约上 EngineIndex.FetchAsync 不抛；真抛了也不该让启动失败。
+            Log.Write("Engine index failed: " + ex.Message);
+        }
+
+        // 后台线程 → UI 线程。跨线程碰控件会抛，所以经 Dispatcher 回去。
+        Dispatcher.UIThread.Post(() => Refresh());
     }
 
     // ───────────────────────── 服务与状态 ─────────────────────────
@@ -352,20 +405,45 @@ public sealed class HubWorkspace : IDisposable
         });
     }
 
-    public async Task InstallEngineAsync()
+    public async Task ChooseAndInstallEngineAsync()
+    {
+        if (_operation is not null)
+        {
+            return;
+        }
+
+        // 预选当前选中的引擎版本：连装两次同一版本时，第二次至少不用从头找。
+        var preferred = SelectedEngine?.Version;
+        var release = await EngineVersionDialog.PickAsync(Owner, _releases, preferred);
+        if (release is null)
+        {
+            return;
+        }
+
+        await InstallEngineAsync(release.Version);
+    }
+
+    /// <summary>可安装的官方引擎版本。远端索引优先，拉取失败时是内置清单。</summary>
+    public EngineReleases Releases() => _releases;
+
+    /// <summary>
+    /// 安装指定版本的官方引擎。<paramref name="version"/> 为空时取清单里最新的 LTS ——
+    /// CLI 与验收程序按这条默认路径走，交互界面则先让人选。
+    /// </summary>
+    public async Task InstallEngineAsync(string? version = null)
     {
         await ExecuteAsync("Install official engine", async token =>
         {
-            var manifest = PackageManifest.Read(Path.Combine(Manifests, "engine-manifest.json"));
-            // WPF 版这里写的是 Packages.Single()：清单只要多一个包就抛异常。
-            // 这里改成"取官方 LTS 通道里版本最新的一个"，既保留现状行为
-            // （今天清单里就一个包），也让清单将来能列多个版本。
-            //
-            // 接 https://axmol.dev/versions/index.json 的落点就在这一行：
-            // 那份索引给的是"有哪些版本可装"，这里给的是"装到哪、哈希是什么"。
-            var package = manifest.Packages
-                .OrderByDescending(p => p.Version, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault(p => p.Channel == "official-lts") ?? manifest.Packages[0];
+            var catalog = Releases();
+            // 版本号写错时必须在这里停住：清单里有 id/url/sha256，随便挑一个"最接近的"
+            // 等于下到一个用户没要求的引擎，而 Hub 直到构建失败才会发现。
+            var release = version is null ? catalog.LatestLts()
+                : catalog.Find(version) ?? throw new InvalidOperationException(
+                    HubStrings.Language == HubTexts.DefaultLanguage
+                        ? $"清单里没有 Axmol {version} 这个可安装版本。"
+                        : $"Axmol {version} is not an installable release in the manifest.");
+
+            var package = release.Package;
             var path = await _installer.InstallAsync(package, DownloadProgress(), token);
             AddEngine(StateStore.ValidateEngine(path, package.Channel));
         });

@@ -219,7 +219,14 @@ if (args.Contains("--install-tools"))
 if (args.Contains("--install-engine"))
 {
     using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-    var package = PackageManifest.Read("manifests/engine-manifest.json").Packages.Single();
+    // 清单现在列出多个版本，所以这里不能再 Single()；`--engine-version <v>` 可指定，
+    // 不给就取最新 LTS —— 与界面「安装」按钮的默认语义一致。
+    var releases = new EngineReleases(root, Path.GetFullPath("manifests"));
+    var requested = Array.IndexOf(args, "--engine-version");
+    var release = requested >= 0 && requested + 1 < args.Length
+        ? releases.Find(args[requested + 1]) ?? throw new ArgumentException("No such engine release in the manifest: " + args[requested + 1])
+        : releases.LatestLts();
+    var package = release.Package;
     var installer = new PackageInstaller(new DownloadManager(http, Console.WriteLine), root, Console.WriteLine);
     var path = await installer.InstallAsync(package);
     var engineEntry = StateStore.ValidateEngine(path, package.Channel);
@@ -230,7 +237,7 @@ if (args.Contains("--install-engine"))
     var projectService = new ProjectService(processRunner, detectorEntry, toolsRoot, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
     var created = await projectService.CreateAsync("HelloAxmol", Path.Combine(root, "projects"), engineEntry);
     new StateStore(root).Save(new HubState { Engines = [engineEntry], Projects = [created], DefaultEnginePath = path });
-    Console.WriteLine("Official engine verified and project created. Game Build/Run still requires managed MSVC and Windows SDK.");
+    Console.WriteLine($"Axmol {release.Version} verified and project created. Game Build/Run still requires managed MSVC and Windows SDK.");
     return;
 }
 var count = 0;

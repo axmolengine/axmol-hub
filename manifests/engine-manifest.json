@@ -8,7 +8,63 @@
       "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.5/axmol-2.11.5.zip",
       "sha256": "425bf1b2661b4488f1d62f24d2e7b8f0f5ce2154891820ce84c05219a5c0c0ee",
       "archiveRoot": "axmol-2.11.5",
-      "destination": "engines/official-lts/2.11.5"
+      "destination": "engines/official-lts/2.11.5",
+      "downloadBytes": 244248389
+    },
+    {
+      "id": "axmol-2.11.4",
+      "version": "2.11.4",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.4/axmol-2.11.4.zip",
+      "sha256": "eaab7130f6e48a72bec14dda6a34622784ee3545e8cad96d71bebd4d6fc9a03f",
+      "archiveRoot": "axmol-2.11.4",
+      "destination": "engines/official-lts/2.11.4",
+      "downloadBytes": 243581478
+    },
+    {
+      "id": "axmol-2.11.3",
+      "version": "2.11.3",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.3/axmol-2.11.3.zip",
+      "sha256": "56f5e2764c1ddd9bdfd60ddf128624bff2805d2050d6d2549841ddc024e51ffa",
+      "archiveRoot": "axmol-2.11.3",
+      "destination": "engines/official-lts/2.11.3",
+      "downloadBytes": 237092381
+    },
+    {
+      "id": "axmol-2.11.2",
+      "version": "2.11.2",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.2/axmol-2.11.2.zip",
+      "sha256": "503533c79cfc653ddc81a520c3b7bb1fd197c51a1cb7d82fdb7d8d8f8e54b020",
+      "archiveRoot": "axmol-2.11.2",
+      "destination": "engines/official-lts/2.11.2",
+      "downloadBytes": 237092289
+    },
+    {
+      "id": "axmol-2.11.1",
+      "version": "2.11.1",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.1/axmol-2.11.1.zip",
+      "sha256": "c23b839d1bfd555b6ad4ecd2d5f2ac88d2a2b7f3b9e7fad88bd81df917eaeb3f",
+      "archiveRoot": "axmol-2.11.1",
+      "destination": "engines/official-lts/2.11.1",
+      "downloadBytes": 237092396
+    },
+    {
+      "id": "axmol-2.11.0",
+      "version": "2.11.0",
+      "channel": "official-lts",
+      "repository": "https://github.com/axmolengine/axmol",
+      "url": "https://github.com/axmolengine/axmol/releases/download/v2.11.0/axmol-2.11.0.zip",
+      "sha256": "729098dba206b5292374f80ea6bbb98107c3b9b0cb12c89520ce66eb4b632cba",
+      "archiveRoot": "axmol-2.11.0",
+      "destination": "engines/official-lts/2.11.0",
+      "downloadBytes": 284241683
     }
   ]
 }

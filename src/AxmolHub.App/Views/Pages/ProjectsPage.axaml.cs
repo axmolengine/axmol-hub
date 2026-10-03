@@ -42,7 +42,28 @@ public partial class ProjectsPage : UserControl
                 return;
             }
 
-            _workspace.SelectedProject = ProjectsGrid.SelectedItem as ProjectEntry;
+            var picked = ProjectsGrid.SelectedItem as ProjectEntry;
+            // 「没有真的换项目」必须直接返回 —— 否则与 Reload() 构成闭环，UI 线程被占死：
+            //
+            //   SelectionChanged → Refresh() → Changed → Reload()
+            //     → 重建 ItemsSource（新数组，选中项先被清空）
+            //     → 重设 SelectedItem（再选回来，又一次变化）
+            //     → _ready = true → SelectionChanged → …
+            //
+            // 为什么 _ready 闸门挡不住：Reload() 里那两次赋值同时发出选中变化事件，
+            // 而它们并不保证在赋值语句内同步回调（ItemsSource 换数组后选中项要经
+            // 选型模型/布局重算），于是事件落到 _ready 已经恢复成 true 之后 —— 闸门形同虚设。
+            // 实测：45 秒内 Reload 被调 4701 次，窗口"未响应" 33 秒。
+            //
+            // 判据用"选中项没变"而不是再设一道闸门：Reload() 总会把工作区的
+            // SelectedProject 同步成表格当前选中项，所以重入时这里必然相等，
+            // 闭环在**第一圈**就断开；而用户真的点了另一行时两者不等，照常刷新。
+            if (ReferenceEquals(picked, _workspace.SelectedProject))
+            {
+                return;
+            }
+
+            _workspace.SelectedProject = picked;
             // 选中项变了，平台卡与设备条都要跟着走；WPF 版在这里调的是 SyncProjectTarget。
             _workspace.Refresh();
         };
