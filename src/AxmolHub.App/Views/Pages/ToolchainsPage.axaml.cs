@@ -74,7 +74,7 @@ public partial class ToolchainsPage : UserControl
 
             _workspace.ToolchainEngine = engine;
             var engineVersion = engine?.Version ?? "";
-            var available = BuildTargets.ForVersion(engineVersion);
+            var available = BuildTargets.ForHost(engineVersion);
             ToolTargetPicker.ItemsSource = available;
             ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
                 ? current
@@ -132,7 +132,7 @@ public partial class ToolchainsPage : UserControl
         // The toolchain probe target follows the engine version: only v3 exposes dedicated targets like arm64/wasm64.
         // If the previously chosen ToolTarget is no longer in this version's list (e.g. v3's arm64 switched to v2), fall back to the first.
         var engineVersion = (_workspace.ToolchainEngine?.Version) ?? "";
-        var available = BuildTargets.ForVersion(engineVersion);
+        var available = BuildTargets.ForHost(engineVersion);
         ToolTargetPicker.ItemsSource = available;
         ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
             ? current

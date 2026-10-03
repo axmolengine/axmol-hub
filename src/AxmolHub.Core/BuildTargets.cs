@@ -91,6 +91,18 @@ public static class BuildTargets
         var major = MajorVersion(version);
         return All.Where(target => !target.RequiresMajor(major)).ToArray();
     }
+
+    /// <summary>
+    /// The targets this machine can actually <b>build</b>: engine-version filter, host-OS filter
+    /// (<see cref="BuildTarget.Hosts"/>), and the cross-compilation constraint (<see cref="BuildTarget.CanCrossBuild"/>).
+    ///
+    /// Presenting a target that can never be built on this host is pointless in a picker, so the UI lists
+    /// only what the current machine supports. This is the entry point every platform picker should use.
+    /// </summary>
+    public static IReadOnlyList<BuildTarget> ForHost(string version)
+        => ForVersion(version)
+            .Where(target => target.CanBuildOn(Host) && target.CanCrossBuild(HostArch))
+            .ToArray();
     public static string BuildDirectory(ProjectEntry project)
     {
         BuildConfigurations.Validate(project.Configuration);

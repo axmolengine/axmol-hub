@@ -59,8 +59,13 @@ public sealed class BuildTargetDialog : Window
 
         Content = new Border { Child = panel, Padding = new Thickness(24) };
 
-        _picker.ItemsSource = BuildTargets.ForVersion(project.Version);
-        _picker.SelectedItem = BuildTargets.Get(project.Platform);
+        var available = BuildTargets.ForHost(project.Version);
+        _picker.ItemsSource = available;
+        // The project's current target may not be buildable on this host (e.g. picked on another machine
+        // or via the CLI); fall back to the first buildable target so the combo box never shows a selection
+        // that isn't in the list.
+        var current = BuildTargets.Get(project.Platform);
+        _picker.SelectedItem = available.Contains(current) ? current : available[0];
         _picker.SelectionChanged += (_, _) => RefreshConfigurations();
         RefreshConfigurations();
     }

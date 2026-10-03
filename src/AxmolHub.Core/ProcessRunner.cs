@@ -20,7 +20,7 @@ public sealed class ProcessRunner(Action<string> log)
     public async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
         string workingDirectory, IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyList<string>? sensitiveValues = null,
-        IReadOnlyDictionary<string, string>? overrides = null)
+        IReadOnlyDictionary<string, string>? overrides = null, bool firstLineOnly = false)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -67,8 +67,8 @@ public sealed class ProcessRunner(Action<string> log)
         var lastOutputTicks = Environment.TickCount64;
         void MarkOutput() => Interlocked.Exchange(ref lastOutputTicks, Environment.TickCount64);
 
-        var output = ReadAsync(process.StandardOutput, false, Redact, MarkOutput);
-        var error = ReadAsync(process.StandardError, true, Redact, MarkOutput);
+        var output = ReadAsync(process.StandardOutput, false, Redact, MarkOutput, firstLineOnly);
+        var error = ReadAsync(process.StandardError, true, Redact, MarkOutput, firstLineOnly);
 
         if (idleTimeout == Infinite)
         {
@@ -142,7 +142,7 @@ public sealed class ProcessRunner(Action<string> log)
         }
     }
 
-    private async Task<string> ReadAsync(StreamReader reader, bool error, Func<string, string> redact, Action? onOutput = null)
+    private async Task<string> ReadAsync(StreamReader reader, bool error, Func<string, string> redact, Action? onOutput = null, bool firstLineOnly = false)
     {
         var text = new StringBuilder();
         while (await reader.ReadLineAsync() is { } line)
@@ -151,6 +151,10 @@ public sealed class ProcessRunner(Action<string> log)
             line = redact(line);
             text.AppendLine(line);
             log(error ? $"stderr: {line}" : line);
+            // For cheap probes (e.g. `nuget help` where only the first line "NuGet Version: …" matters),
+            // stop reading once the first line is captured so the rest of the dump isn't pulled into memory
+            // or the log. The child process still runs to completion and exits on its own.
+            if (firstLineOnly && !error) break;
         }
         return text.ToString();
     }

@@ -70,6 +70,10 @@ public sealed class EngineToolchain(ProcessRunner runner)
             case "windows":
             case "uwp":
                 // nuget uses -mode BOTH (engine tree first); llvm checks the system clang first.
+                // "help" is not a stray command: nuget has no --version, and its "help" first line
+                // ("NuGet Version: …") is the version source — the same probe the engine runs
+                // (`find_prog -name 'nuget' -params 'help'` in 1k/1kiss.ps1). ProbeVersionAsync reads
+                // only that first line.
                 rows.Add(await ResolveAsync(new ToolSpec("NuGet", "nuget", "nuget", ["help"], Lookup.EngineFirst, ["nuget"]), profile, root, cancellation));
                 rows.Add(await ResolveAsync(new ToolSpec("LLVM (clang-format/genbindings)", "llvm", "clang", ["--version"], Lookup.SystemFirst, ["LLVM/bin"]), profile, root, cancellation));
                 rows.Add(await VisualStudioAsync(profile, cancellation));
@@ -174,7 +178,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
     {
         try
         {
-            var result = await runner.RunAsync(executable, parameters, Path.GetDirectoryName(executable) ?? ".", cancellation: cancellation, timeout: TimeSpan.FromSeconds(20));
+            var result = await runner.RunAsync(executable, parameters, Path.GetDirectoryName(executable) ?? ".", cancellation: cancellation, timeout: TimeSpan.FromSeconds(20), firstLineOnly: true);
             var firstLine = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
             if (ToolVersion.Extract(firstLine) is { } extracted) return extracted;
         }
