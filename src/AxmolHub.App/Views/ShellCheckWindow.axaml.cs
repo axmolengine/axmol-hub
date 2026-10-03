@@ -497,6 +497,17 @@ public partial class ShellCheckWindow : Window
         Check(vsButton is not null && vsButton.IsVisible == OperatingSystem.IsWindows(),
             "Visual Studio 按钮仅 Windows 显示（devenv.exe 是 Windows 专属）");
 
+        // The launch arguments are the one part of this flow that fails **outside** the process: a wrong
+        // switch makes devenv print "Invalid Command Line. Unknown Switch" and exit instead of opening.
+        // Nothing in the build catches it, so pin the exact list (folder path only, no switch) here.
+        var editorPath = System.IO.Path.Combine(scratchRoot, "SampleProject");
+        var vsArgs = HubWorkspace.EditorArguments(visualStudio: true, editorPath);
+        var codeArgs = HubWorkspace.EditorArguments(visualStudio: false, editorPath);
+        Check(vsArgs.Length == 1 && vsArgs[0] == editorPath
+              && codeArgs.Length == 1 && codeArgs[0] == editorPath,
+            "两种编辑器的启动参数都只有项目路径、不带任何开关（devenv 没有 /OpenFolder 这类开关，"
+            + "传开关会直接报错而不打开：VS=[" + string.Join(" ", vsArgs) + "] Code=[" + string.Join(" ", codeArgs) + "]）");
+
         Check(NamedDescendant<Button>(projects, "RemoveProjectButton") is { } removeProject
               && DockPanel.GetDock(removeProject) == Dock.Right,
             "「移出列表」停在动作条最右侧（破坏性操作不与构建按钮相邻，避免误触）");

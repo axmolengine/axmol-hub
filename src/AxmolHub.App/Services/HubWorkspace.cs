@@ -1007,10 +1007,26 @@ public sealed class HubWorkspace : IDisposable
                 : "Select VS Code executable in Settings first.");
         }
 
-        Open(executable, visualStudio ? ["/OpenFolder", project.Path] : [project.Path]);
+        Open(executable, EditorArguments(visualStudio, project.Path));
         project.LastOpened = DateTimeOffset.Now;
         return Task.CompletedTask;
     });
+
+    /// <summary>
+    /// Launch arguments that open <paramref name="path"/> in the selected editor.
+    ///
+    /// Both editors take the folder as a **positional** first argument: devenv's own usage line is
+    /// "devenv [solutionfile | projectfile | folder | anyfile.ext]", and a CMake project folder is
+    /// what makes Visual Studio pick up <c>CMakeLists.txt</c>. There is deliberately no switch here —
+    /// devenv has no <c>/OpenFolder</c> switch, and passing one aborts with
+    /// "Invalid Command Line. Unknown Switch : OpenFolder" **before** the IDE ever opens, which is a
+    /// failure no compiler can catch. Kept as a pure function so the shell check can pin the exact list.
+    ///
+    /// <paramref name="visualStudio"/> is intentionally not consulted: the two editors accept the same
+    /// positional form, and keeping the flag makes the call site read symmetrically on both branches so
+    /// someone "restoring" a VS-only switch has to see this comment first.
+    /// </summary>
+    internal static string[] EditorArguments(bool visualStudio, string path) => [path];
 
     /// <summary>Selects an editor executable. WPF's <c>SelectEditor</c>, including filename validation.</summary>
     public async Task SelectEditorAsync(bool visualStudio, string? path)

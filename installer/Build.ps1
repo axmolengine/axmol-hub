@@ -26,9 +26,10 @@ if (-not $Version) {
 if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
 
 if (-not $Channel) {
-    $Channel = 'linux'
-    if ($Runtime -like 'win-*') { $Channel = 'win' }
-    elseif ($Runtime -like 'osx-*') { $Channel = 'osx' }
+    # channel 用完整 RID（win-x64/osx-arm64/osx-x64/linux-x64）：每个架构是独立更新流，
+    # feed 名 releases.<rid>.json 天然唯一（解决 osx 双架构同名冲突），且客户端按已装包的
+    # channel 精确查找 releases.<channel>.json，打包端命名必须与之严格一致。
+    $Channel = $Runtime
 }
 
 # 打包器固定版本、装在 workspace 内：不改 PATH，也不复用系统上可能已装的 vpk。

@@ -98,13 +98,20 @@ internal sealed class UpdateService
     /// </summary>
     public async Task<CheckOutcome> CheckAndPromptAsync(Window? owner)
     {
-        var outcome = await CheckOnStartupAsync().ConfigureAwait(false);
+        // No ConfigureAwait(false) here on purpose: this is the **UI-facing** path. Once the check
+        // completes we call PromptAndApplyAsync, which shows a dialog (HubDialog.ShowAsync →
+        // Window.ShowDialog). ShowDialog must run on the UI thread; ConfigureAwait(false) would resume
+        // this method on a thread-pool thread and make Avalonia throw
+        // "The calling thread cannot access this object because a different thread owns it"
+        // (observed as an unhandled-exception crash). CheckOnStartupAsync already keeps its own network
+        // await off the UI thread internally, so hoisting the continuation is unnecessary.
+        var outcome = await CheckOnStartupAsync();
         if (outcome.Result is not CheckResult.UpdateAvailable || outcome.Update is null)
         {
             return outcome;
         }
 
-        await PromptAndApplyAsync(owner, outcome.Update).ConfigureAwait(false);
+        await PromptAndApplyAsync(owner, outcome.Update);
         return outcome;
     }
 

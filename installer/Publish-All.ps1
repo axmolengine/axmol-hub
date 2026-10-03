@@ -14,6 +14,10 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
+# 用户可见的产物命名统一走这一份前缀：从 packId（Axmol.Hub）派生成小写连字符（axmol-hub），
+# 与安装包 axmol-hub-<version>-<rid>.{ext} 同源。nupkg 也用它，feed 里的 FileName 随之改写，
+# 保证「feed 引用名 == release 上实际资产名」，客户端下载才不会 404。
+$taskAssetPrefix = ($taskPackId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
 
 if (-not $Version) {
     [xml]$taskProduct = Get-Content -LiteralPath "$taskRoot/Directory.Build.props"
@@ -27,12 +31,13 @@ if (-not $env:GH_TOKEN) { throw 'GH_TOKEN is not set.' }
 $taskTag = "v$Version"
 $taskSlug = ($RepoUrl -replace '^https?://[^/]+/', '') -replace '\.git$', ''
 
-# 平台 → (channel, 安装包后缀)。与 Build.ps1 的改名、release-build.yml 的 upload glob 保持一致。
+# 平台 → (channel=完整 RID, 安装包后缀, 产物目录)。channel 用 RID 是为了让 feed 名
+# releases.<rid>.json 天然唯一（osx-arm64/osx-x64 不再撞名），且等于客户端查找的 releases.<channel>.json。
 $taskPlatforms = @(
-    @{ Channel = 'win';   Suffix = '.exe';      Dir = 'win-x64' },
-    @{ Channel = 'osx';   Suffix = '.pkg';      Dir = 'osx-arm64' },
-    @{ Channel = 'osx';   Suffix = '.pkg';      Dir = 'osx-x64' },
-    @{ Channel = 'linux'; Suffix = '.AppImage'; Dir = 'linux-x64' }
+    @{ Channel = 'win-x64';    Suffix = '.exe';      Dir = 'win-x64' },
+    @{ Channel = 'osx-arm64';  Suffix = '.pkg';      Dir = 'osx-arm64' },
+    @{ Channel = 'osx-x64';    Suffix = '.pkg';      Dir = 'osx-x64' },
+    @{ Channel = 'linux-x64';  Suffix = '.AppImage'; Dir = 'linux-x64' }
 )
 
 $taskUpload = @()
@@ -59,26 +64,40 @@ foreach ($taskPlat in $taskPlatforms) {
     $taskParsed = Get-Content -Raw -LiteralPath $taskFeed | ConvertFrom-Json
     $taskKept = @($taskParsed.Assets | Where-Object { $_.Version -eq $Version })
     if (-not $taskKept) { throw "The release feed for $($taskPlat.Dir) has no entry for version $Version." }
-    Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
 
     $taskUpload += $taskSetupPath
     $taskUpload += ($taskSetupPath + '.sha256')
 
-    # nupkg 按 packId+version 命名，各平台 full/delta 同名但内容不同，必须带平台目录区分——
-    # 但上传到 release 页时不能重名，否则互相覆盖。这里把它们改名为带 runtime 前缀的副本。
+    # vpk 的 nupkg 名 = {packId}-{version}[-{channel}]-{full|delta}.nupkg；channel 段**仅当
+    # os==Windows 且 channel 恰等于平台默认值 "win" 时才省略**（Velopack DefaultName.GetSuggestedReleaseName）。
+    # 我们用 channel=rid（win-x64/osx-arm64/…），它不是 "win"，故**四个平台（含 win）都带 -<rid>- 段**。
+    # 按带后缀名找，找不到再退回无后缀名兜底。
+    # 改名目的：与安装包统一成小写连字符 axmol-hub-<ver>-<rid>-<full|delta>.nupkg（前缀由 packId 派生，
+    # 见 $taskAssetPrefix）。改完必须同步修 feed 里引用的 FileName/URL，否则客户端按 feed 找 nupkg 会 404。
     foreach ($taskNupkg in @('full', 'delta')) {
-        $taskNupkgPath = Join-Path $taskDir "$taskPackId-$Version-$taskNupkg.nupkg"
-        if (Test-Path -LiteralPath $taskNupkgPath) {
-            $taskTarget = Join-Path $taskDir "$taskPackId-$Version-$($taskPlat.Dir)-$taskNupkg.nupkg"
-            Copy-Item -LiteralPath $taskNupkgPath -Destination $taskTarget -Force
-            $taskUpload += $taskTarget
+        $taskCandidates = @(
+            (Join-Path $taskDir "$taskPackId-$Version-$($taskPlat.Channel)-$taskNupkg.nupkg"),
+            (Join-Path $taskDir "$taskPackId-$Version-$taskNupkg.nupkg")
+        ) | Where-Object { Test-Path -LiteralPath $_ }
+        if (-not $taskCandidates) { continue }
+        $taskNupkgPath = @($taskCandidates)[0]
+        $taskOrigName = [System.IO.Path]::GetFileName($taskNupkgPath)
+        $taskNewName  = "$taskAssetPrefix-$Version-$($taskPlat.Dir)-$taskNupkg.nupkg"
+        $taskTarget = Join-Path $taskDir $taskNewName
+        Copy-Item -LiteralPath $taskNupkgPath -Destination $taskTarget -Force
+        $taskUpload += $taskTarget
+        foreach ($a in $taskKept) {
+            if ($a.FileName -eq $taskOrigName) {
+                $a.FileName = $taskNewName
+                if ($a.URL)         { $a.URL = $a.URL -replace [regex]::Escape($taskOrigName), $taskNewName }
+                if ($a.DownloadUrl) { $a.DownloadUrl = $a.DownloadUrl -replace [regex]::Escape($taskOrigName), $taskNewName }
+            }
         }
     }
 
-    # feed 本身：每个 channel 一个，按 channel 命名避免 osx-arm64/osx-x64 两个 feed 重名。
-    $taskFeedTarget = Join-Path $taskDir "releases.$($taskPlat.Channel)-$($taskPlat.Dir).json"
-    Copy-Item -LiteralPath $taskFeed -Destination $taskFeedTarget -Force
-    $taskUpload += $taskFeedTarget
+    # 写回修好的 feed（feed 名 = releases.<channel>.json = releases.<rid>.json），随安装包一起上传。
+    Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
+    $taskUpload += $taskFeed
 }
 
 if (-not $taskUpload) { throw 'No assets collected for upload; is ArtifactDir populated?' }

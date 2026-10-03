@@ -12,6 +12,8 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
+# nupkg 上传时的统一命名前缀：由 packId 派生成小写连字符（Axmol.Hub → axmol-hub），与安装包同源。
+$taskAssetPrefix = ($taskPackId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
 
 # Single source of the version: the repository-root Directory.Build.props, same as
 # Build.ps1 and Test.ps1 read. There is no second copy anywhere in this pipeline.
@@ -22,9 +24,8 @@ if (-not $Version) {
 if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
 
 if (-not $Channel) {
-    $Channel = 'linux'
-    if ($Runtime -like 'win-*') { $Channel = 'win' }
-    elseif ($Runtime -like 'osx-*') { $Channel = 'osx' }
+    # 与 Build.ps1 保持一致：channel = 完整 RID，feed 名 releases.<rid>.json 即客户端查找名。
+    $Channel = $Runtime
 }
 
 # The tag check only matters when actually uploading: it's the one place that can catch
@@ -75,7 +76,6 @@ if ($Stage -in @('All', 'Upload')) {
     $taskParsed = Get-Content -Raw -LiteralPath $taskFeed | ConvertFrom-Json
     $taskKept = @($taskParsed.Assets | Where-Object { $_.Version -eq $Version })
     if (-not $taskKept) { throw "The release feed has no entry for version $Version." }
-    Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
 
     # Explicit upload list instead of `vpk upload github`: the installer is renamed, and
     # vpk's own uploader enumerates files from assets.<channel>.json, which still carries
@@ -90,12 +90,38 @@ if ($Stage -in @('All', 'Upload')) {
     $taskSetup = "axmol-hub-$Version-$Runtime$taskSuffix"
     $taskUpload = @(
         (Join-Path $taskOutput $taskSetup),
-        (Join-Path $taskOutput ($taskSetup + '.sha256')),
-        (Join-Path $taskOutput "$taskPackId-$Version-full.nupkg"),
-        $taskFeed
+        (Join-Path $taskOutput ($taskSetup + '.sha256'))
     )
-    $taskDelta = Join-Path $taskOutput "$taskPackId-$Version-delta.nupkg"
-    if (Test-Path -LiteralPath $taskDelta) { $taskUpload += $taskDelta }
+
+    # nupkg：vpk 原名 = {packId}-{version}[-{channel}]-{full|delta}.nupkg，channel 段**只在
+    # os==Windows 且 channel=="win" 时省略**（Velopack DefaultName.GetSuggestedReleaseName）。这里用
+    # channel=RID，故四个平台一律带 -<rid>- 段。上传时改名为与安装包同源的小写连字符
+    # axmol-hub-<version>-<runtime>-<type>.nupkg，并同步改 feed 的 FileName，否则客户端按 feed 找包 404。
+    foreach ($taskNupkg in @('full', 'delta')) {
+        $taskCandidates = @(
+            (Join-Path $taskOutput "$taskPackId-$Version-$Channel-$taskNupkg.nupkg"),
+            (Join-Path $taskOutput "$taskPackId-$Version-$taskNupkg.nupkg")
+        ) | Where-Object { Test-Path -LiteralPath $_ }
+        if (-not $taskCandidates) { continue }
+        $taskNupkgPath = @($taskCandidates)[0]
+        $taskOrigName = [System.IO.Path]::GetFileName($taskNupkgPath)
+        $taskNewName  = "$taskAssetPrefix-$Version-$Runtime-$taskNupkg.nupkg"
+        $taskTarget = Join-Path $taskOutput $taskNewName
+        Copy-Item -LiteralPath $taskNupkgPath -Destination $taskTarget -Force
+        $taskUpload += $taskTarget
+        foreach ($a in $taskKept) {
+            if ($a.FileName -eq $taskOrigName) {
+                $a.FileName = $taskNewName
+                if ($a.URL)         { $a.URL = $a.URL -replace [regex]::Escape($taskOrigName), $taskNewName }
+                if ($a.DownloadUrl) { $a.DownloadUrl = $a.DownloadUrl -replace [regex]::Escape($taskOrigName), $taskNewName }
+            }
+        }
+    }
+
+    # 写回裁剪 + 改名后的 feed（feed 名 = releases.<channel>.json = releases.<rid>.json）。
+    Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
+    $taskUpload += $taskFeed
+
     foreach ($taskFile in $taskUpload) {
         if (-not (Test-Path -LiteralPath $taskFile)) { throw "Missing release asset: $taskFile" }
     }

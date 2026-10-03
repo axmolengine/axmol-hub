@@ -24,19 +24,21 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 | 文件 | 用途 |
 | --- | --- |
 | `axmol-hub-<version>-<runtime>.exe` | 一键安装器（**自定义名**），含 SHA-256 |
-| `Axmol.Hub-win-Portable.zip` | 免安装版，含 SHA-256。**当前不上传 release 页** |
-| `Axmol.Hub-<version>-full.nupkg` / `-delta.nupkg` | 自更新载荷 |
-| `releases.win.json` | 更新索引，自动更新的唯一入口 |
-| `assets.win.json` / `RELEASES` | vpk 内部用（`vpk upload` 的清单 / Squirrel 迁移），不上传 |
+| `Axmol.Hub-<runtime>-Portable.zip` | 免安装版，含 SHA-256。**当前不上传 release 页** |
+| `Axmol.Hub-<version>-<runtime>-full.nupkg` / `-delta.nupkg` | 自更新载荷（打包器产出名；上传时改名为 `axmol-hub-…`，见下） |
+| `releases.<runtime>.json` | 更新索引，自动更新的唯一入口 |
+| `assets.<channel>.json` / `RELEASES-<channel>` | vpk 内部用（`vpk upload` 的清单 / Squirrel 迁移），不上传 |
 
-**文件名的两套规则**（都是 `vpk` 派生的，只有第一个被改掉了）：
+**文件名的两套规则**（都由 `vpk` 派生）：
 
-- 安装包：`Build.ps1` 把 `vpk` 产出的 `{packId}-{channel}-Setup.exe` 改名为 `axmol-hub-<version>-<runtime>.exe`。原生名里既没有版本也没有架构，在 release 页上每次发布都重名，只能靠标题分辨。
-- 更新载荷：`{packId}-<version>-full.nupkg` / `-delta.nupkg`，**不能改** —— `releases.win.json` 里硬引用了这个文件名。安装包改名与更新链路无关，两者互不影响。
+- 安装包：`Build.ps1` 把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `axmol-hub-<version>-<runtime>.exe`。原生名里既没有版本也没有架构，在 release 页上每次发布都重名，只能靠标题分辨。
+- 更新载荷：`vpk` 产出 `{packId}-<version>{-channel}-{full|delta}.nupkg`，`Publish-All.ps1` 上传时把它改名为与安装包同源的小写连字符 `axmol-hub-<version>-<runtime>-{full|delta}.nupkg`，**并同步改写 feed 里的 `FileName`** —— 否则客户端按 feed 找不到包。安装包改名与更新链路无关，两者互不影响。
+
+其中 `{-channel}` 段：`vpk` **只在 Windows 且 channel 恰为平台默认值 `win` 时省略**，其余一律带 `-<channel>`（macOS 出 `-osx-…`、Linux 出 `-linux-…`）。本项目 channel = **完整 RID**（`win-x64` / `osx-arm64` / `osx-x64` / `linux-x64`，见 `Build.ps1`），因 `win-x64 ≠ win`，**四个平台（含 Windows）的 nupkg 都带 `-<rid>-` 段**。feed 名同理 = `releases.<rid>.json`。
 
 版本号只有**一个来源**：仓库根的 `Directory.Build.props`（五个项目共用）。`Build.ps1` 读它，不再有散落的手工副本。
 
-`Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台。**当前只有 Windows 能出包**。P6 之后 App 已经是跨平台实现（Avalonia / `net8.0`），守卫的保留理由也随之变了：不再是"项目是 Windows 独占"，而是 **osx / linux 的发行通道（签名、公证、载荷格式）尚未跑通**。Core、Cli 与 App 都已经能为每个宿主构建。
+`Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台，**没有平台守卫**：四个平台都在各自原生 runner 上出包（Windows `Setup.exe` / macOS `.pkg` / Linux `.AppImage`）。P6 之后 App 是跨平台实现（Avalonia / `net8.0`），Core、Cli 与 App 都能为每个宿主构建；**签名 / 公证尚未接入**，因此产物目前都是未签名状态。
 
 `Test.ps1 -Isolated` 用一次性 `packId`、程序名与安装目录打包两个相邻版本（`x` 与 `x+1`），验证：
 
@@ -83,8 +85,8 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 | 平台 | runner | 安装器 | 主程序参数 |
 | --- | --- | --- | --- |
 | Windows x64 | `windows-latest` | `axmol-hub-<v>-win-x64.exe` | `--mainExe` |
-| macOS arm64 / x64 | `macos-15` | `axmol-hub-<v>-osx-{arm64,x64}.pkg` | 打包器自动探测 |
-| Linux x64 | `ubuntu-22.04` | `axmol-hub-<v>-linux-x64.AppImage` | `--exeName` |
+| macOS arm64 / x64 | `macos-15` | `axmol-hub-<v>-osx-{arm64,x64}.pkg` | `--mainExe` |
+| Linux x64 | `ubuntu-24.04` | `axmol-hub-<v>-linux-x64.AppImage` | `--mainExe` |
 
 单平台调试仍可用 `Publish.ps1`：
 
@@ -95,7 +97,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 多平台合并上传由 `Publish-All.ps1` 承担（dist 阶段调用）。`Upload` 阶段都需要 `GH_TOKEN`（CI 里是 `GITHUB_TOKEN`）和 `gh`。
 
-**`releases.<channel>.json` 必须先裁剪再上传。** `GithubSource` 会把最近 10 个 release 各自的 feed 合并，然后到**该 feed 所属的 release** 里按文件名找 nupkg。`vpk download` 会把上一版的条目带进新 feed，但上一版的 nupkg 在旧 release 里 —— 不裁剪，更新检查会直接抛错。裁剪规则是只留 `Version == 当前版本` 的条目。一个 tag 下同 channel 的多架构（osx-arm64 / osx-x64）feed 分别按 `releases.osx-<arch>.json` 命名上传，避免互相覆盖；nupkg 也按 `-<runtime>-` 前缀区分。
+**`releases.<channel>.json` 必须先裁剪再上传。** `GithubSource` 会把最近 10 个 release 各自的 feed 合并，然后到**该 feed 所属的 release** 里按文件名找 nupkg。`vpk download` 会把上一版的条目带进新 feed，但上一版的 nupkg 在旧 release 里 —— 不裁剪，更新检查会直接抛错。裁剪规则是只留 `Version == 当前版本` 的条目。一个 tag 下每个平台一个 channel（= 完整 RID），feed 名 `releases.<rid>.json`（`releases.win-x64.json` / `releases.osx-arm64.json` / `releases.osx-x64.json` / `releases.linux-x64.json`）天然唯一、无需额外后缀；nupkg 名也带 `-<rid>-` 段并与 feed 引用保持同步。
 
 **tag 必须与 `Directory.Build.props` 的版本一致**（`v0.2.1` ↔ `0.2.1`）。feed、nupkg 名、安装包名都带版本号，而 release 页是按 tag 组织的，两者漂移会静默地让更新对不上。
 
