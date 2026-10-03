@@ -179,9 +179,6 @@ jobs:
           ls -l "$exe"
           "$exe" targets | tr -d '\r' | head -3
 
-      - name: Upload CLI host
-        uses: actions/upload-artifact@v7
-        with:
-          name: cli-${{ matrix.rid }}
-          path: artifacts/cli/${{ matrix.rid }}
-          if-no-files-found: error
+      # 这里曾有一步 "Upload CLI host"，把 artifacts/cli/<rid> 作为 cli-<rid> 上传。2026-10-03 删除：
+      # 没有任何后续消费方（发布链路的 App 产物由 installer/Build.ps1 自行发布，不读 CI 的 CLI 产物），
+      # 它想证明的"产物可用"已由上面两步（发布 + 在目标宿主真跑）证明，artifact 只是把同一个结论再存一份。

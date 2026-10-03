@@ -469,6 +469,32 @@ public partial class ShellCheckWindow : Window
         Check(shell.NavigateTo("Toolchains") is ToolchainsPage, "工具链页由 ToolchainsPage 承载");
         Check(shell.NavigateTo("Settings") is SettingsPage, "设置页由 SettingsPage 承载");
 
+        // The projects page's action bar is a deliberate two-row layout: row 1 = build/run/configure plus
+        // the two project-setting dialogs, row 2 = the open/launch commands with the destructive "remove"
+        // docked at the far right. Ten commands are now spread over three different containers, so a
+        // future regrouping can silently drop one — and a missing button does not fail to build, it just
+        // disappears from a screenshot. Assert all ten by name, plus the one deliberate positional rule
+        // (that "remove" stays isolated from the build buttons);
+        // it is the reason the row exists and would be easy to undo while "tidying up" the markup.
+        var projects = (ProjectsPage)shell.NavigateTo("Projects");
+        projects.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        var commands = new[]
+        {
+            "BuildButton", "RunButton", "ConfigureButton", "AndroidReleaseButton", "PrebuiltSettingsButton",
+            "OpenFolderButton", "OpenOutputsButton", "VisualStudioButton", "CodeButton", "RemoveProjectButton",
+        };
+        var missing = commands
+            .Where(name => NamedDescendant<Button>(projects, name) is not { IsVisible: true })
+            .ToArray();
+        Check(missing.Length == 0,
+            "项目页动作条十项命令都还在且可见（重排成两行不能丢按钮，缺：" + string.Join(", ", missing) + "）");
+
+        Check(NamedDescendant<Button>(projects, "RemoveProjectButton") is { } removeProject
+              && DockPanel.GetDock(removeProject) == Dock.Right,
+            "「移出列表」停在动作条最右侧（破坏性操作不与构建按钮相邻，避免误触）");
+
         Check(Throws<ArgumentException>(() => shell.NavigateTo("Nope")),
             "未知页面键抛 ArgumentException（而不是显示一个空宿主）");
 

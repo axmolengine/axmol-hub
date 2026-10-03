@@ -8,10 +8,33 @@
   <!--
     Projects page. A port of <Grid x:Name="ProjectsPage"> from the WPF version's MainWindow.xaml, copied
     line by line in structure: title row → three stat cards → new-project panel (collapsed by default) →
-    project table → Android device bar + action button row.
+    project table → Android device bar + two-row action bar.
     The header text is reset by code on every refresh (it must follow language changes), so no fixed
     Chinese Header is written here.
   -->
+
+  <UserControl.Styles>
+    <!--
+      The action bar owns its own gaps. Button's ControlTheme carries Margin 0,0,8,0, so if the bar used
+      WrapPanel.ItemSpacing on top of that every horizontal gap would double to 16px while the vertical
+      gap (which the theme has none of) stayed at the value ItemSpacing/LineSpacing provide. Zeroing the
+      trailing margin here makes ItemSpacing/LineSpacing the single source of truth for both directions.
+    -->
+    <Style Selector="WrapPanel.actions > Button">
+      <Setter Property="Margin" Value="0" />
+    </Style>
+
+    <!-- Group separator inside row 1: visually splits "operate on the project" from "project settings".
+         Height is fixed (a contentless Border measures 0 high otherwise) and it is vertically centred
+         rather than stretched, so the divider never dictates the row height. -->
+    <Style Selector="Border.sep">
+      <Setter Property="Width" Value="1" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Background" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Margin" Value="7,0,12,0" />
+    </Style>
+  </UserControl.Styles>
 
   <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
 
@@ -173,18 +196,45 @@
         </StackPanel>
       </Border>
 
-      <WrapPanel Margin="0,18,0,6">
-        <Button x:Name="BuildButton" Content="{DynamicResource Build}" Classes="primary" />
-        <Button x:Name="RunButton" Content="{DynamicResource Run}" />
-        <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet" />
-        <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet" />
-        <Button x:Name="PrebuiltSettingsButton" Content="{DynamicResource PrebuiltSettings}" Classes="quiet" />
-        <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
-        <Button x:Name="OpenOutputsButton" Content="{DynamicResource OpenOutputs}" Classes="quiet" />
-        <Button x:Name="VisualStudioButton" Content="Visual Studio" Classes="quiet" />
-        <Button x:Name="CodeButton" Content="VS Code" Classes="quiet" />
-        <Button x:Name="RemoveProjectButton" Content="{DynamicResource RemoveFromList}" Classes="quiet" />
-      </WrapPanel>
+      <!--
+        Action bar. Ten commands do not fit on one line even at the window's minimum width
+        (MinWidth 1080 → ~800px of content), and letting a single WrapPanel break them wherever it
+        happens to run out of room produced a cramped second row whose contents read as arbitrary.
+        It is laid out as two deliberate rows instead:
+
+          row 1  build / run / configure  │  the two project-scoped setting dialogs
+          row 2  open / launch actions                                       … remove (far right)
+
+        Grouping rule: row 1 is "operate on this project", row 2 is "go somewhere / launch something".
+        The destructive "remove from list" is isolated at the right edge of row 2 so it can never be hit
+        by accident while reaching for a neighbouring button.
+
+        Each row stays a WrapPanel so a narrow window still degrades gracefully, and ItemSpacing/LineSpacing
+        (rather than the theme's trailing-margin spacing — see UserControl.Styles) supply the horizontal gap
+        **and** the vertical gap between wrapped lines. The missing vertical gap is what made the old
+        two-row layout look crowded.
+      -->
+      <StackPanel Margin="0,18,0,6" Spacing="8">
+        <WrapPanel Classes="actions" ItemSpacing="8" LineSpacing="8">
+          <Button x:Name="BuildButton" Content="{DynamicResource Build}" Classes="primary" />
+          <Button x:Name="RunButton" Content="{DynamicResource Run}" />
+          <Button x:Name="ConfigureButton" Content="{DynamicResource Configure}" Classes="quiet" />
+          <Border Classes="sep" />
+          <Button x:Name="AndroidReleaseButton" Content="{DynamicResource AndroidReleaseSettings}" Classes="quiet" />
+          <Button x:Name="PrebuiltSettingsButton" Content="{DynamicResource PrebuiltSettings}" Classes="quiet" />
+        </WrapPanel>
+
+        <DockPanel>
+          <Button x:Name="RemoveProjectButton" Content="{DynamicResource RemoveFromList}" Classes="quiet"
+                  DockPanel.Dock="Right" Margin="16,0,0,0" />
+          <WrapPanel Classes="actions" ItemSpacing="8" LineSpacing="8">
+            <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />
+            <Button x:Name="OpenOutputsButton" Content="{DynamicResource OpenOutputs}" Classes="quiet" />
+            <Button x:Name="VisualStudioButton" Content="Visual Studio" Classes="quiet" />
+            <Button x:Name="CodeButton" Content="VS Code" Classes="quiet" />
+          </WrapPanel>
+        </DockPanel>
+      </StackPanel>
     </StackPanel>
 
   </Grid>
