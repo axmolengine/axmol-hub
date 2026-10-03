@@ -27,11 +27,12 @@ if (-not $Channel) {
     elseif ($Runtime -like 'osx-*') { $Channel = 'osx' }
 }
 
-# The tag is the only place that can catch "version bumped, tag forgotten": the feed,
-# the nupkg name and the installer name all carry the version from Directory.Build.props,
-# while the release page is keyed by the tag.
+# The tag check only matters when actually uploading: it's the one place that can catch
+# "version bumped, tag forgotten" (the feed, nupkg name and installer name all carry the
+# version, while the release page is keyed by the tag). The Build stage runs on any master
+# push (GITHUB_REF_NAME=master) and must not be gated by it.
 $taskTag = "v$Version"
-if ($env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME -ne $taskTag) {
+if ($Stage -eq 'Upload' -and $env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME -ne $taskTag) {
     throw "Tag '$env:GITHUB_REF_NAME' does not match version $Version (expected '$taskTag')."
 }
 

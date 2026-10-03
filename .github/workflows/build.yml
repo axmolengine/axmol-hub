@@ -1,16 +1,24 @@
-name: CI
+# 构建 + 验证 + 安装器打包，三个职责合在一个 workflow 里，靠 job 分层：
+#   - meta：解析提交信息是否为 "Version x.y.z"，决定是否打包（普通提交只验证，不打包）。
+#   - verify：三平台矩阵，验证代码正确性（编译、宿主判定、CLI 契约、下载契约），任何提交都跑。
+#   - package-*：四平台各自在原生 runner 上跑 vpk pack（不能交叉出包），仅在 "Version" 提交或手动触发时跑。
+# 是否发布由 dist.yml 根据提交信息与结果决定（与 axslcc 的 build.yml + dist.yml 语义一致）。
+name: Build
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
+    paths-ignore:
+      - '.github/workflows/dist.yml'
+      - 'docs/**'
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -21,8 +29,36 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
-  hosts:
-    name: ${{ matrix.label }}
+  # ── 是否打包：解析提交信息。普通提交（非 "Version x.y.z"）只验证、不打包；
+  #    只有发版提交或手动触发才走打包，把昂贵的 vpk pack 留给真正要发版的那一次。──
+  meta:
+    name: Decide packaging
+    runs-on: ubuntu-24.04
+    outputs:
+      should_package: ${{ steps.decide.outputs.should_package }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Decide
+        id: decide
+        shell: pwsh
+        run: |
+          $msg = "$(git log -1 --format=%s)"
+          Write-Host "HEAD commit message: $msg"
+          # 手动触发视为发版（和 dist 的 workflow_dispatch 允许手动输版本呼应）。
+          $isDispatch = '${{ github.event_name }}' -eq 'workflow_dispatch'
+          $isVersion = [Regex]::IsMatch($msg, '^Version\s+\d+\.\d+\.\d+(-\w+)?$')
+          $should = ($isDispatch -or $isVersion) -and '${{ github.event_name }}' -ne 'pull_request'
+          # 输出小写 true/false，与 job 条件 needs.meta.outputs.should_package == 'true' 对齐。
+          $flag = if ($should) { 'true' } else { 'false' }
+          "should_package=$flag" >> $env:GITHUB_OUTPUT
+          Write-Host "should_package=$flag"
+
+  # ── 验证：代码没坏。三平台矩阵，与打包解耦，失败只代表代码回归，与发布无关。──
+  verify:
+    name: Verify (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,11 +68,11 @@ jobs:
             label: Windows x64
             rid: win-x64
             host: windows
-          - os: macos-latest
+          - os: macos-15
             label: macOS arm64
             rid: osx-arm64
             host: macos
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             label: Linux x64
             rid: linux-x64
             host: linux
@@ -51,7 +87,7 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
-      # 上面的 env 只是"申请 8.0.x"，setup-dotnet 实际解析到哪个补丁版本才决定编译器版本。
+      # 上面的 env 只是"申请 10.0.x"，setup-dotnet 实际解析到哪个补丁版本才决定编译器版本。
       # 这个差异已经真实咬过一次（2026-10-03）：本机 Ubuntu 用 apt 装 dotnet-sdk-8.0
       # 只能拿到 8.0.1xx（编译器 4.8.0.0），而 Avalonia 12.1.3 的分析器与生成器是按
       # 4.14 编译的，源生成器整个不产出，表现为一排
@@ -182,3 +218,152 @@ jobs:
       # 这里曾有一步 "Upload CLI host"，把 artifacts/cli/<rid> 作为 cli-<rid> 上传。2026-10-03 删除：
       # 没有任何后续消费方（发布链路的 App 产物由 installer/Build.ps1 自行发布，不读 CI 的 CLI 产物），
       # 它想证明的"产物可用"已由上面两步（发布 + 在目标宿主真跑）证明，artifact 只是把同一个结论再存一份。
+
+  # ── 打包：安装器产物。artifact 名必须恰好等于平台目录名（win-x64 等），
+  #    因为 dist 的 Publish-All.ps1 按平台目录名（Dir）在下载目录里找子目录。──
+  package-win-x64:
+    name: Package Windows x64
+    needs: meta
+    if: needs.meta.outputs.should_package == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-release-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-release-
+
+      - name: Prepare pinned Velopack CLI
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+
+      - name: Build release packages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./installer/Publish.ps1 -Stage Build -Runtime win-x64
+
+      - name: Isolated install acceptance
+        shell: pwsh
+        run: ./installer/Test.ps1 -Isolated
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: win-x64
+          path: |
+            artifacts/releases/win-x64/axmol-hub-*-win-x64.exe
+            artifacts/releases/win-x64/axmol-hub-*-win-x64.exe.sha256
+            artifacts/releases/win-x64/*.nupkg
+            artifacts/releases/win-x64/releases.*.json
+          if-no-files-found: error
+
+  package-osx-arm64:
+    name: Package macOS arm64
+    needs: meta
+    if: needs.meta.outputs.should_package == 'true'
+    runs-on: macos-15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Prepare pinned Velopack CLI
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+
+      - name: Build release packages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./installer/Publish.ps1 -Stage Build -Runtime osx-arm64
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: osx-arm64
+          path: |
+            artifacts/releases/osx-arm64/axmol-hub-*-osx-arm64.pkg
+            artifacts/releases/osx-arm64/axmol-hub-*-osx-arm64.pkg.sha256
+            artifacts/releases/osx-arm64/*.nupkg
+            artifacts/releases/osx-arm64/releases.*.json
+          if-no-files-found: error
+
+  package-osx-x64:
+    name: Package macOS x64
+    needs: meta
+    if: needs.meta.outputs.should_package == 'true'
+    runs-on: macos-15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Prepare pinned Velopack CLI
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+
+      - name: Build release packages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./installer/Publish.ps1 -Stage Build -Runtime osx-x64
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: osx-x64
+          path: |
+            artifacts/releases/osx-x64/axmol-hub-*-osx-x64.pkg
+            artifacts/releases/osx-x64/axmol-hub-*-osx-x64.pkg.sha256
+            artifacts/releases/osx-x64/*.nupkg
+            artifacts/releases/osx-x64/releases.*.json
+          if-no-files-found: error
+
+  package-linux-x64:
+    name: Package Linux x64
+    needs: meta
+    if: needs.meta.outputs.should_package == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+
+      - name: Prepare pinned Velopack CLI
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+
+      - name: Build release packages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./installer/Publish.ps1 -Stage Build -Runtime linux-x64
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64
+          path: |
+            artifacts/releases/linux-x64/axmol-hub-*-linux-x64.AppImage
+            artifacts/releases/linux-x64/axmol-hub-*-linux-x64.AppImage.sha256
+            artifacts/releases/linux-x64/*.nupkg
+            artifacts/releases/linux-x64/releases.*.json
+          if-no-files-found: error

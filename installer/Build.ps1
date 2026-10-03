@@ -37,10 +37,9 @@ if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'ar
 if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskPack.version) first: dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-packaging" }
 if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CLI $($taskPack.version)")) { throw "The workspace Velopack CLI is not the pinned $($taskPack.version)." }
 
-# P6 起 App 是 Avalonia 版（net8.0，三平台都能构建），但**发行通道仍只验过 Windows**：
-# Velopack 的 osx/linux 载荷要走各自平台的签名与打包流程，尚未跑通。守卫因此保留，
-# 理由从"项目是 Windows 独占"换成了"这条通道还没验过"—— 见 docs/hub-development-plan.md D1/D2/D5。
-if ($Runtime -notlike 'win-*') { throw "The $Runtime release channel is not wired up yet (see docs/hub-development-plan.md D1/D2)." }
+# 三平台都在各自原生 runner 上跑 `vpk pack`：Windows 出 Setup.exe，macOS 出 .pkg，
+# Linux 出 .AppImage。Velopack 的 osx/linux 打包 runner 依赖平台工具（pkgbuild/codesign、
+# mksquashfs），不能在 Windows 上交叉出包，因此这里不再设平台守卫。
 
 $taskPublish = Join-Path $taskRoot "artifacts/app/$Runtime"
 $taskOutput = if ($OutputDir) { $OutputDir } else { Join-Path $taskRoot "artifacts/releases/$Runtime" }
@@ -56,37 +55,54 @@ if ($NoClean) {
 dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
-# AppImage 要求 PNG 图标，Windows 用多尺寸 ICO。
+# 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。
 $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.png'
 if ($Runtime -like 'win-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.ico' }
+if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.icns' }
+
+# 主程序名按平台取：Windows 产物带 .exe，macOS/Linux 是 Avalonia 的无后缀同名可执行文件。
+# 参数名三平台统一用 --mainExe（官方 vpk 1.2.x 的跨平台参数；master 源码里出现的 --exeName
+# 是尚未发布的新名，1.2.161 里不存在）。macOS 的 entry point 其实来自 .app 的 Info.plist、
+# Linux 来自生成的 .desktop，--mainExe 在三平台都被接受。
+$taskMainExe = 'AxmolHub.App.exe'
+if ($Runtime -like 'osx-*' -or $Runtime -like 'linux-*') { $taskMainExe = 'AxmolHub.App' }
 
 $taskArguments = @(
     '--skip-updates', 'pack',
     '--packId', $PackId,
     '--packVersion', $Version,
     '--packDir', $taskPublish,
-    '--mainExe', 'AxmolHub.App.exe',
     '--packTitle', $PackTitle,
     '--packAuthors', 'Simdsoft Limited and other Axmol contributors',
     '--icon', $taskIcon,
     '--outputDir', $taskOutput,
     '--channel', $Channel,
     '--runtime', $Runtime,
-    # Inno 的桌面快捷方式是可选项且默认不勾选；Velopack 的一键安装没有向导可承载该选项，
-    # 所以固定为只建开始菜单入口，而不是接受它的 Desktop,StartMenuRoot 默认值。
-    '--shortcuts', 'StartMenuRoot'
+    '--mainExe', $taskMainExe
 )
+# 只有 --shortcuts 是 Windows/Inno 专属（Velopack.Packaging.Windows.dll 才有），
+# 传给 Linux/macOS 版 vpk 会报 "Unrecognized command or argument" 并连带搞乱后续解析。
+if ($Runtime -like 'win-*') {
+    # 快捷方式位置：Velopack 的合法值只有 Desktop 与 StartMenuRoot 两个（逗号分隔，可多选）。
+    # 一键安装没有向导可承载「是否建桌面快捷方式」这个选项，这里固定为桌面 + 开始菜单各建一个。
+    $taskArguments += @('--shortcuts', 'Desktop,StartMenuRoot')
+}
 & $taskVpk @taskArguments
 if ($LASTEXITCODE -ne 0) { throw 'Velopack packaging failed.' }
 
-# 用户直接下载的安装包换成自定义名：axmol-hub-<version>-<runtime>.exe。
-# vpk 的原生名是 {packId}-{channel}-Setup.exe —— 里面既没有版本也没有架构，
-# 在 GitHub Release 页上只能靠 release 标题分辨版本，而同名文件在每次发布里都会重复出现。
-# 只改这一个文件：自动更新读的是 releases.<channel>.json 与它引用的 .nupkg，
-# 与安装包叫什么无关。副作用是 assets.<channel>.json 里仍记着 vpk 原生名 ——
+# 用户直接下载的安装包换成自定义名：axmol-hub-<version>-<runtime>.{exe|pkg|AppImage}。
+# vpk 的原生名是 {packId}-{channel}-Setup.exe / {packId}-{channel}.pkg / {packId}-{channel}-Portable 等 ——
+# 里面既没有版本也没有架构，在 GitHub Release 页上只能靠 release 标题分辨版本，
+# 而同名文件在每次发布里都会重复出现。只改这一个文件：自动更新读的是 releases.<channel>.json
+# 与它引用的 .nupkg，与安装包叫什么无关。副作用是 assets.<channel>.json 里仍记着 vpk 原生名 ——
 # 那是 `vpk upload` 的上传清单，本项目用 gh release upload 自己列文件，因此不消费它。
-$taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*-Setup.exe')
-if ($taskSetup.Count -ne 1) { throw "Expected exactly one *-Setup.exe in $taskOutput, found $($taskSetup.Count)." }
+# 安装器按平台挑：Windows 是 *-Setup.exe，macOS 是 *.pkg，Linux 是 *.AppImage。
+$taskSetup = switch -Wildcard ($Runtime) {
+    'win-*'   { @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*-Setup.exe') }
+    'osx-*'   { @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.pkg') }
+    default   { @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.AppImage') }
+}
+if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput for $Runtime, found $($taskSetup.Count)." }
 $taskSetupName = 'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
 Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 

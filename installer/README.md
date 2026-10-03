@@ -69,24 +69,39 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 ## 发布到 GitHub Release
 
-`Publish.ps1` 走 `download → pack → upload` 三步，分两个 `-Stage`，CI 可以把安装验收插在中间：
+发布分两个 workflow，语义与 axslcc 的 `build` + `dist` 一致：
+
+1. **`build.yml`** —— `on: push`（master）+ `pull_request` + `workflow_dispatch`。内部两类 job：
+   - `verify`：三平台矩阵，验证代码正确性（编译、宿主判定、CLI JSON 契约、下载契约），**任何提交都跑**。
+   - `package-*`：四个 job 各在原生 runner 上 `Publish.ps1 -Stage Build`（拉上一版 → 打包出 delta → 改名 + sha256），`upload-artifact` 上产物。**只在提交信息是 `Version x.y.z` 或手动触发时跑**，普通提交跳过打包。Windows 还多跑一步 `Test.ps1 -Isolated` 安装验收。
+2. **`dist.yml`** —— `on: workflow_run`（监听 build 完成）+ `workflow_dispatch`。解析提交信息 `^Version x.y.z$`（也接受 `x.y.z-beta`）决定是否发版，下载三平台产物，用 `Publish-All.ps1` 合并上传到一个 release。
+
+日常发版：把版本号写进 `Directory.Build.props`，提交信息写 `Version x.y.z`，push 到 master。CI 自己判断是否打包、是否发布 —— 提交信息不是 `Version ...` 的普通提交只验证、不打包、不发布。
+
+三平台产物装进**同一个 tag 的同一个 release**：
+
+| 平台 | runner | 安装器 | 主程序参数 |
+| --- | --- | --- | --- |
+| Windows x64 | `windows-latest` | `axmol-hub-<v>-win-x64.exe` | `--mainExe` |
+| macOS arm64 / x64 | `macos-15` | `axmol-hub-<v>-osx-{arm64,x64}.pkg` | 打包器自动探测 |
+| Linux x64 | `ubuntu-22.04` | `axmol-hub-<v>-linux-x64.AppImage` | `--exeName` |
+
+单平台调试仍可用 `Publish.ps1`：
 
 ```powershell
-./installer/Publish.ps1 -Stage Build    # 拉上一版 + 打包（产出 delta）
-./installer/Publish.ps1 -Stage Upload   # 裁剪 feed + gh release create/upload + 校验
+./installer/Publish.ps1 -Stage Build -Runtime win-x64     # 拉上一版 + 打包（产出 delta）
+./installer/Publish.ps1 -Stage Upload -Runtime win-x64    # 单平台裁剪 feed + gh release create/upload + 校验
 ```
 
-不带 `-Stage` 时两步连着跑。`Upload` 阶段需要 `GH_TOKEN`（CI 里就是 `GITHUB_TOKEN`）和 `gh`。
+多平台合并上传由 `Publish-All.ps1` 承担（dist 阶段调用）。`Upload` 阶段都需要 `GH_TOKEN`（CI 里是 `GITHUB_TOKEN`）和 `gh`。
 
-上传清单是**显式列出**的，只有四样：安装包、`安装包.sha256`、本版 `-full.nupkg`（有 `-delta.nupkg` 时也带上）、`releases.win.json`。用 `gh release upload` 而不是 `vpk upload github`，是因为后者按 `assets.win.json` 枚举文件，而那里记的是 `vpk` 原生名 —— 安装包一改名就对不上了。
+**`releases.<channel>.json` 必须先裁剪再上传。** `GithubSource` 会把最近 10 个 release 各自的 feed 合并，然后到**该 feed 所属的 release** 里按文件名找 nupkg。`vpk download` 会把上一版的条目带进新 feed，但上一版的 nupkg 在旧 release 里 —— 不裁剪，更新检查会直接抛错。裁剪规则是只留 `Version == 当前版本` 的条目。一个 tag 下同 channel 的多架构（osx-arm64 / osx-x64）feed 分别按 `releases.osx-<arch>.json` 命名上传，避免互相覆盖；nupkg 也按 `-<runtime>-` 前缀区分。
 
-**`releases.win.json` 必须先裁剪再上传。** `GithubSource` 会把最近 10 个 release 各自的 `releases.win.json` 合并，然后到**该 feed 所属的 release** 里按文件名找 nupkg。`vpk download` 会把上一版的条目带进新 feed，但上一版的 nupkg 在旧 release 里 —— 不裁剪，更新检查会直接抛错。裁剪规则是只留 `Version == 当前版本` 的条目；旧版本仍可通过它自己那个 release 的 feed 被发现。
-
-**tag 必须与 `Directory.Build.props` 的版本一致**（`v0.2.1` ↔ `0.2.1`），`Publish.ps1` 会拦。feed、nupkg 名、安装包名都带版本号，而 release 页是按 tag 组织的，两者漂移会静默地让更新对不上。
+**tag 必须与 `Directory.Build.props` 的版本一致**（`v0.2.1` ↔ `0.2.1`）。feed、nupkg 名、安装包名都带版本号，而 release 页是按 tag 组织的，两者漂移会静默地让更新对不上。
 
 上传后会立刻回读 release 的资产清单，确认每一件都在 —— 这是唯一能证明「更新源真的可用」的检查。
 
-**保留策略尚未实现。** `gh release upload` 只控制这一次传什么，历史 release 的资产不会自己消失。每版约 190 MB（安装包 94 + full 87 + delta），仓库存储软限制 1 GB，够放 4–5 版；之后需要一个「删旧 release 资产」的步骤。
+**保留策略尚未实现。** `gh release upload` 只控制这一次传什么，历史 release 的资产不会自己消失。每版三平台合计远超单平台 190 MB，仓库存储软限制 1 GB，很快会需要「删旧 release 资产」的步骤。
 
 ## 增量包
 

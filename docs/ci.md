@@ -1,7 +1,7 @@
 # 持续集成与打包
 
 日期：2026-10-02
-关联：`.github/workflows/ci.yml`、`.github/workflows/release-windows.yml`、[installer/README.md](../installer/README.md)
+关联：`.github/workflows/build.yml`、`.github/workflows/dist.yml`、[installer/README.md](../installer/README.md)
 
 > **后续变更（2026-10-03）**：本文 §2 落地记录里出现的 `module-manifest.json` 已改名 `recipe-manifest.json`、
 > `EngineModules` 已改名 `PackagingRecipes`（模块概念整体移除）。历史叙述保留当时命名，不再逐字回改。
@@ -12,14 +12,14 @@
 
 | workflow | 触发 | 目的 | 是否阻塞合并 |
 | --- | --- | --- | --- |
-| `ci.yml` | push 到 `master`、PR、手动 | 三平台构建健康度 | **是** |
-| `release-windows.yml` | tag `v*`、手动 | Windows 安装包（Velopack）与安装验收 | 否（发布用） |
+| `build.yml` | push 到 `master`、PR、手动 | 验证（三平台构建健康度）+ 打包（仅 `Version` 提交） | **是** |
+| `dist.yml` | build 完成后（`workflow_run`）、手动 | 三平台安装包合并发布到一个 release | 否（发布用） |
 
-分开发的理由：安装包链路要下载固定版 Velopack CLI、发布自包含 App、再做真实安装/升级/卸载验收，属于发布动作；把它塞进每个 PR 会让 CI 变慢、变脆，而且失败信息（打包器、签名之类）与"代码是否可构建"无关。
+分开发的理由：安装包链路要下载固定版 Velopack CLI、发布自包含 App、再做真实安装/升级/卸载验收，属于发布动作；把它塞进每个 PR 会让 CI 变慢、变脆，而且失败信息（打包器、签名之类）与"代码是否可构建"无关。因此打包只在提交信息为 `Version x.y.z` 时触发，普通提交只跑验证。
 
 ---
 
-## 2. `ci.yml`：三平台矩阵
+## 2. `build.yml` 的 `verify` job：三平台矩阵
 
 矩阵为 `windows-latest` / `macos-latest` / `ubuntu-latest`，每个平台做五件事：
 
@@ -33,7 +33,7 @@
 
 矩阵里曾多出一步 `Upload CLI host`，把 `artifacts/cli/<rid>` 作为 artifact `cli-<rid>` 上传。现已删除，理由三条：
 
-1. **没有消费方。** 发布链路的 App 产物由 `release-windows.yml` 里的 `installer/Build.ps1` 自己发布，从不读 CI 的 CLI 产物；也没有"人工下载一份三平台 CLI 来用"的用法。
+1. **没有消费方。** 发布链路的 App 产物由 `build.yml` 里的 `installer/Build.ps1` 自己发布，从不读 CI 的 CLI 产物；也没有"人工下载一份三平台 CLI 来用"的用法。
 2. **它想证明的事已经由别处证明。** "自包含发布是否可用"由上面第 4、5 步回答（发布成功 + 在目标宿主真的跑起来）。artifact 只是把同一条结论再存一份 —— 下载回来仍然是"CI 当时是绿的"。
 3. **不是零成本。** 三平台各上传一份几十 MB 的自包含产物，长期占 artifact 配额，过期前一直挂在 Actions 页面上。
 
@@ -78,7 +78,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 
 1. **服务对象已消失。** 它验证的是 WPF 版 App，而这个项目已被 Avalonia 版整体取代并删除；macOS/Linux 上又根本跑不了，等于为一个死掉的平台独占项目长期维护一条独占步骤。
 2. **它给出的绿灯容易被误读。** 断言只覆盖"进程能启动并退出 0"，而首帧的触发时机一变就可能截到空白窗口却照样通过（详见 [avalonia-migration-plan.md §3.5](avalonia-migration-plan.md)）。证据强度低于它看起来的样子。
-3. **真正需要它的地方不在 CI。** `installer/Test.ps1` 用 `--smoke` 验证"安装后的自包含产物能否启动"，那是发布链路的验收项，跑在 `release-windows.yml` 与维护者本机。
+3. **真正需要它的地方不在 CI。** `installer/Test.ps1` 用 `--smoke` 验证"安装后的自包含产物能否启动"，那是发布链路的验收项，跑在 `build.yml` 的 Windows 打包 job 与维护者本机。
 
 **`--smoke` 模式本身没有被删除**，Avalonia 版已按 §3.5 重做（`ContentRendered` 在 Avalonia 不存在，改挂 `Opened` + `DispatcherPriority.Loaded`），并补了一道"帧非空白"的断言。**是否把它加回三平台矩阵仍未决定** —— 需要常驻 headless harness，属待办。
 
@@ -184,16 +184,27 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 
 ---
 
-## 4. `release-windows.yml`
+## 4. 发布（`build.yml` + `dist.yml`）
 
-链路（已在本机完整跑通，见 §5）：
+2026-10-03 起改为两个 workflow，语义对齐 axslcc 的 `build` + `dist`（验证与打包合进 `build.yml`，旧的 `ci.yml` 与 `release-windows.yml` 已删）：
 
-1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `artifacts/packaging-tools/vpk`，**不修改 PATH**。
-2. `installer/Publish.ps1 -Stage Build`：`vpk download github` 拉回上一版（供 delta）→ `installer/Build.ps1 -NoClean` 发布自包含 App 并 `vpk pack`，产出安装器 / `Portable.zip` / `.nupkg` / `releases.win.json`，安装包改名为 `axmol-hub-<version>-<runtime>.exe` 并写 `.sha256`。版本号读自仓库根的 `Directory.Build.props`，脚本里没有第二份副本。
-3. 上传上述产物与更新索引（CI 证据，与 release 页无关）。
-4. `installer/Test.ps1 -Isolated`：一次性 packId / 程序名 / 安装目录 + 两个相邻版本，验证静默安装、载荷完整、自包含启动、中文与空格路径、跨版本升级保留用户数据、卸载移除载荷与注册项且保留用户数据，结束后自行清理。**排在发布之前**：验收不过就不该有新 release。
-5. `installer/Publish.ps1 -Stage Upload`（仅 tag push）：裁剪 `releases.win.json` 只留本版条目 → `gh release create` / `gh release upload`（安装包 + sha256 + full/delta nupkg + 更新索引）→ 回读 release 资产清单确认每一件都在。需要 `permissions: contents: write` 与 `GH_TOKEN`。
-6. 上传验收证据到 `artifacts/install-checks/`。
+**`build.yml`**（`on: push` master + `pull_request` + `workflow_dispatch`）—— 两类 job：
+
+- `meta`：解析提交信息是否为 `^Version x.y.z$`，输出 `should_package`（普通提交只验证、不打包）。
+- `verify`：三平台矩阵（§2 的验证职责，任何提交都跑）。
+- `package-*`：四个 job，`needs: meta` + `if: should_package == 'true'`，各在原生 runner 上打包：
+  1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `artifacts/packaging-tools/vpk`，**不修改 PATH**。
+  2. `installer/Publish.ps1 -Stage Build -Runtime <rid>`：`vpk download github` 拉回上一版（供 delta）→ `installer/Build.ps1 -NoClean` 发布自包含 App 并 `vpk pack`，产出安装器 / `.nupkg` / `releases.<channel>.json`，安装包改名为 `axmol-hub-<version>-<runtime>.<ext>` 并写 `.sha256`。版本号读自仓库根的 `Directory.Build.props`，脚本里没有第二份副本。
+  3. `upload-artifact` 上传产物，artifact 名 = 平台目录名（`win-x64` 等），供 dist 的 `Publish-All.ps1` 按目录定位。
+  4. Windows job 额外跑 `installer/Test.ps1 -Isolated`（一次性身份 + 相邻版本，验证安装/升级/卸载/数据保留）。**排在发布之前**：验收不过就不该有新 release。
+
+**`dist.yml`**（`on: workflow_run` 监听 build + `workflow_dispatch`）：
+
+5. 解析提交信息 `^Version x.y.z$`（接受 `x.y.z-beta`）→ 决定 `release_ver`；匹配不到则用手动输入的 `version`，两者皆无则跳过全部后续步骤。
+6. `dawidd6/action-download-artifact` 下载三平台产物。
+7. `installer/Publish-All.ps1`：逐平台裁剪 feed 只留本版 → 收集安装包 + sha256 + full/delta nupkg（按 runtime 前缀区分）+ 按 channel 命名的 feed → `gh release create` / `gh release upload --clobber` → 回读资产清单确认每一件都在。需要 `permissions: contents: write` 与 `GH_TOKEN`。
+
+产物平台对照：Windows `win-x64.exe`、macOS `osx-{arm64,x64}.pkg`、Linux `linux-x64.AppImage`；主程序参数 Windows 用 `--mainExe`、Linux 用 `--exeName`、macOS 由打包器自动探测。三个平台装进同一个 tag 的同一个 release。
 
 ---
 

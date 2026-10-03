@@ -128,6 +128,25 @@
         </StackPanel>
       </Border>
 
+      <!-- Software update (Velopack self-update). The version line and "check" button are wired in
+           code because the current version is read from the assembly at runtime, and the check
+           result feeds back into an imperative status label. -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock Text="{DynamicResource Updates}" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource UpdatesHint}" />
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock x:Name="CurrentVersionLine" FontWeight="SemiBold" />
+              <TextBlock x:Name="UpdateStatusLine" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button x:Name="CheckForUpdatesButton" Grid.Column="1" VerticalAlignment="Center"
+                    Margin="12,0,0,0" Content="{DynamicResource CheckForUpdates}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
       <!-- Code editors -->
       <Border Classes="card">
         <StackPanel Spacing="16">

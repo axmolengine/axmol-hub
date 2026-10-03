@@ -307,5 +307,16 @@ public static class HubTexts
         ["Choose devenv.exe"] = ("请选择 devenv.exe。", "Choose devenv.exe."),
         ["Choose Code.exe"] = ("请选择 Code.exe。", "Choose Code.exe."),
         ["StartupFailed"] = ("Axmol Hub 启动失败", "Axmol Hub failed to start"),
+        // 更新检查（Velopack 自更新）。"检查更新"按钮在设置页，启动时也会自动静默检查一次。
+        ["Updates"] = ("软件更新", "Software update"),
+        ["UpdatesHint"] = ("检查 Axmol Hub 的新版本。只有安装版才会自动更新。", "Check for a new version of Axmol Hub. Only installed copies update automatically."),
+        ["CurrentVersion"] = ("当前版本", "Current version"),
+        ["CheckForUpdates"] = ("检查更新", "Check for updates"),
+        ["CheckingUpdate"] = ("正在检查更新…", "Checking for updates…"),
+        ["UpdateAvailableTitle"] = ("发现新版本", "Update available"),
+        ["UpdateAvailablePrompt"] = ("发现 Axmol Hub 新版本 {0}。是否立即下载并在安装后自动重启？", "A new version of Axmol Hub ({0}) is available. Download it now and restart automatically after install?"),
+        ["UpdateUpToDate"] = ("已是最新版本。", "You're up to date."),
+        ["UpdateNotInstalled"] = ("当前是开发版或便携版，无法自动更新。", "This is a development or portable copy, so it can't update itself."),
+        ["UpdateFailed"] = ("检查更新失败，请稍后重试。", "Couldn't check for updates. Try again later."),
     };
 }

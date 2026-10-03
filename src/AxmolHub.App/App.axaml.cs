@@ -124,6 +124,24 @@ public partial class App : Application
         var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences);
         desktop.MainWindow = window;
 
+        // Silent startup update check. Fire-and-forget: it must never block the window from coming
+        // up, and its only visible effect is a dialog when an update is found (which is surfaced
+        // through the same prompt → download → restart path as the settings-page button, only after
+        // the window is shown). Automation / gallery / verification modes never phone home — a
+        // self-check binary checking for updates would be a side effect nobody asked for and would
+        // fail on offline CI.
+        if (!Options.IsAutomation)
+        {
+            window.Opened += async (_, _) =>
+            {
+                var outcome = await UpdateService.Instance.CheckOnStartupAsync();
+                if (outcome.Result is UpdateService.CheckResult.UpdateAvailable && outcome.Update is not null)
+                {
+                    await UpdateService.Instance.PromptAndApplyAsync(window, outcome.Update);
+                }
+            };
+        }
+
         // The two screenshot switches are mutually exclusive: --smoke exits right after one shot,
         // while --smoke-pages switches pages eight times in a row.
         // When both are passed, --smoke-pages wins (broader coverage) without an error.

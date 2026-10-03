@@ -1,0 +1,58 @@
+# 发布编排：解析提交信息 "Version x.y.z" 决定是否发版，下载三平台产物，合并上传到一个 release。
+# 触发 = workflow_run（监听 build 完成）+ workflow_dispatch（手动输入 version）。
+# 与 axslcc 的 dist.yml 语义一致：任何 build 完成都触发，靠提交信息正则 + 结果决定是否真发。
+name: Dist
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (fallback when commit message is not "Version x.y.z")'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      # 提交信息模板：Version 1.8.0（也接受 Version 1.8.0-beta 这类带预发布后缀）。
+      # 匹配不到时用手动输入的 version；两者都无 → release_ver 为空，后续步骤全部跳过。
+      - name: Check release version
+        id: check_ver
+        shell: pwsh
+        run: |
+          $commit_msg = "$(git show -s --format=%s)"
+          Write-Host "Parsing release version from commit message: $commit_msg"
+          $m = [Regex]::Match($commit_msg, '^Version\s+(?<ver>\d+\.\d+\.\d+(-\w+)?)$')
+          if (-not $m.Success) { $m = [Regex]::Match('${{ github.event.inputs.version }}', '^(?<ver>\d+\.\d+\.\d+(-\w+)?)$') }
+          $release_ver = if ($m.Success) { $m.Groups['ver'].Value } else { '' }
+          Write-Host "release_ver=$release_ver"
+          "release_ver=$release_ver" >> $env:GITHUB_OUTPUT
+          "release_tag=v$release_ver" >> $env:GITHUB_OUTPUT
+
+      - name: Download artifacts
+        if: steps.check_ver.outputs.release_ver != ''
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: build.yml
+          workflow_conclusion: success
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./downloaded
+
+      - name: Publish release
+        if: steps.check_ver.outputs.release_ver != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./installer/Publish-All.ps1 -Version ${{ steps.check_ver.outputs.release_ver }} -ArtifactDir ./downloaded

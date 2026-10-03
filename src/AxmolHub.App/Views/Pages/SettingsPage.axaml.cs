@@ -81,6 +81,7 @@ public partial class SettingsPage : UserControl
         OpenDataFolderButton.Click += (_, _) => _openFolder(_workspace.Store.Root);
         SelectVisualStudioButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: true);
         SelectCodeButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: false);
+        CheckForUpdatesButton.Click += async (_, _) => await CheckForUpdatesAsync();
 
         // DataRootNote's copy goes through XAML's {DynamicResource}; **don't** assign it imperatively here:
         // an imperative value won't change on language switch, and the self-check reads this control's text to judge whether localization works.
@@ -142,6 +143,10 @@ public partial class SettingsPage : UserControl
             DefaultEngine.Text = engine?.ToString() ?? HubStrings.Get("NoDefault");
             VisualStudioLocation.Text = Display(state.VisualStudioExecutable);
             CodeLocation.Text = Display(state.CodeExecutable);
+            // The current-version line is read from the assembly; it is not localizable copy, so it
+            // is safe to assign imperatively here and won't need a language-switch refresh.
+            CurrentVersionLine.Text = HubStrings.Get("CurrentVersion") + "  v" +
+                (typeof(SettingsPage).Assembly.GetName().Version?.ToString(3) ?? "0.0.0");
             // Visual Studio (devenv.exe) is Windows-only; hide its row on other hosts so the user isn't
             // offered an editor that can never be installed there.
             VisualStudioRow.IsVisible = OperatingSystem.IsWindows();
@@ -507,4 +512,34 @@ public partial class SettingsPage : UserControl
     }
 
     private string Display(string? path) => path is { Length: > 0 } ? path : HubStrings.Get("NotSelected");
+
+    /// <summary>
+    /// The settings-page "Check for updates" entry point. Unlike the silent startup check, this one
+    /// surfaces every outcome to the user: the button is clicked *because* they want a visible answer.
+    /// The download + restart prompt lives in <see cref="UpdateService.CheckAndPromptAsync"/>.
+    /// </summary>
+    private async Task CheckForUpdatesAsync()
+    {
+        // The status line doubles as a "busy" indicator; the button is disabled while a check runs so
+        // a second click can't stack a second network round-trip on top of the first.
+        CheckForUpdatesButton.IsEnabled = false;
+        UpdateStatusLine.Text = HubStrings.Get("CheckingUpdate");
+        try
+        {
+            var owner = TopLevel.GetTopLevel(this) as Window;
+            var outcome = await UpdateService.Instance.CheckAndPromptAsync(owner);
+
+            UpdateStatusLine.Text = outcome.Result switch
+            {
+                UpdateService.CheckResult.UpdateAvailable => string.Format(HubStrings.Get("UpdateAvailablePrompt"), outcome.Update!.TargetFullRelease.Version),
+                UpdateService.CheckResult.UpToDate => HubStrings.Get("UpdateUpToDate"),
+                UpdateService.CheckResult.NotInstalled => HubStrings.Get("UpdateNotInstalled"),
+                _ => HubStrings.Get("UpdateFailed"),
+            };
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
 }
