@@ -98,10 +98,10 @@ public sealed class EngineVersionDialog : Window
             HubStrings.Get(release.Installed ? "Installed" : "Missing"),
         });
 
-        // 没验过模块清单的版本仍然允许安装 —— 引擎本身是自洽的，模块清单只影响
-        // "添加模块"那一步。但必须在这里说出来，否则用户装完才发现加不了模块。
-        _warning.Text = HubStrings.Get("EngineModulesUnverified");
-        _warning.IsVisible = !release.ModulesVerified;
+        // 没验过配方的版本仍然允许安装 —— 引擎本身是自洽的，配方只影响 Android 打包
+        // 那一步。但必须在这里说出来，否则用户装完才发现打不了包。
+        _warning.Text = HubStrings.Get("EngineRecipeUnverified");
+        _warning.IsVisible = !release.RecipesVerified;
     }
 
     public static string Size(long? value) => value is null ? "—" : value >= 1024L * 1024 * 1024

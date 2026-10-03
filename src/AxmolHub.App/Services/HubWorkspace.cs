@@ -93,8 +93,6 @@ public sealed class HubWorkspace : IDisposable
         _engineToolchain = new EngineToolchain(_runner);
         _installer = new PackageInstaller(new DownloadManager(_http, Log.Write), Store.Root, Log.Write);
 
-        Modules = new EngineModules(Store.Root, Manifests);
-
         _releases = new EngineReleases(Store.Root, Manifests);
         RefreshEngineIndexAsync();
 
@@ -154,7 +152,6 @@ public sealed class HubWorkspace : IDisposable
     public HubLog Log { get; }
     public HubPreferences Preferences { get; }
     public PreferencesStore PreferencesStore { get; }
-    public EngineModules Modules { get; }
     /// <summary>
     /// Hub 自己的数据目录（下载缓存、Android 打包暂存）。
     /// **不是工具链根** —— 工具链在引擎树里（<c>&lt;engine&gt;/tools/external</c>），由引擎的 setup.ps1 准备。
@@ -206,7 +203,7 @@ public sealed class HubWorkspace : IDisposable
 
     public ProjectEntry? SelectedProject { get; set; }
     public EngineEntry? SelectedEngine { get; set; }
-    public EngineEntry? ModuleEngine { get; set; }
+    public EngineEntry? ToolchainEngine { get; set; }
     public AndroidDevice? SelectedDevice { get; set; }
 
     /// <summary>新建项目面板里的默认位置。WPF 版是 <c>ProjectLocation.Text</c>。</summary>
@@ -337,13 +334,13 @@ public sealed class HubWorkspace : IDisposable
     {
         var selectedProject = SelectedProject;
         var selectedEngine = SelectedEngine;
-        var moduleEngine = ModuleEngine;
+        var moduleEngine = ToolchainEngine;
 
         SelectedProject = State.Projects.FirstOrDefault(p => selectedProject is not null && p.Path == selectedProject.Path)
                           ?? State.Projects.FirstOrDefault();
         SelectedEngine = State.Engines.FirstOrDefault(e => selectedEngine is not null && e.Path == selectedEngine.Path)
                          ?? State.Engines.FirstOrDefault();
-        ModuleEngine = State.Engines.FirstOrDefault(e => moduleEngine is not null && e.Path == moduleEngine.Path)
+        ToolchainEngine = State.Engines.FirstOrDefault(e => moduleEngine is not null && e.Path == moduleEngine.Path)
                        ?? SelectedEngine;
 
         SyncProjectTarget();
@@ -975,7 +972,7 @@ public sealed class HubWorkspace : IDisposable
     private static string EngineTools(EngineEntry engine) => EngineToolchain.ToolRoot(engine);
 
     private EngineEntry? ToolEngine =>
-        ModuleEngine
+        ToolchainEngine
         ?? State.Engines.FirstOrDefault(engine => engine.Path == State.DefaultEnginePath)
         ?? State.Engines.FirstOrDefault();
 
@@ -1033,51 +1030,6 @@ public sealed class HubWorkspace : IDisposable
             Log.Write($"{effective}: {result.Describe()}");
             // 开发者模式未开时 setup.ps1 会 exit 0 却什么都没装 —— 这种假成功必须报失败。
             if (!result.Succeeded) throw new InvalidOperationException(result.Describe());
-            UpdateTools(await DetectAsync(token));
-        });
-    }
-
-    /// <summary>
-    /// 平台准备。WPF 版叫「添加模块」：选平台 → 下载安装各自工具链。
-    /// 现在后半步整个是引擎的：勾选的平台逐个跑 <c>setup.ps1 -p &lt;platform&gt;</c>。
-    /// </summary>
-    public async Task ChooseModulesAsync(EngineEntry? engine)
-    {
-        if (_operation is not null || engine is null)
-        {
-            return;
-        }
-
-        var dialog = new ModuleWindow(Modules, State.Engines, engine);
-        var result = Owner is null
-            ? await dialog.ShowDialog<HubDialogResult>(null!)
-            : await dialog.ShowDialog<HubDialogResult>(Owner);
-        if (result != HubDialogResult.Ok)
-        {
-            return;
-        }
-
-        var chosenEngine = dialog.SelectedEngine;
-        var ids = dialog.SelectedIds;
-
-        await ExecuteAsync("Prepare platforms", async token =>
-        {
-            var validated = StateStore.ValidateEngine(chosenEngine.Path, chosenEngine.Channel);
-            if (validated.Version != chosenEngine.Version)
-            {
-                throw new InvalidDataException("Engine version changed.");
-            }
-
-            Modules.Save(chosenEngine, ids);
-            Log.Write(HubStrings.Get("ModuleSaved"));
-
-            foreach (var platform in Modules.Platforms(chosenEngine, ids))
-            {
-                var outcome = await _setup.RunAsync(chosenEngine, new SetupOptions(platform), token);
-                Log.Write($"{platform}: {outcome.Describe()}");
-                if (!outcome.Succeeded) throw new InvalidOperationException($"{platform}: {outcome.Describe()}");
-            }
-
             UpdateTools(await DetectAsync(token));
         });
     }

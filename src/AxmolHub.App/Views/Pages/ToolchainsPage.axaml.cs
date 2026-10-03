@@ -57,32 +57,30 @@ public partial class ToolchainsPage : UserControl
             await _workspace.ChangeToolTargetAsync(ToolTargetPicker.SelectedItem as BuildTarget);
         };
 
-        ModuleEnginePicker.SelectionChanged += async (_, _) =>
+        EnginePicker.SelectionChanged += async (_, _) =>
         {
             if (!_ready)
             {
                 return;
             }
 
-            var engine = ModuleEnginePicker.SelectedItem as EngineEntry;
+            var engine = EnginePicker.SelectedItem as EngineEntry;
             // 工具链属于具体引擎树；值没变就不要重新探测（否则会和 Reload 形成回环）。
-            if (ReferenceEquals(engine, _workspace.ModuleEngine))
+            if (ReferenceEquals(engine, _workspace.ToolchainEngine))
             {
                 return;
             }
 
-            _workspace.ModuleEngine = engine;
+            _workspace.ToolchainEngine = engine;
             var engineVersion = engine?.Version ?? "";
             var available = BuildTargets.ForVersion(engineVersion);
             ToolTargetPicker.ItemsSource = available;
             ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
                 ? current
                 : available[0];
-            ReloadModules();
             await _workspace.VerifyToolchainsAsync();
         };
 
-        ManageModulesButton.Click += async (_, _) => await _workspace.ChooseModulesAsync(_workspace.ModuleEngine);
         RunEngineSetupButton.Click += async (_, _) => await RunEngineSetupAsync();
         VerifyButton.Click += async (_, _) => await _workspace.VerifyToolchainsAsync();
 
@@ -102,7 +100,7 @@ public partial class ToolchainsPage : UserControl
             return;
         }
 
-        var engine = _workspace.ModuleEngine;
+        var engine = _workspace.ToolchainEngine;
         var prompt = engine is null
             ? HubStrings.Get("EngineSetupHint")
             : engine + "\n\n" + HubStrings.Get("EngineSetupHint");
@@ -124,15 +122,15 @@ public partial class ToolchainsPage : UserControl
 
         _ready = false;
 
-        ModuleEnginePicker.ItemsSource = _workspace.State.Engines.ToArray();
-        ModuleEnginePicker.SelectedItem = _workspace.ModuleEngine
+        EnginePicker.ItemsSource = _workspace.State.Engines.ToArray();
+        EnginePicker.SelectedItem = _workspace.ToolchainEngine
                                           ?? _workspace.State.Engines.FirstOrDefault(e => e.Path == _workspace.State.DefaultEnginePath)
                                           ?? _workspace.State.Engines.FirstOrDefault();
-        _workspace.ModuleEngine = ModuleEnginePicker.SelectedItem as EngineEntry;
+        _workspace.ToolchainEngine = EnginePicker.SelectedItem as EngineEntry;
 
         // 工具链探测目标随引擎版本走：v3 才露出 arm64/wasm64 这些专属目标。
         // 之前选的 ToolTarget 若已不在该版本的可选列表里（如 v3 的 arm64 换到 v2），回退到首个。
-        var engineVersion = (_workspace.ModuleEngine?.Version) ?? "";
+        var engineVersion = (_workspace.ToolchainEngine?.Version) ?? "";
         var available = BuildTargets.ForVersion(engineVersion);
         ToolTargetPicker.ItemsSource = available;
         ToolTargetPicker.SelectedItem = _workspace.ToolTarget is { } current && available.Contains(current)
@@ -140,7 +138,6 @@ public partial class ToolchainsPage : UserControl
             : available[0];
         ToolTargetHint.Text = _workspace.ToolTargetHint;
 
-        ReloadModules();
         ReloadTools();
         _ready = true;
     }
@@ -158,73 +155,6 @@ public partial class ToolchainsPage : UserControl
         for (var index = 0; index < headers.Length && index < ToolsGrid.Columns.Count; index++)
         {
             ToolsGrid.Columns[index].Header = HubStrings.Get(headers[index]);
-        }
-    }
-
-    /// <summary>
-    /// 平台概览。一行一个平台：它在这台宿主上能不能准备、用户是否勾选过，
-    /// 以及等价的引擎命令（<c>setup.ps1 -p &lt;platform&gt;</c>）。
-    ///
-    /// 刻意**不再**显示下载体积/依赖清单：那些数据来自 Hub 自持的工具链包清单，
-    /// 而安装已经是引擎的事，Hub 手里没有也不该有一份会漂移的副本。
-    /// </summary>
-    private void ReloadModules()
-    {
-        ModuleOverview.Children.Clear();
-        if (ModuleEnginePicker.SelectedItem is not EngineEntry engine)
-        {
-            return;
-        }
-
-        try
-        {
-            var selected = _workspace.Modules.Load(engine).ModuleIds;
-            foreach (var module in _workspace.Modules.ForEngine(engine))
-            {
-                var hostReady = module.Hosts.Contains(BuildTargets.Host);
-                var chosen = selected.Contains(module.Id);
-                var status = module.Id == "uwp"
-                    ? HubStrings.Get("UwpPending")
-                    : HubStrings.Get(hostReady ? chosen ? "ModuleInstalled" : "ModuleMissing" : "ModuleExternal");
-
-                var caption = ModuleWindow.ModuleName(module.Id);
-                var platform = AxmolCommandMap.PlatformForModule(module.Id);
-                if (hostReady && platform is not null)
-                {
-                    caption += "   ·   setup.ps1 -p " + platform;
-                }
-
-                var row = new DockPanel();
-                var badge = new TextBlock
-                {
-                    Text = status,
-                    FontSize = 12,
-                    Foreground = Brush.Parse(chosen && hostReady ? "#70D7AF" : "#A8A8A8"),
-                    Margin = new Thickness(16, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                DockPanel.SetDock(badge, Dock.Right);
-                row.Children.Add(badge);
-                row.Children.Add(new TextBlock { Text = caption, FontSize = 14 });
-
-                ModuleOverview.Children.Add(new Border
-                {
-                    Child = row,
-                    Padding = new Thickness(18, 16, 18, 16),
-                    Background = Brush.Parse("#252525"),
-                    BorderBrush = Brush.Parse("#3A3A3A"),
-                    BorderThickness = new Thickness(0, 0, 0, 1),
-                });
-            }
-        }
-        catch (InvalidOperationException)
-        {
-            ModuleOverview.Children.Add(new TextBlock
-            {
-                Text = HubStrings.Get("ModuleUnsupported"),
-                Classes = { "muted" },
-                Margin = new Thickness(18, 12, 0, 12),
-            });
         }
     }
 }

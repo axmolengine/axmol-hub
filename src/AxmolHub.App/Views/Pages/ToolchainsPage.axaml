@@ -5,11 +5,8 @@
              x:DataType="local:ToolchainsPage">
 
   <!--
-    工具链页。照抄 WPF 版 ToolchainsPage：标题行 → 引擎版本条（配「添加模块」按钮）→
-    可滚动区（模块概览 + 「组件详情」Expander）。
-
-    模块概览是**代码构建**的（WPF 版 RefreshModules 往 ModuleOverview 里堆 Border），
-    因为它的行数取决于引擎版本对应的清单；这里同样留一个 StackPanel 给它。
+    工具链页。标题行 → 引擎版本条 → 组件详情（工具链表格）。
+    平台/架构的可构建性由 BuildTargets 表达，不再有独立的「模块」概念。
   -->
 
   <Grid RowDefinitions="Auto,Auto,*,Auto">
@@ -23,22 +20,15 @@
 
     <Border Grid.Row="1" Background="{DynamicResource Hub.Surface}" CornerRadius="6"
             Padding="18,16" Margin="0,0,0,18">
-      <StackPanel>
-        <DockPanel>
-          <Button x:Name="ManageModulesButton" Content="{DynamicResource AddModules}"
-                  Classes="primary" DockPanel.Dock="Right" Margin="18,0,0,0" />
-          <TextBlock Text="{DynamicResource EngineVersion}" Margin="0,0,16,0" />
-          <ComboBox x:Name="ModuleEnginePicker" Width="320" HorizontalAlignment="Left" />
-        </DockPanel>
-        <TextBlock Text="{DynamicResource ModulesHint}" Classes="muted" Margin="0,12,0,0" />
-      </StackPanel>
+      <DockPanel>
+        <TextBlock Text="{DynamicResource EngineVersion}" Margin="0,0,16,0" />
+        <ComboBox x:Name="EnginePicker" Width="320" HorizontalAlignment="Left" />
+      </DockPanel>
     </Border>
 
     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
       <StackPanel>
-        <StackPanel x:Name="ModuleOverview" />
-
-        <Expander x:Name="DetailsExpander" Header="{DynamicResource ComponentDetails}" Margin="0,16,0,0">
+        <Expander x:Name="DetailsExpander" Header="{DynamicResource ComponentDetails}">
           <StackPanel>
             <DockPanel>
               <TextBlock Text="{DynamicResource Platform}" Margin="0,0,16,0" />

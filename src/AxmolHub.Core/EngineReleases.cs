@@ -82,18 +82,17 @@ public sealed class EngineReleases(string root, string manifests)
         ?? throw new InvalidDataException("Engine manifest declares no official LTS release.");
 
     /// <summary>
-    /// 已有验证过模块清单的引擎版本。
+    /// 已有验证过打包配方的引擎版本。
     ///
     /// 清单缺失时返回空集合而**不**抛异常：这里只用来在选择界面上提示一句，
-    /// 真正的闸门在 <see cref="EngineModules.ForEngine"/> 与
-    /// <see cref="PackagingRecipes.RequireVerified"/>，那两处仍然是失败关闭。
+    /// 真正的闸门在 <see cref="PackagingRecipes.RequireVerified"/>，那里仍然是失败关闭。
     /// 提示位不该有能力把整个选择界面卡死。
     /// </summary>
     private HashSet<string> VerifiedEngineVersions()
     {
-        var path = Path.Combine(manifests, "module-manifest.json");
+        var path = Path.Combine(manifests, "recipe-manifest.json");
         if (!File.Exists(path)) return [];
-        var catalogue = JsonSerializer.Deserialize<ModuleManifest>(File.ReadAllText(path), Json);
+        var catalogue = JsonSerializer.Deserialize<RecipeManifest>(File.ReadAllText(path), Json);
         return (catalogue?.Profiles ?? []).Select(profile => profile.EngineVersion).ToHashSet();
     }
 
@@ -117,12 +116,12 @@ public sealed class EngineReleases(string root, string manifests)
     private static int Segment(int[] segments, int index) => index < segments.Length ? segments[index] : 0;
 }
 
-/// <summary>清单里的一个引擎版本，连同"装没装"和"模块清单验没验过"两个只读事实。</summary>
-public sealed record EngineRelease(PackageEntry Package, bool Installed, bool ModulesVerified)
+/// <summary>清单里的一个引擎版本，连同"装没装"和"打包配方验没验过"两个只读事实。</summary>
+public sealed record EngineRelease(PackageEntry Package, bool Installed, bool RecipesVerified)
 {
     public string Version => Package.Version;
     public string Channel => Package.Channel;
 
-    /// <summary>紧凑标识，给下拉框用。详情（通道、大小、模块状态）由界面另行显示。</summary>
+    /// <summary>紧凑标识，给下拉框用。详情（通道、大小、配方状态）由界面另行显示。</summary>
     public override string ToString() => $"{Version} · {Channel}";
 }

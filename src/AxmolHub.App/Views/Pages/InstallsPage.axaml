@@ -45,7 +45,6 @@
                TextWrapping="Wrap" Margin="0,14,0,0" />
 
     <WrapPanel Grid.Row="3" Margin="0,18,0,6">
-      <Button x:Name="ModulesButton" Content="{DynamicResource AddModules}" Classes="primary" />
       <Button x:Name="BuildEngineButton" Content="{DynamicResource BuildEngine}" />
       <Button x:Name="DefaultButton" Content="{DynamicResource SetDefault}" />
       <Button x:Name="OpenFolderButton" Content="{DynamicResource OpenFolder}" Classes="quiet" />

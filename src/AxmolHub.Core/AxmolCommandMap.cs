@@ -57,19 +57,6 @@ public static class AxmolCommandMap
     };
 
     /// <summary>平台模块 id → 引擎 <c>-p</c> 平台名（模块准备 = <c>setup.ps1 -p &lt;platform&gt;</c>）。</summary>
-    public static string? PlatformForModule(string moduleId) => moduleId switch
-    {
-        "windows" => "win32",
-        "android" => "android",
-        "web" => "wasm",
-        "ios" => "ios",
-        "tvos" => "tvos",
-        "macos" => "osx",
-        "linux" => "linux",
-        "uwp" => "winuwp",
-        _ => null,
-    };
-
     /// <summary>
     /// 配置开关。引擎用 <c>-O&lt;n&gt;</c> 的 <c>n</c> 作索引选构建类型
     /// （<c>1k/1kiss.ps1</c>：<c>@('Debug','MinSizeRel','RelWithDebInfo','Release')[$options.O]</c>）：

@@ -872,27 +872,11 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     Check(concurrentStore.Load().Projects.Count == 8, "Concurrent CLI project updates preserve other projects");
 }
 {
-    var moduleRoot = Path.Combine(root, "modules-" + Guid.NewGuid().ToString("N"));
-    var modules = new EngineModules(moduleRoot, Path.GetFullPath("manifests"));
-    Check(modules.ForEngine(engine).Select(module => module.Id).OrderBy(id => id)
-        .SequenceEqual(new[] { "android", "ios", "linux", "macos", "tvos", "uwp", "web", "windows" }),
-        "Module manifest lists the engine's supported platforms for the verified version");
-    modules.Save(engine, ["android", "web", "android"]);
-    Check(modules.Load(engine).ModuleIds.SequenceEqual(new[] { "android", "web" }), "Module choices persist with duplicate choices removed");
-    var anotherEngine = engine with { Path = Path.Combine(moduleRoot, "other-engine") };
-    Check(!modules.HasSelection(anotherEngine) && modules.Load(anotherEngine).ModuleIds.Length == 0, "Module selection belongs to the exact engine installation");
-    modules.Save(engine, []);
-    Check(modules.HasSelection(engine) && modules.Load(engine).ModuleIds.Length == 0, "Explicitly deselected modules remain deselected after restart");
-    await Reject<InvalidDataException>(() => Task.Run(() => modules.Save(engine, ["unknown"])), "Unknown module cannot be persisted");
-    await Reject<InvalidOperationException>(() => Task.Run(() => modules.ForEngine(engine with { Version = "99.0.0" })), "Unverified engine version cannot use another version module profile");
-    // 打包配方的版本验证边界同样来自清单，不是代码里的字面量：同一个配方在已声明与未声明的版本上必须给出相反结论。
+    // 打包配方的版本验证边界来自清单（recipe-manifest.json），不是代码里的字面量：
+    // 同一个配方在已声明与未声明的版本上必须给出相反结论。
     PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine with { Version = "99.0.0" }, PackagingRecipes.AndroidPackaging)), "Unverified engine version cannot borrow another version packaging recipe");
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine, "recipe-that-is-not-declared")), "Recipe not declared for the engine version is refused");
-    // 模块模型已从「包 + 安装器」收敛为「平台 + 引擎命令」：勾选表达意图，安装由引擎的 setup.ps1 负责。
-    Check(modules.Platforms(engine, ["android", "web"]).SequenceEqual(new[] { "android", "wasm" }),
-        "Selected modules map to the engine's own platform names for setup.ps1");
-    Check(modules.Platforms(engine, ["unknown-module"]).Count == 0, "Unknown modules contribute no platform to prepare");
 }
 {
     var androidRoot = Path.Combine(root, "android-fixture-" + Guid.NewGuid().ToString("N"));

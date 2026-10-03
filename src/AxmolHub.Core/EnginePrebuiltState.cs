@@ -37,7 +37,7 @@ public sealed class EngineBuildRecord
 /// <summary>
 /// 引擎构建记录的存放位置：**Hub 数据根内**，按「引擎路径|版本|通道」的哈希落一个文件。
 ///
-/// 与 <see cref="EngineModules"/> 的选择记录同构。放在数据根而不是引擎树里有两个理由：
+/// 放在数据根而不是引擎树里有两个理由：
 /// <list type="number">
 /// <item>记录描述的是「磁盘上这棵树被构建过」，把引擎移出列表再加入仍能命中同一条记录；</item>
 /// <item>导入进来的引擎目前是**只读**的（只有 <c>PackageInstaller</c> 对 Hub 安装的引擎写

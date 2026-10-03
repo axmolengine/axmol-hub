@@ -1,0 +1,8 @@
+{
+  "profiles": [
+    {
+      "engineVersion": "2.11.5",
+      "verifiedRecipes": ["android-packaging"]
+    }
+  ]
+}

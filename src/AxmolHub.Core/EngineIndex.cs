@@ -72,7 +72,7 @@ public static class EngineIndex
     ///
     /// 通道参与 `RequiredEngine(project)` 的匹配，而项目的通道写在 .axmol-hub.json 里。
     /// 擅自把不认识的通道名原样放行，会造出"装得上、却匹配不到任何项目"的引擎。
-    /// 新通道要在这里显式登记，登记时连带确认 module-manifest 里有没有对应 profile。
+    /// 新通道要在这里显式登记，登记时连带确认 recipe-manifest 里有没有对应 profile（配方验证）。
     /// </summary>
     private static readonly Dictionary<string, string> Channels = new(StringComparer.OrdinalIgnoreCase)
     {
