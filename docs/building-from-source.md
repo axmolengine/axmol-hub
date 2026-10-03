@@ -4,7 +4,59 @@
 
 ## 从源码运行界面
 
-界面在 `src/AxmolHub.App/`（`net8.0`，目标三平台）。开发机需要装 **.NET 10 SDK**（最稳妥：`net8.0` 目标框架下，Avalonia 12.1.3 的分析器/源生成器是按编译器 4.14 编译的，而 SDK 8 的旧补丁——例如 Ubuntu 上 `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx——只带编译器 4.8，源生成器整个不产出，报一排 `CS0103: The name 'InitializeComponent' does not exist`。SDK 8 只有够新的补丁、编译器 ≥ 4.14 才够，.NET 10 一定够），然后在本仓库根目录执行：
+界面在 `src/AxmolHub.App/`（`net8.0`，目标三平台）。开发机需要装 **.NET 10 SDK**（最稳妥：`net8.0` 目标框架下，Avalonia 12.1.3 的分析器/源生成器是按编译器 4.14 编译的，而 SDK 8 的旧补丁——例如 Ubuntu 上 `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx——只带编译器 4.8，源生成器整个不产出，报一排 `CS0103: The name 'InitializeComponent' does not exist`。SDK 8 只有够新的补丁、编译器 ≥ 4.14 才够，.NET 10 一定够）。**SDK 版本要求就是 10.0.x**，构建命令各平台一致，差别只在怎么装 SDK。
+
+### 安装 .NET 10 SDK
+
+装完先确认：
+
+```bash
+dotnet --version        # 期望 10.0.x
+dotnet --list-sdks      # 列出已装的 SDK
+```
+
+**Windows**
+
+```powershell
+winget install Microsoft.DotNet.SDK.10
+```
+
+**macOS**
+
+需要 macOS 14（Sonoma）或更新。Apple Silicon（M1–M5）选 **Arm64**，Intel 选 **x64**。
+
+```bash
+# 方式 A —— 官方 .pkg 安装包（推荐）
+# https://dotnet.microsoft.com/download/dotnet/10.0 → SDK → macOS
+
+# 方式 B —— 安装脚本，无安装界面、无管理员弹窗（装到 ~/.dotnet）
+curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+chmod +x dotnet-install.sh
+./dotnet-install.sh --channel 10.0 --architecture arm64   # Intel 用 x64
+
+# 脚本不会改 shell 配置，此刻 PATH 里还没有 dotnet：
+echo 'export DOTNET_ROOT=$HOME/.dotnet' >> ~/.zshrc
+echo 'export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools' >> ~/.zshrc
+exec zsh
+
+# 方式 C —— Homebrew
+brew install --cask dotnet-sdk
+```
+
+**Ubuntu**
+
+```bash
+# Ubuntu 24.04 / 25.04 / 25.10 —— .NET 已在 Ubuntu 自己的源里，不用加任何第三方源
+sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0
+
+# Ubuntu 22.04 —— .NET 10 只来自 Canonical 的 backports PPA
+sudo add-apt-repository ppa:dotnet/backports
+sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0
+```
+
+不要再按老教程去加 `packages.microsoft.com`：微软**已不再**通过它为 Ubuntu 提供包（且该源只有 x64），和 Ubuntu 源混用正是 .NET 包冲突（package mix-up）报错的来源。arm64 主机请用 Ubuntu 源或上面的安装脚本。
+
+然后在本仓库根目录执行：
 
 ```powershell
 dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c Release
