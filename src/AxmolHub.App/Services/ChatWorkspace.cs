@@ -475,7 +475,10 @@ public sealed class ChatWorkspace : IDisposable
 
         try
         {
-            var result = await flow.SignInAsync(oauth, cancellationToken).ConfigureAwait(false);
+            // No ConfigureAwait(false): the continuation calls AddOAuthCredential → SaveCredentials → Changed,
+            // which ChatPanel.Reload consumes by mutating Avalonia controls. Keep it on the captured UI context
+            // (same rule as RefreshModelsAsync), or the sign-in would touch the visual tree from a worker thread.
+            var result = await flow.SignInAsync(oauth, cancellationToken);
             var credential = AddOAuthCredential(providerId, result.AccountId, result.Scope, result.Key);
             return credential is null
                 ? new OAuthSignInOutcome(Error: "The credential could not be stored.")
@@ -641,7 +644,11 @@ public sealed class ChatWorkspace : IDisposable
         // product bug. A client built here is ours, so only that one is disposed.
         using var owned = _modelListHttp is null ? new HttpClient { Timeout = TimeSpan.FromSeconds(20) } : null;
         var client = _modelListHttp ?? owned!;
-        var result = await ModelList.FetchAsync(client, provider, cancellationToken).ConfigureAwait(false);
+        // No ConfigureAwait(false) here: the continuation below ends in SaveProviders() → Changed, which is
+        // consumed by ChatPanel.Reload — code that mutates Avalonia controls. It must resume on the captured
+        // UI context; resuming on the thread pool would touch the visual tree from a worker thread and hang
+        // the whole UI (a CPU-bound cross-thread re-entrancy, not a network wait).
+        var result = await ModelList.FetchAsync(client, provider, cancellationToken);
         if (!result.Reachable) return result;
 
         // Split against the *previous* fetch, not against nothing. "Not in this response" alone cannot tell a
