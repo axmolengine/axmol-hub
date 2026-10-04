@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub.App;
@@ -330,6 +331,12 @@ public partial class MainWindow : Window
 
     private void WireChrome()
     {
+        // The update dot reflects UpdateService.Last; both the startup check and the settings-page
+        // check feed it. A check can complete on a background continuation, so marshal before touching
+        // the control. Subscribed once — WireChrome only runs from the constructor.
+        UpdateService.Instance.Changed += () => Dispatcher.UIThread.Post(SyncUpdateBadge);
+        SyncUpdateBadge();
+
         CancelButton.Click += (_, _) => _workspace.Cancel();
 
         CopyErrorButton.Click += async (_, _) =>
@@ -361,11 +368,21 @@ public partial class MainWindow : Window
         Closed += (_, _) => _workspace.Dispose();
     }
 
+    private void SyncUpdateBadge()
+        => ShowUpdateBadge(UpdateService.Instance.Last?.Result is UpdateService.CheckResult.UpdateAvailable);
+
+    /// <summary>
+    /// Shows/hides the update dot on the Settings nav item. Passive signalling only — no prompt: the
+    /// dot says "there's something new in Settings"; the user goes there to see and act on it.
+    /// </summary>
+    internal void ShowUpdateBadge(bool show) => SettingsUpdateDot.IsVisible = show;
+
     private void InitializeChrome()
     {
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         BrandVersion.Text = "v" + version;
         Title = "Axmol Hub " + BrandVersion.Text;
+        ToolTip.SetTip(SettingsUpdateDot, HubStrings.Get("UpdateDotTooltip"));
 
         // The WPF version hard-codes "AXMOL 2.11 LTS" in the bottom-left. The Avalonia version
         // computes it from the **default engine** at runtime: hard-coding the version number would

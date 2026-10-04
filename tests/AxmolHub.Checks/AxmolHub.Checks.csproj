@@ -4,6 +4,9 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- 同上（Core）：无 PackageReference，锁文件钉不住任何东西，退出跟踪。
+         **加第一个 PackageReference 时删掉这一行。** -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/AxmolHub.Core/AxmolHub.Core.csproj" /></ItemGroup>
   <!-- 与三个 exe 项目保持同一套部署布局：PackagingRecipes 从 AppContext.BaseDirectory/manifests 读验证边界，

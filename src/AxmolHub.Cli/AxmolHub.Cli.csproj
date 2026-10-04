@@ -3,9 +3,12 @@
     <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
     <!-- Version 见仓库根的 Directory.Build.props：五个项目共用一个产品版本。 -->
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <!-- 与 installer/Build-Hosts.ps1 的宿主集合一致。列全是为了让锁文件包含每个 RID 的
-         原生资产段；只写 RuntimeIdentifier 会让锁文件内容随最后一次 restore 用的 RID 变化。 -->
+    <!-- 与 installer/Build-Hosts.ps1 的宿主集合一致：四个 RID 都在那里用 -r 显式发布。
+         保留它是为了让"本项目的发布宿主全集"有一个可读的声明点；新增/变更发布宿主时同步这里。 -->
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <!-- 本项目没有 PackageReference，锁文件钉不住任何东西，退出 packages.lock.json 跟踪
+         （细则见仓库根 Directory.Build.props）。**加第一个 PackageReference 时删掉这一行。** -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />

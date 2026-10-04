@@ -3,5 +3,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- 本项目没有任何 PackageReference → packages.lock.json 里只有空的框架/RID 节点，钉不住
+         任何东西；而它的内容会随"最后一次 restore 带不带 -r"来回变，本项目还会被 App 的 RID
+         发布传递性污染（详见仓库根 Directory.Build.props）。因此退出锁文件跟踪。
+         **给本项目加第一个 PackageReference 时，删掉下面这一行。** -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
 </Project>

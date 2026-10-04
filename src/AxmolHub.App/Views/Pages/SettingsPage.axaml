@@ -128,22 +128,42 @@
         </StackPanel>
       </Border>
 
-      <!-- Software update (Velopack self-update). The version line and "check" button are wired in
-           code because the current version is read from the assembly at runtime, and the check
-           result feeds back into an imperative status label. -->
+      <!-- Software update (Velopack self-update). The version line, status, progress and buttons are
+           wired in code: the current version comes from the assembly, the check is a network call, and
+           the download reports progress through a callback. -->
       <Border Classes="card">
         <StackPanel Spacing="10">
           <TextBlock Text="{DynamicResource Updates}" FontSize="16" FontWeight="SemiBold" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource UpdatesHint}" />
+
+          <!-- Off by default? No: with it on, finding an update is enough and the only thing left is a
+               restart, which is the whole point of a background updater. Unchecking it hands the
+               download back to the "Download & restart" button. -->
+          <CheckBox x:Name="AutoDownloadCheck" Content="{DynamicResource AutoDownloadUpdates}" />
 
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel>
               <TextBlock x:Name="CurrentVersionLine" FontWeight="SemiBold" />
               <TextBlock x:Name="UpdateStatusLine" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
-            <Button x:Name="CheckForUpdatesButton" Grid.Column="1" VerticalAlignment="Center"
-                    Margin="12,0,0,0" Content="{DynamicResource CheckForUpdates}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+              <Button x:Name="CheckForUpdatesButton" Content="{DynamicResource CheckForUpdates}" />
+              <Button x:Name="DownloadUpdateButton" Content="{DynamicResource DownloadAndRestart}"
+                      IsVisible="False" Margin="8,0,0,0" />
+              <Button x:Name="RestartUpdateButton" Content="{DynamicResource RestartNow}"
+                      IsVisible="False" Margin="8,0,0,0" />
+              <Button x:Name="CancelUpdateButton" Content="{DynamicResource Cancel}" Classes="quiet"
+                      IsVisible="False" Margin="8,0,0,0" />
+            </StackPanel>
           </Grid>
+
+          <!-- The padded host is both a comfortable hover target — a bare ProgressBar is only a few pixels
+               tall, so hovering it is fiddly — and the owner of the download-speed tooltip. Visibility is
+               toggled on the host rather than the bar, so the hover area exists exactly while a download
+               (or the "ready to restart" bar) is on screen. -->
+          <Border x:Name="UpdateProgressHost" Padding="0,6" IsVisible="False">
+            <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" />
+          </Border>
         </StackPanel>
       </Border>
 

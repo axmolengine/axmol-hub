@@ -910,9 +910,10 @@ P2–P5 期间 `ci.yml` 里是**两条 GUI 线并存**：
 3. **中文 IME 输入**：macOS / Linux 后端下的输入法候选窗、组合输入在 `TextBox`/`PasswordBox` 上是否正常。这是之前就挂着的待实测项，现在是硬需求 —— Hub 有大量中文文案与中文路径。**P3 完成时仍未触碰**（P3 只做样式，不涉输入语义）。
 4. **CJK 字体回退**：目标 Linux 发行版是否预装 Noto Sans CJK？若否，是自带字体（增加体积）还是声明依赖？**P3 已把回退链写进 `Hub.Font.Ui` / `Hub.Font.Mono`（§3.4），但"目标发行版上真能出中文"仍无证据。**
 5. **Avalonia 版本 —— 已定**：pin **12.1.3**（MIT，当前最新稳定版）。已核实其 nupkg `lib/` 同时提供 **`net8.0` 与 `net10.0`** → **迁移不升 TFM**，新项目就是 `net8.0`。选 12.x 时注意 §5.1 那条 DevTools 包名变更（`AvaloniaUI.DiagnosticsSupport` 2.2.3；`Avalonia.Diagnostics` 停在 11.3.22，12.x 一个都没发）。**P2 与 P3 都是在这个版本上实测通过的。**
-6. **NuGet 源与版本锁定 —— 已落地（2026-10-02，见 §8）**：`NuGet.config`（`<clear/>` + 仅 nuget.org）+ `Directory.Build.props`（`RestorePackagesWithLockFile=true`）+ **5 份 `packages.lock.json`** 已随 P2/P3 一起进仓库。**`RestoreLockedMode` 按原计划刻意没有打开**，理由正是下面这条：
+6. **NuGet 源与版本锁定 —— 已落地（2026-10-02，见 §8）**：`NuGet.config`（`<clear/>` + 仅 nuget.org）+ `Directory.Build.props`（`RestorePackagesWithLockFile=true`）+ **`packages.lock.json`** 已随 P2/P3 一起进仓库（2026-10-04 起只保留 App 那一份，理由见下第 2 条）。**`RestoreLockedMode` 按原计划刻意没有打开**，理由正是下面这条：
    - **锁文件与 SDK 版本耦合**（这是必须在 CI 跑绿一次之后再动的唯一原因）：本机只有 SDK 10.0.401，`net8.0` 的 targeting pack 走 NuGet 还原；CI 用 SDK 8.0.x，targeting pack 来自 SDK 自带目录。两者可能产出**内容不同的 `packages.lock.json`**，此时若已开 `RestoreLockedMode`，CI 会在锁文件校验上直接红 —— 而在 CI 真实跑绿之前，这条红线无法当场验证。**顺序就按原计划执行：先落文件、不开锁定模式 → 等 CI 真绿一次 → 再决定是否切换。**
    - **第二个、更尖锐的耦合（2026-10-02 发现并已修）：锁文件内容取决于最后一次 restore 用的 RID。** 用 `dotnet publish -r osx-arm64` 还原会写进一段 `net8.0/osx-arm64` 专属原生资产，而随后一次不带 RID 的 `dotnet build` 会把它抹掉 —— 锁文件在两次操作之间自己变了。对策不是"接受抖动"，而是让它 RID 完整：会被 RID 发布的项目各自声明 `RuntimeIdentifiers`（Cli 四个、App 三个；P6 前另有 WPF 版一个，已随其删除），列出实际会发布的全集。**代价是新增/变更发布宿主时必须同步这两个属性**，否则锁文件退化成"只对某个 RID 正确"。实测已确认：RID 发布 → 无 RID 构建往返若干次，锁文件不再变化。
+     **2026-10-04 更正：这条只对 Cli 成立，对 App 不成立。** 实测复现 —— 单次 `-r <rid>` 还原会把已声明的多个 RID 节点**剪成只剩那一个**（App 声明 3 个，跑一次 `-r win-x64` 就只剩 1 个），且会**顺带改写被引用项目的锁文件**（App 的 RID 还原会给 Core 加上 `net8.0/win-x64`，尽管 Core 自己没有任何 RID 声明）。`installer/Build.ps1` 走 `dotnet publish -r win-x64`，所以每打一次本地包，App 的锁文件必然被剪。最终对策改成"只跟踪确有依赖的项目"，并把"提交前跑一遍不带 RID 的 `dotnet restore` 即可复原"写进了 `Directory.Build.props`。
    - `NuGet.config` 里另有一处要说清的边界：本机实测 `api.nuget.org` 的响应会 302 到 `nuget.azure.cn`，说明网络上已有镜像/代理在起作用。因此 `<clear/>` 只是**固定逻辑源**（让不同开发机看到同一套包 ID 与版本），**并不改变实际网络路径**。
 
 
@@ -927,7 +928,8 @@ P2–P5 期间 `ci.yml` 里是**两条 GUI 线并存**：
 随之而来的三件事，**已于 2026-10-02 落地**（与 P2/P3 同一批提交）：
 
 1. **`NuGet.config`（`<clear/>` + 仅留 nuget.org）**。落地前 restore 源继承开发机（实测两个：`api.nuget.org` 与 VS 内置本地源）。1 个零依赖包时无所谓，30 个传递依赖时不同的开发机就会给出不同结果。**边界**：`<clear/>` 只固定逻辑源，不改变实际网络路径（本机 `api.nuget.org` 实测会 302 到 `nuget.azure.cn`）。
-2. **`packages.lock.json`**（`RestorePackagesWithLockFile`，每个项目一份；落地时 **5 份**，P6 删 WPF 版后 **4 份**）。这是仓库现有"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物。**边界要说清，不要夸大**：NuGet 全局包本身已有 SHA-512 校验，锁文件解决的是**版本漂移**，不是篡改。**`RestoreLockedMode` 刻意没有一起打开** —— 原因见 §7 第 6 条（锁文件与 SDK 版本耦合，CI 里直接开会在一条从未跑过的线上踩红）。分两步上：先落文件，等 CI 真绿一次再决定切不切。
+2. **`packages.lock.json`**（`RestorePackagesWithLockFile`；落地时每个项目一份共 **5 份**，P6 删 WPF 版后 **4 份**；**2026-10-04 起只跟踪 App 那 1 份**）。这是仓库现有"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物。**边界要说清，不要夸大**：NuGet 全局包本身已有 SHA-512 校验，锁文件解决的是**版本漂移**，不是篡改。**`RestoreLockedMode` 刻意没有一起打开** —— 原因见 §7 第 6 条（锁文件与 SDK 版本耦合，CI 里直接开会在一条从未跑过的线上踩红）。分两步上：先落文件，等 CI 真绿一次再决定切不切。
+   - **2026-10-04 收紧范围**：Core / Cli / Checks 三个项目**零 `PackageReference`**，锁文件里只有空的框架/RID 节点，钉不住任何东西，而内容会随「最后一次 restore 带不带 `-r`」来回变 —— 于是它们各自的 csproj 显式加 `<RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>` 并退出 git 跟踪。全仓唯一有依赖的 App 保留（也就只有它这一份是真的在钉版本）。**给零依赖项目加第一个 `PackageReference` 时要删掉那行。**
 3. **`Directory.Build.props` 收敛版本号**。`0.1.6` 原先手工散在 `App.csproj` / `Cli.csproj` / `AxmolHub.App.csproj` / `README.md` 四处；P2 恰好演示了这个洞在扩大 —— 新增一个项目就要多抄一份。**落地时顺手查出一个真实缺陷**：`<Version>` 只有 3 个项目声明了，导致 **`AxmolHub.Core.dll` 报的版本是 `1.0.0`，而 `AxmolHub.Cli.dll` 报 `0.1.6`** —— 同一份构建里两个程序集版本不一致，且没有任何构建期信号。收敛后 5 个程序集统一为 `0.1.6`（P6 删 WPF 版后为 4 个）。`installer/Build.ps1` 与 `installer/Test.ps1` 的版本发现也从 `AxmolHub.App.csproj` 改指向 `Directory.Build.props`，保持了"脚本里没有第二份副本"这条既有性质。
 
 另外：Avalonia 及其传递依赖需要进 `THIRD_PARTY_NOTICES.md`（以 MIT 为主，需署名；`Avalonia.Angle.Windows.Natives` 打包的是 ANGLE 原生二进制，许可需单独核对），构建时间与 CI 缓存键也要重估。**这两项仍未做。**

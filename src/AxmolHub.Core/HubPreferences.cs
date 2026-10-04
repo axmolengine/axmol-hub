@@ -21,6 +21,13 @@ public sealed class HubPreferences
 
     /// <summary>The URL for <see cref="DownloadSources.CustomId"/>: a <c>{version}</c> template or a bare https origin.</summary>
     public string? CustomDownloadSource { get; set; }
+
+    /// <summary>
+    /// When true, an available update is downloaded in the background as soon as a check finds it,
+    /// so the only thing left for the user is a restart. **Download only** — applying (which
+    /// restarts the app) stays an explicit action.
+    /// </summary>
+    public bool AutoDownloadUpdates { get; set; } = true;
 }
 
 public sealed class PreferencesStore(string path)

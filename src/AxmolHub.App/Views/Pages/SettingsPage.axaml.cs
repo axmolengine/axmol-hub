@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub.App;
@@ -37,6 +38,22 @@ public partial class SettingsPage : UserControl
 
     /// <summary>Suppresses <c>SelectionChanged</c> during initialization: the WPF version likewise had a <c>preferencesReady</c> gate.</summary>
     private bool _ready;
+
+    /// <summary>True while a manual check is running: it owns the status line, so
+    /// <see cref="RenderUpdateState"/> must not clobber it. The download needs no such flag — its phase
+    /// lives in <see cref="UpdateService"/> and <see cref="RenderUpdateState"/> reads it from there.</summary>
+    private bool _checking;
+
+    /// <summary>Whether this page is currently subscribed to <see cref="UpdateService.Changed"/>
+    /// (hooked while on screen only).</summary>
+    private bool _updateHooked;
+
+    /// <summary>
+    /// The progress area's tooltip content. It stays the **same instance** for the page's whole life and
+    /// is installed as the tip exactly once (see <see cref="SetDownloadTooltip"/>): that is what lets the
+    /// tooltip remain open while the pointer rests in the progress area.
+    /// </summary>
+    private readonly TextBlock _speedTip = new();
 
     /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public SettingsPage()
@@ -82,6 +99,20 @@ public partial class SettingsPage : UserControl
         SelectVisualStudioButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: true);
         SelectCodeButton.Click += async (_, _) => await SelectEditorAsync(visualStudio: false);
         CheckForUpdatesButton.Click += async (_, _) => await CheckForUpdatesAsync();
+        DownloadUpdateButton.Click += async (_, _) => await DownloadUpdateAsync();
+        CancelUpdateButton.Click += (_, _) => UpdateService.Instance.CancelDownload();
+        RestartUpdateButton.Click += (_, _) => UpdateService.Instance.ApplyAndRestart();
+        AutoDownloadCheck.IsCheckedChanged += (_, _) => OnAutoDownloadChanged();
+
+        // Installed exactly once, on purpose — see SetDownloadTooltip for why re-assigning ToolTip.Tip
+        // per progress tick is what used to make the tooltip impossible to keep on screen.
+        ToolTip.SetTip(UpdateProgressHost, _speedTip);
+
+        // The update card is a *view* of the shared UpdateService, so a check or a background download
+        // started elsewhere (the shell's startup check) shows up here live. Hooked while the page is on
+        // screen only: a cached page that has been navigated away shouldn't keep rendering.
+        AttachedToVisualTree += (_, _) => HookUpdateService();
+        DetachedFromVisualTree += (_, _) => UnhookUpdateService();
 
         // DataRootNote's copy goes through XAML's {DynamicResource}; **don't** assign it imperatively here:
         // an imperative value won't change on language switch, and the self-check reads this control's text to judge whether localization works.
@@ -150,6 +181,15 @@ public partial class SettingsPage : UserControl
             // Visual Studio (devenv.exe) is Windows-only; hide its row on other hosts so the user isn't
             // offered an editor that can never be installed there.
             VisualStudioRow.IsVisible = OperatingSystem.IsWindows();
+            // The auto-download switch mirrors the preference. Assigning it here doesn't re-save:
+            // _ready is false for the whole reload (the same gate the dropdowns rely on). It is
+            // disabled on a dev/portable copy, where there is nothing to auto-update.
+            AutoDownloadCheck.IsChecked = _preferences.AutoDownloadUpdates;
+            AutoDownloadCheck.IsEnabled = UpdateService.Instance.IsInstalled;
+            // Re-render the update card from the last known check: this re-localizes the status line
+            // on a language switch (it is written imperatively) and reflects a check the shell already
+            // ran at startup (the update dot and this card share UpdateService.Last).
+            RenderUpdateState();
         }
         finally
         {
@@ -514,32 +554,197 @@ public partial class SettingsPage : UserControl
     private string Display(string? path) => path is { Length: > 0 } ? path : HubStrings.Get("NotSelected");
 
     /// <summary>
+    /// Persists the "auto-download" choice and, when it is switched on with an update already known,
+    /// starts the background download right away — otherwise the choice would not take effect until the
+    /// next check, which reads as "the checkbox does nothing".
+    /// </summary>
+    private void OnAutoDownloadChanged()
+    {
+        if (!_ready)
+        {
+            return;
+        }
+
+        var value = AutoDownloadCheck.IsChecked == true;
+        if (value == _preferences.AutoDownloadUpdates)
+        {
+            return;
+        }
+
+        _preferences.AutoDownloadUpdates = value;
+        _preferencesStore.Save(_preferences);
+        UpdateService.Instance.AutoDownload = value;
+        if (value)
+        {
+            UpdateService.Instance.StartPendingAutoDownload();
+        }
+    }
+
+    /// <summary>Live-renders the card whenever the shared update state changes (check result or download
+    /// progress). The event can be raised from the download thread, so marshal before touching controls.</summary>
+    private void OnUpdateChanged() => Dispatcher.UIThread.Post(RenderUpdateState);
+
+    private void HookUpdateService()
+    {
+        if (_updateHooked)
+        {
+            return;
+        }
+
+        _updateHooked = true;
+        UpdateService.Instance.Changed += OnUpdateChanged;
+        RenderUpdateState();
+    }
+
+    private void UnhookUpdateService()
+    {
+        if (!_updateHooked)
+        {
+            return;
+        }
+
+        _updateHooked = false;
+        UpdateService.Instance.Changed -= OnUpdateChanged;
+    }
+
+    /// <summary>
     /// The settings-page "Check for updates" entry point. Unlike the silent startup check, this one
-    /// surfaces every outcome to the user: the button is clicked *because* they want a visible answer.
-    /// The download + restart prompt lives in <see cref="UpdateService.CheckAndPromptAsync"/>.
+    /// surfaces every outcome: the button is clicked *because* the user wants a visible answer.
     /// </summary>
     private async Task CheckForUpdatesAsync()
     {
         // The status line doubles as a "busy" indicator; the button is disabled while a check runs so
         // a second click can't stack a second network round-trip on top of the first.
+        _checking = true;
         CheckForUpdatesButton.IsEnabled = false;
         UpdateStatusLine.Text = HubStrings.Get("CheckingUpdate");
         try
         {
-            var owner = TopLevel.GetTopLevel(this) as Window;
-            var outcome = await UpdateService.Instance.CheckAndPromptAsync(owner);
-
-            UpdateStatusLine.Text = outcome.Result switch
-            {
-                UpdateService.CheckResult.UpdateAvailable => string.Format(HubStrings.Get("UpdateAvailablePrompt"), outcome.Update!.TargetFullRelease.Version),
-                UpdateService.CheckResult.UpToDate => HubStrings.Get("UpdateUpToDate"),
-                UpdateService.CheckResult.NotInstalled => HubStrings.Get("UpdateNotInstalled"),
-                _ => HubStrings.Get("UpdateFailed"),
-            };
+            await UpdateService.Instance.CheckAsync();
         }
         finally
         {
+            _checking = false;
             CheckForUpdatesButton.IsEnabled = true;
+            RenderUpdateState();
         }
     }
+
+    /// <summary>
+    /// Renders the card from <see cref="UpdateService"/>: the download phase first (progress bar, cancel
+    /// / restart), then the check result (status text, which button is offered). Called when the page is
+    /// shown, on <see cref="UpdateService.Changed"/>, and after a manual check — so a check or a
+    /// background download started elsewhere shows up here too, and the status line re-localizes on a
+    /// language switch.
+    /// </summary>
+    private void RenderUpdateState()
+    {
+        // A manual check owns the status line while it runs; don't overwrite "checking…".
+        if (_checking)
+        {
+            return;
+        }
+
+        var service = UpdateService.Instance;
+
+        // Only the host is toggled: it carries the padding that makes the progress area hoverable, so
+        // hiding the bar alone would leave an invisible strip still able to show a tooltip.
+        UpdateProgressHost.IsVisible = false;
+        CheckForUpdatesButton.IsVisible = false;
+        DownloadUpdateButton.IsVisible = false;
+        RestartUpdateButton.IsVisible = false;
+        CancelUpdateButton.IsVisible = false;
+
+        if (service.Download == UpdateService.DownloadState.Downloading)
+        {
+            SetStatusLineError(false);
+            UpdateProgress.Value = service.DownloadPercent;
+            UpdateProgressHost.IsVisible = true;
+            CancelUpdateButton.IsVisible = true;
+            UpdateStatusLine.Text = string.Format(HubStrings.Get("UpdateDownloading"), service.DownloadPercent);
+            SetDownloadTooltip(string.Format(
+                HubStrings.Get("UpdateDownloadSpeed"), UpdateService.FormatSpeed(service.DownloadBytesPerSecond)));
+            return;
+        }
+
+        if (service.Download == UpdateService.DownloadState.Ready)
+        {
+            SetStatusLineError(false);
+            UpdateProgress.Value = 100;
+            UpdateProgressHost.IsVisible = true;
+            RestartUpdateButton.IsVisible = true;
+            UpdateStatusLine.Text = HubStrings.Get("UpdateReadyToRestart");
+            // The bar stays on screen once the download is done, so its tooltip needs copy that is still
+            // true — otherwise hovering it would keep repeating a speed that no longer means anything.
+            SetDownloadTooltip(HubStrings.Get("UpdateReadyToRestart"));
+            return;
+        }
+
+        // A failed download is reported right here instead of in a dialog: the whole update flow is
+        // deliberately modal-free, and this card is where the user is already looking. The retry is the
+        // "Download & restart" button (and any new check, which clears the error).
+        if (service.DownloadError is { } error)
+        {
+            SetStatusLineError(true);
+            UpdateStatusLine.Text = HubStrings.Get("UpdateDownloadFailed") + error;
+            DownloadUpdateButton.IsVisible = true;
+            return;
+        }
+
+        SetStatusLineError(false);
+
+        var last = service.Last;
+        UpdateStatusLine.Text = last?.Result switch
+        {
+            UpdateService.CheckResult.UpdateAvailable => string.Format(HubStrings.Get("UpdateReady"), last.Update!.TargetFullRelease.Version),
+            UpdateService.CheckResult.UpToDate => HubStrings.Get("UpdateUpToDate"),
+            UpdateService.CheckResult.NotInstalled => HubStrings.Get("UpdateNotInstalled"),
+            UpdateService.CheckResult.Failed => HubStrings.Get("UpdateFailed"),
+            _ => HubStrings.Get("UpdateCheckHint"),
+        };
+
+        if (last?.Result is UpdateService.CheckResult.UpdateAvailable)
+        {
+            DownloadUpdateButton.IsVisible = true;
+        }
+        else
+        {
+            CheckForUpdatesButton.IsVisible = true;
+        }
+    }
+
+    /// <summary>
+    /// Switches the status line between the muted look and the danger ink by swapping style classes —
+    /// not an inline <c>Foreground</c> — so the token re-resolves on a theme switch. Never both at once:
+    /// they set the same property and whichever style is declared later would silently win.
+    /// </summary>
+    private void SetStatusLineError(bool error)
+    {
+        UpdateStatusLine.Classes.Set("muted", !error);
+        UpdateStatusLine.Classes.Set("danger", error);
+    }
+
+    /// <summary>
+    /// Sets the text of the progress area's tooltip.
+    ///
+    /// It writes into the <see cref="_speedTip"/> TextBlock that was attached as the tip **once** in the
+    /// constructor, rather than re-assigning <c>ToolTip.Tip</c> on every progress tick. That is not
+    /// tidiness — it is the whole reason the tooltip can stay on screen:
+    ///
+    /// Avalonia's ToolTipService closes an open tooltip when the Tip value changes to **null**, and a new
+    /// value assigned while the tooltip is closed does **not** re-open it (its TipChanged handler only
+    /// acts while <c>IsOpen</c> is true). Resetting the tip to null on every render therefore killed the
+    /// tooltip after the first tick, and the pointer had to leave the control and come back before it
+    /// would show again — which is exactly the "it won't stay put" behaviour. Passing a stable tip object
+    /// keeps <c>TipProperty</c> unchanged, so nothing ever closes it: the tooltip stays up for as long as
+    /// the pointer rests in the progress area, and the text still updates live.
+    /// </summary>
+    private void SetDownloadTooltip(string text) => _speedTip.Text = text;
+
+    /// <summary>
+    /// The "Download &amp; restart" button. Reaching the line after the await means the download failed or
+    /// was cancelled (success replaces this process); either way the card renders the outcome by itself,
+    /// through <see cref="UpdateService.Changed"/> — the update flow puts up **no dialog at all**.
+    /// </summary>
+    private async Task DownloadUpdateAsync() => await UpdateService.Instance.DownloadAndApplyAsync();
 }

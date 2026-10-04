@@ -14,27 +14,35 @@
          此前 0.1.6 被手工抄在 App / Cli / Avalonia 三份 csproj 里，而 Core 与 Checks
          根本没写 Version —— 结果是同一份产物里 Core.dll 报 1.0.0、Cli.dll 报 0.1.6。
          installer/Build.ps1 与 installer/Test.ps1 也从本文件读版本号，不要再往别处复制副本。 -->
-    <Version>0.2.3</Version>
+    <Version>0.2.4</Version>
 
-    <!-- 仓库既有的"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物：把每个项目的完整传递闭包
+    <!-- 仓库既有的"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物：把项目的完整传递闭包
          钉在 packages.lock.json 里，避免不同开发机解析出不同版本。
 
          边界要说清，不要夸大：它解决的是**版本漂移**，不是篡改 —— NuGet 全局包本身已有
          SHA-512 校验，锁文件不是签名。
 
-         刻意不在本文件开启 RestoreLockedMode：本机只有 SDK 10，net8.0 的 targeting pack
-         在本机走 NuGet 还原，而 CI 的 SDK 8 从 SDK 自带目录取，两者可能产出内容不同的锁文件；
-         直接锁定会让 CI 在锁文件校验上失败，而 CI 至今还没有真实跑过 = 埋一条无法当场验证的红线。
-         顺序：先提交锁文件 → 等 CI 真实跑绿一次 → 再决定是否切到锁定模式。
+         **只有真有依赖的项目才保留锁文件**：锁文件的价值来自"钉住包版本"，零依赖项目的
+         锁文件里只剩空的框架/RID 节点，钉不住任何东西，却会跟着下面的 RID 行为一起抖。
+         目前全仓唯一有 PackageReference 的是 App，所以仓库里**只跟踪 App 的那一份**；
+         Core / Cli / Checks 各自在 csproj 里显式关掉本属性（加第一个 PackageReference 时删掉那行）。
 
-         第二个风险（2026-10-02 发现，比上面这条更尖锐）：**锁文件的内容取决于最后一次 restore
-         用的 RID**。用 `dotnet publish -r osx-arm64` 还原会写进一段 `net8.0/osx-arm64` 专属
-         原生资产，而随后一次不带 RID 的 `dotnet build` 会把它抹掉 —— 于是锁文件在两次操作之间
-         自己"变了"。产物不是不一致，是锁文件在抖动。
-         对策是让锁文件 RID 完整而不是随操作漂移：会被 RID 发布的两个项目各自声明
-         RuntimeIdentifiers（Cli 四个、App 三个），列出实际会发布的全集。
-         Core 与 Checks 不发布，因此不声明。
-         新增/变更发布宿主时必须同步这里，否则锁文件又会退化成"只对某个 RID 正确"。 -->
+         刻意不开 RestoreLockedMode：本机只有 SDK 10，net8.0 的 targeting pack 在本机走 NuGet
+         还原，而 CI 的 SDK 8 从 SDK 自带目录取，两者可能产出内容不同的锁文件；直接锁定会让 CI
+         在锁文件校验上失败。顺序：先提交锁文件 → 等 CI 真实跑绿一次 → 再决定是否切到锁定模式。
+         （另：CI 目前既没有开 locked-mode，也没有显式 dotnet restore，锁文件尚未成为闸门。）
+
+         **锁文件会抖，这是 NuGet 的确定性行为，不是环境异常**（2026-10-04 实测复现）：
+         内容取决于最后一次 restore 带不带 -r ——
+           · 不带 RID：写「基础 TFM 节点 + 每个已声明 RuntimeIdentifiers 一个节点」；
+           · 带 -r <rid>：**只写该 RID 一个节点并剪掉其余**，且会**顺带改写被引用项目的
+             锁文件**（App 带 -r win-x64 还原会给 Core 添上 net8.0/win-x64，尽管 Core 自己
+             没有声明任何 RID）。
+         installer/Build.ps1 走 dotnet publish -r win-x64，所以**每打一次本地包，App 的锁文件
+         就会从多个 RID 被剪成 1 个**（Core 那份已不跟踪，不受影响）。
+         别指望"声明 RuntimeIdentifiers 就万事大吉"：那对 Cli 成立、对 App 不成立，因为单次
+         -r 还原仍会把多 RID 剪成单 RID。**提交前跑一遍不带 RID 的 dotnet restore 即可复原**
+         （实测：四个项目各 restore 一次后 git status 归零）。 -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
   </PropertyGroup>

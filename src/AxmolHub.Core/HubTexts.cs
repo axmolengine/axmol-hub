@@ -313,10 +313,22 @@ public static class HubTexts
         ["CurrentVersion"] = ("当前版本", "Current version"),
         ["CheckForUpdates"] = ("检查更新", "Check for updates"),
         ["CheckingUpdate"] = ("正在检查更新…", "Checking for updates…"),
-        ["UpdateAvailableTitle"] = ("发现新版本", "Update available"),
-        ["UpdateAvailablePrompt"] = ("发现 Axmol Hub 新版本 {0}。是否立即下载并在安装后自动重启？", "A new version of Axmol Hub ({0}) is available. Download it now and restart automatically after install?"),
         ["UpdateUpToDate"] = ("已是最新版本。", "You're up to date."),
         ["UpdateNotInstalled"] = ("当前是开发版或便携版，无法自动更新。", "This is a development or portable copy, so it can't update itself."),
         ["UpdateFailed"] = ("检查更新失败，请稍后重试。", "Couldn't check for updates. Try again later."),
+        // 「有可用更新」不用弹窗，只在设置页导航项上点一个红点（见 Hub.NotificationDot）；红点只负责
+        // 「去看设置」，版本号、下载进度与操作都在设置页的更新卡片里。
+        ["UpdateDotTooltip"] = ("有可用更新", "Update available"),
+        ["UpdateCheckHint"] = ("点「检查更新」查看是否有新版本。", "Click \"Check for updates\" to see if a newer version exists."),
+        ["AutoDownloadUpdates"] = ("自动下载更新", "Auto-download updates"),
+        ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
+        ["DownloadAndRestart"] = ("下载并重启", "Download & restart"),
+        ["UpdateDownloading"] = ("正在下载更新… {0}%", "Downloading update… {0}%"),
+        // 进度条/状态行的悬停提示。{0} 是已格式化好的速率（"2.4 MB/s"），单位不随语言变化。
+        ["UpdateDownloadSpeed"] = ("下载速度：{0}", "Download speed: {0}"),
+        ["UpdateReadyToRestart"] = ("更新已就绪，重启完成更新。", "Update ready — restart to finish."),
+        ["RestartNow"] = ("立即重启", "Restart now"),
+        // 故意不带 {0}：后面要拼的是异常原文，可能含花括号，string.Format 会抛 FormatException。
+        ["UpdateDownloadFailed"] = ("更新下载失败：", "Couldn't download the update: "),
     };
 }

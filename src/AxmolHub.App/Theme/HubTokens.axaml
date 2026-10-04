@@ -51,6 +51,13 @@
       <SolidColorBrush x:Key="Hub.DangerText" Color="#F294A7" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#8A5A64" />
 
+      <!-- Notification dot (the "update available" badge on the Settings nav item). Its own semantic
+           on purpose: an available update is not a danger/error, so it must not reuse Hub.Danger
+           (which is also deliberately low-chroma for ink/fill use). Values are tuned for a small
+           *filled* dot — both clear ≥4.5:1 against every surface in their theme, which the pale
+           Hub.Danger dark hue would not read as for an alert at 8px. -->
+      <SolidColorBrush x:Key="Hub.NotificationDot" Color="#FF5C6C" />
+
       <SolidColorBrush x:Key="Hub.GridSurface" Color="#252525" />
       <SolidColorBrush x:Key="Hub.GridAlternate" Color="#292929" />
       <SolidColorBrush x:Key="Hub.GridHeader" Color="#2D2D2D" />
@@ -102,6 +109,9 @@
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#E5A6B2" />
+
+      <!-- See the note in the Dark dictionary: a distinct semantic from Hub.Danger, tuned as a filled dot. -->
+      <SolidColorBrush x:Key="Hub.NotificationDot" Color="#D93025" />
 
       <SolidColorBrush x:Key="Hub.GridSurface" Color="#FFFFFF" />
       <SolidColorBrush x:Key="Hub.GridAlternate" Color="#FAFAFC" />

@@ -121,13 +121,21 @@
             </StackPanel>
           </RadioButton>
 
+          <!-- Settings carries the update badge: a dot at the trailing edge when a new version is
+               known (toggled by MainWindow.ShowUpdateBadge). This row is a Grid rather than the other
+               rows' StackPanel so the dot can sit at the far right; the dot is IsVisible=False by
+               default, and its Auto column collapses to nothing while hidden. -->
           <RadioButton x:Name="NavSettings" Classes="nav" GroupName="Navigation">
-            <StackPanel Orientation="Horizontal">
-              <Path Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
                     Width="17" Height="17" Stretch="Uniform"
                     VerticalAlignment="Center" Margin="0,0,13,0" />
-              <TextBlock Text="{DynamicResource Settings}" VerticalAlignment="Center" />
-            </StackPanel>
+              <TextBlock Grid.Column="1" Text="{DynamicResource Settings}" VerticalAlignment="Center" />
+              <Ellipse Grid.Column="2" x:Name="SettingsUpdateDot"
+                       Width="8" Height="8" IsVisible="False"
+                       Fill="{DynamicResource Hub.NotificationDot}"
+                       VerticalAlignment="Center" Margin="10,0,1,0" />
+            </Grid>
           </RadioButton>
         </StackPanel>
 

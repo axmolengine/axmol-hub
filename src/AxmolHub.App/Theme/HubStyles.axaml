@@ -42,6 +42,16 @@
     <Setter Property="TextWrapping" Value="Wrap" />
   </Style>
 
+  <!-- Inline error copy inside a card (e.g. a failed update download). Same ink weight of the danger
+       hue as the destructive button, so it reads as a warning without becoming a filled block. It
+       shares muted's metrics deliberately: a status line that flips to an error must not change size
+       or re-wrap the card. Callers swap .muted for .danger, never use both. -->
+  <Style Selector="TextBlock.danger">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
   <!-- Monospace font for the activity log (WPF inlined FontFamily="Consolas") -->
   <Style Selector="TextBox.mono">
     <Setter Property="FontFamily" Value="{StaticResource Hub.Font.Mono}" />

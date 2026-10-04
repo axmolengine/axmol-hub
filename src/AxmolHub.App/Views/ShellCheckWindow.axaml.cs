@@ -8,6 +8,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
+using Velopack;
 using static AxmolHub.App.ThemeProbe;
 
 namespace AxmolHub.App;
@@ -633,6 +634,25 @@ public partial class ShellCheckWindow : Window
               && !SettingsPage.MatchesEditorExecutable(false, @"C:\Tools\devenv.exe"),
             "编辑器校验按文件名判定、不区分大小写，且两种编辑器不可互换");
 
+        // The download-speed tooltip rests on two pure functions that fail **silently** if wrong: a wrong
+        // total still yields a plausible-looking rate, and an off-by-1024 still reads like a speed.
+        var fullPackage = new VelopackAsset { FileName = "axmol-hub-1.0.0-win-x64-full.nupkg", Size = 100_000_000 };
+        var smallDelta = new VelopackAsset { FileName = "axmol-hub-1.0.0-win-x64-delta.nupkg", Size = 2_000_000 };
+        var oversizedDelta = new VelopackAsset { FileName = "axmol-hub-1.0.0-win-x64-delta.nupkg", Size = 200_000_000 };
+        var noBase = UpdateService.DescribeDownload(new UpdateInfo(fullPackage, false));
+        var withDelta = UpdateService.DescribeDownload(new UpdateInfo(fullPackage, false, fullPackage, [smallDelta]));
+        var deltaBiggerThanPackage = UpdateService.DescribeDownload(new UpdateInfo(fullPackage, false, fullPackage, [oversizedDelta]));
+        Check(noBase == (100_000_000L, 100)
+              && withDelta == (2_000_000L, 70)
+              && deltaBiggerThanPackage == (100_000_000L, 100),
+            "下载速率换算的总量与阶段：无基线→整包(0-100%)，有增量→增量之和(0-70%)，增量大于整包→回落整包");
+
+        Check(UpdateService.FormatSpeed(0) == "—"
+              && UpdateService.FormatSpeed(512) == "512 B/s"
+              && UpdateService.FormatSpeed(2048) == "2 KB/s"
+              && UpdateService.FormatSpeed(3.5 * 1024 * 1024) == "3.5 MB/s",
+            "下载速率文案按 B/KB/MB 分档，未知速率显示占位符，且与界面语言无关");
+
         // --- 5.2 Really switch the language once ---
         var navBefore = NavLabel(shell.NavSettings);
         var noteBefore = NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text;
@@ -809,12 +829,13 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// A navigation item's text. Its <c>Content</c> went from "a piece of text" to an
-    /// "icon + text" StackPanel (so the icon recolors with the selection state, as in the WPF
-    /// version), so <c>Content.ToString()</c> no longer works — it returns a type name and the
-    /// assertion becomes an always-true/always-false decoration.
+    /// A navigation item's text. Its <c>Content</c> is a panel laying out "icon [+ badge]" plus the
+    /// label — a StackPanel for most items, a Grid for the Settings item (which carries a trailing
+    /// update dot). <c>Content.ToString()</c> would return a type name and turn the assertion into an
+    /// always-true/always-false decoration, so the label is read from the panel's TextBlock children
+    /// (the shared <see cref="Panel"/> base covers both StackPanel and Grid).
     /// </summary>
-    private static string NavLabel(RadioButton button) => button.Content is StackPanel panel
+    private static string NavLabel(RadioButton button) => button.Content is Panel panel
         ? string.Join("", panel.Children.OfType<TextBlock>().Select(text => text.Text))
         : button.Content?.ToString() ?? "";
 

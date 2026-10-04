@@ -76,6 +76,10 @@ public partial class App : Application
         // side of every ThemeDictionaries token DynamicResource resolves to.
         ThemeService.Apply(preferences.Theme, this);
 
+        // Seed the update service with the user's background-download preference before the startup
+        // check runs, so a check that finds an update can start fetching it right away.
+        UpdateService.Instance.AutoDownload = preferences.AutoDownloadUpdates;
+
         // P4's three self-check/verification modes each use a dedicated window; the product mode
         // opens the main window.
         if (Options.VerifyThemeReport is { } themeReport)
@@ -125,21 +129,14 @@ public partial class App : Application
         desktop.MainWindow = window;
 
         // Silent startup update check. Fire-and-forget: it must never block the window from coming
-        // up, and its only visible effect is a dialog when an update is found (which is surfaced
-        // through the same prompt → download → restart path as the settings-page button, only after
-        // the window is shown). Automation / gallery / verification modes never phone home — a
-        // self-check binary checking for updates would be a side effect nobody asked for and would
-        // fail on offline CI.
+        // up, and its only visible effect is the dot the shell raises on the Settings nav item (fed
+        // by UpdateService.Changed) — **no modal prompt**: an available update is a passive badge, and
+        // the actual check / download / apply is a deliberate action taken in the settings page.
+        // Automation / gallery / verification modes never phone home — a self-check binary checking
+        // for updates would be a side effect nobody asked for and would fail on offline CI.
         if (!Options.IsAutomation)
         {
-            window.Opened += async (_, _) =>
-            {
-                var outcome = await UpdateService.Instance.CheckOnStartupAsync();
-                if (outcome.Result is UpdateService.CheckResult.UpdateAvailable && outcome.Update is not null)
-                {
-                    await UpdateService.Instance.PromptAndApplyAsync(window, outcome.Update);
-                }
-            };
+            window.Opened += async (_, _) => await UpdateService.Instance.CheckAsync();
         }
 
         // The two screenshot switches are mutually exclusive: --smoke exits right after one shot,
