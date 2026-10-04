@@ -220,6 +220,10 @@ public partial class ShellCheckWindow : Window
             "会话首条消息完成后顶部标题更新（实际「" + panel.ConversationTitleText + "」）");
 
         var second = shell.Chat.StartConversation();
+        Check(panel.SessionMenuCount == 2 && panel.SessionHasDeleteMenu(saved.Id),
+            "每个会话项提供独立的操作菜单（含删除）");
+        Check(panel.SessionMenuHasAccessibleHitArea(saved.Id),
+            "会话菜单按钮具有至少 36x36 的可点击区域");
         panel.SearchForCheck("测试提问");
         Check(panel.ConversationListText.Contains(saved.Title, StringComparison.Ordinal)
               && !panel.ConversationListText.Contains(HubStrings.Get("NewConversation"), StringComparison.Ordinal),
@@ -235,8 +239,9 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         Check(panel.ConversationCount == 1 && panel.BubbleCount == 0,
             "删除当前会话只清除该记录（实际会话 " + panel.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
-        shell.Chat.DeleteConversation(second.Id);
         panel.SearchForCheck("");
+        Check(panel.DeleteConversationFromMenuForCheck(second.Id) && panel.ConversationCount == 0,
+            "通过会话操作菜单删除指定的历史对话");
 
         shell.Chat.RemoveModel(orca.Id, checkModel);
         shell.Chat.RemoveProvider(checkProvider.Id);

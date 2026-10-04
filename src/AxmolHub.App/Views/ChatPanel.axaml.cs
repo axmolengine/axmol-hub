@@ -36,7 +36,6 @@ public partial class ChatPanel : UserControl
             _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
         };
         NewConversationButton.Click += (_, _) => _chat.StartConversation();
-        DeleteConversationButton.Click += (_, _) => DeleteActiveConversation();
         SendButton.Click += (_, _) => _ = SendAsync();
 
         InputBox.KeyDown += async (_, e) =>
@@ -56,8 +55,6 @@ public partial class ChatPanel : UserControl
 
         UpdateConversationTitle();
         NewConversationButton.Content = HubStrings.Get("NewConversation");
-        DeleteConversationButton.Content = HubStrings.Get("DeleteConversation");
-        DeleteConversationButton.IsEnabled = _chat.ActiveConversation is not null && _send is null;
         ConversationSearch.PlaceholderText = HubStrings.Get("SearchConversations");
         ConversationListLabel.Text = HubStrings.Get("Conversation");
         SendButton.Content = _send is null ? HubStrings.Get("Send") : HubStrings.Get("Stop");
@@ -112,19 +109,51 @@ public partial class ChatPanel : UserControl
         foreach (var summary in summaries)
         {
             var title = summary.Title.Length > 0 ? summary.Title : HubStrings.Get("NewConversation");
+            var row = new Border
+            {
+                Background = Brushes.Transparent,
+                CornerRadius = new CornerRadius(6),
+            };
+            row.Classes.Add("session-row");
+            var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,42") };
             var item = new Button
             {
                 Content = title,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 Padding = new Thickness(10, 8),
+                Margin = new Thickness(0),
             };
             ToolTip.SetTip(item, title);
             item.Classes.Add("session");
             if (summary.Id == activeId) item.Classes.Add("active");
             item.Tag = summary.Id;
             item.Click += (_, _) => _chat.OpenConversation(summary.Id);
-            ConversationList.Children.Add(item);
+            var menuButton = new Button
+            {
+                Content = "⋯",
+                Width = 40,
+                Height = 38,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                FontSize = 18,
+            };
+            menuButton.Classes.Add("session-menu");
+            ToolTip.SetTip(menuButton, HubStrings.Get("ConversationActions"));
+
+            var menu = new MenuFlyout();
+            var deleteItem = new MenuItem { Header = HubStrings.Get("DeleteConversation") };
+            deleteItem.Click += (_, _) => DeleteConversation(summary.Id);
+            menu.Items.Add(deleteItem);
+            menuButton.Click += (_, _) => menu.ShowAt(menuButton);
+            menuButton.Tag = menu;
+
+            layout.Children.Add(item);
+            Grid.SetColumn(menuButton, 1);
+            layout.Children.Add(menuButton);
+            row.Child = layout;
+            row.Tag = summary.Id;
+            ConversationList.Children.Add(row);
         }
 
         if (summaries.Length == 0)
@@ -139,10 +168,7 @@ public partial class ChatPanel : UserControl
         }
     }
 
-    private void DeleteActiveConversation()
-    {
-        if (_chat.ActiveConversation is { } active) _chat.DeleteConversation(active.Id);
-    }
+    private void DeleteConversation(string id) => _chat.DeleteConversation(id);
 
     private async Task SendAsync()
     {
@@ -169,7 +195,6 @@ public partial class ChatPanel : UserControl
 
         _send = new CancellationTokenSource();
         SendButton.Content = HubStrings.Get("Stop");
-        DeleteConversationButton.IsEnabled = false;
         try
         {
             await foreach (var chunk in _chat.SendAsync(text, _send.Token).ConfigureAwait(true))
@@ -192,7 +217,6 @@ public partial class ChatPanel : UserControl
             _send = null;
             SendButton.Content = HubStrings.Get("Send");
             UpdateConversationTitle();
-            DeleteConversationButton.IsEnabled = _chat.ActiveConversation is not null;
             RefreshConversationList();
         }
     }
@@ -276,8 +300,8 @@ public partial class ChatPanel : UserControl
     internal int ModelChoiceCount => ModelPicker.ItemCount;
     internal string SelectedModelText => ModelPicker.SelectedItem?.ToString() ?? "";
     internal string ConversationListText => string.Join("\n", ConversationList.Children
-        .OfType<Button>()
-        .Select(button => button.Content?.ToString()));
+        .OfType<Border>()
+        .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault()?.Content?.ToString()));
     internal string ConversationTitleText => TitleLabel.Text ?? "";
     internal int BubbleCount => MessageFlow.Children.OfType<Border>().Count();
 
@@ -289,11 +313,49 @@ public partial class ChatPanel : UserControl
 
     internal bool OpenConversationForCheck(string id)
     {
-        var item = ConversationList.Children.OfType<Button>()
-            .FirstOrDefault(button => string.Equals(button.Tag?.ToString(), id, StringComparison.Ordinal));
+        var item = ConversationList.Children.OfType<Border>()
+            .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
+            .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault())
+            .FirstOrDefault(button => button is not null);
         if (item is null) return false;
         item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         return _chat.ActiveConversation?.Id == id;
+    }
+
+    internal int SessionMenuCount => ConversationList.Children.OfType<Border>()
+        .Select(row => row.Child as Grid)
+        .Where(grid => grid is not null)
+        .Sum(grid => grid!.Children.OfType<Button>().Count(button => button.Classes.Contains("session-menu")));
+
+    internal bool SessionMenuHasAccessibleHitArea(string id)
+        => ConversationList.Children.OfType<Border>()
+            .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
+            .SelectMany(row => (row.Child as Grid)?.Children.OfType<Button>() ?? [])
+            .Any(button => button.Classes.Contains("session-menu")
+                           && button.Width >= 36
+                           && button.Height >= 36
+                           && button.IsHitTestVisible);
+
+    internal bool SessionHasDeleteMenu(string id)
+        => ConversationList.Children.OfType<Border>()
+            .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
+            .SelectMany(row => (row.Child as Grid)?.Children.OfType<Button>() ?? [])
+            .Any(button => button.Tag is MenuFlyout flyout
+                           && flyout.Items.OfType<MenuItem>().Any(item =>
+                               string.Equals(item.Header?.ToString(), HubStrings.Get("DeleteConversation"), StringComparison.Ordinal)));
+
+    internal bool DeleteConversationFromMenuForCheck(string id)
+    {
+        var deleteItem = ConversationList.Children.OfType<Border>()
+            .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
+            .SelectMany(row => (row.Child as Grid)?.Children.OfType<Button>() ?? [])
+            .SelectMany(button => (button.Tag as MenuFlyout)?.Items.OfType<MenuItem>() ?? [])
+            .FirstOrDefault(item =>
+                string.Equals(item.Header?.ToString(), HubStrings.Get("DeleteConversation"), StringComparison.Ordinal));
+        if (deleteItem is null) return false;
+
+        deleteItem.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        return _chat.Conversations.All(summary => summary.Id != id);
     }
 
     internal bool SelectModelForCheck(string providerId, string modelName)

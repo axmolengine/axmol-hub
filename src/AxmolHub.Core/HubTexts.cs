@@ -338,6 +338,7 @@ public static class HubTexts
         ["DeleteConversation"] = ("删除对话", "Delete conversation"),
         ["SearchConversations"] = ("搜索对话", "Search conversations"),
         ["NoSearchResults"] = ("没有匹配的对话。", "No matching conversations."),
+        ["ConversationActions"] = ("对话操作", "Conversation actions"),
         ["Conversation"] = ("对话", "Conversation"),
         ["NoConversations"] = ("还没有对话。", "No conversations yet."),
         ["NoAvailableChatModels"] = ("请先在设置中鉴权并添加可用模型。", "Authenticate a provider and add an available model in Settings first."),

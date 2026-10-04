@@ -21,6 +21,24 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
+    <Style Selector="Button.session-menu">
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="Padding" Value="7,3" />
+      <Setter Property="Margin" Value="0" />
+    </Style>
+    <Style Selector="Border.session-row:pointerover Button.session-menu">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.session-menu:pointerover">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
   </UserControl.Styles>
 
   <Grid ColumnDefinitions="250,*">
@@ -53,9 +71,6 @@
           <TextBlock x:Name="ActiveModelLabel" Classes="muted" FontSize="12" Margin="0,4,0,0"
                      TextTrimming="CharacterEllipsis" />
         </StackPanel>
-        <Button x:Name="DeleteConversationButton" Grid.Column="1"
-                Content="{DynamicResource DeleteConversation}" Classes="quiet destructive"
-                Padding="10,6" VerticalAlignment="Center" />
       </Grid>
 
       <Border Grid.Row="1" Background="{DynamicResource Hub.SurfaceSunken}" CornerRadius="6"
