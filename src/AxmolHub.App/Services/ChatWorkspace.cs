@@ -65,11 +65,12 @@ public sealed class ChatWorkspace : IDisposable
     public IReadOnlyList<ModelProvider> Providers => _providerList;
 
     /// <summary>The provider/model choices available in chat: enabled providers with credentials (or no
-    /// required key) and at least one configured model.</summary>
+    /// required key) and at least one enabled, configured model.</summary>
     public IReadOnlyList<ChatModelOption> AvailableChatModels
         => _providerList
             .Where(provider => provider.Enabled && (!provider.ApiKeyRequired || provider.Credential is not null))
             .SelectMany(provider => provider.Models
+                .Where(model => model.Enabled)
                 .OrderByDescending(model => model.InUse)
                 .Select(model => new ChatModelOption(provider, model.Name)))
             .ToList();
@@ -88,7 +89,8 @@ public sealed class ChatWorkspace : IDisposable
                         ?.ActiveModel?.Name;
                 }
 
-                return FindChatModel(_active.ProviderId, modelName);
+                return FindChatModel(_active.ProviderId, modelName)
+                       ?? AvailableChatModels.FirstOrDefault(choice => choice.Provider.Id == _active.ProviderId);
             }
 
             return FindChatModel(_selectedProviderId, _selectedModelName) ?? AvailableChatModels.FirstOrDefault();
@@ -443,9 +445,22 @@ public sealed class ChatWorkspace : IDisposable
 
         var target = provider.Models.FirstOrDefault(candidate =>
             string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (target is null) return false;
+        if (target is null || !target.Enabled) return false;
 
         foreach (var model in provider.Models) model.InUse = ReferenceEquals(model, target);
+        SaveProviders();
+        return true;
+    }
+
+    /// <summary>Controls whether a provider model is offered in chat.</summary>
+    public bool SetModelEnabled(string providerId, string name, bool enabled)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        var model = provider?.Models.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (model is null) return false;
+
+        model.Enabled = enabled;
         SaveProviders();
         return true;
     }
@@ -718,8 +733,14 @@ public sealed class ChatWorkspace : IDisposable
 
         // An empty list is a real answer (rule 3 in ModelList): adopt it, so a provider that retired
         // everything shows nothing rather than showing what it used to serve.
+        var previousModels = provider.Models.ToDictionary(model => model.Name, StringComparer.OrdinalIgnoreCase);
         provider.Models = result.Models
-            .Select(name => new ProviderModel { Name = name, InUse = false })
+            .Select(name => new ProviderModel
+            {
+                Name = name,
+                InUse = false,
+                Enabled = !previousModels.TryGetValue(name, out var previous) || previous.Enabled,
+            })
             .ToList();
 
         // Anything the user typed by hand that the endpoint has never reported is kept — the endpoint's

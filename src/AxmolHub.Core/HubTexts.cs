@@ -431,6 +431,7 @@ public static class HubTexts
         ["ModelsFetchedEmpty"] = ("该提供商没有返回任何模型。", "The provider returned no models."),
         ["ModelsFetchFailed"] = ("未能拉取模型列表，保留原有列表。", "Could not fetch the model list; the existing list was kept."),
         ["ModelUse"] = ("使用此模型", "Use this model"),
+        ["ModelEnabledHint"] = ("在聊天模型选择器中启用或隐藏此模型。", "Show or hide this model in the chat model picker."),
         ["ModelRemove"] = ("移除该模型", "Remove this model"),
         ["ModelRemoveConfirm"] = ("将从本机列表移除该模型，提供商与密钥不受影响。", "Removes this model from the local list. The provider and its keys are unaffected."),
         ["ModelAdded"] = ("已添加模型。", "Model added."),

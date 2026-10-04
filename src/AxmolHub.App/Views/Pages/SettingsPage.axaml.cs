@@ -1272,7 +1272,17 @@ public partial class SettingsPage : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        if (!inUse)
+        var enabled = new ToggleSwitch
+        {
+            IsChecked = model.Enabled,
+            VerticalAlignment = VerticalAlignment.Center,
+            Tag = SectionTags.ModelEnabled,
+        };
+        ToolTip.SetTip(enabled, HubStrings.Get("ModelEnabledHint"));
+        enabled.IsCheckedChanged += (_, _) => SetModelEnabled(provider.Id, model.Name, enabled.IsChecked == true);
+        actions.Children.Add(enabled);
+
+        if (!inUse && model.Enabled)
         {
             var use = new Button
             {
@@ -1458,6 +1468,14 @@ public partial class SettingsPage : UserControl
         if (_chat.SetActiveModel(providerId, modelName))
         {
             SetProviderStatus(false, "");
+            RebuildProviderGroups();
+        }
+    }
+
+    private void SetModelEnabled(string providerId, string modelName, bool enabled)
+    {
+        if (_chat?.SetModelEnabled(providerId, modelName, enabled) == true)
+        {
             RebuildProviderGroups();
         }
     }
@@ -1837,6 +1855,7 @@ public partial class SettingsPage : UserControl
         bool HasCredentialField,
         string SummaryText,
         string[] ModelNames,
+        bool[] ModelEnabled,
         string ActiveModelName,
         string[] ModelDescriptions,
         /// <summary>
@@ -1959,6 +1978,7 @@ public partial class SettingsPage : UserControl
             .ToArray() ?? [];
 
         var modelNames = new List<string>();
+        var modelEnabled = new List<bool>();
         var descriptions = new List<string>();
         var activeModel = "";
         foreach (var row in modelRows)
@@ -1967,6 +1987,8 @@ public partial class SettingsPage : UserControl
             var nameRow = (StackPanel)text.Children[0];
             var modelName = nameRow.Children.OfType<TextBlock>().First().Text ?? "";
             modelNames.Add(modelName);
+            modelEnabled.Add(row.GetVisualDescendants().OfType<ToggleSwitch>()
+                .FirstOrDefault(toggle => toggle.Tag as string == SectionTags.ModelEnabled)?.IsChecked == true);
 
             // The "in use" pill is the Border the row adds after the name.
             if (nameRow.Children.OfType<Border>().Any()) activeModel = modelName;
@@ -2014,6 +2036,7 @@ public partial class SettingsPage : UserControl
             hasCredentialField,
             summary,
             modelNames.ToArray(),
+            modelEnabled.ToArray(),
             activeModel,
             descriptions.ToArray(),
             showsModelSection && !modelsHidden,
@@ -2029,6 +2052,21 @@ public partial class SettingsPage : UserControl
         RebuildProviderGroups();
         UpdateLayout();
         Dispatcher.UIThread.RunJobs();
+    }
+
+    internal bool SetModelEnabledForCheck(string providerId, string modelName, bool enabled)
+    {
+        var modelRow = GroupCards
+            .Where(group => group.Tag as string == providerId)
+            .SelectMany(group => group.GetVisualDescendants().OfType<Border>())
+            .FirstOrDefault(row => row.Tag as string == SectionTags.ModelRow
+                                   && row.GetVisualDescendants().OfType<TextBlock>()
+                                       .Any(text => text.Text == modelName));
+        var rowToggle = modelRow?.GetVisualDescendants().OfType<ToggleSwitch>().FirstOrDefault();
+        if (rowToggle is null) return false;
+
+        rowToggle.IsChecked = enabled;
+        return true;
     }
 
     /// <summary>
@@ -2184,6 +2222,7 @@ public partial class SettingsPage : UserControl
         internal const string ModelsEmpty = "provider-models-empty";
 
         internal const string ModelRow = "provider-model-row";
+        internal const string ModelEnabled = "provider-model-enabled";
 
         /// <summary>The one-pixel rule between two model rows.</summary>
         internal const string ModelDivider = "provider-model-divider";

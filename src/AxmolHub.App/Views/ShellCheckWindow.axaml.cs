@@ -573,6 +573,24 @@ public partial class ShellCheckWindow : Window
         var withTwo = settings.ProviderGroupForId("deepseek");
         Check(withTwo is { ModelNames.Length: 2 }, "两个模型都渲染在子列表里（实际 "
             + (withTwo?.ModelNames.Length ?? -1) + " 个）");
+        Check(withTwo is { ModelEnabled.Length: 2 }
+              && withTwo.ModelEnabled.All(enabled => enabled),
+            "新添加的模型默认启用（实际 [" + string.Join(", ", withTwo?.ModelEnabled ?? []) + "]）");
+        Check(settings.SetModelEnabledForCheck("deepseek", secondModel, false)
+              && shell.Chat.Providers.First(provider => provider.Id == "deepseek")
+                  .Models.Single(model => model.Name == secondModel).Enabled == false
+              && shell.Chat.AvailableChatModels.All(choice =>
+                  choice.Provider.Id != "deepseek" || choice.ModelName != secondModel),
+            "关闭模型开关后保存状态并从聊天模型选择器隐藏");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("deepseek") is { ModelEnabled.Length: 2 } disabledGroup
+              && !disabledGroup.ModelEnabled[1],
+            "模型开关状态在设置列表重绘后保持关闭");
+        Check(settings.SetModelEnabledForCheck("deepseek", secondModel, true)
+              && shell.Chat.AvailableChatModels.Any(choice =>
+                  choice.Provider.Id == "deepseek" && choice.ModelName == secondModel),
+            "重新启用模型后恢复到聊天模型选择器");
+        settings.RefreshProviderGroupsForCheck();
         // The name of the model the first AddModel created — read back from the rendered rows rather than
         // written into the check, because it is data and it moves. It is deliberately *not* ModelNames[0]:
         // the list keeps insertion order, and the first row is the first model added, which is also the one

@@ -25,6 +25,9 @@ public sealed class ProviderModel
     /// </summary>
     public bool InUse { get; set; }
 
+    /// <summary>Whether this model is offered in chat's model picker.</summary>
+    public bool Enabled { get; set; } = true;
+
     /// <summary>The picker binds this object directly, so what it shows is this (same rule as ModelProvider).</summary>
     public override string ToString() => Name;
 }
