@@ -353,8 +353,8 @@ public static class HubTexts
         ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI；macOS/Linux 待补）。", "Secure key storage is not available on this platform yet (Windows uses DPAPI; macOS/Linux are pending)."),
         ["ApiKeyRequired"] = ("该提供商需要 API 密钥。", "This provider requires an API key."),
         ["SaveApiKey"] = ("保存密钥", "Save key"),
-        // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，作者可获得分成（见规划 D5）。
-        ["AffiliateDisclosure"] = ("经本项目的推荐链接注册 {0}，作者可获得分成。", "Signing up for {0} through this project's referral link supports the author."),
+        // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，Simdsoft 可获得分成，所得收入全部用于 Axmol 引擎及相关工具的研发（见规划 D5）。
+        ["AffiliateDisclosure"] = ("通过本项目的推荐链接注册 {0}，Simdsoft 可获得分成，所得收入将全部用于 Axmol 引擎及相关工具的研发。", "Signing up for {0} through this project's referral link earns Simdsoft a commission, all of which goes toward developing the Axmol engine and its tooling."),
         ["ViewReferral"] = ("了解详情", "Learn more"),
         ["ChatFailed"] = ("助手请求失败：", "Assistant request failed: "),
         ["ChatCancelled"] = ("已停止。", "Stopped."),

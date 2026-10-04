@@ -69,7 +69,40 @@ public sealed class OrcaRouterOAuthFlow
                 "The provider's discovery document did not advertise both an authorization and a token endpoint.");
         }
 
-        return new OAuthEndpoints(authorization, token);
+        return new OAuthEndpoints(UpgradeToHttps(authorization), UpgradeToHttps(token));
+    }
+
+    /// <summary>
+    /// Upgrades a discovered endpoint from <c>http</c> to <c>https</c> unless it is a loopback host.
+    ///
+    /// OrcaRouter's public deployment is https-only, but its discovery document has been observed to advertise
+    /// plain <c>http://</c> endpoints — a TLS-terminating proxy reporting the scheme it saw rather than the one
+    /// the client must use. Trusting that verbatim breaks the token exchange in a way that is easy to miss:
+    /// <see cref="HttpClient"/> follows an <c>http</c> → <c>https</c> redirect by rewriting a POST into a GET
+    /// (RFC 7231 §6.4.2), so the exchange body carrying the code and verifier is silently dropped and the
+    /// server answers "malformed request". The browser hides the fault because it follows the same redirect
+    /// preserving the query — which is why the consent screen works while the exchange does not.
+    ///
+    /// Loopback is the one place plain http is correct (a local self-hosted relay), so it is left alone; the
+    /// same applies to an explicit non-default port, which marks a custom deployment rather than the public
+    /// service.
+    /// </summary>
+    private static string UpgradeToHttps(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return url;
+        if (uri.Scheme != Uri.UriSchemeHttp) return url;
+        if (!uri.IsDefaultPort) return url;
+        if (IsLoopback(uri.Host)) return url;
+
+        var builder = new UriBuilder(uri) { Scheme = Uri.UriSchemeHttps, Port = -1 };
+        return builder.Uri.AbsoluteUri;
+    }
+
+    private static bool IsLoopback(string host)
+    {
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        return IPAddress.TryParse(host, out var ip) && ip is not null && IPAddress.IsLoopback(ip);
     }
 
     /// <summary>
