@@ -127,9 +127,8 @@ public sealed class ModelProvider
     public string? ApiKey => Credential?.Secret;
 
     /// <summary>
-    /// The model name passed to the endpoint. A projection of the model that is marked in use, not a stored
-    /// field — kept under this name so nothing downstream (the client factory, the pipeline, the assistant
-    /// page's status line) has to learn that a provider can now hold several models.
+    /// The provider's default model name, projected from the model that is marked in use rather than stored
+    /// separately. A chat conversation may choose another configured model without changing this default.
     ///
     /// <para>Settable for two reasons: JSON deserialization of an older file that wrote a single
     /// <c>Model</c> property (the setter folds it into the list — see <see cref="Normalize"/>, which the
@@ -161,8 +160,9 @@ public sealed class ModelProvider
     /// </summary>
     public List<ProviderModel> Models { get; set; } = [];
 
-    /// <summary>The model marked in use, or the first one when none is marked (a file that was hand-edited, or
-    /// a list whose marked entry was just removed). <c>null</c> when there are no models at all.</summary>
+    /// <summary>The provider's default model, marked in use, or the first one when none is marked (a file that
+    /// was hand-edited, or a list whose marked entry was just removed). A conversation may override it.
+    /// <c>null</c> when there are no models at all.</summary>
     [JsonIgnore]
     public ProviderModel? ActiveModel
     {

@@ -158,14 +158,24 @@ public partial class ShellCheckWindow : Window
         Check(shell.CurrentPage is ChatPanel, "助手页由 ChatPanel 承载（整屏页面而不是右侧抽屉）");
         Check(shell.NavAssistant.IsChecked == true, "助手页同时点亮了左侧导航项");
 
-        // OrcaRouter is the built-in provider, and the page must name it as the model that answers next.
-        // The conversation page no longer has a provider picker (that moved to Settings), so this read-only
-        // line is the only place the active model is visible from the page — and getting it wrong is silent.
+        // Give the page one usable local provider/model in the isolated test data root. The chat model
+        // selector must not offer a key-required provider before it is authenticated.
         var orca = shell.Chat.Providers.FirstOrDefault(provider => provider.Id == "orcarouter");
         Check(orca is not null, "内置 OrcaRouter provider 已装配");
-        Check(panel.ActiveModelText.Contains(orca!.Name, StringComparison.Ordinal)
-              && panel.ActiveModelText.Contains(orca.Model, StringComparison.Ordinal),
-            "助手页显示当前模型（provider + 模型名，实际「" + panel.ActiveModelText + "」）");
+        const string checkModel = "shell-check-model";
+        shell.Chat.AddModel(orca!.Id, checkModel);
+        var checkProvider = shell.Chat.AddProvider(
+            "Shell check local", "http://localhost:11434/v1", checkModel, null);
+        Check(checkProvider is not null, "自检创建了免密本地模型 provider");
+        panel.Reload();
+        Check(panel.ModelChoiceCount == 1,
+            "模型选择器排除未鉴权 provider，只列出可用模型（实际 " + panel.ModelChoiceCount + " 项）");
+        Check(panel.SelectModelForCheck(checkProvider!.Id, checkModel)
+              && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal),
+            "可以在输入框左下角选择 provider/model（实际「" + panel.SelectedModelText + "」）");
+        Check(panel.ActiveModelText.Contains(checkProvider.Name, StringComparison.Ordinal)
+              && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
+            "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
 
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
         shell.Chat.ClientOverride = _ => new ScriptedChatClient(["你好", "，Axmol", " 助手。"]);
@@ -201,16 +211,36 @@ public partial class ShellCheckWindow : Window
               && saved.Messages[1].Text == "你好，Axmol 助手。",
             "助手回复写回了会话（不只是留在界面上）");
 
-        // The conversation picker shows the derived title, not the type name (same silent failure as above).
-        Check(panel.ConversationPickerText == saved!.Title && panel.ConversationPickerText.Length > 0,
-            "会话下拉显示的是标题而不是类型名（实际「" + panel.ConversationPickerText + "」）");
+        Check(saved is not null && saved.ProviderId == checkProvider.Id && saved.ModelName == checkModel,
+            "会话持久化所选 provider/model（实际「" + saved?.ProviderId + " · " + saved?.ModelName + "」）");
+        Check(panel.ConversationListText.Contains(saved!.Title, StringComparison.Ordinal)
+              && panel.ConversationListText.Contains("测试提问", StringComparison.Ordinal),
+            "左侧会话列表显示由首条消息生成的标题");
+        Check(panel.ConversationTitleText == saved.Title,
+            "会话首条消息完成后顶部标题更新（实际「" + panel.ConversationTitleText + "」）");
 
-        // Deleting the active conversation clears the flow — the picker and the flow must agree.
+        var second = shell.Chat.StartConversation();
+        panel.SearchForCheck("测试提问");
+        Check(panel.ConversationListText.Contains(saved.Title, StringComparison.Ordinal)
+              && !panel.ConversationListText.Contains(HubStrings.Get("NewConversation"), StringComparison.Ordinal),
+            "左侧搜索按会话标题过滤列表（实际「" + panel.ConversationListText + "」）");
+        Check(panel.OpenConversationForCheck(saved.Id)
+              && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
+              && panel.BubbleCount == 2,
+            "切换回历史会话后恢复原消息流及其 provider/model");
+
+        // Deleting the active conversation clears the transcript but leaves other sessions in history.
         shell.Chat.DeleteConversation(saved!.Id);
         panel.Reload();
         Dispatcher.UIThread.RunJobs();
-        Check(panel.ConversationCount == 0 && panel.BubbleCount == 0,
-            "删除会话后列表与消息流一起清空（实际会话 " + panel.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
+        Check(panel.ConversationCount == 1 && panel.BubbleCount == 0,
+            "删除当前会话只清除该记录（实际会话 " + panel.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
+        shell.Chat.DeleteConversation(second.Id);
+        panel.SearchForCheck("");
+
+        shell.Chat.RemoveModel(orca.Id, checkModel);
+        shell.Chat.RemoveProvider(checkProvider.Id);
+        panel.Reload();
 
         // ── Provider management lives in Settings now (it moved off the assistant page) ──
         await CheckProvidersInSettingsAsync(scratchRoot, shell);

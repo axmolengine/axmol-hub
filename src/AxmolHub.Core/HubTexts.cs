@@ -330,14 +330,17 @@ public static class HubTexts
         ["RestartNow"] = ("立即重启", "Restart now"),
         // 故意不带 {0}：后面要拼的是异常原文，可能含花括号，string.Format 会抛 FormatException。
         ["UpdateDownloadFailed"] = ("更新下载失败：", "Couldn't download the update: "),
-        // 内置 AI 助手（右侧抽屉）。协议基线是 OpenAI 兼容，首期 provider = OrcaRouter + 自定义。
+        // 内置 AI 助手。协议基线是 OpenAI 兼容，首期 provider = OrcaRouter + 自定义。
         ["Assistant"] = ("AI 助手", "AI assistant"),
         ["AssistantHint"] = ("向助手提问 Axmol 相关问题。模型由你配置的 provider 提供。", "Ask the assistant about Axmol. Answers come from the provider you configure."),
         ["AssistantEmpty"] = ("开始新的对话。", "Start a new conversation."),
         ["NewConversation"] = ("新建对话", "New conversation"),
         ["DeleteConversation"] = ("删除对话", "Delete conversation"),
+        ["SearchConversations"] = ("搜索对话", "Search conversations"),
+        ["NoSearchResults"] = ("没有匹配的对话。", "No matching conversations."),
         ["Conversation"] = ("对话", "Conversation"),
         ["NoConversations"] = ("还没有对话。", "No conversations yet."),
+        ["NoAvailableChatModels"] = ("请先在设置中鉴权并添加可用模型。", "Authenticate a provider and add an available model in Settings first."),
         ["Send"] = ("发送", "Send"),
         ["Stop"] = ("停止", "Stop"),
         ["InputPlaceholder"] = ("输入消息，Enter 发送，Shift+Enter 换行", "Type a message. Enter to send, Shift+Enter for a newline"),
@@ -345,7 +348,7 @@ public static class HubTexts
         // 设置页新增的「模型提供商」卡片标题与说明（provider 管理从助手页迁到这里）。
         ["ModelProviders"] = ("模型提供商", "Model providers"),
         ["ModelProvidersHint"] = ("助手使用的模型接口。「添加提供商」可从内置预设中挑选（OrcaRouter、OpenAI、DeepSeek、Ollama…），已配置的提供商在此管理密钥与模型；助手页只负责选择用哪一个。", "The endpoints the assistant can use. \"Add provider\" picks from built-in presets (OrcaRouter, OpenAI, DeepSeek, Ollama …); keys and models for the ones you configured are managed here, while the assistant page only chooses between them."),
-        // 助手页顶部的只读提示，{0} = 提供商名称，{1} = 模型名称。
+        // 助手页模型提示，{0} = 提供商名称，{1} = 模型名称。
         ["ActiveModelFormat"] = ("当前模型：{0} · {1}", "Current model: {0} · {1}"),
         ["NoProvider"] = ("尚未配置模型提供商。", "No model provider is configured yet."),
         ["ApiKey"] = ("API 密钥", "API key"),
@@ -415,7 +418,7 @@ public static class HubTexts
         ["ProviderNoCredential"] = ("此提供商无需密钥，可直接使用。", "This provider needs no key and works as-is."),
         ["RemoveProviderIcon"] = ("移除", "Remove"),
         ["Models"] = ("模型", "Models"),
-        ["ModelsHint"] = ("同一提供商可保存多个模型，标为「使用中」的那个用于对话。", "A provider can hold several models; the one marked \"In use\" answers the chat."),
+        ["ModelsHint"] = ("同一提供商可保存多个模型，标为「使用中」的是默认模型；每个对话也可单独选择模型。", "A provider can hold several models; \"In use\" is its default, and each conversation can choose a model independently."),
         ["AddModel"] = ("添加模型", "Add model"),
         ["RefreshModels"] = ("刷新", "Refresh"),
         ["RefreshModelsHint"] = ("从提供商重新拉取可用模型列表。", "Fetch the available model list from the provider again."),

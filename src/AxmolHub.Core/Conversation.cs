@@ -39,6 +39,7 @@ public sealed class Conversation
     public string Id { get; set; } = "";
     public string Title { get; set; } = "";
     public string ProviderId { get; set; } = "";
+    public string ModelName { get; set; } = "";
     public List<ChatTurn> Messages { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

@@ -16,11 +16,12 @@ namespace AxmolHub.Agent;
 /// </summary>
 public static class ChatClientFactory
 {
-    public static IChatClient Create(Core.ModelProvider provider)
+    public static IChatClient Create(Core.ModelProvider provider, string? modelOverride = null)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
-        if (string.IsNullOrWhiteSpace(provider.Model))
+        var model = string.IsNullOrWhiteSpace(modelOverride) ? provider.Model : modelOverride;
+        if (string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no model.");
         if (provider.ApiKeyRequired && string.IsNullOrEmpty(provider.ApiKey))
             throw new InvalidOperationException($"Provider '{provider.Name}' requires an API key.");
@@ -28,6 +29,6 @@ public static class ChatClientFactory
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.
         var credential = new ApiKeyCredential(provider.ApiKey ?? "not-needed");
         var client = new OpenAIClient(credential, new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) });
-        return client.GetChatClient(provider.Model).AsIChatClient();
+        return client.GetChatClient(model).AsIChatClient();
     }
 }

@@ -11,14 +11,14 @@ namespace AxmolHub.App;
 
 /// <summary>
 /// The chat half of the shell's non-visual state — the counterpart of <see cref="HubWorkspace"/> for the AI
-/// drawer. It owns the provider list, the conversation list, and the streaming pipeline, and it is the only
+/// chat view. It owns the provider list, the conversation list, and the streaming pipeline, and it is the only
 /// place that touches the OS credential store, so the panel above it stays a pure view.
 ///
 /// It lives in the App rather than Core on purpose: it needs the Agent layer (the OpenAI-compatible client
 /// factory and the platform secret store), and Core must stay dependency-free and offline-buildable.
 ///
 /// **An <see cref="IChatClient"/> factory is injectable** (<see cref="ClientOverride"/>) so the shell
-/// self-check can drive a scripted client and assert the whole drawer — streaming, conversation switching,
+/// self-check can drive a scripted client and assert the whole chat view — streaming, conversation switching,
 /// affiliate disclosure — with no network and no API key. This is the same seam the S2 checks use; here it
 /// reaches the UI.
 /// </summary>
@@ -33,6 +33,8 @@ public sealed class ChatWorkspace : IDisposable
     private readonly List<ModelProvider> _providerList = [];
     private readonly List<ProviderCredential> _credentialList = [];
     private Conversation? _active;
+    private string? _selectedProviderId;
+    private string? _selectedModelName;
 
     /// <summary>Set by the verification harness to answer with a scripted stream instead of a real endpoint.</summary>
     internal Func<ModelProvider, IChatClient>? ClientOverride { get; set; }
@@ -62,12 +64,68 @@ public sealed class ChatWorkspace : IDisposable
 
     public IReadOnlyList<ModelProvider> Providers => _providerList;
 
-    /// <summary>The selected provider, or the first enabled one. <c>null</c> when nothing is configured.</summary>
-    public ModelProvider? ActiveProvider => _providerList.FirstOrDefault(provider => provider.Enabled);
+    /// <summary>The provider/model choices available in chat: enabled providers with credentials (or no
+    /// required key) and at least one configured model.</summary>
+    public IReadOnlyList<ChatModelOption> AvailableChatModels
+        => _providerList
+            .Where(provider => provider.Enabled && (!provider.ApiKeyRequired || provider.Credential is not null))
+            .SelectMany(provider => provider.Models
+                .OrderByDescending(model => model.InUse)
+                .Select(model => new ChatModelOption(provider, model.Name)))
+            .ToList();
+
+    /// <summary>The choice attached to the active conversation, or the remembered/default choice for a new one.</summary>
+    public ChatModelOption? SelectedChatModel
+    {
+        get
+        {
+            if (_active is not null)
+            {
+                var modelName = _active.ModelName;
+                if (string.IsNullOrWhiteSpace(modelName))
+                {
+                    modelName = _providerList.FirstOrDefault(provider => provider.Id == _active.ProviderId)
+                        ?.ActiveModel?.Name;
+                }
+
+                return FindChatModel(_active.ProviderId, modelName);
+            }
+
+            return FindChatModel(_selectedProviderId, _selectedModelName) ?? AvailableChatModels.FirstOrDefault();
+        }
+    }
+
+    public ModelProvider? ActiveProvider => SelectedChatModel?.Provider;
 
     public Conversation? ActiveConversation => _active;
 
     public IReadOnlyList<ConversationSummary> Conversations => _conversations.List();
+
+    /// <summary>Selects a usable provider/model for the current conversation or the next new conversation.</summary>
+    public bool SelectChatModel(string providerId, string modelName)
+    {
+        var choice = FindChatModel(providerId, modelName);
+        if (choice is null) return false;
+
+        _selectedProviderId = choice.Provider.Id;
+        _selectedModelName = choice.ModelName;
+        if (_active is not null)
+        {
+            _active.ProviderId = choice.Provider.Id;
+            _active.ModelName = choice.ModelName;
+            _conversations.Save(_active);
+        }
+
+        Changed?.Invoke();
+        return true;
+    }
+
+    private ChatModelOption? FindChatModel(string? providerId, string? modelName)
+        => string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(modelName)
+            ? null
+            : AvailableChatModels.FirstOrDefault(choice =>
+                choice.Provider.Id == providerId
+                && string.Equals(choice.ModelName, modelName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Loads the user's saved providers.
@@ -959,7 +1017,15 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation StartConversation(string? providerId = null)
     {
-        var conversation = Conversation.Create(providerId ?? ActiveProvider?.Id ?? "");
+        var choice = SelectedChatModel;
+        var selectedProvider = providerId is null
+            ? choice?.Provider
+            : _providerList.FirstOrDefault(provider => provider.Id == providerId);
+        var modelName = selectedProvider is not null && choice is not null && selectedProvider.Id == choice.Provider.Id
+            ? choice.ModelName
+            : selectedProvider?.Model ?? "";
+        var conversation = Conversation.Create(selectedProvider?.Id ?? "");
+        conversation.ModelName = modelName;
         _conversations.Save(conversation);
         _active = conversation;
         Changed?.Invoke();
@@ -994,17 +1060,20 @@ public sealed class ChatWorkspace : IDisposable
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (_active is null) throw new InvalidOperationException("No active conversation.");
-        if (ActiveProvider is null) throw new InvalidOperationException("No provider is configured.");
+        var choice = SelectedChatModel;
+        if (choice is null) throw new InvalidOperationException("No authenticated provider with a configured model is available.");
 
-        var provider = ActiveProvider;
+        var provider = choice.Provider;
         var conversation = _active;
+        conversation.ProviderId = provider.Id;
+        conversation.ModelName = choice.ModelName;
         conversation.Append(ChatTurn.User(text));
         _conversations.Save(conversation);
 
         var received = new System.Text.StringBuilder();
         try
         {
-            await foreach (var chunk in StreamAsync(provider, conversation, cancellationToken).ConfigureAwait(false))
+            await foreach (var chunk in StreamAsync(provider, choice.ModelName, conversation, cancellationToken).ConfigureAwait(false))
             {
                 received.Append(chunk);
                 yield return chunk;
@@ -1022,10 +1091,13 @@ public sealed class ChatWorkspace : IDisposable
         }
     }
 
-    private IAsyncEnumerable<string> StreamAsync(ModelProvider provider, Conversation conversation, CancellationToken cancellationToken)
+    private IAsyncEnumerable<string> StreamAsync(
+        ModelProvider provider,
+        string modelName,
+        Conversation conversation,
+        CancellationToken cancellationToken)
     {
-        // A provider may pin a model per conversation later; today the provider's model is the source.
-        var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider);
+        var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider, modelName);
         var pipeline = new ChatPipeline(client);
 
         // The history handed to the pipeline is everything said so far *excluding* the trailing user turn we
@@ -1034,9 +1106,14 @@ public sealed class ChatWorkspace : IDisposable
         return pipeline.SendAsync(provider, history, cancellationToken: cancellationToken);
     }
 
+    public sealed record ChatModelOption(ModelProvider Provider, string ModelName)
+    {
+        public override string ToString() => $"{Provider.Name} · {ModelName}";
+    }
+
     public void Dispose()
     {
-        // Nothing holds a live handle yet (the client and secret store are per-call), but the drawer's
+        // Nothing holds a live handle yet (the client and secret store are per-call), but the chat view's
         // lifetime should match the shell's — keep the seam so a future cached client is released here.
     }
 
@@ -1082,4 +1159,3 @@ public enum KeyCheckOutcome
     /// <summary>The probe could not be completed — offline, DNS, timeout, a base URL that is not usable.</summary>
     Unreachable,
 }
-
