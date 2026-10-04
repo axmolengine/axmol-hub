@@ -78,7 +78,7 @@ tests/
 manifests/        Fixed tool versions, download URLs, and SHA-256
 installer/        Velopack packaging, icon conversion, and install-check scripts
 licenses/         Third-party license texts
-docs/             Design, plans, and detailed guides (Chinese)
+docs/             Design decisions (ADR) and user-facing guides (Chinese)
 docs/images/      README screenshots
 ```
 
