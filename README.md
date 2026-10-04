@@ -96,7 +96,7 @@ Axmol Hub does not collect telemetry or personal information. It accesses the ne
 
 ## Code signing policy
 
-Free code signing is provided by [SignPath.io](https://about.signpath.io), with the certificate issued by the [SignPath Foundation](https://signpath.org). SignPath signing for Axmol Hub is being set up; until it is active, installer packages are unsigned (see [docs/hub-development-plan.md](docs/hub-development-plan.md) §4 D5).
+Free code signing is provided by [SignPath.io](https://about.signpath.io), with the certificate issued by the [SignPath Foundation](https://signpath.org). SignPath signing for Axmol Hub is being set up; until it is active, installer packages are unsigned.
 
 - Committers and reviewers: [@halx99](https://github.com/halx99)
 - Approvers: [@halx99](https://github.com/halx99)

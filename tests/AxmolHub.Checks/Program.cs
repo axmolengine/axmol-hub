@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AxmolHub.Core;
+using AxmolHub.Agent;
+using Microsoft.Extensions.AI;
 
 // args[0] is the data root ONLY when it is an actual path. A leading "--" means the caller passed a
 // flag in first position, in which case we fall back to the default so flags never get turned into
@@ -13,6 +15,429 @@ Directory.CreateDirectory(root);
 
 // 构建已委派给引擎 cmdline；Checks 里的 ProjectService 共用仓库内的包装脚本。
 EngineCommandLine EngineCli(ProcessRunner runner) => new(runner, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
+if (args.Contains("--check-ai-providers"))
+{
+    void AssertRejects(Action action, string name)
+    {
+        try { action(); }
+        catch (InvalidOperationException) { Console.WriteLine("PASS: " + name); return; }
+        throw new Exception("FAILED: " + name);
+    }
+
+    // Built-in manifest entry assembles the expected provider (no half-built objects).
+    var orca = AiProviderManifest.CreateBuiltIn("orcarouter")
+        ?? throw new Exception("orcarouter is missing from ai-providers.json.");
+    if (orca.IsCustom) throw new Exception("Built-in provider must not be marked custom.");
+    if (orca.BaseUrl != "https://api.orcarouter.ai/v1") throw new Exception($"Wrong base URL: {orca.BaseUrl}");
+    // No model is seeded, and the list is asserted empty rather than merely "not the old value": a manifest
+    // that quietly reintroduced a default would put a name in front of the user that goes stale the moment
+    // the provider retires it, and it would 404 on first use with the user's key blamed for it.
+    if (orca.Models.Count != 0) throw new Exception($"Manifest must not seed a model (found {orca.Models.Count}).");
+    if (!orca.ApiKeyRequired) throw new Exception("orcarouter should require an API key.");
+    if (!orca.Affiliate) throw new Exception("orcarouter should be flagged affiliate.");
+    if (string.IsNullOrEmpty(orca.ReferralUrl)) throw new Exception("orcarouter should carry a referral URL.");
+    Console.WriteLine("PASS: orcarouter manifest entry assembles the expected provider.");
+
+    if (AiProviderManifest.CreateBuiltIn("nonexistent") is not null)
+        throw new Exception("Unknown provider id should return null.");
+    Console.WriteLine("PASS: unknown provider id returns null.");
+
+    // The catalog: several presets, every one complete enough to be adopted with nothing typed, and every one
+    // searchable by description (the picker filters on it, so an empty blurb would silently hide the preset
+    // from anyone who does not already know the vendor's name).
+    var catalog = AiProviderManifest.Load();
+    if (catalog.Count < 3) throw new Exception($"The preset catalog should offer several providers, found {catalog.Count}.");
+    foreach (var entry in catalog)
+    {
+        if (entry.Id.Length == 0 || entry.Name.Length == 0) throw new Exception($"A preset is missing id or name: {entry.Id}");
+        if (entry.Description.Length == 0) throw new Exception($"Preset '{entry.Id}' has no description for the picker card.");
+        // No preset may name a default model. A shipped name rots the moment the vendor adds or retires a
+        // model, and a rotted default is offered in the list and then fails on first use with a 404 that
+        // blames the user's key. The list is read from the endpoint (ModelCatalog) after authenticating.
+        if (entry.GetType().GetProperty("DefaultModel") is not null)
+            throw new Exception($"Preset '{entry.Id}' still exposes a DefaultModel property; the model list must come from the endpoint.");
+        if (!AiProviderEntry.IsUsableBaseUrl(entry.BaseUrl)) throw new Exception($"Preset '{entry.Id}' has a base URL the client cannot use: {entry.BaseUrl}");
+    }
+    Console.WriteLine($"PASS: the catalog carries {catalog.Count} complete presets, each with a description and no baked-in model.");
+
+    // Every preset must declare how it authenticates, and the declaration must survive the JSON round trip
+    // with unknown values filtered out. Without this a preset could silently become unusable.
+    foreach (var entry in catalog)
+    {
+        if (entry.EffectiveAuthMethods.Count == 0)
+            throw new Exception($"Preset '{entry.Id}' declares no usable auth method, so no account could ever be added.");
+        if (entry.AuthMethods.Any(method => !ProviderAuthMethods.IsKnown(method)))
+            throw new Exception($"Preset '{entry.Id}' declares an auth method the app does not implement: {string.Join(",", entry.AuthMethods)}");
+    }
+    if (!orca.SupportsOAuth) throw new Exception("orcarouter should declare OAuth support.");
+    if (orca.OAuth is null) throw new Exception("A preset that supports OAuth must carry its OAuth parameters.");
+    if (orca.OAuth.Scope != "api") throw new Exception($"orcarouter must request the narrow 'api' scope, got '{orca.OAuth.Scope}'.");
+    if (!AiProviderEntry.IsUsableBaseUrl(orca.OAuth.DiscoveryUrl)) throw new Exception("The OAuth discovery URL must be a usable URL.");
+    if (string.IsNullOrEmpty(orca.OAuth.AppName)) throw new Exception("The OAuth app name is shown on the consent screen and must not be empty.");
+    Console.WriteLine("PASS: every preset declares a usable auth method and orcarouter carries its OAuth parameters.");
+
+    // The manifest entry and the runtime provider must agree on auth support: the settings page renders a
+    // ModelProvider, so a difference here would offer a button the flow cannot honour.
+    var manifestOrca = AiProviderManifest.Find("orcarouter") ?? throw new Exception("orcarouter vanished from the manifest.");
+    if (manifestOrca.SupportsOAuth != orca.SupportsOAuth)
+        throw new Exception("The manifest entry and the runtime provider disagree about OAuth support.");
+    if (!manifestOrca.EffectiveAuthMethods.SequenceEqual(orca.EffectiveAuthMethods))
+        throw new Exception("The manifest entry and the runtime provider disagree about auth methods.");
+    Console.WriteLine("PASS: manifest entry and runtime provider agree on the auth surface.");
+
+    // A preset without an authMethods array, or with only values the app cannot implement, falls back to
+    // apiKey rather than becoming unusable. This is the compatibility path for manifests written earlier.
+    //
+    // The options matter: the file is camelCase and the model is PascalCase, so the default (case-sensitive)
+    // options deserialize to an *empty* object without throwing — and an empty object happens to also fall back
+    // to apiKey, which would make this assertion pass while reading nothing.
+    var legacyFileJson = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    var legacy = System.Text.Json.JsonSerializer.Deserialize<ModelProvider>(
+        """{"id":"legacy","name":"Legacy","baseUrl":"https://example.test/v1","model":"m","authMethods":["carrier-pigeon"]}""",
+        legacyFileJson);
+    if (legacy is null || !legacy.EffectiveAuthMethods.SequenceEqual([ProviderAuthMethods.ApiKey]))
+        throw new Exception("An unknown or absent authMethods list should fall back to apiKey.");
+    if (legacy.Id != "legacy") throw new Exception("The legacy fixture was not actually deserialized.");
+    if (legacy.SupportsOAuth) throw new Exception("A provider with no OAuth block must not claim OAuth support.");
+    Console.WriteLine("PASS: an unrecognised authMethods list falls back to apiKey instead of breaking the preset.");
+
+    // DefaultProviderId must ignore a default that names a provider the catalog does not carry.
+    if (AiProviderManifest.DefaultProviderId() is null)
+        throw new Exception("DefaultProviderId returned null for the shipped manifest.");
+    Console.WriteLine("PASS: the shipped manifest resolves a default provider id.");
+
+    // Localized descriptions fall back to English rather than resolving empty — the picker shows this copy, so
+    // an empty string would render a blank card.
+    var ollama = AiProviderManifest.CreateBuiltIn("ollama") ?? throw new Exception("ollama is missing from the catalog.");
+    if (ollama.ApiKeyRequired) throw new Exception("A local Ollama endpoint should not require an API key.");
+    if (ollama.Describe("zh-CN").Length == 0 || ollama.Describe("en-US").Length == 0)
+        throw new Exception("A preset description resolved empty for a supported language.");
+    if (ollama.Describe("fr-FR") != ollama.Description)
+        throw new Exception("An unsupported language should fall back to the English description.");
+    Console.WriteLine("PASS: preset descriptions resolve per language and fall back to English.");
+
+    // The seed contract: exactly one default, and it is a real catalog entry. A default that names a
+    // non-existent provider would leave a fresh install with nothing configured.
+    var defaultId = AiProviderManifest.DefaultProviderId();
+    if (defaultId is null || catalog.All(entry => entry.Id != defaultId))
+        throw new Exception($"The manifest's default provider '{defaultId}' is not in the catalog.");
+    Console.WriteLine($"PASS: the manifest names one real default preset to seed ('{defaultId}').");
+
+    // Factory validation: custom needs base URL + model; cloud needs a key; a keyless local endpoint works.
+    AssertRejects(() => ChatClientFactory.Create(new ModelProvider { IsCustom = true, Model = "m" }), "custom provider without base URL is rejected");
+    AssertRejects(() => ChatClientFactory.Create(new ModelProvider { IsCustom = true, BaseUrl = "http://localhost:11434/v1" }), "custom provider without model is rejected");
+    AssertRejects(() => ChatClientFactory.Create(new ModelProvider { BaseUrl = "https://api.orcarouter.ai/v1", Model = "orcarouter/auto", ApiKeyRequired = true }), "required API key missing is rejected");
+    if (ChatClientFactory.Create(new ModelProvider { IsCustom = true, Name = "Local", BaseUrl = "http://localhost:11434/v1", Model = "llama3" }) is null)
+        throw new Exception("Keyless local provider should produce a client.");
+    Console.WriteLine("PASS: factory validates providers and assembles a keyless local client.");
+
+    // ProviderStore keeps keys out of JSON; CredentialStore owns the key and rehydrates it from the
+    // secret store. The split is the whole point: a provider is a declaration, an account is a secret.
+    var secretStore = new InMemorySecretStore();
+    var providerStore = new ProviderStore(root);
+    providerStore.Save([new ModelProvider { Id = "orcarouter", Name = "OrcaRouter", BaseUrl = "https://api.orcarouter.ai/v1", ApiKeyRequired = true, Model = "orcarouter/auto" }]);
+    var credentialStore = new CredentialStore(root, secretStore);
+    var credential = new ProviderCredential
+    {
+        Id = "orcarouter",
+        ProviderId = "orcarouter",
+        Label = "Default",
+        Source = CredentialSources.ApiKey,
+        CreatedAt = DateTimeOffset.UnixEpoch,
+    };
+    credential.Secret = "sk-secret-123";
+    credentialStore.Save([credential]);
+
+    var providersJson = File.ReadAllText(Path.Combine(root, "ai", "providers.json"));
+    if (providersJson.Contains("sk-secret-123")) throw new Exception("API key leaked into providers.json.");
+    var credentialsJson = File.ReadAllText(Path.Combine(root, "ai", "credentials.json"));
+    if (credentialsJson.Contains("sk-secret-123")) throw new Exception("API key leaked into credentials.json.");
+
+    var roundTrip = credentialStore.Load().Single(item => item.Id == "orcarouter");
+    if (roundTrip.Secret != "sk-secret-123") throw new Exception("API key was not rehydrated from the secret store.");
+    Console.WriteLine("PASS: ProviderStore and CredentialStore keep keys out of JSON and rehydrate them.");
+
+    // A credential that names a provider id is what makes ModelProvider.ApiKey a live projection rather
+    // than a stored field. Bind it and read it back.
+    var liveProvider = providerStore.Load().Single(item => item.Id == "orcarouter");
+    liveProvider.Credential = roundTrip;
+    if (liveProvider.ApiKey != "sk-secret-123") throw new Exception("ModelProvider.ApiKey did not project from its credential.");
+    Console.WriteLine("PASS: ModelProvider.ApiKey projects from the provider's credential.");
+
+    // Credential shape: the secret is what makes a credential usable, and it must survive the JSON/OS-store
+    // split whichever provenance produced it. Provenance itself is metadata the UI never has to branch on —
+    // a pasted key and a browser sign-in are the same kind of thing, which is the point of the one-to-one rule.
+    var oauthCredential = new ProviderCredential
+    {
+        Id = "orcarouter-oauth",
+        ProviderId = "orcarouter",
+        Label = "Work",
+        Source = CredentialSources.OAuth,
+        AccountId = "acct-42",
+        CreatedAt = DateTimeOffset.UnixEpoch,
+    };
+    oauthCredential.Secret = "sk-yoex-456";
+    credentialStore.Save([credential, oauthCredential]);
+    var both = credentialStore.Load().Where(item => item.ProviderId == "orcarouter").ToArray();
+    if (both.Length != 2) throw new Exception("Expected two stored credential records.");
+    if (both.Any(item => item.Secret is null or ""))
+        throw new Exception("Credentials lost their secrets on round-trip.");
+    if (both.Select(item => item.Source).Distinct().Count() != 2)
+        throw new Exception("Provenance did not survive the round-trip, so the two would be indistinguishable.");
+    Console.WriteLine("PASS: credential records round-trip with their secrets and their provenance intact.");
+
+    // A provider owns a *list* of models with exactly one marked in use, and `Model` is a projection of that
+    // mark. The projection is what lets the client factory and the pipeline stay unaware that a provider can
+    // hold several models — so it is asserted rather than assumed.
+    var multi = new ModelProvider { Id = "multi", Name = "Multi", BaseUrl = "https://example.test/v1" };
+    if (multi.Models.Count != 0) throw new Exception("A fresh provider should start with no models.");
+    if (multi.Model != "") throw new Exception("Model should project to empty when no model exists.");
+
+    // The legacy single-value setter is the compatibility path for a providers.json written before the list
+    // existed: assigning it must produce a list with that one model marked in use.
+    multi.Model = "gpt-5.1-codex-mini";
+    if (multi.Models.Count != 1 || !multi.Models[0].InUse)
+        throw new Exception("Assigning Model should synthesize a one-entry list marked in use.");
+    if (multi.Model != "gpt-5.1-codex-mini") throw new Exception("Model did not project back the assigned value.");
+
+    // Assigning the same name again must not stack a duplicate row. This is the guarded setter's job, and the
+    // deserialization path depends on it (a file carries both "Model" and "Models").
+    multi.Model = "gpt-5.1-codex-mini";
+    if (multi.Models.Count != 1) throw new Exception("Re-assigning the same name should not add a second model.");
+
+    // A hand-edited file can carry several models with none marked. Normalize is what repairs it, and without
+    // this the provider would send an empty model name and fail with a confusing 400.
+    var unmarked = new ModelProvider
+    {
+        Id = "unmarked",
+        Models = [new ProviderModel { Name = "a" }, new ProviderModel { Name = "b" }],
+    };
+    unmarked.Normalize();
+    if (unmarked.Models.Count(model => model.InUse) != 1 || !unmarked.Models[0].InUse)
+        throw new Exception("Normalize should mark exactly the first model when none is marked.");
+
+    // Two marks (a hand-merge) collapse to the first; blanks and case-insensitive duplicates are dropped.
+    var messy = new ModelProvider
+    {
+        Id = "messy",
+        Models =
+        [
+            new ProviderModel { Name = "  a  ", InUse = true },
+            new ProviderModel { Name = "A" },
+            new ProviderModel { Name = "b", InUse = true },
+            new ProviderModel { Name = "   " },
+        ],
+    };
+    messy.Normalize();
+    if (messy.Models.Count != 2) throw new Exception($"Normalize should drop blanks and duplicates, got {messy.Models.Count}.");
+    if (messy.Models[0].Name != "a") throw new Exception("Normalize should trim names.");
+    if (messy.Models.Count(model => model.InUse) != 1 || !messy.Models[0].InUse)
+        throw new Exception("Normalize should keep only the first mark.");
+    Console.WriteLine("PASS: a provider holds a model list with exactly one in use, and Model projects it.");
+
+    // The JSON round trip is the path that actually exercises the setter ordering: a file written by an older
+    // build carries "model" as a string, a newer one carries "models". Both must load to the same state.
+    //
+    // The options must mirror ProviderStore's: it reads with PropertyNameCaseInsensitive, because the file is
+    // camelCase while the model is PascalCase. Deserializing with the defaults silently produces an *empty*
+    // object (no exception), which is how a test can "pass" while reading nothing at all.
+    var fileJson = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+    var legacyJson = """{"id":"legacy-models","name":"Legacy","baseUrl":"https://example.test/v1","model":"only-one"}""";
+    var fromLegacy = System.Text.Json.JsonSerializer.Deserialize<ModelProvider>(legacyJson, fileJson)
+                     ?? throw new Exception("Legacy provider JSON failed to deserialize.");
+    fromLegacy.Normalize();
+    if (fromLegacy.Models.Count != 1 || fromLegacy.Model != "only-one")
+        throw new Exception($"A legacy single-model file should load as a one-entry list. [models={fromLegacy.Models.Count} model='{fromLegacy.Model}']");
+
+    var newJson = """{"id":"new-models","name":"New","baseUrl":"https://example.test/v1","models":[{"name":"x","inUse":true},{"name":"y"}]}""";
+    var fromNew = System.Text.Json.JsonSerializer.Deserialize<ModelProvider>(newJson, fileJson)
+                  ?? throw new Exception("Provider JSON with a models array failed to deserialize.");
+    fromNew.Normalize();
+    if (fromNew.Models.Count != 2 || fromNew.Model != "x")
+        throw new Exception("A file with a models array should keep both and project the marked one.");
+
+    // Both keys present (what a file looks like after the first save by a mixed build): the setter must not
+    // duplicate the model the array already carries. This is the ordering hazard the guarded setter exists for,
+    // so it is driven through the *real* load path too — not only the in-memory setter.
+    var bothJson = """{"id":"both","name":"Both","baseUrl":"https://example.test/v1","model":"x","models":[{"name":"x","inUse":true},{"name":"y"}]}""";
+    var fromBoth = System.Text.Json.JsonSerializer.Deserialize<ModelProvider>(bothJson, fileJson)
+                   ?? throw new Exception("Provider JSON with both keys failed to deserialize.");
+    fromBoth.Normalize();
+    if (fromBoth.Models.Count != 2)
+        throw new Exception($"A file carrying both keys should not duplicate the model, got {fromBoth.Models.Count}.");
+    if (fromBoth.Model != "x") throw new Exception("The marked model should win over the legacy scalar.");
+
+    // And the round trip through the store itself, so the case-insensitive options above cannot drift from the
+    // real ones without this failing.
+    var modelRoot = Path.Combine(root, "model-roundtrip");
+    Directory.CreateDirectory(modelRoot);
+    var modelStore = new ProviderStore(modelRoot);
+    modelStore.Save([new ModelProvider
+    {
+        Id = "saved",
+        Name = "Saved",
+        BaseUrl = "https://example.test/v1",
+        Models = [new ProviderModel { Name = "first", InUse = true }, new ProviderModel { Name = "second" }],
+    }]);
+    var reloaded = modelStore.Load().Single();
+    if (reloaded.Models.Count != 2 || reloaded.Model != "first")
+        throw new Exception($"A saved model list should round-trip, got {reloaded.Models.Count} / '{reloaded.Model}'.");
+
+    // A hand-written file with the models in reverse order and the second one marked must honour the mark
+    // rather than defaulting to the first entry.
+    File.WriteAllText(Path.Combine(modelRoot, "ai", "providers.json"),
+        """[{"id":"hand","name":"Hand","baseUrl":"https://example.test/v1","models":[{"name":"a"},{"name":"b","inUse":true}]}]""");
+    var handEdited = modelStore.Load().Single();
+    if (handEdited.Model != "b")
+        throw new Exception($"A hand-edited file should honour the marked model, got '{handEdited.Model}'.");
+    Console.WriteLine("PASS: legacy, new and mixed providers.json shapes all load to the same model list.");
+
+    // The description catalog is a nicety, so the contract is asymmetric on purpose: a known name gets copy,
+    // an unknown one gets nothing (rather than a guess or a failure). A newly released model must be usable
+    // before Hub ships an update.
+    if (ModelCatalog.Describe("gpt-5.1-codex-mini").Length == 0)
+        throw new Exception("A model the catalog knows should carry a description.");
+    if (ModelCatalog.Describe("some-brand-new-model-2099") != "")
+        throw new Exception("An unknown model should simply have no description.");
+    if (ModelCatalog.Describe("") != "") throw new Exception("An empty name should have no description.");
+    // Exact entries must win over family prefixes, or a specific model would inherit its family's blurb.
+    if (ModelCatalog.Describe("gpt-4o") == ModelCatalog.Describe("gpt-4o-mini"))
+        throw new Exception("Exact catalog entries should not collapse into one family description.");
+    Console.WriteLine("PASS: the model description catalog is additive and never fails closed.");
+
+    // ── Key validation is declared per provider, and absence means "do not check" ──
+    // The load-bearing property is the negative one: a provider with no declaration must report
+    // "unsupported" rather than "rejected", because a gateway that closes /models would otherwise have a
+    // working key refused. Asserting only the positive case would let a fail-closed default through.
+    void Assert(bool condition, string name)
+    {
+        if (!condition) throw new Exception("FAILED: " + name);
+        Console.WriteLine("PASS: " + name);
+    }
+
+    var manifest = AiProviderManifest.Load();
+    Assert(manifest.Count > 0, "the built-in provider manifest loads");
+
+    var probed = manifest.Where(entry => entry.KeyValidation is not null).ToArray();
+    Assert(probed.Length > 0, $"at least one preset declares a key probe (actual {probed.Length})");
+    Assert(probed.All(entry => entry.KeyValidation!.IsKnown),
+        "every declared probe is one Hub knows how to run");
+    Assert(probed.All(entry => entry.AuthMethods.Contains(ProviderAuthMethods.ApiKey)),
+        "only providers that take a key declare a probe");
+
+    // A keyless endpoint has nothing to probe, and must not claim otherwise.
+    Assert(manifest.Where(entry => !entry.AuthMethods.Contains(ProviderAuthMethods.ApiKey))
+            .All(entry => entry.KeyValidation is null),
+        "a provider that needs no key declares no probe");
+
+    // The probe path must stay relative: an absolute URL would let a hand-edited manifest aim the check at
+    // a host of its choosing, which is a request-forgery primitive rather than a validation feature.
+    Assert(!new AiProviderKeyValidation { Type = AiProviderKeyValidation.HttpGetModels, Path = "https://evil.test/steal" }.IsKnown,
+        "a probe path pointing at another host is rejected");
+    Assert(!new AiProviderKeyValidation { Type = AiProviderKeyValidation.HttpGetModels, Path = "//evil.test/models" }.IsKnown,
+        "a protocol-relative probe path is rejected");
+    Assert(!new AiProviderKeyValidation { Type = "postTheKeySomewhere", Path = "/models" }.IsKnown,
+        "an unknown probe type is rejected rather than ignored at run time");
+
+    // The probe must reach the provider as a ModelProvider, since that is what the check reads at run time.
+    var deepseek = AiProviderManifest.CreateBuiltIn("deepseek")!;
+    Assert(deepseek.KeyValidation is { IsKnown: true },
+        "a declared probe survives the trip from manifest entry to provider");
+    Assert(AiProviderManifest.CreateBuiltIn("ollama")!.KeyValidation is null,
+        "a keyless provider arrives with no probe, which is what makes it skip validation");
+
+    Console.WriteLine("PASS: key validation is opt-in per provider and fails open when undeclared.");
+    return;
+}
+if (args.Contains("--check-ai-sessions"))
+{
+    // Conversation model: title is derived from the first user turn, and the first line only.
+    var conversation = Conversation.Create("orcarouter");
+    conversation.Append(ChatTurn.User("How do I add a sprite?\nSecond line ignored"));
+    conversation.Append(ChatTurn.Assistant("Use Sprite::create."));
+    if (conversation.Title != "How do I add a sprite?") throw new Exception($"Wrong derived title: {conversation.Title}");
+    if (Conversation.DeriveTitle(new string('a', 80)).Length != 49) throw new Exception("Long title was not truncated to 48 chars plus ellipsis.");
+    Console.WriteLine("PASS: conversation derives its title from the first user turn.");
+
+    // Persistence: save, reload, and the index must agree without reading message bodies.
+    var store = new ConversationStore(root);
+    store.Save(conversation);
+    var reloaded = store.Load(conversation.Id) ?? throw new Exception("Saved conversation did not reload.");
+    if (reloaded.Messages.Count != 2 || reloaded.Messages[1].Text != "Use Sprite::create.") throw new Exception("Conversation turns did not round-trip.");
+    var listed = store.List().Single(summary => summary.Id == conversation.Id);
+    if (listed.MessageCount != 2 || listed.Title != conversation.Title) throw new Exception("Index entry disagrees with the conversation.");
+    Console.WriteLine("PASS: ConversationStore round-trips turns and maintains the index.");
+
+    // A hostile id may not escape the sessions directory.
+    var escaped = false;
+    try { store.Delete("../../evil"); } catch (ArgumentException) { escaped = true; }
+    if (!escaped && File.Exists(Path.Combine(root, "evil.json"))) throw new Exception("Conversation id escaped the sessions directory.");
+    Console.WriteLine("PASS: ConversationStore sanitizes ids (no path traversal).");
+
+    // Deletion removes both the file and the index entry.
+    store.Delete(conversation.Id);
+    if (store.Load(conversation.Id) is not null) throw new Exception("Deleted conversation still loads.");
+    if (store.List().Any(summary => summary.Id == conversation.Id)) throw new Exception("Deleted conversation is still listed.");
+    Console.WriteLine("PASS: ConversationStore deletes conversations and their index entries.");
+
+    // ContextTrimmer: system turns survive, oldest turns are dropped, and order is preserved.
+    var history = new List<ChatTurn> { ChatTurn.System("You are Axmol's assistant.") };
+    for (var index = 0; index < 20; index++) history.Add(ChatTurn.User($"message number {index} " + new string('x', 300)));
+    var trimmed = ContextTrimmer.Trim(history, budget: 400);
+    if (trimmed.Count == 0) throw new Exception("Trimmer produced an empty prompt.");
+    if (trimmed[0].Role != ChatRoles.System) throw new Exception("Trimmer dropped the system turn.");
+    if (trimmed.Count >= history.Count) throw new Exception("Trimmer did not drop anything under a tight budget.");
+    var kept = trimmed.Where(turn => turn.Role == ChatRoles.User).ToList();
+    if (kept[^1].Text != history[^1].Text) throw new Exception("Trimmer did not keep the newest turn.");
+    if (trimmed.Select(ContextTrimmer.EstimateTokens).Sum() > 470) throw new Exception("Trimmer exceeded the budget by more than one message.");
+    Console.WriteLine("PASS: ContextTrimmer keeps the system turn and the newest turns within budget.");
+
+    // A single oversized message must not produce an empty prompt.
+    var oversize = ContextTrimmer.Trim([ChatTurn.User(new string('y', 4000))], budget: 10);
+    if (oversize.Count != 1) throw new Exception("Trimmer dropped an oversized newest turn, leaving no prompt.");
+    Console.WriteLine("PASS: ContextTrimmer keeps at least the newest turn.");
+
+    // Pipeline: turn <-> ChatMessage conversion is lossless, and streaming yields the fake text.
+    var turns = new List<ChatTurn> { ChatTurn.System("sys"), ChatTurn.User("hello"), ChatTurn.Assistant("hi"), new(ChatRoles.Tool, "result", DateTimeOffset.Now) };
+    var wireMessages = ChatPipeline.ToChatMessages(turns);
+    if (wireMessages.Count != 4) throw new Exception("ToChatMessages lost or added messages.");
+    for (var index = 0; index < turns.Count; index++)
+        if (wireMessages[index].Text != turns[index].Text) throw new Exception($"Conversion lost text at index {index}.");
+    if (wireMessages[3].Role != ChatRole.Tool) throw new Exception("Tool role did not map to ChatRole.Tool.");
+    Console.WriteLine("PASS: ChatPipeline converts turns to messages losslessly.");
+
+    var fake = new FakeChatClient(["Hel", "lo!"]);
+    var pipeline = new ChatPipeline(fake);
+    var streamed = new StringBuilder();
+    var provider = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    provider.MaxContextTokens = 8192;
+    foreach (var provider2 in new[] { provider })
+        await foreach (var chunk in pipeline.SendAsync(provider2, turns))
+            streamed.Append(chunk);
+    if (streamed.ToString() != "Hello!") throw new Exception($"Streamed text was '{streamed}' instead of 'Hello!'.");
+    if (fake.LastMessages is null || fake.LastMessages.Count != 4) throw new Exception("Pipeline did not forward the full trimmed history.");
+    Console.WriteLine("PASS: ChatPipeline streams assistant text through the fake client.");
+
+    // The pipeline applies the budget it is given: an oversized history reaches the client trimmed.
+    var longHistory = new List<ChatTurn>();
+    for (var index = 0; index < 40; index++) longHistory.Add(ChatTurn.User($"turn {index} " + new string('z', 400)));
+    var tiny = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    tiny.MaxContextTokens = 300;
+    await foreach (var _ in new ChatPipeline(fake).SendAsync(tiny, longHistory)) { }
+    if (fake.LastMessages is null || fake.LastMessages.Count >= longHistory.Count) throw new Exception("Pipeline did not trim the oversized history before calling the client.");
+    Console.WriteLine("PASS: ChatPipeline trims oversized history before the model call.");
+
+    // Cancellation propagates as OperationCanceledException.
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    var cancelled = false;
+    try { await foreach (var _ in new ChatPipeline(new FakeChatClient(["x"], honorCancellation: true)).SendAsync(provider, [ChatTurn.User("hi")], cancellationToken: cancellation.Token)) { } }
+    catch (OperationCanceledException) { cancelled = true; }
+    if (!cancelled) throw new Exception("Cancellation was not propagated.");
+    Console.WriteLine("PASS: ChatPipeline propagates cancellation.");
+    return;
+}
 if (args.Contains("--check-release-receipt"))
 {
     var entry = new StateStore(root).Load().Projects.Single(p => p.Name == "HelloAndroidRelease");
@@ -1044,3 +1469,41 @@ sealed class FixtureHandler(byte[] bytes) : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new ByteArrayContent(bytes) });
     }
 }
+
+/// <summary>In-memory <see cref="ISecretStore"/> backing the <c>--check-ai-providers</c> assertions.</summary>
+sealed class InMemorySecretStore : ISecretStore
+{
+    private readonly Dictionary<string, string> _values = new();
+    public string? Read(string providerId) => _values.TryGetValue(providerId, out var value) ? value : null;
+    public void Write(string providerId, string key) => _values[providerId] = key;
+    public void Delete(string providerId) => _values.Remove(providerId);
+}
+
+/// <summary>A scripted <see cref="IChatClient"/> for the <c>--check-ai-sessions</c> assertions: yields fixed
+/// text chunks and records the messages it was asked to answer, so the pipeline can be tested with no network
+/// at all. This is the payoff of routing every provider through the M.E.AI abstraction — the seam is fakeable.</summary>
+sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation = false) : IChatClient
+{
+    public IList<ChatMessage>? LastMessages { get; private set; }
+
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Checks only use the streaming path.");
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        LastMessages = messages.ToList();
+        foreach (var chunk in chunks)
+        {
+            if (honorCancellation) cancellationToken.ThrowIfCancellationRequested();
+            yield return new ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, chunk);
+            await Task.Yield();
+        }
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public void Dispose() { }
+}
+

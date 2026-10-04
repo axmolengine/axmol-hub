@@ -11,6 +11,9 @@ internal sealed record HubHostOptions(
     string PreferencesPath,
     string? SmokeImagePath,
     string? SmokePagesDirectory,
+    string? ShotProviderPickerPath,
+    string? ShotSettingsAuthPath,
+    string? ShotAuthDialogPath,
     string? VerifyThemeReport,
     string? VerifyFoundationReport,
     string? VerifyShellReport,
@@ -29,7 +32,8 @@ internal sealed record HubHostOptions(
     /// informational dialogs (with no corresponding operation to fail).
     /// </summary>
     public bool IsAutomation =>
-        SmokeImagePath is not null || SmokePagesDirectory is not null
+        SmokeImagePath is not null || SmokePagesDirectory is not null || ShotProviderPickerPath is not null
+        || ShotSettingsAuthPath is not null || ShotAuthDialogPath is not null
         || VerifyThemeReport is not null || VerifyFoundationReport is not null
         || VerifyShellReport is not null || VerifyOpsReport is not null || Gallery;
 
@@ -64,6 +68,9 @@ internal sealed record HubHostOptions(
             Value(args, "--preferences") ?? DefaultPreferencesPath,
             Value(args, "--smoke"),
             Value(args, "--smoke-pages"),
+            Value(args, "--shot-provider-picker"),
+            Value(args, "--shot-settings-auth"),
+            Value(args, "--shot-auth-dialog"),
             Value(args, "--verify-theme"),
             Value(args, "--verify-foundation"),
             Value(args, "--verify-shell"),

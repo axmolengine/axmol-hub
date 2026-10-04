@@ -87,6 +87,36 @@
         </StackPanel>
       </Border>
 
+      <!-- Model providers (the AI assistant's configuration). Moved here from the assistant page: choosing
+           which model answers is part of the conversation, but *managing endpoints, models and keys* is
+           configuration — the same split GitHub Copilot uses. The assistant page keeps only a read-only
+           "current model" line.
+
+           Every configured provider is its own group, and all groups are expanded: the list is short (a
+           handful of endpoints), and collapsing would hide the two things people come here for — which model
+           is in use and whether a key is already stored. Each group therefore carries its own sign-in
+           entrance, its own accounts and its own model list.
+
+           The groups are built in code (RebuildProviderGroups) rather than bound, because each one owns
+           button handlers that close over the provider it belongs to and the rows are rebuilt on every
+           language switch — a DataTemplate would need a view-model layer for four controls. -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock Text="{DynamicResource ModelProviders}" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource ModelProvidersHint}" />
+
+          <Button x:Name="AddProviderButton" Content="{DynamicResource AddProvider}" Classes="quiet"
+                  HorizontalAlignment="Left" Padding="10,4" />
+
+          <!-- Status line for provider operations (add/remove/key/sign-in). Lives above the list so a
+               result is visible wherever the scroll happens to be. Named distinctly from the update card's
+               status line: a page registers every x:Name, and a duplicate throws at load time. -->
+          <TextBlock x:Name="ProviderStatusLine" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
+
+          <StackPanel x:Name="ProviderGroupList" Spacing="12" />
+        </StackPanel>
+      </Border>
+
       <!-- Storage and projects -->
       <Border Classes="card">
         <StackPanel Spacing="18">

@@ -4,7 +4,7 @@
   <!--
     Avalonia equivalents of the full set of ControlTemplates from the WPF version's App.xaml.
 
-    Two semantic differences to keep in mind (see docs/avalonia-migration-plan.md §3.1):
+    Two semantic differences to keep in mind:
 
     1. Avalonia has no Trigger. WPF's `<Trigger Property="IsMouseOver"> + Setter TargetName="Frame"`
        becomes here "selector + pseudo-class + /template/ to target a template-internal part":

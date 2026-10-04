@@ -133,8 +133,1041 @@ public partial class ShellCheckWindow : Window
         var shell = CheckShell(scratchRoot);
         await CheckInstallsPageAsync(scratchRoot, shell);
         await CheckSettingsPageAsync(scratchRoot, shell);
+        await CheckAssistantAsync(scratchRoot, shell);
         CheckDataRootSwitch(scratchRoot, shell);
         CheckRealRender(shell);
+    }
+
+    /// <summary>
+    /// The AI assistant drawer. Every failure mode here is silent at build time: a hidden drawer whose
+    /// toggle does nothing, a provider picker that never lists the built-in provider, a stream that never
+    /// reaches the UI, and — most importantly — affiliate disclosure that is designed but never shown.
+    ///
+    /// The chat client is **scripted**, so this group runs with no network, no API key and no endpoint: the
+    /// pipeline is driven end to end through the real send path and the reply is read back off the flow. This
+    /// is the payoff of routing every provider through <c>IChatClient</c>.
+    /// </summary>
+    private async Task CheckAssistantAsync(string scratchRoot, MainWindow shell)
+    {
+        Check(!shell.AssistantVisible, "默认停在项目页，助手页没有占着屏幕");
+
+        var panel = shell.OpenAssistant();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.AssistantVisible, "导航到助手页后它真的显示出来");
+        Check(shell.CurrentPage is ChatPanel, "助手页由 ChatPanel 承载（整屏页面而不是右侧抽屉）");
+        Check(shell.NavAssistant.IsChecked == true, "助手页同时点亮了左侧导航项");
+
+        // OrcaRouter is the built-in provider, and the page must name it as the model that answers next.
+        // The conversation page no longer has a provider picker (that moved to Settings), so this read-only
+        // line is the only place the active model is visible from the page — and getting it wrong is silent.
+        var orca = shell.Chat.Providers.FirstOrDefault(provider => provider.Id == "orcarouter");
+        Check(orca is not null, "内置 OrcaRouter provider 已装配");
+        Check(panel.ActiveModelText.Contains(orca!.Name, StringComparison.Ordinal)
+              && panel.ActiveModelText.Contains(orca.Model, StringComparison.Ordinal),
+            "助手页显示当前模型（provider + 模型名，实际「" + panel.ActiveModelText + "」）");
+
+        // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["你好", "，Axmol", " 助手。"]);
+        shell.Chat.StartConversation();
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        var before = panel.BubbleCount;
+        await panel.SendForCheckAsync("测试提问");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        // A real frame with the assistant page filled: the assertions above read the object graph, and a page
+        // that lays out to zero size (or clips its content) would pass them all while showing nothing.
+        var drawerShot = System.IO.Path.Combine(ScratchDirectory.Resolve("assistant-render"), "page.png");
+        var drawerStats = SmokeCapture.Capture(shell, drawerShot);
+        Check(System.IO.File.Exists(drawerShot) && !drawerStats.IsBlank(),
+            "助手页发送后真实渲染出非空白帧（distinct=" + drawerStats.DistinctColors
+            + "，variance=" + drawerStats.LuminanceVariance.ToString("F2", CultureInfo.InvariantCulture) + "）");
+
+        Check(panel.BubbleCount == before + 2, "一次发送追加了「用户 + 助手」两个气泡（实际新增 " + (panel.BubbleCount - before) + "）");
+        Check(panel.FlowText.Contains("测试提问", StringComparison.Ordinal),
+            "用户消息出现在消息流里");
+        Check(panel.FlowText.Contains("你好，Axmol 助手。", StringComparison.Ordinal),
+            "流式回复完整落进消息流（实际消息流：\n" + panel.FlowText + "）");
+
+        // The conversation persists: the saved transcript must carry both turns, so the reply survives a
+        // reload instead of living only in the UI.
+        var saved = shell.Chat.ActiveConversation;
+        Check(saved is not null && saved.Messages.Count == 2
+              && saved.Messages[1].Role == ChatRoles.Assistant
+              && saved.Messages[1].Text == "你好，Axmol 助手。",
+            "助手回复写回了会话（不只是留在界面上）");
+
+        // The conversation picker shows the derived title, not the type name (same silent failure as above).
+        Check(panel.ConversationPickerText == saved!.Title && panel.ConversationPickerText.Length > 0,
+            "会话下拉显示的是标题而不是类型名（实际「" + panel.ConversationPickerText + "」）");
+
+        // Deleting the active conversation clears the flow — the picker and the flow must agree.
+        shell.Chat.DeleteConversation(saved!.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        Check(panel.ConversationCount == 0 && panel.BubbleCount == 0,
+            "删除会话后列表与消息流一起清空（实际会话 " + panel.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
+
+        // ── Provider management lives in Settings now (it moved off the assistant page) ──
+        await CheckProvidersInSettingsAsync(scratchRoot, shell);
+
+        shell.Chat.ClientOverride = null;
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The provider card in Settings ▸ Models. This is the only path to a custom (local-model) endpoint, so
+    /// it is asserted where it now lives: the card must render on the settings page, the management buttons
+    /// must be there, the affiliate disclosure (D5) must be shown and name the provider, and the logic behind
+    /// the dialog — validation, id assignment, persistence, the built-in/custom split — must hold.
+    ///
+    /// Since S6 the add flow is the Copilot-shaped preset picker rather than an empty form, so the picker's
+    /// search behaviour is asserted too: the dialog is modal and cannot be clicked from here, but it can be
+    /// constructed and its query driven, which is where a broken filter or a lost "custom endpoint" row would
+    /// show up.
+    /// </summary>
+    private async Task CheckProvidersInSettingsAsync(string scratchRoot, MainWindow shell)
+    {
+        var settings = (SettingsPage)shell.NavigateTo("Settings");
+        settings.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        Check(settings.ProviderCount >= 1, "设置页列出了内置 provider（实际 " + settings.ProviderCount + " 个）");
+        // Every configured provider gets its own group, so the count on screen must match the model — a group
+        // that failed to render would otherwise be invisible while the provider "existed".
+        var orca = shell.Chat.Providers.FirstOrDefault(provider => provider.Id == "orcarouter");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupCount == settings.ProviderCount,
+            "每个已配置的 provider 各渲染一组（实际 " + settings.ProviderGroupCount + " 组 / "
+            + settings.ProviderCount + " 个 provider）");
+        // The group is titled with the display name, not the type name — the failure a naive binding makes.
+        Check(settings.ProviderGroupForId("orcarouter") is not null,
+            "分组标题用的是 provider 名称（实际 [" + string.Join(",", settings.ProviderGroups.Select(g => g.Name)) + "]）");
+        Check(settings.ProviderButtonsVisible, "设置页显示了「添加提供商」入口");
+        Check(settings.AffiliateDisclosureVisible
+              && settings.AffiliateDisclosureText.Contains(orca?.Name ?? "\u0000", StringComparison.Ordinal),
+            "affiliate 披露在 OrcaRouter 分组内可见且点名了 provider（实际「" + settings.AffiliateDisclosureText + "」）");
+
+        // ── Seeding: exactly one preset, not the whole catalog ──
+        // A fresh workspace has no providers.json at all. Seeding every preset was the old behaviour and read
+        // as "why do I have four endpoints I never added"; the contract now is one, and it is the manifest's
+        // declared default. Asserted on a brand-new root so a leftover file cannot mask the branch.
+        var freshRoot = Path.Combine(scratchRoot, "fresh-seed");
+        Directory.CreateDirectory(freshRoot);
+        using (var fresh = new ChatWorkspace(freshRoot))
+        {
+            Check(fresh.Providers.Count == 1, "全新安装只预置一个 provider（实际 " + fresh.Providers.Count + " 个）");
+            Check(fresh.Providers[0].Id == AiProviderManifest.DefaultProviderId(),
+                "预置的是清单声明的默认 provider（实际「" + fresh.Providers[0].Id + "」）");
+            // A second workspace over the same root must not re-seed or duplicate: the saved file is
+            // authoritative once it exists.
+            fresh.SaveProviders();
+        }
+
+        using (var again = new ChatWorkspace(freshRoot))
+        {
+            Check(again.Providers.Count == 1, "已有 providers.json 时不再重新播种（实际 " + again.Providers.Count + " 个）");
+        }
+
+        // ── The preset catalog and the picker's search ──
+        var presets = shell.Chat.AvailablePresets();
+        Check(presets.Count >= 2, "清单提供多个可选预设（实际 " + presets.Count + " 个）");
+        Check(presets.All(preset => preset.Description.Length > 0),
+            "每个预设都带说明文案（用于搜索卡片）");
+        Check(presets.All(preset => !preset.IsCustom), "预设列表里不含自定义 provider");
+        Check(presets.All(preset => shell.Chat.Providers.All(provider => provider.Id != preset.Id)),
+            "已配置的 provider 不再出现在可选预设里（不会重复添加）");
+
+        // ── Multiple accounts for one service: the opencode rule ──
+        //
+        // A provider id names one account, so a second account for the same service is a second provider
+        // pointing at the same base URL. That is what opencode does, and it is why the list filters an
+        // already-configured preset out rather than offering a "add another account" affordance on it: a
+        // built-in's id is its identity in the manifest, and two entries sharing it would be one entry.
+        //
+        // The escape hatch is the custom provider, which is already how a second account is added — it takes
+        // any http(s) endpoint and its own key. Asserted here because the one-to-one migration removed the
+        // account list that used to be the other way in, and this is now the *only* way in. If the base URL
+        // check ever tightened enough to reject a duplicate endpoint, this is what would catch it.
+        var duplicateUrl = shell.Chat.Providers.FirstOrDefault(provider => !provider.IsCustom)?.BaseUrl ?? "";
+        Check(duplicateUrl.Length > 0, "至少有一个已配置 provider 提供了可复用的 base URL");
+        var twinId = shell.Chat.AddProvider("DeepSeek (个人)", duplicateUrl, "twin-model", "sk-second-account")?.Id;
+        Check(twinId is not null, "可以为同一服务添加第二个 provider（指向同一 base URL）");
+        Check(twinId is not null && shell.Chat.Providers.Count(provider => provider.BaseUrl == duplicateUrl) == 2,
+            "两个 provider 可以共用一个 base URL（实际 "
+                + shell.Chat.Providers.Count(provider => provider.BaseUrl == duplicateUrl) + " 个）");
+        // The point of a second entry: they hold different keys, independently revocable. Same base URL with
+        // one shared credential would be a duplicate row that looks like a second account and is not.
+        Check(twinId is not null && CountCredentials(shell.Chat, twinId) == 1
+              && shell.Chat.CredentialFor(twinId)?.Secret == "sk-second-account",
+            "第二个 provider 持有自己那份密钥（实际「" + shell.Chat.CredentialFor(twinId ?? "")?.Secret + "」）");
+        Check(twinId is not null && shell.Chat.DisconnectProvider(twinId)
+              && CountCredentials(shell.Chat, twinId) == 0,
+            "断开其中一个不影响另一个（断开后剩 "
+                + CountCredentials(shell.Chat, duplicateUrl.Length > 0 && twinId is not null ? twinId : "") + " 份）");
+        Check(twinId is not null && shell.Chat.RemoveProvider(twinId), "第二个 provider 可以单独移除");
+        Check(shell.Chat.Providers.All(provider => provider.Id != "deepseek" || provider.BaseUrl != duplicateUrl),
+            "移除后另一个 provider 仍在列表里");
+
+        var picker = ProviderPickerWindow.ForCheck(presets);
+        Check(picker.RowCountForCheck == presets.Count + 1,
+            "选择器列出全部预设 + 一个「自定义接口」行（实际 " + picker.RowCountForCheck + " 行）");
+        Check(picker.CustomRowVisibleForCheck, "空查询时「自定义接口」行可见");
+        Check(!picker.EmptyNoticeVisibleForCheck, "空查询时不显示「无匹配」提示");
+
+        picker.SearchForCheck("deep");
+        Dispatcher.UIThread.RunJobs();
+        Check(picker.VisiblePresetIdsForCheck.Length == 1 && picker.VisiblePresetIdsForCheck[0] == "deepseek",
+            "搜索按名称过滤（实际 [" + string.Join(",", picker.VisiblePresetIdsForCheck) + "]）");
+        Check(picker.CustomRowVisibleForCheck == false, "不相关的查询会隐藏「自定义接口」行");
+
+        // Searching the *description* must work too: someone who remembers "本地" should land on Ollama
+        // without knowing the product is called Ollama.
+        picker.SearchForCheck("本地");
+        Dispatcher.UIThread.RunJobs();
+        Check(picker.VisiblePresetIdsForCheck.Length >= 1 && picker.VisiblePresetIdsForCheck.Contains("ollama"),
+            "搜索命中说明文案而不只是名称（实际 [" + string.Join(",", picker.VisiblePresetIdsForCheck) + "]）");
+
+        picker.SearchForCheck("zzz-no-such-provider");
+        Dispatcher.UIThread.RunJobs();
+        Check(picker.RowCountForCheck == 0 && picker.EmptyNoticeVisibleForCheck,
+            "无匹配时列表为空且显示提示（实际 " + picker.RowCountForCheck + " 行）");
+
+        picker.SearchForCheck("custom");
+        Dispatcher.UIThread.RunJobs();
+        Check(picker.CustomRowVisibleForCheck, "搜索「custom」时仍能找到「自定义接口」行");
+
+        // Back to the full list before choosing: the search box is a filter, and a stale query would make the
+        // two assertions below depend on whatever the last query happened to match.
+        picker.SearchForCheck("");
+        Dispatcher.UIThread.RunJobs();
+
+        // Choosing a preset must set the id, not the custom flag — the two exits of the dialog are what the
+        // caller branches on, so getting them crossed would silently open the wrong form.
+        Check(picker.ChoosePresetForCheck(presets[0].Id) && picker.SelectedId == presets[0].Id && !picker.WantsCustom,
+            "选中预设时返回其 id 且不要求自定义表单");
+        Check(picker.ChooseCustomForCheck() && picker.WantsCustom, "选中「自定义接口」行时返回自定义意图");
+
+        // ── Adopting a preset ──
+        var adoptId = presets[0].Id;
+        var adopted = shell.Chat.AddPreset(adoptId);
+        Check(adopted is { IsCustom: false } && adopted.Id == adoptId && adopted.BaseUrl.Length > 0,
+            "采纳预设会带上清单里的接口地址与模型");
+        Check(shell.Chat.AddPreset(adoptId) is null, "重复采纳同一预设被拒绝");
+        Check(shell.Chat.AvailablePresets().All(preset => preset.Id != adoptId), "采纳后该预设不再出现在候选里");
+        // The protection is on the *default* provider, not on the origin of the entry: adopting a preset and
+        // then removing it works, and the preset returns to the catalogue. Keeping the old "built-ins cannot
+        // be removed" rule here would have asserted behaviour the product deliberately does not have.
+        Check(adoptId != AiProviderManifest.DefaultProviderId(),
+            "这里采纳的预设不是默认 provider，所以移除规则不适用于它");
+        Check(shell.Chat.RemoveProvider(adoptId), "非默认的内置预设可以移除（保护规则只针对默认 provider）");
+        Check(shell.Chat.AvailablePresets().Any(preset => preset.Id == adoptId),
+            "移除后该预设回到候选目录");
+        Check(shell.Chat.AddPreset(adoptId) is not null, "移除的预设可以再次采纳");
+
+        var providerCountBefore = shell.Chat.Providers.Count;
+
+        // Validation: a custom provider without a name, without a usable URL, or without a model is refused.
+        Check(shell.Chat.AddProvider("本地模型", "http://localhost:11434/v1", "llama3", null) is not null,
+            "添加合法的自定义 provider 成功");
+        Check(shell.Chat.Providers.Count == providerCountBefore + 1, "新 provider 进入列表（实际 " + shell.Chat.Providers.Count + " 个）");
+        Check(shell.Chat.AddProvider("", "http://localhost:11434/v1", "llama3", null) is null, "缺名称的自定义 provider 被拒绝");
+        Check(shell.Chat.AddProvider("坏地址", "localhost:11434/v1", "llama3", null) is null,
+            "非绝对 http(s) 地址被拒绝（裸 host 会到第一次发消息才炸）");
+        Check(shell.Chat.AddProvider("缺模型", "http://localhost:11434/v1", "   ", null) is null, "缺模型的自定义 provider 被拒绝");
+
+        // The new provider persists and reloads with its custom flag intact — a custom provider must not be
+        // re-derived from the manifest (there is no manifest entry for it) on the next load.
+        var custom = shell.Chat.Providers.First(provider => provider.IsCustom);
+        var reloaded = new ChatWorkspace(scratchRoot);
+        var reloadedCustom = reloaded.Providers.FirstOrDefault(provider => provider.Id == custom.Id);
+        Check(reloadedCustom is { IsCustom: true } && reloadedCustom.BaseUrl == "http://localhost:11434/v1"
+              && reloadedCustom.Model == "llama3",
+            "自定义 provider 落盘并在重载后保持（含 base URL 与模型）");
+        reloaded.Dispose();
+
+        // Editing changes a custom provider's endpoint in place.
+        Check(shell.Chat.UpdateProvider(custom.Id, "本地模型", "http://localhost:8080/v1", "qwen2", null),
+            "编辑自定义 provider 成功");
+        Check(shell.Chat.UpdateProvider(custom.Id, "本地模型", "not a url", "qwen2", null) == false,
+            "编辑成非法地址被拒绝（校验与保存路径同一份规则）");
+
+        // A built-in provider's base URL/name are pinned to the manifest; an update that tries to change them
+        // succeeds but leaves them untouched (the model may change), so the outcome is what is asserted — a
+        // boolean alone would not catch "accepted the edit and wrote the new URL anyway".
+        Check(shell.Chat.UpdateProvider("orcarouter", "改名", "http://evil", "orcarouter/auto", null),
+            "内置 provider 的模型可以更新");
+        var orcaAfter = shell.Chat.Providers.First(provider => provider.Id == "orcarouter");
+        Check(orcaAfter.Name == "OrcaRouter" && orcaAfter.BaseUrl == "https://api.orcarouter.ai/v1",
+            "内置 provider 的名称与接口地址被钉在清单上（实际「" + orcaAfter.Name + "」/「" + orcaAfter.BaseUrl + "」）");
+        Check(shell.Chat.RemoveProvider("orcarouter") == false, "内置 provider 不能被移除");
+        Check(shell.Chat.RemoveProvider(custom.Id), "自定义 provider 可以移除");
+        Check(shell.Chat.Providers.All(provider => !provider.IsCustom), "移除后列表里不再有自定义 provider");
+
+        // ── Sign-in methods and accounts ──
+        // The block is driven through the page's real selection path (SelectProviderForCheck → the same
+        // UpdateProviderDetail a click triggers), so what is asserted is the object graph the user would see.
+        await CheckAuthAndAccountsAsync(settings, shell);
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The grouped provider list: that every configured provider gets its own group, that the sign-in
+    /// entrances follow the manifest, that models form a sub-list with one marked in use, and that accounts
+    /// are one credential each regardless of where the credential came from.
+    ///
+    /// The tempting failure here is a tree that renders but does nothing — Avalonia resolves bindings and
+    /// styles silently, so a group whose handlers were never wired still looks right. Every assertion below
+    /// therefore reads the *rendered* tree (a group that failed to build counts as missing) rather than the
+    /// model it was built from.
+    /// </summary>
+    private async Task CheckAuthAndAccountsAsync(SettingsPage settings, MainWindow shell)
+    {
+        // Ollama is a *preset*, not a configured provider — it only reaches the list once adopted. Adopt it
+        // so the assertion exercises the keyless path rather than finding no group at all (which would pass a
+        // "no sign-in shown" check for the wrong reason).
+        var ollamaAdopted = shell.Chat.AddPreset("ollama") is not null;
+        Check(ollamaAdopted, "可以采纳 Ollama 预设以验证无凭据路径");
+        settings.RefreshProviderGroupsForCheck();
+        var ollama = settings.ProviderGroupForId("ollama");
+        Check(ollama is not null, "无凭据的 provider 同样有自己的分组，而不是从列表里消失");
+        Check(ollama is not null && ollama.ShowsNoCredentialNote,
+            "本地 provider（Ollama）只说明「无需密钥」，不给出鉴权入口");
+        Check(ollama is { AuthButtonText: "" },
+            "无需鉴权的 provider 不显示鉴权按钮（点它不会有任何事可做）");
+
+        // ── The list shows no credential input, ever ──
+        // This is the assertion the whole revision exists for. It is checked on every rendered group rather
+        // than on one, because a single provider happening to be keyless would satisfy a check aimed at the
+        // wrong provider — the input used to live per-provider, so the property to prove is universal.
+        foreach (var group in settings.ProviderGroups)
+        {
+            Check(!group.HasCredentialField,
+                "分组「" + group.Name + "」里没有任何密钥输入框（鉴权改由对话框承接）");
+        }
+
+        settings.RefreshProviderGroupsForCheck();
+        var orcaGroup = settings.ProviderGroupForId("orcarouter");
+        Check(orcaGroup is not null, "需要凭据的 provider 有自己的分组");
+        // Both routes are declared for OrcaRouter, so the single button must offer authentication — and the
+        // choice between them now happens inside the dialog, not on this row.
+        Check(orcaGroup is not null && orcaGroup.AuthButtonText == HubStrings.Get("Authenticate"),
+            "未鉴权时按钮文案是「鉴权」（实际「" + orcaGroup?.AuthButtonText + "」）");
+
+        // The other half: a key-only provider gets the same single entry point, because the dialog is what
+        // adapts to the manifest — the row itself is identical either way.
+        var deepseekAdopted = shell.Chat.AddPreset("deepseek") is not null;
+        Check(deepseekAdopted, "可以采纳 DeepSeek 预设以验证仅密钥路径");
+        settings.RefreshProviderGroupsForCheck();
+        var deepseekGroup = settings.ProviderGroupForId("deepseek");
+        Check(deepseekGroup is not null && deepseekGroup.AuthButtonText == HubStrings.Get("Authenticate"),
+            "仅支持密钥的 provider 同样显示「鉴权」按钮，方式选择交给对话框");
+
+        // The status mark is a *statement about the provider*, so it must be false before any credential
+        // exists and true after one does. Asserting only the "linked" half would pass for a mark wired to
+        // always-on, which is exactly the bug this pair exists to catch.
+        Check(deepseekGroup is { IsLinked: false },
+            "没有任何凭据的 provider 显示未鉴权（实际「" + deepseekGroup?.LinkedStatusText + "」）");
+
+        // The summary line is what makes a name-only list readable, and the account count must not appear
+        // before there is an account — "0 accounts" on an unconfigured provider is noise, not information.
+        Check(deepseekGroup is not null && deepseekGroup.SummaryText.Contains("模型")
+              && !deepseekGroup.SummaryText.Contains("账号"),
+            "摘要行给出模型数，未鉴权时不出现「0 个账号」（实际「" + deepseekGroup?.SummaryText + "」）");
+
+        // The mark and its label must actually be *drawn*, not merely present in the tree. Both are looked up
+        // during a rebuild that can happen while the page is still detached from the resource host, and a
+        // brush resolved too early comes back null: the string is right, the tick is in the tree, and the
+        // screen shows nothing at all. Only the resolved paint tells the two apart.
+        Check(deepseekGroup is { StatusLabelIsPainted: true },
+            "鉴权状态文字真的解析出了画刷（文字在树里不等于看得见）");
+        Check(deepseekGroup is { StatusMarkIsPainted: true },
+            "鉴权状态图标真的解析出了描边画刷（Path 在树里不等于画得出来）");
+
+        // The removal rule is about the *default* provider, not about "built-in": OrcaRouter is the pinned
+        // default, and everything else — preset or custom — is removable. DeepSeek is a preset that is not
+        // the default, so it must offer the action.
+        Check(deepseekGroup is { HasRemoveButton: true },
+            "非默认的 provider（即便来自内置清单）同样可以移除");
+        Check(orcaGroup is { HasRemoveButton: false },
+            "默认 provider 不出现在移除目录里（清单会在下次启动时把它补回来）");
+
+        // ── Models: a real sub-list, one marked in use ──
+        //
+        // A provider straight from the manifest arrives with **no** model, because the manifest no longer
+        // names one. That is the change this whole block was rewritten for: a default model written into a
+        // shipped JSON file goes stale the moment the provider adds or retires one, and a stale default is
+        // worse than none — it is offered in the list and fails on first use with a 404 that blames the
+        // user's key. The list comes from GET {baseUrl}/models instead (see CheckModelListAsync).
+        //
+        // So the sequence below seeds the first model the way the product now does — by adding one — and
+        // asserts the mark from there. Asserting "the manifest seeds a default" would have been a check that
+        // passes only while the manifest is wrong.
+        // So the sequence below authenticates the provider first, then seeds the first model the way a user
+        // would — by adding it — and asserts the mark from there. Asserting "the manifest seeds a default"
+        // would have been a check that passes only while the manifest is wrong.
+        //
+        // The credential goes in *before* the model assertions, not after, because the model section is not
+        // rendered at all for a provider with nothing to authenticate: the list is fetched with the user's
+        // key, so before there is one there is nothing to show. That rule gets its own block below
+        // (CheckModelListAsync); re-asserting it here would turn a hide-rule failure into a report about the
+        // model list breaking, which sends the reader to the wrong file.
+        shell.Chat.AddCredential("deepseek", "", "sk-deepseek-models", CredentialSources.ApiKey);
+        settings.RefreshProviderGroupsForCheck();
+        var afterAuth = settings.ProviderGroupForId("deepseek");
+        Check(afterAuth is { ShowsModelSection: true, ModelNames.Length: 0 },
+            "鉴权后、尚未拉取时模型区已就位但还没有模型行（实际 "
+                + (afterAuth?.ModelNames.Length ?? -1) + " 行）");
+
+        var added = shell.Chat.AddModel("deepseek", "deepseek-reasoner");
+        Check(added is not null, "可以为 provider 添加第一个模型");
+        Check(added is { InUse: true },
+            "第一个添加的模型自动成为使用中的那个（实际 InUse=" + added?.InUse + "）");
+        Check(shell.Chat.AddModel("deepseek", "DEEPSEEK-REASONER") is null,
+            "重复添加同一模型被拒绝（大小写不敏感）");
+
+        var secondModel = shell.Chat.AddModel("deepseek", "deepseek-chat")?.Name ?? "";
+        Check(secondModel.Length > 0, "可以为同一 provider 添加第二个模型");
+
+        settings.RefreshProviderGroupsForCheck();
+        var withTwo = settings.ProviderGroupForId("deepseek");
+        Check(withTwo is { ModelNames.Length: 2 }, "两个模型都渲染在子列表里（实际 "
+            + (withTwo?.ModelNames.Length ?? -1) + " 个）");
+        // The name of the model the first AddModel created — read back from the rendered rows rather than
+        // written into the check, because it is data and it moves. It is deliberately *not* ModelNames[0]:
+        // the list keeps insertion order, and the first row is the first model added, which is also the one
+        // holding the mark. Reading position 0 would work today and silently stop meaning anything if the
+        // list were ever sorted.
+        var firstModel = added?.Name ?? "";
+        Check(firstModel.Length > 0, "读到了第一个添加的模型名，用它断言标记落点");
+        // Adding a model does not steal the in-use mark — that only moves when the user says so.
+        Check(withTwo is not null && withTwo.ActiveModelName == firstModel,
+            "添加模型不会改变使用中的那个（实际「" + withTwo?.ActiveModelName + "」）");
+        // The description lookup is a nicety, and it must actually reach the row: a catalogue that is never
+        // read would leave every row a bare name and still pass every other check here.
+        Check(withTwo is not null && withTwo.ModelDescriptions.Any(text => text.Length > 0),
+            "模型行带上了说明文案（实际 [" + string.Join(" | ", withTwo?.ModelDescriptions ?? []) + "]）");
+
+        // Switching is explicit, and it moves the mark rather than adding a second one.
+        Check(shell.Chat.SetActiveModel("deepseek", "deepseek-reasoner"), "可以切换使用中的模型");
+        settings.RefreshProviderGroupsForCheck();
+        var switched = settings.ProviderGroupForId("deepseek");
+        Check(switched is not null && switched.ActiveModelName == "deepseek-reasoner",
+            "标记移到新选的模型上（实际「" + switched?.ActiveModelName + "」）");
+        Check(switched is { ModelNames.Length: 2 }, "切换不会新增模型行（实际 "
+            + (switched?.ModelNames.Length ?? -1) + " 个）");
+
+        // Removing the one in use hands the mark to what is left, so a provider is never left without a model.
+        // The survivor is the *other* model, not the one that was in use — which is the point: "hands the
+        // mark to what is left" is a claim about the remaining list, and asserting it against the removed
+        // name would pass for a provider that had somehow kept its mark on a deleted row.
+        Check(shell.Chat.RemoveModel("deepseek", "deepseek-reasoner"), "可以移除模型");
+        settings.RefreshProviderGroupsForCheck();
+        var afterRemoval = settings.ProviderGroupForId("deepseek");
+        Check(afterRemoval is { ModelNames.Length: 1 }, "移除后子列表少一行（实际 "
+            + (afterRemoval?.ModelNames.Length ?? -1) + " 个）");
+        Check(afterRemoval is not null && afterRemoval.ActiveModelName == secondModel,
+            "移除使用中的模型后，标记落到剩下的那个上（实际「" + afterRemoval?.ActiveModelName
+                + "」，期望「" + secondModel + "」）");
+
+        // DeepSeek stays configured from here on: the disconnect check below needs a real provider to cut
+        // loose, and adding a credential to a removed provider is a silent no-op that would make that check
+        // fail for a reason that has nothing to do with disconnecting.
+
+        // ── Credentials: one provider, one credential, however it was created ──
+        //
+        // The UI no longer renders a credential list, so "there is exactly one" is asserted on the data layer.
+        // That is the invariant the whole one-to-one change rests on, and it is the kind of rule that rots
+        // silently: a second AddCredential that appended instead of replacing would leave every screen looking
+        // correct while the model underneath had quietly gone back to one-to-many.
+        var label = "工作账号";
+        var first = shell.Chat.AddCredential("orcarouter", label, "sk-test-account-1", CredentialSources.ApiKey);
+        Check(first is not null, "可以为 provider 鉴权（密钥来源）");
+        settings.RefreshProviderGroupsForCheck();
+        var withOne = settings.ProviderGroupForId("orcarouter");
+        Check(CountCredentials(shell.Chat, "orcarouter") == 1,
+            "鉴权后该 provider 恰有一份凭据（实际 " + CountCredentials(shell.Chat, "orcarouter") + " 份）");
+        Check(first is not null && first.Label == label,
+            "凭据记下了用户填的备注（实际「" + first?.Label + "」）");
+
+        // The mark flips on the first credential, whatever produced it — the whole point of collapsing key and
+        // OAuth into one account model. Before/after are asserted together so a mark that is simply stuck on
+        // cannot satisfy both.
+        Check(withOne is { IsLinked: true },
+            "有凭据后 provider 变为已鉴权（实际「" + withOne?.LinkedStatusText + "」）");
+        Check(withOne is not null && withOne.LinkedStatusText == HubStrings.Get("ProviderConnected"),
+            "已鉴权状态行用的就是「已鉴权」这个词，而不是「已连接」");
+        // The one control, relabelled. Asserting the label rather than "a button appeared" is what makes this
+        // a check of the state: a button that stayed on "authenticate" would otherwise pass unnoticed.
+        Check(withOne is not null && withOne.AuthButtonText == HubStrings.Get("DisconnectProvider"),
+            "已鉴权后同一个按钮变成「断开鉴权」（实际「" + withOne?.AuthButtonText + "」）");
+
+        // An OAuth-produced credential is the same kind of thing, so it lands in the same slot — and replaces
+        // the pasted key rather than joining it. This is the assertion that has teeth: under the old
+        // one-to-many model this call appended, and the list grew to two rows.
+        var oauthCredential = shell.Chat.AddOAuthCredential("orcarouter", "acct-77", "api", "sk-yoex-test");
+        Check(oauthCredential is not null, "浏览器登录产出的凭据以同样的形式入库");
+        settings.RefreshProviderGroupsForCheck();
+        Check(CountCredentials(shell.Chat, "orcarouter") == 1,
+            "两类来源共用同一个凭据槽位，而不是各占一行（实际 "
+                + CountCredentials(shell.Chat, "orcarouter") + " 份）");
+        Check(oauthCredential is not null && oauthCredential.Secret == "sk-yoex-test",
+            "登录产出的凭据取代了先前粘贴的密钥");
+        Check(settings.ProviderGroupForId("orcarouter") is { IsLinked: true },
+            "换来源之后仍然是已鉴权，不需要用户再点一次");
+
+        // Re-authenticating rotates the secret on the credential already there.
+        var again = shell.Chat.AddOAuthCredential("orcarouter", "acct-77", "api", "sk-yoex-rotated");
+        Check(again?.Id == oauthCredential?.Id, "同一 provider 再次登录是轮换密钥而不是新增一份");
+        Check(again?.Secret == "sk-yoex-rotated", "轮换确实写入了新密钥（实际「" + again?.Secret + "」）");
+        settings.RefreshProviderGroupsForCheck();
+        Check(CountCredentials(shell.Chat, "orcarouter") == 1,
+            "轮换后凭据数不变（实际 " + CountCredentials(shell.Chat, "orcarouter") + " 份）");
+
+        // The one-to-one rule is not only about the OAuth path: pasting a second key over an authenticated
+        // provider has to replace too, or the two entry points would disagree about what "one" means.
+        var replaced = shell.Chat.AddCredential("orcarouter", "", "sk-pasted-over-oauth", CredentialSources.ApiKey);
+        Check(replaced?.Id == oauthCredential?.Id, "粘贴新密钥替换的是同一份凭据，而不是叠一份新的");
+        Check(CountCredentials(shell.Chat, "orcarouter") == 1,
+            "两条鉴权路径交替使用后仍然只有一份凭据（实际 "
+                + CountCredentials(shell.Chat, "orcarouter") + " 份）");
+
+        // ── The sign-in flow itself, over an injected transport ──
+        // Endpoint discovery is a real request, so the handler answers it; the exchange then fails, which is
+        // the branch that proves the flow is wired end to end without needing a live account. The button is
+        // taken from the rendered group, so this also proves the *group's* button is the one that is wired.
+        settings.UseOAuthHandlerForCheck(new OAuthProbeHandler());
+        await settings.RunOAuthFlowForCheckAsync();
+        Check(settings.StatusLineText.Length > 0 && settings.StatusLineText != HubStrings.Get("AuthOAuthPending"),
+            "登录失败时状态行给出了具体原因，而不是停在「正在等待授权…」（实际「"
+                + settings.StatusLineText + "」）");
+
+        // Clean up so the later checks see the provider list they expect.
+        var owned = shell.Chat.CredentialFor("orcarouter");
+        if (owned is not null) shell.Chat.RemoveCredential(owned.Id);
+        settings.RefreshProviderGroupsForCheck();
+        Check(CountCredentials(shell.Chat, "orcarouter") == 0
+              && settings.ProviderGroupForId("orcarouter") is { IsLinked: false },
+            "移除凭据后该 provider 回到未鉴权（实际 " + CountCredentials(shell.Chat, "orcarouter") + " 份）");
+
+        // ── Disconnect versus remove: the two intentions stay separate ──
+        // Disconnect is "revoke on this machine": it clears the credential and the mark, and leaves the
+        // provider itself alone. Asserting the *group* survives is the half that catches an implementation
+        // which quietly calls remove instead — the two would look identical from the credential list.
+        shell.Chat.AddCredential("deepseek", "临时账号", "sk-disconnect-probe", CredentialSources.ApiKey);
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("deepseek") is { IsLinked: true }, "断开前的 provider 已鉴权");
+        Check(shell.Chat.DisconnectProvider("deepseek"), "可以断开一个已鉴权的 provider");
+        settings.RefreshProviderGroupsForCheck();
+        Check(CountCredentials(shell.Chat, "deepseek") == 0, "断开后本机不再保存任何凭据");
+        Check(settings.ProviderGroupForId("deepseek") is { IsLinked: false },
+            "断开后回到未鉴权（实际「" + settings.ProviderGroupForId("deepseek")?.LinkedStatusText + "」）");
+        Check(settings.ProviderGroupForId("deepseek") is not null,
+            "断开只清除凭据，provider 本身与它的分组都保留");
+        // The same control flips back rather than disappearing: it is the provider's only entry point, and a
+        // row whose right-hand side went empty would be harder to read than one that says "authenticate".
+        Check(settings.ProviderGroupForId("deepseek") is { AuthButtonText: var back }
+              && back == HubStrings.Get("Authenticate"),
+            "断开之后按钮变回「鉴权」（实际「" + settings.ProviderGroupForId("deepseek")?.AuthButtonText + "」）");
+        Check(shell.Chat.DisconnectProvider("deepseek") == false,
+            "对未鉴权的 provider 再次断开是空操作，返回 false 而不是假装成功");
+
+        // Cleanup: the removal rule is "the default provider is protected, everything else is not" — not
+        // "built-ins are protected". OrcaRouter is the pinned default, so it is the one that must refuse.
+        Check(shell.Chat.RemoveProvider("orcarouter") == false, "默认 provider 不能被移除，它的分组也随之保留");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("orcarouter") is not null, "被拒绝移除的默认 provider 分组仍在页面上");
+
+        var customId = shell.Chat.AddProvider("Custom Test", "https://example.test/v1", "test-model", null)?.Id;
+        Check(customId is not null, "可以添加自定义 provider 以验证移除路径");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId(customId ?? "\u0000") is { HasRemoveButton: true },
+            "自定义 provider 的分组带移除按钮");
+        Check(shell.Chat.RemoveProvider(customId ?? ""), "自定义 provider 可以移除");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId(customId ?? "\u0000") is null, "移除 provider 后它的分组也从页面消失");
+
+        // A removed *preset* is not gone for good: it drops out of the configured list and reappears in the
+        // catalogue, so the same id can be adopted again. Without this, "remove" on the default-neighbouring
+        // presets would read as a one-way door.
+        Check(shell.Chat.RemoveProvider("deepseek"), "非默认的内置预设可以移除");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("deepseek") is null, "移除后预设的分组从配置列表消失");
+        Check(shell.Chat.AvailablePresets().Any(preset => preset.Id == "deepseek"),
+            "移除的预设回到「添加提供商」目录里，可以再加回来");
+        Check(shell.Chat.AddPreset("deepseek") is not null, "移除的预设可以重新采纳");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("deepseek") is not null, "重新采纳后分组重新出现");
+
+        CheckAuthDialogSteps(shell.Chat.Providers);
+        await CheckModelListAsync(settings, shell);
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The model list is fetched over the OpenAI protocol and cached, and the section that shows it obeys
+    /// the rules that follow from that.
+    ///
+    /// <para><b>Everything here runs against an injected handler.</b> A check that reached
+    /// <c>api.deepseek.com</c> would be slow, flaky, and dependent on a key nobody has — and the failure mode
+    /// would be indistinguishable from the product being broken. The handler scripts the exact four answers the
+    /// design distinguishes (a list, an empty list, a 401, a body that is not this shape), because those
+    /// distinctions <i>are</i> the design: collapsing any two of them is the bug this block exists to catch.</para>
+    ///
+    /// <para>The UI assertions read the rendered tree through the page's own view record, so a section that was
+    /// never built counts as missing rather than as empty.</para>
+    /// </summary>
+    private async Task CheckModelListAsync(SettingsPage settings, MainWindow shell)
+    {
+        // ── The parser, on the shapes that matter ──
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
+                """{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5-mini"},{"id":"gpt-5"}]}"""))
+                is ["gpt-5", "gpt-5-mini"],
+            "解析 data[].id，并按大小写不敏感去重保序（实际 ["
+                + string.Join(",", ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
+                    """{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5-mini"},{"id":"gpt-5"}]}"""))) + "]）");
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes("""{"data":[{"id":" GPT-5 "}]}""")) is ["GPT-5"],
+            "模型名两端的空白被裁掉");
+        // A gateway is free to attach whatever it likes to each entry. A whole-object binding would make an
+        // unexpected extra field a hard failure, so only "id" is read and anything else is ignored.
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
+                """{"object":"list","data":[{"id":"m","owned_by":"me","permission":[],"extra":{"x":1}}]}""")) is ["m"],
+            "只读 data[].id，多余字段不影响解析");
+        // An HTML error page from a proxy is a 200 with no models in it. That is "this provider will not tell
+        // us", not "we could not ask" — and the two lead to different user advice.
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes("<html>gateway</html>")).Count == 0,
+            "非协议形状的响应体解析为空列表而不是报错");
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes("""{"data":[{"object":"model"}]}""")).Count == 0,
+            "缺少 id 的条目被跳过，不产生空行");
+        Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes("""{"object":"list","data":[]}""")).Count == 0,
+            "空 data 数组是合法答案（这就是「该提供商没有模型」）");
+
+        // ── Before authentication the list is not rendered at all ──
+        //
+        // The list is fetched with the user's key. Before there is one there is nothing to ask with, so the
+        // section is absent rather than present-and-empty — an empty list here would read as "this provider
+        // has no models", which is a different and wrong statement.
+        var unauthenticated = shell.Chat.Providers.FirstOrDefault(provider =>
+            NeedsCredentialForCheck(provider) && shell.Chat.CredentialFor(provider.Id) is null);
+        Check(unauthenticated is not null, "存在未鉴权且需要凭据的 provider，用它检查模型列表的隐藏规则");
+
+        settings.RefreshProviderGroupsForCheck();
+        var hiddenGroup = unauthenticated is null ? null : settings.ProviderGroupForId(unauthenticated.Id);
+        Check(unauthenticated is not null && hiddenGroup is { ShowsModelSection: false },
+            "未鉴权的 provider 不渲染模型列表（实际 "
+                + (hiddenGroup is { ShowsModelSection: true } ? "仍然渲染" : "未渲染") + "）");
+        Check(unauthenticated is not null && hiddenGroup is { ModelNames.Length: 0 },
+            "未鉴权时一个模型名都不出现（实际 " + (hiddenGroup?.ModelNames.Length ?? -1) + " 个）");
+
+        // A keyless provider is the exemption, and it is the one that would break if the rule were written as
+        // "hide until a credential exists": Ollama never has one, so its models would be unreachable forever.
+        var keyless = shell.Chat.Providers.FirstOrDefault(provider => !NeedsCredentialForCheck(provider));
+        Check(keyless is not null, "存在无需凭据的 provider（Ollama），用它检查豁免规则");
+        settings.RefreshProviderGroupsForCheck();
+        var keylessGroup = keyless is null ? null : settings.ProviderGroupForId(keyless.Id);
+        Check(keyless is not null && keylessGroup is { ShowsModelSection: true },
+            "无需鉴权的 provider 仍然渲染模型列表（豁免生效）");
+
+        // ── A successful fetch adopts the list and renders it ──
+        var target = keyless ?? unauthenticated;
+        Check(target is not null, "有一个 provider 可以用来跑拉取路径");
+        if (target is null) return;
+
+        // ── What a fresh provider looks like before anything is fetched ──
+        //
+        // This is the state a user meets on a freshly adopted preset, and it is the one that has no model at
+        // all. The two halves are asserted separately because either can appear without the other: a section
+        // with no refresh button strands the user, and a refresh button in an empty section says nothing about
+        // what the list is for.
+        settings.RefreshProviderGroupsForCheck();
+        var beforeFetch = settings.ProviderGroupForId(target.Id);
+        Check(beforeFetch is { ShowsModelSection: true, ShowsModelEmptyState: true },
+            "拉取前模型区显示空状态而不是留白（实际「" + (beforeFetch is { ShowsModelEmptyState: true } ? "有" : "无") + "」）");
+        Check(beforeFetch is { HasRefreshButton: true },
+            "模型区带「刷新」入口，用户不必等鉴权流程替他拉一次");
+
+        // ── The request itself, on a keyless provider ──
+        //
+        // Asserted on what was actually sent, because nothing about the *list* can catch a header that should
+        // not have been added: an endpoint that ignores Authorization answers identically either way, and a
+        // header carrying a null token reads as "Bearer " with an empty value — which some gateways reject.
+        var keylessProbe = new ModelListProbeHandler("""{"object":"list","data":[]}""");
+        settings.UseModelListHandlerForCheck(keylessProbe);
+        await settings.RefreshModelsForCheckAsync(target.Id);
+
+        Check(keylessProbe.Requests.Count > 0,
+            "确实发出了模型列表请求（实际 " + keylessProbe.Requests.Count + " 次）");
+        Check(keylessProbe.Requests.All(request => request.Headers.Authorization is null),
+            "无凭据的 provider 不发送 Authorization 头（实际 ["
+                + string.Join(",", keylessProbe.Requests.Select(request => request.Headers.Authorization?.ToString() ?? "null")) + "]）");
+        // The URL is the provider's own base URL + /models. Trailing-slash tolerance is checked through the
+        // request itself rather than by reading the URL-building expression: a base written as ".../v1/" is
+        // legitimate user input, and "//models" 404s on a provider that otherwise works.
+        Check(keylessProbe.Requests.All(request =>
+                request.RequestUri?.AbsolutePath.TrimEnd('/').EndsWith("/models", StringComparison.Ordinal) == true),
+            "请求打到该 provider 自己的 {baseUrl}/models（实际 "
+                + keylessProbe.Requests.FirstOrDefault()?.RequestUri + "）");
+
+        // ── A successful fetch adopts the list and renders it ──
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+            """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"}]}"""));
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        Check(settings.StatusLineText.Length > 0 && !settings.StatusLineText.Contains("正在拉取"),
+            "拉取结束后状态行给出了结果（实际「" + settings.StatusLineText + "」）");
+
+        settings.RefreshProviderGroupsForCheck();
+        var fetched = settings.ProviderGroupForId(target.Id);
+        Check(fetched is { ShowsModelEmptyState: false },
+            "拉取成功后空状态消失");
+        Check(fetched is not null && fetched.ModelNames.Contains("llama3.2") && fetched.ModelNames.Contains("qwen3"),
+            "拉到的模型渲染在子列表里（实际 [" + string.Join(",", fetched?.ModelNames ?? []) + "]）");
+        Check(fetched is not null && fetched.ModelDescriptions.Any(text => text.Length > 0),
+            "拉到的模型名走描述查表，命中时给出说明（实际 ["
+                + string.Join(" | ", fetched?.ModelDescriptions ?? []) + "]）");
+        // One model is marked in use without the user choosing: after Normalize the first entry holds the mark,
+        // because a provider with models but no marked one would send an empty model name to the endpoint.
+        Check(fetched is { ModelNames.Length: > 0 } && fetched.ActiveModelName == fetched.ModelNames[0],
+            "拉取后第一个模型自动成为使用中的那个（实际「" + fetched?.ActiveModelName + "」）");
+
+        // ── The other half of the header rule ──
+        //
+        // Asserted on a provider that *does* hold a credential, because the keyless check above would pass
+        // just as happily against a build that never sends Authorization at all. Both halves are needed: one
+        // proves the header is not sent when it must not be, this one proves it is sent when it must be.
+        if (unauthenticated is not null)
+        {
+            shell.Chat.AddCredential(unauthenticated.Id, "", "sk-model-list-probe", CredentialSources.ApiKey);
+            var authedProbe = new ModelListProbeHandler("""{"object":"list","data":[]}""");
+            settings.UseModelListHandlerForCheck(authedProbe);
+            await settings.RefreshModelsForCheckAsync(unauthenticated.Id);
+            Check(authedProbe.Requests.Count > 0
+                  && authedProbe.Requests.All(request => request.Headers.Authorization?.Parameter == "sk-model-list-probe"),
+                "有凭据的 provider 用 Bearer 头带上密钥（实际 ["
+                    + string.Join(",", authedProbe.Requests.Select(request => request.Headers.Authorization?.Parameter ?? "null")) + "]）");
+
+            // And the section appears the moment there is a credential — the other side of the hide rule,
+            // asserted after the fact rather than only in the abstract.
+            settings.RefreshProviderGroupsForCheck();
+            Check(settings.ProviderGroupForId(unauthenticated.Id) is { ShowsModelSection: true },
+                "鉴权之后模型列表立刻可见，无需别的操作");
+        }
+
+        // ── Separators ──
+        //
+        // Both kinds are counted against the rows they divide, because a rule that is in the tree but in the
+        // wrong place (a leading rule, one per row including the first) looks correct in a screenshot and is
+        // wrong as a rule.
+        Check(fetched is not null && fetched.ModelDividerCount == Math.Max(0, fetched.ModelNames.Length - 1),
+            "模型行之间的分割线恰好是行数减一（" + (fetched?.ModelNames.Length ?? 0) + " 行 / "
+                + (fetched?.ModelDividerCount ?? -1) + " 条）");
+        Check(settings.GroupDividerCount == Math.Max(0, settings.ProviderGroupCount - 1),
+            "provider 分组之间的分割线恰好是组数减一（" + settings.ProviderGroupCount + " 组 / "
+                + settings.GroupDividerCount + " 条）");
+        // The dividers are Borders too, so this is the check that the group count was not quietly inflated by
+        // them: every other assertion above reads ProviderGroupCount or ProviderGroups.
+        Check(settings.ProviderGroups.Count == shell.Chat.Providers.Count,
+            "分割线没有被当成 provider 分组（实际读到 " + settings.ProviderGroups.Count + " 组 / "
+                + shell.Chat.Providers.Count + " 个 provider）");
+
+        // ── The cache survives a reload ──
+        Check(shell.Chat.CachedModels(target.Id).Contains("llama3.2"),
+            "拉取结果写进了本机缓存（实际 [" + string.Join(",", shell.Chat.CachedModels(target.Id)) + "]）");
+
+        // ── A hand-added name is not thrown away by a refresh ──
+        //
+        // The endpoint's silence about a name is not evidence the name is wrong: a self-hosted gateway can
+        // legitimately serve a model it declines to list. A refresh that rebuilt the list from the response
+        // alone would silently delete work the user did by hand.
+        var manual = "hand-written-model";
+        Check(shell.Chat.AddModel(target.Id, manual) is not null, "可以手动添加一个接口没有报告的模型名");
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+            """{"object":"list","data":[{"id":"llama3.2"}]}"""));
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+        var merged = settings.ProviderGroupForId(target.Id);
+        Check(merged is not null && merged.ModelNames.Contains(manual),
+            "刷新不会删掉手动添加的模型（实际 [" + string.Join(",", merged?.ModelNames ?? []) + "]）");
+        // A model the endpoint *did* report and has now retired does go away — otherwise the list only ever
+        // grows and a stale name would be offered and then fail on first use.
+        Check(merged is not null && !merged.ModelNames.Contains("qwen3"),
+            "接口不再报告的模型会从列表里消失（实际 [" + string.Join(",", merged?.ModelNames ?? []) + "]）");
+
+        // ── A failed fetch keeps what was there ──
+        //
+        // This is the assertion with the most weight behind it. Treating "could not ask" as "there are none"
+        // is the single easiest way to ship a model list that empties itself every time the network hiccups,
+        // and it would pass every check above — those all run against a handler that answers.
+        var beforeFailure = shell.Chat.Providers.First(provider => provider.Id == target.Id).Models
+            .Select(model => model.Name).ToArray();
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(status: 401));
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+        var afterFailure = settings.ProviderGroupForId(target.Id);
+        Check(afterFailure is not null
+              && afterFailure.ModelNames.OrderBy(name => name)
+                  .SequenceEqual(beforeFailure.OrderBy(name => name)),
+            "拉取失败时原有列表原封不动（[" + string.Join(",", beforeFailure) + "] → ["
+                + string.Join(",", afterFailure?.ModelNames ?? []) + "]）");
+        Check(settings.StatusLineText.Contains(HubStrings.Get("ModelsFetchFailed")),
+            "拉取失败在状态行说明了原因（实际「" + settings.StatusLineText + "」）");
+
+        // An empty list is a real answer, and everything the endpoint had reported goes away because of it —
+        // otherwise a provider that retired every model would keep showing them forever. What survives is
+        // the hand-written name, which the endpoint has never claimed to serve either way; asserting the
+        // count is 0 here would be asserting that a user's own entry is deleted by an unrelated fetch.
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler("""{"object":"list","data":[]}"""));
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+        var emptied = settings.ProviderGroupForId(target.Id);
+        Check(emptied is { ShowsModelEmptyState: false }
+              && emptied.ModelNames.Length == 1
+              && emptied.ModelNames[0] == manual,
+            "接口返回空列表时，接口报告过的模型全部消失、手动添加的保留（实际 ["
+                + string.Join(",", emptied?.ModelNames ?? []) + "]）");
+        Check(settings.StatusLineText == HubStrings.Get("ModelsFetchedEmpty"),
+            "空列表与拉取失败给出不同的提示（实际「" + settings.StatusLineText + "」）");
+
+        // The cache follows the list: a failed fetch never wrote, an empty one did.
+        Check(shell.Chat.CachedModels(target.Id).Count == 0,
+            "缓存与最后一次成功拉取一致（实际 " + shell.Chat.CachedModels(target.Id).Count + " 个）");
+
+        // Now that nothing but the hand-written name is left, a second empty fetch has nothing left to retire,
+        // and the section shows its genuine empty state — the state a user reaches on a provider that serves
+        // no models at all. This is the only way to assert that state without hand-placing it.
+        // The two failures on the same provider in a row. The second one is the assertion with teeth: an injected
+        // HttpClient is owned by the harness and reused, so a fetch path that disposed it would make every
+        // refresh after the first throw ObjectDisposedException — which the fetch reports as Unreachable,
+        // i.e. "the endpoint is unavailable", blaming the network for a bug in our own lifetime management.
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler("""{"object":"list","data":[]}"""));
+        shell.Chat.RemoveModel(target.Id, manual);
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId(target.Id) is { ShowsModelEmptyState: true, ModelNames.Length: 0 },
+            "接口返回空列表且无手动模型时显示空状态（实际 "
+                + (settings.ProviderGroupForId(target.Id)?.ModelNames.Length ?? -1) + " 个）");
+
+        var reuseProbe = new ModelListProbeHandler("""{"object":"list","data":[{"id":"after-empty"}]}""");
+        settings.UseModelListHandlerForCheck(reuseProbe);
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+        Check(reuseProbe.Requests.Count > 0
+              && settings.ProviderGroupForId(target.Id) is { ModelNames.Length: 1 }
+                  && settings.ProviderGroupForId(target.Id)!.ModelNames[0] == "after-empty",
+            "同一个注入的 HttpClient 可以连续多次拉取（第二次实际 ["
+                + string.Join(",", settings.ProviderGroupForId(target.Id)?.ModelNames ?? []) + "]）");
+
+        // Restore something renderable so the screenshot below shows a populated list rather than an empty
+        // state, and so the remaining checks are not reading a section that only exists to be empty.
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+            """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"},{"id":"gemma3"}]}"""));
+        await settings.RefreshModelsForCheckAsync(target.Id);
+        settings.RefreshProviderGroupsForCheck();
+
+        // ── Removing a provider forgets its cache ──
+        //
+        // A custom provider id is never reused, so a leftover entry could only be read by something that no
+        // longer exists — and the file would grow a row per provider ever added.
+        var disposable = shell.Chat.AddProvider("Cache Probe", "https://example.test/v1", "m1", null);
+        Check(disposable is not null, "可以添加一个自定义 provider 来验证缓存清理");
+        if (disposable is not null)
+        {
+            settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+                """{"object":"list","data":[{"id":"m1"},{"id":"m2"}]}"""));
+            await settings.RefreshModelsForCheckAsync(disposable.Id);
+            Check(shell.Chat.CachedModels(disposable.Id).Contains("m1")
+                  && shell.Chat.CachedModels(disposable.Id).Contains("m2"),
+                "自定义 provider 也写缓存（状态行「" + settings.StatusLineText + "」，缓存 ["
+                    + string.Join(",", shell.Chat.CachedModels(disposable.Id)) + "]）");
+            Check(shell.Chat.RemoveProvider(disposable.Id), "移除自定义 provider");
+            Check(shell.Chat.CachedModels(disposable.Id).Count == 0,
+                "移除 provider 后它的缓存条目也一并清除（实际还有 "
+                    + shell.Chat.CachedModels(disposable.Id).Count + " 条）");
+        }
+    }
+
+    /// <summary>
+    /// Whether a provider has any way to authenticate — the same test the settings page applies before
+    /// deciding to hide the model section, restated here so the assertion and the rule are visibly the same
+    /// predicate rather than two things that happen to agree today.
+    /// </summary>
+    private static bool NeedsCredentialForCheck(ModelProvider provider)
+        => provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey)
+           || provider.SupportsOAuth;
+
+    /// <summary>
+    /// Walks the authentication dialog's two steps without showing it.
+    ///
+    /// <para><b>The assertion that carries this block is "no blank text".</b> A helper that builds a
+    /// <c>TextBlock</c> from a string and forgets to assign it produces a control that is in the tree, has
+    /// a measured size, and paints nothing — no exception, no warning, no zero-error build. It happened
+    /// here: the key step's explanatory line was constructed from a parameter that never reached
+    /// <c>Text</c>, and every check that counted buttons or read <c>Tag</c> still passed. Only reading the
+    /// strings back out catches it.</para>
+    ///
+    /// <para>Step one is checked for the declared methods rather than a fixed pair, and for Next being
+    /// disabled until something is picked — a confirm that is live before there is a choice confirms
+    /// nothing.</para>
+    /// </summary>
+    /// <summary>
+    /// How many credentials a provider owns, read off the raw list.
+    ///
+    /// <para>Deliberately not <c>CredentialFor</c>: "exactly one" is the invariant under test, and asking the
+    /// single-accessor how many there are would be the assertion agreeing with whatever that accessor chooses to
+    /// return — a check that cannot fail, which is worse than none because it reads like evidence.</para>
+    /// </summary>
+    private static int CountCredentials(ChatWorkspace chat, string providerId)
+        => chat.Credentials.Count(credential => credential.ProviderId == providerId);
+
+    private void CheckAuthDialogSteps(IReadOnlyList<ModelProvider> providers)
+    {
+        var dual = providers.FirstOrDefault(provider => provider.SupportsOAuth
+            && provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
+        Check(dual is not null, "存在同时支持登录与密钥的 provider，用它检查第一步的两个选项");
+
+        if (dual is not null)
+        {
+            var stepOne = AuthDialog.ForCheck(dual);
+            Check(stepOne.StepControlCountForCheck > 0,
+                "鉴权对话框第一步建出了控件（实际 " + stepOne.StepControlCountForCheck + " 个；为 0 说明读的是空树，下面几条会空过）");
+            Check(stepOne.BlankTextCountForCheck == 0,
+                "鉴权对话框第一步没有空白文字块（实际 " + stepOne.BlankTextCountForCheck + " 个）");
+            Check(stepOne.MethodOptionsForCheck.Contains(ProviderAuthMethods.OAuth)
+                && stepOne.MethodOptionsForCheck.Contains(ProviderAuthMethods.ApiKey),
+                "第一步按清单列出该 provider 支持的鉴权方式（实际 ["
+                    + string.Join(",", stepOne.MethodOptionsForCheck) + "]）");
+            Check(!stepOne.NextEnabledForCheck, "未选择方式时「下一步」不可用");
+            Check(stepOne.NextTextForCheck == HubStrings.Get("Next"), "第一步的确认键是「下一步」");
+
+            stepOne.SelectForCheck(ProviderAuthMethods.ApiKey);
+            Check(stepOne.NextEnabledForCheck, "选中一种方式后「下一步」才可用");
+
+            var login = providers.FirstOrDefault(provider => provider.SupportsOAuth);
+            if (login is not null)
+            {
+                var labelled = AuthDialog.ForCheck(login);
+                Check(labelled.VisibleTextForCheck.Any(text => text.Contains(login.Name)),
+                    "登录选项的文案里带 provider 名称（实际 ["
+                        + string.Join(" | ", labelled.VisibleTextForCheck) + "]）");
+            }
+        }
+
+        // A key-only provider opens straight on the key box. Asserted because dressing a one-option choice
+        // up as a decision is the failure mode: the user clicks Next to accept what was already decided.
+        var keyOnly = providers.FirstOrDefault(provider => !provider.SupportsOAuth
+            && provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
+        Check(keyOnly is not null, "存在只支持密钥的 provider，用它检查单路径时直接进输入步");
+
+        if (keyOnly is not null)
+        {
+            var stepTwo = AuthDialog.ForCheck(keyOnly, ProviderAuthMethods.ApiKey);
+            Check(stepTwo.StepControlCountForCheck > 0,
+                "鉴权对话框第二步建出了控件（实际 " + stepTwo.StepControlCountForCheck + " 个；为 0 说明读的是空树）");
+            Check(stepTwo.BlankTextCountForCheck == 0,
+                "鉴权对话框第二步没有空白文字块（实际 " + stepTwo.BlankTextCountForCheck + " 个）");
+            Check(stepTwo.MethodOptionsForCheck.Length == 0, "密钥步不再重复列鉴权方式");
+            Check(stepTwo.NextEnabledForCheck == false, "密钥步没有「下一步」，确认键是「保存」");
+            Check(stepTwo.HasPasswordBoxForCheck, "密钥步有一个密码类输入框");
+            Check(stepTwo.VisibleTextForCheck.Any(text => text.Contains(keyOnly.Name))
+                == (keyOnly.KeyValidation is { IsKnown: true }),
+                "是否说明「会先校验」取决于清单有没有配 keyValidation（实际 ["
+                    + string.Join(" | ", stepTwo.VisibleTextForCheck) + "]）");
+        }
+
+        var keyless = providers.FirstOrDefault(provider => !provider.SupportsOAuth
+            && !provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
+        Check(keyless is not null, "存在不需要凭据的 provider，用它确认不会被要求鉴权");
+    }
+
+    /// <summary>
+    /// Answers the OAuth discovery request and fails the exchange. That split is deliberate: discovery is
+    /// reached before any browser work, so it proves the flow starts, while the failing exchange stops the
+    /// check short of waiting for a callback that will never arrive.
+    /// </summary>
+    private sealed class OAuthProbeHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath.Contains("openid-configuration", StringComparison.Ordinal) == true)
+            {
+                var json = """{"authorization_endpoint":"https://example.test/auth","token_endpoint":"https://example.test/token"}""";
+                return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+        }
+    }
+
+    /// <summary>
+    /// A scripted answer for <c>GET {baseUrl}/models</c>.
+    ///
+    /// <para>Scripted rather than real because the distinctions the design turns on are all about what the
+    /// endpoint <i>does</i> — a list, an empty list, a refusal, a body in the wrong shape — and only a real
+    /// provider can produce the last three on demand. The recorded requests matter too: the keyless rule is
+    /// about a header that must <b>not</b> be sent, and no assertion about the list itself can catch an
+    /// Authorization header that was added when it should not have been.</para>
+    /// </summary>
+    private sealed class ModelListProbeHandler(string? body = null, int status = 200) : System.Net.Http.HttpMessageHandler
+    {
+        /// <summary>Every request this handler saw, in order, so a check can assert on what was sent.</summary>
+        public List<System.Net.Http.HttpRequestMessage> Requests { get; } = [];
+
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+
+            var response = new System.Net.Http.HttpResponseMessage(
+                (System.Net.HttpStatusCode)status)
+            {
+                // JSON by default so the content type matches what a real OpenAI-compatible endpoint sends;
+                // a body served as text/plain is a difference no rule here depends on, but it would be one
+                // more thing differing for no reason.
+                Content = new System.Net.Http.StringContent(
+                    body ?? """{"object":"list","data":[]}""",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+
+            return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>A scripted <c>IChatClient</c> for the assistant checks: yields fixed text chunks and touches
+    /// no network. Mirrors the one in the Checks project; the App cannot reference that project.</summary>
+    private sealed class ScriptedChatClient(IReadOnlyList<string> chunks) : Microsoft.Extensions.AI.IChatClient
+    {
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            System.Threading.CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The assistant check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
+        {
+            foreach (var chunk in chunks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, chunk);
+                await Task.Yield();
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 
     /// <summary>
@@ -425,12 +1458,14 @@ public partial class ShellCheckWindow : Window
 
         // Page keys are deliberately separate from **copy keys**: the engines page's page key is Engines, while its navigation copy key is Installs
         // (the WPF version already used the word "Installs", so HubTexts keeps it — the two are not the same string).
+        // Settings has left this list for the bottom gear: it is still a full page (see MainWindow.PageKeys) but
+        // no longer a navigation radio button, so it is asserted separately below.
         var navs = new (string Page, string Label, RadioButton Button)[]
         {
             ("Projects", "Projects", shell.NavProjects),
             ("Installs", "Installs", shell.NavInstalls),
             ("Toolchains", "Toolchains", shell.NavToolchains),
-            ("Settings", "Settings", shell.NavSettings),
+            ("Assistant", "Assistant", shell.NavAssistant),
         };
 
         Check(navs.All(nav => nav.Button.GroupName == "Navigation"),
@@ -443,8 +1478,8 @@ public partial class ShellCheckWindow : Window
         Check(labels == expected,
             "导航文案来自 HubTexts 而不是硬编码（期望 " + expected + "，实际 " + labels + "）");
 
-        Check(navs.Select(nav => nav.Page).SequenceEqual(MainWindow.PageKeys),
-            "导航项与页面键逐一对应（" + string.Join("/", navs.Select(nav => nav.Page)) + "），新增导航项必须同时给出页面");
+        Check(navs.Select(nav => nav.Page).SequenceEqual(MainWindow.PageKeys.Where(key => key != "Settings")),
+            "导航项与页面键（除设置外）逐一对应（" + string.Join("/", navs.Select(nav => nav.Page)) + "），新增导航项必须同时给出页面");
 
         // Navigate one by one, confirming the host content **really** changed and the left highlight follows — not just the checked state.
         var seen = new List<Control>();
@@ -457,18 +1492,33 @@ public partial class ShellCheckWindow : Window
                 "NavigateTo(" + page + ") 后左侧恰好高亮该项（页面与导航不会各说各话）");
         }
 
-        Check(seen.Distinct().Count() == MainWindow.PageKeys.Length,
-            "四个页面是四个不同实例（没有把同一个控件复用成多页）");
+        Check(seen.Distinct().Count() == navs.Length,
+            "四个导航页面是四个不同实例（没有把同一个控件复用成多页）");
 
         // Caching: navigating again must return the same instance. Otherwise every page switch rebuilds and selection plus scroll position are silently lost.
         Check(ReferenceEquals(shell.NavigateTo("Installs"), seen[Array.IndexOf(MainWindow.PageKeys, "Installs")]),
             "再次导航到同一页拿回同一实例（页面被缓存而不是每次重建）");
 
-        // All four pages must be real pages: any pre-P5 "not migrated" placeholder page gets caught right here.
+        // Every page must be a real page: any pre-P5 "not migrated" placeholder page gets caught right here.
+        // Settings is included even though it is not a nav item — it is reached through the gear.
         Check(shell.NavigateTo("Projects") is ProjectsPage, "项目页由 ProjectsPage 承载");
         Check(shell.NavigateTo("Installs") is InstallsPage, "引擎页由 InstallsPage 承载");
         Check(shell.NavigateTo("Toolchains") is ToolchainsPage, "工具链页由 ToolchainsPage 承载");
+        Check(shell.NavigateTo("Assistant") is ChatPanel, "AI 助手页由 ChatPanel 承载");
         Check(shell.NavigateTo("Settings") is SettingsPage, "设置页由 SettingsPage 承载");
+
+        // Settings left the navigation list for a gear at the bottom of the rail (it is not a frequent
+        // destination). Two silent failures are possible here — the gear stops navigating, or it keeps a
+        // stale nav highlight — so both the click path and the highlight are asserted.
+        Check(shell.SettingsLabel == HubTexts.Get("Settings", HubStrings.Language),
+            "齿轮按钮的提示文案来自 HubTexts（图标按钮没有文字，提示是它唯一的名称，实际「" + shell.SettingsLabel + "」）");
+        shell.NavigateTo("Toolchains");
+        shell.ClickSettingsGearForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.CurrentPage is SettingsPage, "点底部齿轮真的打开设置页（事件接线有效）");
+        Check(navs.All(nav => nav.Button.IsChecked != true),
+            "设置页不是导航项，打开它时左侧不再有任何高亮（不会出现「设置亮着但当前不是设置页」）");
 
         // The projects page's action bar is a deliberate two-row layout: row 1 = build/run/configure plus
         // the two project-setting dialogs, row 2 = the open/launch commands with the destructive "remove"
@@ -518,14 +1568,14 @@ public partial class ShellCheckWindow : Window
 
         // Go through the real event path: changing IsChecked should trigger navigation. Only this proves the XAML/code wiring works —
         // the assertions above that call NavigateTo directly can't prove it.
-        // Leave the settings page first — NavigateTo now highlights synchronously, so staying on the same page and setting true triggers no event,
+        // Leave the target page first — NavigateTo now highlights synchronously, so staying on the same page and setting true triggers no event,
         // turning this assertion into an always-true decoration.
         shell.NavigateTo("Toolchains");
-        shell.NavSettings.IsChecked = true;
+        shell.NavAssistant.IsChecked = true;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.CurrentPage is SettingsPage && shell.NavToolchains.IsChecked != true,
-            "设置 NavSettings.IsChecked 真的触发了导航（事件接线有效）");
+        Check(shell.CurrentPage is ChatPanel && shell.NavToolchains.IsChecked != true,
+            "设置 NavAssistant.IsChecked 真的触发了导航（事件接线有效）");
 
         shell.SetStatus("状态栏自检");
         Check(shell.Status.Text == "状态栏自检", "SetStatus 写入底部状态栏");
@@ -654,9 +1704,12 @@ public partial class ShellCheckWindow : Window
             "下载速率文案按 B/KB/MB 分档，未知速率显示占位符，且与界面语言无关");
 
         // --- 5.2 Really switch the language once ---
-        var navBefore = NavLabel(shell.NavSettings);
+        // The shell-side probe uses a nav item that is still a RadioButton (NavToolchains): it is built at
+        // shell construction time, so its text changing proves DynamicResource re-resolves in place. Settings
+        // itself is no longer a nav item (it is the gear), so it can't serve as this probe any more.
+        var navBefore = NavLabel(shell.NavToolchains);
         var noteBefore = NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text;
-        Check(navBefore == HubTexts.Get("Settings", HubTexts.ChineseLanguage)
+        Check(navBefore == HubTexts.Get("Toolchains", HubTexts.ChineseLanguage)
               && noteBefore == HubTexts.Get("DataHint", HubTexts.ChineseLanguage),
             "切换前外壳与设置页的文字都是中文（" + navBefore + " / " + noteBefore + "）");
 
@@ -668,10 +1721,10 @@ public partial class ShellCheckWindow : Window
         Check(settings.SelectedLanguage == HubTexts.EnglishLanguage,
             "选语言真的改变了设置页的当前语言（" + settings.SelectedLanguage + "）");
 
-        // This is the core of the group: NavSettings is a control built at **shell construction** time, long existing by the language switch.
+        // This is the core of the group: the nav item is a control built at **shell construction** time, long existing by the language switch.
         // Its text changing proves DynamicResource **re-resolves in place**, not just once at construction.
-        var navAfter = NavLabel(shell.NavSettings);
-        Check(navAfter == HubTexts.Get("Settings", HubTexts.EnglishLanguage) && navAfter != navBefore,
+        var navAfter = NavLabel(shell.NavToolchains);
+        Check(navAfter == HubTexts.Get("Toolchains", HubTexts.EnglishLanguage) && navAfter != navBefore,
             "外壳上早于切换就存在的控件（导航项）跟着换了文字：" + navBefore + " → " + navAfter);
 
         var noteAfter = NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text;
@@ -707,7 +1760,7 @@ public partial class ShellCheckWindow : Window
         settings.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        Check(NavLabel(shell.NavSettings) == HubTexts.Get("Settings", HubTexts.ChineseLanguage)
+        Check(NavLabel(shell.NavToolchains) == HubTexts.Get("Toolchains", HubTexts.ChineseLanguage)
               && NamedDescendant<TextBlock>(settings, "DataHintLabel")?.Text == HubTexts.Get("DataHint", HubTexts.ChineseLanguage),
             "切回中文后文字跟着回来（不是单向生效）");
 

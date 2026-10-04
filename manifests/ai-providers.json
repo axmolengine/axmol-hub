@@ -1,0 +1,54 @@
+{
+  "_comment": "Built-in AI provider presets. This is a CATALOG, not a configured list: nothing here is added to the user's provider list on its own. The settings page offers these in the 'Add provider' search dialog, and exactly one of them (orcarouter, see defaultProvider) is seeded on a fresh install. Keys are camelCase and map onto AxmolHub.Core.AiProviderEntry.",
+  "defaultProvider": "orcarouter",
+  "providers": [
+    {
+      "id": "orcarouter",
+      "name": "OrcaRouter",
+      "description": "OrcaRouter is an OpenAI-compatible router that fronts many upstream models behind one endpoint and one key. Sign in with your OrcaRouter account, or paste an existing key. Seeded on a fresh install.",
+      "descriptionZh": "OrcaRouter 是一个 OpenAI 兼容的路由服务，用一个端点、一把密钥调用上游多家模型。可用 OrcaRouter 账号登录，也可粘贴已有密钥。首次安装时默认写入。",
+      "baseUrl": "https://api.orcarouter.ai/v1",
+      "apiKeyRequired": true,
+      "maxContextTokens": 128000,
+      "affiliate": true,
+      "referralUrl": "https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359",
+      "authMethods": ["apiKey", "oauth"],
+      "keyValidation": { "type": "httpGetModels", "path": "/models" },
+      "oauth": {
+        "discoveryUrl": "https://www.orcarouter.ai/.well-known/openid-configuration",
+        "scope": "api",
+        "appName": "Axmol Hub",
+        "referralCode": "ref_e3b6a1445aa97ab3c359"
+      }
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "description": "OpenAI's own API. Requires a key from platform.openai.com and a model name your account can call.",
+      "descriptionZh": "OpenAI 官方接口。需要 platform.openai.com 的密钥，以及你的账户可调用的模型名。",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyRequired": true,
+      "authMethods": ["apiKey"],
+      "keyValidation": { "type": "httpGetModels", "path": "/models" }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "description": "DeepSeek's OpenAI-compatible API. The model list is read from the endpoint after you authenticate.",
+      "descriptionZh": "DeepSeek 的 OpenAI 兼容接口。鉴权后从接口拉取可用模型列表。",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiKeyRequired": true,
+      "authMethods": ["apiKey"],
+      "keyValidation": { "type": "httpGetModels", "path": "/models" }
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (local)",
+      "description": "A model running on this machine through Ollama. No account and no key are needed; the server must be running and the model pulled first.",
+      "descriptionZh": "通过 Ollama 在本地运行的模型，无需账户和密钥，但需要先启动本机服务并拉取模型。",
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKeyRequired": false,
+      "authMethods": ["none"]
+    }
+  ]
+}

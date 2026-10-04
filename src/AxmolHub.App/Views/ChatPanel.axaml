@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AxmolHub.App"
+             x:Class="AxmolHub.App.ChatPanel"
+             x:DataType="local:ChatPanel">
+
+  <!--
+    The AI assistant, as a **full page** like Projects/Installs/Toolchains: the whole content area belongs to
+    the conversation. (It used to be a 380px right-side drawer; the full-page shape was asked for so the
+    transcript gets the same room as every other destination.)
+
+    Shape: header (title + current model + new) → message flow (scrolls, fills) → input row (send / stop).
+    The transcript is the only thing that grows; everything else is a fixed-height row, so the input row stays
+    at the bottom no matter how long the conversation gets.
+
+    Provider **management** deliberately does not live here: it moved to Settings ▸ Models, together with the
+    affiliate disclosure. This page only *reports* which model the next message will use — the same split
+    GitHub Copilot uses (settings own configuration, the chat view owns the conversation).
+  -->
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="0,0,0,2">
+
+    <!-- Header -->
+    <DockPanel Grid.Row="0" Margin="0,0,0,14">
+      <Button x:Name="NewConversationButton" Content="{DynamicResource NewConversation}" Classes="quiet"
+              DockPanel.Dock="Right" Padding="12,6" VerticalAlignment="Top" />
+      <StackPanel VerticalAlignment="Center">
+        <TextBlock x:Name="TitleLabel" Text="{DynamicResource Assistant}"
+                   FontSize="22" FontWeight="SemiBold" />
+        <TextBlock x:Name="ActiveModelLabel" Classes="muted" FontSize="12" Margin="0,6,0,0"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+    </DockPanel>
+
+    <!-- Conversation history picker -->
+    <DockPanel Grid.Row="1" Margin="0,0,0,12" VerticalAlignment="Top">
+      <Button x:Name="DeleteConversationButton" Content="{DynamicResource DeleteConversation}"
+              Classes="quiet destructive" DockPanel.Dock="Right" Padding="10,5" Margin="8,0,0,0" />
+      <ComboBox x:Name="ConversationPicker" HorizontalAlignment="Stretch"
+                PlaceholderText="{DynamicResource NoConversations}" />
+    </DockPanel>
+
+    <!-- Message flow -->
+    <Border Grid.Row="2" Background="{DynamicResource Hub.SurfaceSunken}" CornerRadius="6"
+            BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1">
+      <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto" Padding="16,12">
+        <StackPanel x:Name="MessageFlow" Spacing="12">
+          <TextBlock x:Name="EmptyHint" Text="{DynamicResource AssistantEmpty}"
+                     Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Input -->
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+      <TextBox x:Name="InputBox" Grid.Column="0" AcceptsReturn="True" MaxHeight="160"
+               TextWrapping="Wrap" PlaceholderText="{DynamicResource InputPlaceholder}"
+               VerticalContentAlignment="Top" Padding="10,8" />
+      <Button x:Name="SendButton" Grid.Column="1" Content="{DynamicResource Send}" Classes="primary"
+              Margin="10,0,0,0" Padding="18,8" VerticalAlignment="Bottom" />
+    </Grid>
+
+  </Grid>
+</UserControl>

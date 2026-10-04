@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub.App;
@@ -117,6 +118,141 @@ public partial class App : Application
         if (Options.Gallery)
         {
             desktop.MainWindow = new ControlGalleryWindow();
+            return;
+        }
+
+        // --shot-provider-picker <png>: shows the modal "add provider" picker on its own and captures it.
+        // Nothing else can photograph it — it is a dialog, so --smoke-pages (which walks the shell's pages)
+        // never sees it — and it is the one new screen S6 introduced, i.e. exactly the thing a person needs to
+        // look at before believing the layout is right. Presets are read from the real manifest, with a couple
+        // of already-configured entries filtered out so the list has the shape a user would actually see.
+        if (Options.ShotProviderPickerPath is { } pickerShot)
+        {
+            var presets = AiProviderManifest.Load()
+                .Where(entry => entry.Id != "openai")
+                .Select(entry => AiProviderManifest.CreateBuiltIn(entry.Id))
+                .OfType<ModelProvider>()
+                .ToArray();
+
+            var dialog = ProviderPickerWindow.ForCheck(presets);
+            desktop.MainWindow = dialog;
+            dialog.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    dialog.UpdateLayout();
+                    Dispatcher.UIThread.RunJobs();
+                    var stats = SmokeCapture.Capture(dialog, pickerShot);
+                    Console.WriteLine(stats.IsBlank() ? $"BLANK {pickerShot}" : $"OK    {pickerShot}");
+                    desktop.Shutdown(stats.IsBlank() ? 1 : 0);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    desktop.Shutdown(1);
+                }
+            });
+            return;
+        }
+
+        // --shot-auth-dialog <png>: the authentication dialog, on the method step or the key step depending on
+        // whether the file name says "key". It is a separate switch for the same reason as the picker shot: a
+        // modal is not part of the settings page, so --smoke-pages cannot photograph it at all.
+        if (Options.ShotAuthDialogPath is { } authDialogShot)
+        {
+            // OrcaRouter is the one provider with both routes, so step one is the only place the two options
+            // appear together; a key-only provider would render a list of one and misrepresent the dialog.
+            var provider = AiProviderManifest.CreateBuiltIn("orcarouter");
+            if (provider is null)
+            {
+                Console.Error.WriteLine("orcarouter is missing from the manifest.");
+                desktop.Shutdown(1);
+                return;
+            }
+
+            var step = authDialogShot.Contains("key", StringComparison.OrdinalIgnoreCase)
+                ? ProviderAuthMethods.ApiKey
+                : null;
+            var authDialog = AuthDialog.ForCheck(provider, step);
+            desktop.MainWindow = authDialog;
+            authDialog.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    authDialog.UpdateLayout();
+                    Dispatcher.UIThread.RunJobs();
+                    var stats = SmokeCapture.Capture(authDialog, authDialogShot);
+                    Console.WriteLine(stats.IsBlank() ? $"BLANK {authDialogShot}" : $"OK    {authDialogShot}");
+                    desktop.Shutdown(stats.IsBlank() ? 1 : 0);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    desktop.Shutdown(1);
+                }
+            });
+            return;
+        }
+
+        // --shot-settings-auth <png>: the settings page scrolled to the provider card, with an account added.
+        // Same reason as the picker shot — the auth block sits below the fold, so --smoke-pages captures a
+        // page image that does not contain it. The account is added through the real workspace so what is
+        // photographed is the state a configured install would be in, not a hand-built mock.
+        if (Options.ShotSettingsAuthPath is { } authShot)
+        {
+            // A scratch data root, not the user's: this mode writes real credentials to demonstrate the account
+            // list, and doing that against the live root would leave demo accounts behind on every run.
+            var authRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "axmolhub-shot-" + Guid.NewGuid().ToString("N")[..8]);
+            System.IO.Directory.CreateDirectory(authRoot);
+
+            var authWindow = new MainWindow(authRoot, preferencesStore, preferences);
+            desktop.MainWindow = authWindow;
+            authWindow.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    var settings = (SettingsPage)authWindow.NavigateTo("Settings");
+                    settings.UpdateLayout();
+                    Dispatcher.UIThread.RunJobs();
+
+                    // Two accounts so the list has the shape it gets in real use (a named one plus a signed-in
+                    // one), which is what makes the active badge and the row of actions worth looking at.
+                    authWindow.Chat.AddCredential("orcarouter", "工作账号", "sk-demo-account", CredentialSources.ApiKey);
+                    authWindow.Chat.AddOAuthCredential("orcarouter", "acct-demo", "api", "sk-yoex-demo");
+
+                    // A second endpoint and several models, so the picture shows the grouped list the way it
+                    // looks once more than one provider is configured — a single group would not reveal whether
+                    // the groups actually stack. Three models rather than one for the same reason about the
+                    // rules *between* rows: with a single row there is nothing to divide, so a picture taken
+                    // then cannot show whether the separators are there, doubled, or drawn in the wrong place.
+                    authWindow.Chat.AddPreset("deepseek");
+                    authWindow.Chat.AddModel("orcarouter", "orcarouter/auto");
+                    authWindow.Chat.AddModel("orcarouter", "gpt-5.1-codex-mini");
+                    authWindow.Chat.AddModel("orcarouter", "o4-mini");
+                    settings.RefreshProviderGroupsForCheck();
+                    // A second shot scrolls to the next group, so the "all groups expanded" claim is visible
+                    // rather than inferred from one card.
+                    if (authShot.Contains("second", StringComparison.OrdinalIgnoreCase))
+                    {
+                        settings.ScrollToSecondGroupForCheck();
+                    }
+                    else
+                    {
+                        settings.ScrollToProviderCardForCheck();
+                    }
+
+                    authWindow.UpdateLayout();
+                    Dispatcher.UIThread.RunJobs();
+                    var stats = SmokeCapture.Capture(authWindow, authShot);
+                    Console.WriteLine(stats.IsBlank() ? $"BLANK {authShot}" : $"OK    {authShot}");
+                    desktop.Shutdown(stats.IsBlank() ? 1 : 0);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    desktop.Shutdown(1);
+                }
+            });
             return;
         }
 

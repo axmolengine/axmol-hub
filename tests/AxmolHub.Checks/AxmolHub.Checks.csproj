@@ -4,11 +4,13 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- 同上（Core）：无 PackageReference，锁文件钉不住任何东西，退出跟踪。
-         **加第一个 PackageReference 时删掉这一行。** -->
-    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <!-- 本项目经 Agent 间接引入 Microsoft.Extensions.AI 等包（有真依赖），因此锁文件须跟踪
+         （继承根 props 的 true），不再退出。 -->
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../src/AxmolHub.Core/AxmolHub.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/AxmolHub.Core/AxmolHub.Core.csproj" />
+    <ProjectReference Include="../../src/AxmolHub.Agent/AxmolHub.Agent.csproj" />
+  </ItemGroup>
   <!-- 与三个 exe 项目保持同一套部署布局：PackagingRecipes 从 AppContext.BaseDirectory/manifests 读验证边界，
        行为检查必须和产品看到同一份清单，否则断言就测不到真实路径。 -->
   <ItemGroup>

@@ -35,7 +35,6 @@ public readonly record struct PickResult(PickOutcome Outcome, string? Path)
 /// semantics changed too: WPF gives <c>string?</c> directly, Avalonia gives
 /// <c>IStorageFolder</c>/<c>IStorageFile</c>; the local path must be recovered via
 /// <c>TryGetLocalPath()</c>, which is null when it can't be recovered (cloud location).
-/// See docs/avalonia-migration-plan.md §3.3.
 /// </summary>
 public static class Pickers
 {

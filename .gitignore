@@ -28,8 +28,7 @@ Thumbs.db
 *.p12
 *.key
 
-# 开发期临时产物与缓存（自检的报告/截图/夹具也落在这里，见 Services/ScratchDirectory.cs）
+# 本地工作稿与临时产物（不随仓库发布：方案/规划稿、自检报告、截图、夹具）
 tmp/
 cache/
-
-docs/vision-vs-implementation.md
+local/

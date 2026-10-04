@@ -33,7 +33,7 @@ public sealed record FrameStats(int Width, int Height, int DistinctColors, doubl
 /// blank" criterion.
 /// Corresponds to the RenderTargetBitmap + PngBitmapEncoder section of WPF's App.xaml.cs, but
 /// WPF's <c>Window.ContentRendered</c> doesn't exist in Avalonia, so the first-frame signal must
-/// be built by hand (see docs/avalonia-migration-plan.md §3.5).
+/// be built by hand.
 /// </summary>
 public static class SmokeCapture
 {

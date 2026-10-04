@@ -330,5 +330,158 @@ public static class HubTexts
         ["RestartNow"] = ("立即重启", "Restart now"),
         // 故意不带 {0}：后面要拼的是异常原文，可能含花括号，string.Format 会抛 FormatException。
         ["UpdateDownloadFailed"] = ("更新下载失败：", "Couldn't download the update: "),
+        // 内置 AI 助手（右侧抽屉）。协议基线是 OpenAI 兼容，首期 provider = OrcaRouter + 自定义。
+        ["Assistant"] = ("AI 助手", "AI assistant"),
+        ["AssistantHint"] = ("向助手提问 Axmol 相关问题。模型由你配置的 provider 提供。", "Ask the assistant about Axmol. Answers come from the provider you configure."),
+        ["AssistantEmpty"] = ("开始新的对话。", "Start a new conversation."),
+        ["NewConversation"] = ("新建对话", "New conversation"),
+        ["DeleteConversation"] = ("删除对话", "Delete conversation"),
+        ["Conversation"] = ("对话", "Conversation"),
+        ["NoConversations"] = ("还没有对话。", "No conversations yet."),
+        ["Send"] = ("发送", "Send"),
+        ["Stop"] = ("停止", "Stop"),
+        ["InputPlaceholder"] = ("输入消息，Enter 发送，Shift+Enter 换行", "Type a message. Enter to send, Shift+Enter for a newline"),
+        ["Provider"] = ("模型提供商", "Provider"),
+        // 设置页新增的「模型提供商」卡片标题与说明（provider 管理从助手页迁到这里）。
+        ["ModelProviders"] = ("模型提供商", "Model providers"),
+        ["ModelProvidersHint"] = ("助手使用的模型接口。「添加提供商」可从内置预设中挑选（OrcaRouter、OpenAI、DeepSeek、Ollama…），已配置的提供商在此管理密钥与模型；助手页只负责选择用哪一个。", "The endpoints the assistant can use. \"Add provider\" picks from built-in presets (OrcaRouter, OpenAI, DeepSeek, Ollama …); keys and models for the ones you configured are managed here, while the assistant page only chooses between them."),
+        // 助手页顶部的只读提示，{0} = 提供商名称，{1} = 模型名称。
+        ["ActiveModelFormat"] = ("当前模型：{0} · {1}", "Current model: {0} · {1}"),
+        ["NoProvider"] = ("尚未配置模型提供商。", "No model provider is configured yet."),
+        ["ApiKey"] = ("API 密钥", "API key"),
+        ["ApiKeyHint"] = ("密钥保存在操作系统的凭据存储中，不会写入配置文件或日志。", "The key is kept in the OS credential store, never written to config files or logs."),
+        ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI；macOS/Linux 待补）。", "Secure key storage is not available on this platform yet (Windows uses DPAPI; macOS/Linux are pending)."),
+        ["ApiKeyRequired"] = ("该提供商需要 API 密钥。", "This provider requires an API key."),
+        ["SaveApiKey"] = ("保存密钥", "Save key"),
+        // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，作者可获得分成（见规划 D5）。
+        ["AffiliateDisclosure"] = ("经本项目的推荐链接注册 {0}，作者可获得分成。", "Signing up for {0} through this project's referral link supports the author."),
+        ["ViewReferral"] = ("了解详情", "Learn more"),
+        ["ChatFailed"] = ("助手请求失败：", "Assistant request failed: "),
+        ["ChatCancelled"] = ("已停止。", "Stopped."),
+        ["You"] = ("你", "You"),
+        // provider 管理（custom provider = 用户自带 endpoint，接入本地模型的主要途径）。
+        ["AddProvider"] = ("添加提供商", "Add provider"),
+        ["EditProvider"] = ("编辑提供商", "Edit provider"),
+        ["RemoveProvider"] = ("移除提供商", "Remove provider"),
+        ["AddCustomProvider"] = ("添加自定义提供商", "Add custom provider"),
+        ["EditProviderTitle"] = ("编辑提供商", "Edit provider"),
+        ["ProviderName"] = ("名称", "Name"),
+        ["ProviderBaseUrl"] = ("接口地址", "Base URL"),
+        ["ProviderBaseUrlHint"] = ("OpenAI 兼容的接口地址，例如 https://api.openai.com/v1，本地模型如 http://localhost:11434/v1。", "OpenAI-compatible base URL, e.g. https://api.openai.com/v1; for a local model, http://localhost:11434/v1."),
+        ["ProviderModel"] = ("模型名称", "Model"),
+        ["ProviderModelHint"] = ("提供商使用的默认模型，例如 gpt-4o-mini、orcarouter/auto、llama3。", "Default model for this provider, e.g. gpt-4o-mini, orcarouter/auto, llama3."),
+        ["ProviderNameRequired"] = ("请填写提供商名称。", "Enter a provider name."),
+        ["ProviderBaseUrlInvalid"] = ("接口地址无效：请填写完整的 http/https 地址。", "Invalid base URL: enter a full http/https address."),
+        ["ProviderModelRequired"] = ("请填写模型名称。", "Enter a model name."),
+        ["ProviderBuiltInReadOnly"] = ("内置提供商不能移除；如需其他接口，请添加自定义提供商。", "Built-in providers can't be removed. To use another endpoint, add a custom provider."),
+        ["ProviderRemoved"] = ("已移除提供商。", "Provider removed."),
+        ["ProviderBuiltInLockedHint"] = ("内置提供商的接口地址与名称由清单固定，可修改模型和密钥。", "A built-in provider's base URL and name come from the manifest; its model and key can be changed."),
+        ["RemoveProviderConfirm"] = ("移除后该提供商的密钥也会删除，且无法恢复。", "Removing it also deletes its stored API key. This cannot be undone."),
+        // provider 预设选择器（对齐 GitHub Copilot 的「列表 + 可搜索添加」交互）。
+        ["ProviderPickerHint"] = ("选择要接入的模型提供商。可搜索名称或说明；接入清单外的私有接口请选「自定义接口」。", "Pick a model provider to add. Search by name or description; for a private endpoint that isn't listed, choose \"Custom endpoint\"."),
+        ["ProviderSearchHint"] = ("搜索提供商", "Search providers"),
+        ["ProviderSearchNoMatch"] = ("没有匹配的提供商。试试更短的关键词，或选择「自定义接口」。", "No matching provider. Try a shorter term, or choose \"Custom endpoint\"."),
+        ["ProviderCustomRow"] = ("自定义接口", "Custom endpoint"),
+        ["ProviderCustomRowHint"] = ("手动填写 OpenAI 兼容的接口地址与模型，适用于自建网关或局域网内的本地模型。", "Enter an OpenAI-compatible base URL and model by hand — for a self-hosted gateway or a local model on another machine."),
+        ["ProviderAlreadyAdded"] = ("该提供商已在列表中。", "That provider is already in the list."),
+        // 认证方式与账号（对齐 opencode 的 account 模型：一份凭据 = 一个账号，不分来源）。
+        ["AuthMethod"] = ("认证方式", "Sign-in method"),
+        ["AuthMethodApiKey"] = ("API 密钥", "API key"),
+        ["AuthMethodOAuth"] = ("浏览器登录", "Sign in with browser"),
+        ["AuthMethodNone"] = ("无需认证", "No sign-in needed"),
+        ["AuthMethodNoneHint"] = ("本地接口不需要密钥，可以直接使用。", "A local endpoint needs no key and works as-is."),
+        ["AuthOAuthSignIn"] = ("使用 {0} 登录", "Sign in with {0}"),
+        ["AuthOAuthHint"] = ("将在浏览器中打开 {0} 的授权页面；完成授权后密钥会自动保存，无需手动复制。", "Opens {0}'s authorization page in your browser. The key is saved automatically once you approve — nothing to copy."),
+        ["AuthOAuthPending"] = ("正在等待浏览器授权…", "Waiting for authorization in the browser…"),
+        ["AuthOAuthSucceeded"] = ("已登录并保存密钥。", "Signed in; the key has been saved."),
+        ["AuthOAuthFailed"] = ("登录失败：", "Sign-in failed: "),
+        ["AuthOAuthCancelled"] = ("已取消登录。", "Sign-in cancelled."),
+        ["AuthOAuthScopeRejected"] = ("授权返回的权限范围比请求的更宽（{0}），已拒绝该密钥。请在授权页面仅勾选接口访问权限。", "The granted scope ({0}) is wider than the one requested, so the key was refused. On the consent page, grant API access only."),
+        ["AuthOAuthNoBrowser"] = ("无法自动打开浏览器，请手动访问下面的地址：", "Could not open a browser automatically; open this address by hand:"),
+        ["AuthOAuthPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥，无法完成登录。", "Secure key storage is not available on this platform yet, so sign-in cannot complete."),
+        // 两种登录入口同时出现时，中间的分隔文案。
+        ["AuthOrSeparator"] = ("或", "or"),
+        // "Active" survives the account list's removal because the *model* rows reuse it to mark the model in
+        // use. The key kept its old name rather than being renamed to ModelActive: HubTexts is bilingual data,
+        // not something to churn, and a rename would have touched two languages to say nothing.
+        ["AccountActive"] = ("使用中", "Active"),
+        ["Affiliate"] = ("推荐", "Referral"),
+        ["Add"] = ("添加", "Add"),
+        ["Save"] = ("保存", "Save"),
+        // 分组列表（每个已配置的 provider 各成一组、全部展开）与其中的模型子列表。
+        ["ProviderInUse"] = ("当前", "Current"),
+        ["ProviderBuiltInTag"] = ("内置", "Built-in"),
+        ["ProviderCustomTag"] = ("自定义", "Custom"),
+        ["ProviderNoCredential"] = ("此提供商无需密钥，可直接使用。", "This provider needs no key and works as-is."),
+        ["RemoveProviderIcon"] = ("移除", "Remove"),
+        ["Models"] = ("模型", "Models"),
+        ["ModelsHint"] = ("同一提供商可保存多个模型，标为「使用中」的那个用于对话。", "A provider can hold several models; the one marked \"In use\" answers the chat."),
+        ["AddModel"] = ("添加模型", "Add model"),
+        ["RefreshModels"] = ("刷新", "Refresh"),
+        ["RefreshModelsHint"] = ("从提供商重新拉取可用模型列表。", "Fetch the available model list from the provider again."),
+        // 拉取结果。三种结局分开写而不是一句话带过：「问到了但一个都没有」和「压根没问到」在用户那里是
+        // 完全不同的两件事——前者要去检查账号权限或本地服务，后者要检查网络，合写成一句就等于没告诉
+        // 用户该做什么。
+        ["ModelsRefreshing"] = ("正在拉取模型列表…", "Fetching the model list…"),
+        ["ModelsFetched"] = ("已拉取 {0} 个模型。", "Fetched {0} models."),
+        ["ModelsFetchedEmpty"] = ("该提供商没有返回任何模型。", "The provider returned no models."),
+        ["ModelsFetchFailed"] = ("未能拉取模型列表，保留原有列表。", "Could not fetch the model list; the existing list was kept."),
+        ["ModelUse"] = ("使用此模型", "Use this model"),
+        ["ModelRemove"] = ("移除该模型", "Remove this model"),
+        ["ModelRemoveConfirm"] = ("将从本机列表移除该模型，提供商与密钥不受影响。", "Removes this model from the local list. The provider and its keys are unaffected."),
+        ["ModelAdded"] = ("已添加模型。", "Model added."),
+        ["ModelRemoved"] = ("已移除模型。", "Model removed."),
+        ["ModelDuplicated"] = ("该模型已在列表中。", "That model is already in the list."),
+        ["ModelNameRequired"] = ("请填写模型名称。", "Enter a model name."),
+        ["ModelNamePlaceholder"] = ("模型名称，例如 gpt-5.1-codex-mini", "Model name, e.g. gpt-5.1-codex-mini"),
+        ["AddModelTitle"] = ("添加模型", "Add model"),
+        ["NoModels"] = ("尚未添加模型。", "No models added yet."),
+        // 与 NoModels 分开：那一行说的是「你没加」，这一行说的是「接口还没告诉我们有哪些」。去掉
+        // defaultModel 之后，新采纳的 provider 一开始就是空的，混用旧文案会把用户引到「手动添加」，
+        // 而真正该做的是点刷新。
+        ["NoModelsFetched"] = ("还没有模型列表。点击「刷新」从提供商拉取，或手动添加一个模型名。", "No model list yet. Press Refresh to fetch one from the provider, or add a model name by hand."),
+        // 鉴权状态与断开。对勾 = 该 provider 已鉴权（有一份凭据，不分来源）。术语统一用「鉴权 / 链接」。
+        //
+        // 这些文案在「一个 provider 一份凭据」之后改过一次：原来写的是「全部账号」，那是多账号模型留下的
+        // 说法，现在一个 provider 只有一份凭据，说「全部」反而会让用户以为还有别的要清。
+        ["ProviderConnected"] = ("已鉴权", "Authenticated"),
+        ["ProviderNotConnected"] = ("未鉴权", "Not authenticated"),
+        ["DisconnectProviderConfirm"] = ("将删除该提供商在本机保存的密钥，提供商本身保留，可随时重新鉴权。此操作无法恢复。", "Deletes the key saved for this provider on this machine. The provider itself stays and can be reauthenticated at any time. This cannot be undone."),
+        ["ProviderDisconnected"] = ("已断开鉴权并清除本地密钥。", "Disconnected; local key cleared."),
+        ["ProviderNothingToDisconnect"] = ("该提供商没有已保存的密钥。", "This provider has no saved key."),
+        ["ProviderPinnedHint"] = ("默认提供商不能移除（移除后会在下次启动时自动恢复）；可以断开鉴权清除本地密钥。", "The default provider can't be removed — it would be restored on the next launch. You can disconnect it to clear local keys."),
+
+        // 折叠态下那一行摘要。只剩模型数：账号数在一对一之后恒为 0 或 1，而「1 个账号」是个没有信息量的
+        // 数字——连接状态由名称旁边的对勾说，不需要文字再说一遍。
+        ["SummaryModelCount"] = ("{0} 个模型", "{0} models"),
+        ["SummaryModelCountOne"] = ("{0} 个模型", "1 model"),
+
+        // ── 鉴权对话框 ──
+        // 列表里只有一个按钮：未鉴权时叫「鉴权」，已鉴权时叫「断开鉴权」。真正的输入发生在对话框里，
+        // 所以列表页永远看不到输入框。
+        ["Authenticate"] = ("鉴权", "Authenticate"),
+        ["DisconnectProvider"] = ("断开鉴权", "Disconnect"),
+        ["AuthDialogTitle"] = ("鉴权 {0}", "Authenticate {0}"),
+        ["AuthDialogHint"] = ("该提供商支持以下鉴权方式，请选择一种。", "This provider supports the following methods. Pick one."),
+        ["AuthMethodLoginOption"] = ("用 {0} 账号登录", "Sign in with a {0} account"),
+        ["AuthMethodKeyOption"] = ("粘贴已有密钥", "Paste an existing key"),
+        ["Next"] = ("下一步", "Next"),
+        ["Back"] = ("上一步", "Back"),
+        ["AuthKeyStepTitle"] = ("输入密钥", "Enter your key"),
+        ["AuthKeyStepHint"] = ("密钥只保存在本机。确定前会向 {0} 校验一次。", "The key is stored on this machine only. It is checked against {0} before it is saved."),
+        ["AuthKeyStepHintNoCheck"] = ("密钥只保存在本机。", "The key is stored on this machine only."),
+        ["AuthKeyChecking"] = ("正在校验…", "Checking…"),
+        ["AuthKeyRejected"] = ("{0} 拒绝了该密钥，请检查后重试。", "{0} rejected this key. Check it and try again."),
+        // 校验请求本身失败（离线 / 端点不可达）时**照常保存**：把「问不到」说成「密钥无效」会让用户在
+        // 酒店 Wi-Fi 上怎么也连不上。这个区分与 KeyCheckOutcome 的四态是一一对应的。
+        ["AuthKeyUnreachable"] = ("无法向 {0} 校验该密钥（网络或端点不可用），将直接保存。", "Could not check the key with {0} (network or endpoint unavailable); saving it as typed."),
+        ["AuthKeyAccepted"] = ("密钥有效。", "The key is valid."),
+        ["AuthDone"] = ("鉴权成功。", "Authenticated."),
+        ["AuthDialogCancelled"] = ("已取消鉴权。", "Authentication cancelled."),
+        ["AuthSecretsUnsupported"] = ("当前平台没有可用的密钥存储，无法保存鉴权信息。", "This platform has no secret store available, so authentication cannot be saved."),
+
+        // 移除 provider 时的自动断开。确认框必须说明凭据会一起没了，否则「移除」看起来只影响列表。
+        ["RemoveProviderWithCredentials"] = ("将同时删除该提供商在本机保存的 {0} 个账号与密钥。此操作无法恢复。", "Also deletes the {0} account(s) and key(s) saved for this provider on this machine. This cannot be undone."),
+        ["RemoveProviderIconHint"] = ("移除该提供商", "Remove this provider"),
     };
 }

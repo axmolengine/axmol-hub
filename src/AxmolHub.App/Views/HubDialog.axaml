@@ -10,7 +10,7 @@
 
   <!-- Avalonia has no MessageBox. We build our own instead of pulling in a third-party package: the
        repo already hand-writes all control styles, so building our own reuses HubTokens / HubControls
-       directly and adds no dependency. See docs/avalonia-migration-plan.md §3.2.
+       directly and adds no dependency.
 
        It must be able to **display standalone with no host window** — in the WPF version App.xaml.cs
        used MessageBox to report "startup failed" before the main window was created, and that path

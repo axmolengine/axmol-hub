@@ -32,7 +32,7 @@ public sealed class CliEnvelope
 
 /// <summary>
 /// The encoding entry point for the contract. Placed in Core rather than Cli so that P1's MCP Server can
-/// serialize **the same set of payload types** (see docs/ai-first-plan.md §1.1 "tools are defined once");
+/// serialize **the same set of payload types** ("tools are defined once");
 /// putting it in Cli would sooner or later produce two definitions that drift apart. Introduces no NuGet
 /// dependency: System.Text.Json is in the framework, and Core's offline cold-build nature must be preserved.
 /// </summary>

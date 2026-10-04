@@ -15,7 +15,7 @@
 
 ## 图形界面：Avalonia 依赖闭包
 
-Avalonia 版界面（`src/AxmolHub.App/`）引入 **31 个** NuGet 包（从 `project.assets.json` 数出的完整传递闭包，含 `Avalonia.Controls.DataGrid`；同项目的 `Velopack` 另算一节）。**`Avalonia` / `Avalonia.Desktop` / `Avalonia.Themes.Fluent` 三项及其绝大多数传递依赖是 MIT**（`Avalonia.*` 12.1.3、`SkiaSharp` 3.119.4、`HarfBuzzSharp` 8.3.1.3、`MicroCom.Runtime`、`Tmds.DBus.Protocol` 等，均按包内 nuspec 的 `MIT` 表达式核对）。逐项声明见 [docs/avalonia-migration-plan.md](docs/avalonia-migration-plan.md) §8。
+Avalonia 版界面（`src/AxmolHub.App/`）引入 **31 个** NuGet 包（从 `project.assets.json` 数出的完整传递闭包，含 `Avalonia.Controls.DataGrid`；同项目的 `Velopack` 另算一节）。**`Avalonia` / `Avalonia.Desktop` / `Avalonia.Themes.Fluent` 三项及其绝大多数传递依赖是 MIT**（`Avalonia.*` 12.1.3、`SkiaSharp` 3.119.4、`HarfBuzzSharp` 8.3.1.3、`MicroCom.Runtime`、`Tmds.DBus.Protocol` 等，均按包内 nuspec 的 `MIT` 表达式核对）。
 
 **例外一个，必须单独声明**：
 

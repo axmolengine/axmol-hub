@@ -28,6 +28,16 @@ public partial class MainWindow : Window
     private readonly HubPreferences _preferences;
     private readonly Dictionary<string, Control> _pages = [];
 
+    /// <summary>
+    /// The AI assistant page's state. **One instance for the window's whole life**, created before the page
+    /// is: it persists providers/conversations under the data root, so unlike <see cref="HubWorkspace"/>
+    /// it must survive a data-root switch's decision point — see <see cref="SwitchDataRoot"/>.
+    /// </summary>
+    private ChatWorkspace _chat;
+
+    /// <summary>The assistant page, built lazily on first navigation (a user who never opens it pays nothing).</summary>
+    private ChatPanel? _chatPanel;
+
     private string _currentKey = "";
 
     /// <summary>
@@ -55,6 +65,7 @@ public partial class MainWindow : Window
         _preferences = preferences;
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
         _workspace.Owner = this;
+        _chat = new ChatWorkspace(dataRoot);
 
         InitializeComponent();
         InitializeChrome();
@@ -64,7 +75,11 @@ public partial class MainWindow : Window
         NavProjects.IsCheckedChanged += (_, _) => OnNavigated(NavProjects, "Projects");
         NavInstalls.IsCheckedChanged += (_, _) => OnNavigated(NavInstalls, "Installs");
         NavToolchains.IsCheckedChanged += (_, _) => OnNavigated(NavToolchains, "Toolchains");
-        NavSettings.IsCheckedChanged += (_, _) => OnNavigated(NavSettings, "Settings");
+        NavAssistant.IsCheckedChanged += (_, _) => OnNavigated(NavAssistant, "Assistant");
+
+        // Settings is no longer a nav item: it is the gear at the bottom of the rail. It still navigates like
+        // one, so the page keeps its cached instance and ScrollViewer position.
+        SettingsButton.Click += (_, _) => NavigateTo("Settings");
 
         // Default to the "Projects" page, matching the WPF version (WPF uses NavProjects IsChecked="True").
         NavigateTo("Projects");
@@ -108,9 +123,9 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>The assembled page keys. Verification programs rely on it to confirm all four
-    /// navigation items have a destination.</summary>
-    internal static string[] PageKeys => ["Projects", "Installs", "Toolchains", "Settings"];
+    /// <summary>The assembled page keys. Verification programs rely on it to confirm every navigation
+    /// destination has a real page. <c>Assistant</c> is included: it is a full page now, not a drawer.</summary>
+    internal static string[] PageKeys => ["Projects", "Installs", "Toolchains", "Assistant", "Settings"];
 
     internal HubWorkspace Workspace => _workspace;
 
@@ -128,7 +143,8 @@ public partial class MainWindow : Window
                 "Projects" => new ProjectsPage(_workspace),
                 "Installs" => new InstallsPage(_workspace),
                 "Toolchains" => new ToolchainsPage(_workspace),
-                "Settings" => new SettingsPage(_workspace, _preferencesStore, _preferences, OpenFolder, ApplyLanguage, SwitchDataRoot),
+                "Assistant" => _chatPanel ??= CreateChatPanel(),
+                "Settings" => new SettingsPage(_workspace, _preferencesStore, _preferences, _chat, OpenFolder, ApplyLanguage, SwitchDataRoot),
                 _ => throw new ArgumentException("Unknown page: " + name, nameof(name)),
             };
             _pages[name] = page;
@@ -140,18 +156,26 @@ public partial class MainWindow : Window
         return page;
     }
 
+    /// <summary>Builds the assistant page once and keeps the shell's reference to it, so a later
+    /// data-root switch can drop and rebuild it (<see cref="ReplaceWorkspace"/>).</summary>
+    private ChatPanel CreateChatPanel()
+        => new(_chat);
+
     /// <summary>
     /// Keeps the left navigation highlight in sync with the current page. This is exactly what the
     /// WPF version does in <c>SelectPage</c>.
     /// Skipping it yields "showing page A but highlighting page B" — invisible at compile time and
     /// at binding time, only catchable by screenshot review.
+    ///
+    /// Settings is not a nav item, so it has no highlight to sync: landing on it simply clears the four
+    /// radio buttons. That is why the loop below can omit it while <see cref="PageKeys"/> still lists it.
     /// </summary>
     private void SyncNavigation(string name)
     {
         foreach (var (key, button) in new[]
                  {
                      ("Projects", NavProjects), ("Installs", NavInstalls),
-                     ("Toolchains", NavToolchains), ("Settings", NavSettings),
+                     ("Toolchains", NavToolchains), ("Assistant", NavAssistant),
                  })
         {
             var expected = key == name;
@@ -228,6 +252,14 @@ public partial class MainWindow : Window
         // reconstruct them.
         _pages.Clear();
 
+        // The assistant's providers and conversations also live under the data root, so it must be rebuilt
+        // for the new one and the page (if it was ever built) dropped with it — otherwise the assistant would
+        // keep listing the previous root's conversations and saving new ones into a directory that is no
+        // longer current. Rebuilding rather than re-pointing mirrors how the pages are handled.
+        _chat.Dispose();
+        _chat = new ChatWorkspace(next.Store.Root);
+        _chatPanel = null;
+
         // The log panel holds the previous root's content; leaving it would point people at a
         // directory no one is looking at anymore.
         ActivityLog.Text = "";
@@ -262,13 +294,21 @@ public partial class MainWindow : Window
     /// doesn't cover them).</summary>
     internal void ApplyLanguage()
     {
+        // InitializeChrome also rewrites the settings gear's tooltip, so a language switch reaches it.
         InitializeChrome();
 
         foreach (var page in _pages.Values)
         {
-            if (page is SettingsPage settings)
+            switch (page)
             {
-                settings.Reload();
+                case SettingsPage settings:
+                    settings.Reload();
+                    break;
+                // The assistant's copy is written in code (it composes values), so it only follows a language
+                // switch if it is told to — the same reason the settings page reloads here.
+                case ChatPanel chat:
+                    chat.Reload();
+                    break;
             }
         }
 
@@ -329,6 +369,34 @@ public partial class MainWindow : Window
         };
     }
 
+    /// <summary>
+    /// The assistant page, for the shell self-check. Navigates to it first if needed (which also proves the
+    /// lazy construction path works).
+    /// </summary>
+    internal ChatPanel OpenAssistant()
+    {
+        NavigateTo("Assistant");
+        return _chatPanel!;
+    }
+
+    /// <summary>
+    /// The assistant's state, for the shell self-check to assert against — and to install a scripted chat
+    /// client so the page can be verified with no network and no API key.
+    /// </summary>
+    internal ChatWorkspace Chat => _chat;
+
+    /// <summary>Whether the assistant page is the one on screen.</summary>
+    internal bool AssistantVisible => _currentKey == "Assistant";
+
+    /// <summary>The settings gear's tooltip, for the shell self-check: the button is icon-only, so the tip is
+    /// the only place its name is spelled out.</summary>
+    internal string SettingsLabel => ToolTip.GetTip(SettingsButton) as string ?? "";
+
+    /// <summary>Raises the gear's click path as a real click would — the self-check walks the same code the
+    /// user's click does instead of calling <see cref="NavigateTo"/> directly.</summary>
+    internal void ClickSettingsGearForCheck() => SettingsButton.RaiseEvent(
+        new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+
     private void WireChrome()
     {
         // The update dot reflects UpdateService.Last; both the startup check and the settings-page
@@ -366,13 +434,14 @@ public partial class MainWindow : Window
         };
 
         Closed += (_, _) => _workspace.Dispose();
+        Closed += (_, _) => _chat.Dispose();
     }
 
     private void SyncUpdateBadge()
         => ShowUpdateBadge(UpdateService.Instance.Last?.Result is UpdateService.CheckResult.UpdateAvailable);
 
     /// <summary>
-    /// Shows/hides the update dot on the Settings nav item. Passive signalling only — no prompt: the
+    /// Shows/hides the update dot on the settings gear. Passive signalling only — no prompt: the
     /// dot says "there's something new in Settings"; the user goes there to see and act on it.
     /// </summary>
     internal void ShowUpdateBadge(bool show) => SettingsUpdateDot.IsVisible = show;
@@ -383,6 +452,10 @@ public partial class MainWindow : Window
         BrandVersion.Text = "v" + version;
         Title = "Axmol Hub " + BrandVersion.Text;
         ToolTip.SetTip(SettingsUpdateDot, HubStrings.Get("UpdateDotTooltip"));
+
+        // The settings gear is icon-only, so its tooltip is the only place the name "Settings" appears for it.
+        // Set here rather than in ApplyLanguage so it is also in place at construction time.
+        ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
 
         // The WPF version hard-codes "AXMOL 2.11 LTS" in the bottom-left. The Avalonia version
         // computes it from the **default engine** at runtime: hard-coding the version number would

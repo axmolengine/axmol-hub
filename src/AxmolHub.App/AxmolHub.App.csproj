@@ -39,7 +39,7 @@
          注意这个包比核心慢一个补丁版本（12.1.2 vs 12.1.3），依赖约束是 >=，照常解析。 -->
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
     <!-- Avalonia.Fonts.Inter 刻意不加：Inter 不含 CJK 字形，而 Hub 的界面是中文优先，
-         字体选型属于 P3（见 docs/avalonia-migration-plan.md §3.4），在此处引入只会把错误默认值固化下来。 -->
+         字体选型属于 P3，在此处引入只会把错误默认值固化下来。 -->
     <!-- 开发期的可视化树调试器。官方模板的写法：Release 下整包不参与编译。
          注意 12.x 的包名是 AvaloniaUI.DiagnosticsSupport，Avalonia.Diagnostics 停在 11.3.22，12.x 一个都没发。 -->
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
@@ -49,6 +49,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
+    <!-- The AI assistant needs the Agent layer (OpenAI-compatible client factory + OS credential store).
+         Agent's own NuGet dependencies (Microsoft.Extensions.AI, .OpenAI, ProtectedData) flow through
+         transitively, which is why App gains them without repeating them above. -->
+    <ProjectReference Include="../AxmolHub.Agent/AxmolHub.Agent.csproj" />
     <!-- 内容清单与原 WPF 版逐行对齐；图标资源已在 P6 搬过来（见上面的 ApplicationIcon）。 -->
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
