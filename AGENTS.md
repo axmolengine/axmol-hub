@@ -55,3 +55,8 @@ A release is cut by a commit titled `Version x.y.z`. Its **only** change is the 
 `Directory.Build.props` — it is the release marker, not a change, and the release notes skip it.
 Anything else belongs in its own commit; if it rides along with the version bump, CI warns and the
 commit stays in the notes.
+
+## Project memory
+
+The `.workbuddy` directory holds the project's work logs and local memory. If that folder exists,
+access it and read the memory — do not perform any additional inference beyond what it records.
