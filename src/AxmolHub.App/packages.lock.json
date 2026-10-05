@@ -61,6 +61,18 @@
         "resolved": "0.40.0",
         "contentHash": "4ve14zs+gt1irldTQE3y5FLAHuzmhW7T99lAAvVipe/q2LWT/nUCO0iICb9TXGvMX6n7Z1OZroFXkdSy91rO8w=="
       },
+      "Markdown.Avalonia": {
+        "type": "Direct",
+        "requested": "[12.0.0-a3, )",
+        "resolved": "12.0.0-a3",
+        "contentHash": "WxJ09NVwZhVGyOwxIjoCngAPxK3D03qp6Q0s22tJsuFBqeA/J5P/nMtq2u6qCSYrQapjvWhre44IZ20euMJ0lA==",
+        "dependencies": {
+          "Markdown.Avalonia.Html": "12.0.0-a3",
+          "Markdown.Avalonia.Svg": "12.0.0-a3",
+          "Markdown.Avalonia.SyntaxHigh": "12.0.0-a3",
+          "Markdown.Avalonia.Tight": "12.0.0-a3"
+        }
+      },
       "Velopack": {
         "type": "Direct",
         "requested": "[1.2.161, )",
@@ -71,6 +83,14 @@
         "type": "Transitive",
         "resolved": "2.1.27548.20260419",
         "contentHash": "l17nI3XVDN3oMnpjf2pnmJg0YTwK4m6NLsn/itAjDMdObTFxN77D5F1M9sRMSfViSY3KKcse1ROczwgoWLJsnA=="
+      },
+      "Avalonia.AvaloniaEdit": {
+        "type": "Transitive",
+        "resolved": "12.0.0",
+        "contentHash": "VNfaYdTbiQ2DlSkSMoLg4DhTbQmQR0cFT6nqEqLkaYGLjBWmUdv5BNIuoObK4c9cgzFqnEJXBaOp4R/bxgFKfQ==",
+        "dependencies": {
+          "Avalonia": "12.0.0"
+        }
       },
       "Avalonia.BuildServices": {
         "type": "Transitive",
@@ -152,6 +172,28 @@
           "Avalonia.Skia": "12.1.3"
         }
       },
+      "ColorDocument.Avalonia": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "2MwW34IORon/fsqIJ99CDKMQ4Ht4xgbAQP93GGKAtXbTWevzmxbtr83IJ7tfRFmkxN3KCcYNhsKJ3JY+oD8KHA==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "ColorTextBlock.Avalonia": "12.0.0-a3"
+        }
+      },
+      "ColorTextBlock.Avalonia": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "atiMWViOXGG4bYBYxR+azVAM5XA53/exUpa3GHBL0Ktu+swS8I2ljmg6uLAqSINyq3KXrDpr2qL8hj0D+5bfPA==",
+        "dependencies": {
+          "Avalonia": "12.0.0"
+        }
+      },
+      "ExCSS": {
+        "type": "Transitive",
+        "resolved": "4.3.1",
+        "contentHash": "A8UtcghHQlWxPJhJF5bsfEYO7068JHGTuJ7tzyyMjd5fE/N/xY1cVOUhzuLLFwMOCJVnM4mqSQc93W9fGfZ1kA=="
+      },
       "HarfBuzzSharp": {
         "type": "Transitive",
         "resolved": "8.3.1.3",
@@ -180,6 +222,52 @@
         "type": "Transitive",
         "resolved": "8.3.1.3",
         "contentHash": "bx8CE8Js+XGX8PUxAHCBDEORt5aaBYtMN4Hr9QFs57Xithh6yjUyYqksizH6eRDhJkwsGI+SXWmPmMm8lZC9Pw=="
+      },
+      "HtmlAgilityPack": {
+        "type": "Transitive",
+        "resolved": "1.11.42",
+        "contentHash": "LDc1bEfF14EY2DZzak4xvzWvbpNXK3vi1u0KQbBpLUN4+cx/VrvXhgCAMSJhSU5vz0oMfW9JZIR20vj/PkDHPA=="
+      },
+      "Markdown.Avalonia.Html": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "700s950UN1yYCGsbetUOexkUo0iO18r+bWfz5A4l5rZzDfXTwju6YJ3xtXUAmrCpN7ZFP1v34XJCNB4VedhGFw==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "ColorTextBlock.Avalonia": "12.0.0-a3",
+          "HtmlAgilityPack": "1.11.42",
+          "Markdown.Avalonia.SyntaxHigh": "12.0.0-a3",
+          "Markdown.Avalonia.Tight": "12.0.0-a3"
+        }
+      },
+      "Markdown.Avalonia.Svg": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "fwq6jheiRJvgv2ekJqV5DrAKR13qA0dEnTTpt+EdmS0PhsAtNpm6STphUCm8SMK7dcUjY/bZplwE3BGL7/ftgQ==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "Markdown.Avalonia.Tight": "12.0.0-a3",
+          "Svg.Controls.Avalonia": "12.0.0.1"
+        }
+      },
+      "Markdown.Avalonia.SyntaxHigh": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "e68Rdih2WA2GVrS6pJsPUBc70dUb22HZx2QjmOFRQlihXiae+5a5nlIXrb2kbHrPgsiiKyXLqyUZKUST2P8bEQ==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "Avalonia.AvaloniaEdit": "12.0.0"
+        }
+      },
+      "Markdown.Avalonia.Tight": {
+        "type": "Transitive",
+        "resolved": "12.0.0-a3",
+        "contentHash": "ogAS4ZYcMnMgNDPvBAxRQxziL0iCdZHzBurYjqYTkTArVTzVZJ0exzBjStJ2yvfodO2bnTndwrO3Y5IAneRyXw==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "ColorDocument.Avalonia": "12.0.0-a3",
+          "ColorTextBlock.Avalonia": "12.0.0-a3"
+        }
       },
       "MicroCom.Runtime": {
         "type": "Transitive",
@@ -308,6 +396,11 @@
           "System.Net.ServerSentEvents": "10.0.11"
         }
       },
+      "ShimSkiaSharp": {
+        "type": "Transitive",
+        "resolved": "4.1.0",
+        "contentHash": "ivo4qGw4MyozDpkjf/JsDS1YDKMyKw+Nrb9UNfwLWNsadVlf0pI1unb5PQ6JiIcEzqBDdlJXyAMzx+gocBVB7w=="
+      },
       "SkiaSharp": {
         "type": "Transitive",
         "resolved": "3.119.4",
@@ -336,6 +429,43 @@
         "type": "Transitive",
         "resolved": "3.119.4",
         "contentHash": "XOpbx/4CReO2wYsq2s6rbvdauc6dntG4Zv499sHGTJ87bwZaFXszFkwql3+FIZMc8kUPeaj3Mx2ezIJmo8a1Kg=="
+      },
+      "Svg.Controls.Avalonia": {
+        "type": "Transitive",
+        "resolved": "12.0.0.1",
+        "contentHash": "VzeANFBwPxQvd7iIZ5OUxCudxylOtKRsRTbHAWYts8y03BUyEBlKYF/CiZ0xZJbARsn2gKyOSXQaevWRkIkyvA==",
+        "dependencies": {
+          "Avalonia": "12.0.0",
+          "Svg.Model": "4.1.0",
+          "Svg.SceneGraph": "4.1.0"
+        }
+      },
+      "Svg.Custom": {
+        "type": "Transitive",
+        "resolved": "4.1.0",
+        "contentHash": "NGoJFa+cXV783x/trg+HEy1ew4LPfELEaPkNrdncjSPhY4ZIFMSL/lwqcCY+jyq5Ef/Q1Wj2t3FBkbGXMPoDXA==",
+        "dependencies": {
+          "ExCSS": "4.3.1"
+        }
+      },
+      "Svg.Model": {
+        "type": "Transitive",
+        "resolved": "4.1.0",
+        "contentHash": "gZ21aaCul5QyqgDR9yFt1qLrz0XkXE3/CRY73Sj9vP/HuqrfE/WUY59xlSs11dpbBFd4ZpC9teaHLqS2RxecSg==",
+        "dependencies": {
+          "ShimSkiaSharp": "4.1.0",
+          "Svg.Custom": "4.1.0"
+        }
+      },
+      "Svg.SceneGraph": {
+        "type": "Transitive",
+        "resolved": "4.1.0",
+        "contentHash": "Z3exGx3xqlvUdF2IWFGtDcMSGkVwOV7ciYcCpUeZwcrZcUtofaMPYQcC5mFORQLGZtmDdyaLmdMoJYzw+XsaBQ==",
+        "dependencies": {
+          "ShimSkiaSharp": "4.1.0",
+          "Svg.Custom": "4.1.0",
+          "Svg.Model": "4.1.0"
+        }
       },
       "System.ClientModel": {
         "type": "Transitive",

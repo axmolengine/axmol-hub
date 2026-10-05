@@ -10,7 +10,12 @@ using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AxmolHub.Core;
+using AvaloniaEdit;
+using Markdown.Avalonia;
+using MarkdownEngine = Markdown.Avalonia.Markdown;
+using ColorTextBlock.Avalonia;
 
 namespace AxmolHub.App;
 
@@ -273,7 +278,7 @@ public partial class ChatPanel : UserControl
             MaxWidth = 780,
             HorizontalAlignment = fromUser
                 ? Avalonia.Layout.HorizontalAlignment.Right
-                : Avalonia.Layout.HorizontalAlignment.Left,
+                : Avalonia.Layout.HorizontalAlignment.Stretch,
             Child = new StackPanel { Spacing = 4, Children = { label, body } },
         };
         MessageFlow.Children.Add(bubble);
@@ -308,7 +313,43 @@ public partial class ChatPanel : UserControl
                 InlineUIContainer { Child: TextBlock { Tag: "markdown-link", Text: string linkText } } => linkText,
                 _ => "",
             }) ?? [])
-            : block.Text));
+            : block.Text)
+        .Concat(MessageFlow.Children
+            .OfType<Border>()
+            .SelectMany(bubble => bubble.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
+            .Select(viewer => viewer.Tag as string ?? "")));
+
+    internal bool HasVisibleMarkdownCodeBlock(string code)
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(viewer => viewer.Markdown?.Contains(code, StringComparison.Ordinal) == true
+                           && viewer.Bounds.Width > 0
+                           && viewer.Bounds.Height > 0);
+
+    internal bool HasRenderedMarkdownLink(string url)
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(viewer => MarkdownMessageRenderer.HasLinkHandler(viewer, url));
+
+    internal bool HasThemedMarkdownLink()
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(MarkdownMessageRenderer.HasThemedLink);
+
+    internal bool HasSyntaxHighlightedCode(string language)
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .SelectMany(viewer => viewer.GetVisualDescendants().OfType<TextEditor>())
+            .Any(editor => string.Equals(editor.Tag?.ToString(), language, StringComparison.OrdinalIgnoreCase)
+                           && editor.SyntaxHighlighting is not null);
+
+    internal bool HasMarkdownCopyToolbar()
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(MarkdownMessageRenderer.HasCopyToolbar);
+
+    internal void ApplyMarkdownSyntaxHighlightingForCheck()
+    {
+        foreach (var viewer in MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
+        {
+            MarkdownMessageRenderer.ApplySyntaxHighlighting(viewer);
+        }
+    }
 
     internal string ActiveModelText => ActiveModelLabel.Text ?? "";
     internal int ConversationCount => _chat.Conversations.Count;

@@ -41,6 +41,8 @@
       <SolidColorBrush x:Key="Hub.AccentBorder" Color="#399BDC" />
       <SolidColorBrush x:Key="Hub.AccentSoft" Color="#2879CE" />
       <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#398BE0" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#70B8F2" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#9BCBFA" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#70D7AF" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#F294A7" />
@@ -104,6 +106,8 @@
       <SolidColorBrush x:Key="Hub.AccentBorder" Color="#2E86C8" />
       <SolidColorBrush x:Key="Hub.AccentSoft" Color="#2E86C8" />
       <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#3D93D6" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#1769AA" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#0E4F88" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#1E9E76" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />

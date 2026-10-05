@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Documents;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
@@ -10,6 +9,8 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
+using Markdown.Avalonia;
+using MarkdownEngine = Markdown.Avalonia.Markdown;
 using Velopack;
 using static AxmolHub.App.ThemeProbe;
 
@@ -180,7 +181,17 @@ public partial class ShellCheckWindow : Window
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
 
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["你好", "，Axmol", " 助手。"]);
+        const string scriptedReply = "你好，Axmol 助手。\n\n"
+                                     + "[Axmol 官网](https://axmol.dev/)\n\n"
+                                     + "更多信息：https://github.com/axmolengine/axmol\n\n"
+                                     + "```cpp\nint main() {}\n```";
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+            [
+                "你好，Axmol 助手。",
+                "\n\n[Axmol 官网](https://axmol.dev/)",
+                "\n\n更多信息：https://github.com/axmolengine/axmol",
+                "\n\n```cpp\nint main() {}\n```",
+            ]);
         shell.Chat.StartConversation();
         panel.Reload();
         shell.UpdateLayout();
@@ -202,48 +213,49 @@ public partial class ShellCheckWindow : Window
         Check(panel.BubbleCount == before + 2, "一次发送追加了「用户 + 助手」两个气泡（实际新增 " + (panel.BubbleCount - before) + "）");
         Check(panel.FlowText.Contains("测试提问", StringComparison.Ordinal),
             "用户消息出现在消息流里");
-        Check(panel.FlowText.Contains("你好，Axmol 助手。", StringComparison.Ordinal),
+        Check(panel.FlowText.Contains(scriptedReply, StringComparison.Ordinal),
             "流式回复完整落进消息流（实际消息流：\n" + panel.FlowText + "）");
-        var markdown = MarkdownMessageRenderer.Render(
+        Check(panel.HasVisibleMarkdownCodeBlock("int main() {}"),
+            "聊天消息中的 fenced code block 交给已完成布局的 Markdown 控件渲染");
+        panel.ApplyMarkdownSyntaxHighlightingForCheck();
+        Check(panel.HasSyntaxHighlightedCode("cpp"),
+            "C++ fenced code block 使用可用的语法定义高亮");
+        Check(panel.HasMarkdownCopyToolbar(),
+            "代码块右上角显示复制按钮且不显示语言标签");
+        Check(HubTexts.Get("CopyCode", HubTexts.ChineseLanguage) == "复制代码"
+              && HubTexts.Get("CopyCode", HubTexts.EnglishLanguage) == "Copy code",
+            "复制代码提示支持中英文");
+        Check(panel.HasRenderedMarkdownLink("https://axmol.dev/")
+              && panel.HasRenderedMarkdownLink("https://github.com/axmolengine/axmol"),
+            "Markdown 链接与回复中的裸 URL 均生成可点击链接");
+        Check(panel.HasThemedMarkdownLink(),
+            "Markdown 链接使用 Hub 主题配色而非默认纯蓝");
+        const string sampleMarkdown =
             "# Heading\n\nA **bold** word and `inline code`.\n\n"
             + "- **Official website:** https://axmol.dev/\n"
             + "- **GitHub repository:** https://github.com/axmolengine/axmol\n"
             + "- **Markdown link:** [Axmol documentation](https://axmol.dev/guide/)\n\n"
             + "| Name | Value |\n| --- | --- |\n| answer | 42 |\n\n"
-            + "```csharp\nvar answer = 42;\n```");
-        Check(markdown.GetLogicalDescendants().OfType<TextBlock>().Any(block =>
-                  block.Tag as string == "markdown-heading" && RenderedText(block) == "Heading")
-              && markdown.GetLogicalDescendants().OfType<TextBlock>().Any(block =>
-                  block.Tag as string == "markdown-code" && block.Text?.Contains("var answer = 42;", StringComparison.Ordinal) == true)
-              && markdown.GetLogicalDescendants().OfType<StackPanel>().Any(panel => panel.Tag as string == "markdown-list")
-              && markdown.GetLogicalDescendants().OfType<ScrollViewer>().Any(viewer => viewer.Tag as string == "markdown-table")
-              && markdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Any(block => block.Tag as string == "markdown-link" && block.Text == "Axmol documentation")
-              && markdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Where(block => block.Tag as string == "markdown-link")
-                  .All(block => block.Foreground is Avalonia.Media.SolidColorBrush linkBrush && linkBrush.Color.A == 255)
-              && markdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Any(block => block.Inlines?.OfType<Run>()
-                      .Any(run => run.Text == "bold" && run.FontWeight == Avalonia.Media.FontWeight.Bold) == true),
-            "Markdown 标题、强调、列表、表格和 fenced code block 按格式渲染");
+            + "```csharp\nvar answer = 42;\n```";
+        var markdown = MarkdownMessageRenderer.Render(sampleMarkdown);
+        Check(markdown.Tag as string == sampleMarkdown
+              && markdown.Engine is MarkdownEngine { HyperlinkCommand: not null },
+            "Markdown.Avalonia 渲染器接收完整 Markdown 并接入安全链接处理");
+        Check(MarkdownMessageRenderer.HasLinkHandler(markdown, "https://axmol.dev/guide/"),
+            "Markdown.Avalonia 接收规范化后的 Markdown 链接节点");
         var linksMarkdown = MarkdownMessageRenderer.Render(
             "- **Official website:** https://axmol.dev/\n"
             + "- **GitHub repository:** https://github.com/axmolengine/axmol");
-        Check(linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Count(block => block.Tag as string == "markdown-link") == 2
-              && linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Any(block => block.Tag as string == "markdown-link" && block.Text == "https://axmol.dev/")
-              && linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
-                  .Any(block => block.Tag as string == "markdown-link"
-                                && block.Text == "https://github.com/axmolengine/axmol"),
-            "列表中的裸 URL 显示为始终可见的链接文本");
+        Check(MarkdownMessageRenderer.HasLinkHandler(linksMarkdown, "https://axmol.dev/")
+              && MarkdownMessageRenderer.HasLinkHandler(linksMarkdown, "https://github.com/axmolengine/axmol"),
+            "列表中的裸 URL 保留原文并使用可点击链接处理器");
 
         // The conversation persists: the saved transcript must carry both turns, so the reply survives a
         // reload instead of living only in the UI.
         var saved = shell.Chat.ActiveConversation;
         Check(saved is not null && saved.Messages.Count == 2
               && saved.Messages[1].Role == ChatRoles.Assistant
-              && saved.Messages[1].Text == "你好，Axmol 助手。",
+              && saved.Messages[1].Text == scriptedReply,
             "助手回复写回了会话（不只是留在界面上）");
 
         Check(saved is not null && saved.ProviderId == checkProvider.Id && saved.ModelName == checkModel,
@@ -1979,14 +1991,6 @@ public partial class ShellCheckWindow : Window
     private static string NavLabel(RadioButton button) => button.Content is Panel panel
         ? string.Join("", panel.Children.OfType<TextBlock>().Select(text => text.Text))
         : button.Content?.ToString() ?? "";
-
-    private static string RenderedText(TextBlock block)
-        => string.Concat(block.Inlines?.Select(inline => inline switch
-        {
-            Run run => run.Text,
-            InlineUIContainer { Child: TextBlock { Tag: "markdown-link", Text: string linkText } } => linkText,
-            _ => "",
-        }) ?? []);
 
     private static bool Throws<T>(Action action)
         where T : Exception

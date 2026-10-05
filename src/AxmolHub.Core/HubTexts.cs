@@ -219,6 +219,7 @@ public static class HubTexts
         ["NoDefault"] = ("尚未安装引擎", "No engine installed"),
         ["LogTitle"] = ("活动与构建日志", "Activity and build log"),
         ["CopyError"] = ("复制错误", "Copy error"),
+        ["CopyCode"] = ("复制代码", "Copy code"),
         ["OpenLogs"] = ("打开日志", "Open logs"),
         ["Cancel"] = ("取消", "Cancel"),
         // 对话框按钮。以前这三条在 HubDialog 里是**写死的中文**，于是英文界面里点开任何弹窗，

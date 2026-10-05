@@ -33,6 +33,10 @@
 
   <StreamGeometry x:Key="Hub.Icon.ChevronRight">M9 5L16.5 12L9 19L6.5 16.5L11.5 12L6.5 7.5Z</StreamGeometry>
 
+  <!-- Two offset document outlines = Copy -->
+  <StreamGeometry x:Key="Hub.Icon.Copy">M8 7V5.5A1.5 1.5 0 0 1 9.5 4H15A1.5 1.5 0 0 1 16.5 5.5V12A1.5 1.5 0 0 1 15 13.5H14 M6 8H11.5A1.5 1.5 0 0 1 13 9.5V16A1.5 1.5 0 0 1 11.5 17.5H6A1.5 1.5 0 0 1 4.5 16V9.5A1.5 1.5 0 0 1 6 8Z</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.CopySuccess">M4.5 12.5L9.2 17L19.5 6.5</StreamGeometry>
+
   <!-- A speech bubble with a spark = AI assistant. The bubble reads as "chat"; the inner spark keeps it from
        being mistaken for the Projects/Engines icon set at 17px. -->
   <StreamGeometry x:Key="Hub.Icon.Assistant">F1 M4 5.4A1.6 1.6 0 0 1 5.6 3.8H18.4A1.6 1.6 0 0 1 20 5.4V14.6A1.6 1.6 0 0 1 18.4 16.2H11.2L6.6 20.2V16.2H5.6A1.6 1.6 0 0 1 4 14.6ZM12 6.2L13.1 8.7L15.6 9.8L13.1 10.9L12 13.4L10.9 10.9L8.4 9.8L10.9 8.7Z</StreamGeometry>

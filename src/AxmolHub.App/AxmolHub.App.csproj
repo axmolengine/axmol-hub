@@ -29,6 +29,7 @@
   <ItemGroup>
     <!-- 仓库仅有的 NuGet 依赖全部集中在这里：Avalonia 一组 + Velopack（P6 从 WPF 项目搬过来，
          依赖集合没有变，只是换了宿主项目）。Core 与 Cli 仍保持零依赖、可离线构建。 -->
+    <PackageReference Include="Markdown.Avalonia" Version="12.0.0-a3" />
     <PackageReference Include="Markdig" Version="0.40.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Avalonia" Version="12.1.3" />
@@ -61,6 +62,7 @@
     <Content Include="../AxmolHub.Core/Scripts/*.ps1" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <AvaloniaResource Include="Assets/Cpp.xshd" />
     <!-- 打包器要的是磁盘上的图标文件（vpk 的 icon 参数），不是嵌入资源；ApplicationIcon 已把它编进 exe。
          这里刻意**不**再写 Resource / None —— 后者与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
   </ItemGroup>

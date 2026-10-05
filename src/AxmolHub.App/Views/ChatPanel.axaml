@@ -1,10 +1,81 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="using:AxmolHub.App"
+             xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
+             xmlns:ae="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
              x:Class="AxmolHub.App.ChatPanel"
              x:DataType="local:ChatPanel">
 
   <UserControl.Styles>
+    <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CTextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CHyperlink">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Link}" />
+      <Setter Property="HoverForeground" Value="{DynamicResource Hub.LinkHover}" />
+      <Setter Property="IsUnderline" Value="True" />
+    </Style>
+    <Style Selector="Border.CodeBlock">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Margin" Value="0,10" />
+    </Style>
+    <Style Selector="ScrollViewer.CodeBlock">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Padding" Value="16,14" />
+    </Style>
+    <Style Selector="TextBlock.CodeBlock">
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="ae|TextEditor.markdown-code-editor">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.markdown-code-copy">
+      <Setter Property="Width" Value="22" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="MinWidth" Value="22" />
+      <Setter Property="MinHeight" Value="22" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Frame"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <Path Width="15"
+                  Height="15"
+                  Stretch="Uniform"
+                  Data="{StaticResource Hub.Icon.Copy}"
+                  Fill="Transparent"
+                  Stroke="{TemplateBinding Foreground}"
+                  StrokeThickness="1.8" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Button.markdown-code-copy:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Border.CodeBlock:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
     <Style Selector="Button.session">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />

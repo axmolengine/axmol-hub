@@ -1,381 +1,276 @@
+using System.Text.RegularExpressions;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Documents;
-using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Layout;
 using Avalonia.LogicalTree;
+using Avalonia.VisualTree;
 using Avalonia.Media;
+using Avalonia.Markup.Xaml.MarkupExtensions;
+using Avalonia.Threading;
+using ColorTextBlock.Avalonia;
+using Markdown.Avalonia;
+using MarkdownEngine = Markdown.Avalonia.Markdown;
+using Markdown.Avalonia.SyntaxHigh;
 using Markdig;
-using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using AvaloniaEdit;
 
 namespace AxmolHub.App;
 
 internal static class MarkdownMessageRenderer
 {
-    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+    private static readonly MarkdownPipeline AutoLinkPipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
+        .UseAutoLinks()
         .Build();
+    private static readonly Regex BareUrlPattern = new(@"https?://[^\s<>""'`]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Lazy<(SyntaxHighlight Plugin, SyntaxHighlightProvider Provider)> Syntax = new(CreateSyntax);
 
-    internal static StackPanel Render(string markdown)
+    internal static MarkdownScrollViewer Render(string markdown)
     {
-        var content = new StackPanel { Spacing = 8 };
-        RenderInto(content, markdown);
-        return content;
+        var viewer = new MarkdownScrollViewer
+        {
+            MarkdownStyleName = "GithubLike",
+            SelectionEnabled = true,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            Tag = markdown,
+        };
+        var syntax = Syntax.Value;
+        var plugins = new MdAvPlugins();
+        plugins.Plugins.Add(syntax.Plugin);
+        viewer.Plugins = plugins;
+        EventHandler? layoutUpdated = null;
+        layoutUpdated = (_, _) =>
+        {
+            if (ApplySyntaxHighlighting(viewer)) viewer.LayoutUpdated -= layoutUpdated;
+        };
+        viewer.LayoutUpdated += layoutUpdated;
+        var engine = new MarkdownEngine();
+        engine.HyperlinkCommand = new OpenLinkCommand(viewer);
+        viewer.Engine = engine;
+        viewer.Markdown = LinkifyBareUrls(markdown);
+        return viewer;
     }
 
     internal static void RenderInto(StackPanel content, string markdown)
     {
         content.Children.Clear();
-        foreach (var block in Markdown.Parse(markdown, Pipeline))
-        {
-            var rendered = RenderBlock(block);
-            if (rendered is not null) content.Children.Add(rendered);
-        }
+        content.Children.Add(Render(markdown));
     }
 
-    private static Control? RenderBlock(Block block)
+    internal static bool ApplySyntaxHighlighting(MarkdownScrollViewer viewer)
     {
-        switch (block)
+        var foundEditor = false;
+        foreach (var editor in viewer.GetVisualDescendants().OfType<TextEditor>().ToArray())
         {
-            case HeadingBlock heading:
-                return RenderParagraph(heading.Inline, heading.Level switch
-                {
-                    1 => 22,
-                    2 => 19,
-                    3 => 16,
-                    _ => 14,
-                }, FontWeight.SemiBold, "markdown-heading");
-
-            case ParagraphBlock paragraph:
-                return RenderParagraph(paragraph.Inline);
-
-            case CodeBlock code:
-                return RenderCode(code.Lines.ToString(), code is FencedCodeBlock fenced ? fenced.Info : null);
-
-            case QuoteBlock quote:
-                var quotedContent = RenderContainer(quote);
-                return new Border
-                {
-                    BorderBrush = Brush("Hub.BorderStrong"),
-                    BorderThickness = new Thickness(3, 0, 0, 0),
-                    Background = Brush("Hub.Surface"),
-                    Padding = new Thickness(10, 6),
-                    Child = quotedContent,
-                };
-
-            case ListBlock list:
-                return RenderList(list);
-
-            case Table table:
-                return RenderTable(table);
-
-            case ThematicBreakBlock:
-                return new Border
-                {
-                    Height = 1,
-                    Background = Brush("Hub.Border"),
-                    Margin = new Thickness(0, 4),
-                };
-
-            case LeafBlock leaf:
-                return PlainText(leaf.Lines.ToString());
-
-            case ContainerBlock container:
-                return RenderContainer(container);
-
-            default:
-                return null;
-        }
-    }
-
-    private static StackPanel RenderContainer(ContainerBlock container)
-    {
-        var panel = new StackPanel { Spacing = 6 };
-        foreach (var block in container)
-        {
-            var rendered = RenderBlock(block);
-            if (rendered is not null) panel.Children.Add(rendered);
-        }
-
-        return panel;
-    }
-
-    private static Control RenderParagraph(
-        ContainerInline? inline,
-        double fontSize = 13,
-        FontWeight? fontWeight = null,
-        string? tag = null)
-    {
-        var text = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = fontSize,
-            FontWeight = fontWeight ?? FontWeight.Normal,
-            Tag = tag,
-        };
-        AppendInlines(text, inline?.FirstChild, new InlineStyle());
-        return text;
-    }
-
-    private static void AppendInlines(TextBlock target, Markdig.Syntax.Inlines.Inline? inline, InlineStyle style)
-    {
-        for (var current = inline; current is not null; current = current.NextSibling)
-        {
-            switch (current)
+            foundEditor = true;
+            editor.Classes.Add("markdown-code-editor");
+            if (editor.SyntaxHighlighting is null
+                && editor.Tag is string language
+                && Syntax.Value.Provider.Solve(language) is { } definition)
             {
-                case LiteralInline literal:
-                    AddRun(target, literal.Content.ToString(), style);
-                    break;
-
-                case CodeInline code:
-                    AddRun(target, code.Content.ToString(), style with { IsCode = true });
-                    break;
-
-                case LineBreakInline:
-                    AddRun(target, "\n", style);
-                    break;
-
-                case AutolinkInline autolink:
-                    AddLink(target, autolink.Url, autolink.Url, style);
-                    break;
-
-                case EmphasisInline emphasis:
-                    var emphasisStyle = style with
-                    {
-                        IsBold = style.IsBold || (emphasis.DelimiterChar != '~' && emphasis.DelimiterCount >= 2),
-                        IsItalic = style.IsItalic || (emphasis.DelimiterChar != '~' && emphasis.DelimiterCount % 2 == 1),
-                        IsStrike = style.IsStrike || emphasis.DelimiterChar == '~',
-                    };
-                    AppendInlines(target, emphasis.FirstChild, emphasisStyle);
-                    break;
-
-                case LinkInline link:
-                    var label = link.IsAutoLink ? "" : GetInlineText(link.FirstChild);
-                    if (string.IsNullOrWhiteSpace(label)) label = link.Label;
-                    if (string.IsNullOrWhiteSpace(label)) label = link.Url ?? "";
-                    AddLink(target, label, link.Url ?? "", style);
-                    break;
-
-                case HtmlInline html:
-                    AddRun(target, html.Tag, style);
-                    break;
+                editor.SyntaxHighlighting = definition;
             }
+
+            InstallCodeBlockToolbar(editor);
         }
+
+        var foundLink = false;
+        foreach (var link in viewer.GetLogicalDescendants().OfType<CHyperlink>())
+        {
+            foundLink = true;
+            link.Bind(CInline.ForegroundProperty, new DynamicResourceExtension("Hub.Link"));
+            link.Bind(CHyperlink.HoverForegroundProperty, new DynamicResourceExtension("Hub.LinkHover"));
+            link.IsUnderline = true;
+        }
+
+        return foundEditor || foundLink;
     }
 
-    private static void AddRun(TextBlock target, string text, InlineStyle style)
+    private static void InstallCodeBlockToolbar(TextEditor editor)
     {
-        if (text.Length == 0) return;
+        var codeBlock = editor.GetVisualAncestors().OfType<Border>()
+            .FirstOrDefault(border => border.Classes.Contains("CodeBlock"));
+        if (codeBlock is null || codeBlock.Classes.Contains("hub-code-block-layout")) return;
 
-        var run = new Run(text);
-        if (style.IsBold) run.FontWeight = FontWeight.Bold;
-        if (style.IsItalic) run.FontStyle = FontStyle.Italic;
-        if (style.IsLink)
-        {
-            run.Foreground = Brush("Hub.AccentBorder");
-            run.TextDecorations = TextDecorations.Underline;
-        }
-        else if (style.IsStrike)
-        {
-            run.TextDecorations = TextDecorations.Strikethrough;
-        }
-        if (style.IsCode) run.FontFamily = new FontFamily("Consolas");
-        target.Inlines?.Add(run);
-    }
+        var content = new Grid { Margin = new Avalonia.Thickness(12, 6, 12, 10) };
+        content.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        content.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star));
 
-    private static string GetInlineText(Markdig.Syntax.Inlines.Inline? inline)
-    {
-        var text = new System.Text.StringBuilder();
-        for (var current = inline; current is not null; current = current.NextSibling)
+        var copyButton = new Button();
+        copyButton.Classes.Add("markdown-code-copy");
+        copyButton.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right;
+        copyButton.Bind(ToolTip.TipProperty, new DynamicResourceExtension("CopyCode"));
+        copyButton.Click += async (_, _) =>
         {
-            switch (current)
+            var clipboard = TopLevel.GetTopLevel(editor)?.Clipboard;
+            if (clipboard is null) return;
+
+            var item = new DataTransferItem();
+            item.Set(DataFormat.Text, editor.Text);
+            var data = new DataTransfer();
+            data.Add(item);
+            await clipboard.SetDataAsync(data);
+
+            var icon = copyButton.GetVisualDescendants()
+                .OfType<Avalonia.Controls.Shapes.Path>()
+                .FirstOrDefault();
+            if (icon?.Data is null) return;
+
+            var feedbackState = copyButton.Tag as CopyFeedbackState
+                                ?? new CopyFeedbackState(icon.Data);
+            var resetVersion = ++feedbackState.Version;
+            copyButton.Tag = feedbackState;
+            if (Application.Current?.TryGetResource("Hub.Icon.CopySuccess", null, out var successGeometry) == true
+                && successGeometry is Geometry checkGeometry)
             {
-                case LiteralInline literal:
-                    text.Append(literal.Content);
-                    break;
-                case CodeInline code:
-                    text.Append(code.Content);
-                    break;
-                case LineBreakInline:
-                    text.Append('\n');
-                    break;
-                case ContainerInline container:
-                    text.Append(GetInlineText(container.FirstChild));
-                    break;
-                case AutolinkInline autolink:
-                    text.Append(autolink.Url);
-                    break;
-                case HtmlInline html:
-                    text.Append(html.Tag);
-                    break;
+                icon.Data = checkGeometry;
             }
-        }
 
-        return text.ToString();
-    }
-
-    private static void AddLink(TextBlock target, string label, string url, InlineStyle style)
-    {
-        if (label.Length == 0) label = url;
-        if (label.Length == 0) return;
-
-        var linkText = new TextBlock
-        {
-            Text = label,
-            Foreground = LinkBrush(),
-            TextDecorations = TextDecorations.Underline,
-            FontWeight = style.IsBold ? FontWeight.Bold : FontWeight.Normal,
-            FontStyle = style.IsItalic ? FontStyle.Italic : FontStyle.Normal,
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Tag = "markdown-link",
-        };
-        ToolTip.SetTip(linkText, url);
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            && uri.Scheme is "http" or "https" or "mailto")
-        {
-            linkText.Tapped += async (_, _) =>
+            DispatcherTimer.RunOnce(() =>
             {
-                var launcher = TopLevel.GetTopLevel(linkText)?.Launcher;
-                if (launcher is not null) await launcher.LaunchUriAsync(uri);
-            };
-        }
-
-        target.Inlines?.Add(new InlineUIContainer { Child = linkText });
-    }
-
-    private static IBrush LinkBrush()
-        => new SolidColorBrush(Color.Parse("#68C5FF"));
-
-    private static Control RenderCode(string code, string? info)
-    {
-        var children = new StackPanel { Spacing = 4 };
-        var language = info?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(language))
-        {
-            children.Children.Add(new TextBlock
-            {
-                Text = language,
-                FontSize = 10,
-                Foreground = Brush("Hub.TextSecondary"),
-            });
-        }
-
-        children.Children.Add(new TextBlock
-        {
-            Text = code.TrimEnd('\r', '\n'),
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
-            Foreground = Brush("Hub.TextPrimary"),
-            Tag = "markdown-code",
-        });
-
-        return new Border
-        {
-            Background = Brush("Hub.SurfaceSunken"),
-            BorderBrush = Brush("Hub.BorderSubtle"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(5),
-            Padding = new Thickness(10, 8),
-            Child = new ScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = children,
-            },
-        };
-    }
-
-    private static Control RenderList(ListBlock list)
-    {
-        var panel = new StackPanel { Spacing = 5, Tag = "markdown-list" };
-        var itemNumber = int.TryParse(
-            list.OrderedStart,
-            System.Globalization.NumberStyles.Integer,
-            System.Globalization.CultureInfo.InvariantCulture,
-            out var orderedStart)
-            ? orderedStart
-            : 1;
-        foreach (var item in list.OfType<ListItemBlock>())
-        {
-            var marker = list.IsOrdered ? $"{itemNumber++}." : "•";
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("24,*") };
-            row.Children.Add(new TextBlock
-            {
-                Text = marker,
-                VerticalAlignment = VerticalAlignment.Top,
-            });
-            var itemContent = RenderContainer(item);
-            Grid.SetColumn(itemContent, 1);
-            row.Children.Add(itemContent);
-            panel.Children.Add(row);
-        }
-
-        return panel;
-    }
-
-    private static Control RenderTable(Table table)
-    {
-        var rows = table.OfType<TableRow>().ToArray();
-        var columnCount = rows.Select(row => row.OfType<TableCell>().Count()).DefaultIfEmpty(0).Max();
-        if (columnCount == 0) return new StackPanel();
-
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions(string.Join(",", Enumerable.Repeat("*", columnCount))),
-        };
-        for (var rowIndex = 0; rowIndex < rows.Length; rowIndex++)
-        {
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            var fallbackColumn = 0;
-            foreach (var cell in rows[rowIndex].OfType<TableCell>())
-            {
-                var cellContent = RenderContainer(cell);
-                if (rows[rowIndex].IsHeader)
+                if (ReferenceEquals(copyButton.Tag, feedbackState)
+                    && feedbackState.Version == resetVersion)
                 {
-                    foreach (var text in cellContent.GetLogicalDescendants().OfType<TextBlock>())
-                    {
-                        text.FontWeight = FontWeight.SemiBold;
-                    }
+                    icon.Data = feedbackState.OriginalIcon;
                 }
-                var border = new Border
-                {
-                    BorderBrush = Brush("Hub.BorderSubtle"),
-                    BorderThickness = new Thickness(0, 0, 1, 1),
-                    Padding = new Thickness(8, 5),
-                    Child = cellContent,
-                };
-                Grid.SetRow(border, rowIndex);
-                Grid.SetColumn(border, cell.ColumnIndex >= 0 ? cell.ColumnIndex : fallbackColumn);
-                Grid.SetColumnSpan(border, Math.Max(1, cell.ColumnSpan));
-                Grid.SetRowSpan(border, Math.Max(1, cell.RowSpan));
-                grid.Children.Add(border);
-                fallbackColumn += Math.Max(1, cell.ColumnSpan);
-            }
+            }, TimeSpan.FromSeconds(1.2));
+        };
+
+        if (editor.Parent is Panel oldParent)
+        {
+            oldParent.Children.Remove(editor);
         }
 
-        return new ScrollViewer
-        {
-            Tag = "markdown-table",
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = grid,
-        };
+        Grid.SetRow(copyButton, 0);
+        Grid.SetRow(editor, 1);
+        content.Children.Add(copyButton);
+        content.Children.Add(editor);
+        codeBlock.Classes.Add("hub-code-block-layout");
+        codeBlock.Child = content;
     }
 
-    private static TextBlock PlainText(string text)
-        => new() { Text = text, TextWrapping = TextWrapping.Wrap };
+    private static (SyntaxHighlight Plugin, SyntaxHighlightProvider Provider) CreateSyntax()
+    {
+        var plugin = new SyntaxHighlight();
+        var xshd = new Uri("avares://AxmolHub.App/Assets/Cpp.xshd");
+        foreach (var alias in new[] { "c", "h", "cc", "cpp", "cxx", "hpp" })
+        {
+            plugin.Aliases.Add(new Alias { Name = alias, XSHD = xshd });
+        }
 
-    private static IBrush? Brush(string key)
-        => Application.Current is { } app && app.TryFindResource(key, out var value) ? value as IBrush : null;
+        return (plugin, new SyntaxHighlightProvider(plugin.Aliases));
+    }
 
-    private readonly record struct InlineStyle(
-        bool IsBold = false,
-        bool IsItalic = false,
-        bool IsStrike = false,
-        bool IsLink = false,
-        bool IsCode = false);
+    private sealed class CopyFeedbackState(Geometry originalIcon)
+    {
+        internal Geometry OriginalIcon { get; } = originalIcon;
+        internal int Version { get; set; }
+    }
+
+    internal static bool HasLinkHandler(MarkdownScrollViewer viewer, string url)
+        => viewer.Engine is MarkdownEngine { HyperlinkCommand: not null }
+           && viewer.Markdown is { } markdown
+           && Markdig.Markdown.Parse(markdown, AutoLinkPipeline)
+               .Descendants()
+               .OfType<LinkInline>()
+               .Any(link => string.Equals(link.Url, url, StringComparison.Ordinal));
+
+    internal static bool HasThemedLink(MarkdownScrollViewer viewer)
+        => viewer.GetLogicalDescendants().OfType<CHyperlink>()
+            .Any(link => link.Foreground is ISolidColorBrush foreground
+                         && foreground.Color != Colors.Blue
+                         && link.HoverForeground is ISolidColorBrush);
+
+    internal static bool HasCopyToolbar(MarkdownScrollViewer viewer)
+        => viewer.GetVisualDescendants().OfType<Button>()
+            .Any(button => button.Classes.Contains("markdown-code-copy")
+                           && button.HorizontalAlignment == Avalonia.Layout.HorizontalAlignment.Right
+                           && Equals(ToolTip.GetTip(button), HubStrings.Get("CopyCode"))
+                           && button.GetVisualAncestors().OfType<Border>()
+                               .Any(border => border.Classes.Contains("hub-code-block-layout")))
+           && !viewer.GetVisualDescendants().OfType<Label>()
+               .Any(label => label.Classes.Contains("LangInfo"));
+
+    private static string LinkifyBareUrls(string markdown)
+    {
+        var document = Markdig.Markdown.Parse(markdown, AutoLinkPipeline);
+        var protectedSpans = document.Descendants()
+            .Where(node => node is CodeBlock or CodeInline
+                           || node is LinkInline { IsAutoLink: false })
+            .Select(node => node.Span)
+            .Where(span => !span.IsEmpty && span.Start >= 0 && span.End < markdown.Length)
+            .ToArray();
+        var links = new List<(int Start, int Length, string Replacement)>();
+        foreach (Match match in BareUrlPattern.Matches(markdown))
+        {
+            var url = TrimTrailingPunctuation(match.Value);
+            if (url.Length == 0) continue;
+
+            var start = match.Index;
+            var length = url.Length;
+            if (start > 0 && markdown[start - 1] == '<'
+                && start + length < markdown.Length && markdown[start + length] == '>')
+            {
+                continue;
+            }
+
+            var end = start + length - 1;
+            if (protectedSpans.Any(span => span.Start <= end && span.End >= start)) continue;
+
+            links.Add((start, length, $"[{url}]({url})"));
+        }
+
+        foreach (var link in links.OrderByDescending(link => link.Start))
+        {
+            markdown = markdown.Remove(link.Start, link.Length)
+                .Insert(link.Start, link.Replacement);
+        }
+
+        return markdown;
+    }
+
+    private static string TrimTrailingPunctuation(string url)
+    {
+        while (url.Length > 0 && ".,;:!?，。！？；：、".IndexOf(url[^1]) >= 0)
+        {
+            url = url[..^1];
+        }
+
+        while (url.EndsWith(')') && url.Count(character => character == ')') > url.Count(character => character == '('))
+        {
+            url = url[..^1];
+        }
+
+        return url;
+    }
+
+    private sealed class OpenLinkCommand(MarkdownScrollViewer viewer) : ICommand
+    {
+        public event EventHandler? CanExecuteChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CanExecute(object? parameter)
+            => parameter is string value
+               && Uri.TryCreate(value, UriKind.Absolute, out var uri)
+               && uri.Scheme is "http" or "https" or "mailto";
+
+        public async void Execute(object? parameter)
+        {
+            if (parameter is not string value
+                || !Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                || uri.Scheme is not ("http" or "https" or "mailto"))
+            {
+                return;
+            }
+
+            var launcher = TopLevel.GetTopLevel(viewer)?.Launcher;
+            if (launcher is not null) await launcher.LaunchUriAsync(uri);
+        }
+    }
 }
