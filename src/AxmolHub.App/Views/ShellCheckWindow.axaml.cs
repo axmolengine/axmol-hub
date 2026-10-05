@@ -180,6 +180,30 @@ public partial class ShellCheckWindow : Window
               && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
 
+        // ── Composer shape: chip picker, round button, focus highlight ──
+        Check(panel.ModelPickerIsChipForCheck,
+            "模型选择器以胶囊呈现，而不是占满整行的字段");
+        panel.SetInputForCheck("");
+        Check(!panel.SendButtonEnabledForCheck,
+            "输入框为空时发送按钮置灰（点之前就能看出没有东西可发）");
+        var sendStateUpdates = panel.SendStateUpdates;
+        panel.SetInputForCheck("嗨");
+        Check(panel.SendStateUpdates > sendStateUpdates,
+            "改动输入框文本会触发按钮状态重算（证明变更通知确实接通，而不是只靠初始渲染）");
+        Check(panel.SendButtonEnabledForCheck,
+            "输入框有内容时发送按钮恢复可用（实际 IsEnabled=" + panel.SendButtonEnabledForCheck + "）");
+        Check(!panel.SendIconIsStopForCheck, "空闲状态的按钮显示的是发送箭头");
+        Check(panel.SendButtonTooltipForCheck == HubStrings.Get("Send"),
+            "空闲状态按钮提示为发送（实际「" + panel.SendButtonTooltipForCheck + "」）");
+        panel.SetInputForCheck("");
+        var idleComposerBorder = panel.ComposerBorderBrushForCheck;
+        panel.SetComposerFocusForCheck(true);
+        shell.UpdateLayout();
+        Check(panel.ComposerFocusedForCheck && !Equals(idleComposerBorder, panel.ComposerBorderBrushForCheck),
+            "输入框获得焦点时整个输入容器的边框切换为高亮色");
+        panel.SetComposerFocusForCheck(false);
+        shell.UpdateLayout();
+
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
         const string scriptedReply = "你好，Axmol 助手。\n\n"
                                      + "[Axmol 官网](https://axmol.dev/)\n\n"
@@ -293,14 +317,23 @@ public partial class ShellCheckWindow : Window
         // ── Message-level actions and session management ──
         // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
         // regenerate/continue. Presence is asserted here; the operations themselves are asserted below.
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["改写前的回复"]);
+        var streamGate = new System.Threading.Tasks.TaskCompletionSource<bool>();
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["改写前的回复"], streamGate.Task);
         var opsConversation = shell.Chat.StartConversation();
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        await panel.SendForCheckAsync("第一问");
+
+        // Held open at the first token so the mid-stream button state can be asserted, not just the end state.
+        var streaming = panel.BeginSendForCheckAsync("第一问");
+        Check(panel.SendIconIsStopForCheck && panel.SendButtonEnabledForCheck,
+            "流式进行中发送按钮切换为停止图标并保持可点（点它即取消）");
+        streamGate.SetResult(true);
+        await streaming;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
+        Check(!panel.SendIconIsStopForCheck && panel.SendButtonTooltipForCheck == HubStrings.Get("Send"),
+            "流式结束后按钮回到发送箭头");
 
         Check(opsConversation.Messages.Count == 2 && opsConversation.Messages[0].Role == ChatRoles.User,
             "会话记录了用户与助手两轮（实际 " + opsConversation.Messages.Count + "）");
@@ -1402,7 +1435,7 @@ public partial class ShellCheckWindow : Window
 
     /// <summary>A scripted <c>IChatClient</c> for the assistant checks: yields fixed text chunks and touches
     /// no network. Mirrors the one in the Checks project; the App cannot reference that project.</summary>
-    private sealed class ScriptedChatClient(IReadOnlyList<string> chunks) : Microsoft.Extensions.AI.IChatClient
+    private sealed class ScriptedChatClient(IReadOnlyList<string> chunks, Task? gate = null) : Microsoft.Extensions.AI.IChatClient
     {
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
@@ -1415,6 +1448,9 @@ public partial class ShellCheckWindow : Window
             Microsoft.Extensions.AI.ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
         {
+            // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
+            // composer button can be asserted instead of only its end state.
+            if (gate is not null) await gate;
             foreach (var chunk in chunks)
             {
                 cancellationToken.ThrowIfCancellationRequested();

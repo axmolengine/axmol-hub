@@ -58,7 +58,13 @@ public partial class ChatPanel : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
-        ConversationSearch.TextChanged += (_, _) => RefreshConversationList();
+        // Listen on the Text property rather than TextChanged: in Avalonia 12 a programmatic assignment to
+        // TextBox.Text does **not** raise TextChanged, so a handler on it only ever saw user edits — the
+        // send button kept whatever state the last real keystroke left it in.
+        ConversationSearch.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) RefreshConversationList();
+        };
         ModelPicker.SelectionChanged += (_, _) =>
         {
             if (!_ready || ModelPicker.SelectedItem is not ChatWorkspace.ChatModelOption choice) return;
@@ -68,6 +74,12 @@ public partial class ChatPanel : UserControl
         SendButton.Click += (_, _) => _ = SendAsync();
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
+        InputBox.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) UpdateSendState();
+        };
+        InputBox.GotFocus += (_, _) => SetComposerFocus(true);
+        InputBox.LostFocus += (_, _) => SetComposerFocus(false);
 
         InputBox.KeyDown += async (_, e) =>
         {
@@ -88,9 +100,9 @@ public partial class ChatPanel : UserControl
         NewConversationButton.Content = HubStrings.Get("NewConversation");
         ConversationSearch.PlaceholderText = HubStrings.Get("SearchConversations");
         ConversationListLabel.Text = HubStrings.Get("Conversation");
-        SendButton.Content = _send is null ? HubStrings.Get("Send") : HubStrings.Get("Stop");
         InputBox.PlaceholderText = HubStrings.Get("InputPlaceholder");
         EmptyHint.Text = HubStrings.Get("AssistantEmpty");
+        UpdateSendState();
 
         RefreshModelPicker();
         UpdateActiveModel();
@@ -433,6 +445,55 @@ public partial class ChatPanel : UserControl
         _ = clipboard.SetDataAsync(data);
     }
 
+    /// <summary>
+    /// Keeps the composer's round button in step with the composer: the same button sends or stops, and it is
+    /// greyed out while the box is empty so "there is nothing to send" is visible before the click rather than
+    /// after it.
+    /// </summary>
+    private void UpdateSendState()
+    {
+        SendStateUpdates++;
+        var streaming = _send is not null;
+        SendButton.IsEnabled = streaming || (InputBox.Text ?? "").Trim().Length > 0;
+        SendButton.Content = BuildSendIcon(streaming);
+        ToolTip.SetTip(SendButton, HubStrings.Get(streaming ? "Stop" : "Send"));
+    }
+
+    /// <summary>Builds the arrow (send) or square (stop) glyph. Colours are bound as DynamicResource rather
+    /// than looked up once because this runs from the constructor, before the control is attached — a brush
+    /// captured there comes back null and the glyph would be invisible.</summary>
+    private static Control BuildSendIcon(bool streaming)
+    {
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Width = 15,
+            Height = 15,
+            Stretch = Stretch.Uniform,
+        };
+        path.Data = ThemeGeometry(streaming ? "Hub.Icon.Stop" : "Hub.Icon.Send");
+
+        if (streaming)
+        {
+            // The stop square is solid; the fill is what makes it read differently from the arrow.
+            path.Bind(Avalonia.Controls.Shapes.Path.FillProperty, new DynamicResourceExtension("Hub.TextOnAccent"));
+            return path;
+        }
+
+        path.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextOnAccent"));
+        path.StrokeThickness = 2;
+        path.StrokeLineCap = PenLineCap.Round;
+        path.StrokeJoin = PenLineJoin.Round;
+        return path;
+    }
+
+    private static Geometry? ThemeGeometry(string key)
+        => Application.Current is { } app && app.TryFindResource(key, out var value) ? value as Geometry : null;
+
+    /// <summary>Highlights the composer frame while the input has focus so the whole rounded box reads as the
+    /// thing being typed into. Toggled as a class rather than re-binding per event, which keeps the border
+    /// colour a DynamicResource that follows the theme instead of a brush captured once.</summary>
+    private void SetComposerFocus(bool focused) => ComposerFrame.Classes.Set("focused", focused);
+
     private async Task SendAsync()
     {
         if (_send is not null)
@@ -519,7 +580,7 @@ public partial class ChatPanel : UserControl
         AppendStreamingBubble(body);
 
         var buffer = new StringBuilder();
-        SendButton.Content = HubStrings.Get("Stop");
+        UpdateSendState();
         try
         {
             await foreach (var chunk in start(token).ConfigureAwait(true))
@@ -541,7 +602,7 @@ public partial class ChatPanel : UserControl
         {
             _send.Dispose();
             _send = null;
-            SendButton.Content = HubStrings.Get("Send");
+            UpdateSendState();
             ForceRebuildMessages();
             UpdateConversationTitle();
             RefreshConversationList();
@@ -647,6 +708,28 @@ public partial class ChatPanel : UserControl
     /// whole flow (the incremental path's whole point).</summary>
     internal object? FirstBubbleForCheck => MessageFlow.Children.OfType<Border>().FirstOrDefault();
 
+    // ── Composer (send button state, chip, focus highlight) ──
+    internal void SetComposerFocusForCheck(bool focused) => SetComposerFocus(focused);
+    internal bool ComposerFocusedForCheck => ComposerFrame.Classes.Contains("focused");
+    internal IBrush? ComposerBorderBrushForCheck => ComposerFrame.BorderBrush;
+    internal bool SendButtonEnabledForCheck => SendButton.IsEnabled;
+    internal string InputTextForCheck => InputBox.Text ?? "";
+
+    /// <summary>How many times the send button's state has been recomputed. A check asserts it grows when the
+    /// input text changes, which is what proves the change notification is actually wired up — the button
+    /// would still look right until the first keystroke.</summary>
+    internal int SendStateUpdates { get; private set; }
+    internal string SendButtonTooltipForCheck => ToolTip.GetTip(SendButton)?.ToString() ?? "";
+    internal bool ModelPickerIsChipForCheck => ModelPicker.Classes.Contains("chip");
+
+    /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
+    /// rather than by string, because the icons are resolved from the same cached resource.</summary>
+    internal bool SendIconIsStopForCheck
+        => SendButton.Content is Avalonia.Controls.Shapes.Path path
+           && ReferenceEquals(path.Data, ThemeGeometry("Hub.Icon.Stop"));
+
+    internal void SetInputForCheck(string text) => InputBox.Text = text;
+
     internal void SearchForCheck(string query)
     {
         ConversationSearch.Text = query;
@@ -734,5 +817,13 @@ public partial class ChatPanel : UserControl
     {
         InputBox.Text = text;
         await SendAsync();
+    }
+
+    /// <summary>Starts a send without awaiting it, so a check can inspect the mid-stream state (the button
+    /// becomes a stop icon before the first token arrives).</summary>
+    internal Task BeginSendForCheckAsync(string text)
+    {
+        InputBox.Text = text;
+        return SendAsync();
     }
 }

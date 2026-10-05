@@ -143,6 +143,49 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
       <Setter Property="Margin" Value="2,10,0,2" />
     </Style>
+    <!-- The composer frame. Hub.BorderSubtle in dark mode is #353535, the same value as Hub.SurfaceRaised,
+         so a raised frame bordered with it has no visible outline - the frame takes Hub.Border and stays a
+         step darker than the chip inside it, which is what makes the chip read as a control. The focused
+         variant is toggled from code (see SetComposerFocus) rather than with :focus-within, so it is a real,
+         assertable state instead of a selector that may silently never match. -->
+    <Style Selector="Border.composer">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.composer.focused">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <!-- The model picker as a chip. The global ComboBox theme (Theme/HubControls.axaml) stays untouched:
+         a full-width bordered field is right for the settings page and wrong for a composer. -->
+    <Style Selector="ComboBox.chip">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="MaxDropDownHeight" Value="320" />
+    </Style>
+    <!-- The one-round send / stop button. Height, width and radius are set together so it is a circle rather
+         than a rounded square. -->
+    <Style Selector="Button.send">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="MinWidth" Value="34" />
+      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="CornerRadius" Value="17" />
+      <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
   </UserControl.Styles>
 
   <Grid ColumnDefinitions="250,*">
@@ -192,20 +235,26 @@
         </Grid>
       </Border>
 
-      <!-- Composer with model selection anchored at its lower-left corner -->
-      <Border Grid.Row="2" Background="{DynamicResource Hub.SurfaceAlt}" CornerRadius="7"
-              BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1"
-              Margin="0,12,0,0" Padding="10">
+      <!-- Composer: one rounded container drawing the only frame, so the composer reads as a single control
+           instead of three stacked boxes. The input is borderless; the model picker is a chip rather than a
+           full-width field because switching models is a low-frequency action that should not out-weigh the
+           message being typed. The send button is a round icon button whose two states (arrow / square) are
+           distinguishable by shape, not only by colour. -->
+      <Border x:Name="ComposerFrame" Grid.Row="2" Classes="composer"
+              Background="{DynamicResource Hub.SurfaceAlt}" CornerRadius="14"
+              Margin="0,12,0,0" Padding="14,12,12,10">
         <Grid RowDefinitions="Auto,Auto">
-          <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" MinHeight="64" MaxHeight="160"
+          <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" MinHeight="52" MaxHeight="160"
                    TextWrapping="Wrap" PlaceholderText="{DynamicResource InputPlaceholder}"
                    PlaceholderForeground="{DynamicResource Hub.TextTertiary}"
-                   VerticalContentAlignment="Top" Padding="8,6" />
-          <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
-            <ComboBox x:Name="ModelPicker" Grid.Column="0" Width="300" HorizontalAlignment="Left"
+                   VerticalContentAlignment="Top"
+                   Background="Transparent" BorderThickness="0" CornerRadius="0"
+                   Padding="2,0" Margin="0" />
+          <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+            <ComboBox x:Name="ModelPicker" Grid.Column="0" Classes="chip"
+                      HorizontalAlignment="Left" VerticalAlignment="Center"
                       PlaceholderText="{DynamicResource NoAvailableChatModels}" />
-            <Button x:Name="SendButton" Grid.Column="1" Content="{DynamicResource Send}" Classes="primary"
-                    Padding="18,7" VerticalAlignment="Center" />
+            <Button x:Name="SendButton" Grid.Column="1" Classes="send" VerticalAlignment="Center" />
           </Grid>
         </Grid>
       </Border>
