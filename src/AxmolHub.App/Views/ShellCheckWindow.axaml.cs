@@ -369,8 +369,14 @@ public partial class ShellCheckWindow : Window
         // ── Message-level actions and session management ──
         // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
         // regenerate/continue. Presence is asserted here; the operations themselves are asserted below.
-        var streamGate = new System.Threading.Tasks.TaskCompletionSource<bool>();
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["改写前的回复"], streamGate.Task);
+        var streamGate = new System.Threading.Tasks.TaskCompletionSource<bool>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstChunkGate = new System.Threading.Tasks.TaskCompletionSource<bool>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstChunkReached = new System.Threading.Tasks.TaskCompletionSource<bool>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+            ["改写前的回复"], streamGate.Task, firstChunkGate.Task, firstChunkReached);
         var opsConversation = shell.Chat.StartConversation();
         panel.Reload();
         shell.UpdateLayout();
@@ -380,23 +386,71 @@ public partial class ShellCheckWindow : Window
         var streaming = panel.BeginSendForCheckAsync("第一问");
         Check(panel.SendIconIsStopForCheck && panel.SendButtonEnabledForCheck,
             "流式进行中发送按钮切换为停止图标并保持可点（点它即取消）");
+        Check(panel.ChatActivityVisibleForCheck
+              && panel.ChatActivityTextForCheck == HubStrings.Get("ChatPreparing"),
+            "等待首个文本块时显示准备状态");
+        Check(panel.ChatActivityElapsedForCheck == "0s",
+            "请求状态旁显示可读的实际耗时");
         streamGate.SetResult(true);
+        await firstChunkReached.Task;
+        Check(panel.ChatActivityVisibleForCheck
+              && panel.ChatActivityTextForCheck == HubStrings.Get("ChatGenerating"),
+            "收到首个文本块后切换为生成状态");
+        firstChunkGate.SetResult(true);
         await streaming;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(!panel.SendIconIsStopForCheck && panel.SendButtonTooltipForCheck == HubStrings.Get("Send"),
             "流式结束后按钮回到发送箭头");
+        Check(!panel.ChatActivityVisibleForCheck && panel.ChatActivityTextForCheck.Length == 0,
+            "流式结束后清除活动状态");
 
         Check(opsConversation.Messages.Count == 2 && opsConversation.Messages[0].Role == ChatRoles.User,
             "会话记录了用户与助手两轮（实际 " + opsConversation.Messages.Count + "）");
-        Check(panel.BubbleHasAction(0, "CopyMessage") && panel.BubbleHasAction(0, "EditMessage") && panel.BubbleHasAction(0, "DeleteMessage"),
-            "用户消息气泡提供复制 / 编辑重发 / 删除操作");
+        Check(panel.BubbleHasAction(0, "CopyMessage") && panel.BubbleHasAction(0, "EditMessage")
+              && panel.BubbleHasIconAction(0, "CopyMessage") && panel.BubbleHasIconAction(0, "EditMessage"),
+            "用户消息悬停操作栏提供复制图标与编辑图标");
+        Check(panel.BubbleActionBarOpacity(0) == 0,
+            "用户消息操作栏未悬停时保持隐藏");
         Check(panel.BubbleHasAction(1, "CopyMessage") && panel.BubbleHasAction(1, "RegenerateMessage") && panel.BubbleHasAction(1, "ContinueReply"),
             "最后一条助手消息气泡提供复制 / 重新生成 / 继续操作");
+        Check(!string.IsNullOrWhiteSpace(panel.MessageTimestampTextForCheck(0))
+              && panel.MessageTimestampTooltipForCheck(0)
+                 == opsConversation.Messages[0].At.ToLocalTime().ToString(
+                     "yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture)
+              && panel.MessageTimestampTextForCheck(1) is null,
+            "用户消息操作条显示相对时间，悬停提示为完整本地时间，助手消息不重复显示");
         Check(panel.MessageActionCount > 0, "消息操作条渲染进消息流（实际 " + panel.MessageActionCount + " 个按钮）");
         Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
               && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
             "消息操作文案支持中英文");
+
+        var failureCheckConversation = shell.Chat.StartConversation();
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient([]);
+        await panel.SendForCheckAsync("空回复问题");
+        Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatNoResponse"),
+            "模型正常结束但没有文本时显示无回复提示");
+
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient([], exception: new TimeoutException());
+        await panel.SendForCheckAsync("超时问题");
+        Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatTimedOut"),
+            "请求超时时显示明确的超时提示");
+
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+            [], exception: new System.Net.Http.HttpRequestException("连接被拒绝"));
+        await panel.SendForCheckAsync("连接失败问题");
+        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatConnectionFailed"), StringComparison.Ordinal) == true,
+            "网络连接异常在流结束重绘后仍显示连接失败提示");
+        shell.Chat.DeleteConversation(failureCheckConversation.Id);
+        shell.Chat.OpenConversation(opsConversation.Id);
+        opsConversation = shell.Chat.ActiveConversation!;
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
 
         // Incremental rendering: an unrelated reload must reuse the existing bubbles, not rebuild the flow.
         var firstBubble = panel.FirstBubbleForCheck;
@@ -1546,7 +1600,12 @@ public partial class ShellCheckWindow : Window
 
     /// <summary>A scripted <c>IChatClient</c> for the assistant checks: yields fixed text chunks and touches
     /// no network. Mirrors the one in the Checks project; the App cannot reference that project.</summary>
-    private sealed class ScriptedChatClient(IReadOnlyList<string> chunks, Task? gate = null) : Microsoft.Extensions.AI.IChatClient
+    private sealed class ScriptedChatClient(
+        IReadOnlyList<string> chunks,
+        Task? gate = null,
+        Task? afterFirstChunkGate = null,
+        System.Threading.Tasks.TaskCompletionSource<bool>? firstChunkReached = null,
+        Exception? exception = null) : Microsoft.Extensions.AI.IChatClient
     {
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
@@ -1562,10 +1621,18 @@ public partial class ShellCheckWindow : Window
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
             // composer button can be asserted instead of only its end state.
             if (gate is not null) await gate;
+            if (exception is not null) throw exception;
+            var firstChunk = true;
             foreach (var chunk in chunks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, chunk);
+                if (firstChunk)
+                {
+                    firstChunk = false;
+                    firstChunkReached?.TrySetResult(true);
+                    if (afterFirstChunkGate is not null) await afterFirstChunkGate;
+                }
                 await Task.Yield();
             }
         }

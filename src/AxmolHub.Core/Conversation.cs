@@ -14,6 +14,21 @@ public static class ChatRoles
     public const string Tool = "tool";
 }
 
+public static class ChatModes
+{
+    public const string Ask = "ask";
+    public const string Plan = "plan";
+    public const string Agent = "agent";
+}
+
+public static class ChatReasoningEfforts
+{
+    public const string Auto = "auto";
+    public const string Low = "low";
+    public const string Medium = "medium";
+    public const string High = "high";
+}
+
 /// <summary>
 /// One message in a conversation, in <b>Hub's own</b> persisted shape.
 ///
@@ -25,9 +40,31 @@ public static class ChatRoles
 /// </summary>
 public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
 {
-    public static ChatTurn User(string text) => new(ChatRoles.User, text, DateTimeOffset.Now);
+    public string? ToolName { get; init; }
+    public string? ToolCallId { get; init; }
+    public string? ToolArguments { get; init; }
+    public bool ToolFailed { get; init; }
+    public string? AttachedContext { get; init; }
+
+    public static ChatTurn User(string text, string? attachedContext = null) =>
+        new(ChatRoles.User, text, DateTimeOffset.Now) { AttachedContext = attachedContext };
     public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
     public static ChatTurn System(string text) => new(ChatRoles.System, text, DateTimeOffset.Now);
+
+    public static ChatTurn FunctionCall(string callId, string name, string arguments) =>
+        new(ChatRoles.Assistant, "", DateTimeOffset.Now)
+        {
+            ToolCallId = callId,
+            ToolName = name,
+            ToolArguments = arguments,
+        };
+
+    public static ChatTurn FunctionResult(string callId, string text, bool failed = false) =>
+        new(ChatRoles.Tool, text, DateTimeOffset.Now)
+        {
+            ToolCallId = callId,
+            ToolFailed = failed,
+        };
 }
 
 /// <summary>
@@ -41,6 +78,8 @@ public sealed class Conversation
     public string ProviderId { get; set; } = "";
     public string ModelName { get; set; } = "";
     public List<ChatTurn> Messages { get; set; } = [];
+    public string Mode { get; set; } = ChatModes.Ask;
+    public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Auto;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

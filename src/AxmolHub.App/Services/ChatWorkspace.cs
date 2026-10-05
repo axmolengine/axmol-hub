@@ -35,12 +35,18 @@ public sealed class ChatWorkspace : IDisposable
     private Conversation? _active;
     private string? _selectedProviderId;
     private string? _selectedModelName;
+    private string _selectedMode = ChatModes.Ask;
+    private string _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+
+    internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
 
     /// <summary>Set by the verification harness to answer with a scripted stream instead of a real endpoint.</summary>
     internal Func<ModelProvider, IChatClient>? ClientOverride { get; set; }
 
     /// <summary>Raised when the provider or conversation lists change and the panel should repaint.</summary>
     public event Action? Changed;
+
+    internal event Action<string, bool>? ToolActivityChanged;
 
     public ChatWorkspace(string dataRoot)
     {
@@ -101,7 +107,50 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation? ActiveConversation => _active;
 
+    public string ActiveMode => _active?.Mode ?? _selectedMode;
+    public string ActiveReasoningEffort => _active?.ReasoningEffort ?? _selectedReasoningEffort;
+    public bool SupportsReasoningEffort
+        => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.ModelName);
+
     public IReadOnlyList<ConversationSummary> Conversations => _conversations.List();
+
+    public bool SelectMode(string mode)
+    {
+        if (mode is not (ChatModes.Ask or ChatModes.Plan or ChatModes.Agent)) return false;
+        _selectedMode = mode;
+        if (_active is not null)
+        {
+            _active.Mode = mode;
+            _conversations.Save(_active);
+        }
+        Changed?.Invoke();
+        return true;
+    }
+
+    public bool SelectReasoningEffort(string effort)
+    {
+        if (effort is not (ChatReasoningEfforts.Auto or ChatReasoningEfforts.Low
+            or ChatReasoningEfforts.Medium or ChatReasoningEfforts.High)) return false;
+        if (effort != ChatReasoningEfforts.Auto && !SupportsReasoningEffort) return false;
+        _selectedReasoningEffort = effort;
+        if (_active is not null)
+        {
+            _active.ReasoningEffort = effort;
+            _conversations.Save(_active);
+        }
+        Changed?.Invoke();
+        return true;
+    }
+
+    internal (int Used, int Budget) EstimateContextUsage(string draft)
+    {
+        var provider = SelectedChatModel?.Provider;
+        var budget = provider?.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
+        var history = _active?.Messages.ToList() ?? [];
+        history.Add(ChatTurn.User(draft));
+        var trimmed = ContextTrimmer.Trim(history, budget, ChatModePrompt.For(ActiveMode));
+        return (trimmed.Sum(ContextTrimmer.EstimateTokens), budget);
+    }
 
     /// <summary>Selects a usable provider/model for the current conversation or the next new conversation.</summary>
     public bool SelectChatModel(string providerId, string modelName)
@@ -1110,6 +1159,11 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation StartConversation(string? providerId = null)
     {
+        if (_active is not null)
+        {
+            _selectedMode = ChatModes.Ask;
+            _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+        }
         var choice = SelectedChatModel;
         var selectedProvider = providerId is null
             ? choice?.Provider
@@ -1119,6 +1173,8 @@ public sealed class ChatWorkspace : IDisposable
             : selectedProvider?.Model ?? "";
         var conversation = Conversation.Create(selectedProvider?.Id ?? "");
         conversation.ModelName = modelName;
+        conversation.Mode = _selectedMode;
+        conversation.ReasoningEffort = _selectedReasoningEffort;
         _conversations.Save(conversation);
         _active = conversation;
         Changed?.Invoke();
@@ -1142,6 +1198,8 @@ public sealed class ChatWorkspace : IDisposable
         var conversation = _conversations.Load(empty.Id)
             ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
         _active = conversation;
+        _selectedMode = conversation.Mode;
+        _selectedReasoningEffort = conversation.ReasoningEffort;
         Changed?.Invoke();
         return conversation;
     }
@@ -1149,6 +1207,8 @@ public sealed class ChatWorkspace : IDisposable
     public Conversation? OpenConversation(string id)
     {
         _active = _conversations.Load(id);
+        _selectedMode = _active?.Mode ?? ChatModes.Ask;
+        _selectedReasoningEffort = _active?.ReasoningEffort ?? ChatReasoningEfforts.Auto;
         Changed?.Invoke();
         return _active;
     }
@@ -1156,7 +1216,12 @@ public sealed class ChatWorkspace : IDisposable
     public void DeleteConversation(string id)
     {
         _conversations.Delete(id);
-        if (_active?.Id == id) _active = null;
+        if (_active?.Id == id)
+        {
+            _active = null;
+            _selectedMode = ChatModes.Ask;
+            _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+        }
         Changed?.Invoke();
     }
 
@@ -1229,6 +1294,15 @@ public sealed class ChatWorkspace : IDisposable
         string text,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (var chunk in SendAsync(text, null, cancellationToken).ConfigureAwait(false))
+            yield return chunk;
+    }
+
+    public async IAsyncEnumerable<string> SendAsync(
+        string text,
+        string? attachedContext,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         if (_active is null) throw new InvalidOperationException("No active conversation.");
         var choice = SelectedChatModel
             ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
@@ -1236,7 +1310,7 @@ public sealed class ChatWorkspace : IDisposable
         var conversation = _active;
         conversation.ProviderId = choice.Provider.Id;
         conversation.ModelName = choice.ModelName;
-        conversation.Append(ChatTurn.User(text));
+        conversation.Append(ChatTurn.User(text, attachedContext));
         _conversations.Save(conversation);
 
         await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
@@ -1255,8 +1329,9 @@ public sealed class ChatWorkspace : IDisposable
         if (index < 0 || index >= _active.Messages.Count) return false;
 
         var conversation = _active;
+        var attachedContext = conversation.Messages[index].AttachedContext;
         conversation.Messages.RemoveRange(index, conversation.Messages.Count - index);
-        conversation.Append(ChatTurn.User(text));
+        conversation.Append(ChatTurn.User(text, attachedContext));
         _conversations.Save(conversation);
         return true;
     }
@@ -1339,11 +1414,76 @@ public sealed class ChatWorkspace : IDisposable
     {
         var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider, modelName);
         var pipeline = new ChatPipeline(client);
+        var mode = conversation.Mode is ChatModes.Ask or ChatModes.Plan or ChatModes.Agent
+            ? conversation.Mode
+            : ChatModes.Ask;
+        IReadOnlyList<AITool> tools = mode == ChatModes.Ask
+            ? Array.Empty<AITool>()
+            : CreateReadOnlyTools();
+        var reasoning = SupportsReasoningEffort && conversation.ReasoningEffort != ChatReasoningEfforts.Auto
+            ? conversation.ReasoningEffort
+            : null;
 
         // The history handed to the pipeline is everything said so far *excluding* the trailing user turn we
         // just appended and are about to answer; the pipeline adds it back as the last message.
         var history = conversation.Messages.ToList();
-        return pipeline.SendAsync(provider, history, cancellationToken: cancellationToken);
+        return pipeline.SendAsync(
+            provider,
+            history,
+            ChatModePrompt.For(mode),
+            reasoning,
+            tools,
+            (name, callId, arguments) =>
+            {
+                conversation.Append(ChatTurn.FunctionCall(callId, name, arguments));
+                _conversations.Save(conversation);
+                ToolActivityChanged?.Invoke(name, false);
+            },
+            (name, callId, result, failed) =>
+            {
+                conversation.Append(ChatTurn.FunctionResult(callId, result, failed));
+                _conversations.Save(conversation);
+                ToolActivityChanged?.Invoke(name, true);
+            },
+            cancellationToken);
+    }
+
+    private IReadOnlyList<AITool> CreateReadOnlyTools()
+    {
+        var snapshot = HubSnapshotProvider?.Invoke()
+            ?? throw new InvalidOperationException("The Hub read-only tool snapshot is unavailable.");
+
+        return
+        [
+            AIFunctionFactory.Create(
+                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Projects.Select(project => new
+                {
+                    project.Name,
+                    project.EngineVersion,
+                    project.Platform,
+                    project.Configuration,
+                    project.BuildStatus,
+                }))),
+                new AIFunctionFactoryOptions
+                {
+                    Name = "get_projects",
+                    Description = "List registered Hub projects with their engine version and build target.",
+                }),
+            AIFunctionFactory.Create(
+                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Engines)),
+                new AIFunctionFactoryOptions
+                {
+                    Name = "get_engines",
+                    Description = "List installed Axmol engine versions and channels.",
+                }),
+            AIFunctionFactory.Create(
+                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Toolchains)),
+                new AIFunctionFactoryOptions
+                {
+                    Name = "get_toolchain_status",
+                    Description = "Read the latest already-known toolchain detection status; does not run probes or change anything.",
+                }),
+        ];
     }
 
     public sealed record ChatModelOption(ModelProvider Provider, string ModelName)
@@ -1351,10 +1491,32 @@ public sealed class ChatWorkspace : IDisposable
         public override string ToString() => $"{Provider.Name} · {ModelName}";
     }
 
+    internal sealed record HubReadOnlySnapshot(
+        IReadOnlyList<HubProjectSummary> Projects,
+        IReadOnlyList<HubEngineSummary> Engines,
+        IReadOnlyList<HubToolchainSummary> Toolchains);
+
+    internal sealed record HubProjectSummary(
+        string Name, string Path, string EngineVersion, string Platform, string Configuration, string BuildStatus);
+
+    internal sealed record HubEngineSummary(string Version, string Channel);
+
+    internal sealed record HubToolchainSummary(string Name, string Status, bool Detected);
+
     public void Dispose()
     {
         // Nothing holds a live handle yet (the client and secret store are per-call), but the chat view's
         // lifetime should match the shell's — keep the seam so a future cached client is released here.
+    }
+
+    internal static class ChatModePrompt
+    {
+        public static string For(string mode) => mode switch
+        {
+            ChatModes.Plan => "You are a general-purpose assistant. Use only the available read-only tools to inspect Hub context when useful. Return a concise, actionable plan. Do not claim to have performed actions.",
+            ChatModes.Agent => "You are a general-purpose assistant. Use only the available read-only tools to inspect Hub context when useful, then answer directly. You cannot modify files, run commands, or perform other actions.",
+            _ => "You are a general-purpose assistant. Answer from the conversation without calling tools.",
+        };
     }
 
     /// <summary>Stand-in used when the platform has no OS credential store; it simply refuses to hold keys,

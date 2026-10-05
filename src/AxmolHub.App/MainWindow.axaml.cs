@@ -93,6 +93,7 @@ public partial class MainWindow : Window
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
         _workspace.Owner = this;
         _chat = new ChatWorkspace(dataRoot);
+        _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
 
         InitializeComponent();
         InitializeSidebar();
@@ -208,6 +209,20 @@ public partial class MainWindow : Window
         return panel;
     }
 
+    private ChatWorkspace.HubReadOnlySnapshot CreateReadOnlyChatSnapshot()
+        => new(
+            _workspace.State.Projects
+                .Select(project => new ChatWorkspace.HubProjectSummary(
+                    project.Name, project.Path, project.Version, project.Platform, project.Configuration, project.BuildStatus))
+                .ToArray(),
+            _workspace.State.Engines
+                .Select(engine => new ChatWorkspace.HubEngineSummary(engine.Version, engine.Channel))
+                .ToArray(),
+            _workspace.Components
+                .Select(component => new ChatWorkspace.HubToolchainSummary(
+                    component.Name, component.Status.ToString(), component.Executable is not null))
+                .ToArray());
+
     /// <summary>
     /// Keeps the left navigation highlight in sync with the current page. This is exactly what the
     /// WPF version does in <c>SelectPage</c>.
@@ -305,6 +320,7 @@ public partial class MainWindow : Window
         // longer current. Rebuilding rather than re-pointing mirrors how the pages are handled.
         _chat.Dispose();
         _chat = new ChatWorkspace(next.Store.Root);
+        _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
         _chatPanel = null;
 
         // The conversation sidebar holds the old workspace; rebuild it for the new one.

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -33,11 +35,22 @@ public partial class ChatPanel : UserControl
     /// <summary>How close to the bottom counts as "the user is at the bottom". A few pixels of slack stop
     /// sub-pixel scroll rounding from flipping the state on every scroll event.</summary>
     private const double StickEpsilon = 6;
+    private static readonly TimeSpan ChatRequestTimeout = TimeSpan.FromMinutes(2);
 
     private readonly ChatWorkspace _chat;
     private CancellationTokenSource? _send;
+    private TextBlock? _streamStatusLabel;
+    private TextBlock? _streamElapsedLabel;
+    private Ellipse[] _activityDots = [];
+    private DispatcherTimer? _activityTimer;
+    private readonly Stopwatch _activityStopwatch = new();
+    private readonly List<ContextAttachment> _contextAttachments = [];
+    private int _activityFrame;
+    private bool _stopRequested;
     private bool _ready;
     private bool _stickToBottom = true;
+    private string? _pendingSteerText;
+    private string? _pendingSteerContext;
 
     /// <summary>The conversation whose turns <see cref="MessageFlow"/> currently shows, and how many of its
     /// visible turns are already rendered. Together they let <see cref="RenderMessages"/> append only what is
@@ -61,6 +74,11 @@ public partial class ChatPanel : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
+        _chat.ToolActivityChanged += (name, completed) => Dispatcher.UIThread.Post(() =>
+        {
+            if (_streamStatusLabel is not null)
+                _streamStatusLabel.Text = ToolActivityText(name, completed);
+        });
         ModelPicker.SelectionChanged += (_, _) =>
         {
             if (!_ready || ModelPicker.SelectedItem is not ChatWorkspace.ChatModelOption choice) return;
@@ -70,12 +88,28 @@ public partial class ChatPanel : UserControl
                 HubStrings.Get("ModelChangedFormat"),
                 choice.Provider.Name + " · " + choice.ModelName), danger: false);
         };
+        ModePicker.SelectionChanged += (_, _) =>
+        {
+            if (!_ready || ModePicker.SelectedItem is not ComposerChoice choice) return;
+            _chat.SelectMode(choice.Value);
+        };
+        ReasoningPicker.SelectionChanged += (_, _) =>
+        {
+            if (!_ready || ReasoningPicker.SelectedItem is not ComposerChoice choice) return;
+            _chat.SelectReasoningEffort(choice.Value);
+        };
+        ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
+        AddContextButton.Click += (_, _) => ShowAddContextMenu();
         SendButton.Click += (_, _) => _ = SendAsync();
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
         InputBox.PropertyChanged += (_, e) =>
         {
-            if (e.Property == TextBox.TextProperty) UpdateSendState();
+            if (e.Property == TextBox.TextProperty)
+            {
+                UpdateSendState();
+                UpdateContextRing();
+            }
         };
         InputBox.GotFocus += (_, _) => SetComposerFocus(true);
         InputBox.LostFocus += (_, _) => SetComposerFocus(false);
@@ -103,12 +137,13 @@ public partial class ChatPanel : UserControl
         InputBox.PlaceholderText = HubStrings.Get("InputPlaceholder");
         GreetingLabel.Text = HubStrings.Get("AssistantGreeting");
         GreetingSubtitle.Text = HubStrings.Get("AssistantGreetingSubtitle");
-        BuildSuggestionChips();
         UpdateSendState();
 
         RefreshModelPicker();
+        RefreshComposerChoices();
         RenderMessages();
         _ready = true;
+        UpdateContextRing();
     }
 
     private void RefreshModelPicker()
@@ -123,32 +158,191 @@ public partial class ChatPanel : UserControl
         ModelPicker.IsEnabled = choices.Length > 0;
     }
 
-    // ───────────────────────── Empty state ─────────────────────────
-
-    private void BuildSuggestionChips()
+    private void RefreshComposerChoices()
     {
-        SuggestionChips.Children.Clear();
-        foreach (var key in new[]
-                 {
-                     "SuggestionCreateProject", "SuggestionCheckEnvironment",
-                     "SuggestionMigrate", "SuggestionPhysics",
-                 })
+        var modes = new[]
         {
-            var text = HubStrings.Get(key);
-            var chip = new Button
-            {
-                Content = text,
-                Classes = { "suggestion" },
-            };
-            chip.Click += (_, _) => _ = SendSuggestionAsync(text);
-            SuggestionChips.Children.Add(chip);
-        }
+            new ComposerChoice(ChatModes.Ask, HubStrings.Get("ChatModeAsk")),
+            new ComposerChoice(ChatModes.Plan, HubStrings.Get("ChatModePlan")),
+            new ComposerChoice(ChatModes.Agent, HubStrings.Get("ChatModeAgent")),
+        };
+        ModePicker.ItemsSource = modes;
+        ModePicker.SelectedItem = modes.First(choice => choice.Value == _chat.ActiveMode);
+
+        var efforts = new[]
+        {
+            new ComposerChoice(ChatReasoningEfforts.Auto, HubStrings.Get("ChatReasoningAuto")),
+            new ComposerChoice(ChatReasoningEfforts.Low, HubStrings.Get("ChatReasoningLow")),
+            new ComposerChoice(ChatReasoningEfforts.Medium, HubStrings.Get("ChatReasoningMedium")),
+            new ComposerChoice(ChatReasoningEfforts.High, HubStrings.Get("ChatReasoningHigh")),
+        };
+        ReasoningPicker.ItemsSource = efforts;
+        ReasoningPicker.IsEnabled = _chat.SupportsReasoningEffort;
+        var currentEffort = _chat.SupportsReasoningEffort
+            ? _chat.ActiveReasoningEffort
+            : ChatReasoningEfforts.Auto;
+        ReasoningPicker.SelectedItem = efforts.FirstOrDefault(choice => choice.Value == currentEffort) ?? efforts[0];
     }
 
-    private async Task SendSuggestionAsync(string text)
+    private void UpdateContextRing()
     {
-        InputBox.Text = text;
-        await SendAsync();
+        if (_chat is null) return;
+        var (used, budget) = _chat.EstimateContextUsage(InputBox.Text ?? "");
+        var ratio = budget > 0 ? (double)used / budget : 0;
+        ContextRing.Usage = Math.Clamp(ratio, 0, 1);
+        ToolTip.SetTip(ContextRing, string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatContextEstimateFormat"),
+            used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            budget.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            Math.Clamp((int)Math.Round(ratio * 100), 0, 100)));
+    }
+
+    private void ShowAddContextMenu()
+    {
+        var menu = new MenuFlyout();
+        var addFolder = new MenuItem { Header = HubStrings.Get("ChatAddLocalFolder") };
+        addFolder.Click += async (_, _) => await AddLocalFolderAsync();
+        menu.Items.Add(addFolder);
+
+        var projects = _chat.HubSnapshotProvider?.Invoke()?.Projects ?? [];
+        var addProject = new MenuItem
+        {
+            Header = HubStrings.Get("ChatAddHubProject"),
+            IsEnabled = projects.Count > 0,
+        };
+        foreach (var project in projects)
+        {
+            var projectItem = new MenuItem { Header = project.Name, Tag = project };
+            projectItem.Click += (_, _) =>
+            {
+                if (projectItem.Tag is ChatWorkspace.HubProjectSummary selected)
+                    AddProjectAttachment(selected);
+            };
+            addProject.Items.Add(projectItem);
+        }
+
+        if (projects.Count == 0)
+        {
+            addProject.Items.Add(new MenuItem
+            {
+                Header = HubStrings.Get("ChatNoHubProjects"),
+                IsEnabled = false,
+            });
+        }
+        menu.Items.Add(addProject);
+        menu.ShowAt(AddContextButton);
+    }
+
+    private async Task AddLocalFolderAsync()
+    {
+        var owner = TopLevel.GetTopLevel(this);
+        if (owner is null) return;
+        var result = await Pickers.PickFolderAsync(owner, HubStrings.Get("ChatPickFolderTitle"));
+        if (result.Outcome == PickOutcome.Cancelled) return;
+        if (result.Outcome == PickOutcome.NotLocal)
+        {
+            AppendNotice(HubStrings.Get("ChatFolderNotLocal"), danger: true);
+            return;
+        }
+
+        var path = result.Path!;
+        AddContextAttachment(new ContextAttachment(
+            "folder",
+            System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)),
+            path));
+    }
+
+    private void AddProjectAttachment(ChatWorkspace.HubProjectSummary project)
+    {
+        var details = string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatProjectContextFormat"),
+            project.EngineVersion,
+            project.Platform,
+            project.Configuration,
+            project.BuildStatus);
+        AddContextAttachment(new ContextAttachment("project", project.Name, project.Path, details));
+    }
+
+    private void AddContextAttachment(ContextAttachment attachment)
+    {
+        if (_contextAttachments.Any(existing =>
+                string.Equals(existing.Path, attachment.Path,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+            return;
+        _contextAttachments.Add(attachment);
+        RenderContextAttachments();
+        UpdateContextRing();
+    }
+
+    private void RenderContextAttachments()
+    {
+        ContextAttachmentPanel.Children.Clear();
+        foreach (var attachment in _contextAttachments)
+        {
+            var label = new TextBlock
+            {
+                Text = (attachment.Kind == "project" ? HubStrings.Get("ChatProjectPrefix") : HubStrings.Get("ChatFolderPrefix"))
+                       + attachment.Name,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 240,
+            };
+            label.Classes.Add("context-attachment-label");
+            var remove = new Button { Content = "×", Tag = attachment };
+            remove.Classes.Add("context-attachment-remove");
+            ToolTip.SetTip(label, attachment.Path);
+            remove.Click += (_, _) =>
+            {
+                if (remove.Tag is ContextAttachment selected)
+                {
+                    _contextAttachments.Remove(selected);
+                    RenderContextAttachments();
+                    UpdateContextRing();
+                }
+            };
+            var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            chip.Children.Add(label);
+            chip.Children.Add(remove);
+            var border = new Border { Child = chip };
+            border.Classes.Add("context-attachment");
+            ContextAttachmentPanel.Children.Add(border);
+        }
+
+        ContextAttachmentPanel.IsVisible = _contextAttachments.Count > 0;
+    }
+
+    private Task<string?> ReadAttachmentContextAsync()
+    {
+        if (_contextAttachments.Count == 0) return Task.FromResult<string?>(null);
+        var attachments = _contextAttachments.ToArray();
+        return Task.Run<string?>(() =>
+        {
+            var sections = attachments.Select(attachment =>
+            {
+                var contents = ChatContextReader.ReadFolder(attachment.Path, attachment.Name);
+                return attachment.Details is { Length: > 0 }
+                    ? attachment.Details + "\n\n" + contents
+                    : contents;
+            });
+            return string.Join("\n\n", sections);
+        });
+    }
+
+    private static string ToolActivityText(string name, bool completed)
+    {
+        var tool = name switch
+        {
+            "get_projects" => HubStrings.Get("ChatToolProjects"),
+            "get_engines" => HubStrings.Get("ChatToolEngines"),
+            "get_toolchain_status" => HubStrings.Get("ChatToolchains"),
+            _ => name,
+        };
+        return string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get(completed ? "ChatToolCompletedFormat" : "ChatToolRunningFormat"),
+            tool);
     }
 
     // ───────────────────────── Messages ─────────────────────────
@@ -212,7 +406,7 @@ public partial class ChatPanel : UserControl
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
 
-        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, index, turn.Role, turn.Text, isLast));
+        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, index, turn.Role, turn.Text, isLast, turn.At));
         _renderedCount++;
 
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
@@ -226,7 +420,8 @@ public partial class ChatPanel : UserControl
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
         MessageFlow.Children.Add(BuildMessageRow(fromUser, body, null,
-            fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false));
+            fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false,
+            fromUser ? DateTimeOffset.Now : null));
         _renderedCount++;
         ScrollToEnd();
     }
@@ -247,7 +442,8 @@ public partial class ChatPanel : UserControl
     /// A null <paramref name="index"/> (the live streaming bubble / just-sent user pill) carries no
     /// action bar: there is nothing stable to act on until the turn is persisted.
     /// </summary>
-    private Control BuildMessageRow(bool fromUser, Control body, int? index, string role, string text, bool isLast)
+    private Control BuildMessageRow(
+        bool fromUser, Control body, int? index, string role, string text, bool isLast, DateTimeOffset? at = null)
     {
         var column = new StackPanel { Spacing = 6 };
 
@@ -267,7 +463,7 @@ public partial class ChatPanel : UserControl
 
         if (index is { } messageIndex)
         {
-            var actions = BuildActionBar(messageIndex, role, text, isLast);
+            var actions = BuildActionBar(messageIndex, role, text, isLast, at);
             actions.HorizontalAlignment = fromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
             column.Children.Add(actions);
         }
@@ -287,7 +483,7 @@ public partial class ChatPanel : UserControl
         };
     }
 
-    private Control BuildActionBar(int index, string role, string text, bool isLast)
+    private Control BuildActionBar(int index, string role, string text, bool isLast, DateTimeOffset? at)
     {
         var bar = new StackPanel
         {
@@ -297,26 +493,83 @@ public partial class ChatPanel : UserControl
         };
         bar.Classes.Add("message-actions");
 
-        bar.Children.Add(ActionButton("CopyMessage", () => CopyToClipboard(text)));
+        if (role == ChatRoles.User && at is { } timestamp)
+        {
+            var localTimestamp = timestamp.ToLocalTime();
+            var relative = new TextBlock { Text = FormatRelativeTime(DateTimeOffset.Now - localTimestamp) };
+            relative.Classes.Add("message-timestamp");
+            ToolTip.SetTip(relative, localTimestamp.ToString(
+                "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture));
+            bar.Children.Add(relative);
+        }
 
         if (role == ChatRoles.User)
         {
-            bar.Children.Add(ActionButton("EditMessage", () => _ = EditMessageAsync(index, text)));
+            bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
+            bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => _ = EditMessageAsync(index, text)));
         }
-        else if (isLast)
+        else
         {
-            bar.Children.Add(ActionButton("RegenerateMessage", () => _ = RegenerateAsync()));
-            bar.Children.Add(ActionButton("ContinueReply", () => _ = ContinueAsync()));
+            bar.Children.Add(ActionButton("CopyMessage", () => CopyToClipboard(text)));
+            if (isLast)
+            {
+                bar.Children.Add(ActionButton("RegenerateMessage", () => _ = RegenerateAsync()));
+                bar.Children.Add(ActionButton("ContinueReply", () => _ = ContinueAsync()));
+            }
+            bar.Children.Add(ActionButton("DeleteMessage", () => _ = DeleteMessageAsync(index)));
         }
 
-        bar.Children.Add(ActionButton("DeleteMessage", () => _ = DeleteMessageAsync(index)));
         return bar;
+    }
+
+    private static string FormatRelativeTime(TimeSpan elapsed)
+    {
+        var seconds = Math.Max(0, (int)elapsed.TotalSeconds);
+        if (seconds < 60) return HubStrings.Get("MessageTimeJustNow");
+        if (seconds < 3600)
+            return string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("MessageTimeMinutesAgo"),
+                (int)elapsed.TotalMinutes);
+        if (seconds < 86400)
+            return string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("MessageTimeHoursAgo"),
+                (int)elapsed.TotalHours);
+
+        return string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("MessageTimeDaysAgo"),
+            (int)elapsed.TotalDays);
     }
 
     private static Button ActionButton(string textKey, Action onClick)
     {
-        var button = new Button { Content = HubStrings.Get(textKey) };
+        var button = new Button { Content = HubStrings.Get(textKey), Tag = textKey };
         button.Classes.Add("message-action");
+        ToolTip.SetTip(button, HubStrings.Get(textKey));
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private static Button IconActionButton(string textKey, string geometryKey, Action onClick)
+    {
+        var icon = new Avalonia.Controls.Shapes.Path
+        {
+            Width = 15,
+            Height = 15,
+            Stretch = Stretch.Uniform,
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.8,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+        };
+        icon.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension(geometryKey));
+        icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+
+        var button = new Button { Content = icon, Tag = textKey };
+        button.Classes.Add("message-action");
+        button.Classes.Add("message-action-icon");
         ToolTip.SetTip(button, HubStrings.Get(textKey));
         button.Click += (_, _) => onClick();
         return button;
@@ -376,9 +629,13 @@ public partial class ChatPanel : UserControl
     {
         SendStateUpdates++;
         var streaming = _send is not null;
-        SendButton.IsEnabled = streaming || (InputBox.Text ?? "").Trim().Length > 0;
-        SendButton.Content = BuildSendIcon(streaming);
-        ToolTip.SetTip(SendButton, HubStrings.Get(streaming ? "Stop" : "Send"));
+        var hasText = (InputBox.Text ?? "").Trim().Length > 0;
+        SendButton.IsEnabled = _pendingSteerText is null && (streaming || hasText);
+        SendButton.Content = BuildSendIcon(streaming && !hasText);
+        ToolTip.SetTip(SendButton, HubStrings.Get(streaming
+            ? hasText ? "ChatSteer" : "Stop"
+            : "Send"));
+        UpdateContextRing();
     }
 
     /// <summary>Builds the arrow (send) or square (stop) glyph. Colours are bound as DynamicResource rather
@@ -419,6 +676,34 @@ public partial class ChatPanel : UserControl
     {
         if (_send is not null)
         {
+            if (_pendingSteerText is not null) return;
+            var steerText = (InputBox.Text ?? "").Trim();
+            if (steerText.Length > 0)
+            {
+                string? steerContext;
+                try
+                {
+                    steerContext = await ReadAttachmentContextAsync();
+                }
+                catch (Exception ex)
+                {
+                    AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
+                    return;
+                }
+
+                _pendingSteerText = steerText;
+                _pendingSteerContext = steerContext;
+                InputBox.Text = "";
+                _contextAttachments.Clear();
+                RenderContextAttachments();
+                if (_streamStatusLabel is not null)
+                    _streamStatusLabel.Text = HubStrings.Get("ChatSteering");
+                UpdateSendState();
+                _send.Cancel();
+                return;
+            }
+
+            _stopRequested = true;
             _send.Cancel();
             return;
         }
@@ -431,12 +716,37 @@ public partial class ChatPanel : UserControl
             return;
         }
 
-        if (_chat.ActiveConversation is null) _chat.StartConversation();
+        string? context;
+        try
+        {
+            context = await ReadAttachmentContextAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
+            return;
+        }
+
+        _contextAttachments.Clear();
+        RenderContextAttachments();
         InputBox.Text = "";
+        await SendTextAsync(text, context);
+    }
+
+    private async Task SendTextAsync(string text, string? attachedContext = null)
+    {
+        if (text.Length == 0) return;
+        if (_chat.SelectedChatModel is null)
+        {
+            AppendNotice(HubStrings.Get("NoAvailableChatModels"), danger: true);
+            return;
+        }
+
+        if (_chat.ActiveConversation is null) _chat.StartConversation();
 
         AppendPlainBubble(text, fromUser: true);
         ConversationStateChanged?.Invoke();
-        await StreamReplyAsync(token => _chat.SendAsync(text, token));
+        await StreamReplyAsync(token => _chat.SendAsync(text, attachedContext, token));
     }
 
     private async Task RegenerateAsync()
@@ -494,19 +804,73 @@ public partial class ChatPanel : UserControl
     private async Task StreamReplyAsync(Func<CancellationToken, IAsyncEnumerable<string>> start)
     {
         _send = new CancellationTokenSource();
+        _stopRequested = false;
+        _send.CancelAfter(ChatRequestTimeout);
         var token = _send.Token;
 
         var body = new StackPanel { Spacing = 8 };
         var preview = new TextBlock { TextWrapping = TextWrapping.Wrap };
         body.Children.Add(preview);
+        var activity = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        activity.Classes.Add("chat-activity");
+        var dots = new StackPanel { Orientation = Orientation.Horizontal };
+        dots.Classes.Add("chat-activity-dots");
+        _activityDots = Enumerable.Range(0, 3).Select(_ =>
+        {
+            var dot = new Ellipse();
+            dot.Classes.Add("chat-activity-dot");
+            return dot;
+        }).ToArray();
+        foreach (var dot in _activityDots) dots.Children.Add(dot);
+        activity.Children.Add(dots);
+        _streamStatusLabel = new TextBlock { Text = HubStrings.Get("ChatPreparing") };
+        _streamStatusLabel.Classes.Add("chat-activity-label");
+        activity.Children.Add(_streamStatusLabel);
+        activity.Children.Add(new TextBlock
+        {
+            Text = "·",
+            Classes = { "chat-activity-elapsed" },
+        });
+        _streamElapsedLabel = new TextBlock
+        {
+            Text = "0s",
+            Classes = { "chat-activity-elapsed" },
+        };
+        activity.Children.Add(_streamElapsedLabel);
+        body.Children.Add(activity);
         AppendStreamingBubble(body);
 
         var buffer = new StringBuilder();
+        var receivedText = false;
+        string? completionNotice = null;
+        var completionNoticeIsDanger = false;
+        _activityStopwatch.Restart();
+        _activityFrame = 0;
+        UpdateActivityIndicator();
+        _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _activityTimer.Tick += (_, _) =>
+        {
+            _activityFrame++;
+            UpdateActivityIndicator();
+            UpdateActivityElapsed();
+        };
+        _activityTimer.Start();
         UpdateSendState();
         try
         {
             await foreach (var chunk in start(token).ConfigureAwait(true))
             {
+                if (!receivedText && chunk.Length > 0)
+                {
+                    receivedText = true;
+                    if (_streamStatusLabel is not null)
+                        _streamStatusLabel.Text = HubStrings.Get("ChatGenerating");
+                }
+
                 buffer.Append(chunk);
                 preview.Text = buffer.ToString();
                 ScrollToEndIfSticky();
@@ -514,21 +878,75 @@ public partial class ChatPanel : UserControl
         }
         catch (OperationCanceledException)
         {
-            AppendNotice(HubStrings.Get("ChatCancelled"), danger: false);
+            if (_pendingSteerText is null)
+            {
+                completionNotice = _stopRequested
+                    ? HubStrings.Get("ChatCancelled")
+                    : HubStrings.Get("ChatTimedOut");
+                completionNoticeIsDanger = !_stopRequested;
+            }
+        }
+        catch (TimeoutException)
+        {
+            completionNotice = HubStrings.Get("ChatTimedOut");
+            completionNoticeIsDanger = true;
+        }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            completionNotice = HubStrings.Get("ChatConnectionFailed") + ex.Message;
+            completionNoticeIsDanger = true;
         }
         catch (Exception ex)
         {
-            AppendNotice(HubStrings.Get("ChatFailed") + ex.Message, danger: true);
+            completionNotice = HubStrings.Get("ChatFailed") + ex.Message;
+            completionNoticeIsDanger = true;
         }
         finally
         {
+            _activityTimer?.Stop();
+            _activityTimer = null;
+            _activityStopwatch.Stop();
+            _streamStatusLabel = null;
+            _streamElapsedLabel = null;
+            _activityDots = [];
             _send.Dispose();
             _send = null;
             UpdateSendState();
             ForceRebuildMessages();
             ConversationStateChanged?.Invoke();
+            if (completionNotice is null && buffer.Length == 0)
+            {
+                completionNotice = HubStrings.Get("ChatNoResponse");
+                completionNoticeIsDanger = true;
+            }
+            if (completionNotice is not null)
+                AppendNotice(completionNotice, completionNoticeIsDanger);
             ScrollToEnd();
         }
+
+        if (_pendingSteerText is { } steerText)
+        {
+            _pendingSteerText = null;
+            var steerContext = _pendingSteerContext;
+            _pendingSteerContext = null;
+            UpdateSendState();
+            await SendTextAsync(steerText, steerContext);
+        }
+    }
+
+    private void UpdateActivityIndicator()
+    {
+        for (var i = 0; i < _activityDots.Length; i++)
+            _activityDots[i].Opacity = (i + _activityFrame) % _activityDots.Length == 0 ? 1 : 0.35;
+    }
+
+    private void UpdateActivityElapsed()
+    {
+        if (_streamElapsedLabel is null) return;
+        var elapsed = _activityStopwatch.Elapsed;
+        _streamElapsedLabel.Text = elapsed.TotalMinutes >= 1
+            ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s"
+            : $"{Math.Max(0, (int)elapsed.TotalSeconds)}s";
     }
 
     // ───────────────────────── Scrolling ─────────────────────────
@@ -666,6 +1084,15 @@ public partial class ChatPanel : UserControl
     internal bool ComposerFocusedForCheck => ComposerFrame.Classes.Contains("focused");
     internal IBrush? ComposerBorderBrushForCheck => ComposerFrame.BorderBrush;
     internal bool SendButtonEnabledForCheck => SendButton.IsEnabled;
+    internal bool ChatActivityVisibleForCheck => _streamStatusLabel is { IsVisible: true };
+    internal string ChatActivityTextForCheck => _streamStatusLabel?.Text ?? "";
+    internal string ChatActivityElapsedForCheck => _streamElapsedLabel?.Text ?? "";
+    internal string? LastNoticeTextForCheck
+        => MessageFlow.Children.LastOrDefault() is Grid row
+           && row.Classes.Contains("notice")
+           && row.Children.OfType<TextBlock>().FirstOrDefault() is { } label
+            ? label.Text
+            : null;
     internal string InputTextForCheck => InputBox.Text ?? "";
 
     /// <summary>How many times the send button's state has been recomputed. A check asserts it grows when the
@@ -673,6 +1100,13 @@ public partial class ChatPanel : UserControl
     internal int SendStateUpdates { get; private set; }
     internal string SendButtonTooltipForCheck => ToolTip.GetTip(SendButton)?.ToString() ?? "";
     internal bool ModelPickerIsChipForCheck => ModelPicker.Classes.Contains("chip");
+    internal string SelectedModeForCheck => (ModePicker.SelectedItem as ComposerChoice)?.Value ?? "";
+    internal string SelectedReasoningForCheck => (ReasoningPicker.SelectedItem as ComposerChoice)?.Value ?? "";
+    internal bool ReasoningPickerEnabledForCheck => ReasoningPicker.IsEnabled;
+    internal double ContextUsageForCheck => ContextRing.Usage;
+    internal string ContextTooltipForCheck => ToolTip.GetTip(ContextRing)?.ToString() ?? "";
+    internal int ContextAttachmentCountForCheck => _contextAttachments.Count;
+    internal bool HasComposerAddMenuForCheck => AddContextButton is not null;
 
     /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
     /// rather than by string, because the icons are resolved from the same cached resource.</summary>
@@ -681,6 +1115,22 @@ public partial class ChatPanel : UserControl
            && ReferenceEquals(path.Data, ThemeGeometry("Hub.Icon.Stop"));
 
     internal void SetInputForCheck(string text) => InputBox.Text = text;
+
+    internal bool SelectModeForCheck(string mode)
+    {
+        var choice = ModePicker.Items?.Cast<ComposerChoice>().FirstOrDefault(option => option.Value == mode);
+        if (choice is null) return false;
+        ModePicker.SelectedItem = choice;
+        return true;
+    }
+
+    internal bool SelectReasoningForCheck(string effort)
+    {
+        var choice = ReasoningPicker.Items?.Cast<ComposerChoice>().FirstOrDefault(option => option.Value == effort);
+        if (choice is null) return false;
+        ReasoningPicker.SelectedItem = choice;
+        return true;
+    }
 
     internal bool SelectModelForCheck(string providerId, string modelName)
     {
@@ -705,11 +1155,42 @@ public partial class ChatPanel : UserControl
         return SendAsync();
     }
 
+    private sealed record ComposerChoice(string Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private sealed record ContextAttachment(string Kind, string Name, string Path, string? Details = null);
+
     internal bool BubbleHasAction(int visibleIndex, string textKey)
     {
         var row = MessageRows.ElementAtOrDefault(visibleIndex);
         return row is not null && row.GetLogicalDescendants().OfType<Button>()
             .Any(button => button.Classes.Contains("message-action")
-                           && string.Equals(button.Content?.ToString(), HubStrings.Get(textKey), StringComparison.Ordinal));
+                           && (string.Equals(button.Tag?.ToString(), textKey, StringComparison.Ordinal)
+                               || string.Equals(button.Content?.ToString(), HubStrings.Get(textKey), StringComparison.Ordinal)));
     }
+
+    internal bool BubbleHasIconAction(int visibleIndex, string textKey)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<Button>()
+            .Any(button => button.Classes.Contains("message-action-icon")
+                           && string.Equals(button.Tag?.ToString(), textKey, StringComparison.Ordinal)) == true;
+
+    internal double BubbleActionBarOpacity(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<StackPanel>()
+            .FirstOrDefault(panel => panel.Classes.Contains("message-actions"))?.Opacity ?? -1;
+
+    internal string? MessageTimestampTextForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("message-timestamp"))?.Text;
+
+    internal string? MessageTimestampTooltipForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("message-timestamp")) is { } label
+            ? ToolTip.GetTip(label)?.ToString()
+            : null;
 }

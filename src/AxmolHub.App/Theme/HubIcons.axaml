@@ -46,6 +46,7 @@
 
   <!-- Two offset document outlines = Copy -->
   <StreamGeometry x:Key="Hub.Icon.Copy">M8 7V5.5A1.5 1.5 0 0 1 9.5 4H15A1.5 1.5 0 0 1 16.5 5.5V12A1.5 1.5 0 0 1 15 13.5H14 M6 8H11.5A1.5 1.5 0 0 1 13 9.5V16A1.5 1.5 0 0 1 11.5 17.5H6A1.5 1.5 0 0 1 4.5 16V9.5A1.5 1.5 0 0 1 6 8Z</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Edit">M3.5 16.5L3 21L7.5 20.5L19.2 8.8L15.2 4.8ZM13.8 6.2L17.8 10.2</StreamGeometry>
   <StreamGeometry x:Key="Hub.Icon.CopySuccess">M4.5 12.5L9.2 17L19.5 6.5</StreamGeometry>
 
   <!-- A speech bubble with a spark = AI assistant. The bubble reads as "chat"; the inner spark keeps it from

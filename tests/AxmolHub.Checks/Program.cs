@@ -369,6 +369,16 @@ if (args.Contains("--check-ai-sessions"))
     if (listed.MessageCount != 2 || listed.Title != conversation.Title) throw new Exception("Index entry disagrees with the conversation.");
     Console.WriteLine("PASS: ConversationStore round-trips turns and maintains the index.");
 
+    conversation.Mode = ChatModes.Plan;
+    conversation.ReasoningEffort = ChatReasoningEfforts.High;
+    conversation.Messages.Add(ChatTurn.User("Inspect this file", "file content"));
+    store.Save(conversation);
+    reloaded = store.Load(conversation.Id) ?? throw new Exception("Conversation with mode/context did not reload.");
+    if (reloaded.Mode != ChatModes.Plan || reloaded.ReasoningEffort != ChatReasoningEfforts.High
+        || reloaded.Messages[^1].AttachedContext != "file content")
+        throw new Exception("Composer settings or attached context did not round-trip.");
+    Console.WriteLine("PASS: Conversation mode, reasoning effort, and attached context persist.");
+
     // A hostile id may not escape the sessions directory.
     var escaped = false;
     try { store.Delete("../../evil"); } catch (ArgumentException) { escaped = true; }
@@ -414,6 +424,17 @@ if (args.Contains("--check-ai-sessions"))
     var oversize = ContextTrimmer.Trim([ChatTurn.User(new string('y', 4000))], budget: 10);
     if (oversize.Count != 1) throw new Exception("Trimmer dropped an oversized newest turn, leaving no prompt.");
     Console.WriteLine("PASS: ContextTrimmer keeps at least the newest turn.");
+    if (ContextTrimmer.EstimateTokens(ChatTurn.User("question", "attached file contents"))
+        <= ContextTrimmer.EstimateTokens("question"))
+        throw new Exception("Context estimator ignored attached file contents.");
+    Console.WriteLine("PASS: ContextTrimmer accounts for attached context.");
+
+    if (!ModelCatalog.SupportsReasoningEffort("gpt-5.1")
+        || !ModelCatalog.SupportsReasoningEffort("o3-mini")
+        || ModelCatalog.SupportsReasoningEffort("gpt-50")
+        || ModelCatalog.SupportsReasoningEffort("unknown-model"))
+        throw new Exception("Reasoning capability did not fail closed to explicitly listed model families.");
+    Console.WriteLine("PASS: Reasoning effort is gated to explicitly declared model families.");
 
     // Pipeline: turn <-> ChatMessage conversion is lossless, and streaming yields the fake text.
     var turns = new List<ChatTurn> { ChatTurn.System("sys"), ChatTurn.User("hello"), ChatTurn.Assistant("hi"), new(ChatRoles.Tool, "result", DateTimeOffset.Now) };
@@ -422,6 +443,18 @@ if (args.Contains("--check-ai-sessions"))
     for (var index = 0; index < turns.Count; index++)
         if (wireMessages[index].Text != turns[index].Text) throw new Exception($"Conversion lost text at index {index}.");
     if (wireMessages[3].Role != ChatRole.Tool) throw new Exception("Tool role did not map to ChatRole.Tool.");
+    var toolTurns = new[]
+    {
+        ChatTurn.FunctionCall("call-1", "get_projects", "{\"filter\":\"active\"}"),
+        ChatTurn.FunctionResult("call-1", "[{\"name\":\"Demo\"}]"),
+    };
+    var toolMessages = ChatPipeline.ToChatMessages(toolTurns);
+    if (toolMessages[0].Contents.Single() is not FunctionCallContent
+        || toolMessages[1].Contents.Single() is not FunctionResultContent)
+        throw new Exception("Persisted tool protocol did not convert back to function call/result contents.");
+    var attachedMessage = ChatPipeline.ToChatMessage(ChatTurn.User("Question", "attached reference"));
+    if (!attachedMessage.Text.Contains("attached reference", StringComparison.Ordinal))
+        throw new Exception("Attached context was not included in the model-facing user message.");
     Console.WriteLine("PASS: ChatPipeline converts turns to messages losslessly.");
 
     var fake = new FakeChatClient(["Hel", "lo!"]);
@@ -444,6 +477,40 @@ if (args.Contains("--check-ai-sessions"))
     await foreach (var _ in new ChatPipeline(fake).SendAsync(tiny, longHistory)) { }
     if (fake.LastMessages is null || fake.LastMessages.Count >= longHistory.Count) throw new Exception("Pipeline did not trim the oversized history before calling the client.");
     Console.WriteLine("PASS: ChatPipeline trims oversized history before the model call.");
+
+    var toolClient = new ToolLoopChatClient();
+    var startedTools = 0;
+    var completedTools = 0;
+    var toolResult = new StringBuilder();
+    var readOnlyTool = AIFunctionFactory.Create(
+        (Func<string>)(() => "[{\"name\":\"Demo\"}]"),
+        new AIFunctionFactoryOptions
+        {
+            Name = "get_projects",
+            Description = "Return registered projects.",
+        });
+    await foreach (var chunk in new ChatPipeline(toolClient).SendAsync(
+                       provider,
+                       [ChatTurn.User("List projects")],
+                       tools: [readOnlyTool],
+                       onToolStarted: (_, _, _) => startedTools++,
+                       onToolCompleted: (_, _, result, failed) =>
+                       {
+                           if (failed) throw new Exception("Read-only tool unexpectedly failed.");
+                           completedTools++;
+                           toolResult.Append(result);
+                       }))
+        streamed.Append(chunk);
+    if (toolClient.CallCount != 2 || startedTools != 1 || completedTools != 1
+        || !toolResult.ToString().Contains("Demo", StringComparison.Ordinal))
+        throw new Exception("Tool call → execution → result → final answer loop did not complete.");
+    if (!toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionCallContent))
+        || !toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
+        throw new Exception("The tool loop did not send the function call and result back to the model.");
+    if (!toolClient.LastOptions!.Tools!.Any(tool => tool.Name == "get_projects"))
+        throw new Exception("The allowed read-only tool was not exposed in chat options.");
+    streamed.Clear();
+    Console.WriteLine("PASS: ChatPipeline completes the read-only function-call loop.");
 
     // Cancellation propagates as OperationCanceledException.
     using var cancellation = new CancellationTokenSource();
@@ -1524,3 +1591,44 @@ sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation
     public void Dispose() { }
 }
 
+sealed class ToolLoopChatClient : IChatClient
+{
+    public int CallCount { get; private set; }
+    public IList<ChatMessage> SecondRequest { get; private set; } = [];
+    public ChatOptions? LastOptions { get; private set; }
+
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Checks only use the streaming path.");
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        LastOptions = options;
+        var request = messages.ToList();
+        if (CallCount == 1)
+        {
+            yield return new ChatResponseUpdate(
+                ChatRole.Assistant,
+                new List<AIContent>
+                {
+                    new FunctionCallContent("call-1", "get_projects", new Dictionary<string, object?>()),
+                });
+        }
+        else
+        {
+            SecondRequest = request;
+            if (!request.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
+                throw new Exception("The function result was missing from the follow-up request.");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "Projects loaded.");
+        }
+
+        await Task.Yield();
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public void Dispose() { }
+}

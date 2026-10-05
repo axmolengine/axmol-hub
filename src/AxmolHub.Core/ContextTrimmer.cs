@@ -17,13 +17,16 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class ContextTrimmer
 {
+    public const int DefaultBudgetTokens = 8192;
+
     /// <summary>Rough characters-per-token used when no tokenizer is available. Deliberately conservative
     /// (real English averages nearer 4) so the estimate over-counts rather than overflows the window.</summary>
     public const int CharactersPerToken = 3;
 
     /// <summary>Estimates the token cost of a turn: its text plus a small per-message overhead for the role
     /// and delimiters every chat format adds.</summary>
-    public static int EstimateTokens(ChatTurn turn) => EstimateTokens(turn.Text);
+    public static int EstimateTokens(ChatTurn turn)
+        => EstimateTokens(turn.Text) + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext));
 
     public static int EstimateTokens(string text) => text.Length / CharactersPerToken + MessageOverheadTokens;
 
