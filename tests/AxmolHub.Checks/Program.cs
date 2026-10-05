@@ -381,6 +381,23 @@ if (args.Contains("--check-ai-sessions"))
     if (store.List().Any(summary => summary.Id == conversation.Id)) throw new Exception("Deleted conversation is still listed.");
     Console.WriteLine("PASS: ConversationStore deletes conversations and their index entries.");
 
+    // Pinned sessions sort above newer ones, and the pin survives an index round-trip.
+    var older = Conversation.Create("orcarouter");
+    older.Append(ChatTurn.User("older"));
+    older.UpdatedAt = DateTimeOffset.Now.AddHours(-1);
+    store.Save(older);
+    var newer = Conversation.Create("orcarouter");
+    newer.Append(ChatTurn.User("newer"));
+    store.Save(newer);
+    if (store.List()[0].Id != newer.Id) throw new Exception("The most recently updated conversation did not sort first.");
+    older.Pinned = true;
+    store.Save(older);
+    var byPin = store.List();
+    if (byPin[0].Id != older.Id || !byPin[0].Pinned) throw new Exception("A pinned conversation did not sort first, or lost its pin through the index.");
+    Console.WriteLine("PASS: ConversationStore sorts pinned conversations first.");
+    store.Delete(older.Id);
+    store.Delete(newer.Id);
+
     // ContextTrimmer: system turns survive, oldest turns are dropped, and order is preserved.
     var history = new List<ChatTurn> { ChatTurn.System("You are Axmol's assistant.") };
     for (var index = 0; index < 20; index++) history.Add(ChatTurn.User($"message number {index} " + new string('x', 300)));

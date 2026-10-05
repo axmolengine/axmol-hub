@@ -44,6 +44,10 @@ public sealed class Conversation
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
+    /// <summary>Pinned conversations sort above the rest regardless of recency. Kept on the conversation
+    /// itself (not only the index) so a rebuild from the message files restores the pin.</summary>
+    public bool Pinned { get; set; }
+
     /// <summary>Longest auto-title before ellipsis; short enough to fit the session list.</summary>
     private const int MaxTitleLength = 48;
 
@@ -81,6 +85,7 @@ public sealed class ConversationSummary
     public string ProviderId { get; set; } = "";
     public int MessageCount { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public bool Pinned { get; set; }
 
     public static ConversationSummary From(Conversation conversation) => new()
     {
@@ -89,6 +94,7 @@ public sealed class ConversationSummary
         ProviderId = conversation.ProviderId,
         MessageCount = conversation.Messages.Count,
         UpdatedAt = conversation.UpdatedAt,
+        Pinned = conversation.Pinned,
     };
 
     /// <summary>
