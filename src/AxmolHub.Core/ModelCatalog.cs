@@ -17,9 +17,23 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class ModelCatalog
 {
-    /// <summary>Whether a configured model can expose reasoning-effort choices in the UI.</summary>
+    /// <summary>
+    /// Whether Hub has explicit knowledge that a model accepts reasoning-effort options.
+    /// Unknown models fail closed because the provider's model-list endpoint usually exposes IDs only.
+    /// </summary>
     public static bool SupportsReasoningEffort(string? modelName)
-        => !string.IsNullOrWhiteSpace(modelName);
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return false;
+        var name = modelName.Trim();
+        return IsFamily(name, "gpt-5")
+               || IsFamily(name, "o1")
+               || IsFamily(name, "o3")
+               || IsFamily(name, "o4");
+    }
+
+    private static bool IsFamily(string modelName, string family)
+        => modelName.StartsWith(family, StringComparison.OrdinalIgnoreCase)
+           && (modelName.Length == family.Length || modelName[family.Length] is '-' or '.');
 
     /// <summary>The description for a model name, or an empty string when nothing is known about it.</summary>
     public static string Describe(string? modelName)
