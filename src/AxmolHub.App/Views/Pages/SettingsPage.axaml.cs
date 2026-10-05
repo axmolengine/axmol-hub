@@ -1304,13 +1304,17 @@ public partial class SettingsPage : UserControl
 
         var row = new Border
         {
-            Background = BrushOrNull("Hub.Surface"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(12, 8),
             Tag = SectionTags.ModelRow,
             Child = grid,
         };
+        // Bind, don't capture: BrushOrNull runs while the page may still be unattached, and a static null
+        // here rendered the rows transparent — they silently took the provider card's colour instead of
+        // the settings card's (the exact confusion that made the card itself get recoloured once).
+        row.Bind(Border.BackgroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.Surface"));
         row.Bind(Border.BorderBrushProperty,
             new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.BorderSubtle"));
         return row;
@@ -1343,14 +1347,17 @@ public partial class SettingsPage : UserControl
         referral.Click += (_, _) => OpenReferral(provider);
         stack.Children.Add(referral);
 
-        return new Border
+        var box = new Border
         {
-            Background = BrushOrNull("Hub.Surface"),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8),
             Tag = SectionTags.Affiliate,
             Child = stack,
         };
+        // Same reason as the model rows: a static BrushOrNull can capture null before attach.
+        box.Bind(Border.BackgroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.Surface"));
+        return box;
     }
 
     /// <summary>A small rounded label ("内置", "使用中"), used instead of colour alone to carry meaning.</summary>
@@ -1902,6 +1909,12 @@ public partial class SettingsPage : UserControl
         bool HasProviderOutline,
         bool HasProviderSurface,
         bool HasModelRowsOutline,
+        /// <summary>
+        /// Every model row paints the settings-card surface, not the provider card's. A statically captured
+        /// brush (<c>BrushOrNull</c> before attach) left the rows transparent once, and they silently took
+        /// the card's darker colour — the rows must be bound, and this is what pins that.
+        /// </summary>
+        bool HasModelRowSurface,
         bool HasProviderHeaderDivider,
         /// <summary>
         /// Whether the model section is rendered at all. False for a provider that needs a credential and has
@@ -2025,6 +2038,8 @@ public partial class SettingsPage : UserControl
         var hasModelRowsOutline = modelRows.Length > 0
                                   && modelRows.All(row => row.BorderThickness.Left > 0
                                                          && row.BorderBrush is not null);
+        var hasModelRowSurface = modelRows.Length > 0
+                                 && modelRows.All(row => ThemeProbe.IsToken(row.Background, "Hub.Surface"));
 
         var modelNames = new List<string>();
         var modelEnabled = new List<bool>();
@@ -2093,6 +2108,7 @@ public partial class SettingsPage : UserControl
             hasProviderOutline,
             hasProviderSurface,
             hasModelRowsOutline,
+            hasModelRowSurface,
             hasProviderHeaderDivider,
             showsModelSection && !modelsHidden,
             showsModelEmptyState,

@@ -1063,6 +1063,8 @@ public partial class ShellCheckWindow : Window
         //
         Check(fetched is { HasModelRowsOutline: true },
             "模型行使用独立描边卡片（实际 " + (fetched?.ModelNames.Length ?? 0) + " 行）");
+        Check(fetched is { HasModelRowSurface: true },
+            "模型行底色 = 设置卡片底色 Hub.Surface（曾经静态取色失败被染成 provider 卡片色）");
         Check(fetched is not null && fetched.ModelDividerCount == 0,
             "模型行卡片之间没有重复分割线（实际 " + (fetched?.ModelDividerCount ?? -1) + " 条）");
         Check(settings.HasOnlyProviderCards,
