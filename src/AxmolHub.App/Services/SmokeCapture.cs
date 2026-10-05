@@ -85,6 +85,25 @@ public static class SmokeCapture
         return Analyze(pixels, size.Width, size.Height, framebuffer.RowBytes);
     }
 
+    /// <summary>Decodes a PNG on disk into a BGRA framebuffer, for assertions that measure **where** things
+    /// are rather than whether the frame is blank. A PNG on disk is the evidence, not an in-memory render:
+    /// the same file a human opens to look at. <c>RenderTargetBitmap</c> exposes no <c>CopyPixels</c>, so the
+    /// read goes through a lockable staging bitmap, as in <see cref="Measure"/>.</summary>
+    public static byte[] ReadBgra(string path, out int width, out int height, out int stride)
+    {
+        using var bitmap = new Bitmap(path);
+        var size = bitmap.PixelSize;
+        width = size.Width;
+        height = size.Height;
+        using var staging = new WriteableBitmap(size, bitmap.Dpi, PixelFormat.Bgra8888, AlphaFormat.Premul);
+        using var framebuffer = staging.Lock();
+        bitmap.CopyPixels(framebuffer);
+        stride = framebuffer.RowBytes;
+        var pixels = new byte[stride * height];
+        Marshal.Copy(framebuffer.Address, pixels, 0, pixels.Length);
+        return pixels;
+    }
+
     /// <summary>
     /// Measures a BGRA pixel buffer. A **pure function**, so the blank criterion itself can be
     /// asserted with a synthetic buffer — otherwise "will the criterion misjudge" could only be

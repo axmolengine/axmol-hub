@@ -267,6 +267,25 @@ public partial class ShellCheckWindow : Window
         Check(!panel.SendIconIsStopForCheck, "空闲状态的按钮显示的是发送箭头");
         Check(panel.SendButtonTooltipForCheck == HubStrings.Get("Send"),
             "空闲状态按钮提示为发送（实际「" + panel.SendButtonTooltipForCheck + "」）");
+        // Centring, measured rather than assumed. The object graph alone would pass on a button whose arrow
+        // visibly reads off-centre, because the Stretch fitting and the layout rounding that place the ink
+        // happen after layout — so the slot is asserted in DIP and the ink in rendered pixels.
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var glyphLayout = panel.SendGlyphLayoutForCheck;
+        Check(glyphLayout.AffordanceWidth == 0,
+            "隐藏的「…」角标不占按钮内容行的宽度（实际 " + Fmt(glyphLayout.AffordanceWidth) + "）");
+        Check(Math.Abs(glyphLayout.Dx) <= 0.75 && Math.Abs(glyphLayout.Dy) <= 0.75,
+            "发送图元槽在圆钮内居中（dx=" + Fmt(glyphLayout.Dx) + "，dy=" + Fmt(glyphLayout.Dy)
+            + "，槽宽=" + Fmt(glyphLayout.SlotWidth) + "）");
+        var glyphShot = System.IO.Path.Combine(ScratchDirectory.Resolve("send-glyph"), "send.png");
+        var glyphFrame = SmokeCapture.Capture(panel.SendButtonForCheck, glyphShot);
+        var inkCentered = SendGlyphInkIsCentered(glyphShot, panel.SendGlyphColorForCheck,
+            out var inkDx, out var inkDy, out var inkW, out var inkH);
+        Check(!glyphFrame.IsBlank() && inkCentered && Math.Abs(inkDx) <= 0.75 && Math.Abs(inkDy) <= 0.75,
+            "发送箭头的墨迹在圆钮内居中（dx=" + Fmt(inkDx) + "，dy=" + Fmt(inkDy)
+            + "，墨迹 " + Fmt(inkW) + "×" + Fmt(inkH) + " px）");
+
         panel.SetInputForCheck("");
         var idleComposerBorder = panel.ComposerBorderBrushForCheck;
         panel.SetComposerFocusForCheck(true);
@@ -628,6 +647,51 @@ public partial class ShellCheckWindow : Window
                 }
             }
         }
+        return true;
+    }
+
+    /// <summary>Two-decimal, culture-free number for check messages: a regression has to be diagnosable from
+    /// the report, not just red.</summary>
+    private static string Fmt(double value) => value.ToString("F2", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Measures the send glyph's ink from its own rendered frame. <see cref="SmokeCapture.Capture"/> renders
+    /// at 96 DPI, so 1px = 1 DIP and the offsets do not depend on the desktop scale factor; capturing the
+    /// button alone inscribes the circle in the frame, so the circle's centre is the frame centre and only
+    /// the glyph needs detecting. The mask is a per-channel distance from the glyph's live colour — both the
+    /// accent fill and its border sit further away than the tolerance, so one mask is enough.
+    /// </summary>
+    private static bool SendGlyphInkIsCentered(string png, Avalonia.Media.Color glyph,
+        out double dx, out double dy, out double inkWidth, out double inkHeight)
+    {
+        var pixels = SmokeCapture.ReadBgra(png, out var width, out var height, out var stride);
+        const int tolerance = 24;
+        var minX = width;
+        var minY = height;
+        var maxX = -1;
+        var maxY = -1;
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var o = (y * stride) + (x * 4);
+                if (pixels[o + 3] < 250) continue;
+                if (Math.Abs(pixels[o] - glyph.B) > tolerance
+                    || Math.Abs(pixels[o + 1] - glyph.G) > tolerance
+                    || Math.Abs(pixels[o + 2] - glyph.R) > tolerance) continue;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        dx = dy = inkWidth = inkHeight = 0;
+        if (maxX < minX || maxY < minY) return false;
+        dx = (minX + maxX) / 2.0 - (width - 1) / 2.0;
+        dy = (minY + maxY) / 2.0 - (height - 1) / 2.0;
+        inkWidth = maxX - minX + 1;
+        inkHeight = maxY - minY + 1;
         return true;
     }
 

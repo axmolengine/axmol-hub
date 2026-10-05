@@ -1336,6 +1336,43 @@ public partial class ChatPanel : UserControl
         => SendButton.Content is Avalonia.Controls.Shapes.Path path
            && ReferenceEquals(path.Data, ThemeGeometry("Hub.Icon.Stop"));
 
+    /// <summary>The round button on its own, so a check can render just the circle and its glyph.</summary>
+    internal Control SendButtonForCheck => SendButton;
+
+    /// <summary>The colour the glyph is drawn in, read from its live brush. A pixel mask must not hardcode
+    /// it: <c>Hub.Accent</c> is a different blue per theme, and a literal would fail on a theme switch.</summary>
+    internal Color SendGlyphColorForCheck
+        => SendButton.Content is Avalonia.Controls.Shapes.Path { Stroke: ISolidColorBrush brush }
+            ? brush.Color
+            : Colors.Transparent;
+
+    /// <summary>
+    /// Where the glyph's slot sits inside the button, in DIP, plus the width the hidden "…" affordance
+    /// claims. Measured from layout bounds because it is the ink's placement *inside* the slot that goes
+    /// wrong, not the slot's placement in the button — so the two together say whether a centring failure
+    /// comes from layout or from Stretch. A negative affordance width means the template part was not
+    /// found at all, which is a different failure from "it takes no space".
+    /// </summary>
+    internal (double Dx, double Dy, double SlotWidth, double AffordanceWidth) SendGlyphLayoutForCheck
+    {
+        get
+        {
+            var glyph = SendButton.Content as Visual;
+            double x = 0, y = 0;
+            for (var v = glyph; v is not null && v != SendButton; v = v.GetVisualParent())
+            {
+                x += v.Bounds.X;
+                y += v.Bounds.Y;
+            }
+            var affordance = SendButton.GetVisualDescendants().OfType<TextBlock>()
+                .FirstOrDefault(t => t.Name == "PART_MoreAffordance");
+            return (x + (glyph?.Bounds.Width ?? 0) / 2 - SendButton.Bounds.Width / 2,
+                    y + (glyph?.Bounds.Height ?? 0) / 2 - SendButton.Bounds.Height / 2,
+                    glyph?.Bounds.Width ?? 0,
+                    affordance?.Bounds.Width ?? -1);
+        }
+    }
+
     internal void SetInputForCheck(string text) => InputBox.Text = text;
 
     internal bool SelectModeForCheck(string mode)
