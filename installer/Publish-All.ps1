@@ -2,13 +2,16 @@
 # 与 Publish.ps1 -Stage Upload（单 runtime）互补：本脚本是 dist 阶段的编排层，
 # 从 release-build 拉下来的产物目录里，按平台逐一裁剪 feed 并收集上传清单，
 # 最后 `gh release create/upload` 一次完成，再回读资产清单校验。
-# 用法（CI 里由 release-dist.yml 调用）：
-#   ./installer/Publish-All.ps1 -Version 0.2.1 -ArtifactDir ./downloaded
-# 其中 ArtifactDir 下每个平台一个子目录，文件名与 release-build.yml 的 upload 一致。
+# 用法（CI 里由 dist.yml 调用）：
+#   ./installer/Publish-All.ps1 -Version 0.2.1 -ArtifactDir ./downloaded `
+#     -TargetCommit <sha> -NotesFile ./release-notes.md
+# 其中 ArtifactDir 下每个平台一个子目录，文件名与 build.yml 的 upload 一致。
 param(
     [string]$Version,
     [string]$RepoUrl = 'https://github.com/axmolengine/axmol-hub',
-    [string]$ArtifactDir
+    [string]$ArtifactDir,
+    [string]$TargetCommit,
+    [string]$NotesFile
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
@@ -25,6 +28,10 @@ if (-not $Version) {
 }
 if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
 if (-not $ArtifactDir) { throw 'ArtifactDir is required (where release-build artifacts were downloaded).' }
+if ($NotesFile) {
+    if (-not (Test-Path -LiteralPath $NotesFile -PathType Leaf)) { throw "Release notes file not found: $NotesFile" }
+    $NotesFile = (Resolve-Path -LiteralPath $NotesFile).Path
+}
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'The GitHub CLI (gh) is required.' }
 if (-not $env:GH_TOKEN) { throw 'GH_TOKEN is not set.' }
 
@@ -116,8 +123,19 @@ try {
 }
 if ($taskExists) {
     Write-Warning "Release $taskTag already exists; uploading into it."
+    if ($NotesFile) {
+        & gh release edit $taskTag --repo $taskSlug --notes-file $NotesFile
+        if ($LASTEXITCODE -ne 0) { throw "gh release edit failed with $LASTEXITCODE." }
+    }
 } else {
-    & gh release create $taskTag --repo $taskSlug --title "Axmol Hub $Version" --generate-notes
+    $taskCreateArgs = @('release', 'create', $taskTag, '--repo', $taskSlug, '--title', "Axmol Hub $Version")
+    if ($TargetCommit) { $taskCreateArgs += @('--target', $TargetCommit) }
+    if ($NotesFile) {
+        $taskCreateArgs += @('--notes-file', $NotesFile)
+    } else {
+        $taskCreateArgs += '--generate-notes'
+    }
+    & gh @taskCreateArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed with $LASTEXITCODE." }
 }
 & gh release upload $taskTag --repo $taskSlug --clobber $taskUpload

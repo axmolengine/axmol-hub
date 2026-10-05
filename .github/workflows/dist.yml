@@ -25,21 +25,61 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 0
 
       # 提交信息模板：Version 1.8.0（也接受 Version 1.8.0-beta 这类带预发布后缀）。
       # 匹配不到时用手动输入的 version；两者都无 → release_ver 为空，后续步骤全部跳过。
       - name: Check release version
         id: check_ver
         shell: pwsh
+        env:
+          MANUAL_VERSION: ${{ github.event.inputs.version }}
         run: |
           $commit_msg = "$(git show -s --format=%s)"
           Write-Host "Parsing release version from commit message: $commit_msg"
           $m = [Regex]::Match($commit_msg, '^Version\s+(?<ver>\d+\.\d+\.\d+(-\w+)?)$')
-          if (-not $m.Success) { $m = [Regex]::Match('${{ github.event.inputs.version }}', '^(?<ver>\d+\.\d+\.\d+(-\w+)?)$') }
+          if (-not $m.Success) { $m = [Regex]::Match($env:MANUAL_VERSION, '^(?<ver>\d+\.\d+\.\d+(-\w+)?)$') }
           $release_ver = if ($m.Success) { $m.Groups['ver'].Value } else { '' }
           Write-Host "release_ver=$release_ver"
           "release_ver=$release_ver" >> $env:GITHUB_OUTPUT
           "release_tag=v$release_ver" >> $env:GITHUB_OUTPUT
+          "release_target=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+
+      - name: Build release notes
+        id: release_notes
+        if: steps.check_ver.outputs.release_ver != ''
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.check_ver.outputs.release_tag }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+        run: |
+          $targetCommit = "$(git rev-parse HEAD)"
+          $previousTag = "$(git describe --tags --abbrev=0 --exclude=$env:RELEASE_TAG $targetCommit 2>$null)"
+          if ($LASTEXITCODE -ne 0) { $previousTag = '' }
+
+          $range = if ($previousTag) { "$previousTag..$targetCommit" } else { $targetCommit }
+          $commits = @(& git log --reverse --format='%H%x09%h%x09%s' $range)
+          if ($LASTEXITCODE -ne 0) { throw "git log failed with $LASTEXITCODE." }
+          if (-not $commits) { throw "No commits found for release range $range." }
+
+          $notes = [System.Collections.Generic.List[string]]::new()
+          $notes.Add('## Release notes')
+          $notes.Add('')
+          foreach ($commit in $commits) {
+            $parts = $commit -split "`t", 3
+            $commitUrl = "$env:REPOSITORY_URL/commit/$($parts[0])"
+            $notes.Add("- [``$($parts[1])``]($commitUrl) $($parts[2])")
+          }
+          if ($previousTag) {
+            $notes.Add('')
+            $notes.Add("[Full changelog: $previousTag...$env:RELEASE_TAG]($env:REPOSITORY_URL/compare/$previousTag...$env:RELEASE_TAG)")
+          }
+
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -LiteralPath $notesPath -Encoding UTF8 -Value $notes
+          Write-Host "Release notes contain $($commits.Count) commit(s) after '$previousTag'."
+          Get-Content -LiteralPath $notesPath
+          "notes_file=$notesPath" >> $env:GITHUB_OUTPUT
 
       - name: Download artifacts
         if: steps.check_ver.outputs.release_ver != ''
@@ -55,4 +95,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./installer/Publish-All.ps1 -Version ${{ steps.check_ver.outputs.release_ver }} -ArtifactDir ./downloaded
+          RELEASE_VERSION: ${{ steps.check_ver.outputs.release_ver }}
+          RELEASE_TARGET: ${{ steps.check_ver.outputs.release_target }}
+          RELEASE_NOTES_FILE: ${{ steps.release_notes.outputs.notes_file }}
+        run: ./installer/Publish-All.ps1 -Version $env:RELEASE_VERSION -ArtifactDir ./downloaded -TargetCommit $env:RELEASE_TARGET -NotesFile $env:RELEASE_NOTES_FILE

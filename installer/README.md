@@ -76,7 +76,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 1. **`build.yml`** —— `on: push`（master）+ `pull_request` + `workflow_dispatch`。内部两类 job：
    - `verify`：三平台矩阵，验证代码正确性（编译、宿主判定、CLI JSON 契约、下载契约），**任何提交都跑**。
    - `package-*`：四个 job 各在原生 runner 上 `Publish.ps1 -Stage Build`（拉上一版 → 打包出 delta → 改名 + sha256），`upload-artifact` 上产物。**只在提交信息是 `Version x.y.z` 或手动触发时跑**，普通提交跳过打包。Windows 还多跑一步 `Test.ps1 -Isolated` 安装验收。
-2. **`dist.yml`** —— `on: workflow_run`（监听 build 完成）+ `workflow_dispatch`。解析提交信息 `^Version x.y.z$`（也接受 `x.y.z-beta`）决定是否发版，下载三平台产物，用 `Publish-All.ps1` 合并上传到一个 release。
+2. **`dist.yml`** —— `on: workflow_run`（监听 build 完成）+ `workflow_dispatch`。以完整 Git 历史检出本次构建提交，解析提交信息 `^Version x.y.z$`（也接受 `x.y.z-beta`）决定是否发版；从最近一个可达 tag 到本次提交生成英文逐提交发布日志（提交标题保留原文），再下载三平台产物，用 `Publish-All.ps1` 合并上传到一个 release。tag 明确创建在本次构建 SHA 上；重跑已有 release 时会刷新同一份发布日志。
 
 日常发版：把版本号写进 `Directory.Build.props`，提交信息写 `Version x.y.z`，push 到 master。CI 自己判断是否打包、是否发布 —— 提交信息不是 `Version ...` 的普通提交只验证、不打包、不发布。
 
