@@ -14,7 +14,7 @@
          此前 0.1.6 被手工抄在 App / Cli / Avalonia 三份 csproj 里，而 Core 与 Checks
          根本没写 Version —— 结果是同一份产物里 Core.dll 报 1.0.0、Cli.dll 报 0.1.6。
          installer/Build.ps1 与 installer/Test.ps1 也从本文件读版本号，不要再往别处复制副本。 -->
-    <Version>0.2.4</Version>
+    <Version>0.3.0</Version>
 
     <!-- 仓库既有的"版本 + SHA-256 双钉"哲学在 NuGet 侧的等价物：把项目的完整传递闭包
          钉在 packages.lock.json 里，避免不同开发机解析出不同版本。
