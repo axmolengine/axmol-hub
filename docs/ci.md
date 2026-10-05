@@ -201,7 +201,7 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 **`dist.yml`**（`on: workflow_run` 监听 build + `workflow_dispatch`）：
 
 5. 以完整 Git 历史检出触发 build 的提交，解析提交信息 `^Version x.y.z$`（接受 `x.y.z-beta`）→ 决定 `release_ver`；匹配不到则用手动输入的 `version`，两者皆无则跳过全部后续步骤。
-6. 用最近一个可达 tag（排除本次 `v<version>`，兼容重跑）到本次构建提交的 `git log` 生成英文发布日志；每项包含短 SHA、提交链接和原始标题，并附英文完整 compare 链接。首次发布没有旧 tag 时收集截至当前提交的全部历史。
+6. 用最近一个可达 tag（排除本次 `v<version>`，兼容重跑）到本次构建提交的 `git log` 生成英文发布日志；每项包含短 SHA、提交链接和原始标题，并附英文完整 compare 链接。首次发布没有旧 tag 时收集截至当前提交的全部历史。**`Version x.y.z` 这条提交本身不进日志**：它是发布标记不是变更，且规范上只改 `Directory.Build.props` —— 只有当它真的只改这一个文件时才跳过，若夹带了别的文件则保留并打警告（否则实质改动会从日志里消失）。区间里全是版本标记时回退为列出全部，日志不会为空。`Check release version` 另有一道守卫：版本提交若带上了 `Directory.Build.props` 之外的文件，会在该 run 上留一条 warning。
 7. `dawidd6/action-download-artifact` 下载三平台产物。
 8. `installer/Publish-All.ps1`：逐平台裁剪 feed 只留本版 → 收集安装包 + sha256 + full/delta nupkg（`vpk` 原名带 `-<channel>-` 段，上传时改名为小写连字符 `axmol-hub-<version>-<rid>-{full|delta}.nupkg`，**并同步改写 feed 的 `FileName`**）+ 按 channel（= 完整 RID）命名的 feed `releases.<rid>.json` → `gh release create --target <本次构建 SHA> --notes-file <发布日志>` / `gh release upload --clobber` → 回读资产清单确认每一件都在。重跑已有 release 时用同一份日志更新正文。需要 `permissions: contents: write` 与 `GH_TOKEN`。
 

@@ -45,6 +45,17 @@ jobs:
           "release_tag=v$release_ver" >> $env:GITHUB_OUTPUT
           "release_target=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
+          # Convention guard: a "Version x.y.z" commit must be a version bump and nothing else. It is
+          # the release marker, so anything riding along with it either belongs in its own commit or
+          # will be missing from the release notes (the step below drops pure version bumps).
+          if ($m.Success) {
+            $touched = @(& git show --name-only --format='' HEAD | Where-Object { $_ })
+            $extra = @($touched | Where-Object { $_ -ne 'Directory.Build.props' })
+            if ($extra) {
+              Write-Host "::warning file=Directory.Build.props::The 'Version $release_ver' commit also changes: $($extra -join ', '). Keep version bumps limited to Directory.Build.props."
+            }
+          }
+
       - name: Build release notes
         id: release_notes
         if: steps.check_ver.outputs.release_ver != ''
@@ -62,11 +73,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "git log failed with $LASTEXITCODE." }
           if (-not $commits) { throw "No commits found for release range $range." }
 
+          # The "Version x.y.z" commit is the release marker, not a change: it carries no user-visible
+          # work, so it never belongs in the notes. Only drop it when it really is a version bump —
+          # a commit that used that title but also touched other files would hide real work, so keep
+          # it and warn instead of silently deleting it from the log.
+          $listed = [System.Collections.Generic.List[string[]]]::new()
+          foreach ($commit in $commits) {
+            $parts = $commit -split "`t", 3
+            if ($parts[2] -match '^Version\s+\d+\.\d+\.\d+(-\w+)?$') {
+              $touched = @(& git show --name-only --format='' $parts[0] | Where-Object { $_ })
+              if ($touched.Count -eq 1 -and $touched[0] -eq 'Directory.Build.props') {
+                Write-Host "Skipping version marker $($parts[1]): it only bumps Directory.Build.props."
+                continue
+              }
+
+              Write-Host "::warning file=Directory.Build.props::Commit $($parts[1]) is titled 'Version x.y.z' but also changes $($touched.Count) file(s); keeping it in the release notes."
+            }
+            $listed.Add($parts)
+          }
+
+          # Never ship an empty body: if every commit in the range was a version marker, fall back to
+          # the full range rather than publishing a release with nothing in it.
+          if (-not $listed) {
+            Write-Host 'Every commit in the range is a version marker; listing the full range instead.'
+            foreach ($commit in $commits) { $listed.Add(($commit -split "`t", 3)) }
+          }
+
           $notes = [System.Collections.Generic.List[string]]::new()
           $notes.Add('## Release notes')
           $notes.Add('')
-          foreach ($commit in $commits) {
-            $parts = $commit -split "`t", 3
+          foreach ($parts in $listed) {
             $commitUrl = "$env:REPOSITORY_URL/commit/$($parts[0])"
             $notes.Add("- [``$($parts[1])``]($commitUrl) $($parts[2])")
           }
@@ -77,7 +113,7 @@ jobs:
 
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           Set-Content -LiteralPath $notesPath -Encoding UTF8 -Value $notes
-          Write-Host "Release notes contain $($commits.Count) commit(s) after '$previousTag'."
+          Write-Host "Release notes contain $($listed.Count) commit(s) after '$previousTag'."
           Get-Content -LiteralPath $notesPath
           "notes_file=$notesPath" >> $env:GITHUB_OUTPUT
 

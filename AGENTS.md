@@ -25,3 +25,8 @@ feat: redesign chat UI around conversations
 ```
 
 Keep a commit scoped to one change; do not sweep unrelated working-copy modifications into it.
+
+A release is cut by a commit titled `Version x.y.z`. Its **only** change is the version in
+`Directory.Build.props` — it is the release marker, not a change, and the release notes skip it.
+Anything else belongs in its own commit; if it rides along with the version bump, CI warns and the
+commit stays in the notes.
