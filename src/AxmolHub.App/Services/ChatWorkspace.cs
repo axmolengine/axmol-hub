@@ -1125,6 +1125,27 @@ public sealed class ChatWorkspace : IDisposable
         return conversation;
     }
 
+    /// <summary>
+    /// Opens the most recent empty conversation if one already exists, otherwise starts a new one.
+    /// The new-conversation (+) button goes through this so repeated clicks cannot stack up empty
+    /// sessions in the history.
+    /// </summary>
+    public Conversation StartOrOpenEmptyConversation()
+    {
+        var empty = _conversations.List()
+            .Where(summary => summary.MessageCount == 0)
+            .OrderByDescending(summary => summary.UpdatedAt)
+            .FirstOrDefault();
+
+        if (empty is null) return StartConversation();
+
+        var conversation = _conversations.Load(empty.Id)
+            ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
+        _active = conversation;
+        Changed?.Invoke();
+        return conversation;
+    }
+
     public Conversation? OpenConversation(string id)
     {
         _active = _conversations.Load(id);

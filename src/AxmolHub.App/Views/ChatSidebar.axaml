@@ -90,7 +90,8 @@
              PlaceholderText="{DynamicResource SearchConversations}"
              PlaceholderForeground="{DynamicResource Hub.TextTertiary}" />
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer x:Name="ConversationScrollViewer"
+                  VerticalScrollBarVisibility="Auto">
       <StackPanel x:Name="ConversationList" Spacing="3" />
     </ScrollViewer>
   </DockPanel>

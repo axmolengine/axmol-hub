@@ -318,6 +318,25 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.DeleteConversationFromMenuForCheck(second.Id) && sidebar.ConversationCount == 0,
             "通过会话操作菜单删除指定的历史对话");
 
+        // ── New-conversation (+) reuses an existing empty session instead of stacking empties ──
+        var emptyA = shell.Chat.StartOrOpenEmptyConversation();
+        var emptyB = shell.Chat.StartOrOpenEmptyConversation();
+        Check(emptyA.Id == emptyB.Id && sidebar.ConversationCount == 1,
+            "＋ 在已有空会话时直接打开它而不是再建一个（实际会话 " + sidebar.ConversationCount + "）");
+
+        // ── The conversation list scrolls inside its bounded slot ──
+        for (var i = 0; i < 18; i++) shell.Chat.StartConversation();
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(sidebar.ListIsScrollableForCheck,
+            "会话超出侧栏高度时列表可滚动（而不是覆盖底部品牌行）");
+
+        // Cleanup: all nineteen are empty, so the prune path clears the fixture in one call.
+        Check(shell.Chat.PruneEmptyConversations() >= 19 && sidebar.ConversationCount == 0,
+            "自检清理：空会话被一次性移除");
+        sidebar.Reload();
+
         // ── Sidebar collapse: the ☰ toggle hides the whole panel and nothing peeks through ──
         Check(shell.SidebarExpandedForCheck && shell.SidebarClipsForCheck,
             "侧栏默认展开且开启内容裁剪");

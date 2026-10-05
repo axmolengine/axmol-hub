@@ -47,7 +47,7 @@ public partial class ChatSidebar : UserControl
         };
 
         SearchToggle.Click += (_, _) => ToggleSearch();
-        NewButton.Click += (_, _) => _chat.StartConversation();
+        NewButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation();
 
         ToolTip.SetTip(SearchToggle, HubStrings.Get("SearchConversationsTip"));
         ToolTip.SetTip(NewButton, HubStrings.Get("NewConversationTip"));
@@ -273,4 +273,10 @@ public partial class ChatSidebar : UserControl
         var summary = _chat.Conversations.FirstOrDefault(candidate => candidate.Id == id);
         if (summary is not null) _chat.SetPinned(id, !summary.Pinned);
     }
+
+    /// <summary>True once the conversation list has more content than its viewport — i.e. it is actually
+    /// scrolling inside its bounded slot rather than overflowing the sidebar.</summary>
+    internal bool ListIsScrollableForCheck
+        => ConversationScrollViewer.Bounds.Height > 1
+           && ConversationScrollViewer.Extent.Height > ConversationScrollViewer.Viewport.Height + 1;
 }
