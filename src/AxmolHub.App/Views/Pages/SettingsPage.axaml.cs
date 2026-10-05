@@ -1192,6 +1192,23 @@ public partial class SettingsPage : UserControl
         add.Click += async (_, _) => await AddModelAsync(provider);
         actions.Children.Add(add);
 
+        // Rightmost: the one action that empties the list. Disabled rather than hidden when there is
+        // nothing to remove, so the toolbar keeps a stable shape across empty and populated states.
+        var removeAll = new Button
+        {
+            Content = BuildClearListIcon(),
+            Classes = { "quiet" },
+            Width = 30,
+            Height = 28,
+            Padding = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = provider.Models.Count > 0,
+            Tag = SectionTags.RemoveAllModels,
+        };
+        ToolTip.SetTip(removeAll, HubStrings.Get("ModelsRemoveAll"));
+        removeAll.Click += async (_, _) => await RemoveAllModelsAsync(provider);
+        actions.Children.Add(removeAll);
+
         Grid.SetColumn(actions, 1);
         heading.Children.Add(actions);
         section.Children.Add(heading);
@@ -1447,6 +1464,27 @@ public partial class SettingsPage : UserControl
         return new Viewbox { Width = 14, Height = 14, Child = path };
     }
 
+    /// <summary>
+    /// The remove-all icon: a list (three short strokes) crossed by a small ×. A plain trash would read as
+    /// "remove this row" — the same glyph the per-row button already uses — so the list-plus-cross shape
+    /// carries the "the whole list" meaning. Same construction rules as the other icons: generated geometry,
+    /// stroke bound through DynamicResource.
+    /// </summary>
+    private Control BuildClearListIcon()
+    {
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Data = Avalonia.Media.Geometry.Parse(
+                "M1.5,2.5 H6.5 M1.5,6 H6.5 M1.5,9.5 H6.5 M8,4 L11.5,7.5 M11.5,4 L8,7.5"),
+            StrokeThickness = 1.4,
+            StrokeLineCap = Avalonia.Media.PenLineCap.Round,
+            StrokeJoin = Avalonia.Media.PenLineJoin.Round,
+        };
+        path.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+        return new Viewbox { Width = 14, Height = 14, Child = path };
+    }
+
     private static Border BuildProviderHeaderDivider()
     {
         var divider = new Border
@@ -1618,6 +1656,39 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
+    /// Empties one provider's configured-model list. Same confirm-first shape as the single-row removal:
+    /// the click is one icon away from "add", and a misclick that costs the whole list is not recoverable
+    /// by one more click.
+    /// </summary>
+    private async Task RemoveAllModelsAsync(ModelProvider provider)
+    {
+        if (_chat is null || provider.Models.Count == 0) return;
+
+        if (Owner() is { } owner)
+        {
+            var confirmed = await HubDialog.ShowAsync(
+                owner,
+                HubStrings.Get("ModelsRemoveAll"),
+                string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    HubStrings.Get("ModelsRemoveAllConfirm"),
+                    provider.Models.Count),
+                HubDialogButtons.OkCancel);
+            if (confirmed != HubDialogResult.Ok) return;
+        }
+
+        var removed = _chat.RemoveAllModels(provider.Id);
+        if (removed > 0)
+        {
+            SetProviderStatus(false, string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                HubStrings.Get("ModelsRemovedAll"),
+                removed));
+            RebuildProviderGroups();
+        }
+    }
+
+    /// <summary>
     /// The browser sign-in for one provider group. Everything that can go wrong here is reported through the
     /// status line rather than a dialog: the flow is async and the user is looking at another window, so a
     /// modal box would be waiting in the wrong place.
@@ -1676,6 +1747,10 @@ public partial class SettingsPage : UserControl
             }
 
             SetProviderStatus(false, HubStrings.Get("AuthOAuthSucceeded"));
+
+            // The credential is stored the moment the flow lands, so the linked mark repaints now — the
+            // fetch below can take seconds and must not hold the state badge hostage.
+            RebuildProviderGroups();
 
             // Same reasoning as the pasted-key path: a sign-in that leaves an empty model list is only half
             // finished, and the list is reachable now precisely because the browser just minted the key.
@@ -1827,6 +1902,10 @@ public partial class SettingsPage : UserControl
             return;
         }
 
+        // The key is already stored, so "linked" is true now: repaint the mark before the fetch rather than
+        // after it — the list can take seconds to arrive and the state must not wait on it.
+        RebuildProviderGroups();
+
         // The model list needs the key, and the user has just handed one over — so it is fetched here rather
         // than left as the next thing to remember. It is the same call the refresh button makes; doing it
         // automatically is what turns "authenticated" into "ready to use" without a second visit.
@@ -1910,6 +1989,9 @@ public partial class SettingsPage : UserControl
         bool HasModelCatalogButton,
         bool HasAddModelButton,
         bool ModelCatalogPrecedesAdd,
+        bool HasRemoveAllModelsButton,
+        /// <summary>Remove-all sits rightmost, after add: presence and order are different failures.</summary>
+        bool RemoveAllFollowsAdd,
         bool HasProviderOutline,
         bool HasProviderSurface,
         bool HasModelRowsOutline,
@@ -2004,6 +2086,10 @@ public partial class SettingsPage : UserControl
         var hasModelCatalogButton = modelCatalogIndex >= 0;
         var hasAddModelButton = addModelIndex >= 0;
         var modelCatalogPrecedesAdd = modelCatalogIndex >= 0 && addModelIndex > modelCatalogIndex;
+        var removeAllIndex = Array.FindIndex(modelActionButtons,
+            button => button.Tag as string == SectionTags.RemoveAllModels);
+        var hasRemoveAllModelsButton = removeAllIndex >= 0;
+        var removeAllFollowsAdd = addModelIndex >= 0 && removeAllIndex > addModelIndex;
         var hasProviderOutline = group.BorderThickness.Left > 0
                                  && group.BorderBrush is not null;
         var hasProviderSurface = ThemeProbe.IsToken(group.Background, "Hub.ProviderSurface");
@@ -2109,6 +2195,8 @@ public partial class SettingsPage : UserControl
             hasModelCatalogButton && !hasHeaderCatalogButton,
             hasAddModelButton,
             modelCatalogPrecedesAdd,
+            hasRemoveAllModelsButton,
+            removeAllFollowsAdd,
             hasProviderOutline,
             hasProviderSurface,
             hasModelRowsOutline,
@@ -2309,6 +2397,7 @@ public partial class SettingsPage : UserControl
         internal const string ModelEnabled = "provider-model-enabled";
         internal const string ModelCatalog = "provider-model-catalog";
         internal const string AddModelButton = "provider-add-model";
+        internal const string RemoveAllModels = "provider-remove-all-models";
         internal const string RemoveProvider = "provider-remove";
         internal const string ProviderHeaderDivider = "provider-header-divider";
 

@@ -936,12 +936,14 @@ public partial class ShellCheckWindow : Window
                   HasModelCatalogButton: true,
                   HasAddModelButton: true,
                   ModelCatalogPrecedesAdd: true,
+                  HasRemoveAllModelsButton: true,
+                  RemoveAllFollowsAdd: true,
                   HasProviderOutline: true,
                   HasProviderSurface: true,
                   HasProviderHeaderDivider: true,
                   HasRefreshButton: false
               },
-            "provider 卡片有边界和标题分隔线，目录及添加操作按顺序位于模型工具栏");
+            "provider 卡片有边界和标题分隔线，目录、添加、移除全部按顺序位于模型工具栏");
         Check(settings.ModelCatalogForCheck(target.Id) is { HasRefreshButtonForCheck: true },
             "模型目录弹窗提供刷新按钮");
 

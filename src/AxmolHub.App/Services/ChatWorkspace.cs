@@ -438,6 +438,23 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Removes every configured model from a provider in one save, returning how many were removed. The
+    /// provider, its credential and the cached catalog are untouched — only the configured list is emptied,
+    /// so re-adding from the catalog afterwards costs nothing.
+    /// </summary>
+    public int RemoveAllModels(string providerId)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null || provider.Models.Count == 0) return 0;
+
+        var removed = provider.Models.Count;
+        provider.Models.Clear();
+        provider.Normalize();
+        SaveProviders();
+        return removed;
+    }
+
     /// <summary>Marks a model as the one requests are sent with.</summary>
     public bool SetActiveModel(string providerId, string name)
     {
