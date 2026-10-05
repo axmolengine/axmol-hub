@@ -161,6 +161,7 @@ public sealed class ChatWorkspace : IDisposable
                 // gains OAuth support in a later release should offer it without a reinstall.
                 provider.Description = builtIn.Description;
                 provider.DescriptionZh = builtIn.DescriptionZh;
+                provider.DefaultEnabledModels = [.. builtIn.DefaultEnabledModels];
                 provider.AuthMethods = [.. builtIn.AuthMethods];
                 provider.OAuth = builtIn.OAuth;
                 // Same reasoning as the two lines above: the probe is a manifest fact, refreshed every load.
@@ -419,8 +420,8 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Removes a model. Removing the one in use hands the mark to the first remaining model, so a provider with
-    /// models left is never left without one selected.
+    /// Removes a model. Removing the one in use hands the mark to the first remaining enabled model; if none
+    /// remain enabled, the provider has no default until a model is enabled again.
     /// </summary>
     public bool RemoveModel(string providerId, string name)
     {
@@ -456,11 +457,58 @@ public sealed class ChatWorkspace : IDisposable
     public bool SetModelEnabled(string providerId, string name, bool enabled)
     {
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
-        var model = provider?.Models.FirstOrDefault(candidate =>
+        if (provider is null) return false;
+
+        var model = provider.Models.FirstOrDefault(candidate =>
             string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
         if (model is null) return false;
 
+        if (model.Enabled == enabled) return true;
+
         model.Enabled = enabled;
+        if (enabled && !provider.Models.Any(candidate => candidate.InUse && candidate.Enabled))
+        {
+            model.InUse = true;
+        }
+        else if (!enabled && model.InUse)
+        {
+            model.InUse = false;
+            if (provider.Models.FirstOrDefault(candidate => candidate.Enabled) is { } next)
+                next.InUse = true;
+        }
+
+        provider.Normalize();
+        SaveProviders();
+        return true;
+    }
+
+    /// <summary>Enables a model chosen from the provider's cached catalog, adding it if it is not configured yet.</summary>
+    public bool EnableCatalogModel(string providerId, string name)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        var trimmed = name.Trim();
+        if (provider is null || trimmed.Length == 0) return false;
+
+        if (!CachedModels(providerId).Any(candidate =>
+                string.Equals(candidate, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var configured = provider.Models.FirstOrDefault(model =>
+            string.Equals(model.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+        if (configured is not null)
+        {
+            return SetModelEnabled(providerId, configured.Name, true);
+        }
+
+        provider.Models.Add(new ProviderModel
+        {
+            Name = trimmed,
+            Enabled = true,
+            InUse = !provider.Models.Any(model => model.Enabled),
+        });
+        provider.Normalize();
         SaveProviders();
         return true;
     }
@@ -735,11 +783,18 @@ public sealed class ChatWorkspace : IDisposable
         // everything shows nothing rather than showing what it used to serve.
         var previousModels = provider.Models.ToDictionary(model => model.Name, StringComparer.OrdinalIgnoreCase);
         provider.Models = result.Models
-            .Select(name => new ProviderModel
+            .Where(name => previousModels.ContainsKey(name)
+                           || provider.DefaultEnabledModels.Any(defaultName =>
+                               string.Equals(defaultName, name, StringComparison.OrdinalIgnoreCase)))
+            .Select(name =>
             {
-                Name = name,
-                InUse = false,
-                Enabled = !previousModels.TryGetValue(name, out var previous) || previous.Enabled,
+                var previous = previousModels.GetValueOrDefault(name);
+                return new ProviderModel
+                {
+                    Name = name,
+                    InUse = previous?.InUse == true,
+                    Enabled = previous?.Enabled ?? true,
+                };
             })
             .ToList();
 

@@ -120,6 +120,8 @@ public sealed class AiProviderEntry
     public string BaseUrl { get; set; } = "";
     public bool ApiKeyRequired { get; set; }
     public int? MaxContextTokens { get; set; }
+    /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
+    public List<string> DefaultEnabledModels { get; set; } = [];
     public bool Affiliate { get; set; }
     public string? ReferralUrl { get; set; }
 
@@ -280,6 +282,7 @@ public static class AiProviderManifest
                 DescriptionZh = entry.DescriptionZh,
                 BaseUrl = entry.BaseUrl,
                 ApiKeyRequired = entry.ApiKeyRequired,
+                DefaultEnabledModels = [.. entry.DefaultEnabledModels],
                 // No model is seeded. The manifest deliberately does not name one: a name written into a
                 // shipped JSON file goes stale the moment the provider adds or retires a model, and a stale
                 // default is worse than none — it is offered in the list and fails on first use with a 404

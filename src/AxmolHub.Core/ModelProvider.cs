@@ -71,6 +71,13 @@ public sealed class ModelProvider
     public AiProviderKeyValidation? KeyValidation { get; set; }
 
     /// <summary>
+    /// Models from the built-in manifest that should be enabled when first discovered in the live catalog.
+    /// It is derived from the manifest and is not persisted; later refreshes preserve the user's saved choice.
+    /// </summary>
+    [JsonIgnore]
+    public List<string> DefaultEnabledModels { get; set; } = [];
+
+    /// <summary>
     /// The auth methods this provider actually offers: the declared list with unknown values dropped, or
     /// <c>["apiKey"]</c> when nothing usable was declared.
     ///
@@ -160,27 +167,23 @@ public sealed class ModelProvider
     /// </summary>
     public List<ProviderModel> Models { get; set; } = [];
 
-    /// <summary>The provider's default model, marked in use, or the first one when none is marked (a file that
-    /// was hand-edited, or a list whose marked entry was just removed). A conversation may override it.
-    /// <c>null</c> when there are no models at all.</summary>
+    /// <summary>The provider's default model, marked in use, or the first enabled model when the mark is missing.
+    /// A conversation may override it. <c>null</c> when no models are enabled.</summary>
     [JsonIgnore]
     public ProviderModel? ActiveModel
     {
         get
         {
-            var marked = Models.FirstOrDefault(model => model.InUse);
+            var marked = Models.FirstOrDefault(model => model.Enabled && model.InUse);
             if (marked is not null) return marked;
-            // Self-healing rather than failing: a provider with models but none marked would otherwise send an
-            // empty model name to the endpoint, and the error would arrive as a confusing 400.
-            if (Models.Count > 0) Models[0].InUse = true;
-            return Models.FirstOrDefault();
+            return Models.FirstOrDefault(model => model.Enabled);
         }
     }
 
     /// <summary>
     /// Brings a deserialized provider into a consistent state. Called by the store after loading, because
-    /// <see cref="Models"/> is populated by JSON binding while the "exactly one in use" rule is not something
-    /// the serializer can enforce.
+    /// <see cref="Models"/> is populated by JSON binding while the "one enabled default, or none" rule is not
+    /// something the serializer can enforce.
     /// </summary>
     public void Normalize()
     {
@@ -192,15 +195,15 @@ public sealed class ModelProvider
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Models.RemoveAll(model => !seen.Add(model.Name));
 
-        var inUse = Models.Where(model => model.InUse).ToList();
-        if (inUse.Count == 0)
+        var inUse = Models.Where(model => model.Enabled && model.InUse).ToList();
+        foreach (var model in Models)
         {
-            if (Models.Count > 0) Models[0].InUse = true;
+            model.InUse = inUse.Count > 0 && ReferenceEquals(model, inUse[0]);
         }
-        else
+
+        if (inUse.Count == 0 && Models.FirstOrDefault(model => model.Enabled) is { } firstEnabled)
         {
-            // More than one marked happens when two files are merged by hand; the first one wins.
-            foreach (var model in inUse.Skip(1)) model.InUse = false;
+            firstEnabled.InUse = true;
         }
     }
 

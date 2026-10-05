@@ -5,9 +5,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
-// GetLogicalDescendants (not GetVisualDescendants) on purpose: the model section and the refresh button are
-// read for a window or group that may not be attached to a visual root yet, and the visual walk returns an
-// empty collection in that case — which turns "the check found nothing" into "the check passed".
+// GetLogicalDescendants (not GetVisualDescendants) on purpose: the model section is read for a group that may
+// not be attached to a visual root yet, and the visual walk returns an empty collection in that case — which
+// turns "the check found nothing" into "the check passed".
 using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -832,37 +832,8 @@ public partial class SettingsPage : UserControl
 
         foreach (var provider in _chat.Providers)
         {
-            // A rule between groups, never above the first: a leading rule would read as a separator from
-            // the "Add provider" button rather than as part of the list. Inserted before every group but the
-            // first so the count is always groups - 1, which is what the assertion below expects.
-            if (ProviderGroupList.Children.OfType<Border>()
-                .Any(border => border.Tag as string != SectionTags.GroupDivider))
-            {
-                ProviderGroupList.Children.Add(BuildGroupDivider());
-            }
             ProviderGroupList.Children.Add(BuildProviderGroup(provider));
         }
-    }
-
-    /// <summary>
-    /// A one-pixel rule between two provider groups.
-    ///
-    /// <para><b>A full-width rule rather than a gap.</b> The groups are sunken cards on the page background,
-    /// and 12px of space alone does not separate them — the eye reads one long column of names. The rule is
-    /// bound through <c>DynamicResource</c> for the same reason the icons and status labels on this page are:
-    /// the groups are built during a rebuild that can happen before the page is attached to a resource host,
-    /// and a brush read too early comes back null, which for a rule means a divider that is in the tree and
-    /// invisible on screen.</para>
-    ///
-    /// <para>Tagged so the self-check can count them: "a separator exists" read by index would pass for a
-    /// layout that happens to put one <c>Border</c> in the right place, and fail on one that puts two.</para>
-    /// </summary>
-    private Control BuildGroupDivider()
-    {
-        var divider = new Border { Height = 1, Tag = SectionTags.GroupDivider };
-        divider.Bind(Border.BackgroundProperty,
-            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.Border"));
-        return divider;
     }
 
     /// <summary>
@@ -881,6 +852,8 @@ public partial class SettingsPage : UserControl
 
         content.Children.Add(BuildProviderHeader(provider));
         content.Children.Add(BuildProviderSummary(provider));
+        if (CanListModels(provider))
+            content.Children.Add(BuildProviderHeaderDivider());
         content.Children.Add(BuildModelSection(provider));
 
         // A keyless provider says so once, in the summary, rather than growing a section of its own.
@@ -901,20 +874,25 @@ public partial class SettingsPage : UserControl
             content.Children.Add(BuildAffiliateSection(provider));
         }
 
-        return new Border
+        var card = new Border
         {
-            Background = BrushOrNull("Hub.SurfaceSunken"),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 10),
+            Padding = new Thickness(14, 10),
             // The provider id, not the display name: a lookup by name breaks the moment a preset is renamed
             // ("Ollama (local)") and would report a missing group as a layout failure.
             Tag = provider.Id,
             Child = content,
         };
+        card.Bind(Border.BackgroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.ProviderSurface"));
+        card.Bind(Border.BorderBrushProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.BorderSubtle"));
+        return card;
     }
 
     /// <summary>
-    /// The one line of prose under the name: how many models, and what the endpoint is.
+    /// The one line of prose under the name: how many models are configured, not how many are in the full catalog.
     ///
     /// <para>It exists because the header is now only a name and a state, and a bare list of names gives the
     /// eye nothing to compare rows by. It is deliberately counts and not detail — the details are one click
@@ -1061,6 +1039,7 @@ public partial class SettingsPage : UserControl
                 Classes = { "quiet" },
                 Padding = new Thickness(6, 4),
                 VerticalAlignment = VerticalAlignment.Center,
+                Tag = SectionTags.RemoveProvider,
             };
             ToolTip.SetTip(remove, HubStrings.Get("RemoveProviderIcon"));
             remove.Click += async (_, _) => await RemoveProviderAsync(provider);
@@ -1094,21 +1073,17 @@ public partial class SettingsPage : UserControl
 
 
     /// <summary>
-    /// The model sub-list: one row per model, the one in use marked, each with enable/remove actions.
+    /// The configured model sub-list: catalog entries are added here only when selected or when a manifest
+    /// default matches. Each row has enable/remove actions; the full catalog is in the model-section toolbar.
     ///
     /// <para>Each row keeps the model name, optional description, current-use marker and availability toggle.
     /// Model selection stays in the conversation page's picker. The description is a lookup
     /// (<see cref="ModelCatalog"/>) and is simply absent for a model Hub
     /// does not know, so a brand-new name still works.</para>
     ///
-    /// <para><b>The list is not rendered at all before the provider is authenticated.</b> It comes from
-    /// <c>GET {baseUrl}/models</c> with the user's key, so before a key exists there is nothing to ask with:
-    /// an unauthenticated fetch answers 401, and a list built from that answer would either be empty (and
-    /// read as "this provider has no models") or come from a request the user never authorized. Hiding the
-    /// section is also the honest state — the summary line and the header both already say "not
-    /// authenticated", so nothing is left unexplained. A keyless provider is exempt: Ollama needs no key, so
-    /// there is no such thing as being unready, and hiding its list would leave no way to reach its models
-    /// at all.</para>
+    /// <para><b>The configured-model list is not rendered before authentication.</b> The full cached catalog
+    /// remains reachable through the model toolbar, but fetching it requires the user's key. A keyless provider
+    /// is exempt: Ollama needs no key, so it can fetch and show its configured entries immediately.</para>
     /// </summary>
     private Control BuildModelSection(ModelProvider provider)
     {
@@ -1120,7 +1095,7 @@ public partial class SettingsPage : UserControl
         var section = new StackPanel { Spacing = 6, Tag = SectionTags.Models };
 
         var expanded = provider.Models.Count <= 10;
-        var listContent = new StackPanel { Spacing = 4, IsVisible = expanded, Tag = SectionTags.ModelList };
+        var listContent = new StackPanel { Spacing = 8, IsVisible = expanded, Tag = SectionTags.ModelList };
         var toggleContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var disclosure = new Avalonia.Controls.Shapes.Path
         {
@@ -1189,29 +1164,31 @@ public partial class SettingsPage : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        // Refresh sits next to Add rather than replacing it. The endpoint is authoritative about what it
-        // serves, but it is not authoritative about what the user wants configured — a gateway can list a
-        // hundred models while the user only ever calls two — so both entries stay, and the refresh is what
-        // picks up a newly released model without anyone retyping it.
-        var refresh = new Button
+        var catalog = new Button
         {
-            Content = HubStrings.Get("RefreshModels"),
+            Content = BuildSearchIcon(),
             Classes = { "quiet" },
-            Padding = new Thickness(8, 3),
-            FontSize = 11,
-            Tag = SectionTags.RefreshModels,
+            Width = 30,
+            Height = 28,
+            Padding = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Tag = SectionTags.ModelCatalog,
         };
-        ToolTip.SetTip(refresh, HubStrings.Get("RefreshModelsHint"));
-        refresh.Click += async (_, _) => await RefreshModelsAsync(provider, refresh);
-        actions.Children.Add(refresh);
+        ToolTip.SetTip(catalog, HubStrings.Get("OpenModelCatalog"));
+        catalog.Click += async (_, _) => await OpenModelCatalogAsync(provider);
+        actions.Children.Add(catalog);
 
         var add = new Button
         {
-            Content = HubStrings.Get("AddModel"),
+            Content = BuildAddIcon(),
             Classes = { "quiet" },
-            Padding = new Thickness(8, 3),
-            FontSize = 11,
+            Width = 30,
+            Height = 28,
+            Padding = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Tag = SectionTags.AddModelButton,
         };
+        ToolTip.SetTip(add, HubStrings.Get("AddModel"));
         add.Click += async (_, _) => await AddModelAsync(provider);
         actions.Children.Add(add);
 
@@ -1221,12 +1198,10 @@ public partial class SettingsPage : UserControl
 
         if (provider.Models.Count == 0)
         {
-            // A distinct empty state from the old "no models added yet". The section is empty because the
-            // endpoint has not been asked (or could not be asked), not because the user chose nothing —
-            // saying the latter would send them looking in the wrong place.
+            // The catalog is separate; this empty state means the user has not enabled or manually added a model.
             listContent.Children.Add(new TextBlock
             {
-                Text = HubStrings.Get("NoModelsFetched"),
+                Text = HubStrings.Get("NoEnabledModels"),
                 Classes = { "muted" },
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
@@ -1238,10 +1213,6 @@ public partial class SettingsPage : UserControl
 
         foreach (var model in provider.Models)
         {
-            // A rule between rows, and none before the first: a leading rule under the heading reads as a
-            // separator from the heading rather than as part of the list. Inserted *between* rather than
-            // appended so the count always stays rows - 1.
-            if (listContent.Children.Count > 0) listContent.Children.Add(BuildModelDivider());
             listContent.Children.Add(BuildModelRow(provider, model));
         }
 
@@ -1250,46 +1221,23 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Whether this provider's model list may be fetched and shown.
+    /// Whether the provider's model catalog may be fetched.
     ///
-    /// <para>True for a keyless provider (nothing to authenticate) or for one that holds a credential. False
-    /// for a provider that needs a key and does not have one — the request would come back 401 and there is
-    /// nothing useful to render.</para>
+    /// <para>True for a provider that does not require a key or one that holds a credential. False for a
+    /// provider that requires a key and does not have one — the request would come back 401.</para>
     ///
     /// <para>Lives here rather than in <see cref="ChatWorkspace"/> because it is a <b>presentation</b>
     /// decision: the fetch itself is legal without a key (the endpoint decides), and a future caller that
     /// wants to try anyway should not have to fight a UI-layer guard.</para>
     /// </summary>
     private bool CanListModels(ModelProvider provider)
-        => !NeedsCredential(provider) || IsLinked(provider);
+        => !provider.ApiKeyRequired || IsLinked(provider);
 
     /// <summary>Whether this provider has any way to authenticate at all — the same test the header uses to
     /// decide whether to offer the auth button, so the two cannot disagree about what "unready" means.</summary>
     private static bool NeedsCredential(ModelProvider provider)
         => provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey)
            || provider.SupportsOAuth;
-
-    /// <summary>
-    /// A one-pixel rule between two model rows.
-    ///
-    /// <para>Bound through <c>DynamicResource</c> like every other themed element on this page: the rows are
-    /// built during a rebuild that can happen before the page is attached to a resource host, and a brush read
-    /// too early comes back null — which for a <c>Shape</c> means it draws nothing, so the divider would be
-    /// in the tree and invisible on screen. A <c>Border</c> with a background brush has the same failure, so
-    /// this is a bound <c>Border</c> rather than an unbound one.</para>
-    /// </summary>
-    private static Control BuildModelDivider()
-    {
-        var divider = new Border
-        {
-            Height = 1,
-            Margin = new Thickness(0, 3),
-            Tag = SectionTags.ModelDivider,
-        };
-        divider.Bind(Border.BackgroundProperty,
-            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.BorderSubtle"));
-        return divider;
-    }
 
     private Control BuildModelRow(ModelProvider provider, ProviderModel model)
     {
@@ -1354,14 +1302,18 @@ public partial class SettingsPage : UserControl
         grid.Children.Add(text);
         grid.Children.Add(actions);
 
-        return new Border
+        var row = new Border
         {
             Background = BrushOrNull("Hub.Surface"),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(10, 6),
+            Padding = new Thickness(12, 8),
             Tag = SectionTags.ModelRow,
             Child = grid,
         };
+        row.Bind(Border.BorderBrushProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.BorderSubtle"));
+        return row;
     }
 
     private Control BuildAffiliateSection(ModelProvider provider)
@@ -1456,6 +1408,46 @@ public partial class SettingsPage : UserControl
         return new Viewbox { Width = 12, Height = 12, Child = path };
     }
 
+    private Control BuildSearchIcon()
+    {
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Data = Avalonia.Media.Geometry.Parse(
+                "M8,4.75 C8,6.55 6.55,8 4.75,8 C2.95,8 1.5,6.55 1.5,4.75 C1.5,2.95 2.95,1.5 4.75,1.5 C6.55,1.5 8,2.95 8,4.75 M7.25,7.25 L11,11"),
+            StrokeThickness = 1.5,
+            StrokeLineCap = Avalonia.Media.PenLineCap.Round,
+            StrokeJoin = Avalonia.Media.PenLineJoin.Round,
+        };
+        path.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+        return new Viewbox { Width = 14, Height = 14, Child = path };
+    }
+
+    private Control BuildAddIcon()
+    {
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Data = Avalonia.Media.Geometry.Parse("M6,1.5 V10.5 M1.5,6 H10.5"),
+            StrokeThickness = 1.7,
+            StrokeLineCap = Avalonia.Media.PenLineCap.Round,
+        };
+        path.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+        return new Viewbox { Width = 14, Height = 14, Child = path };
+    }
+
+    private static Border BuildProviderHeaderDivider()
+    {
+        var divider = new Border
+        {
+            Height = 1,
+            Tag = SectionTags.ProviderHeaderDivider,
+        };
+        divider.Bind(Border.BackgroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.BorderSubtle"));
+        return divider;
+    }
+
     /// <summary>
     /// The linked state mark: a tick in the success green. Same construction rules as the remove icon — a
     /// <c>Path</c> whose stroke is bound, because an unset <c>Shape.Stroke</c> draws nothing and the failure is
@@ -1516,21 +1508,14 @@ public partial class SettingsPage : UserControl
     /// <summary>
     /// Fetches the provider's model list and repaints.
     ///
-    /// <para>The button is passed in and disabled for the duration rather than looked up: the group list is
-    /// rebuilt from several places, so a lookup could disable one row's button while the one the user clicked
-    /// stayed live and a second request went out underneath it. Disabling first and re-enabling in a
-    /// <c>finally</c> covers the failure path too — an unreachable endpoint is a normal outcome here, not an
-    /// exception.</para>
-    ///
     /// <para>A fetch that fails reports the reason and <b>leaves the existing list alone</b>, so the section
     /// does not collapse to empty on a network blip. A fetch that succeeds with zero models says so
     /// explicitly rather than letting the empty state speak for itself.</para>
     /// </summary>
-    private async Task RefreshModelsAsync(ModelProvider provider, Button? button = null)
+    private async Task<ModelFetchResult> RefreshModelsAsync(ModelProvider provider)
     {
-        if (_chat is null) return;
+        if (_chat is null) return ModelFetchResult.Unreachable("The chat workspace is unavailable.");
 
-        if (button is not null) button.IsEnabled = false;
         SetProviderStatus(false, HubStrings.Get("ModelsRefreshing"));
 
         try
@@ -1539,7 +1524,7 @@ public partial class SettingsPage : UserControl
             if (!result.Reachable)
             {
                 SetProviderStatus(true, HubStrings.Get("ModelsFetchFailed") + " " + result.Problem);
-                return;
+                return result;
             }
 
             SetProviderStatus(false, result.Models.Count == 0
@@ -1548,13 +1533,30 @@ public partial class SettingsPage : UserControl
                     System.Globalization.CultureInfo.InvariantCulture,
                     HubStrings.Get("ModelsFetched"),
                     result.Models.Count));
+            return result;
         }
         finally
         {
-            if (button is not null) button.IsEnabled = true;
             RebuildProviderGroups();
         }
     }
+
+    private async Task OpenModelCatalogAsync(ModelProvider provider)
+    {
+        if (_chat is null) return;
+        await CreateModelCatalogWindow(provider).ShowAsync(Owner());
+        RebuildProviderGroups();
+    }
+
+    private ModelCatalogWindow CreateModelCatalogWindow(ModelProvider provider)
+        => ModelCatalogWindow.Create(
+            provider,
+            () => _chat.CachedModels(provider.Id),
+            name => provider.Models.Any(model =>
+                string.Equals(model.Name, name, StringComparison.OrdinalIgnoreCase) && model.Enabled),
+            name => _chat.EnableCatalogModel(provider.Id, name),
+            () => RefreshModelsAsync(provider),
+            CanListModels(provider));
 
     private async Task AddModelAsync(ModelProvider provider)
     {
@@ -1894,6 +1896,13 @@ public partial class SettingsPage : UserControl
         bool HasModelListToggle,
         bool ModelListExpanded,
         bool HasUseModelButton,
+        bool HasModelCatalogButton,
+        bool HasAddModelButton,
+        bool ModelCatalogPrecedesAdd,
+        bool HasProviderOutline,
+        bool HasProviderSurface,
+        bool HasModelRowsOutline,
+        bool HasProviderHeaderDivider,
         /// <summary>
         /// Whether the model section is rendered at all. False for a provider that needs a credential and has
         /// none: the list is fetched with the user's key, so there is nothing to show and asking would be a
@@ -1902,15 +1911,10 @@ public partial class SettingsPage : UserControl
         bool ShowsModelSection,
         /// <summary>The section is present but the endpoint listed nothing (or has not been asked yet).</summary>
         bool ShowsModelEmptyState,
-        /// <summary>The re-fetch control is rendered, so the list is not a one-shot result.</summary>
+        /// <summary>True only if the legacy provider-list refresh control is present; it should stay false.</summary>
         bool HasRefreshButton,
-        /// <summary>One-pixel rules between the model rows. Exactly rows - 1, or 0 for fewer than two rows.</summary>
-        int ModelDividerCount,
-        /// <summary>
-        /// The rules between provider groups themselves. This is what makes one provider visually distinct
-        /// from the next; without it the cards read as a single long list of names.
-        /// </summary>
-        int GroupDividerCount);
+        /// <summary>Legacy rule count; outlined model cards intentionally keep this at zero.</summary>
+        int ModelDividerCount);
 
     /// <summary>The provider groups currently rendered, in display order.</summary>
     internal IReadOnlyList<ProviderGroupView> ProviderGroups
@@ -1919,49 +1923,33 @@ public partial class SettingsPage : UserControl
     /// <summary>Number of provider groups rendered — the count the page actually shows, not the model's.</summary>
     internal int ProviderGroupCount => GroupCards.Count();
 
-    /// <summary>
-    /// The rules between groups, in display order.
-    ///
-    /// <para>Exposed as its own hook because a divider is the exact thing a layout change would silently drop:
-    /// it is a <c>Border</c> with no content, so it never fails to build — it just stops being there, and every
-    /// check about the <i>groups</i> keeps passing.</para>
-    /// </summary>
-    internal int GroupDividerCount => ProviderGroupList.Children
-        .OfType<Border>()
-        .Count(border => border.Tag as string == SectionTags.GroupDivider);
+    internal bool HasOnlyProviderCards
+        => _chat is not null
+           && ProviderGroupList.Children.Count == _chat.Providers.Count
+           && GroupCards.All(card => _chat.Providers.Any(provider => provider.Id == card.Tag as string));
 
-    /// <summary>
-    /// The group cards, excluding the rules between them.
-    ///
-    /// <para><b>A divider is a <c>Border</c> too</b>, so every read that walks <c>ProviderGroupList.Children
-    /// </c> has to exclude it explicitly. Reading groups by <c>OfType&lt;Border&gt;()</c> alone would return
-    /// one extra "group" per divider and every count on this page would be quietly wrong — which is why this
-    /// is one shared accessor rather than a filter repeated at each call site.</para>
-    /// </summary>
+    /// <summary>The provider cards currently rendered.</summary>
     private IEnumerable<Border> GroupCards
-        => ProviderGroupList.Children.OfType<Border>()
-            .Where(border => border.Tag as string != SectionTags.GroupDivider);
+        => ProviderGroupList.Children.OfType<Border>();
 
     /// <summary>
     /// Reads one group card.
     ///
-    /// <para>An instance method rather than a static one because the group-divider count is a property of the
-    /// <i>list</i>, not of the card: the same card read in isolation cannot say how many rules sit above it.
-    /// Reading it from a static reader would have meant either dropping the field or threading the list in —
-    /// and dropping it is exactly the kind of quiet omission that lets the separators disappear unnoticed.</para>
+    /// <para>An instance method so the card can be checked against the provider model while reading the rendered
+    /// visual tree.</para>
     /// </summary>
     private ProviderGroupView ReadGroup(Border group)
     {
         var content = (StackPanel)group.Child!;
 
-        // The header is a two-column Grid: name pills on the left, the status mark and the two actions on the
+        // The header is a two-column Grid: name pills on the left, the status mark and available actions on the
         // right. Both columns are StackPanels, so the two are told apart by column rather than by shape — a
         // positional read would swap them the moment the title gained a pill.
         var header = (Grid)content.Children[0];
         var title = (StackPanel)header.Children[0];
         var name = title.Children.OfType<TextBlock>().First().Text ?? "";
 
-        // The actions column packs [status stack] + [the auth button] + [optional remove icon]. The mark's
+        // The actions column packs [status stack] + [auth, catalog and remove actions as applicable]. The mark's
         // label is the source of truth for "linked": matching on the drawn tick would make the assertion pass
         // on any provider that happens to render a check-shaped Path, and the label is what the user reads.
         var actions = (StackPanel)header.Children[1];
@@ -1969,9 +1957,11 @@ public partial class SettingsPage : UserControl
         var statusLabel = statusStack?.Children.OfType<TextBlock>().FirstOrDefault();
         var statusText = statusLabel?.Text ?? "";
         var isLinked = statusText == HubStrings.Get("ProviderConnected");
-        // The remove control is the icon button, so it is told apart by having non-text content rather than by
-        // position — the auth button's label changes with the state and cannot be matched by text.
-        var hasRemove = actions.Children.OfType<Button>().Any(button => button.Content is not string);
+        // Tags distinguish icon actions even though their content is a generated control rather than text.
+        var hasRemove = actions.Children.OfType<Button>()
+            .Any(button => button.Tag as string == SectionTags.RemoveProvider);
+        var hasHeaderCatalogButton = actions.Children.OfType<Button>()
+            .Any(button => button.Tag as string == SectionTags.ModelCatalog);
 
         // "The text is in the tree" is not "the user can see it". A brush that resolved to null while the page
         // was detached leaves a label with the right string and nothing to draw it in, and every check that
@@ -1987,6 +1977,21 @@ public partial class SettingsPage : UserControl
             .ToArray();
 
         var modelSection = sections.FirstOrDefault(section => (string)section.Tag! == SectionTags.Models);
+        var modelActions = modelSection?.Children.OfType<Grid>().FirstOrDefault()?.Children
+            .OfType<StackPanel>().FirstOrDefault(stack => stack.Children.OfType<Button>().Any());
+        var modelActionButtons = modelActions?.Children.OfType<Button>().ToArray() ?? [];
+        var modelCatalogIndex = Array.FindIndex(modelActionButtons,
+            button => button.Tag as string == SectionTags.ModelCatalog);
+        var addModelIndex = Array.FindIndex(modelActionButtons,
+            button => button.Tag as string == SectionTags.AddModelButton);
+        var hasModelCatalogButton = modelCatalogIndex >= 0;
+        var hasAddModelButton = addModelIndex >= 0;
+        var modelCatalogPrecedesAdd = modelCatalogIndex >= 0 && addModelIndex > modelCatalogIndex;
+        var hasProviderOutline = group.BorderThickness.Left > 0
+                                 && group.BorderBrush is not null;
+        var hasProviderSurface = ThemeProbe.IsToken(group.Background, "Hub.ProviderSurface");
+        var hasProviderHeaderDivider = content.Children.OfType<Border>()
+            .Any(border => border.Tag as string == SectionTags.ProviderHeaderDivider);
 
         // "Not rendered" is a *Border* placeholder rather than a missing section, so that "this group has no
         // model list" and "this group failed to build its model list" stay distinguishable — both would read as
@@ -1996,8 +2001,7 @@ public partial class SettingsPage : UserControl
 
         var showsModelSection = modelSection is not null;
 
-        // The empty-state line and the refresh control both live inside the section; they are looked up by tag
-        // rather than by position because the heading is a Grid whose right column holds two buttons now.
+        // The empty-state line and model controls are looked up by tag rather than by position.
         var showsModelEmptyState = modelSection?.GetLogicalDescendants().OfType<TextBlock>()
             .Any(text => text.Tag as string == SectionTags.ModelsEmpty) ?? false;
         var hasRefresh = modelSection?.GetLogicalDescendants()
@@ -2018,6 +2022,9 @@ public partial class SettingsPage : UserControl
                 .SelectMany(list => list.Children.OfType<Border>())
                 .Where(row => row.Tag as string == SectionTags.ModelRow))
             .ToArray() ?? [];
+        var hasModelRowsOutline = modelRows.Length > 0
+                                  && modelRows.All(row => row.BorderThickness.Left > 0
+                                                         && row.BorderBrush is not null);
 
         var modelNames = new List<string>();
         var modelEnabled = new List<bool>();
@@ -2039,12 +2046,8 @@ public partial class SettingsPage : UserControl
             descriptions.Add(description);
         }
 
-        // Counted inside the same nested list the rows come from, so the two cannot disagree about which
-        // list they are describing. A divider sitting outside it would be invisible to the row count and
-        // still show up on screen.
-        var modelDividers = modelSection?.GetLogicalDescendants()
-            .OfType<Border>()
-            .Count(border => border.Tag as string == SectionTags.ModelDivider) ?? 0;
+        // Model rows are individually outlined cards, so there should be no extra dividers between them.
+        const int modelDividers = 0;
 
         // The single auth control, read by its tag. Its *label* is the state: the same button reads
         // "authenticate" or "disconnect", so a check that only counted buttons would pass for either.
@@ -2084,11 +2087,17 @@ public partial class SettingsPage : UserControl
             hasModelListToggle,
             modelList?.IsVisible == true,
             hasUseModelButton,
+            hasModelCatalogButton && !hasHeaderCatalogButton,
+            hasAddModelButton,
+            modelCatalogPrecedesAdd,
+            hasProviderOutline,
+            hasProviderSurface,
+            hasModelRowsOutline,
+            hasProviderHeaderDivider,
             showsModelSection && !modelsHidden,
             showsModelEmptyState,
             hasRefresh,
-            modelDividers,
-            GroupDividerCount);
+            modelDividers);
     }
 
     /// <summary>Forces a repaint of the group list, so a self-check sees the tree a click would produce.</summary>
@@ -2192,26 +2201,20 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Runs the real "Refresh" control for one provider — the same handler a click runs, so what is asserted is
-    /// the rendered button's wiring rather than a parallel code path that could drift from it.
+    /// Runs the model catalog's refresh handler through the same path as its dialog button.
     /// </summary>
     /// <param name="providerId">Provider to refresh; a missing group is a no-op rather than an exception.</param>
     internal async Task RefreshModelsForCheckAsync(string providerId)
     {
         var provider = _chat?.Providers.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider is null) return;
-
-        // The button is looked up by tag and disabled/enabled around the call, exactly as a click would: an
-        // assertion that skipped it would leave the "disabled while in flight" behaviour untested. A group that
-        // is not rendered (an unauthenticated provider with nothing to list) simply yields null — the fetch
-        // still runs, which is what a keyless provider relies on.
-        var button = GroupCards
-            .FirstOrDefault(border => border.Tag as string == providerId)?
-            .GetLogicalDescendants().OfType<Button>()
-            .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.RefreshModels);
-
-        await RefreshModelsAsync(provider, button);
+        await CreateModelCatalogWindow(provider).RefreshForCheckAsync();
     }
+
+    internal ModelCatalogWindow? ModelCatalogForCheck(string providerId)
+        => _chat?.Providers.FirstOrDefault(candidate => candidate.Id == providerId) is { } provider
+            ? CreateModelCatalogWindow(provider)
+            : null;
 
     /// <summary>
     /// Scrolls to the second provider group, so a screenshot shows that the groups actually stack rather than
@@ -2284,12 +2287,10 @@ public partial class SettingsPage : UserControl
 
         internal const string ModelRow = "provider-model-row";
         internal const string ModelEnabled = "provider-model-enabled";
-
-        /// <summary>The one-pixel rule between two model rows.</summary>
-        internal const string ModelDivider = "provider-model-divider";
-
-        /// <summary>The one-pixel rule between two provider groups.</summary>
-        internal const string GroupDivider = "provider-group-divider";
+        internal const string ModelCatalog = "provider-model-catalog";
+        internal const string AddModelButton = "provider-add-model";
+        internal const string RemoveProvider = "provider-remove";
+        internal const string ProviderHeaderDivider = "provider-header-divider";
 
         /// <summary>The control that re-fetches the list from the endpoint.</summary>
         internal const string RefreshModels = "provider-refresh-models";

@@ -145,6 +145,9 @@ public partial class ControlGalleryWindow : Window
         var probe = TokenColor("Hub.SurfaceRaised");
         check(probe is not null,
             "语义色可从 Application.Resources 解析（Hub.SurfaceRaised = " + (probe?.ToString() ?? "null") + "）");
+        var darkProviderSurface = TokenColor("Hub.ProviderSurface");
+        check(darkProviderSurface is not null && darkProviderSurface != TokenColor("Hub.Surface"),
+            "深色主题 provider 卡片底色与模型项底色区分");
 
         // ---- Buttons: did the ControlTheme replace the Fluent default ----
         check(IsToken(BtnDefault.Background, "Hub.SurfaceRaised"),
@@ -313,6 +316,11 @@ public partial class ControlGalleryWindow : Window
                 "切换 ThemeVariant 后窗口底色改变（深色 " + darkBackground + " → 浅色 " + lightBackground + "）");
             check(IsToken(Background, "Hub.Background"),
                 "浅色变体下窗口底色 = Hub.Background 的浅色值（实际 " + Describe(Background) + "）");
+            var lightProviderSurface = TokenColor("Hub.ProviderSurface");
+            check(lightProviderSurface is not null
+                  && lightProviderSurface != TokenColor("Hub.Surface")
+                  && lightProviderSurface != darkProviderSurface,
+                "浅色主题 provider 卡片底色与模型项底色区分且适配主题切换");
 
             Application.Current.RequestedThemeVariant = ThemeVariant.Dark;
             UpdateLayout();

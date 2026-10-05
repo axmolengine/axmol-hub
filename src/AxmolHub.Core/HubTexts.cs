@@ -444,11 +444,20 @@ public static class HubTexts
         ["ModelNameRequired"] = ("请填写模型名称。", "Enter a model name."),
         ["ModelNamePlaceholder"] = ("模型名称，例如 gpt-5.1-codex-mini", "Model name, e.g. gpt-5.1-codex-mini"),
         ["AddModelTitle"] = ("添加模型", "Add model"),
+        ["OpenModelCatalog"] = ("浏览模型目录", "Browse catalog"),
+        ["ModelCatalogTitle"] = ("{0} 模型目录", "{0} model catalog"),
+        ["ModelCatalogHint"] = ("双击模型即可启用；可连续选择多个模型。", "Double-click models to enable them; you can choose several."),
+        ["ModelCatalogSearchHint"] = ("搜索模型名称", "Search model names"),
+        ["ModelCatalogEmpty"] = ("缓存目录为空。点击刷新从提供商获取模型。", "The cached catalog is empty. Refresh to fetch models from the provider."),
+        ["ModelCatalogRefreshUnavailable"] = ("请先完成提供商鉴权后再刷新模型目录。", "Authenticate this provider before refreshing its model catalog."),
+        ["ModelCatalogNoMatch"] = ("没有匹配的模型。", "No matching models."),
+        ["ModelCatalogEnabled"] = ("已启用模型：{0}", "Enabled model: {0}"),
+        ["ModelCatalogEnableFailed"] = ("无法启用该模型，请刷新目录后重试。", "Could not enable this model. Refresh the catalog and try again."),
+        ["ModelCatalogEnabledState"] = ("已启用", "Enabled"),
+        ["ModelCatalogDisabledState"] = ("双击启用", "Double-click to enable"),
+        ["CloseModelCatalog"] = ("关闭", "Close"),
+        ["NoEnabledModels"] = ("尚未启用模型。浏览模型目录，或手动添加模型。", "No models enabled. Browse the catalog or add a model manually."),
         ["NoModels"] = ("尚未添加模型。", "No models added yet."),
-        // 与 NoModels 分开：那一行说的是「你没加」，这一行说的是「接口还没告诉我们有哪些」。去掉
-        // defaultModel 之后，新采纳的 provider 一开始就是空的，混用旧文案会把用户引到「手动添加」，
-        // 而真正该做的是点刷新。
-        ["NoModelsFetched"] = ("还没有模型列表。点击「刷新」从提供商拉取，或手动添加一个模型名。", "No model list yet. Press Refresh to fetch one from the provider, or add a model name by hand."),
         // 鉴权状态与断开。对勾 = 该 provider 已鉴权（有一份凭据，不分来源）。术语统一用「鉴权 / 链接」。
         //
         // 这些文案在「一个 provider 一份凭据」之后改过一次：原来写的是「全部账号」，那是多账号模型留下的
@@ -462,8 +471,8 @@ public static class HubTexts
 
         // 折叠态下那一行摘要。只剩模型数：账号数在一对一之后恒为 0 或 1，而「1 个账号」是个没有信息量的
         // 数字——连接状态由名称旁边的对勾说，不需要文字再说一遍。
-        ["SummaryModelCount"] = ("{0} 个模型", "{0} models"),
-        ["SummaryModelCountOne"] = ("{0} 个模型", "1 model"),
+        ["SummaryModelCount"] = ("{0} 个已配置模型", "{0} configured models"),
+        ["SummaryModelCountOne"] = ("1 个已配置模型", "1 configured model"),
 
         // ── 鉴权对话框 ──
         // 列表里只有一个按钮：未鉴权时叫「鉴权」，已鉴权时叫「断开鉴权」。真正的输入发生在对话框里，

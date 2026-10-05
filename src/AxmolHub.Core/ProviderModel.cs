@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// One model name a provider can call, plus whether it is the provider's default model.
+/// One configured model name a provider can call, plus whether it is the provider's default model.
 ///
 /// <para><b>Why a list rather than a single field.</b> One credential commonly reaches several models: the same
 /// DeepSeek key serves <c>deepseek-chat</c> and <c>deepseek-reasoner</c>, and the same OrcaRouter key serves
@@ -20,8 +20,9 @@ public sealed class ProviderModel
     public string Name { get; set; } = "";
 
     /// <summary>
-    /// Whether this is the provider's default model. Exactly one entry in a provider is marked; the invariant
-    /// is enforced by <see cref="ModelProvider.Normalize"/> rather than by the serializer.
+    /// Whether this is the provider's default model. One enabled entry is marked when any model is enabled;
+    /// none is marked when all configured models are disabled. The invariant is enforced by
+    /// <see cref="ModelProvider.Normalize"/> rather than by the serializer.
     /// </summary>
     public bool InUse { get; set; }
 

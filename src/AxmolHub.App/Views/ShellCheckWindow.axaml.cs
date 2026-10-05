@@ -493,7 +493,7 @@ public partial class ShellCheckWindow : Window
         // ── Sign-in methods and accounts ──
         // The block is driven through the page's real selection path (SelectProviderForCheck → the same
         // UpdateProviderDetail a click triggers), so what is asserted is the object graph the user would see.
-        await CheckAuthAndAccountsAsync(settings, shell);
+        await CheckAuthAndAccountsAsync(scratchRoot, settings, shell);
 
         await Task.CompletedTask;
     }
@@ -508,7 +508,7 @@ public partial class ShellCheckWindow : Window
     /// therefore reads the *rendered* tree (a group that failed to build counts as missing) rather than the
     /// model it was built from.
     /// </summary>
-    private async Task CheckAuthAndAccountsAsync(SettingsPage settings, MainWindow shell)
+    private async Task CheckAuthAndAccountsAsync(string scratchRoot, SettingsPage settings, MainWindow shell)
     {
         // Ollama is a *preset*, not a configured provider — it only reaches the list once adopted. Adopt it
         // so the assertion exercises the keyless path rather than finding no group at all (which would pass a
@@ -805,7 +805,7 @@ public partial class ShellCheckWindow : Window
         Check(settings.ProviderGroupForId("deepseek") is not null, "重新采纳后分组重新出现");
 
         CheckAuthDialogSteps(shell.Chat.Providers);
-        await CheckModelListAsync(settings, shell);
+        await CheckModelListAsync(scratchRoot, settings, shell);
         await Task.CompletedTask;
     }
 
@@ -822,7 +822,7 @@ public partial class ShellCheckWindow : Window
     /// <para>The UI assertions read the rendered tree through the page's own view record, so a section that was
     /// never built counts as missing rather than as empty.</para>
     /// </summary>
-    private async Task CheckModelListAsync(SettingsPage settings, MainWindow shell)
+    private async Task CheckModelListAsync(string scratchRoot, SettingsPage settings, MainWindow shell)
     {
         // ── The parser, on the shapes that matter ──
         Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
@@ -878,18 +878,72 @@ public partial class ShellCheckWindow : Window
         Check(target is not null, "有一个 provider 可以用来跑拉取路径");
         if (target is null) return;
 
+        // The manifest gives a small, exact default-enabled set. The fetched response remains authoritative
+        // about existence, and a later refresh must not undo a user's explicit toggle.
+        var recommendedModel = AiProviderManifest.Find("deepseek")?.DefaultEnabledModels.FirstOrDefault()
+                               ?? "missing-manifest-default";
+        var defaultsResponse = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            data = new[]
+            {
+                new { id = recommendedModel },
+                new { id = "unlisted-manifest-probe" },
+            },
+        });
+        var defaultsRoot = Path.Combine(scratchRoot, "manifest-defaults-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(defaultsRoot);
+        using (var defaultsWorkspace = new ChatWorkspace(defaultsRoot))
+        using (var defaultsHttp = new System.Net.Http.HttpClient(new ModelListProbeHandler(
+                   defaultsResponse)))
+        {
+            var defaultProvider = defaultsWorkspace.AddPreset("deepseek");
+            var credentialAdded = defaultsWorkspace.AddCredential(
+                "deepseek", "", "sk-manifest-model-probe", CredentialSources.ApiKey);
+            defaultsWorkspace.ModelListHttp = defaultsHttp;
+            var defaultsResult = await defaultsWorkspace.RefreshModelsAsync("deepseek");
+            var configured = defaultsWorkspace.Providers.First(provider => provider.Id == "deepseek");
+            var enabledDefault = configured.Models.FirstOrDefault(model => model.Name == recommendedModel);
+            Check(defaultProvider is not null && defaultsResult.Reachable
+                  && defaultProvider.DefaultEnabledModels.Contains(recommendedModel)
+                  && enabledDefault is { Enabled: true }
+                  && !configured.Models.Any(model => model.Name == "unlisted-manifest-probe"),
+                "manifest 中的 defaultEnabledModels 只启用与目录匹配的模型（defaults ["
+                    + string.Join(",", defaultProvider?.DefaultEnabledModels ?? [])
+                    + "] credential=" + (credentialAdded is not null)
+                    + " fetch=" + defaultsResult.Reachable + " problem=" + defaultsResult.Problem
+                    + " configured=[" + string.Join(",", configured.Models.Select(model => model.Name + ":" + model.Enabled))
+                    + "]）");
+            Check(credentialAdded is not null
+                  && defaultsWorkspace.SetModelEnabled("deepseek", recommendedModel, false),
+                "用户可以关闭 manifest 默认启用的模型");
+            await defaultsWorkspace.RefreshModelsAsync("deepseek");
+            configured = defaultsWorkspace.Providers.First(provider => provider.Id == "deepseek");
+            enabledDefault = configured.Models.FirstOrDefault(model => model.Name == recommendedModel);
+            Check(enabledDefault is { Enabled: false }
+                  && !configured.Models.Any(model => model.Name == "unlisted-manifest-probe"),
+                "后续目录刷新保留用户已关闭的状态且新模型仍默认关闭");
+        }
         // ── What a fresh provider looks like before anything is fetched ──
         //
         // This is the state a user meets on a freshly adopted preset, and it is the one that has no model at
-        // all. The two halves are asserted separately because either can appear without the other: a section
-        // with no refresh button strands the user, and a refresh button in an empty section says nothing about
-        // what the list is for.
+        // all. Catalog browsing and manual addition are actions on the model section.
         settings.RefreshProviderGroupsForCheck();
         var beforeFetch = settings.ProviderGroupForId(target.Id);
         Check(beforeFetch is { ShowsModelSection: true, ShowsModelEmptyState: true },
-            "拉取前模型区显示空状态而不是留白（实际「" + (beforeFetch is { ShowsModelEmptyState: true } ? "有" : "无") + "」）");
-        Check(beforeFetch is { HasRefreshButton: true },
-            "模型区带「刷新」入口，用户不必等鉴权流程替他拉一次");
+            "尚未启用模型时显示模型区空状态（实际「" + (beforeFetch is { ShowsModelEmptyState: true } ? "有" : "无") + "」）");
+        Check(beforeFetch is
+              {
+                  HasModelCatalogButton: true,
+                  HasAddModelButton: true,
+                  ModelCatalogPrecedesAdd: true,
+                  HasProviderOutline: true,
+                  HasProviderSurface: true,
+                  HasProviderHeaderDivider: true,
+                  HasRefreshButton: false
+              },
+            "provider 卡片有边界和标题分隔线，目录及添加操作按顺序位于模型工具栏");
+        Check(settings.ModelCatalogForCheck(target.Id) is { HasRefreshButtonForCheck: true },
+            "模型目录弹窗提供刷新按钮");
 
         // ── The request itself, on a keyless provider ──
         //
@@ -913,7 +967,7 @@ public partial class ShellCheckWindow : Window
             "请求打到该 provider 自己的 {baseUrl}/models（实际 "
                 + keylessProbe.Requests.FirstOrDefault()?.RequestUri + "）");
 
-        // ── A successful fetch adopts the list and renders it ──
+        // ── A successful fetch caches the full catalog without activating every model ──
         settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
             """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"}]}"""));
         await settings.RefreshModelsForCheckAsync(target.Id);
@@ -922,19 +976,47 @@ public partial class ShellCheckWindow : Window
 
         settings.RefreshProviderGroupsForCheck();
         var fetched = settings.ProviderGroupForId(target.Id);
-        Check(fetched is { ShowsModelEmptyState: false },
-            "拉取成功后空状态消失");
-        Check(fetched is not null && fetched.ModelNames.Contains("llama3.2") && fetched.ModelNames.Contains("qwen3"),
-            "拉到的模型渲染在子列表里（实际 [" + string.Join(",", fetched?.ModelNames ?? []) + "]）");
-        Check(fetched is not null && fetched.ModelDescriptions.Any(text => text.Length > 0),
-            "拉到的模型名走描述查表，命中时给出说明（实际 ["
-                + string.Join(" | ", fetched?.ModelDescriptions ?? []) + "]）");
-        // One model is marked in use without the user choosing: after Normalize the first entry holds the mark,
-        // because a provider with models but no marked one would send an empty model name to the endpoint.
-        Check(fetched is { ModelNames.Length: > 0 } && fetched.ActiveModelName == fetched.ModelNames[0],
-            "拉取后第一个模型自动成为使用中的那个（实际「" + fetched?.ActiveModelName + "」）");
+        Check(fetched is { ShowsModelEmptyState: true, ModelNames.Length: 0 },
+            "拉取目录不会默认激活未列入 manifest 的模型");
+        Check(shell.Chat.CachedModels(target.Id).Contains("llama3.2")
+              && shell.Chat.CachedModels(target.Id).Contains("qwen3"),
+            "完整模型列表写入目录缓存（实际 [" + string.Join(",", shell.Chat.CachedModels(target.Id)) + "]）");
         Check(fetched is { HasModelListToggle: true, ModelListExpanded: true, HasUseModelButton: false },
             "模型区可折叠，短列表默认展开且不再显示重复的「使用此模型」按钮");
+
+        var catalog = settings.ModelCatalogForCheck(target.Id);
+        Check(catalog is not null, "可以打开已缓存的模型目录");
+        if (catalog is not null)
+        {
+            catalog.SearchForCheck("qwen3");
+            Dispatcher.UIThread.RunJobs();
+            Check(catalog.VisibleModelNamesForCheck.SequenceEqual(["qwen3"]),
+                "目录搜索框实时过滤模型 ID（实际 [" + string.Join(",", catalog.VisibleModelNamesForCheck) + "]）");
+            catalog.SearchForCheck("");
+            Dispatcher.UIThread.RunJobs();
+            Check(catalog.ActivateForCheck("qwen3")
+                  && catalog.ActivateForCheck("llama3.2")
+                  && catalog.EnabledModelNamesForCheck.Length == 2
+                  && shell.Chat.AvailableChatModels.Count(choice => choice.Provider.Id == target.Id) == 2,
+                "双击可以在弹窗保持打开时连续启用多个模型（实际 ["
+                    + string.Join(",", catalog.EnabledModelNamesForCheck) + "]）");
+        }
+        settings.RefreshProviderGroupsForCheck();
+        fetched = settings.ProviderGroupForId(target.Id);
+        Check(fetched is { ModelNames.Length: 2 } && fetched.ModelDescriptions.Any(text => text.Length > 0),
+            "启用后的模型出现在列表并展示已知模型说明（实际 ["
+                + string.Join(",", fetched?.ModelNames ?? []) + "]）");
+        Check(fetched is { ActiveModelName: "qwen3" },
+            "首次启用的模型成为默认模型，后续选择不覆盖默认（实际「" + fetched?.ActiveModelName + "」）");
+        Check(settings.SetModelEnabledForCheck(target.Id, "qwen3", false)
+              && settings.ProviderGroupForId(target.Id) is { ActiveModelName: "llama3.2" },
+            "关闭默认模型时默认标记转给另一个已启用模型");
+        Check(settings.SetModelEnabledForCheck(target.Id, "llama3.2", false)
+              && settings.ProviderGroupForId(target.Id) is { ActiveModelName: "" },
+            "关闭最后一个已启用模型后清空默认模型标记");
+        Check(settings.SetModelEnabledForCheck(target.Id, "qwen3", true)
+              && settings.ProviderGroupForId(target.Id) is { ActiveModelName: "qwen3" },
+            "重新启用模型时设置新的默认模型");
 
         var extraModels = Enumerable.Range(1, 11).Select(index => $"collapse-probe-{index}").ToArray();
         foreach (var name in extraModels) shell.Chat.AddModel(target.Id, name);
@@ -974,21 +1056,16 @@ public partial class ShellCheckWindow : Window
                 "鉴权之后模型列表立刻可见，无需别的操作");
         }
 
-        // ── Separators ──
+        // ── Provider and model card boundaries ──
         //
-        // Both kinds are counted against the rows they divide, because a rule that is in the tree but in the
-        // wrong place (a leading rule, one per row including the first) looks correct in a screenshot and is
-        // wrong as a rule.
-        Check(fetched is not null && fetched.ModelDividerCount == Math.Max(0, fetched.ModelNames.Length - 1),
-            "模型行之间的分割线恰好是行数减一（" + (fetched?.ModelNames.Length ?? 0) + " 行 / "
-                + (fetched?.ModelDividerCount ?? -1) + " 条）");
-        Check(settings.GroupDividerCount == Math.Max(0, settings.ProviderGroupCount - 1),
-            "provider 分组之间的分割线恰好是组数减一（" + settings.ProviderGroupCount + " 组 / "
-                + settings.GroupDividerCount + " 条）");
-        // The dividers are Borders too, so this is the check that the group count was not quietly inflated by
-        // them: every other assertion above reads ProviderGroupCount or ProviderGroups.
+        Check(fetched is { HasModelRowsOutline: true },
+            "模型行使用独立描边卡片（实际 " + (fetched?.ModelNames.Length ?? 0) + " 行）");
+        Check(fetched is not null && fetched.ModelDividerCount == 0,
+            "模型行卡片之间没有重复分割线（实际 " + (fetched?.ModelDividerCount ?? -1) + " 条）");
+        Check(settings.HasOnlyProviderCards,
+            "provider 卡片之间不再插入分割线");
         Check(settings.ProviderGroups.Count == shell.Chat.Providers.Count,
-            "分割线没有被当成 provider 分组（实际读到 " + settings.ProviderGroups.Count + " 组 / "
+            "provider 卡片计数正确（实际读到 " + settings.ProviderGroups.Count + " 组 / "
                 + shell.Chat.Providers.Count + " 个 provider）");
 
         // ── The cache survives a reload ──
@@ -1073,13 +1150,11 @@ public partial class ShellCheckWindow : Window
         await settings.RefreshModelsForCheckAsync(target.Id);
         settings.RefreshProviderGroupsForCheck();
         Check(reuseProbe.Requests.Count > 0
-              && settings.ProviderGroupForId(target.Id) is { ModelNames.Length: 1 }
-                  && settings.ProviderGroupForId(target.Id)!.ModelNames[0] == "after-empty",
-            "同一个注入的 HttpClient 可以连续多次拉取（第二次实际 ["
-                + string.Join(",", settings.ProviderGroupForId(target.Id)?.ModelNames ?? []) + "]）");
+              && settings.ProviderGroupForId(target.Id) is { ModelNames.Length: 0 }
+                  && shell.Chat.CachedModels(target.Id).Contains("after-empty"),
+            "同一个注入的 HttpClient 可连续刷新，第二次结果进入目录缓存但不自动启用");
 
-        // Restore something renderable so the screenshot below shows a populated list rather than an empty
-        // state, and so the remaining checks are not reading a section that only exists to be empty.
+        // Restore a populated cached directory so the remaining checks can exercise more than the empty case.
         settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
             """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"},{"id":"gemma3"}]}"""));
         await settings.RefreshModelsForCheckAsync(target.Id);

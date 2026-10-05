@@ -21,6 +21,7 @@
       <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#242424" />
       <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#353535" />
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#202020" />
+      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#252525" />
       <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#343434" />
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#383838" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#292929" />
@@ -86,6 +87,7 @@
       <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#EDEEF2" />
       <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#E9E9EE" />
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#EEF0F4" />
       <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#E4E4EA" />
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#DCE4F0" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#FFFFFF" />

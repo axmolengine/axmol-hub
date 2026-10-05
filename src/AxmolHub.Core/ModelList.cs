@@ -8,8 +8,8 @@ namespace AxmolHub.Core;
 // Why the list is fetched rather than shipped: a model name written into a JSON file
 // goes stale the moment the provider adds or retires one, and a stale default is worse
 // than none — it is offered in the list and fails on first use with a 404 that blames
-// the user's key. So `manifests/ai-providers.json` no longer names a default model at
-// all, and the list comes from the endpoint itself.
+// the user's key. The manifest may recommend names for initial activation, but only
+// models returned by the endpoint are added from the catalog.
 //
 // Three rules, each forced by what the endpoint can actually do:
 //
