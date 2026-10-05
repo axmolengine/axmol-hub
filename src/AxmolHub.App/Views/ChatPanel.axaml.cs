@@ -45,6 +45,7 @@ public partial class ChatPanel : UserControl
     private DispatcherTimer? _activityTimer;
     private readonly Stopwatch _activityStopwatch = new();
     private readonly List<ContextAttachment> _contextAttachments = [];
+    private string? _selectedComposerMode;
     private int _activityFrame;
     private bool _stopRequested;
     private bool _stickToBottom = true;
@@ -79,7 +80,7 @@ public partial class ChatPanel : UserControl
                 _streamStatusLabel.Text = ToolActivityText(name, completed);
         });
         ModelPicker.Click += (_, _) => ShowModelMenu();
-        ModeIndicatorButton.Click += (_, _) => _chat.SelectMode(ChatModes.Agent);
+        ModeIndicatorButton.Click += (_, _) => ClearComposerMode();
         ContextButton.Click += (_, _) => ShowContextMenu();
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
@@ -149,9 +150,8 @@ public partial class ChatPanel : UserControl
     private void RefreshComposerChoices()
     {
         RefreshModelPicker();
-        var mode = _chat.ActiveMode;
-        ModeIndicatorButton.IsVisible = mode is ChatModes.Ask or ChatModes.Plan;
-        ModeIndicatorLabel.Text = HubStrings.Get(mode switch
+        ModeIndicatorButton.IsVisible = _selectedComposerMode is not null;
+        ModeIndicatorLabel.Text = HubStrings.Get(_selectedComposerMode switch
         {
             ChatModes.Ask => "ChatModeAsk",
             ChatModes.Plan => "ChatModePlan",
@@ -208,7 +208,6 @@ public partial class ChatPanel : UserControl
     private MenuFlyout BuildComposerMenu()
     {
         var menu = new MenuFlyout();
-        var modeItems = new Dictionary<string, MenuItem>(StringComparer.Ordinal);
         foreach (var (mode, key) in new[]
                  {
                      (ChatModes.Ask, "ChatModeAsk"),
@@ -219,18 +218,18 @@ public partial class ChatPanel : UserControl
             var item = new MenuItem
             {
                 Header = HubStrings.Get(key),
-                ToggleType = MenuItemToggleType.Radio,
-                IsChecked = _chat.ActiveMode == mode,
-                StaysOpenOnClick = true,
+                ToggleType = MenuItemToggleType.CheckBox,
+                IsChecked = _selectedComposerMode == mode,
                 Tag = mode,
             };
             item.Click += (_, _) =>
             {
-                _chat.SelectMode(mode);
-                foreach (var (value, modeItem) in modeItems)
-                    modeItem.IsChecked = mode == value;
+                if (_selectedComposerMode == mode)
+                    ClearComposerMode();
+                else
+                    SetComposerMode(mode);
+                menu.Hide();
             };
-            modeItems.Add(mode, item);
             menu.Items.Add(item);
         }
 
@@ -265,6 +264,20 @@ public partial class ChatPanel : UserControl
         }
         menu.Items.Add(addProject);
         return menu;
+    }
+
+    private void SetComposerMode(string mode)
+    {
+        _selectedComposerMode = mode;
+        _chat.SelectMode(mode);
+        RefreshComposerChoices();
+    }
+
+    private void ClearComposerMode()
+    {
+        _selectedComposerMode = null;
+        _chat.SelectMode(ChatModes.Agent);
+        RefreshComposerChoices();
     }
 
     private void ShowModelMenu()
@@ -1205,6 +1218,7 @@ public partial class ChatPanel : UserControl
     internal int SendStateUpdates { get; private set; }
     internal string SendButtonTooltipForCheck => ToolTip.GetTip(SendButton)?.ToString() ?? "";
     internal bool ModelPickerIsChipForCheck => ModelPicker.Classes.Contains("chip");
+    internal bool ModelPickerUsesContentWidthForCheck => double.IsNaN(ModelPicker.Width);
     internal string SelectedModeForCheck => _chat.ActiveMode;
     internal string SelectedReasoningForCheck => _chat.ActiveReasoningEffort;
     internal bool ReasoningPickerEnabledForCheck => SelectedReasoningLabel.IsVisible;
@@ -1219,6 +1233,28 @@ public partial class ChatPanel : UserControl
     internal bool ContextRingPrecedesModelForCheck
         => ContextButton.Parent is Panel panel
            && panel.Children.IndexOf(ContextButton) < panel.Children.IndexOf(ModelPicker);
+    internal bool ModeIndicatorFollowsPlusForCheck
+        => ModeIndicatorButton.Parent is Panel panel
+           && panel.Children.IndexOf(ModeIndicatorButton) == panel.Children.IndexOf(AddContextButton) + 1;
+    internal bool ModeIndicatorKeepsLabelVisibleForCheck
+        => ModeIndicatorLabel.IsVisible && ModeIndicatorLabel.Parent is Grid grid
+           && grid.ColumnDefinitions.Count == 2
+           && Grid.GetColumn(ModeIndicatorLabel) == 1;
+    internal bool ModeIndicatorCloseIsRedForCheck
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close")) is { } close
+           && close.Foreground is ISolidColorBrush closeBrush
+           && closeBrush.Color.R > closeBrush.Color.G
+           && closeBrush.Color.R > closeBrush.Color.B;
+    internal string ModeIndicatorCloseColorForCheck
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close"))?.Foreground?.ToString() ?? "unset";
+    internal bool ModeIndicatorCloseIsLeftAndCenteredForCheck
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close")) is { } close
+           && close.VerticalAlignment == VerticalAlignment.Center
+           && close.Parent is Grid grid
+           && Grid.GetColumn(close) == 0;
     internal string[] ComposerMenuModesForCheck => BuildComposerMenu().Items.OfType<MenuItem>()
         .Where(IsComposerModeItem)
         .Select(item => (string)item.Tag!)
@@ -1227,6 +1263,13 @@ public partial class ChatPanel : UserControl
         .Where(item => IsComposerModeItem(item) && item.IsChecked)
         .Select(item => (string)item.Tag!)
         .ToArray();
+    internal bool ComposerMenuModeItemsCloseOnClickForCheck
+        => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
+            .All(item => !item.StaysOpenOnClick);
+    internal bool ComposerMenuModesAreCheckboxesForCheck
+        => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
+            .All(item => item.ToggleType == MenuItemToggleType.CheckBox);
+    internal string? SelectedComposerModeForCheck => _selectedComposerMode;
 
     /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
     /// rather than by string, because the icons are resolved from the same cached resource.</summary>
@@ -1239,7 +1282,22 @@ public partial class ChatPanel : UserControl
     internal bool SelectModeForCheck(string mode)
     {
         if (mode is not (ChatModes.Ask or ChatModes.Plan or ChatModes.Agent)) return false;
-        return _chat.SelectMode(mode);
+        SetComposerMode(mode);
+        return true;
+    }
+
+    internal bool ClickComposerModeMenuForCheck(string mode)
+    {
+        var menu = BuildComposerMenu();
+        var item = menu.Items.OfType<MenuItem>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Tag?.ToString(), mode, StringComparison.Ordinal));
+        if (item is null) return false;
+
+        menu.ShowAt(AddContextButton);
+        Dispatcher.UIThread.RunJobs();
+        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
+        return !menu.IsOpen;
     }
 
     internal void ResetModeForCheck()

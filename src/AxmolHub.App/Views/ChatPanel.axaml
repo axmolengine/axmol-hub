@@ -266,9 +266,8 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.mode-indicator">
-      <Setter Property="Height" Value="30" />
       <Setter Property="MinHeight" Value="30" />
-      <Setter Property="Padding" Value="10,3" />
+      <Setter Property="Padding" Value="8,3" />
       <Setter Property="Margin" Value="0,0,6,0" />
       <Setter Property="CornerRadius" Value="15" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
@@ -280,16 +279,16 @@
     </Style>
     <Style Selector="Button.mode-indicator:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="CornerRadius" Value="15" />
     </Style>
     <Style Selector="TextBlock.mode-indicator-close">
-      <Setter Property="IsVisible" Value="False" />
-    </Style>
-    <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-label">
-      <Setter Property="IsVisible" Value="False" />
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
     <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-close">
-      <Setter Property="IsVisible" Value="True" />
+      <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="WrapPanel.context-attachments">
       <Setter Property="Margin" Value="0,8,0,0" />
@@ -391,15 +390,6 @@
                      IsVisible="False" />
           <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
             <WrapPanel x:Name="ComposerChoices" Grid.Column="0" VerticalAlignment="Center">
-              <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
-                      VerticalAlignment="Center" IsVisible="False">
-                <Grid>
-                  <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
-                             VerticalAlignment="Center" />
-                  <TextBlock Classes="mode-indicator-close" Text="×"
-                             FontSize="16" VerticalAlignment="Center" />
-                </Grid>
-              </Button>
               <Button x:Name="AddContextButton" Classes="composer-plus"
                       HorizontalAlignment="Left" VerticalAlignment="Center"
                       HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
@@ -409,6 +399,16 @@
                       Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
                       StrokeThickness="1.8" StrokeLineCap="Round" />
               </Button>
+              <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
+                      VerticalAlignment="Center" IsVisible="False">
+                <Grid ColumnDefinitions="14,*">
+                  <TextBlock Classes="mode-indicator-close" Text="×" FontSize="16"
+                             HorizontalAlignment="Left" VerticalAlignment="Center"
+                             Foreground="{DynamicResource Hub.DangerText}" />
+                  <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
+                             Grid.Column="1" VerticalAlignment="Center" />
+                </Grid>
+              </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"
                         VerticalAlignment="Center" Margin="8,0,0,0">
@@ -416,11 +416,11 @@
                 <local:ContextUsageRing x:Name="ContextRing" Width="20" Height="20" />
               </Button>
               <Button x:Name="ModelPicker" Classes="chip model-picker"
-                      Width="260" HorizontalAlignment="Left" VerticalAlignment="Center">
+                      HorizontalAlignment="Left" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-                  <TextBlock x:Name="SelectedModelLabel" MaxWidth="138"
+                  <TextBlock x:Name="SelectedModelLabel" MaxWidth="130"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                  <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="105"
+                  <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="76"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                              Foreground="{DynamicResource Hub.TextTertiary}" />
                 </StackPanel>

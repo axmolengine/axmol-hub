@@ -178,8 +178,9 @@ public partial class ShellCheckWindow : Window
         Check(panel.ModelChoiceCount == 1,
             "模型选择器排除未鉴权 provider，只列出可用模型（实际 " + panel.ModelChoiceCount + " 项）");
         Check(panel.SelectModelForCheck(checkProvider!.Id, checkModel)
-              && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal),
-            "可以在输入框左下角选择 provider/model（实际「" + panel.SelectedModelText + "」）");
+              && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
+              && panel.ReasoningPickerEnabledForCheck,
+            "可以选择任意已配置模型，并显示推理等级选项（实际「" + panel.SelectedModelText + "」）");
         Check(panel.ActiveModelText.Contains(checkProvider.Name, StringComparison.Ordinal)
               && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
@@ -187,28 +188,58 @@ public partial class ShellCheckWindow : Window
         // ── Composer shape: chip picker, round button, focus highlight ──
         Check(panel.ModelPickerIsChipForCheck,
             "模型选择器以胶囊呈现，而不是占满整行的字段");
+        Check(panel.ModelPickerUsesContentWidthForCheck,
+            "模型选择器按模型名称内容自适应宽度，不再固定占用过宽空间");
         Check(panel.ContextRingPrecedesModelForCheck,
             "上下文用量圆环位于模型选择器左侧");
         Check(panel.ComposerPlusCenteredForCheck,
             "添加上下文的圆形加号按钮在水平和垂直方向居中");
         Check(panel.ComposerMenuModesForCheck.SequenceEqual(
                   [ChatModes.Ask, ChatModes.Plan, ChatModes.Agent])
-              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent])
+              && panel.CheckedComposerMenuModesForCheck.Length == 0
+              && panel.ComposerMenuModesAreCheckboxesForCheck
+              && panel.ComposerMenuModeItemsCloseOnClickForCheck
               && !panel.ModeIndicatorVisibleForCheck,
-            "加号菜单提供互斥的提问、计划、目标选项，默认选中目标且不显示模式胶囊");
-        Check(panel.SelectModeForCheck(ChatModes.Ask)
+            "加号菜单提供可取消的提问、计划、目标复选项，默认全部未勾选且点击后关闭");
+        Check(panel.ModeIndicatorFollowsPlusForCheck,
+            "模式按钮位于加号右侧");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
               && panel.SelectedModeForCheck == ChatModes.Ask
+              && panel.SelectedComposerModeForCheck == ChatModes.Ask
               && panel.ModeIndicatorVisibleForCheck
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Ask]),
-            "选择提问后只勾选提问，并在加号左侧显示模式胶囊");
-        Check(panel.SelectModeForCheck(ChatModes.Plan)
+            "点击提问后菜单关闭、只勾选提问，并显示模式按钮");
+        Check(panel.ModeIndicatorKeepsLabelVisibleForCheck,
+            "悬停删除图标时模式名称仍在按钮固定的右侧文字区显示");
+        Check(panel.ModeIndicatorCloseIsRedForCheck,
+            "模式按钮删除图标使用主题危险色（" + panel.ModeIndicatorCloseColorForCheck + "）");
+        Check(panel.ModeIndicatorCloseIsLeftAndCenteredForCheck,
+            "模式按钮删除图标位于文字左侧并垂直居中");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
+              && panel.SelectedComposerModeForCheck == ChatModes.Plan
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan]),
-            "选择计划会替换提问选中态，模式保持互斥");
+            "点击计划会取消提问并仅勾选计划，菜单立即关闭");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)
+              && panel.SelectedModeForCheck == ChatModes.Agent
+              && panel.SelectedComposerModeForCheck == ChatModes.Agent
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent])
+              && panel.ModeIndicatorVisibleForCheck,
+            "点击目标后仅勾选目标并显示目标按钮，菜单立即关闭");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)
+              && panel.SelectedModeForCheck == ChatModes.Agent
+              && panel.SelectedComposerModeForCheck is null
+              && panel.CheckedComposerMenuModesForCheck.Length == 0
+              && !panel.ModeIndicatorVisibleForCheck,
+            "再次点击已勾选的目标会取消选择并恢复默认模式");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
+              && panel.SelectedComposerModeForCheck == ChatModes.Ask,
+            "可重新启用提问模式");
         panel.ResetModeForCheck();
         Check(panel.SelectedModeForCheck == ChatModes.Agent
+              && panel.SelectedComposerModeForCheck is null
               && !panel.ModeIndicatorVisibleForCheck
-              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent]),
-            "点击模式胶囊恢复默认目标模式并隐藏胶囊");
+              && panel.CheckedComposerMenuModesForCheck.Length == 0,
+            "点击模式按钮的删除图标恢复默认目标模式并取消勾选");
         var contextEstimatePrefix = HubStrings.Get("ChatContextEstimateFormat").Split("{0}")[0];
         Check(panel.ContextTooltipForCheck.StartsWith(contextEstimatePrefix, StringComparison.Ordinal),
             "上下文圆环提示显示当前本地估算");

@@ -434,10 +434,12 @@ if (args.Contains("--check-ai-sessions"))
 
     if (!ModelCatalog.SupportsReasoningEffort("gpt-5.1")
         || !ModelCatalog.SupportsReasoningEffort("o3-mini")
-        || ModelCatalog.SupportsReasoningEffort("gpt-50")
-        || ModelCatalog.SupportsReasoningEffort("unknown-model"))
-        throw new Exception("Reasoning capability did not fail closed to explicitly listed model families.");
-    Console.WriteLine("PASS: Reasoning effort is gated to explicitly declared model families.");
+        || !ModelCatalog.SupportsReasoningEffort("deepseek-flash")
+        || !ModelCatalog.SupportsReasoningEffort("unknown-model")
+        || ModelCatalog.SupportsReasoningEffort(null)
+        || ModelCatalog.SupportsReasoningEffort(" "))
+        throw new Exception("Reasoning effort should be available for every configured model name.");
+    Console.WriteLine("PASS: Reasoning effort is available for every configured model name.");
 
     // Pipeline: turn <-> ChatMessage conversion is lossless, and streaming yields the fake text.
     var turns = new List<ChatTurn> { ChatTurn.System("sys"), ChatTurn.User("hello"), ChatTurn.Assistant("hi"), new(ChatRoles.Tool, "result", DateTimeOffset.Now) };
