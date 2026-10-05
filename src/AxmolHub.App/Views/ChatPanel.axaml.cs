@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Documents;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
@@ -17,7 +16,6 @@ using Avalonia.VisualTree;
 using AxmolHub.Core;
 using AvaloniaEdit;
 using Markdown.Avalonia;
-using MarkdownEngine = Markdown.Avalonia.Markdown;
 using ColorTextBlock.Avalonia;
 
 namespace AxmolHub.App;
@@ -46,6 +44,10 @@ public partial class ChatPanel : UserControl
     private string? _renderedConversationId;
     private int _renderedCount;
 
+    /// <summary>Raised when the active conversation or its title may have changed, so the shell can update
+    /// its top-bar title (the panel no longer owns a title of its own).</summary>
+    internal event Action? ConversationStateChanged;
+
     public ChatPanel()
     {
         _chat = null!;
@@ -58,19 +60,15 @@ public partial class ChatPanel : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
-        // Listen on the Text property rather than TextChanged: in Avalonia 12 a programmatic assignment to
-        // TextBox.Text does **not** raise TextChanged, so a handler on it only ever saw user edits — the
-        // send button kept whatever state the last real keystroke left it in.
-        ConversationSearch.PropertyChanged += (_, e) =>
-        {
-            if (e.Property == TextBox.TextProperty) RefreshConversationList();
-        };
         ModelPicker.SelectionChanged += (_, _) =>
         {
             if (!_ready || ModelPicker.SelectedItem is not ChatWorkspace.ChatModelOption choice) return;
             _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
+            AppendNotice(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                HubStrings.Get("ModelChangedFormat"),
+                choice.Provider.Name + " · " + choice.ModelName), danger: false);
         };
-        NewConversationButton.Click += (_, _) => _chat.StartConversation();
         SendButton.Click += (_, _) => _ = SendAsync();
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
@@ -96,36 +94,16 @@ public partial class ChatPanel : UserControl
         if (_chat is null) return;
         _ready = false;
 
-        UpdateConversationTitle();
-        NewConversationButton.Content = HubStrings.Get("NewConversation");
-        ConversationSearch.PlaceholderText = HubStrings.Get("SearchConversations");
-        ConversationListLabel.Text = HubStrings.Get("Conversation");
         InputBox.PlaceholderText = HubStrings.Get("InputPlaceholder");
-        EmptyHint.Text = HubStrings.Get("AssistantEmpty");
+        GreetingLabel.Text = HubStrings.Get("AssistantGreeting");
+        GreetingSubtitle.Text = HubStrings.Get("AssistantGreetingSubtitle");
+        BuildSuggestionChips();
         UpdateSendState();
 
         RefreshModelPicker();
-        UpdateActiveModel();
-        RefreshConversationList();
         RenderMessages();
         _ready = true;
     }
-
-    private void UpdateActiveModel()
-    {
-        ActiveModelLabel.Text = _chat.SelectedChatModel is { } choice
-            ? string.Format(
-                System.Globalization.CultureInfo.InvariantCulture,
-                HubStrings.Get("ActiveModelFormat"),
-                choice.Provider.Name,
-                choice.ModelName)
-            : HubStrings.Get("NoAvailableChatModels");
-    }
-
-    private void UpdateConversationTitle()
-        => TitleLabel.Text = _chat.ActiveConversation is { Title.Length: > 0 } active
-            ? active.Title
-            : HubStrings.Get("Assistant");
 
     private void RefreshModelPicker()
     {
@@ -139,134 +117,36 @@ public partial class ChatPanel : UserControl
         ModelPicker.IsEnabled = choices.Length > 0;
     }
 
-    // ───────────────────────── Session list ─────────────────────────
+    // ───────────────────────── Empty state ─────────────────────────
 
-    private void RefreshConversationList()
+    private void BuildSuggestionChips()
     {
-        if (_chat is null) return;
-        var query = (ConversationSearch.Text ?? "").Trim();
-        var activeId = _chat.ActiveConversation?.Id;
-        var matches = _chat.Conversations
-            .Where(summary => query.Length == 0 || summary.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-            .ToArray();
-
-        ConversationList.Children.Clear();
-
-        // Time buckets are computed against the local date so "today" means the user's today. Pinned sessions
-        // get their own bucket above the rest and are excluded from the time buckets.
-        var now = DateTimeOffset.Now;
-        var todayStart = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset);
-        var yesterdayStart = todayStart.AddDays(-1);
-        var weekStart = todayStart.AddDays(-7);
-
-        AddGroup("PinConversation", matches.Where(summary => summary.Pinned));
-        AddGroup("GroupToday", matches.Where(summary => !summary.Pinned && summary.UpdatedAt >= todayStart));
-        AddGroup("GroupYesterday", matches.Where(summary => !summary.Pinned && summary.UpdatedAt >= yesterdayStart && summary.UpdatedAt < todayStart));
-        AddGroup("GroupPrevious7Days", matches.Where(summary => !summary.Pinned && summary.UpdatedAt >= weekStart && summary.UpdatedAt < yesterdayStart));
-        AddGroup("GroupOlder", matches.Where(summary => !summary.Pinned && summary.UpdatedAt < weekStart));
-
-        void AddGroup(string headerKey, IEnumerable<ConversationSummary> items)
+        SuggestionChips.Children.Clear();
+        foreach (var key in new[]
+                 {
+                     "SuggestionCreateProject", "SuggestionCheckEnvironment",
+                     "SuggestionMigrate", "SuggestionPhysics",
+                 })
         {
-            var list = items.ToArray();
-            if (list.Length == 0) return;
-            ConversationList.Children.Add(new TextBlock
+            var text = HubStrings.Get(key);
+            var chip = new Button
             {
-                Text = HubStrings.Get(headerKey),
-                Classes = { "group-header" },
-            });
-            foreach (var summary in list) ConversationList.Children.Add(BuildSessionRow(summary, activeId));
-        }
-
-        if (matches.Length == 0)
-        {
-            ConversationList.Children.Add(new TextBlock
-            {
-                Text = query.Length == 0 ? HubStrings.Get("NoConversations") : HubStrings.Get("NoSearchResults"),
-                Classes = { "muted" },
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(8, 6),
-            });
+                Content = text,
+                Classes = { "suggestion" },
+            };
+            chip.Click += (_, _) => _ = SendSuggestionAsync(text);
+            SuggestionChips.Children.Add(chip);
         }
     }
 
-    private Border BuildSessionRow(ConversationSummary summary, string? activeId)
+    private async Task SendSuggestionAsync(string text)
     {
-        var title = summary.Title.Length > 0 ? summary.Title : HubStrings.Get("NewConversation");
-        var row = new Border
-        {
-            Background = Avalonia.Media.Brushes.Transparent,
-            CornerRadius = new CornerRadius(6),
-        };
-        row.Classes.Add("session-row");
-        var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,42") };
-        var item = new Button
-        {
-            Content = title,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Padding = new Thickness(10, 8),
-            Margin = new Thickness(0),
-        };
-        ToolTip.SetTip(item, title);
-        item.Classes.Add("session");
-        if (summary.Id == activeId) item.Classes.Add("active");
-        item.Tag = summary.Id;
-        item.Click += (_, _) =>
-        {
-            if (_send is not null) _send.Cancel();
-            _chat.OpenConversation(summary.Id);
-        };
-        var menuButton = new Button
-        {
-            Content = "⋯",
-            Width = 40,
-            Height = 38,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            FontSize = 18,
-        };
-        menuButton.Classes.Add("session-menu");
-        ToolTip.SetTip(menuButton, HubStrings.Get("ConversationActions"));
-
-        var menu = new MenuFlyout();
-        var renameItem = new MenuItem { Header = HubStrings.Get("RenameConversation") };
-        renameItem.Click += (_, _) => _ = RenameConversationAsync(summary.Id, title);
-        menu.Items.Add(renameItem);
-
-        var pinItem = new MenuItem { Header = HubStrings.Get(summary.Pinned ? "UnpinConversation" : "PinConversation") };
-        pinItem.Click += (_, _) => _chat.SetPinned(summary.Id, !summary.Pinned);
-        menu.Items.Add(pinItem);
-
-        var deleteItem = new MenuItem { Header = HubStrings.Get("DeleteConversation") };
-        deleteItem.Click += (_, _) => _chat.DeleteConversation(summary.Id);
-        menu.Items.Add(deleteItem);
-
-        menuButton.Click += (_, _) => menu.ShowAt(menuButton);
-        menuButton.Tag = menu;
-
-        layout.Children.Add(item);
-        Grid.SetColumn(menuButton, 1);
-        layout.Children.Add(menuButton);
-        row.Child = layout;
-        row.Tag = summary.Id;
-        return row;
+        InputBox.Text = text;
+        await SendAsync();
     }
 
-    private async Task RenameConversationAsync(string id, string currentTitle)
-    {
-        var title = await PromptWindow.ShowAsync(GetOwner(), HubStrings.Get("RenameConversationTitle"), currentTitle);
-        if (title is null) return;
-        _chat.RenameConversation(id, title);
-    }
+    // ───────────────────────── Messages ─────────────────────────
 
-    // ───────────────────────── Message flow ─────────────────────────
-
-    /// <summary>
-    /// Repaints the message flow from the active conversation. Appends only the turns that are new since the
-    /// last render and rebuilds only when the conversation changed or shrank (a delete, or an edit that
-    /// truncated the tail) — rebuilding a long session on every unrelated change is what the incremental path
-    /// exists to avoid.
-    /// </summary>
     private void RenderMessages()
     {
         if (_chat is null) return;
@@ -288,7 +168,7 @@ public partial class ChatPanel : UserControl
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation?.Id;
             _renderedCount = 0;
-            EmptyHint.IsVisible = true;
+            EmptyState.IsVisible = true;
             UpdateScrollAffordance();
             return;
         }
@@ -307,7 +187,7 @@ public partial class ChatPanel : UserControl
             AppendRenderedTurn(index, turn, isLast: index == lastIndex, markdown: i >= visible.Count - EagerMarkdownLimit);
         }
 
-        EmptyHint.IsVisible = false;
+        EmptyState.IsVisible = false;
         UpdateScrollAffordance();
     }
 
@@ -326,10 +206,7 @@ public partial class ChatPanel : UserControl
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
 
-        var row = BuildBubble(
-            fromUser ? HubStrings.Get("You") : HubStrings.Get("Assistant"),
-            body, fromUser, index, turn.Role, turn.Text, isLast);
-        MessageFlow.Children.Add(row);
+        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, index, turn.Role, turn.Text, isLast));
         _renderedCount++;
 
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
@@ -337,54 +214,71 @@ public partial class ChatPanel : UserControl
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
     }
 
-    private void AppendPlainBubble(string speaker, string text, bool fromUser)
+    private void AppendPlainBubble(string text, bool fromUser)
     {
-        EmptyHint.IsVisible = false;
+        EmptyState.IsVisible = false;
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
-        MessageFlow.Children.Add(BuildBubble(speaker, body, fromUser, null, fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false));
+        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, null,
+            fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false));
         _renderedCount++;
         ScrollToEnd();
     }
 
     private void AppendStreamingBubble(StackPanel body)
     {
-        EmptyHint.IsVisible = false;
-        MessageFlow.Children.Add(BuildBubble(
-            HubStrings.Get("Assistant"), body, fromUser: false, index: null, role: ChatRoles.Assistant, text: "", isLast: true));
+        EmptyState.IsVisible = false;
+        MessageFlow.Children.Add(BuildMessageRow(false, body, null,
+            ChatRoles.Assistant, "", isLast: true));
         _renderedCount++;
         ScrollToEnd();
     }
 
-    /// <summary>Builds one message bubble. A null <paramref name="index"/> (the live streaming bubble) carries
-    /// no action bar: there is nothing stable to act on until the turn is persisted.</summary>
-    private Border BuildBubble(string speaker, Control body, bool fromUser, int? index, string role, string text, bool isLast)
+    /// <summary>
+    /// Builds one message row. User rows: a Grid (full-width for hover) carrying a right-aligned pill.
+    /// Assistant rows: a borderless Border carrying plain text. Both carry the message-row class and,
+    /// when <paramref name="index"/> is non-null, a hover-revealed action row.
+    /// A null <paramref name="index"/> (the live streaming bubble / just-sent user pill) carries no
+    /// action bar: there is nothing stable to act on until the turn is persisted.
+    /// </summary>
+    private Control BuildMessageRow(bool fromUser, Control body, int? index, string role, string text, bool isLast)
     {
-        var label = new TextBlock { Text = speaker, FontSize = 11, FontWeight = FontWeight.SemiBold };
-        label.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension(fromUser ? "Hub.AccentBorder" : "Hub.TextSecondary"));
+        var column = new StackPanel { Spacing = 6 };
 
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        header.Children.Add(label);
+        if (fromUser)
+        {
+            column.Children.Add(new Border
+            {
+                Classes = { "user-pill" },
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Child = body,
+            });
+        }
+        else
+        {
+            column.Children.Add(body);
+        }
+
         if (index is { } messageIndex)
         {
             var actions = BuildActionBar(messageIndex, role, text, isLast);
-            Grid.SetColumn(actions, 1);
-            header.Children.Add(actions);
+            actions.HorizontalAlignment = fromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            column.Children.Add(actions);
         }
 
-        var bubble = new Border
+        if (fromUser)
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(7),
-            Padding = new Thickness(12, 9),
-            MaxWidth = 780,
-            HorizontalAlignment = fromUser ? HorizontalAlignment.Right : HorizontalAlignment.Stretch,
-            Child = new StackPanel { Spacing = 4, Children = { header, body } },
+            var grid = new Grid();
+            grid.Classes.Add("message-row");
+            grid.Children.Add(column);
+            return grid;
+        }
+
+        return new Border
+        {
+            Classes = { "assistant-msg", "message-row" },
+            Child = column,
         };
-        bubble.Bind(Border.BackgroundProperty, new DynamicResourceExtension(fromUser ? "Hub.Surface" : "Hub.SurfaceRaised"));
-        bubble.Bind(Border.BorderBrushProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
-        bubble.Classes.Add("message-row");
-        return bubble;
     }
 
     private Control BuildActionBar(int index, string role, string text, bool isLast)
@@ -393,9 +287,9 @@ public partial class ChatPanel : UserControl
         {
             Orientation = Orientation.Horizontal,
             Spacing = 2,
-            HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        bar.Classes.Add("message-actions");
 
         bar.Children.Add(ActionButton("CopyMessage", () => CopyToClipboard(text)));
 
@@ -422,11 +316,27 @@ public partial class ChatPanel : UserControl
         return button;
     }
 
-    private void AppendNotice(string text)
+    /// <summary>Appends a one-line notice: neutral (model changed, cancellation) or danger (errors).</summary>
+    private void AppendNotice(string text, bool danger)
     {
-        var notice = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 11 };
-        notice.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.DangerText"));
-        MessageFlow.Children.Add(notice);
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        row.Classes.Add("notice");
+        row.HorizontalAlignment = HorizontalAlignment.Center;
+        row.MaxWidth = 820;
+        if (danger) row.Classes.Add("danger");
+
+        var icon = new Avalonia.Controls.Shapes.Path
+        {
+            Width = 13,
+            Height = 13,
+            Stretch = Stretch.Uniform,
+            Data = ThemeGeometry("Hub.Icon.Notice"),
+        };
+        icon.Classes.Add("notice-icon");
+        row.Children.Add(icon);
+
+        row.Children.Add(new TextBlock { Text = text });
+        MessageFlow.Children.Add(row);
         ScrollToEnd();
     }
 
@@ -446,7 +356,7 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>
-    /// Keeps the composer's round button in step with the composer: the same button sends or stops, and it is
+    /// Keeps the round button in step with the composer: the same button sends or stops, and it stays
     /// greyed out while the box is empty so "there is nothing to send" is visible before the click rather than
     /// after it.
     /// </summary>
@@ -490,8 +400,7 @@ public partial class ChatPanel : UserControl
         => Application.Current is { } app && app.TryFindResource(key, out var value) ? value as Geometry : null;
 
     /// <summary>Highlights the composer frame while the input has focus so the whole rounded box reads as the
-    /// thing being typed into. Toggled as a class rather than re-binding per event, which keeps the border
-    /// colour a DynamicResource that follows the theme instead of a brush captured once.</summary>
+    /// thing being typed into.</summary>
     private void SetComposerFocus(bool focused) => ComposerFrame.Classes.Set("focused", focused);
 
     private async Task SendAsync()
@@ -506,14 +415,15 @@ public partial class ChatPanel : UserControl
         if (text.Length == 0) return;
         if (_chat.SelectedChatModel is null)
         {
-            AppendNotice(HubStrings.Get("NoAvailableChatModels"));
+            AppendNotice(HubStrings.Get("NoAvailableChatModels"), danger: true);
             return;
         }
 
         if (_chat.ActiveConversation is null) _chat.StartConversation();
         InputBox.Text = "";
 
-        AppendPlainBubble(HubStrings.Get("You"), text, fromUser: true);
+        AppendPlainBubble(text, fromUser: true);
+        ConversationStateChanged?.Invoke();
         await StreamReplyAsync(token => _chat.SendAsync(text, token));
     }
 
@@ -532,7 +442,7 @@ public partial class ChatPanel : UserControl
         if (_send is not null) return;
         if (_chat.ActiveConversation is null || _chat.SelectedChatModel is null) return;
 
-        AppendPlainBubble(HubStrings.Get("You"), HubStrings.Get("ContinueInstruction"), fromUser: true);
+        AppendPlainBubble(HubStrings.Get("ContinueInstruction"), fromUser: true);
         await StreamReplyAsync(token => _chat.ContinueAsync(HubStrings.Get("ContinueInstruction"), token));
     }
 
@@ -592,11 +502,11 @@ public partial class ChatPanel : UserControl
         }
         catch (OperationCanceledException)
         {
-            AppendNotice(HubStrings.Get("ChatCancelled"));
+            AppendNotice(HubStrings.Get("ChatCancelled"), danger: false);
         }
         catch (Exception ex)
         {
-            AppendNotice(HubStrings.Get("ChatFailed") + ex.Message);
+            AppendNotice(HubStrings.Get("ChatFailed") + ex.Message, danger: true);
         }
         finally
         {
@@ -604,8 +514,7 @@ public partial class ChatPanel : UserControl
             _send = null;
             UpdateSendState();
             ForceRebuildMessages();
-            UpdateConversationTitle();
-            RefreshConversationList();
+            ConversationStateChanged?.Invoke();
             ScrollToEnd();
         }
     }
@@ -637,21 +546,30 @@ public partial class ChatPanel : UserControl
 
     // ───────────────────────── Self-check hooks ─────────────────────────
 
-    internal string FlowText => string.Join("\n", MessageFlow.Children
-        .OfType<Border>()
-        .SelectMany(bubble => bubble.GetLogicalDescendants().OfType<TextBlock>())
-        .Select(block => string.IsNullOrEmpty(block.Text)
-            ? string.Concat(block.Inlines?.Select(inline => inline switch
-            {
-                Run run => run.Text,
-                InlineUIContainer { Child: TextBlock { Tag: "markdown-link", Text: string linkText } } => linkText,
-                _ => "",
-            }) ?? [])
-            : block.Text)
-        .Concat(MessageFlow.Children
-            .OfType<Border>()
-            .SelectMany(bubble => bubble.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
-            .Select(viewer => viewer.Tag as string ?? "")));
+    /// <summary>Message rows are controls carrying the message-row class (user rows are Grids, assistant
+    /// rows are Borders).</summary>
+    private IEnumerable<Control> MessageRows
+        => MessageFlow.Children.Where(child => child.Classes.Contains("message-row"));
+
+    internal string FlowText
+    {
+        get
+        {
+            // Every text block (plain bodies plus the Markdown viewer's CTextBlock descendants) in order…
+            var blocks = MessageRows
+                .SelectMany(row => row.GetLogicalDescendants().OfType<TextBlock>())
+                .Select(block => block.Text ?? "")
+                .Where(text => text.Length > 0);
+
+            // …plus the raw markdown carried as each viewer's Tag, so fenced code text is present too.
+            var rawMarkdown = MessageRows
+                .SelectMany(row => row.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
+                .Select(viewer => viewer.Tag as string ?? "")
+                .Where(text => text.Length > 0);
+
+            return string.Join("\n", blocks.Concat(rawMarkdown));
+        }
+    }
 
     internal bool HasVisibleMarkdownCodeBlock(string code)
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
@@ -668,8 +586,7 @@ public partial class ChatPanel : UserControl
             .Any(MarkdownMessageRenderer.HasThemedLink);
 
     internal bool HasSyntaxHighlightedCode(string language)
-        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
-            .SelectMany(viewer => viewer.GetVisualDescendants().OfType<TextEditor>())
+        => MessageFlow.GetLogicalDescendants().OfType<TextEditor>()
             .Any(editor => string.Equals(editor.Tag?.ToString(), language, StringComparison.OrdinalIgnoreCase)
                            && editor.SyntaxHighlighting is not null);
 
@@ -685,28 +602,29 @@ public partial class ChatPanel : UserControl
         }
     }
 
-    internal string ActiveModelText => ActiveModelLabel.Text ?? "";
-    internal int ConversationCount => _chat.Conversations.Count;
+    /// <summary>The selected model formatted as text — the model no longer has a dedicated label, but the
+    /// composer chip and this value still expose it.</summary>
+    internal string ActiveModelText => _chat.SelectedChatModel is { } choice
+        ? string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            HubStrings.Get("ActiveModelFormat"),
+            choice.Provider.Name,
+            choice.ModelName)
+        : HubStrings.Get("NoAvailableChatModels");
+
     internal int ModelChoiceCount => ModelPicker.ItemCount;
     internal string SelectedModelText => ModelPicker.SelectedItem?.ToString() ?? "";
-    internal string ConversationListText => string.Join("\n", ConversationList.Children
-        .OfType<Border>()
-        .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault()?.Content?.ToString()));
-    internal string GroupHeaderText => string.Join("\n", ConversationList.Children
-        .OfType<TextBlock>()
-        .Where(block => block.Classes.Contains("group-header"))
-        .Select(block => block.Text));
-    internal string ConversationTitleText => TitleLabel.Text ?? "";
-    internal int BubbleCount => MessageFlow.Children.OfType<Border>().Count();
+
+    internal int BubbleCount => MessageRows.Count();
 
     internal int MessageActionCount => MessageFlow.GetLogicalDescendants().OfType<Button>()
         .Count(button => button.Classes.Contains("message-action"));
 
     internal bool ScrollToBottomVisible => ScrollToBottomButton.IsVisible;
 
-    /// <summary>The first rendered bubble, so a check can prove a reload reuses it instead of rebuilding the
-    /// whole flow (the incremental path's whole point).</summary>
-    internal object? FirstBubbleForCheck => MessageFlow.Children.OfType<Border>().FirstOrDefault();
+    /// <summary>The first rendered message row, so a check can prove a reload reuses it instead of rebuilding
+    /// the whole flow (the incremental path's whole point).</summary>
+    internal object? FirstBubbleForCheck => MessageRows.FirstOrDefault();
 
     // ── Composer (send button state, chip, focus highlight) ──
     internal void SetComposerFocusForCheck(bool focused) => SetComposerFocus(focused);
@@ -716,8 +634,7 @@ public partial class ChatPanel : UserControl
     internal string InputTextForCheck => InputBox.Text ?? "";
 
     /// <summary>How many times the send button's state has been recomputed. A check asserts it grows when the
-    /// input text changes, which is what proves the change notification is actually wired up — the button
-    /// would still look right until the first keystroke.</summary>
+    /// input text changes, which is what proves the change notification is actually wired up.</summary>
     internal int SendStateUpdates { get; private set; }
     internal string SendButtonTooltipForCheck => ToolTip.GetTip(SendButton)?.ToString() ?? "";
     internal bool ModelPickerIsChipForCheck => ModelPicker.Classes.Contains("chip");
@@ -729,80 +646,6 @@ public partial class ChatPanel : UserControl
            && ReferenceEquals(path.Data, ThemeGeometry("Hub.Icon.Stop"));
 
     internal void SetInputForCheck(string text) => InputBox.Text = text;
-
-    internal void SearchForCheck(string query)
-    {
-        ConversationSearch.Text = query;
-        RefreshConversationList();
-    }
-
-    internal bool OpenConversationForCheck(string id)
-    {
-        var item = ConversationList.Children.OfType<Border>()
-            .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
-            .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault())
-            .FirstOrDefault(button => button is not null);
-        if (item is null) return false;
-        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        return _chat.ActiveConversation?.Id == id;
-    }
-
-    internal int SessionMenuCount => ConversationList.Children.OfType<Border>()
-        .Select(row => row.Child as Grid)
-        .Where(grid => grid is not null)
-        .Sum(grid => grid!.Children.OfType<Button>().Count(button => button.Classes.Contains("session-menu")));
-
-    internal bool SessionMenuHasAccessibleHitArea(string id)
-        => SessionMenuButtons(id).Any(button => button.Width >= 36 && button.Height >= 36 && button.IsHitTestVisible);
-
-    internal bool SessionHasDeleteMenu(string id)
-        => SessionMenuItems(id).Any(item =>
-            string.Equals(item.Header?.ToString(), HubStrings.Get("DeleteConversation"), StringComparison.Ordinal));
-
-    internal bool SessionHasRenameMenu(string id)
-        => SessionMenuItems(id).Any(item =>
-            string.Equals(item.Header?.ToString(), HubStrings.Get("RenameConversation"), StringComparison.Ordinal));
-
-    internal bool SessionHasPinMenu(string id)
-        => SessionMenuItems(id).Any(item =>
-            string.Equals(item.Header?.ToString(), HubStrings.Get("PinConversation"), StringComparison.Ordinal)
-            || string.Equals(item.Header?.ToString(), HubStrings.Get("UnpinConversation"), StringComparison.Ordinal));
-
-    private IEnumerable<Button> SessionMenuButtons(string id) => ConversationList.Children.OfType<Border>()
-        .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))
-        .SelectMany(row => (row.Child as Grid)?.Children.OfType<Button>() ?? [])
-        .Where(button => button.Classes.Contains("session-menu"));
-
-    private IEnumerable<MenuItem> SessionMenuItems(string id) => SessionMenuButtons(id)
-        .SelectMany(button => (button.Tag as MenuFlyout)?.Items.OfType<MenuItem>() ?? []);
-
-    internal bool DeleteConversationFromMenuForCheck(string id)
-    {
-        var deleteItem = SessionMenuItems(id)
-            .FirstOrDefault(item =>
-                string.Equals(item.Header?.ToString(), HubStrings.Get("DeleteConversation"), StringComparison.Ordinal));
-        if (deleteItem is null) return false;
-
-        deleteItem.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        return _chat.Conversations.All(summary => summary.Id != id);
-    }
-
-    internal void RenameConversationForCheck(string id, string title)
-        => _chat.RenameConversation(id, title);
-
-    internal void TogglePinForCheck(string id)
-    {
-        var summary = _chat.Conversations.FirstOrDefault(candidate => candidate.Id == id);
-        if (summary is not null) _chat.SetPinned(id, !summary.Pinned);
-    }
-
-    internal bool BubbleHasAction(int visibleIndex, string textKey)
-    {
-        var bubble = MessageFlow.Children.OfType<Border>().ElementAtOrDefault(visibleIndex);
-        return bubble is not null && bubble.GetLogicalDescendants().OfType<Button>()
-            .Any(button => button.Classes.Contains("message-action")
-                           && string.Equals(button.Content?.ToString(), HubStrings.Get(textKey), StringComparison.Ordinal));
-    }
 
     internal bool SelectModelForCheck(string providerId, string modelName)
     {
@@ -825,5 +668,13 @@ public partial class ChatPanel : UserControl
     {
         InputBox.Text = text;
         return SendAsync();
+    }
+
+    internal bool BubbleHasAction(int visibleIndex, string textKey)
+    {
+        var row = MessageRows.ElementAtOrDefault(visibleIndex);
+        return row is not null && row.GetLogicalDescendants().OfType<Button>()
+            .Any(button => button.Classes.Contains("message-action")
+                           && string.Equals(button.Content?.ToString(), HubStrings.Get(textKey), StringComparison.Ordinal));
     }
 }

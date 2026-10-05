@@ -2,33 +2,23 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="AxmolHub.App.MainWindow"
         Title="Axmol Hub"
-        Width="1280" Height="880" MinWidth="1080" MinHeight="740"
+        Width="1280" Height="880" MinWidth="900" MinHeight="640"
         WindowStartupLocation="CenterScreen">
 
   <!--
-    The shell layout matches the original WPF version cell for cell (that file was deleted in P6; the
-    version at the time was src/AxmolHub.App/MainWindow.xaml):
-      left fixed 218px navigation (brand + subtitle + four RadioButtons), right content area
-      Margin=30,30,30,22, content area three rows: page / status bar (cancel + status dot + status
-      text) / bottom log panel (Expander).
-    Don't "fix the layout on the way": the original WPF version's layout is already-delivered, verified
-    UX, and B2 (whether to add an AI panel) is still undecided — keep the 1:1 first, then talk about changes.
-
-    There are only two **deliberate differences** from the original WPF version, both annotated with reasons:
-      1) navigation icons use vector Paths instead of Segoe MDL2 Assets private-use glyphs (that font only exists on Windows);
-      2) the second line at the bottom-left is computed from the real host machine, not hard-coded to "Windows x64"
-         (the Avalonia version runs on three platforms).
+    Copilot-style shell (benchmark: GitHub Copilot Desktop):
+      left = collapsible sidebar (slim brand + four nav items + conversation list as a child of the
+      "AI 助手" item + bottom brand/gear), with a 5px drag grip on its right edge;
+      right = content: 42px top bar (☰ toggle + page title) / page / 28px status strip / log body.
+    The sidebar collapses to zero width; the ☰ button in the top bar is then the only way back.
   -->
 
   <Window.Styles>
-    <!-- Nav items: the WPF version bound the icon and text Foreground to the RadioButton's Foreground,
-         so both changed color together on selection/hover. In Avalonia, Path uses Fill rather than Foreground,
-         so that binding cannot be copied verbatim; two style classes are used instead — same effect, and no
-         runtime resource lookup. -->
+    <!-- Nav items (kept from the previous shell). -->
     <Style Selector="RadioButton.nav">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="14" />
-      <Setter Property="Padding" Value="9,11" />
+      <Setter Property="Padding" Value="9,10" />
       <Setter Property="Margin" Value="0,0,0,2" />
       <Setter Property="CornerRadius" Value="6" />
     </Style>
@@ -50,10 +40,7 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
 
-    <!-- The settings entry: an icon-only button at the bottom of the navigation rail, next to the brand line.
-         Settings is not a frequent destination, so it gives up its nav row to the assistant while staying a
-         full-screen page. The icon-only shape means the label is never rendered — the tooltip carries it, and
-         apply-language rewrites the tip (see MainWindow.ApplyLanguage). -->
+    <!-- The settings gear at the bottom of the sidebar. -->
     <Style Selector="Button.gear">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
@@ -73,158 +60,210 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
 
-    <!-- The nav item for a page that is currently shown: same visual weight as a checked nav RadioButton. -->
-    <Style Selector="RadioButton.nav.assistant:checked">
+    <!-- Ghost icon buttons: the top-bar ☰ toggle and the status-strip log chevron. -->
+    <Style Selector="Button.icon-ghost">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="7" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.icon-ghost:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.icon-ghost Path.stroked">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+    </Style>
+    <Style Selector="Button.icon-ghost:pointerover Path.stroked">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+
+    <!-- Small quiet buttons in the status strip. -->
+    <Style Selector="Button.strip">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.strip:pointerover">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
   </Window.Styles>
 
-  <Grid ColumnDefinitions="218,*">
+  <Grid ColumnDefinitions="Auto,*">
 
-    <!-- ==================== Left navigation ==================== -->
-    <Border Grid.Column="0"
-            Background="{DynamicResource Hub.SurfaceAlt}"
-            BorderBrush="{DynamicResource Hub.BorderSubtle}"
-            BorderThickness="0,0,1,0"
-            Padding="20,30,20,22">
-      <DockPanel>
+    <!-- ==================== Sidebar ==================== -->
+    <Grid Grid.Column="0" ColumnDefinitions="*,5">
+      <Border x:Name="Sidebar" Grid.Column="0"
+              Background="{DynamicResource Hub.SurfaceAlt}"
+              BorderBrush="{DynamicResource Hub.BorderSubtle}"
+              BorderThickness="0,0,1,0"
+              Padding="14,20,12,18" Width="300">
+        <DockPanel>
 
-        <!-- Bottom: brand line + host machine + the settings gear. The gear shares the brand row and sits at
-             its far right, so the bottom of the rail reads as one line: identity on the left, the one
-             still-reachable utility on the right. -->
-        <StackPanel DockPanel.Dock="Bottom">
-          <Border BorderBrush="{DynamicResource Hub.Border}"
-                  BorderThickness="0,1,0,0"
-                  Padding="6,18,0,0">
-            <Grid ColumnDefinitions="*,Auto">
-              <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
-                           FontSize="11" FontWeight="SemiBold" />
-                <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
-                           FontSize="11" Margin="0,5,0,0" />
-              </StackPanel>
-              <!-- Settings carries the update badge: a dot at the top-right corner of the gear when a new
-                   version is known (toggled by MainWindow.ShowUpdateBadge). The dot deliberately hangs off
-                   the button rather than sitting beside it, so the gear keeps a square hit target. -->
-              <Grid Grid.Column="1" VerticalAlignment="Center">
-                <Button x:Name="SettingsButton" Classes="gear">
-                  <Path Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
-                        Width="17" Height="17" Stretch="Uniform" />
-                </Button>
-                <Ellipse x:Name="SettingsUpdateDot"
-                         Width="8" Height="8" IsVisible="False"
-                         Fill="{DynamicResource Hub.NotificationDot}"
-                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                         Margin="0,1,1,0" IsHitTestVisible="False" />
+          <!-- Bottom: brand line + host machine + the settings gear. -->
+          <StackPanel DockPanel.Dock="Bottom">
+            <Border BorderBrush="{DynamicResource Hub.Border}"
+                    BorderThickness="0,1,0,0"
+                    Padding="6,18,0,0">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                  <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
+                             FontSize="11" FontWeight="SemiBold" />
+                  <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
+                             FontSize="11" Margin="0,5,0,0" />
+                </StackPanel>
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                  <Button x:Name="SettingsButton" Classes="gear">
+                    <Path Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
+                          Width="17" Height="17" Stretch="Uniform" />
+                  </Button>
+                  <Ellipse x:Name="SettingsUpdateDot"
+                           Width="8" Height="8" IsVisible="False"
+                           Fill="{DynamicResource Hub.NotificationDot}"
+                           HorizontalAlignment="Right" VerticalAlignment="Top"
+                           Margin="0,1,1,0" IsHitTestVisible="False" />
+                </Grid>
               </Grid>
-            </Grid>
-          </Border>
-        </StackPanel>
-
-        <StackPanel>
-          <StackPanel Orientation="Horizontal" Margin="4,0,0,12">
-            <Border Width="38" Height="38"
-                    Background="{DynamicResource Hub.SurfaceRaised}"
-                    CornerRadius="6">
-              <Path Data="{StaticResource Hub.Icon.Installs}"
-                    Width="22" Height="22" Stretch="Uniform"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Fill="{DynamicResource Hub.AccentBorder}" />
             </Border>
-            <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-              <TextBlock Text="Axmol Hub" FontSize="22" FontWeight="SemiBold" />
-              <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
-                         FontSize="11" Margin="0,2,0,0" />
-            </StackPanel>
           </StackPanel>
 
-          <TextBlock Text="{DynamicResource Subtitle}" Classes="muted" Margin="5,0,0,34" />
+          <StackPanel>
+            <!-- Slim brand: one 30px tile + two compact text lines. -->
+            <Grid Margin="2,0,0,16" ColumnDefinitions="Auto,*">
+              <Border Width="30" Height="30"
+                      Background="{DynamicResource Hub.SurfaceRaised}"
+                      CornerRadius="6">
+                <Path Data="{StaticResource Hub.Icon.Installs}"
+                      Width="17" Height="17" Stretch="Uniform"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Fill="{DynamicResource Hub.AccentBorder}" />
+              </Border>
+              <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
+                           FontSize="10" Margin="0,2,0,0" />
+              </StackPanel>
+            </Grid>
 
-          <RadioButton x:Name="NavProjects" Classes="nav" GroupName="Navigation">
-            <StackPanel Orientation="Horizontal">
-              <Path Classes="icon" Data="{StaticResource Hub.Icon.Projects}"
-                    Width="17" Height="17" Stretch="Uniform"
-                    VerticalAlignment="Center" Margin="0,0,13,0" />
-              <TextBlock Text="{DynamicResource Projects}" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+            <RadioButton x:Name="NavProjects" Classes="nav" GroupName="Navigation">
+              <StackPanel Orientation="Horizontal">
+                <Path Classes="icon" Data="{StaticResource Hub.Icon.Projects}"
+                      Width="17" Height="17" Stretch="Uniform"
+                      VerticalAlignment="Center" Margin="0,0,13,0" />
+                <TextBlock Text="{DynamicResource Projects}" VerticalAlignment="Center" />
+              </StackPanel>
+            </RadioButton>
 
-          <RadioButton x:Name="NavInstalls" Classes="nav" GroupName="Navigation">
-            <StackPanel Orientation="Horizontal">
-              <Path Classes="icon" Data="{StaticResource Hub.Icon.Installs}"
-                    Width="17" Height="17" Stretch="Uniform"
-                    VerticalAlignment="Center" Margin="0,0,13,0" />
-              <TextBlock Text="{DynamicResource Installs}" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+            <RadioButton x:Name="NavInstalls" Classes="nav" GroupName="Navigation">
+              <StackPanel Orientation="Horizontal">
+                <Path Classes="icon" Data="{StaticResource Hub.Icon.Installs}"
+                      Width="17" Height="17" Stretch="Uniform"
+                      VerticalAlignment="Center" Margin="0,0,13,0" />
+                <TextBlock Text="{DynamicResource Installs}" VerticalAlignment="Center" />
+              </StackPanel>
+            </RadioButton>
 
-          <RadioButton x:Name="NavToolchains" Classes="nav" GroupName="Navigation">
-            <StackPanel Orientation="Horizontal">
-              <Path Classes="icon" Data="{StaticResource Hub.Icon.Toolchains}"
-                    Width="17" Height="17" Stretch="Uniform"
-                    VerticalAlignment="Center" Margin="0,0,13,0" />
-              <TextBlock Text="{DynamicResource Toolchains}" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+            <RadioButton x:Name="NavToolchains" Classes="nav" GroupName="Navigation">
+              <StackPanel Orientation="Horizontal">
+                <Path Classes="icon" Data="{StaticResource Hub.Icon.Toolchains}"
+                      Width="17" Height="17" Stretch="Uniform"
+                      VerticalAlignment="Center" Margin="0,0,13,0" />
+                <TextBlock Text="{DynamicResource Toolchains}" VerticalAlignment="Center" />
+              </StackPanel>
+            </RadioButton>
 
-          <!-- The AI assistant is a **full page** like the three above it. It used to be a 380px drawer beside
-               the current page; a full page was asked for so the conversation gets the whole content area —
-               the same shape as every other destination. -->
-          <RadioButton x:Name="NavAssistant" Classes="nav" GroupName="Navigation">
-            <StackPanel Orientation="Horizontal">
-              <Path Classes="icon" Data="{StaticResource Hub.Icon.Assistant}"
-                    Width="17" Height="17" Stretch="Uniform"
-                    VerticalAlignment="Center" Margin="0,0,13,0" />
-              <TextBlock Text="{DynamicResource Assistant}" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
-        </StackPanel>
+            <RadioButton x:Name="NavAssistant" Classes="nav" GroupName="Navigation">
+              <StackPanel Orientation="Horizontal">
+                <Path Classes="icon" Data="{StaticResource Hub.Icon.Assistant}"
+                      Width="17" Height="17" Stretch="Uniform"
+                      VerticalAlignment="Center" Margin="0,0,13,0" />
+                <TextBlock Text="{DynamicResource Assistant}" VerticalAlignment="Center" />
+              </StackPanel>
+            </RadioButton>
 
-      </DockPanel>
-    </Border>
+            <!-- Conversation list as a child node of the assistant nav item. -->
+            <ContentControl x:Name="ChatSidebarHost" Margin="8,6,0,0" />
+          </StackPanel>
 
-    <!-- ==================== Right content ==================== -->
-    <Grid Grid.Column="1" Margin="30,30,30,22" RowDefinitions="*,Auto,Auto">
+        </DockPanel>
+      </Border>
 
-      <ContentControl x:Name="PageHost" Grid.Row="0" />
+      <!-- Drag grip: 5px hit area on the sidebar's right edge. -->
+      <Border x:Name="ResizeGrip" Grid.Column="1"
+              Background="Transparent"
+              Cursor="SizeWestEast" />
+    </Grid>
 
-      <!-- Status bar: cancel button + status dot + status text. Order deliberately matches the WPF version
-           (Ellipse is DockPanel.Left, TextBlock fills the rest). -->
-      <DockPanel Grid.Row="1" Margin="0,16,0,12">
-        <Button x:Name="CancelButton" Content="{DynamicResource Cancel}" Classes="quiet"
-                DockPanel.Dock="Right" IsEnabled="False" Padding="12,5" Margin="8,0,0,0" />
-        <Ellipse Width="6" Height="6" Fill="{DynamicResource Hub.Success}"
-                 DockPanel.Dock="Left" Margin="0,0,8,0" />
-        <TextBlock x:Name="Status" Text="{DynamicResource Ready}"
-                   Foreground="{DynamicResource Hub.TextSecondary}"
+    <!-- ==================== Content ==================== -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
+
+      <!-- Top bar: sidebar toggle + current page title. -->
+      <Grid Grid.Row="0" Height="42" Margin="18,2,18,0"
+            ColumnDefinitions="Auto,*">
+        <Button x:Name="SidebarToggle" Grid.Column="0" Classes="icon-ghost">
+          <Path Classes="stroked" Data="{StaticResource Hub.Icon.Panel}"
+                Width="18" Height="18" Stretch="Uniform" />
+        </Button>
+        <TextBlock x:Name="PageTitle" Grid.Column="1"
+                   FontSize="14" Margin="10,0,0,0"
                    TextTrimming="CharacterEllipsis" />
-      </DockPanel>
+      </Grid>
 
-      <!-- Bottom log panel. In the WPF version it was the window's third row; it auto-expands on error (see the Failed event of ExecuteAsync). -->
-      <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
+      <ContentControl x:Name="PageHost" Grid.Row="1"
+                      Margin="24,14,24,0" />
+
+      <!-- Slim status strip. -->
+      <Grid Grid.Row="2" Height="28" Margin="18,0,18,0"
+            ColumnDefinitions="Auto,*,Auto,Auto">
+        <Ellipse Grid.Column="0" Width="6" Height="6"
+                 Fill="{DynamicResource Hub.Success}"
+                 VerticalAlignment="Center" />
+        <TextBlock x:Name="Status" Grid.Column="1"
+                   Text="{DynamicResource Ready}"
+                   Foreground="{DynamicResource Hub.TextSecondary}"
+                   FontSize="11" Margin="8,0,0,0"
+                   TextTrimming="CharacterEllipsis"
+                   VerticalAlignment="Center" />
+        <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
+                Grid.Column="2" Classes="strip"
+                IsEnabled="False" Margin="6,0,0,0" />
+        <Button x:Name="LogToggle" Grid.Column="3" Classes="icon-ghost"
+                Padding="6">
+          <Path x:Name="LogToggleChevron" Classes="stroked"
+                Data="{StaticResource Hub.Icon.Chevron}"
+                Width="13" Height="13" Stretch="Uniform"
+                RenderTransformOrigin="50%,50%" />
+        </Button>
+      </Grid>
+
+      <!-- Log body, shown by the strip chevron or auto-expanded on failure. -->
+      <Border x:Name="LogBody" Grid.Row="3" IsVisible="False"
+              Margin="18,6,18,10"
+              BorderBrush="{DynamicResource Hub.Border}"
               BorderThickness="1" CornerRadius="6"
               Background="{DynamicResource Hub.SurfaceAlt}" Padding="12,8">
-        <Expander x:Name="LogPanel" Header="{DynamicResource LogTitle}" IsExpanded="False">
-          <Grid Height="190" Margin="0,10,0,0" RowDefinitions="Auto,*">
-            <StackPanel Grid.Row="0" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Margin="0,0,0,8">
-              <Button x:Name="CopyErrorButton" Content="{DynamicResource CopyError}"
-                      Classes="quiet" Padding="10,5" />
-              <Button x:Name="OpenLogsButton" Content="{DynamicResource OpenLogs}"
-                      Classes="quiet" Padding="10,5" Margin="8,0,0,0" />
-            </StackPanel>
-            <!-- Avalonia's TextBox has no ScrollBarVisibility property (scrolling is handled by the internal
-                 ScrollViewer); horizontal scrolling comes from TextWrapping="NoWrap" + the internal scrollbar,
-                 no extra declaration needed. -->
-            <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
-                     IsReadOnly="True" TextWrapping="NoWrap"
-                     AcceptsReturn="True" />
-          </Grid>
-        </Expander>
+        <Grid Height="190" Margin="0,6,0,0" RowDefinitions="Auto,*">
+          <StackPanel Grid.Row="0" Orientation="Horizontal"
+                      HorizontalAlignment="Right" Margin="0,0,0,8">
+            <Button x:Name="CopyErrorButton" Content="{DynamicResource CopyError}"
+                    Classes="strip" Padding="10,4" />
+            <Button x:Name="OpenLogsButton" Content="{DynamicResource OpenLogs}"
+                    Classes="strip" Padding="10,4" Margin="8,0,0,0" />
+          </StackPanel>
+          <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
+                   IsReadOnly="True" TextWrapping="NoWrap"
+                   AcceptsReturn="True" />
+        </Grid>
       </Border>
 
     </Grid>
 
   </Grid>
 </Window>
-

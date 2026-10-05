@@ -7,6 +7,7 @@
              x:DataType="local:ChatPanel">
 
   <UserControl.Styles>
+    <!-- Markdown rendering metrics. -->
     <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CTextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
       <Setter Property="FontSize" Value="13" />
@@ -76,39 +77,29 @@
     <Style Selector="Border.CodeBlock:pointerover">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
     </Style>
-    <Style Selector="Button.session">
+
+    <!-- User message: a right-aligned subtle pill, no border, no speaker label. -->
+    <Style Selector="Border.user-pill">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="12,9" />
+      <Setter Property="MaxWidth" Value="560" />
+    </Style>
+
+    <!-- Assistant message: no frame at all, plain text on the background. -->
+    <Style Selector="Border.assistant-msg">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="0" />
     </Style>
-    <Style Selector="Button.session:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    </Style>
-    <Style Selector="Button.session.active">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    </Style>
-    <Style Selector="Button.session-menu">
+
+    <!-- Per-message action row: hidden until the message row is hovered. -->
+    <Style Selector="StackPanel.message-actions">
       <Setter Property="Opacity" Value="0" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="5" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="Padding" Value="7,3" />
-      <Setter Property="Margin" Value="0" />
+      <Setter Property="Spacing" Value="2" />
     </Style>
-    <Style Selector="Border.session-row:pointerover Button.session-menu">
+    <Style Selector="Border.message-row:pointerover StackPanel.message-actions">
       <Setter Property="Opacity" Value="1" />
-    </Style>
-    <Style Selector="Button.session-menu:pointerover">
-      <Setter Property="Opacity" Value="1" />
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.message-action">
       <Setter Property="Background" Value="Transparent" />
@@ -118,17 +109,34 @@
       <Setter Property="Padding" Value="6,2" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="FontSize" Value="11" />
-      <Setter Property="Opacity" Value="0" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     </Style>
-    <Style Selector="Border.message-row:pointerover Button.message-action">
-      <Setter Property="Opacity" Value="1" />
-    </Style>
     <Style Selector="Button.message-action:pointerover">
-      <Setter Property="Opacity" Value="1" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
+
+    <!-- Neutral notice rows (model changed, cancellation): small icon + one muted line. -->
+    <Style Selector="Grid.notice">
+      <Setter Property="Margin" Value="0,6" />
+    </Style>
+    <Style Selector="Grid.notice Path.notice-icon">
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Grid.notice TextBlock">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="7,0,0,0" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Grid.notice.danger TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="Grid.notice.danger Path.notice-icon">
+      <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+
     <Style Selector="Button.scroll-bottom">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
@@ -138,16 +146,23 @@
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     </Style>
-    <Style Selector="TextBlock.group-header">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
-      <Setter Property="Margin" Value="2,10,0,2" />
+
+    <!-- Empty-state suggestion chips. -->
+    <Style Selector="Button.suggestion">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="16" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     </Style>
-    <!-- The composer frame. Hub.BorderSubtle in dark mode is #353535, the same value as Hub.SurfaceRaised,
-         so a raised frame bordered with it has no visible outline - the frame takes Hub.Border and stays a
-         step darker than the chip inside it, which is what makes the chip read as a control. The focused
-         variant is toggled from code (see SetComposerFocus) rather than with :focus-within, so it is a real,
-         assertable state instead of a selector that may silently never match. -->
+    <Style Selector="Button.suggestion:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+
+    <!-- The composer frame. -->
     <Style Selector="Border.composer">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
@@ -155,8 +170,6 @@
     <Style Selector="Border.composer.focused">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
     </Style>
-    <!-- The model picker as a chip. The global ComboBox theme (Theme/HubControls.axaml) stays untouched:
-         a full-width bordered field is right for the settings page and wrong for a composer. -->
     <Style Selector="ComboBox.chip">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
@@ -169,8 +182,6 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="MaxDropDownHeight" Value="320" />
     </Style>
-    <!-- The one-round send / stop button. Height, width and radius are set together so it is a circle rather
-         than a rounded square. -->
     <Style Selector="Button.send">
       <Setter Property="Width" Value="34" />
       <Setter Property="Height" Value="34" />
@@ -188,63 +199,48 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid ColumnDefinitions="250,*">
+  <Grid RowDefinitions="*,Auto">
 
-    <!-- Session history -->
-    <Border Grid.Column="0" Background="{DynamicResource Hub.SurfaceAlt}"
-            BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,0,1,0"
-            Padding="12">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Top" Spacing="10">
-          <Button x:Name="NewConversationButton" Content="{DynamicResource NewConversation}"
-                  Classes="primary" HorizontalAlignment="Stretch" Padding="10,8" />
-          <TextBox x:Name="ConversationSearch" PlaceholderText="{DynamicResource SearchConversations}"
-                   PlaceholderForeground="{DynamicResource Hub.TextTertiary}" Padding="9,7" />
-          <TextBlock x:Name="ConversationListLabel" Text="{DynamicResource Conversation}"
-                     Classes="muted" FontSize="11" Margin="2,5,0,0" />
-        </StackPanel>
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
-          <StackPanel x:Name="ConversationList" Spacing="3" />
-        </ScrollViewer>
-      </DockPanel>
-    </Border>
-
-    <!-- Active conversation -->
-    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="24,20,24,16">
-      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
-        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-          <TextBlock x:Name="TitleLabel" Text="{DynamicResource Assistant}"
-                     FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-          <TextBlock x:Name="ActiveModelLabel" Classes="muted" FontSize="12" Margin="0,4,0,0"
-                     TextTrimming="CharacterEllipsis" />
-        </StackPanel>
-      </Grid>
-
-      <Border Grid.Row="1" Background="{DynamicResource Hub.SurfaceSunken}" CornerRadius="6"
-              BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1">
+    <!-- Message area: messages flow directly on the background, centered 820px column. -->
+    <Grid Grid.Row="0">
+      <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto">
         <Grid>
-          <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto" Padding="20,16">
-            <StackPanel x:Name="MessageFlow" Spacing="12" />
-          </ScrollViewer>
-          <TextBlock x:Name="EmptyHint" Text="{DynamicResource AssistantEmpty}"
-                     Classes="muted" TextWrapping="Wrap" Margin="20,16"
-                     VerticalAlignment="Top" IsVisible="False" />
-          <Button x:Name="ScrollToBottomButton" Classes="scroll-bottom"
-                  HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,14"
-                  IsVisible="False" />
+          <StackPanel x:Name="MessageFlow"
+                      MaxWidth="820" HorizontalAlignment="Center"
+                      Margin="0,16,0,16" Spacing="10" />
         </Grid>
-      </Border>
+      </ScrollViewer>
 
-      <!-- Composer: one rounded container drawing the only frame, so the composer reads as a single control
-           instead of three stacked boxes. The input is borderless; the model picker is a chip rather than a
-           full-width field because switching models is a low-frequency action that should not out-weigh the
-           message being typed. The send button is a round icon button whose two states (arrow / square) are
-           distinguishable by shape, not only by colour. -->
-      <Border x:Name="ComposerFrame" Grid.Row="2" Classes="composer"
+      <!-- Empty state: centered greeting + suggestion chips. -->
+      <StackPanel x:Name="EmptyState" IsVisible="False"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Spacing="12" Margin="24">
+        <TextBlock x:Name="GreetingLabel"
+                   FontSize="19" FontWeight="SemiBold"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center" TextWrapping="Wrap" />
+        <TextBlock x:Name="GreetingSubtitle" Classes="muted"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center" TextWrapping="Wrap" />
+        <WrapPanel x:Name="SuggestionChips"
+                   HorizontalAlignment="Center"
+                   ItemSpacing="10" LineSpacing="10"
+                   Margin="0,12,0,0" />
+      </StackPanel>
+
+      <Button x:Name="ScrollToBottomButton" Classes="scroll-bottom"
+              HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,14"
+              IsVisible="False" />
+    </Grid>
+
+    <!-- Composer: centered to the same column. -->
+    <Grid Grid.Row="1">
+      <Border x:Name="ComposerFrame" Classes="composer"
               Background="{DynamicResource Hub.SurfaceAlt}" CornerRadius="14"
-              Margin="0,12,0,0" Padding="14,12,12,10">
+              HorizontalAlignment="Stretch" MaxWidth="820"
+              Margin="0,6,0,4" Padding="14,12,12,10">
         <Grid RowDefinitions="Auto,Auto">
-          <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" MinHeight="52" MaxHeight="160"
+          <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" MinHeight="48" MaxHeight="160"
                    TextWrapping="Wrap" PlaceholderText="{DynamicResource InputPlaceholder}"
                    PlaceholderForeground="{DynamicResource Hub.TextTertiary}"
                    VerticalContentAlignment="Top"

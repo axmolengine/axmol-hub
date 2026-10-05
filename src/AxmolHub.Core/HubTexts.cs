@@ -529,5 +529,17 @@ public static class HubTexts
         // 移除 provider 时的自动断开。确认框必须说明凭据会一起没了，否则「移除」看起来只影响列表。
         ["RemoveProviderWithCredentials"] = ("将同时删除该提供商在本机保存的 {0} 个账号与密钥。此操作无法恢复。", "Also deletes the {0} account(s) and key(s) saved for this provider on this machine. This cannot be undone."),
         ["RemoveProviderIconHint"] = ("移除该提供商", "Remove this provider"),
+
+        // Copilot 化改版：侧栏折叠、空状态欢迎语与建议问题、模型切换通知。
+        ["SidebarToggleTip"] = ("显示或隐藏导航栏", "Show or hide the navigation bar"),
+        ["SearchConversationsTip"] = ("搜索对话", "Search conversations"),
+        ["NewConversationTip"] = ("新建对话", "New conversation"),
+        ["AssistantGreeting"] = ("你好，我是 Axmol 助手", "Hi, I'm your Axmol assistant"),
+        ["AssistantGreetingSubtitle"] = ("引擎、项目与工具链的问题，都可以问我", "Ask me anything about engines, projects and toolchains"),
+        ["SuggestionCreateProject"] = ("如何用 x-studio 创建一个 2D 项目？", "How do I create a 2D project with x-studio?"),
+        ["SuggestionCheckEnvironment"] = ("检查一下当前引擎版本和工具链状态", "Check my engine versions and toolchain status"),
+        ["SuggestionMigrate"] = ("把 Cocos2d-x 项目迁移到 Axmol 要注意什么？", "What should I know when migrating a Cocos2d-x project to Axmol?"),
+        ["SuggestionPhysics"] = ("Axmol 里 Box2D 物理的基本用法", "Basic Box2D physics usage in Axmol"),
+        ["ModelChangedFormat"] = ("已切换模型：{0}", "Model changed to {0}"),
     };
 }

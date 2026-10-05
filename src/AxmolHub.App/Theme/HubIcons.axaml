@@ -49,4 +49,16 @@
        by colour, so the two states are distinguishable even in a monochrome screenshot. -->
   <StreamGeometry x:Key="Hub.Icon.Stop">M7.3 7.3H16.7V16.7H7.3Z</StreamGeometry>
 
+  <!-- A panel with a divider = sidebar toggle, matching the shape GitHub Copilot Desktop uses. Stroked. -->
+  <StreamGeometry x:Key="Hub.Icon.Panel">M4.5 5H19.5V19H4.5 Z M10 5V19</StreamGeometry>
+
+  <!-- A magnifier = search. Stroked. -->
+  <StreamGeometry x:Key="Hub.Icon.Search">M10.7 10.7 m-5.4 0 a5.4 5.4 0 1 0 10.8 0 a5.4 5.4 0 1 0 -10.8 0 M14.8 14.8 L20 20</StreamGeometry>
+
+  <!-- A plus = new. Stroked. -->
+  <StreamGeometry x:Key="Hub.Icon.Plus">M12 5.5V18.5 M5.5 12H18.5</StreamGeometry>
+
+  <!-- A four-point sparkle = neutral notice (e.g. model changed). Filled. -->
+  <StreamGeometry x:Key="Hub.Icon.Notice">M12 5.5 L13.4 10.6 L18.5 12 L13.4 13.4 L12 18.5 L10.6 13.4 L5.5 12 L10.6 10.6 Z</StreamGeometry>
+
 </ResourceDictionary>

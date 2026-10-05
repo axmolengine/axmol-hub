@@ -5,7 +5,9 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Media;
 using Avalonia.Threading;
 using AxmolHub.Core;
 
@@ -37,6 +39,20 @@ public partial class MainWindow : Window
 
     /// <summary>The assistant page, built lazily on first navigation (a user who never opens it pays nothing).</summary>
     private ChatPanel? _chatPanel;
+
+    /// <summary>The conversation-list section hosted under the "AI 助手" nav item. Built eagerly because the
+    /// sidebar is part of the shell; rebuilt together with <see cref="_chat"/> on a data-root switch.</summary>
+    private ChatSidebar? _chatSidebar;
+
+    /// <summary>Sidebar drag state: pointer x and width when the grip grab started.</summary>
+    private double _grabStartX;
+    private double _grabStartWidth;
+    private bool _grabbing;
+
+    /// <summary>Sidebar width bounds (also enforced in the XAML-facing logic).</summary>
+    private const double SidebarMin = 240;
+    private const double SidebarMax = 420;
+    private const double SidebarCollapseThreshold = 200;
 
     /// <summary>
     /// The update dot's tooltip content. Installed once and rewritten **in place**: re-assigning
@@ -76,6 +92,7 @@ public partial class MainWindow : Window
         _chat = new ChatWorkspace(dataRoot);
 
         InitializeComponent();
+        InitializeSidebar();
         InitializeChrome();
         WireWorkspace();
         WireChrome();
@@ -161,13 +178,27 @@ public partial class MainWindow : Window
         _currentKey = name;
         PageHost.Content = page;
         SyncNavigation(name);
+
+        // The conversation list is a child of the assistant nav item: hidden on every other page.
+        ChatSidebarHost.IsVisible = name == "Assistant";
+        UpdatePageTitle();
         return page;
     }
 
     /// <summary>Builds the assistant page once and keeps the shell's reference to it, so a later
     /// data-root switch can drop and rebuild it (<see cref="ReplaceWorkspace"/>).</summary>
     private ChatPanel CreateChatPanel()
-        => new(_chat);
+    {
+        var panel = new ChatPanel(_chat);
+        // Sending a first message auto-titles the conversation; the workspace does not raise Changed for
+        // streamed messages, so the panel tells the shell to refresh its sidebar and top-bar title.
+        panel.ConversationStateChanged += () =>
+        {
+            _chatSidebar?.Reload();
+            UpdatePageTitle();
+        };
+        return panel;
+    }
 
     /// <summary>
     /// Keeps the left navigation highlight in sync with the current page. This is exactly what the
@@ -268,10 +299,14 @@ public partial class MainWindow : Window
         _chat = new ChatWorkspace(next.Store.Root);
         _chatPanel = null;
 
+        // The conversation sidebar holds the old workspace; rebuild it for the new one.
+        _chatSidebar = new ChatSidebar(_chat);
+        ChatSidebarHost.Content = _chatSidebar;
+
         // The log panel holds the previous root's content; leaving it would point people at a
         // directory no one is looking at anymore.
         ActivityLog.Text = "";
-        LogPanel.IsExpanded = false;
+        ShowLog(false);
 
         InitializeChrome();
         NavigateTo(_currentKey);
@@ -304,6 +339,8 @@ public partial class MainWindow : Window
     {
         // InitializeChrome also rewrites the settings gear's tooltip, so a language switch reaches it.
         InitializeChrome();
+        _chatSidebar?.Reload();
+        UpdatePageTitle();
 
         foreach (var page in _pages.Values)
         {
@@ -364,7 +401,7 @@ public partial class MainWindow : Window
             CancelButton.IsEnabled = busy && _workspace.CanCancel;
         };
 
-        _workspace.Failed += () => LogPanel.IsExpanded = true;
+        _workspace.Failed += () => ShowLog(true);
 
         // Dialogs (e.g. "prebuilt library settings") can't reference the main window directly, so
         // page navigation is forwarded here through the workspace.
@@ -386,6 +423,12 @@ public partial class MainWindow : Window
         NavigateTo("Assistant");
         return _chatPanel!;
     }
+
+    /// <summary>The conversation sidebar section, for the shell self-check.</summary>
+    internal ChatSidebar ChatSidebarSection => _chatSidebar!;
+
+    /// <summary>The top-bar title text as shown, for the shell self-check.</summary>
+    internal string PageTitleText => PageTitle.Text ?? "";
 
     /// <summary>
     /// The assistant's state, for the shell self-check to assert against — and to install a scripted chat
@@ -472,8 +515,112 @@ public partial class MainWindow : Window
     /// </summary>
     internal void ShowUpdateBadge(bool show) => SettingsUpdateDot.IsVisible = show;
 
-    private void InitializeChrome()
+    /// <summary>
+    /// Builds the conversation sidebar section, applies persisted sidebar state, and wires the collapse
+    /// toggle, the drag grip and the log chevron.
+    /// </summary>
+    private void InitializeSidebar()
     {
+        _chatSidebar = new ChatSidebar(_chat);
+        ChatSidebarHost.Content = _chatSidebar;
+
+        SidebarToggle.Click += (_, _) => SetSidebarExpanded(!IsSidebarExpanded);
+        ToolTip.SetTip(SidebarToggle, HubStrings.Get("SidebarToggleTip"));
+
+        ResizeGrip.PointerPressed += OnGripPressed;
+        ResizeGrip.PointerMoved += OnGripMoved;
+        ResizeGrip.PointerReleased += OnGripReleased;
+
+        LogToggle.Click += (_, _) => ShowLog(!LogBody.IsVisible);
+
+        // Apply persisted state: width first, then collapsed so a collapsed sidebar really starts at zero.
+        Sidebar.Width = Math.Clamp(_preferences.SidebarWidth, SidebarMin, SidebarMax);
+        SetSidebarExpanded(!_preferences.SidebarCollapsed);
+    }
+
+    private bool IsSidebarExpanded => Sidebar.Width > 1;
+
+    private void SetSidebarExpanded(bool expanded)
+    {
+        if (expanded)
+        {
+            var width = Sidebar.Width < SidebarMin ? _preferences.SidebarWidth : Sidebar.Width;
+            Sidebar.Width = Math.Clamp(width, SidebarMin, SidebarMax);
+            ResizeGrip.IsVisible = true;
+        }
+        else
+        {
+            Sidebar.Width = 0;
+            ResizeGrip.IsVisible = false;
+        }
+
+        if (_preferences.SidebarCollapsed != !expanded)
+        {
+            _preferences.SidebarCollapsed = !expanded;
+            _preferencesStore.Save(_preferences);
+        }
+    }
+
+    private void OnGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _grabbing = true;
+        _grabStartX = e.GetPosition(this).X;
+        _grabStartWidth = Sidebar.Width;
+        e.Pointer.Capture(ResizeGrip);
+        e.Handled = true;
+    }
+
+    private void OnGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_grabbing) return;
+        var width = _grabStartWidth + (e.GetPosition(this).X - _grabStartX);
+        if (width < SidebarCollapseThreshold)
+        {
+            _grabbing = false;
+            e.Pointer.Capture(null);
+            SetSidebarExpanded(false);
+            return;
+        }
+        Sidebar.Width = Math.Clamp(width, SidebarMin, SidebarMax);
+    }
+
+    private void OnGripReleased(object? sender, PointerEventArgs e)
+    {
+        if (!_grabbing) return;
+        _grabbing = false;
+        e.Pointer.Capture(null);
+
+        if (Sidebar.Width >= SidebarCollapseThreshold)
+        {
+            _preferences.SidebarWidth = Math.Clamp(Sidebar.Width, SidebarMin, SidebarMax);
+            _preferencesStore.Save(_preferences);
+        }
+    }
+
+    /// <summary>Shows/hides the log body and flips the strip chevron.</summary>
+    internal void ShowLog(bool show)
+    {
+        LogBody.IsVisible = show;
+        LogToggleChevron.RenderTransform = new RotateTransform(show ? 180 : 0);
+    }
+
+    /// <summary>Updates the top-bar title for the current page.</summary>
+    private void UpdatePageTitle()
+    {
+        PageTitle.Text = _currentKey switch
+        {
+            "Assistant" => _chat.ActiveConversation is { Title.Length: > 0 } active
+                ? active.Title
+                : HubStrings.Get("Assistant"),
+            "Projects" => HubStrings.Get("Projects"),
+            "Installs" => HubStrings.Get("Installs"),
+            "Toolchains" => HubStrings.Get("Toolchains"),
+            "Settings" => HubStrings.Get("Settings"),
+            _ => "",
+        };
+    }
+
+    private void InitializeChrome()    {
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         BrandVersion.Text = "v" + version;
         Title = "Axmol Hub " + BrandVersion.Text;

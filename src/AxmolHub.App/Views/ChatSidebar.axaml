@@ -1,0 +1,97 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AxmolHub.App"
+             x:Class="AxmolHub.App.ChatSidebar"
+             x:DataType="local:ChatSidebar">
+
+  <UserControl.Styles>
+    <!-- Ghost icon buttons in the toolbar: transparent until hover. -->
+    <Style Selector="Button.ghost">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.ghost:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.ghost Path.icon">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+    </Style>
+    <Style Selector="Button.ghost:pointerover Path.icon">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+
+    <!-- Conversation rows (moved verbatim from ChatPanel styles). -->
+    <Style Selector="Button.session">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.session:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.session.active">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.session-menu">
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="Padding" Value="7,3" />
+      <Setter Property="Margin" Value="0" />
+    </Style>
+    <Style Selector="Border.session-row:pointerover Button.session-menu">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.session-menu:pointerover">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="TextBlock.group-header">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="Margin" Value="2,10,0,2" />
+    </Style>
+  </UserControl.Styles>
+
+  <DockPanel>
+    <!-- Toolbar: search toggle + new conversation. Icon-only so the section header row stays one line. -->
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,*" Height="30">
+      <Button x:Name="SearchToggle" Grid.Column="0" Classes="ghost">
+        <Path Classes="icon" Data="{StaticResource Hub.Icon.Search}"
+              Width="16" Height="16" Stretch="Uniform" />
+      </Button>
+      <Button x:Name="NewButton" Grid.Column="1" Classes="ghost">
+        <Path Classes="icon" Data="{StaticResource Hub.Icon.Plus}"
+              Width="16" Height="16" Stretch="Uniform" />
+      </Button>
+    </Grid>
+
+    <!-- Search field, collapsed until the magnifier is clicked. -->
+    <TextBox x:Name="SearchBox" DockPanel.Dock="Top" IsVisible="False"
+             Margin="0,2,0,4" Padding="9,6"
+             PlaceholderText="{DynamicResource SearchConversations}"
+             PlaceholderForeground="{DynamicResource Hub.TextTertiary}" />
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel x:Name="ConversationList" Spacing="3" />
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

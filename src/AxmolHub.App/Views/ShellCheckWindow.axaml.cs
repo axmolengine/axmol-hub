@@ -155,6 +155,7 @@ public partial class ShellCheckWindow : Window
         Check(!shell.AssistantVisible, "默认停在项目页，助手页没有占着屏幕");
 
         var panel = shell.OpenAssistant();
+        var sidebar = shell.ChatSidebarSection;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.AssistantVisible, "导航到助手页后它真的显示出来");
@@ -284,22 +285,22 @@ public partial class ShellCheckWindow : Window
 
         Check(saved is not null && saved.ProviderId == checkProvider.Id && saved.ModelName == checkModel,
             "会话持久化所选 provider/model（实际「" + saved?.ProviderId + " · " + saved?.ModelName + "」）");
-        Check(panel.ConversationListText.Contains(saved!.Title, StringComparison.Ordinal)
-              && panel.ConversationListText.Contains("测试提问", StringComparison.Ordinal),
+        Check(sidebar.ConversationListText.Contains(saved!.Title, StringComparison.Ordinal)
+              && sidebar.ConversationListText.Contains("测试提问", StringComparison.Ordinal),
             "左侧会话列表显示由首条消息生成的标题");
-        Check(panel.ConversationTitleText == saved.Title,
-            "会话首条消息完成后顶部标题更新（实际「" + panel.ConversationTitleText + "」）");
+        Check(shell.PageTitleText == saved.Title,
+            "会话首条消息完成后顶栏标题更新（实际「" + shell.PageTitleText + "」）");
 
         var second = shell.Chat.StartConversation();
-        Check(panel.SessionMenuCount == 2 && panel.SessionHasDeleteMenu(saved.Id),
+        Check(sidebar.SessionMenuCount == 2 && sidebar.SessionHasDeleteMenu(saved.Id),
             "每个会话项提供独立的操作菜单（含删除）");
-        Check(panel.SessionMenuHasAccessibleHitArea(saved.Id),
+        Check(sidebar.SessionMenuHasAccessibleHitArea(saved.Id),
             "会话菜单按钮具有至少 36x36 的可点击区域");
-        panel.SearchForCheck("测试提问");
-        Check(panel.ConversationListText.Contains(saved.Title, StringComparison.Ordinal)
-              && !panel.ConversationListText.Contains(HubStrings.Get("NewConversation"), StringComparison.Ordinal),
-            "左侧搜索按会话标题过滤列表（实际「" + panel.ConversationListText + "」）");
-        Check(panel.OpenConversationForCheck(saved.Id)
+        sidebar.SearchForCheck("测试提问");
+        Check(sidebar.ConversationListText.Contains(saved.Title, StringComparison.Ordinal)
+              && !sidebar.ConversationListText.Contains(HubStrings.Get("NewConversation"), StringComparison.Ordinal),
+            "左侧搜索按会话标题过滤列表（实际「" + sidebar.ConversationListText + "」）");
+        Check(sidebar.OpenConversationForCheck(saved.Id)
               && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
               && panel.BubbleCount == 2,
             "切换回历史会话后恢复原消息流及其 provider/model");
@@ -308,10 +309,10 @@ public partial class ShellCheckWindow : Window
         shell.Chat.DeleteConversation(saved!.Id);
         panel.Reload();
         Dispatcher.UIThread.RunJobs();
-        Check(panel.ConversationCount == 1 && panel.BubbleCount == 0,
-            "删除当前会话只清除该记录（实际会话 " + panel.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
-        panel.SearchForCheck("");
-        Check(panel.DeleteConversationFromMenuForCheck(second.Id) && panel.ConversationCount == 0,
+        Check(sidebar.ConversationCount == 1 && panel.BubbleCount == 0,
+            "删除当前会话只清除该记录（实际会话 " + sidebar.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
+        sidebar.SearchForCheck("");
+        Check(sidebar.DeleteConversationFromMenuForCheck(second.Id) && sidebar.ConversationCount == 0,
             "通过会话操作菜单删除指定的历史对话");
 
         // ── Message-level actions and session management ──
@@ -367,9 +368,9 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.Conversations.First(summary => summary.Id == opsConversation.Id).Pinned,
             "会话置顶标记写入索引");
         panel.Reload();
-        Check(panel.GroupHeaderText.Contains(HubStrings.Get("PinConversation"), StringComparison.Ordinal),
-            "置顶会话单独归入置顶分组（实际分组：" + panel.GroupHeaderText.Replace("\n", " / ") + "）");
-        Check(panel.SessionHasRenameMenu(opsConversation.Id) && panel.SessionHasPinMenu(opsConversation.Id),
+        Check(sidebar.GroupHeaderText.Contains(HubStrings.Get("PinConversation"), StringComparison.Ordinal),
+            "置顶会话单独归入置顶分组（实际分组：" + sidebar.GroupHeaderText.Replace("\n", " / ") + "）");
+        Check(sidebar.SessionHasRenameMenu(opsConversation.Id) && sidebar.SessionHasPinMenu(opsConversation.Id),
             "会话操作菜单提供重命名与置顶");
 
         var emptyConversation = shell.Chat.StartConversation();

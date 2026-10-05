@@ -28,6 +28,12 @@ public sealed class HubPreferences
     /// restarts the app) stays an explicit action.
     /// </summary>
     public bool AutoDownloadUpdates { get; set; } = true;
+
+    /// <summary>左侧导航/会话侧栏展开时的宽度（px），范围 240–420；由侧栏拖拽手柄调整。</summary>
+    public double SidebarWidth { get; set; } = 300;
+
+    /// <summary>侧栏是否处于收起状态；由 ☰ 按钮或拖拽到阈值以下切换。</summary>
+    public bool SidebarCollapsed { get; set; }
 }
 
 public sealed class PreferencesStore(string path)
