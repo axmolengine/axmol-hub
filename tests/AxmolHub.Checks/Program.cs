@@ -574,8 +574,8 @@ if (args.Contains("--check-ai-sessions"))
                        }))
         streamed.Append(chunk);
     if (toolClient.CallCount != 2 || startedTools != 1 || completedTools != 1
-        || !toolResult.ToString().Contains("Demo", StringComparison.Ordinal))
-        throw new Exception("Tool call → execution → result → final answer loop did not complete.");
+        || toolResult.ToString() != "[{\"name\":\"Demo\"}]")
+        throw new Exception($"Tool call → execution → result → final answer loop did not complete. Result handed back: {toolResult}");
     if (!toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionCallContent))
         || !toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
         throw new Exception("The tool loop did not send the function call and result back to the model.");

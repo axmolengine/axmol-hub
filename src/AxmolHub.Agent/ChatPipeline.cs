@@ -198,6 +198,20 @@ public sealed class ChatPipeline(IChatClient client)
         return any ? options : null;
     }
 
+    /// <summary>
+    /// Renders a tool result as the text that goes to the model and into the transcript.
+    ///
+    /// M.E.AI hands the value back as a <see cref="JsonElement"/> even when the function returns a
+    /// string, and serializing that element again wraps the payload in a second JSON layer: the tool's
+    /// own quotes come back as escaped unicode code units and the whole result gains surrounding
+    /// quotes. Unwrapping is what keeps a JSON-returning tool readable on both sides.
+    /// </summary>
     private static string SerializeToolResult(object? result)
-        => result is string text ? text : JsonSerializer.Serialize(result);
+        => result switch
+        {
+            string text => text,
+            JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonElement element => element.GetRawText(),
+            _ => JsonSerializer.Serialize(result),
+        };
 }
