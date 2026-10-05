@@ -1,10 +1,13 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -315,6 +318,25 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.DeleteConversationFromMenuForCheck(second.Id) && sidebar.ConversationCount == 0,
             "通过会话操作菜单删除指定的历史对话");
 
+        // ── Sidebar collapse: the ☰ toggle hides the whole panel and nothing peeks through ──
+        Check(shell.SidebarExpandedForCheck && shell.SidebarClipsForCheck,
+            "侧栏默认展开且开启内容裁剪");
+        shell.ToggleSidebarForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.SidebarExpandedForCheck && Math.Abs(shell.SidebarWidthForCheck) < 0.5
+              && !shell.ResizeGripVisibleForCheck,
+            "点击 ☰ 后侧栏宽度收为 0 且拖拽手柄隐藏");
+        var collapsedShot = System.IO.Path.Combine(ScratchDirectory.Resolve("assistant-render"), "collapsed.png");
+        SmokeCapture.Capture(shell, collapsedShot);
+        Check(LeftStripIsClear(collapsedShot, 14),
+            "侧栏收起后左缘没有图标溢出穿帮");
+        shell.ToggleSidebarForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.SidebarExpandedForCheck && shell.SidebarWidthForCheck >= 240,
+            "再次点击 ☰ 后侧栏恢复原宽度");
+
         // ── Message-level actions and session management ──
         // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
         // regenerate/continue. Presence is asserted here; the operations themselves are asserted below.
@@ -391,6 +413,50 @@ public partial class ShellCheckWindow : Window
 
         shell.Chat.ClientOverride = null;
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Reads the rendered frame back and asserts the left <paramref name="stripWidth"/>-pixel strip is one
+    /// uniform color — the window background. When the sidebar collapsed to width 0 its children used to
+    /// overflow visibly (Avalonia does not clip by default), so an icon tile at the top and the gear at the
+    /// bottom "peeked through"; this is the pixel-level guard for that.
+    /// </summary>
+    private static bool LeftStripIsClear(string png, int stripWidth)
+    {
+        using var bitmap = new Bitmap(png);
+        var size = bitmap.PixelSize;
+        if (size.Width < stripWidth || size.Height < 2) return false;
+
+        using var staging = new WriteableBitmap(size, bitmap.Dpi, PixelFormat.Bgra8888, AlphaFormat.Premul);
+        using var framebuffer = staging.Lock();
+        bitmap.CopyPixels(framebuffer);
+
+        var pixels = new byte[framebuffer.RowBytes * size.Height];
+        Marshal.Copy(framebuffer.Address, pixels, 0, pixels.Length);
+
+        // Reference color: the strip at mid-height, a couple of pixels in (definitely background).
+        var midY = size.Height / 2;
+        var refOffset = (midY * framebuffer.RowBytes) + (2 * 4);
+        var refB = pixels[refOffset];
+        var refG = pixels[refOffset + 1];
+        var refR = pixels[refOffset + 2];
+
+        // Sample the strip every few rows; antialiased icons would differ by far more than this tolerance.
+        const byte tolerance = 10;
+        for (var y = 0; y < size.Height; y += 4)
+        {
+            for (var x = 0; x < stripWidth; x++)
+            {
+                var offset = (y * framebuffer.RowBytes) + (x * 4);
+                if (Math.Abs(pixels[offset] - refB) > tolerance
+                    || Math.Abs(pixels[offset + 1] - refG) > tolerance
+                    || Math.Abs(pixels[offset + 2] - refR) > tolerance)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /// <summary>

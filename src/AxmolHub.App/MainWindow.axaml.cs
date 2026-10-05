@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using AxmolHub.Core;
@@ -429,6 +430,14 @@ public partial class MainWindow : Window
 
     /// <summary>The top-bar title text as shown, for the shell self-check.</summary>
     internal string PageTitleText => PageTitle.Text ?? "";
+
+    // ── Sidebar collapse, for the shell self-check ──
+    internal bool SidebarExpandedForCheck => IsSidebarExpanded;
+    internal double SidebarWidthForCheck => Sidebar.Width;
+    internal bool SidebarClipsForCheck => Sidebar.ClipToBounds;
+    internal bool ResizeGripVisibleForCheck => ResizeGrip.IsVisible;
+    internal void ToggleSidebarForCheck()
+        => SidebarToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>
     /// The assistant's state, for the shell self-check to assert against — and to install a scripted chat
