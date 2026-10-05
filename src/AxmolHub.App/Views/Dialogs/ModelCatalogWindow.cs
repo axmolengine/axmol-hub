@@ -268,12 +268,16 @@ public sealed class ModelCatalogWindow : Window
             Grid.SetColumn(state, 1);
             grid.Children.Add(text);
             grid.Children.Add(state);
-            return new Border
+            var row = new Border
             {
                 Height = 48,
                 Padding = new Thickness(8, 4),
+                Tag = "model-catalog-row",
                 Child = grid,
             };
+            row.Bind(Border.BackgroundProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.ProviderSurface"));
+            return row;
         }
 
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

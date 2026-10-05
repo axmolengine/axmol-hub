@@ -347,8 +347,8 @@ public static class HubTexts
         ["Stop"] = ("停止", "Stop"),
         ["InputPlaceholder"] = ("输入消息，Enter 发送，Shift+Enter 换行", "Type a message. Enter to send, Shift+Enter for a newline"),
         ["Provider"] = ("模型提供商", "Provider"),
-        // 设置页新增的「模型提供商」卡片标题与说明（provider 管理从助手页迁到这里）。
-        ["ModelProviders"] = ("模型提供商", "Model providers"),
+        // 设置页中 AI 模型 provider 管理卡片的标题与说明。
+        ["ModelProviders"] = ("AI 模型提供商", "AI Model providers"),
         ["ModelProvidersHint"] = ("助手使用的模型接口。「添加提供商」可从内置预设中挑选（OrcaRouter、OpenAI、DeepSeek、Ollama…），已配置的提供商在此管理密钥与模型；助手页只负责选择用哪一个。", "The endpoints the assistant can use. \"Add provider\" picks from built-in presets (OrcaRouter, OpenAI, DeepSeek, Ollama …); keys and models for the ones you configured are managed here, while the assistant page only chooses between them."),
         // 助手页模型提示，{0} = 提供商名称，{1} = 模型名称。
         ["ActiveModelFormat"] = ("当前模型：{0} · {1}", "Current model: {0} · {1}"),

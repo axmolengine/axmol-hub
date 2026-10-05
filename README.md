@@ -4,6 +4,8 @@
 
 **A standalone desktop app that manages Axmol engines, projects, and build toolchains.**
 
+[![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359)
+
 Current version **v0.2.x** — early stage. The GUI is C# / .NET 8 / **Avalonia** (`net8.0`, targeting three platforms; validated on Windows, macOS / Linux not yet verified). The currently validated engine baseline is **Axmol 2.11.5**.
 
 ![Axmol Hub main window](docs/images/hub.png)
