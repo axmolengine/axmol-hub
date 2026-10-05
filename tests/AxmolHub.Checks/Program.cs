@@ -354,6 +354,9 @@ if (args.Contains("--check-ai-sessions"))
 {
     // Conversation model: title is derived from the first user turn, and the first line only.
     var conversation = Conversation.Create("orcarouter");
+    if (conversation.Mode != ChatModes.Agent)
+        throw new Exception($"A new conversation should start in the default agent mode, got '{conversation.Mode}'.");
+    Console.WriteLine("PASS: new conversations default to agent mode.");
     conversation.Append(ChatTurn.User("How do I add a sprite?\nSecond line ignored"));
     conversation.Append(ChatTurn.Assistant("Use Sprite::create."));
     if (conversation.Title != "How do I add a sprite?") throw new Exception($"Wrong derived title: {conversation.Title}");

@@ -35,7 +35,7 @@ public sealed class ChatWorkspace : IDisposable
     private Conversation? _active;
     private string? _selectedProviderId;
     private string? _selectedModelName;
-    private string _selectedMode = ChatModes.Ask;
+    private string _selectedMode = ChatModes.Agent;
     private string _selectedReasoningEffort = ChatReasoningEfforts.Auto;
 
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
@@ -107,7 +107,7 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation? ActiveConversation => _active;
 
-    public string ActiveMode => _active?.Mode ?? _selectedMode;
+    public string ActiveMode => _active is null ? _selectedMode : NormalizeMode(_active.Mode);
     public string ActiveReasoningEffort => _active?.ReasoningEffort ?? _selectedReasoningEffort;
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.ModelName);
@@ -1161,7 +1161,7 @@ public sealed class ChatWorkspace : IDisposable
     {
         if (_active is not null)
         {
-            _selectedMode = ChatModes.Ask;
+            _selectedMode = ChatModes.Agent;
             _selectedReasoningEffort = ChatReasoningEfforts.Auto;
         }
         var choice = SelectedChatModel;
@@ -1198,7 +1198,7 @@ public sealed class ChatWorkspace : IDisposable
         var conversation = _conversations.Load(empty.Id)
             ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
         _active = conversation;
-        _selectedMode = conversation.Mode;
+        _selectedMode = NormalizeMode(conversation.Mode);
         _selectedReasoningEffort = conversation.ReasoningEffort;
         Changed?.Invoke();
         return conversation;
@@ -1207,7 +1207,7 @@ public sealed class ChatWorkspace : IDisposable
     public Conversation? OpenConversation(string id)
     {
         _active = _conversations.Load(id);
-        _selectedMode = _active?.Mode ?? ChatModes.Ask;
+        _selectedMode = _active is null ? ChatModes.Agent : NormalizeMode(_active.Mode);
         _selectedReasoningEffort = _active?.ReasoningEffort ?? ChatReasoningEfforts.Auto;
         Changed?.Invoke();
         return _active;
@@ -1219,7 +1219,7 @@ public sealed class ChatWorkspace : IDisposable
         if (_active?.Id == id)
         {
             _active = null;
-            _selectedMode = ChatModes.Ask;
+            _selectedMode = ChatModes.Agent;
             _selectedReasoningEffort = ChatReasoningEfforts.Auto;
         }
         Changed?.Invoke();
@@ -1414,9 +1414,7 @@ public sealed class ChatWorkspace : IDisposable
     {
         var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider, modelName);
         var pipeline = new ChatPipeline(client);
-        var mode = conversation.Mode is ChatModes.Ask or ChatModes.Plan or ChatModes.Agent
-            ? conversation.Mode
-            : ChatModes.Ask;
+        var mode = NormalizeMode(conversation.Mode);
         IReadOnlyList<AITool> tools = mode == ChatModes.Ask
             ? Array.Empty<AITool>()
             : CreateReadOnlyTools();
@@ -1518,6 +1516,10 @@ public sealed class ChatWorkspace : IDisposable
             _ => "You are a general-purpose assistant. Answer from the conversation without calling tools.",
         };
     }
+
+    private static string NormalizeMode(string? mode) => mode is ChatModes.Ask or ChatModes.Plan or ChatModes.Agent
+        ? mode
+        : ChatModes.Agent;
 
     /// <summary>Stand-in used when the platform has no OS credential store; it simply refuses to hold keys,
     /// so <see cref="ProviderStore"/> still round-trips provider metadata.</summary>

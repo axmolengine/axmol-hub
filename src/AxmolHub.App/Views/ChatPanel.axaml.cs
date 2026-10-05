@@ -47,7 +47,6 @@ public partial class ChatPanel : UserControl
     private readonly List<ContextAttachment> _contextAttachments = [];
     private int _activityFrame;
     private bool _stopRequested;
-    private bool _ready;
     private bool _stickToBottom = true;
     private string? _pendingSteerText;
     private string? _pendingSteerContext;
@@ -79,25 +78,9 @@ public partial class ChatPanel : UserControl
             if (_streamStatusLabel is not null)
                 _streamStatusLabel.Text = ToolActivityText(name, completed);
         });
-        ModelPicker.SelectionChanged += (_, _) =>
-        {
-            if (!_ready || ModelPicker.SelectedItem is not ChatWorkspace.ChatModelOption choice) return;
-            _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
-            AppendNotice(string.Format(
-                System.Globalization.CultureInfo.InvariantCulture,
-                HubStrings.Get("ModelChangedFormat"),
-                choice.Provider.Name + " · " + choice.ModelName), danger: false);
-        };
-        ModePicker.SelectionChanged += (_, _) =>
-        {
-            if (!_ready || ModePicker.SelectedItem is not ComposerChoice choice) return;
-            _chat.SelectMode(choice.Value);
-        };
-        ReasoningPicker.SelectionChanged += (_, _) =>
-        {
-            if (!_ready || ReasoningPicker.SelectedItem is not ComposerChoice choice) return;
-            _chat.SelectReasoningEffort(choice.Value);
-        };
+        ModelPicker.Click += (_, _) => ShowModelMenu();
+        ModeIndicatorButton.Click += (_, _) => _chat.SelectMode(ChatModes.Agent);
+        ContextButton.Click += (_, _) => ShowContextMenu();
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
         SendButton.Click += (_, _) => _ = SendAsync();
@@ -132,8 +115,6 @@ public partial class ChatPanel : UserControl
     public void Reload()
     {
         if (_chat is null) return;
-        _ready = false;
-
         InputBox.PlaceholderText = HubStrings.Get("InputPlaceholder");
         GreetingLabel.Text = HubStrings.Get("AssistantGreeting");
         GreetingSubtitle.Text = HubStrings.Get("AssistantGreetingSubtitle");
@@ -142,55 +123,50 @@ public partial class ChatPanel : UserControl
         RefreshModelPicker();
         RefreshComposerChoices();
         RenderMessages();
-        _ready = true;
         UpdateContextRing();
     }
 
     private void RefreshModelPicker()
     {
         var choices = _chat.AvailableChatModels.ToArray();
-        ModelPicker.ItemsSource = choices;
-        ModelPicker.SelectedItem = _chat.SelectedChatModel is { } selected
+        var selected = _chat.SelectedChatModel is { } active
             ? choices.FirstOrDefault(choice =>
-                choice.Provider.Id == selected.Provider.Id
-                && string.Equals(choice.ModelName, selected.ModelName, StringComparison.OrdinalIgnoreCase))
+                choice.Provider.Id == active.Provider.Id
+                && string.Equals(choice.ModelName, active.ModelName, StringComparison.OrdinalIgnoreCase))
             : null;
+        SelectedModelLabel.Text = selected?.ModelName ?? HubStrings.Get("NoAvailableChatModels");
+        var supportsReasoning = selected is not null && ModelCatalog.SupportsReasoningEffort(selected.ModelName);
+        SelectedReasoningLabel.IsVisible = supportsReasoning;
+        SelectedReasoningLabel.Text = supportsReasoning
+            ? ReasoningChoiceLabel(_chat.ActiveReasoningEffort)
+            : "";
         ModelPicker.IsEnabled = choices.Length > 0;
+        ToolTip.SetTip(ModelPicker, selected is null
+            ? HubStrings.Get("NoAvailableChatModels")
+            : selected.Provider.Name + " · " + selected.ModelName);
     }
 
     private void RefreshComposerChoices()
     {
-        var modes = new[]
+        RefreshModelPicker();
+        var mode = _chat.ActiveMode;
+        ModeIndicatorButton.IsVisible = mode is ChatModes.Ask or ChatModes.Plan;
+        ModeIndicatorLabel.Text = HubStrings.Get(mode switch
         {
-            new ComposerChoice(ChatModes.Ask, HubStrings.Get("ChatModeAsk")),
-            new ComposerChoice(ChatModes.Plan, HubStrings.Get("ChatModePlan")),
-            new ComposerChoice(ChatModes.Agent, HubStrings.Get("ChatModeAgent")),
-        };
-        ModePicker.ItemsSource = modes;
-        ModePicker.SelectedItem = modes.First(choice => choice.Value == _chat.ActiveMode);
-
-        var efforts = new[]
-        {
-            new ComposerChoice(ChatReasoningEfforts.Auto, HubStrings.Get("ChatReasoningAuto")),
-            new ComposerChoice(ChatReasoningEfforts.Low, HubStrings.Get("ChatReasoningLow")),
-            new ComposerChoice(ChatReasoningEfforts.Medium, HubStrings.Get("ChatReasoningMedium")),
-            new ComposerChoice(ChatReasoningEfforts.High, HubStrings.Get("ChatReasoningHigh")),
-        };
-        ReasoningPicker.ItemsSource = efforts;
-        ReasoningPicker.IsEnabled = _chat.SupportsReasoningEffort;
-        var currentEffort = _chat.SupportsReasoningEffort
-            ? _chat.ActiveReasoningEffort
-            : ChatReasoningEfforts.Auto;
-        ReasoningPicker.SelectedItem = efforts.FirstOrDefault(choice => choice.Value == currentEffort) ?? efforts[0];
+            ChatModes.Ask => "ChatModeAsk",
+            ChatModes.Plan => "ChatModePlan",
+            _ => "ChatModeGoal",
+        });
+        ToolTip.SetTip(ModeIndicatorButton, HubStrings.Get("ChatModeResetHint"));
     }
 
     private void UpdateContextRing()
     {
         if (_chat is null) return;
-        var (used, budget) = _chat.EstimateContextUsage(InputBox.Text ?? "");
+        var (used, budget) = CurrentContextUsage();
         var ratio = budget > 0 ? (double)used / budget : 0;
         ContextRing.Usage = Math.Clamp(ratio, 0, 1);
-        ToolTip.SetTip(ContextRing, string.Format(
+        ToolTip.SetTip(ContextButton, string.Format(
             System.Globalization.CultureInfo.CurrentCulture,
             HubStrings.Get("ChatContextEstimateFormat"),
             used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
@@ -198,9 +174,66 @@ public partial class ChatPanel : UserControl
             Math.Clamp((int)Math.Round(ratio * 100), 0, 100)));
     }
 
+    private (int Used, int Budget) CurrentContextUsage()
+        => _chat.EstimateContextUsage(InputBox.Text ?? "");
+
+    private void ShowContextMenu()
+    {
+        var (used, budget) = CurrentContextUsage();
+        var ratio = budget > 0 ? (double)used / budget : 0;
+        var menu = new MenuFlyout();
+        menu.Items.Add(new MenuItem
+        {
+            Header = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextEstimateFormat"),
+                used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                budget.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                Math.Clamp((int)Math.Round(ratio * 100), 0, 100)),
+            IsEnabled = false,
+        });
+        menu.Items.Add(new MenuItem
+        {
+            Header = HubStrings.Get("ChatContextEstimateHint"),
+            IsEnabled = false,
+        });
+        menu.ShowAt(ContextButton);
+    }
+
     private void ShowAddContextMenu()
     {
+        BuildComposerMenu().ShowAt(AddContextButton);
+    }
+
+    private MenuFlyout BuildComposerMenu()
+    {
         var menu = new MenuFlyout();
+        var modeItems = new Dictionary<string, MenuItem>(StringComparer.Ordinal);
+        foreach (var (mode, key) in new[]
+                 {
+                     (ChatModes.Ask, "ChatModeAsk"),
+                     (ChatModes.Plan, "ChatModePlan"),
+                     (ChatModes.Agent, "ChatModeGoal"),
+                 })
+        {
+            var item = new MenuItem
+            {
+                Header = HubStrings.Get(key),
+                ToggleType = MenuItemToggleType.Radio,
+                IsChecked = _chat.ActiveMode == mode,
+                StaysOpenOnClick = true,
+                Tag = mode,
+            };
+            item.Click += (_, _) =>
+            {
+                _chat.SelectMode(mode);
+                foreach (var (value, modeItem) in modeItems)
+                    modeItem.IsChecked = mode == value;
+            };
+            modeItems.Add(mode, item);
+            menu.Items.Add(item);
+        }
+
         var addFolder = new MenuItem { Header = HubStrings.Get("ChatAddLocalFolder") };
         addFolder.Click += async (_, _) => await AddLocalFolderAsync();
         menu.Items.Add(addFolder);
@@ -231,7 +264,75 @@ public partial class ChatPanel : UserControl
             });
         }
         menu.Items.Add(addProject);
-        menu.ShowAt(AddContextButton);
+        return menu;
+    }
+
+    private void ShowModelMenu()
+    {
+        BuildModelMenu().ShowAt(ModelPicker);
+    }
+
+    private MenuFlyout BuildModelMenu()
+    {
+        var menu = new MenuFlyout();
+        var choices = _chat.AvailableChatModels;
+        var selected = _chat.SelectedChatModel;
+        foreach (var choice in choices)
+        {
+            var isSelected = selected is not null
+                && choice.Provider.Id == selected.Provider.Id
+                && string.Equals(choice.ModelName, selected.ModelName, StringComparison.OrdinalIgnoreCase);
+            var item = new MenuItem
+            {
+                Header = choice.Provider.Name + " · " + choice.ModelName,
+                ToggleType = MenuItemToggleType.Radio,
+                IsChecked = isSelected,
+                Tag = choice,
+            };
+            item.Click += (_, _) => _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
+
+            if (ModelCatalog.SupportsReasoningEffort(choice.ModelName))
+            {
+                var currentEffort = isSelected ? _chat.ActiveReasoningEffort : ChatReasoningEfforts.Auto;
+                foreach (var (effort, labelKey) in ReasoningChoices)
+                {
+                    var effortItem = new MenuItem
+                    {
+                        Header = HubStrings.Get(labelKey),
+                        ToggleType = MenuItemToggleType.Radio,
+                        IsChecked = currentEffort == effort,
+                        Tag = effort,
+                    };
+                    effortItem.Click += (_, _) =>
+                    {
+                        if (!isSelected) _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
+                        _chat.SelectReasoningEffort(effort);
+                    };
+                    item.Items.Add(effortItem);
+                }
+            }
+
+            menu.Items.Add(item);
+        }
+
+        return menu;
+    }
+
+    private static readonly (string Value, string LabelKey)[] ReasoningChoices =
+    [
+        (ChatReasoningEfforts.Auto, "ChatReasoningAuto"),
+        (ChatReasoningEfforts.Low, "ChatReasoningLow"),
+        (ChatReasoningEfforts.Medium, "ChatReasoningMedium"),
+        (ChatReasoningEfforts.High, "ChatReasoningHigh"),
+    ];
+
+    private static string ReasoningChoiceLabel(string effort)
+    {
+        var labelKey = ReasoningChoices.FirstOrDefault(choice => choice.Value == effort).LabelKey
+                       ?? ReasoningChoices[0].LabelKey;
+        var label = HubStrings.Get(labelKey);
+        var separator = label.IndexOfAny(['：', ':']);
+        return separator >= 0 ? label[(separator + 1)..].Trim() : label;
     }
 
     private async Task AddLocalFolderAsync()
@@ -1024,6 +1125,10 @@ public partial class ChatPanel : UserControl
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
             .Any(MarkdownMessageRenderer.HasCopyToolbar);
 
+    internal bool HasScrollableMarkdownTable()
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(MarkdownMessageRenderer.HasScrollableTable);
+
     internal void ApplyMarkdownSyntaxHighlightingForCheck()
     {
         foreach (var viewer in MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
@@ -1042,8 +1147,8 @@ public partial class ChatPanel : UserControl
             choice.ModelName)
         : HubStrings.Get("NoAvailableChatModels");
 
-    internal int ModelChoiceCount => ModelPicker.ItemCount;
-    internal string SelectedModelText => ModelPicker.SelectedItem?.ToString() ?? "";
+    internal int ModelChoiceCount => _chat.AvailableChatModels.Count;
+    internal string SelectedModelText => SelectedModelLabel.Text ?? "";
 
     internal int BubbleCount => MessageRows.Count();
 
@@ -1100,13 +1205,28 @@ public partial class ChatPanel : UserControl
     internal int SendStateUpdates { get; private set; }
     internal string SendButtonTooltipForCheck => ToolTip.GetTip(SendButton)?.ToString() ?? "";
     internal bool ModelPickerIsChipForCheck => ModelPicker.Classes.Contains("chip");
-    internal string SelectedModeForCheck => (ModePicker.SelectedItem as ComposerChoice)?.Value ?? "";
-    internal string SelectedReasoningForCheck => (ReasoningPicker.SelectedItem as ComposerChoice)?.Value ?? "";
-    internal bool ReasoningPickerEnabledForCheck => ReasoningPicker.IsEnabled;
+    internal string SelectedModeForCheck => _chat.ActiveMode;
+    internal string SelectedReasoningForCheck => _chat.ActiveReasoningEffort;
+    internal bool ReasoningPickerEnabledForCheck => SelectedReasoningLabel.IsVisible;
     internal double ContextUsageForCheck => ContextRing.Usage;
-    internal string ContextTooltipForCheck => ToolTip.GetTip(ContextRing)?.ToString() ?? "";
+    internal string ContextTooltipForCheck => ToolTip.GetTip(ContextButton)?.ToString() ?? "";
     internal int ContextAttachmentCountForCheck => _contextAttachments.Count;
     internal bool HasComposerAddMenuForCheck => AddContextButton is not null;
+    internal bool ModeIndicatorVisibleForCheck => ModeIndicatorButton.IsVisible;
+    internal bool ComposerPlusCenteredForCheck
+        => AddContextButton.HorizontalContentAlignment == HorizontalAlignment.Center
+           && AddContextButton.VerticalContentAlignment == VerticalAlignment.Center;
+    internal bool ContextRingPrecedesModelForCheck
+        => ContextButton.Parent is Panel panel
+           && panel.Children.IndexOf(ContextButton) < panel.Children.IndexOf(ModelPicker);
+    internal string[] ComposerMenuModesForCheck => BuildComposerMenu().Items.OfType<MenuItem>()
+        .Where(IsComposerModeItem)
+        .Select(item => (string)item.Tag!)
+        .ToArray();
+    internal string[] CheckedComposerMenuModesForCheck => BuildComposerMenu().Items.OfType<MenuItem>()
+        .Where(item => IsComposerModeItem(item) && item.IsChecked)
+        .Select(item => (string)item.Tag!)
+        .ToArray();
 
     /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
     /// rather than by string, because the icons are resolved from the same cached resource.</summary>
@@ -1118,27 +1238,28 @@ public partial class ChatPanel : UserControl
 
     internal bool SelectModeForCheck(string mode)
     {
-        var choice = ModePicker.Items?.Cast<ComposerChoice>().FirstOrDefault(option => option.Value == mode);
-        if (choice is null) return false;
-        ModePicker.SelectedItem = choice;
-        return true;
+        if (mode is not (ChatModes.Ask or ChatModes.Plan or ChatModes.Agent)) return false;
+        return _chat.SelectMode(mode);
     }
+
+    internal void ResetModeForCheck()
+        => ModeIndicatorButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+    private static bool IsComposerModeItem(MenuItem item)
+        => item.Tag is string mode
+           && (mode == ChatModes.Ask || mode == ChatModes.Plan || mode == ChatModes.Agent);
 
     internal bool SelectReasoningForCheck(string effort)
     {
-        var choice = ReasoningPicker.Items?.Cast<ComposerChoice>().FirstOrDefault(option => option.Value == effort);
-        if (choice is null) return false;
-        ReasoningPicker.SelectedItem = choice;
-        return true;
+        if (!ReasoningChoices.Any(choice => choice.Value == effort)) return false;
+        return _chat.SelectReasoningEffort(effort);
     }
 
     internal bool SelectModelForCheck(string providerId, string modelName)
     {
-        var choice = ModelPicker.Items?.Cast<ChatWorkspace.ChatModelOption>()
+        var choice = _chat.AvailableChatModels
             .FirstOrDefault(option => option.Provider.Id == providerId && option.ModelName == modelName);
-        if (choice is null) return false;
-        ModelPicker.SelectedItem = choice;
-        return true;
+        return choice is not null && _chat.SelectChatModel(providerId, modelName);
     }
 
     internal async Task SendForCheckAsync(string text)
@@ -1153,11 +1274,6 @@ public partial class ChatPanel : UserControl
     {
         InputBox.Text = text;
         return SendAsync();
-    }
-
-    private sealed record ComposerChoice(string Value, string Label)
-    {
-        public override string ToString() => Label;
     }
 
     private sealed record ContextAttachment(string Kind, string Name, string Path, string? Details = null);

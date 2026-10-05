@@ -49,7 +49,8 @@ fix: move conversation deletion into session actions
 feat: redesign chat UI around conversations
 ```
 
-Keep a commit scoped to one change; do not sweep unrelated working-copy modifications into it; do not contains Co-authored-by
+Keep each commit scoped to one change; do not sweep unrelated working-copy modifications into it.
+Do not add `Co-authored-by` trailers to commit messages.
 
 - **No long-winded commit bodies.** The commit message body must not be a long essay — keep it short.
 

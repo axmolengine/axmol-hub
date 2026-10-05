@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
@@ -77,6 +78,8 @@ internal static class MarkdownMessageRenderer
             InstallCodeBlockToolbar(editor);
         }
 
+        var foundTable = InstallTableScrollViewers(viewer);
+
         var foundLink = false;
         foreach (var link in viewer.GetLogicalDescendants().OfType<CHyperlink>())
         {
@@ -86,7 +89,34 @@ internal static class MarkdownMessageRenderer
             link.IsUnderline = true;
         }
 
-        return foundEditor || foundLink;
+        return foundEditor || foundTable || foundLink;
+    }
+
+    private static bool InstallTableScrollViewers(MarkdownScrollViewer viewer)
+    {
+        var foundTable = false;
+        foreach (var border in viewer.GetVisualDescendants().OfType<Border>().ToArray())
+        {
+            if (!border.Classes.Contains("Table") || border.Classes.Contains("hub-table-scroll")) continue;
+            if (border.Child is not Grid { Classes: var classes } table
+                || !classes.Contains("Table")) continue;
+
+            var scroller = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                Background = Brushes.Transparent,
+            };
+            scroller.Classes.Add("markdown-table-scroll");
+            border.Child = null;
+            scroller.Content = table;
+            border.Classes.Add("hub-table-scroll");
+            border.Child = scroller;
+            foundTable = true;
+        }
+
+        return foundTable;
     }
 
     private static void InstallCodeBlockToolbar(TextEditor editor)
@@ -193,6 +223,14 @@ internal static class MarkdownMessageRenderer
                                .Any(border => border.Classes.Contains("hub-code-block-layout")))
            && !viewer.GetVisualDescendants().OfType<Label>()
                .Any(label => label.Classes.Contains("LangInfo"));
+
+    internal static bool HasScrollableTable(MarkdownScrollViewer viewer)
+        => viewer.GetVisualDescendants().OfType<ScrollViewer>()
+            .Any(scroller => scroller.Classes.Contains("markdown-table-scroll")
+                             && scroller.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto
+                             && scroller.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled
+                             && scroller.Content is Grid { Classes: var classes }
+                             && classes.Contains("Table"));
 
     private static string LinkifyBareUrls(string markdown)
     {

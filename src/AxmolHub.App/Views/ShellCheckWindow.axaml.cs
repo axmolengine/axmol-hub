@@ -187,6 +187,31 @@ public partial class ShellCheckWindow : Window
         // ── Composer shape: chip picker, round button, focus highlight ──
         Check(panel.ModelPickerIsChipForCheck,
             "模型选择器以胶囊呈现，而不是占满整行的字段");
+        Check(panel.ContextRingPrecedesModelForCheck,
+            "上下文用量圆环位于模型选择器左侧");
+        Check(panel.ComposerPlusCenteredForCheck,
+            "添加上下文的圆形加号按钮在水平和垂直方向居中");
+        Check(panel.ComposerMenuModesForCheck.SequenceEqual(
+                  [ChatModes.Ask, ChatModes.Plan, ChatModes.Agent])
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent])
+              && !panel.ModeIndicatorVisibleForCheck,
+            "加号菜单提供互斥的提问、计划、目标选项，默认选中目标且不显示模式胶囊");
+        Check(panel.SelectModeForCheck(ChatModes.Ask)
+              && panel.SelectedModeForCheck == ChatModes.Ask
+              && panel.ModeIndicatorVisibleForCheck
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Ask]),
+            "选择提问后只勾选提问，并在加号左侧显示模式胶囊");
+        Check(panel.SelectModeForCheck(ChatModes.Plan)
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan]),
+            "选择计划会替换提问选中态，模式保持互斥");
+        panel.ResetModeForCheck();
+        Check(panel.SelectedModeForCheck == ChatModes.Agent
+              && !panel.ModeIndicatorVisibleForCheck
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent]),
+            "点击模式胶囊恢复默认目标模式并隐藏胶囊");
+        var contextEstimatePrefix = HubStrings.Get("ChatContextEstimateFormat").Split("{0}")[0];
+        Check(panel.ContextTooltipForCheck.StartsWith(contextEstimatePrefix, StringComparison.Ordinal),
+            "上下文圆环提示显示当前本地估算");
         panel.SetInputForCheck("");
         Check(!panel.SendButtonEnabledForCheck,
             "输入框为空时发送按钮置灰（点之前就能看出没有东西可发）");
@@ -209,15 +234,18 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
 
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
-        const string scriptedReply = "你好，Axmol 助手。\n\n"
+        var scriptedReply = "你好，Axmol 助手。\n\n"
                                      + "[Axmol 官网](https://axmol.dev/)\n\n"
                                      + "更多信息：https://github.com/axmolengine/axmol\n\n"
+                                     + "- First item\n- Second item\n\n"
+                                     + "| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |\n\n"
                                      + "```cpp\nint main() {}\n```";
         shell.Chat.ClientOverride = _ => new ScriptedChatClient(
             [
                 "你好，Axmol 助手。",
                 "\n\n[Axmol 官网](https://axmol.dev/)",
                 "\n\n更多信息：https://github.com/axmolengine/axmol",
+                "\n\n- First item\n- Second item\n\n| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |",
                 "\n\n```cpp\nint main() {}\n```",
             ]);
         shell.Chat.StartConversation();
@@ -245,6 +273,8 @@ public partial class ShellCheckWindow : Window
             "流式回复完整落进消息流（实际消息流：\n" + panel.FlowText + "）");
         Check(panel.HasVisibleMarkdownCodeBlock("int main() {}"),
             "聊天消息中的 fenced code block 交给已完成布局的 Markdown 控件渲染");
+        Check(panel.HasScrollableMarkdownTable(),
+            "Markdown 表格超出聊天栏时使用独立横向滚动区域，列表仍留在原有自动换行布局");
         panel.ApplyMarkdownSyntaxHighlightingForCheck();
         Check(panel.HasSyntaxHighlightedCode("cpp"),
             "C++ fenced code block 使用可用的语法定义高亮");
@@ -260,6 +290,7 @@ public partial class ShellCheckWindow : Window
             "Markdown 链接使用 Hub 主题配色而非默认纯蓝");
         const string sampleMarkdown =
             "# Heading\n\nA **bold** word and `inline code`.\n\n"
+            + "- First item\n- Second item\n\n"
             + "- **Official website:** https://axmol.dev/\n"
             + "- **GitHub repository:** https://github.com/axmolengine/axmol\n"
             + "- **Markdown link:** [Axmol documentation](https://axmol.dev/guide/)\n\n"

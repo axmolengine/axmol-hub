@@ -202,17 +202,18 @@
     <Style Selector="Border.composer.focused">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
     </Style>
-    <Style Selector="ComboBox.chip">
+    <Style Selector="Button.chip">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="14" />
-      <Setter Property="MinHeight" Value="28" />
-      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="CornerRadius" Value="15" />
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="9,4" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="MaxDropDownHeight" Value="320" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="ComboBox.composer-choice">
       <Setter Property="MinHeight" Value="28" />
@@ -227,22 +228,68 @@
       <Setter Property="MaxDropDownHeight" Value="320" />
     </Style>
     <Style Selector="Button.composer-plus">
-      <Setter Property="Width" Value="28" />
-      <Setter Property="Height" Value="28" />
-      <Setter Property="MinWidth" Value="28" />
-      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="MinWidth" Value="30" />
+      <Setter Property="MinHeight" Value="30" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0,0,6,0" />
-      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="CornerRadius" Value="15" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="FontSize" Value="18" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.context-ring-button">
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="MinWidth" Value="30" />
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="15" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.context-ring-button:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.model-picker:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
     <Style Selector="Button.composer-plus:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.mode-indicator">
+      <Setter Property="Height" Value="30" />
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Padding" Value="10,3" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="CornerRadius" Value="15" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.mode-indicator:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="TextBlock.mode-indicator-close">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-label">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-close">
+      <Setter Property="IsVisible" Value="True" />
     </Style>
     <Style Selector="WrapPanel.context-attachments">
       <Setter Property="Margin" Value="0,8,0,0" />
@@ -344,19 +391,40 @@
                      IsVisible="False" />
           <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
             <WrapPanel x:Name="ComposerChoices" Grid.Column="0" VerticalAlignment="Center">
-              <Button x:Name="AddContextButton" Classes="composer-plus" VerticalAlignment="Center"
-                      Content="+" />
-              <ComboBox x:Name="ModePicker" Classes="composer-choice"
-                        Width="92" VerticalAlignment="Center" />
-              <ComboBox x:Name="ReasoningPicker" Classes="composer-choice"
-                        Width="132" VerticalAlignment="Center" />
+              <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
+                      VerticalAlignment="Center" IsVisible="False">
+                <Grid>
+                  <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
+                             VerticalAlignment="Center" />
+                  <TextBlock Classes="mode-indicator-close" Text="×"
+                             FontSize="16" VerticalAlignment="Center" />
+                </Grid>
+              </Button>
+              <Button x:Name="AddContextButton" Classes="composer-plus"
+                      HorizontalAlignment="Left" VerticalAlignment="Center"
+                      HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                      ToolTip.Tip="{DynamicResource ChatAddContext}">
+                <Path Width="14" Height="14" Stretch="Uniform"
+                      Data="{StaticResource Hub.Icon.Plus}"
+                      Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
+                      StrokeThickness="1.8" StrokeLineCap="Round" />
+              </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"
                         VerticalAlignment="Center" Margin="8,0,0,0">
-              <ComboBox x:Name="ModelPicker" Classes="chip composer-choice"
-                        Width="190" HorizontalAlignment="Left" VerticalAlignment="Center"
-                        PlaceholderText="{DynamicResource NoAvailableChatModels}" />
-              <local:ContextUsageRing x:Name="ContextRing" VerticalAlignment="Center" />
+              <Button x:Name="ContextButton" Classes="context-ring-button" VerticalAlignment="Center">
+                <local:ContextUsageRing x:Name="ContextRing" Width="20" Height="20" />
+              </Button>
+              <Button x:Name="ModelPicker" Classes="chip model-picker"
+                      Width="260" HorizontalAlignment="Left" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                  <TextBlock x:Name="SelectedModelLabel" MaxWidth="138"
+                             TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                  <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="105"
+                             TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                             Foreground="{DynamicResource Hub.TextTertiary}" />
+                </StackPanel>
+              </Button>
               <Button x:Name="SendButton" Classes="send" VerticalAlignment="Center" />
             </StackPanel>
           </Grid>
