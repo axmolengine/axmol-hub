@@ -645,6 +645,20 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
+    /// Prefixes an update status line with the version being installed, so the number survives past the
+    /// "found" moment: <see cref="RenderUpdateState"/> swaps the whole line for download progress, then
+    /// for the restart hint, and neither of those carries a version of its own — before this, the version
+    /// disappeared the instant the download started (and with auto-download on, that is immediately).
+    ///
+    /// Pure and separate from the rendering so the rule can be asserted: a dropped version still reads
+    /// like a perfectly good status line, which is the "invisible failure" shape.
+    /// </summary>
+    internal static string ComposeUpdateStatus(string status, string? version)
+        => version is { Length: > 0 }
+            ? string.Format(HubStrings.Get("UpdateVersionPrefix"), version) + status
+            : status;
+
+    /// <summary>
     /// Renders the card from <see cref="UpdateService"/>: the download phase first (progress bar, cancel
     /// / restart), then the check result (status text, which button is offered). Called when the page is
     /// shown, on <see cref="UpdateService.Changed"/>, and after a manual check — so a check or a
@@ -660,6 +674,7 @@ public partial class SettingsPage : UserControl
         }
 
         var service = UpdateService.Instance;
+        var pendingVersion = service.PendingVersion;
 
         // Only the host is toggled: it carries the padding that makes the progress area hoverable, so
         // hiding the bar alone would leave an invisible strip still able to show a tooltip.
@@ -675,7 +690,8 @@ public partial class SettingsPage : UserControl
             UpdateProgress.Value = service.DownloadPercent;
             UpdateProgressHost.IsVisible = true;
             CancelUpdateButton.IsVisible = true;
-            UpdateStatusLine.Text = string.Format(HubStrings.Get("UpdateDownloading"), service.DownloadPercent);
+            UpdateStatusLine.Text = ComposeUpdateStatus(
+                string.Format(HubStrings.Get("UpdateDownloading"), service.DownloadPercent), pendingVersion);
             SetDownloadTooltip(string.Format(
                 HubStrings.Get("UpdateDownloadSpeed"), UpdateService.FormatSpeed(service.DownloadBytesPerSecond)));
             return;
@@ -687,10 +703,12 @@ public partial class SettingsPage : UserControl
             UpdateProgress.Value = 100;
             UpdateProgressHost.IsVisible = true;
             RestartUpdateButton.IsVisible = true;
-            UpdateStatusLine.Text = HubStrings.Get("UpdateReadyToRestart");
+            var readyLine = ComposeUpdateStatus(HubStrings.Get("UpdateReadyToRestart"), pendingVersion);
+            UpdateStatusLine.Text = readyLine;
             // The bar stays on screen once the download is done, so its tooltip needs copy that is still
             // true — otherwise hovering it would keep repeating a speed that no longer means anything.
-            SetDownloadTooltip(HubStrings.Get("UpdateReadyToRestart"));
+            // It carries the version too: this is the line the user reads while deciding to restart.
+            SetDownloadTooltip(readyLine);
             return;
         }
 
@@ -700,7 +718,7 @@ public partial class SettingsPage : UserControl
         if (service.DownloadError is { } error)
         {
             SetStatusLineError(true);
-            UpdateStatusLine.Text = HubStrings.Get("UpdateDownloadFailed") + error;
+            UpdateStatusLine.Text = ComposeUpdateStatus(HubStrings.Get("UpdateDownloadFailed") + error, pendingVersion);
             DownloadUpdateButton.IsVisible = true;
             return;
         }
@@ -710,7 +728,7 @@ public partial class SettingsPage : UserControl
         var last = service.Last;
         UpdateStatusLine.Text = last?.Result switch
         {
-            UpdateService.CheckResult.UpdateAvailable => string.Format(HubStrings.Get("UpdateReady"), last.Update!.TargetFullRelease.Version),
+            UpdateService.CheckResult.UpdateAvailable => string.Format(HubStrings.Get("UpdateReady"), pendingVersion),
             UpdateService.CheckResult.UpToDate => HubStrings.Get("UpdateUpToDate"),
             UpdateService.CheckResult.NotInstalled => HubStrings.Get("UpdateNotInstalled"),
             UpdateService.CheckResult.Failed => HubStrings.Get("UpdateFailed"),

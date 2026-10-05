@@ -1960,6 +1960,33 @@ public partial class ShellCheckWindow : Window
               && UpdateService.FormatSpeed(3.5 * 1024 * 1024) == "3.5 MB/s",
             "下载速率文案按 B/KB/MB 分档，未知速率显示占位符，且与界面语言无关");
 
+        // The version has to survive into the downloading / ready / failed phases, not just the "found"
+        // one: those lines are assembled by hand, so a version that never gets prepended still reads
+        // like a finished status line — assert the composed text, not "the service knows a version".
+        var downloadingLine = SettingsPage.ComposeUpdateStatus(
+            string.Format(HubStrings.Get("UpdateDownloading"), 42), "9.9.9");
+        var plainLine = string.Format(HubStrings.Get("UpdateDownloading"), 42);
+        Check(downloadingLine.Contains("9.9.9", StringComparison.Ordinal)
+              && downloadingLine.EndsWith(plainLine, StringComparison.Ordinal)
+              && SettingsPage.ComposeUpdateStatus(plainLine, null) == plainLine
+              && SettingsPage.ComposeUpdateStatus(plainLine, "") == plainLine,
+            "更新状态行在下载/就绪/失败各阶段都带上版本号，没有版本时原样输出（实际 " + downloadingLine + "）");
+
+        // The dot is the only place an update is announced outside the settings page, so it has to say
+        // which version — "there is an update" alone sends the user hunting through Settings.
+        var badgeTip = MainWindow.FormatUpdateBadgeTip("9.9.9");
+        var badgeFallback = HubStrings.Get("UpdateDotTooltip");
+        Check(badgeTip.Contains("9.9.9", StringComparison.Ordinal)
+              && badgeTip != badgeFallback
+              && MainWindow.FormatUpdateBadgeTip(null) == badgeFallback
+              && MainWindow.FormatUpdateBadgeTip("") == badgeFallback,
+            "更新红点提示带版本号，未知版本时退回「有可用更新」（实际 " + badgeTip + "）");
+
+        // Both readers must spell out the **same** version: they are two consumers of UpdateService, and
+        // a dot that keeps the old copy while the card moves on is invisible from either side alone.
+        Check(shell.UpdateDotTip == MainWindow.FormatUpdateBadgeTip(UpdateService.Instance.PendingVersion),
+            "红点提示与设置页读的是同一份待更新版本（实际 " + shell.UpdateDotTip + "）");
+
         // --- 5.2 Really switch the language once ---
         // The shell-side probe uses a nav item that is still a RadioButton (NavToolchains): it is built at
         // shell construction time, so its text changing proves DynamicResource re-resolves in place. Settings

@@ -323,6 +323,11 @@ public static class HubTexts
         ["UpdateCheckHint"] = ("点「检查更新」查看是否有新版本。", "Click \"Check for updates\" to see if a newer version exists."),
         ["AutoDownloadUpdates"] = ("自动下载更新", "Auto-download updates"),
         ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
+        // 下载中 / 已就绪 / 下载失败三态的状态行都要带版本号：一旦开始下载，"发现新版本 x.y.z"
+        // 就被进度文案顶掉了，用户再也看不到自己要升到哪一版。{0} 是版本号，拼在状态文案前面。
+        ["UpdateVersionPrefix"] = ("新版本 {0} · ", "Version {0} · "),
+        // 红点提示带版本。无版本（还没检查过）时仍用上面的 UpdateDotTooltip。
+        ["UpdateDotTooltipVersion"] = ("有可用更新：{0}", "Update available: {0}"),
         ["DownloadAndRestart"] = ("下载并重启", "Download & restart"),
         ["UpdateDownloading"] = ("正在下载更新… {0}%", "Downloading update… {0}%"),
         // 进度条/状态行的悬停提示。{0} 是已格式化好的速率（"2.4 MB/s"），单位不随语言变化。

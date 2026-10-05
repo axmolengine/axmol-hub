@@ -38,6 +38,14 @@ public partial class MainWindow : Window
     /// <summary>The assistant page, built lazily on first navigation (a user who never opens it pays nothing).</summary>
     private ChatPanel? _chatPanel;
 
+    /// <summary>
+    /// The update dot's tooltip content. Installed once and rewritten **in place**: re-assigning
+    /// <c>ToolTip.Tip</c> closes an open tooltip, and a new value assigned while it is closed does not
+    /// re-open it (the settings page's progress tip hits the same rule). Keeping one TextBlock for the
+    /// window's whole life is what lets the tip stay up while the pointer rests on the dot.
+    /// </summary>
+    private readonly TextBlock _updateDotTip = new();
+
     private string _currentKey = "";
 
     /// <summary>
@@ -438,7 +446,25 @@ public partial class MainWindow : Window
     }
 
     private void SyncUpdateBadge()
-        => ShowUpdateBadge(UpdateService.Instance.Last?.Result is UpdateService.CheckResult.UpdateAvailable);
+    {
+        ShowUpdateBadge(UpdateService.Instance.Last?.Result is UpdateService.CheckResult.UpdateAvailable);
+        // The dot is the only place an update is announced outside the settings page, so it has to say
+        // *which* version — otherwise "there is an update" is all the user gets without going there.
+        _updateDotTip.Text = FormatUpdateBadgeTip(UpdateService.Instance.PendingVersion);
+    }
+
+    /// <summary>
+    /// The update dot's tooltip: the version when one is known, the plain "update available" line when
+    /// it isn't. Pure so the branch can be asserted — a version that never gets appended still reads as
+    /// a finished tooltip.
+    /// </summary>
+    internal static string FormatUpdateBadgeTip(string? version)
+        => version is { Length: > 0 }
+            ? string.Format(HubStrings.Get("UpdateDotTooltipVersion"), version)
+            : HubStrings.Get("UpdateDotTooltip");
+
+    /// <summary>The update dot's tooltip text as it is installed right now, for the shell self-check.</summary>
+    internal string UpdateDotTip => _updateDotTip.Text ?? "";
 
     /// <summary>
     /// Shows/hides the update dot on the settings gear. Passive signalling only — no prompt: the
@@ -451,7 +477,10 @@ public partial class MainWindow : Window
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         BrandVersion.Text = "v" + version;
         Title = "Axmol Hub " + BrandVersion.Text;
-        ToolTip.SetTip(SettingsUpdateDot, HubStrings.Get("UpdateDotTooltip"));
+        // Installed once (see _updateDotTip); only its text moves, and it is rewritten on every
+        // InitializeChrome — which ApplyLanguage calls — so a language switch reaches it too.
+        ToolTip.SetTip(SettingsUpdateDot, _updateDotTip);
+        _updateDotTip.Text = FormatUpdateBadgeTip(UpdateService.Instance.PendingVersion);
 
         // The settings gear is icon-only, so its tooltip is the only place the name "Settings" appears for it.
         // Set here rather than in ApplyLanguage so it is also in place at construction time.

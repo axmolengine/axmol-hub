@@ -71,6 +71,14 @@ internal sealed class UpdateService
     /// </summary>
     public CheckOutcome? Last { get; private set; }
 
+    /// <summary>
+    /// The version of the pending update as text, or null while no update is known. This is the single
+    /// place the version is read: the settings card's status line and the shell's update dot both spell
+    /// it out, and two callers reaching into <see cref="Last"/> on their own is exactly how the copy
+    /// they show would drift apart (or lose the version on one of the phases).
+    /// </summary>
+    public string? PendingVersion => Last?.Update is { } update ? update.TargetFullRelease.Version.ToString() : null;
+
     /// <summary>Raised whenever any observable state changes — the check result (<see cref="Last"/>)
     /// or the download phase. UI handlers must marshal to the UI thread themselves (the shell and the
     /// settings page post through the dispatcher).</summary>
