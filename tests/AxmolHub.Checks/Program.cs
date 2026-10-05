@@ -359,6 +359,22 @@ if (args.Contains("--check-ai-sessions"))
     if (listed.MessageCount != 2 || listed.Title != conversation.Title) throw new Exception("Index entry disagrees with the conversation.");
     Console.WriteLine("PASS: ConversationStore round-trips turns and maintains the index.");
 
+    // What is on disk has to stay readable: the default JSON encoder escapes quotes, backticks, angle
+    // brackets and every non-ASCII character, turning a Chinese transcript into escaped-code-unit soup.
+    var readable = Conversation.Create("orcarouter");
+    readable.Append(ChatTurn.User("列出当前 Hub 登记的项目"));
+    readable.Append(ChatTurn.Assistant("| 项目 | 状态 |\n|---|---|\n| HelloCpp | `Configured` | \"ok\" +1 'x' <b>"));
+    store.Save(readable);
+    var savedText = File.ReadAllText(Path.Combine(root, "ai", "sessions", readable.Id + ".json"));
+    if (!savedText.Contains("项目", StringComparison.Ordinal)
+        || !savedText.Contains("`Configured`", StringComparison.Ordinal)
+        || !savedText.Contains("\\\"ok\\\"", StringComparison.Ordinal)
+        || !savedText.Contains("<b>", StringComparison.Ordinal)
+        || savedText.Contains("\\u00", StringComparison.Ordinal))
+        throw new Exception("The session file escaped characters that should stay literal.");
+    store.Delete(readable.Id);
+    Console.WriteLine("PASS: session files keep CJK, backticks, quotes and angle brackets readable.");
+
     conversation.Mode = ChatModes.Plan;
     conversation.ReasoningEffort = ChatReasoningEfforts.High;
     conversation.Messages.Add(ChatTurn.User("Inspect this file", "file content"));

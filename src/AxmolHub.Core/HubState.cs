@@ -31,7 +31,14 @@ public sealed class HubState
 public sealed class StateStore(string root)
 {
     public string Root { get; } = System.IO.Path.GetFullPath(root);
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        WriteIndented = true,
+        // The default encoder escapes every quote, apostrophe, backtick and non-ASCII character, which
+        // turns a saved conversation into unreadable escaped-code-unit soup. These files stay inside
+        // the data root and are never embedded in HTML or a script, so relaxed is the right trade.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
     public HubState Load() => File.Exists(StatePath)
         ? JsonSerializer.Deserialize<HubState>(File.ReadAllText(StatePath), Json) ?? throw new InvalidDataException("Empty Hub state.")
         : new();
