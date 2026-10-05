@@ -5,11 +5,13 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AxmolHub.Core;
 
 namespace AxmolHub.App;
@@ -107,6 +109,11 @@ public partial class MainWindow : Window
         // one, so the page keeps its cached instance and ScrollViewer position.
         SettingsButton.Click += (_, _) => NavigateTo("Settings");
 
+        // The brand/host text block beside the gear opens the popup menu (Settings + Appearance). The
+        // menu is rebuilt on every open, so its labels and theme checkmarks are always current without
+        // any sync machinery.
+        BottomMenuButton.Click += (_, _) => ToggleBottomMenu();
+
         // Default to the "Projects" page, matching the WPF version (WPF uses NavProjects IsChecked="True").
         NavigateTo("Projects");
 
@@ -170,7 +177,7 @@ public partial class MainWindow : Window
                 "Installs" => new InstallsPage(_workspace),
                 "Toolchains" => new ToolchainsPage(_workspace),
                 "Assistant" => _chatPanel ??= CreateChatPanel(),
-                "Settings" => new SettingsPage(_workspace, _preferencesStore, _preferences, _chat, OpenFolder, ApplyLanguage, SwitchDataRoot),
+                "Settings" => new SettingsPage(_workspace, _preferencesStore, _preferences, _chat, OpenFolder, ApplyLanguage, SwitchDataRoot, UseTheme),
                 _ => throw new ArgumentException("Unknown page: " + name, nameof(name)),
             };
             _pages[name] = page;
@@ -334,11 +341,112 @@ public partial class MainWindow : Window
         ApplyLanguage();
     }
 
+    /// <summary>
+    /// Switches theme: write settings → apply the variant. The **single owner** of that sequence —
+    /// the settings page's picker and the bottom menu's appearance items are two views of it. Same
+    /// order as <see cref="UseLanguage"/> (persist first), for the same reason: a failed write must
+    /// leave the UI untouched rather than showing a theme the settings file doesn't have — it would
+    /// silently revert on the next launch.
+    ///
+    /// Unlike the language path there is **nothing to repaint afterwards**: every token is a
+    /// DynamicResource and re-resolves on its own, including in windows built long before the switch.
+    /// </summary>
+    /// <returns>Null on success; the error message on failure (the caller decides how to show it).</returns>
+    internal string? UseTheme(string theme)
+    {
+        theme = HubTheme.Normalize(theme);
+        var previous = ThemeService.Current;
+        if (theme == previous)
+        {
+            return null;
+        }
+
+        try
+        {
+            _preferences.Theme = theme;
+            _preferencesStore.Save(_preferences);
+            ThemeService.Apply(theme);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            // On failure, revert, otherwise the UI would show a theme that disagrees with the settings file.
+            _preferences.Theme = previous;
+            ThemeService.Apply(previous);
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Shows/hides the bottom entry's popup. Built fresh on every open: labels follow the UI language
+    /// and exactly one checkmark tracks <see cref="ThemeService.Current"/> with no sync machinery.
+    /// </summary>
+    private void ToggleBottomMenu()
+    {
+        if (BottomMenuForCheck is { IsOpen: true } open)
+        {
+            open.Hide();
+            return;
+        }
+
+        FlyoutBase.SetAttachedFlyout(BottomMenuButton, BuildBottomMenu());
+        FlyoutBase.ShowAttachedFlyout(BottomMenuButton);
+    }
+
+    /// <summary>
+    /// The bottom entry's popup: Settings (navigates like the gear click used to) and an Appearance
+    /// submenu holding the three theme values as radio items. <see cref="SettingsPage.ThemeTextKey"/>
+    /// stays the theme→copy-key mapping so a new theme can't leave its label behind. (Avalonia 12 has
+    /// no MenuFlyoutItem family: the flyout hosts <see cref="MenuItem"/>s directly, and a MenuItem with
+    /// children is the submenu.)
+    /// </summary>
+    internal MenuFlyout BuildBottomMenu()
+    {
+        var menu = new MenuFlyout { Placement = PlacementMode.TopEdgeAlignedLeft };
+
+        var settings = new MenuItem { Header = HubStrings.Get("Settings") };
+        settings.Click += (_, _) => NavigateTo("Settings");
+        menu.Items.Add(settings);
+
+        var appearance = new MenuItem { Header = HubStrings.Get("Appearance") };
+        foreach (var theme in HubTheme.All)
+        {
+            var item = new MenuItem
+            {
+                Header = HubStrings.Get(SettingsPage.ThemeTextKey(theme)),
+                ToggleType = MenuItemToggleType.Radio,
+                IsChecked = theme == ThemeService.Current,
+                Tag = theme,
+            };
+            item.Click += (_, _) =>
+            {
+                var error = UseTheme(theme);
+                if (error is not null)
+                {
+                    SetStatus(error);
+                }
+
+                // Re-sync every checkmark: a radio click checks itself but the group's behaviour is
+                // left to us, so without this the user could end up with no theme checked (clicking
+                // the already-checked one) while the theme itself didn't move.
+                foreach (var other in appearance.Items.OfType<MenuItem>())
+                {
+                    other.IsChecked = other.Tag as string == ThemeService.Current;
+                }
+            };
+            appearance.Items.Add(item);
+        }
+
+        menu.Items.Add(appearance);
+        return menu;
+    }
+
     /// <summary>Recomputes all **imperatively** written copy after a language change (DynamicResource
     /// doesn't cover them).</summary>
     internal void ApplyLanguage()
     {
-        // InitializeChrome also rewrites the settings gear's tooltip, so a language switch reaches it.
+        // InitializeChrome also rewrites the chrome tooltips (gear + bottom text block), so a language
+        // switch reaches them.
         InitializeChrome();
         _chatSidebar?.Reload();
         UpdatePageTitle();
@@ -439,6 +547,23 @@ public partial class MainWindow : Window
     internal void ToggleSidebarForCheck()
         => SidebarToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
+    /// <summary>The title block (sidebar top), for the shell self-check. The block is deliberately text
+    /// only: <c>BrandHeaderHasNoIconForCheck</c> is false (i.e. an icon came back) when the header's
+    /// visual subtree contains any image-bearing shape, which is the regression this guards.</summary>
+    internal bool BrandHeaderHasNoIconForCheck => !BrandHeader.GetVisualDescendants().Any(
+        descendant => descendant is Avalonia.Controls.Shapes.Shape or Avalonia.Controls.Image);
+
+    internal int BrandHeaderLinesForCheck => BrandHeader.GetVisualDescendants()
+        .OfType<TextBlock>()
+        .Count(text => text.Text is { Length: > 0 });
+
+    internal string BrandTitleTextForCheck => BrandHeader.GetVisualDescendants()
+        .OfType<TextBlock>()
+        .Select(text => text.Text ?? "")
+        .FirstOrDefault(text => text == "Axmol Hub") ?? "";
+
+    internal string BrandVersionTextForCheck => BrandVersion.Text ?? "";
+
     /// <summary>
     /// The assistant's state, for the shell self-check to assert against — and to install a scripted chat
     /// client so the page can be verified with no network and no API key.
@@ -456,6 +581,18 @@ public partial class MainWindow : Window
     /// user's click does instead of calling <see cref="NavigateTo"/> directly.</summary>
     internal void ClickSettingsGearForCheck() => SettingsButton.RaiseEvent(
         new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+
+    /// <summary>The bottom text block's tooltip, for the shell self-check: the block's visible text names
+    /// the machine, so the tip is where "this opens settings and appearance" is spelled out.</summary>
+    internal string BottomMenuLabel => ToolTip.GetTip(BottomMenuButton) as string ?? "";
+
+    /// <summary>Opens the bottom text block's popup the way the user's click does — the self-check walks
+    /// the same code instead of calling <see cref="BuildBottomMenu"/> directly.</summary>
+    internal void ClickBottomMenuForCheck() => BottomMenuButton.RaiseEvent(
+        new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+
+    /// <summary>The popup the bottom text block last attached, for the shell self-check.</summary>
+    internal MenuFlyout? BottomMenuForCheck => FlyoutBase.GetAttachedFlyout(BottomMenuButton) as MenuFlyout;
 
     private void WireChrome()
     {
@@ -641,6 +778,10 @@ public partial class MainWindow : Window
         // The settings gear is icon-only, so its tooltip is the only place the name "Settings" appears for it.
         // Set here rather than in ApplyLanguage so it is also in place at construction time.
         ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
+
+        // The bottom text block's visible text names the machine, not the menu; the tooltip is where
+        // "this opens settings and appearance" is spelled out. Same place for the same reason.
+        ToolTip.SetTip(BottomMenuButton, HubStrings.Get("BottomMenuTip"));
 
         // The WPF version hard-codes "AXMOL 2.11 LTS" in the bottom-left. The Avalonia version
         // computes it from the **default engine** at runtime: hard-coding the version number would

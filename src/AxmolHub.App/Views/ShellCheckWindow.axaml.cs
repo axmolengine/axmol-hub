@@ -356,6 +356,16 @@ public partial class ShellCheckWindow : Window
         Check(shell.SidebarExpandedForCheck && shell.SidebarWidthForCheck >= 240,
             "再次点击 ☰ 后侧栏恢复原宽度");
 
+        // The title block is text only — two lines, no icon tile. A mark nobody can decode is chrome,
+        // and "the tile came back" would be invisible to every other assertion (it changes no key, no
+        // click path), so the "no image tile in the title block" rule is pinned here.
+        Check(shell.BrandHeaderHasNoIconForCheck && shell.BrandHeaderLinesForCheck == 2,
+            "标题块是纯文字两行、没有图标方块（实际图标 " + shell.BrandHeaderHasNoIconForCheck
+            + "、文字行 " + shell.BrandHeaderLinesForCheck + "）");
+        Check(shell.BrandTitleTextForCheck == "Axmol Hub" && shell.BrandVersionTextForCheck.StartsWith("v"),
+            "标题块文字是 「Axmol Hub」+ 版本号（实际「" + shell.BrandTitleTextForCheck + "」/「"
+            + shell.BrandVersionTextForCheck + "」）");
+
         // ── Message-level actions and session management ──
         // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
         // regenerate/continue. Presence is asserted here; the operations themselves are asserted below.
@@ -1901,9 +1911,8 @@ public partial class ShellCheckWindow : Window
         Check(shell.NavigateTo("Assistant") is ChatPanel, "AI 助手页由 ChatPanel 承载");
         Check(shell.NavigateTo("Settings") is SettingsPage, "设置页由 SettingsPage 承载");
 
-        // Settings left the navigation list for a gear at the bottom of the rail (it is not a frequent
-        // destination). Two silent failures are possible here — the gear stops navigating, or it keeps a
-        // stale nav highlight — so both the click path and the highlight are asserted.
+        // The gear stays an independent shortcut to the settings page (it did not move into the popup).
+        // Two silent failures: the gear stops navigating, or it keeps a stale nav highlight.
         Check(shell.SettingsLabel == HubTexts.Get("Settings", HubStrings.Language),
             "齿轮按钮的提示文案来自 HubTexts（图标按钮没有文字，提示是它唯一的名称，实际「" + shell.SettingsLabel + "」）");
         shell.NavigateTo("Toolchains");
@@ -1911,6 +1920,58 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.CurrentPage is SettingsPage, "点底部齿轮真的打开设置页（事件接线有效）");
+        Check(navs.All(nav => nav.Button.IsChecked != true),
+            "设置页不是导航项，打开它时左侧不再有任何高亮（不会出现「设置亮着但当前不是设置页」）");
+
+        // Beside the gear, the brand/host text block opens the bottom popup menu (Settings + an
+        // Appearance submenu). The silent failures: the block stops opening the menu, the menu loses
+        // an item or its copy drifts from HubTexts/HubTheme, a theme item stops switching, or the
+        // menu's "设置" stops navigating. All are asserted here.
+        Check(shell.BottomMenuLabel == HubTexts.Get("BottomMenuTip", HubStrings.Language),
+            "底部文字块的提示文案来自 HubTexts（文字命名的是机器，提示才说明它打开什么，实际「" + shell.BottomMenuLabel + "」）");
+
+        shell.NavigateTo("Toolchains");
+        shell.ClickBottomMenuForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var bottomMenu = shell.BottomMenuForCheck;
+        Check(bottomMenu is { IsOpen: true }, "点底部入口真的弹出菜单（事件接线有效）");
+        Check(bottomMenu!.Items.Count == 2,
+            "弹出菜单初版只有「设置」与「外观」两项（实际 " + bottomMenu.Items.Count + " 项）");
+
+        var menuSettings = bottomMenu.Items.ElementAt(0) as MenuItem;
+        Check(menuSettings is not null
+              && string.Equals(menuSettings.Header?.ToString(), HubTexts.Get("Settings", HubStrings.Language), StringComparison.Ordinal),
+            "弹出菜单第一项是「设置」（实际「" + (menuSettings?.Header?.ToString() ?? "<null>") + "」）");
+
+        var appearance = bottomMenu.Items.ElementAt(1) as MenuItem;
+        Check(appearance is not null
+              && string.Equals(appearance.Header?.ToString(), HubTexts.Get("Appearance", HubStrings.Language), StringComparison.Ordinal),
+            "弹出菜单第二项是「外观」子菜单（实际「" + (appearance?.Header?.ToString() ?? "<null>") + "」）");
+
+        var themeItems = appearance!.Items.OfType<MenuItem>().ToArray();
+        var themeLabels = themeItems.Select(item => item.Header?.ToString() ?? "<null>").ToArray();
+        var expectedThemeLabels = HubTheme.All.Select(theme => HubTexts.Get(SettingsPage.ThemeTextKey(theme), HubStrings.Language)).ToArray();
+        Check(themeLabels.SequenceEqual(expectedThemeLabels),
+            "外观子菜单按 HubTheme.All 的顺序列出三个主题项，文案来自 HubTexts（期望 "
+            + string.Join("/", expectedThemeLabels) + "，实际 " + string.Join("/", themeLabels) + "）");
+        Check(themeItems.Count(item => item.IsChecked) == 1
+              && themeItems.Single(item => item.IsChecked).Tag as string == ThemeService.Current,
+            "外观子菜单恰好勾选当前主题（" + ThemeService.Current + "）");
+
+        // The theme items drive the shell's UseTheme — the same path the settings picker goes through
+        // (its end-to-end coverage is in 5.6). Click the theme that is **not** current, then come back,
+        // so the run ends dark and the render captures below keep their expected look.
+        var menuTarget = ThemeService.Current == HubTheme.Dark ? HubTheme.Light : HubTheme.Dark;
+        themeItems.Single(item => item.Tag as string == menuTarget)!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Check(ThemeService.Current == menuTarget && themeItems.Single(item => item.IsChecked).Tag as string == menuTarget,
+            "点外观子菜单里未勾选的主题真的切过去，勾选跟着移动（当前 " + ThemeService.Current + "）");
+        themeItems.Single(item => item.Tag as string == HubTheme.Dark)!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Check(ThemeService.Current == HubTheme.Dark, "收尾切回深色（后面的渲染断言都在深色下拍）");
+
+        bottomMenu.Hide();
+        menuSettings!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Check(shell.CurrentPage is SettingsPage, "弹出菜单里的「设置」真的打开设置页（事件接线有效）");
         Check(navs.All(nav => nav.Button.IsChecked != true),
             "设置页不是导航项，打开它时左侧不再有任何高亮（不会出现「设置亮着但当前不是设置页」）");
 

@@ -535,6 +535,7 @@ public static class HubTexts
 
         // Copilot 化改版：侧栏折叠、空状态欢迎语与建议问题、模型切换通知。
         ["SidebarToggleTip"] = ("显示或隐藏导航栏", "Show or hide the navigation bar"),
+        ["BottomMenuTip"] = ("设置与外观", "Settings and appearance"),
         ["SearchConversationsTip"] = ("搜索对话", "Search conversations"),
         ["NewConversationTip"] = ("新建对话", "New conversation"),
         ["AssistantGreeting"] = ("你好，我是 Axmol 助手", "Hi, I'm your Axmol assistant"),

@@ -8,7 +8,8 @@
   <!--
     Copilot-style shell (benchmark: GitHub Copilot Desktop):
       left = collapsible sidebar (slim brand + four nav items + conversation list as a child of the
-      "AI 助手" item + bottom brand/gear), with a 5px drag grip on its right edge;
+      "AI 助手" item + a bottom block whose text part opens the settings/appearance popup menu beside
+      the unchanged gear shortcut), with a 5px drag grip on its right edge;
       right = content: 42px top bar (☰ toggle + page title) / page / 28px status strip / log body.
     The sidebar collapses to zero width; the ☰ button in the top bar is then the only way back.
   -->
@@ -40,7 +41,21 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
 
-    <!-- The settings gear at the bottom of the sidebar. -->
+    <!-- The bottom popup-menu entry: the brand/host text block is one quiet button. -->
+    <Style Selector="Button.host">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="2,4" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.host:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+
+    <!-- The settings gear at the bottom of the sidebar (unchanged: a direct shortcut to the page). -->
     <Style Selector="Button.gear">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
@@ -108,18 +123,23 @@
               ClipToBounds="True">
         <DockPanel>
 
-          <!-- Bottom: brand line + host machine + the settings gear. -->
+          <!-- Bottom: the brand/host text block opens the settings/appearance popup menu; the gear
+               beside it is unchanged — an independent shortcut straight to the settings page, with
+               the update dot riding on it as before. -->
           <StackPanel DockPanel.Dock="Bottom">
             <Border BorderBrush="{DynamicResource Hub.Border}"
                     BorderThickness="0,1,0,0"
-                    Padding="6,18,0,0">
+                    Padding="6,12,0,0">
               <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                  <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
-                             FontSize="11" FontWeight="SemiBold" />
-                  <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
-                             FontSize="11" Margin="0,5,0,0" />
-                </StackPanel>
+                <Button x:Name="BottomMenuButton" Grid.Column="0" Classes="host"
+                        VerticalAlignment="Center">
+                  <StackPanel>
+                    <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
+                               FontSize="11" FontWeight="SemiBold" />
+                    <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
+                               FontSize="11" Margin="0,5,0,0" />
+                  </StackPanel>
+                </Button>
                 <Grid Grid.Column="1" VerticalAlignment="Center">
                   <Button x:Name="SettingsButton" Classes="gear">
                     <Path Classes="icon" Data="{StaticResource Hub.Icon.Settings}"
@@ -136,22 +156,13 @@
           </StackPanel>
 
           <StackPanel DockPanel.Dock="Top">
-            <!-- Slim brand: one 30px tile + two compact text lines. -->
-            <Grid Margin="2,0,0,16" ColumnDefinitions="Auto,*">
-              <Border Width="30" Height="30"
-                      Background="{DynamicResource Hub.SurfaceRaised}"
-                      CornerRadius="6">
-                <Path Data="{StaticResource Hub.Icon.Installs}"
-                      Width="17" Height="17" Stretch="Uniform"
-                      HorizontalAlignment="Center" VerticalAlignment="Center"
-                      Fill="{DynamicResource Hub.AccentBorder}" />
-              </Border>
-              <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
-                <TextBlock Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
-                           FontSize="10" Margin="0,2,0,0" />
-              </StackPanel>
-            </Grid>
+            <!-- Slim brand: two compact text lines. It deliberately carries no icon — a mark with no
+                 established meaning is just chrome, and the title block already reads as "Axmol Hub". -->
+            <StackPanel x:Name="BrandHeader" Margin="2,0,0,16" VerticalAlignment="Center">
+              <TextBlock Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
+                         FontSize="10" Margin="0,2,0,0" />
+            </StackPanel>
 
             <RadioButton x:Name="NavProjects" Classes="nav" GroupName="Navigation">
               <StackPanel Orientation="Horizontal">

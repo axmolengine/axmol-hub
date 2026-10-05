@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AxmolHub.Core;
 
 namespace AxmolHub.App;
@@ -275,7 +276,7 @@ public partial class App : Application
             window.Opened += async (_, _) => await UpdateService.Instance.CheckAsync();
         }
 
-        // The two screenshot switches are mutually exclusive: --smoke exits right after one shot,
+        // The three screenshot switches are mutually exclusive: --smoke exits right after one shot,
         // while --smoke-pages switches pages eight times in a row.
         // When both are passed, --smoke-pages wins (broader coverage) without an error.
         if (Options.SmokePagesDirectory is { } pagesDirectory)
@@ -285,6 +286,54 @@ public partial class App : Application
         else if (Options.SmokeImagePath is { } smokeImage)
         {
             SmokeRunner.Attach(window, desktop, smokeImage);
+        }
+        else if (Options.ShotBottomMenuPath is { } menuShot)
+        {
+            // --shot-bottom-menu <png>: the sidebar's bottom entry is a popup menu, and a popup is
+            // its own top-level — --smoke-pages (which photographs the shell window) can never see
+            // it, so it gets the same dedicated switch as the picker/auth dialogs above. A file name
+            // containing "sub" opens the Appearance submenu and photographs that flyout instead
+            // (same trick the auth dialog shot uses with "key"), because a submenu is yet another
+            // popup and never appears inside its parent's frame.
+            window.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    window.NavigateTo("Toolchains");
+                    Dispatcher.UIThread.RunJobs();
+                    window.ClickBottomMenuForCheck();
+                    Dispatcher.UIThread.RunJobs();
+
+                    // The flyout presents in its own PopupRoot, so the capture must target that
+                    // top-level, not the shell window: walk up from a menu item to it.
+                    var menu = window.BottomMenuForCheck;
+                    var anchor = menu?.Items.OfType<MenuItem>().FirstOrDefault();
+                    if (menuShot.Contains("sub", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var appearance = menu!.Items.OfType<MenuItem>().ElementAt(1);
+                        appearance.IsSubMenuOpen = true;
+                        Dispatcher.UIThread.RunJobs();
+                        anchor = appearance.Items.OfType<MenuItem>().FirstOrDefault();
+                    }
+
+                    var popupRoot = anchor?.GetSelfAndVisualAncestors().OfType<TopLevel>().FirstOrDefault();
+                    if (popupRoot is null)
+                    {
+                        Console.Error.WriteLine("bottom menu did not open.");
+                        desktop.Shutdown(1);
+                        return;
+                    }
+
+                    var stats = SmokeCapture.Capture(popupRoot, menuShot);
+                    Console.WriteLine(stats.IsBlank() ? $"BLANK {menuShot}" : $"OK    {menuShot}");
+                    desktop.Shutdown(stats.IsBlank() ? 1 : 0);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    desktop.Shutdown(1);
+                }
+            });
         }
     }
 }

@@ -45,6 +45,11 @@ public partial class SettingsPage : UserControl
     /// <summary>Asks the shell to switch the data root. Returns whether it actually switched.</summary>
     private readonly Func<string, bool> _switchDataRoot;
 
+    /// <summary>Asks the shell to switch the theme (persist → apply → revert on failure). Returns null on
+    /// success, the error message on failure. The shell owns the sequence: the bottom menu's appearance
+    /// items drive the same path, so the picker must not grow a second copy of it.</summary>
+    private readonly Func<string, string?> _applyTheme;
+
     /// <summary>Suppresses <c>SelectionChanged</c> during initialization: the WPF version likewise had a <c>preferencesReady</c> gate.</summary>
     private bool _ready;
 
@@ -83,6 +88,7 @@ public partial class SettingsPage : UserControl
         _openFolder = _ => { };
         _languageChanged = () => { };
         _switchDataRoot = _ => false;
+        _applyTheme = _ => null;
 
         InitializeComponent();
     }
@@ -94,7 +100,8 @@ public partial class SettingsPage : UserControl
         ChatWorkspace chat,
         Action<string> openFolder,
         Action languageChanged,
-        Func<string, bool> switchDataRoot)
+        Func<string, bool> switchDataRoot,
+        Func<string, string?> applyTheme)
     {
         _workspace = workspace;
         _preferencesStore = preferencesStore;
@@ -103,6 +110,7 @@ public partial class SettingsPage : UserControl
         _openFolder = openFolder;
         _languageChanged = languageChanged;
         _switchDataRoot = switchDataRoot;
+        _applyTheme = applyTheme;
 
         InitializeComponent();
 
@@ -437,13 +445,11 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Switches theme: write settings → apply the variant. Same order as the language path (persist
-    /// first), for the same reason: a failed write must leave the UI untouched rather than showing a
-    /// theme the settings file doesn't have — it would silently revert on the next launch.
+    /// Switches theme through the shell (<see cref="MainWindow.UseTheme"/>), which owns the
+    /// persist → apply → revert sequence — the bottom menu's appearance items share it.
     ///
-    /// Unlike the language path there is **nothing to notify the shell about**: the theme has no
-    /// imperative copy, every token is a DynamicResource and re-resolves on its own, including in
-    /// windows built long before the switch.
+    /// The page's own job is only the picker: on failure put the selection back, otherwise the
+    /// dropdown would show a theme that isn't in effect.
     /// </summary>
     private void OnThemeChanged()
     {
@@ -459,22 +465,16 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        try
+        var error = _applyTheme(theme);
+        if (error is null)
         {
-            _preferences.Theme = theme;
-            _preferencesStore.Save(_preferences);
-            ThemeService.Apply(theme);
+            return;
         }
-        catch (Exception ex)
-        {
-            // On failure, revert the UI, otherwise it would show a theme that disagrees with the settings file.
-            _ready = false;
-            _preferences.Theme = previous;
-            ThemeService.Apply(previous);
-            SelectTheme(previous);
-            _ready = true;
-            _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("OperationFailed"), ex.Message);
-        }
+
+        _ready = false;
+        SelectTheme(previous);
+        _ready = true;
+        _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("OperationFailed"), error);
     }
 
     private async Task ChooseDataDirectoryAsync()
