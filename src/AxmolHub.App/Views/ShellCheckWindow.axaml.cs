@@ -974,10 +974,6 @@ public partial class ShellCheckWindow : Window
         // Adding a model does not steal the in-use mark — that only moves when the user says so.
         Check(withTwo is not null && withTwo.ActiveModelName == firstModel,
             "添加模型不会改变使用中的那个（实际「" + withTwo?.ActiveModelName + "」）");
-        // The description lookup is a nicety, and it must actually reach the row: a catalogue that is never
-        // read would leave every row a bare name and still pass every other check here.
-        Check(withTwo is not null && withTwo.ModelDescriptions.Any(text => text.Length > 0),
-            "模型行带上了说明文案（实际 [" + string.Join(" | ", withTwo?.ModelDescriptions ?? []) + "]）");
 
         // Switching is explicit, and it moves the mark rather than adding a second one.
         Check(shell.Chat.SetActiveModel("deepseek", "deepseek-reasoner"), "可以切换使用中的模型");
@@ -1364,8 +1360,8 @@ public partial class ShellCheckWindow : Window
         }
         settings.RefreshProviderGroupsForCheck();
         fetched = settings.ProviderGroupForId(target.Id);
-        Check(fetched is { ModelNames.Length: 2 } && fetched.ModelDescriptions.Any(text => text.Length > 0),
-            "启用后的模型出现在列表并展示已知模型说明（实际 ["
+        Check(fetched is { ModelNames.Length: 2 },
+            "启用后的模型出现在列表（实际 ["
                 + string.Join(",", fetched?.ModelNames ?? []) + "]）");
         Check(fetched is { ActiveModelName: "qwen3" },
             "首次启用的模型成为默认模型，后续选择不覆盖默认（实际「" + fetched?.ActiveModelName + "」）");

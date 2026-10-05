@@ -135,7 +135,7 @@ public sealed class ModelCatalogWindow : Window
         var query = (_search.Text ?? "").Trim();
         var rows = _models
             .Where(name => query.Length == 0 || name.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .Select(name => new ModelRow(name, _isEnabled(name), ModelCatalog.Describe(name, HubStrings.Language)))
+            .Select(name => new ModelRow(name, _isEnabled(name)))
             .ToList();
 
         _list.ItemsSource = rows;
@@ -193,13 +193,11 @@ public sealed class ModelCatalogWindow : Window
         }
     }
 
-    private sealed class ModelRow(string name, bool enabled, string description) : INotifyPropertyChanged
+    private sealed class ModelRow(string name, bool enabled) : INotifyPropertyChanged
     {
         private bool _enabled = enabled;
 
         public string Name { get; } = name;
-        public string Description { get; } = description;
-        public bool HasDescription => Description.Length > 0;
         public string StateText => HubStrings.Get(Enabled
             ? "ModelCatalogEnabledState"
             : "ModelCatalogDisabledState");
@@ -231,15 +229,6 @@ public sealed class ModelCatalogWindow : Window
                 FontWeight = FontWeight.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
-            var description = new TextBlock
-            {
-                [!TextBlock.TextProperty] = new Binding(nameof(Description)),
-                [!Visual.IsVisibleProperty] = new Binding(nameof(HasDescription)),
-                Classes = { "muted" },
-                FontSize = 11,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            text.Children.Add(description);
 
             var enabledState = new TextBlock
             {

@@ -293,21 +293,6 @@ if (args.Contains("--check-ai-providers"))
         throw new Exception($"A hand-edited file should honour the marked model, got '{handEdited.Model}'.");
     Console.WriteLine("PASS: legacy, new and mixed providers.json shapes all load to the same model list.");
 
-    // The description catalog is a nicety, so the contract is asymmetric on purpose: a known name gets copy,
-    // an unknown one gets nothing (rather than a guess or a failure). A newly released model must be usable
-    // before Hub ships an update.
-    if (ModelCatalog.Describe("gpt-5.1-codex-mini", HubTexts.EnglishLanguage).Length == 0)
-        throw new Exception("A model the catalog knows should carry a description.");
-    if (ModelCatalog.Describe("some-brand-new-model-2099", HubTexts.EnglishLanguage) != "")
-        throw new Exception("An unknown model should simply have no description.");
-    if (ModelCatalog.Describe("", HubTexts.EnglishLanguage) != "") throw new Exception("An empty name should have no description.");
-    // Exact entries must win over family prefixes, or a specific model would inherit its family's blurb.
-    if (ModelCatalog.Describe("gpt-4o", HubTexts.EnglishLanguage) == ModelCatalog.Describe("gpt-4o-mini", HubTexts.EnglishLanguage))
-        throw new Exception("Exact catalog entries should not collapse into one family description.");
-    if (ModelCatalog.Describe("gpt-4o", HubTexts.EnglishLanguage) == ModelCatalog.Describe("gpt-4o", HubTexts.ChineseLanguage))
-        throw new Exception("Model descriptions should follow the selected UI language.");
-    Console.WriteLine("PASS: model descriptions are localized, additive, and never fail closed.");
-
     // ── Key validation is declared per provider, and absence means "do not check" ──
     // The load-bearing property is the negative one: a provider with no declaration must report
     // "unsupported" rather than "rejected", because a gateway that closes /models would otherwise have a

@@ -1316,18 +1316,6 @@ public partial class SettingsPage : UserControl
         }
         text.Children.Add(nameRow);
 
-        var description = ModelCatalog.Describe(model.Name, HubStrings.Language);
-        if (description.Length > 0)
-        {
-            text.Children.Add(new TextBlock
-            {
-                Text = description,
-                Classes = { "muted" },
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-            });
-        }
-
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -2039,7 +2027,6 @@ public partial class SettingsPage : UserControl
         string[] ModelNames,
         bool[] ModelEnabled,
         string ActiveModelName,
-        string[] ModelDescriptions,
         bool HasModelListToggle,
         bool ModelListExpanded,
         bool HasUseModelButton,
@@ -2190,7 +2177,6 @@ public partial class SettingsPage : UserControl
 
         var modelNames = new List<string>();
         var modelEnabled = new List<bool>();
-        var descriptions = new List<string>();
         var activeModel = "";
         foreach (var row in modelRows)
         {
@@ -2203,9 +2189,6 @@ public partial class SettingsPage : UserControl
 
             // The "in use" pill is the Border the row adds after the name.
             if (nameRow.Children.OfType<Border>().Any()) activeModel = modelName;
-
-            var description = text.Children.OfType<TextBlock>().FirstOrDefault()?.Text ?? "";
-            descriptions.Add(description);
         }
 
         // Model rows are individually outlined cards, so there should be no extra dividers between them.
@@ -2245,7 +2228,6 @@ public partial class SettingsPage : UserControl
             modelNames.ToArray(),
             modelEnabled.ToArray(),
             activeModel,
-            descriptions.ToArray(),
             hasModelListToggle,
             modelList?.IsVisible == true,
             hasUseModelButton,
