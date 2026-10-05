@@ -933,6 +933,23 @@ public partial class ShellCheckWindow : Window
         // because a provider with models but no marked one would send an empty model name to the endpoint.
         Check(fetched is { ModelNames.Length: > 0 } && fetched.ActiveModelName == fetched.ModelNames[0],
             "拉取后第一个模型自动成为使用中的那个（实际「" + fetched?.ActiveModelName + "」）");
+        Check(fetched is { HasModelListToggle: true, ModelListExpanded: true, HasUseModelButton: false },
+            "模型区可折叠，短列表默认展开且不再显示重复的「使用此模型」按钮");
+
+        var extraModels = Enumerable.Range(1, 11).Select(index => $"collapse-probe-{index}").ToArray();
+        foreach (var name in extraModels) shell.Chat.AddModel(target.Id, name);
+        settings.RefreshProviderGroupsForCheck();
+        var longList = settings.ProviderGroupForId(target.Id);
+        Check(longList is { ModelListExpanded: false, ModelNames.Length: 13 },
+            "较长模型列表默认收起并保留全部模型（实际 "
+                + (longList?.ModelNames.Length ?? 0) + " 项）");
+        Check(settings.SetModelListExpandedForCheck(target.Id, true)
+              && settings.ProviderGroupForId(target.Id) is { ModelListExpanded: true }
+              && settings.SetModelListExpandedForCheck(target.Id, false)
+              && settings.ProviderGroupForId(target.Id) is { ModelListExpanded: false },
+            "模型列表折叠按钮可展开和收起完整列表");
+        foreach (var name in extraModels) shell.Chat.RemoveModel(target.Id, name);
+        settings.RefreshProviderGroupsForCheck();
 
         // ── The other half of the header rule ──
         //

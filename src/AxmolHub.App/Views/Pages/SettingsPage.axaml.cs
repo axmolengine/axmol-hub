@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 // GetLogicalDescendants (not GetVisualDescendants) on purpose: the model section and the refresh button are
 // read for a window or group that may not be attached to a visual root yet, and the visual walk returns an
@@ -780,9 +781,8 @@ public partial class SettingsPage : UserControl
     // ───────────────────────── Model providers ─────────────────────────
     //
     // This block used to live in the assistant drawer and moved here when the assistant became a full page:
-    // the conversation page keeps only a read-only "current model" line, and every provider operation —
-    // choosing, adding, editing, removing, keying — happens in Settings ▸ Models. GitHub Copilot draws the
-    // same line.
+    // the conversation page keeps the model picker, and endpoint/model management — adding, enabling,
+    // removing, keying — happens in Settings ▸ Models. GitHub Copilot draws the same separation.
     //
     // Adding a custom provider remains the only path to a local model, so the logic is unchanged; only its
     // host moved.
@@ -806,7 +806,8 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Renders one group per configured provider, all expanded.
+    /// Renders one group per configured provider. Large model lists start collapsed; smaller lists remain
+    /// expanded so the short, useful ones still take one glance.
     ///
     /// <para>Built in code rather than bound: each group owns handlers that close over the provider they
     /// belong to (which credential to rotate, which model to mark), and a bound template would need a
@@ -1093,11 +1094,11 @@ public partial class SettingsPage : UserControl
 
 
     /// <summary>
-    /// The model sub-list: one row per model, the one in use marked, each with a use/remove action.
+    /// The model sub-list: one row per model, the one in use marked, each with enable/remove actions.
     ///
-    /// <para>The shape follows the Codex CLI's model selector — name, one-line description, a marker on the
-    /// current entry, and the action on the row itself — because that is the interaction the user asked to
-    /// match. The description is a lookup (<see cref="ModelCatalog"/>) and is simply absent for a model Hub
+    /// <para>Each row keeps the model name, optional description, current-use marker and availability toggle.
+    /// Model selection stays in the conversation page's picker. The description is a lookup
+    /// (<see cref="ModelCatalog"/>) and is simply absent for a model Hub
     /// does not know, so a brand-new name still works.</para>
     ///
     /// <para><b>The list is not rendered at all before the provider is authenticated.</b> It comes from
@@ -1118,13 +1119,68 @@ public partial class SettingsPage : UserControl
         // has nothing to do with what broke.
         var section = new StackPanel { Spacing = 6, Tag = SectionTags.Models };
 
-        var heading = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        heading.Children.Add(new TextBlock
+        var expanded = provider.Models.Count <= 10;
+        var listContent = new StackPanel { Spacing = 4, IsVisible = expanded, Tag = SectionTags.ModelList };
+        var toggleContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var disclosure = new Avalonia.Controls.Shapes.Path
         {
-            Text = HubStrings.Get("Models"),
-            FontWeight = FontWeight.SemiBold,
+            Width = 10,
+            Height = 10,
+            Stretch = Stretch.Uniform,
+            Data = Geometry.Parse("M6 9L12 15L18 9"),
+            Stroke = BrushOrNull("Hub.TextSecondary"),
+            StrokeThickness = 1.8,
+            RenderTransformOrigin = RelativePoint.Center,
+            RenderTransform = new RotateTransform(expanded ? 180 : 0),
             VerticalAlignment = VerticalAlignment.Center,
+        };
+        disclosure.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+        toggleContent.Children.Add(disclosure);
+
+        var toggleText = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        toggleText.Children.Add(new TextBlock
+        {
+            Text = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                HubStrings.Get("ModelsCount"),
+                provider.Models.Count),
+            FontWeight = FontWeight.SemiBold,
         });
+        if (provider.ActiveModel is { } activeModel)
+        {
+            toggleText.Children.Add(new TextBlock
+            {
+                Text = string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    HubStrings.Get("CurrentModelSummary"),
+                    activeModel.Name),
+                Classes = { "muted" },
+                FontSize = 11,
+            });
+        }
+        toggleContent.Children.Add(toggleText);
+
+        var toggle = new ToggleButton
+        {
+            Content = toggleContent,
+            Classes = { "quiet" },
+            IsChecked = expanded,
+            Padding = new Thickness(4, 2),
+            Margin = new Thickness(-4, 0, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Tag = SectionTags.ToggleModelList,
+        };
+        ToolTip.SetTip(toggle, HubStrings.Get("ToggleModelList"));
+        toggle.IsCheckedChanged += (_, _) =>
+        {
+            expanded = toggle.IsChecked == true;
+            listContent.IsVisible = expanded;
+            disclosure.RenderTransform = new RotateTransform(expanded ? 180 : 0);
+        };
+
+        var heading = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        heading.Children.Add(toggle);
 
         var actions = new StackPanel
         {
@@ -1168,7 +1224,7 @@ public partial class SettingsPage : UserControl
             // A distinct empty state from the old "no models added yet". The section is empty because the
             // endpoint has not been asked (or could not be asked), not because the user chose nothing —
             // saying the latter would send them looking in the wrong place.
-            section.Children.Add(new TextBlock
+            listContent.Children.Add(new TextBlock
             {
                 Text = HubStrings.Get("NoModelsFetched"),
                 Classes = { "muted" },
@@ -1176,20 +1232,20 @@ public partial class SettingsPage : UserControl
                 TextWrapping = TextWrapping.Wrap,
                 Tag = SectionTags.ModelsEmpty,
             });
+            section.Children.Add(listContent);
             return section;
         }
 
-        var list = new StackPanel { Spacing = 4 };
         foreach (var model in provider.Models)
         {
             // A rule between rows, and none before the first: a leading rule under the heading reads as a
             // separator from the heading rather than as part of the list. Inserted *between* rather than
             // appended so the count always stays rows - 1.
-            if (list.Children.Count > 0) list.Children.Add(BuildModelDivider());
-            list.Children.Add(BuildModelRow(provider, model));
+            if (listContent.Children.Count > 0) listContent.Children.Add(BuildModelDivider());
+            listContent.Children.Add(BuildModelRow(provider, model));
         }
 
-        section.Children.Add(list);
+        section.Children.Add(listContent);
         return section;
     }
 
@@ -1281,19 +1337,6 @@ public partial class SettingsPage : UserControl
         ToolTip.SetTip(enabled, HubStrings.Get("ModelEnabledHint"));
         enabled.IsCheckedChanged += (_, _) => SetModelEnabled(provider.Id, model.Name, enabled.IsChecked == true);
         actions.Children.Add(enabled);
-
-        if (!inUse && model.Enabled)
-        {
-            var use = new Button
-            {
-                Content = HubStrings.Get("ModelUse"),
-                Classes = { "quiet" },
-                Padding = new Thickness(8, 2),
-                FontSize = 11,
-            };
-            use.Click += (_, _) => SetActiveModel(provider.Id, model.Name);
-            actions.Children.Add(use);
-        }
 
         var remove = new Button
         {
@@ -1461,16 +1504,6 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private IBrush? BrushOrNull(string key)
         => this.TryFindResource(key, out var value) ? value as IBrush : null;
-
-    private void SetActiveModel(string providerId, string modelName)
-    {
-        if (_chat is null) return;
-        if (_chat.SetActiveModel(providerId, modelName))
-        {
-            SetProviderStatus(false, "");
-            RebuildProviderGroups();
-        }
-    }
 
     private void SetModelEnabled(string providerId, string modelName, bool enabled)
     {
@@ -1858,6 +1891,9 @@ public partial class SettingsPage : UserControl
         bool[] ModelEnabled,
         string ActiveModelName,
         string[] ModelDescriptions,
+        bool HasModelListToggle,
+        bool ModelListExpanded,
+        bool HasUseModelButton,
         /// <summary>
         /// Whether the model section is rendered at all. False for a provider that needs a credential and has
         /// none: the list is fetched with the user's key, so there is nothing to show and asking would be a
@@ -1962,11 +1998,17 @@ public partial class SettingsPage : UserControl
 
         // The empty-state line and the refresh control both live inside the section; they are looked up by tag
         // rather than by position because the heading is a Grid whose right column holds two buttons now.
-        var showsModelEmptyState = modelSection?.Children.OfType<TextBlock>()
+        var showsModelEmptyState = modelSection?.GetLogicalDescendants().OfType<TextBlock>()
             .Any(text => text.Tag as string == SectionTags.ModelsEmpty) ?? false;
         var hasRefresh = modelSection?.GetLogicalDescendants()
             .OfType<Button>()
             .Any(button => button.Tag as string == SectionTags.RefreshModels) ?? false;
+        var modelList = modelSection?.GetLogicalDescendants().OfType<StackPanel>()
+            .FirstOrDefault(list => list.Tag as string == SectionTags.ModelList);
+        var hasModelListToggle = modelSection?.GetLogicalDescendants().OfType<ToggleButton>()
+            .Any(button => button.Tag as string == SectionTags.ToggleModelList) ?? false;
+        var hasUseModelButton = modelSection?.GetLogicalDescendants().OfType<Button>()
+            .Any(button => button.Content?.ToString() == HubStrings.Get("ModelUse")) ?? false;
 
         // Each model row is [name (+ optional "in use" pill), optional description] in a text stack. The rows
         // live in a nested untagged StackPanel under the section's heading Grid.
@@ -2039,6 +2081,9 @@ public partial class SettingsPage : UserControl
             modelEnabled.ToArray(),
             activeModel,
             descriptions.ToArray(),
+            hasModelListToggle,
+            modelList?.IsVisible == true,
+            hasUseModelButton,
             showsModelSection && !modelsHidden,
             showsModelEmptyState,
             hasRefresh,
@@ -2052,6 +2097,20 @@ public partial class SettingsPage : UserControl
         RebuildProviderGroups();
         UpdateLayout();
         Dispatcher.UIThread.RunJobs();
+    }
+
+    internal bool SetModelListExpandedForCheck(string providerId, bool expanded)
+    {
+        var toggle = GroupCards
+            .FirstOrDefault(group => group.Tag as string == providerId)?
+            .GetLogicalDescendants().OfType<ToggleButton>()
+            .FirstOrDefault(button => button.Tag as string == SectionTags.ToggleModelList);
+        if (toggle is null) return false;
+
+        toggle.IsChecked = expanded;
+        UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        return true;
     }
 
     internal bool SetModelEnabledForCheck(string providerId, string modelName, bool enabled)
@@ -2210,6 +2269,8 @@ public partial class SettingsPage : UserControl
         internal const string Group = "provider-group";
         internal const string Summary = "provider-summary";
         internal const string Models = "provider-models";
+        internal const string ModelList = "provider-model-list";
+        internal const string ToggleModelList = "provider-toggle-model-list";
 
         /// <summary>
         /// Stands in for the model section when it is not rendered at all (an unauthenticated provider that
