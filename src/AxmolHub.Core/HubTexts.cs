@@ -333,6 +333,9 @@ public static class HubTexts
         // 进度条/状态行的悬停提示。{0} 是已格式化好的速率（"2.4 MB/s"），单位不随语言变化。
         ["UpdateDownloadSpeed"] = ("下载速度：{0}", "Download speed: {0}"),
         ["UpdateReadyToRestart"] = ("更新已就绪，重启完成更新。", "Update ready — restart to finish."),
+        // 两个动作按钮的悬停提示也报版本号：状态行说"已就绪"，按钮说"要装的是哪一版"。
+        ["UpdateDownloadActionTip"] = ("下载 {0} 并重启", "Download {0} and restart"),
+        ["UpdateRestartActionTip"] = ("重启并安装 {0}", "Restart and install {0}"),
         ["RestartNow"] = ("立即重启", "Restart now"),
         // 故意不带 {0}：后面要拼的是异常原文，可能含花括号，string.Format 会抛 FormatException。
         ["UpdateDownloadFailed"] = ("更新下载失败：", "Couldn't download the update: "),

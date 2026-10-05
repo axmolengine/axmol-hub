@@ -64,6 +64,15 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private readonly TextBlock _speedTip = new();
 
+    /// <summary>
+    /// The two update action buttons' tooltip content. Stable instances installed once and rewritten in
+    /// place, for the same reason as <see cref="_speedTip"/>: re-assigning <c>ToolTip.Tip</c> closes an
+    /// open tooltip. They name the version the button will install — the status line says "ready", the
+    /// button is where the user decides, and that is where the number has to be.
+    /// </summary>
+    private readonly TextBlock _downloadTip = new();
+    private readonly TextBlock _restartTip = new();
+
     /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public SettingsPage()
     {
@@ -120,6 +129,8 @@ public partial class SettingsPage : UserControl
         // Installed exactly once, on purpose — see SetDownloadTooltip for why re-assigning ToolTip.Tip
         // per progress tick is what used to make the tooltip impossible to keep on screen.
         ToolTip.SetTip(UpdateProgressHost, _speedTip);
+        ToolTip.SetTip(DownloadUpdateButton, _downloadTip);
+        ToolTip.SetTip(RestartUpdateButton, _restartTip);
 
         // The update card is a *view* of the shared UpdateService, so a check or a background download
         // started elsewhere (the shell's startup check) shows up here live. Hooked while the page is on
@@ -645,6 +656,14 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
+    /// The tooltip of an update action button: the copy named by <paramref name="key"/>, filled in with
+    /// the version it will install. Empty while no version is known — a tip that says "download and
+    /// restart" without saying what is worse than no tip at all.
+    /// </summary>
+    internal static string ComposeActionTip(string key, string? version)
+        => version is { Length: > 0 } ? string.Format(HubStrings.Get(key), version) : "";
+
+    /// <summary>
     /// Prefixes an update status line with the version being installed, so the number survives past the
     /// "found" moment: <see cref="RenderUpdateState"/> swaps the whole line for download progress, then
     /// for the restart hint, and neither of those carries a version of its own — before this, the version
@@ -675,6 +694,11 @@ public partial class SettingsPage : UserControl
 
         var service = UpdateService.Instance;
         var pendingVersion = service.PendingVersion;
+
+        // Both action buttons name the version all the time — not only in the phase that shows them —
+        // because a tip read off a stale render would still be on screen after the state moved on.
+        _downloadTip.Text = ComposeActionTip("UpdateDownloadActionTip", pendingVersion);
+        _restartTip.Text = ComposeActionTip("UpdateRestartActionTip", pendingVersion);
 
         // Only the host is toggled: it carries the padding that makes the progress area hoverable, so
         // hiding the bar alone would leave an invisible strip still able to show a tooltip.
@@ -1950,6 +1974,21 @@ public partial class SettingsPage : UserControl
             }
         }
     }
+
+    // ── Verification hooks for the update card (used by --verify-shell) ──
+
+    /// <summary>The update card's status line **as rendered**. Read back rather than recomputed: what the
+    /// user sees is this control's text, and every phase of the update is a different render of it.</summary>
+    internal string UpdateStatusText => UpdateStatusLine.Text ?? "";
+
+    /// <summary>The "Download &amp; restart" button's tooltip — it has to name the version it will install.</summary>
+    internal string DownloadActionTip => _downloadTip.Text ?? "";
+
+    /// <summary>The "Restart now" button's tooltip, shown only once an update is downloaded and waiting.</summary>
+    internal string RestartActionTip => _restartTip.Text ?? "";
+
+    /// <summary>Whether the "Restart now" button is the action being offered (i.e. the download finished).</summary>
+    internal bool RestartButtonVisible => RestartUpdateButton.IsVisible;
 
     // ── Verification hooks for the provider card (used by --verify-shell) ──
 

@@ -238,6 +238,32 @@ internal sealed class UpdateService
     }
 
     /// <summary>
+    /// Verification hook (<c>--verify-shell</c>): installs a pending update **without** a network check,
+    /// so the settings card's phases can be rendered and read back. Those phases are otherwise
+    /// unreachable in a self-check — a real check needs GitHub, and a real download replaces the process
+    /// the moment it finishes.
+    /// </summary>
+    internal void SetPendingForCheck(UpdateInfo update, DownloadState download = DownloadState.None, int percent = 0)
+    {
+        Last = new CheckOutcome(CheckResult.UpdateAvailable, update);
+        Download = download;
+        DownloadPercent = percent;
+        DownloadError = null;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Undoes <see cref="SetPendingForCheck"/> so a scripted update can't leak into the
+    /// render checks that follow (the badge is driven by <see cref="Last"/> too).</summary>
+    internal void ClearForCheck()
+    {
+        Last = null;
+        Download = DownloadState.None;
+        DownloadPercent = 0;
+        DownloadError = null;
+        Changed?.Invoke();
+    }
+
+    /// <summary>
     /// Starts a background download if an update is known and nothing is in flight yet. Called after a
     /// check when <see cref="AutoDownload"/> is on, and when the user switches the setting on with an
     /// update already pending.

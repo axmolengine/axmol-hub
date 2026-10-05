@@ -2109,6 +2109,46 @@ public partial class ShellCheckWindow : Window
         Check(shell.UpdateDotTip == MainWindow.FormatUpdateBadgeTip(UpdateService.Instance.PendingVersion),
             "红点提示与设置页读的是同一份待更新版本（实际 " + shell.UpdateDotTip + "）");
 
+        // The phases themselves, rendered for real and read off the controls. A real check needs GitHub,
+        // and a real download **replaces the process** the moment it ends, so the downloading and
+        // "restart to finish" states are otherwise unreachable here — and a version that goes missing in
+        // one of them is invisible: the line still reads like a status.
+        var pendingAsset = new VelopackAsset
+        {
+            FileName = "Axmol.Hub-9.9.9-win-x64-full.nupkg",
+            Size = 1_000_000,
+            Version = SemanticVersion.Parse("9.9.9"),
+        };
+        var pendingUpdate = new UpdateInfo(pendingAsset, false);
+
+        UpdateService.Instance.SetPendingForCheck(pendingUpdate, UpdateService.DownloadState.Downloading, 42);
+        settings.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var downloadingText = settings.UpdateStatusText;
+        Check(downloadingText.Contains("9.9.9", StringComparison.Ordinal)
+              && downloadingText.Contains("42", StringComparison.Ordinal),
+            "下载中的状态行真的渲染出版本号与进度（实际 " + downloadingText + "）");
+
+        UpdateService.Instance.SetPendingForCheck(pendingUpdate, UpdateService.DownloadState.Ready);
+        settings.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var readyText = settings.UpdateStatusText;
+        Check(settings.RestartButtonVisible
+              && readyText.Contains("9.9.9", StringComparison.Ordinal)
+              && settings.RestartActionTip.Contains("9.9.9", StringComparison.Ordinal)
+              && settings.DownloadActionTip.Contains("9.9.9", StringComparison.Ordinal),
+            "下载完成提示重启时仍然带着版本号（状态行 " + readyText + " / 重启按钮提示 " + settings.RestartActionTip + "）");
+
+        // And the card must come back down: a scripted update left behind would leak into every render
+        // check that follows (the shell's dot included).
+        UpdateService.Instance.ClearForCheck();
+        settings.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!settings.RestartButtonVisible
+              && settings.UpdateStatusText == HubTexts.Get("UpdateCheckHint", HubStrings.Language)
+              && settings.RestartActionTip.Length == 0,
+            "清掉脚本更新后卡片回到未检查的初始态（状态行 " + settings.UpdateStatusText + "）");
+
         // --- 5.2 Really switch the language once ---
         // The shell-side probe uses a nav item that is still a RadioButton (NavToolchains): it is built at
         // shell construction time, so its text changing proves DynamicResource re-resolves in place. Settings
