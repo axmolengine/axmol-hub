@@ -113,8 +113,8 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 尚未接入，先跑通机制流程。
 
-- **Windows**：计划走 **SignPath Foundation** 的免费 OSS 代码签名（Authenticode）。未签名会触发 SmartScreen 警告。
-- **macOS**：SignPath **不支持** —— 官方签名格式表里没有 `.app` / `.pkg` / `.dmg`，Gatekeeper 只认 Apple 签发的 Developer ID + 公证。macOS 通道接入时只有两条路：Apple Developer Program，或在下载页给出 `xattr -r -d com.apple.quarantine` 的指引。
-- **Linux**：SignPath 支持 `.rpm` / `.deb`（GPG 签名），但 AppImage 场景没有等价的「未知发布者」拦截，自己生成 GPG 密钥即可。
+- **Windows**：尚未接入代码签名，安装包未签名，会触发 SmartScreen 警告。
+- **macOS**：Gatekeeper 只认 Apple 签发的 Developer ID + 公证，`.app` / `.pkg` / `.dmg` 没有免费 OSS 签名通路。macOS 通道接入时只有两条路：Apple Developer Program，或在下载页给出 `xattr -r -d com.apple.quarantine` 的指引。
+- **Linux**：`.rpm` / `.deb` 走 GPG 签名；AppImage 场景没有等价的「未知发布者」拦截，自己生成 GPG 密钥即可。
 
 `Build-Hosts.ps1` 发布各宿主的自包含 CLI；`Build-Icon.ps1` 从源 PNG 生成 16–256 像素多尺寸 ICO。修改图标后先重新生成 ICO，再构建应用。

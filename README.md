@@ -37,7 +37,7 @@ Platform/architecture support is expressed by a single build-target model (`Buil
 
 The CLI cross-publishes `win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`; only the Windows host has actually been exercised. Android supports Debug / Release signed APK / AAB; Release uses the project key, and the ARM64 release package has been actually built and verified. See [docs/android-release-signing.md](docs/android-release-signing.md) for the full signing workflow.
 
-Installer packages are not yet code-signed (SignPath Foundation signing is being set up — see [Code signing policy](#code-signing-policy)), and first-install verification on a clean Windows 10 / 11 is not done yet.
+Installer packages are not yet code-signed, and first-install verification on a clean Windows 10 / 11 is not done yet.
 
 ## Quick start
 
@@ -98,7 +98,7 @@ Axmol Hub does not collect telemetry or personal information. It accesses the ne
 
 ## Code signing policy
 
-Free code signing is provided by [SignPath.io](https://about.signpath.io), with the certificate issued by the [SignPath Foundation](https://signpath.org). SignPath signing for Axmol Hub is being set up; until it is active, installer packages are unsigned.
+Installer packages are currently unsigned. The SignPath Foundation free OSS code-signing application was not approved, so no SignPath certificate is in use. Until code signing is arranged separately, Windows installers trigger a SmartScreen warning and macOS packages need `xattr -r -d com.apple.quarantine` (or Apple notarization) before opening.
 
 - Committers and reviewers: [@halx99](https://github.com/halx99)
 - Approvers: [@halx99](https://github.com/halx99)
