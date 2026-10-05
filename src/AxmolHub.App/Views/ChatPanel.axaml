@@ -110,6 +110,39 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
+    <Style Selector="Button.message-action">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Border.message-row:pointerover Button.message-action">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.message-action:pointerover">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.scroll-bottom">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="12,5" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="TextBlock.group-header">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="Margin" Value="2,10,0,2" />
+    </Style>
   </UserControl.Styles>
 
   <Grid ColumnDefinitions="250,*">
@@ -146,12 +179,17 @@
 
       <Border Grid.Row="1" Background="{DynamicResource Hub.SurfaceSunken}" CornerRadius="6"
               BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1">
-        <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto" Padding="20,16">
-          <StackPanel x:Name="MessageFlow" Spacing="12">
-            <TextBlock x:Name="EmptyHint" Text="{DynamicResource AssistantEmpty}"
-                       Classes="muted" TextWrapping="Wrap" />
-          </StackPanel>
-        </ScrollViewer>
+        <Grid>
+          <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto" Padding="20,16">
+            <StackPanel x:Name="MessageFlow" Spacing="12" />
+          </ScrollViewer>
+          <TextBlock x:Name="EmptyHint" Text="{DynamicResource AssistantEmpty}"
+                     Classes="muted" TextWrapping="Wrap" Margin="20,16"
+                     VerticalAlignment="Top" IsVisible="False" />
+          <Button x:Name="ScrollToBottomButton" Classes="scroll-bottom"
+                  HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,14"
+                  IsVisible="False" />
+        </Grid>
       </Border>
 
       <!-- Composer with model selection anchored at its lower-left corner -->

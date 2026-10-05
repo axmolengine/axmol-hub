@@ -290,6 +290,64 @@ public partial class ShellCheckWindow : Window
         Check(panel.DeleteConversationFromMenuForCheck(second.Id) && panel.ConversationCount == 0,
             "通过会话操作菜单删除指定的历史对话");
 
+        // ── Message-level actions and session management ──
+        // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
+        // regenerate/continue. Presence is asserted here; the operations themselves are asserted below.
+        shell.Chat.ClientOverride = _ => new ScriptedChatClient(["改写前的回复"]);
+        var opsConversation = shell.Chat.StartConversation();
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        await panel.SendForCheckAsync("第一问");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        Check(opsConversation.Messages.Count == 2 && opsConversation.Messages[0].Role == ChatRoles.User,
+            "会话记录了用户与助手两轮（实际 " + opsConversation.Messages.Count + "）");
+        Check(panel.BubbleHasAction(0, "CopyMessage") && panel.BubbleHasAction(0, "EditMessage") && panel.BubbleHasAction(0, "DeleteMessage"),
+            "用户消息气泡提供复制 / 编辑重发 / 删除操作");
+        Check(panel.BubbleHasAction(1, "CopyMessage") && panel.BubbleHasAction(1, "RegenerateMessage") && panel.BubbleHasAction(1, "ContinueReply"),
+            "最后一条助手消息气泡提供复制 / 重新生成 / 继续操作");
+        Check(panel.MessageActionCount > 0, "消息操作条渲染进消息流（实际 " + panel.MessageActionCount + " 个按钮）");
+        Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
+              && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
+            "消息操作文案支持中英文");
+
+        // Incremental rendering: an unrelated reload must reuse the existing bubbles, not rebuild the flow.
+        var firstBubble = panel.FirstBubbleForCheck;
+        panel.Reload();
+        Check(firstBubble is not null && ReferenceEquals(firstBubble, panel.FirstBubbleForCheck),
+            "刷新复用已有气泡控件而不是全量重建（增量渲染）");
+
+        // Regenerate drops the trailing assistant turn; edit-and-resend replaces the turn and truncates after it.
+        Check(shell.Chat.Regenerate() && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Role == ChatRoles.User,
+            "重新生成先丢弃末尾的助手回复");
+        Check(shell.Chat.EditAndResend(0, "改写后的提问")
+              && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Text == "改写后的提问",
+            "编辑重发替换该消息并截断其后全部内容");
+
+        // Session management: rename, pin (its own group header), and pruning abandoned empty sessions.
+        Check(shell.Chat.RenameConversation(opsConversation.Id, "重命名标题")
+              && shell.Chat.ActiveConversation!.Title == "重命名标题",
+            "重命名会话并持久化（实际「" + shell.Chat.ActiveConversation!.Title + "」）");
+        shell.Chat.SetPinned(opsConversation.Id, true);
+        Check(shell.Chat.Conversations.First(summary => summary.Id == opsConversation.Id).Pinned,
+            "会话置顶标记写入索引");
+        panel.Reload();
+        Check(panel.GroupHeaderText.Contains(HubStrings.Get("PinConversation"), StringComparison.Ordinal),
+            "置顶会话单独归入置顶分组（实际分组：" + panel.GroupHeaderText.Replace("\n", " / ") + "）");
+        Check(panel.SessionHasRenameMenu(opsConversation.Id) && panel.SessionHasPinMenu(opsConversation.Id),
+            "会话操作菜单提供重命名与置顶");
+
+        var emptyConversation = shell.Chat.StartConversation();
+        Check(shell.Chat.PruneEmptyConversations() >= 1
+              && shell.Chat.Conversations.All(summary => summary.Id != emptyConversation.Id),
+            "清空空会话移除从未使用的新会话");
+
+        shell.Chat.DeleteConversation(opsConversation.Id);
+        shell.Chat.ClientOverride = null;
+        panel.Reload();
+
         shell.Chat.RemoveModel(orca.Id, checkModel);
         shell.Chat.RemoveProvider(checkProvider.Id);
         panel.Reload();
