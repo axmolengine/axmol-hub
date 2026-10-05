@@ -60,5 +60,5 @@ commit stays in the notes.
 
 ## Project memory
 
-The `.workbuddy` directory holds the project's work logs and local memory. If that folder exists,
+The `.agents` directory holds the project's work logs and local memory. If that folder exists,
 access it and read the memory — do not perform any additional inference beyond what it records.
