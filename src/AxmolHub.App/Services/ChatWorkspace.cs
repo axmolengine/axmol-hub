@@ -1139,6 +1139,62 @@ public sealed class ChatWorkspace : IDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>Renames a conversation; an empty title is refused so a session can never lose its label.
+    /// Renaming writes only the conversation file, so the pin and the messages are untouched.</summary>
+    public bool RenameConversation(string conversationId, string title)
+    {
+        var trimmed = title.Trim();
+        if (trimmed.Length == 0) return false;
+
+        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
+        if (conversation is null) return false;
+
+        conversation.Title = trimmed;
+        _conversations.Save(conversation);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>Pins or unpins a conversation. Pinned sessions sort above the rest (see ConversationStore).</summary>
+    public bool SetPinned(string conversationId, bool pinned)
+    {
+        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
+        if (conversation is null) return false;
+
+        conversation.Pinned = pinned;
+        _conversations.Save(conversation);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>Drops every conversation that never received a message. Starting a new session writes an
+    /// empty one immediately, so without this the sidebar slowly fills with abandoned "new chat" rows.</summary>
+    public int PruneEmptyConversations()
+    {
+        var emptyIds = _conversations.List()
+            .Where(summary => summary.MessageCount == 0)
+            .Select(summary => summary.Id)
+            .ToList();
+
+        foreach (var id in emptyIds) _conversations.Delete(id);
+        if (_active is not null && emptyIds.Contains(_active.Id)) _active = null;
+        if (emptyIds.Count > 0) Changed?.Invoke();
+        return emptyIds.Count;
+    }
+
+    /// <summary>Removes one message from a conversation and persists the result. Removing is the primitive
+    /// behind the per-message delete action; edit/regenerate are built on top of it.</summary>
+    public bool RemoveTurn(string conversationId, int index)
+    {
+        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
+        if (conversation is null || index < 0 || index >= conversation.Messages.Count) return false;
+
+        conversation.Messages.RemoveAt(index);
+        _conversations.Save(conversation);
+        Changed?.Invoke();
+        return true;
+    }
+
     /// <summary>
     /// Streams an assistant reply to <paramref name="text"/> in the active conversation, appending the user
     /// turn first and the assistant turn when the stream completes.
@@ -1153,15 +1209,85 @@ public sealed class ChatWorkspace : IDisposable
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (_active is null) throw new InvalidOperationException("No active conversation.");
-        var choice = SelectedChatModel;
-        if (choice is null) throw new InvalidOperationException("No authenticated provider with a configured model is available.");
+        var choice = SelectedChatModel
+            ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
 
-        var provider = choice.Provider;
         var conversation = _active;
-        conversation.ProviderId = provider.Id;
+        conversation.ProviderId = choice.Provider.Id;
         conversation.ModelName = choice.ModelName;
         conversation.Append(ChatTurn.User(text));
         _conversations.Save(conversation);
+
+        await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
+            yield return chunk;
+    }
+
+    /// <summary>
+    /// Replaces the user turn at <paramref name="index"/> with <paramref name="text"/>. Everything after the
+    /// edited turn is dropped: that text was answered once already, so the reply and any later turns are stale
+    /// the moment the question changes. Streaming is a separate call (<see cref="ResendAsync"/>) so the view
+    /// can repaint the shortened history before the new reply starts arriving.
+    /// </summary>
+    public bool EditAndResend(int index, string text)
+    {
+        if (_active is null) throw new InvalidOperationException("No active conversation.");
+        if (index < 0 || index >= _active.Messages.Count) return false;
+
+        var conversation = _active;
+        conversation.Messages.RemoveRange(index, conversation.Messages.Count - index);
+        conversation.Append(ChatTurn.User(text));
+        _conversations.Save(conversation);
+        return true;
+    }
+
+    /// <summary>Drops the trailing assistant turn (if any) so the last user turn can be answered again.</summary>
+    public bool Regenerate()
+    {
+        if (_active is null) throw new InvalidOperationException("No active conversation.");
+
+        var conversation = _active;
+        if (conversation.Messages.Count > 0 && conversation.Messages[^1].Role == ChatRoles.Assistant)
+            conversation.Messages.RemoveAt(conversation.Messages.Count - 1);
+        _conversations.Save(conversation);
+        return true;
+    }
+
+    /// <summary>Continues a reply the model stopped early: the instruction is appended as a user turn so the
+    /// persisted history reads honestly (the user really did ask it to go on).</summary>
+    public async IAsyncEnumerable<string> ContinueAsync(
+        string instruction,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (_active is null) throw new InvalidOperationException("No active conversation.");
+
+        var conversation = _active;
+        conversation.Append(ChatTurn.User(instruction));
+        _conversations.Save(conversation);
+
+        await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
+            yield return chunk;
+    }
+
+    /// <summary>Streams a reply against the conversation's current history without appending a user turn.
+    /// Used by edit-and-resend and regenerate, whose history change already happened.</summary>
+    public async IAsyncEnumerable<string> ResendAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (_active is null) throw new InvalidOperationException("No active conversation.");
+
+        await foreach (var chunk in StreamReplyAsync(_active, cancellationToken).ConfigureAwait(false))
+            yield return chunk;
+    }
+
+    /// <summary>Streams against the conversation's current history and writes the assistant turn on the way
+    /// out. Shared by send / edit / regenerate / continue so the partial-reply-on-cancel rule holds once.</summary>
+    private async IAsyncEnumerable<string> StreamReplyAsync(
+        Conversation conversation,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var choice = SelectedChatModel
+            ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
+        var provider = choice.Provider;
 
         var received = new System.Text.StringBuilder();
         try
