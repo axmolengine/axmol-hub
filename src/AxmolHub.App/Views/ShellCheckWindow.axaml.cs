@@ -427,6 +427,21 @@ public partial class ShellCheckWindow : Window
         shell.Chat.RemoveProvider(checkProvider.Id);
         panel.Reload();
 
+        // ── Notice rows: the icon and the text must each own a column ──
+        // The row declares "Auto,*", and a child without an explicit column lands in column 0 — both of
+        // them there stacked the text on the icon, which in a real run read like "the model-switch tip is
+        // smudged over something". Appended through the real path and read off the controls.
+        panel.AppendNoticeForCheck(string.Format(
+            CultureInfo.InvariantCulture, HubStrings.Get("ModelChangedFormat"), "ShellCheck · model/x"));
+        Dispatcher.UIThread.RunJobs();
+        var noticeLayout = panel.LastNoticeLayoutForCheck;
+        Check(noticeLayout is { Columns: 2, IconColumn: 0, TextColumn: 1 },
+            "切换模型等提示行的图标与文字各占一列，文字不再压住图标（实际 "
+            + (noticeLayout is { } n
+                ? $"图标第 {n.IconColumn} 列、文字第 {n.TextColumn} 列、共 {n.Columns} 列"
+                : "没有找到提示行") + "）");
+        panel.Reload();
+
         // ── Provider management lives in Settings now (it moved off the assistant page) ──
         await CheckProvidersInSettingsAsync(scratchRoot, shell);
 

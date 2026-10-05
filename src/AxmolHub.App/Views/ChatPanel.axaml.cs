@@ -339,9 +339,15 @@ public partial class ChatPanel : UserControl
             Data = ThemeGeometry("Hub.Icon.Notice"),
         };
         icon.Classes.Add("notice-icon");
+        // The row declares "Auto,*", and a child without an explicit column lands in column 0 — both of
+        // them there meant the text sat on top of the icon, which in a real run read like "the tip is
+        // smudged over something". Icon owns column 0, text column 1.
+        Grid.SetColumn(icon, 0);
         row.Children.Add(icon);
 
-        row.Children.Add(new TextBlock { Text = text });
+        var label = new TextBlock { Text = text };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
         MessageFlow.Children.Add(row);
         ScrollToEnd();
     }
@@ -631,6 +637,29 @@ public partial class ChatPanel : UserControl
     /// <summary>The first rendered message row, so a check can prove a reload reuses it instead of rebuilding
     /// the whole flow (the incremental path's whole point).</summary>
     internal object? FirstBubbleForCheck => MessageRows.FirstOrDefault();
+
+    /// <summary>Appends a notice row through the real path, so the row's layout can be read back off the
+    /// controls instead of inferred from code.</summary>
+    internal void AppendNoticeForCheck(string text, bool danger = false) => AppendNotice(text, danger);
+
+    /// <summary>The last notice row's column layout — (icon column, text column, declared column count) —
+    /// or null when the flow does not end with a notice row. Notice rows are not message rows, so this
+    /// never disturbs the bubble assertions.</summary>
+    internal (int IconColumn, int TextColumn, int Columns)? LastNoticeLayoutForCheck
+    {
+        get
+        {
+            if (MessageFlow.Children.Count == 0
+                || MessageFlow.Children[^1] is not Grid row
+                || !row.Classes.Contains("notice")
+                || row.Children.Count < 2)
+            {
+                return null;
+            }
+
+            return (Grid.GetColumn(row.Children[0]), Grid.GetColumn(row.Children[1]), row.ColumnDefinitions.Count);
+        }
+    }
 
     // ── Composer (send button state, chip, focus highlight) ──
     internal void SetComposerFocusForCheck(bool focused) => SetComposerFocus(focused);
