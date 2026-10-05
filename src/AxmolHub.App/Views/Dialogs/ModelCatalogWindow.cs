@@ -1,6 +1,9 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -112,7 +115,8 @@ public sealed class ModelCatalogWindow : Window
         layout.Children.Add(buttons);
         Content = new Border { Child = layout };
 
-        _list.ItemTemplate = new FuncDataTemplate<ModelRow>((row, _) => row.Render(), supportsRecycling: false);
+        _list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
+        _list.ItemTemplate = new FuncDataTemplate<ModelRow>((_, _) => ModelRow.Render(), supportsRecycling: true);
         _search.TextChanged += (_, _) => Filter();
         _list.DoubleTapped += (_, _) => EnableSelected();
         _search.KeyDown += (_, e) =>
@@ -147,11 +151,11 @@ public sealed class ModelCatalogWindow : Window
         if (_list.SelectedItem is not ModelRow row || row.Enabled) return;
         if (_enableModel(row.Name))
         {
+            row.Enabled = true;
             _status.Text = string.Format(
                 System.Globalization.CultureInfo.InvariantCulture,
                 HubStrings.Get("ModelCatalogEnabled"),
                 row.Name);
-            Filter();
         }
         else
         {
@@ -189,37 +193,75 @@ public sealed class ModelCatalogWindow : Window
         }
     }
 
-    private sealed record ModelRow(string Name, bool Enabled, string Description)
+    private sealed class ModelRow(string name, bool enabled, string description) : INotifyPropertyChanged
     {
-        public Control Render()
+        private bool _enabled = enabled;
+
+        public string Name { get; } = name;
+        public string Description { get; } = description;
+        public bool HasDescription => Description.Length > 0;
+        public string StateText => HubStrings.Get(Enabled
+            ? "ModelCatalogEnabledState"
+            : "ModelCatalogDisabledState");
+        public bool IsEnabled => Enabled;
+        public bool IsDisabled => !Enabled;
+
+        public bool Enabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(StateText));
+                OnPropertyChanged(nameof(IsEnabled));
+                OnPropertyChanged(nameof(IsDisabled));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public static Control Render()
         {
             var text = new StackPanel { Spacing = 2 };
             text.Children.Add(new TextBlock
             {
-                Text = Name,
+                [!TextBlock.TextProperty] = new Binding(nameof(Name)),
                 FontWeight = FontWeight.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
-            if (Description.Length > 0)
+            var description = new TextBlock
             {
-                text.Children.Add(new TextBlock
-                {
-                    Text = Description,
-                    Classes = { "muted" },
-                    FontSize = 11,
-                    TextWrapping = TextWrapping.Wrap,
-                });
-            }
+                [!TextBlock.TextProperty] = new Binding(nameof(Description)),
+                [!Visual.IsVisibleProperty] = new Binding(nameof(HasDescription)),
+                Classes = { "muted" },
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            text.Children.Add(description);
 
-            var state = new TextBlock
+            var enabledState = new TextBlock
             {
-                Text = HubStrings.Get(Enabled ? "ModelCatalogEnabledState" : "ModelCatalogDisabledState"),
+                Text = HubStrings.Get("ModelCatalogEnabledState"),
+                [!Visual.IsVisibleProperty] = new Binding(nameof(IsEnabled)),
                 FontSize = 11,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             };
-            state.Bind(TextBlock.ForegroundProperty,
-                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
-                    Enabled ? "Hub.Success" : "Hub.TextTertiary"));
+            enabledState.Bind(TextBlock.ForegroundProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.Success"));
+            var disabledState = new TextBlock
+            {
+                Text = HubStrings.Get("ModelCatalogDisabledState"),
+                [!Visual.IsVisibleProperty] = new Binding(nameof(IsDisabled)),
+                FontSize = 11,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            disabledState.Bind(TextBlock.ForegroundProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextTertiary"));
+            var state = new Grid();
+            state.Children.Add(enabledState);
+            state.Children.Add(disabledState);
 
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             Grid.SetColumn(text, 0);
@@ -228,12 +270,14 @@ public sealed class ModelCatalogWindow : Window
             grid.Children.Add(state);
             return new Border
             {
-                Padding = new Thickness(8, 6),
+                Height = 48,
+                Padding = new Thickness(8, 4),
                 Child = grid,
             };
         }
 
-        public override string ToString() => Name;
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
     internal async Task ShowAsync(Window? owner)
@@ -266,13 +310,18 @@ public sealed class ModelCatalogWindow : Window
         => _list.Items.OfType<ModelRow>().Where(row => row.Enabled).Select(row => row.Name).ToArray();
 
     internal bool HasRefreshButtonForCheck => _refreshButton.Tag as string == "model-catalog-refresh";
+    internal bool UsesVirtualizingPanelForCheck
+        => _list.ItemsPanel?.Build() is VirtualizingStackPanel;
+    internal bool ActivationPreservedItemsSourceForCheck { get; private set; }
 
     internal bool ActivateForCheck(string name)
     {
         _list.SelectedItem = _list.Items.OfType<ModelRow>()
             .FirstOrDefault(row => string.Equals(row.Name, name, StringComparison.OrdinalIgnoreCase));
         if (_list.SelectedItem is null) return false;
+        var itemsSource = _list.ItemsSource;
         EnableSelected();
+        ActivationPreservedItemsSourceForCheck = ReferenceEquals(itemsSource, _list.ItemsSource);
         return true;
     }
 

@@ -988,6 +988,8 @@ public partial class ShellCheckWindow : Window
         Check(catalog is not null, "可以打开已缓存的模型目录");
         if (catalog is not null)
         {
+            Check(catalog.UsesVirtualizingPanelForCheck,
+                "模型目录使用虚拟化列表面板，滚动时只创建可见项");
             catalog.SearchForCheck("qwen3");
             Dispatcher.UIThread.RunJobs();
             Check(catalog.VisibleModelNamesForCheck.SequenceEqual(["qwen3"]),
@@ -997,8 +999,9 @@ public partial class ShellCheckWindow : Window
             Check(catalog.ActivateForCheck("qwen3")
                   && catalog.ActivateForCheck("llama3.2")
                   && catalog.EnabledModelNamesForCheck.Length == 2
+                  && catalog.ActivationPreservedItemsSourceForCheck
                   && shell.Chat.AvailableChatModels.Count(choice => choice.Provider.Id == target.Id) == 2,
-                "双击可以在弹窗保持打开时连续启用多个模型（实际 ["
+                "双击可以连续启用多个模型且不重建列表（实际 ["
                     + string.Join(",", catalog.EnabledModelNamesForCheck) + "]）");
         }
         settings.RefreshProviderGroupsForCheck();
