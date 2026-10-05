@@ -1,0 +1,49 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
+        x:Class="AxmolHub.App.HubMarkdownStyles">
+
+  <!--
+    Colors for Markdown tables, from the Hub tokens.
+
+    The reason this file exists: the GithubLike markdown theme hardcodes light colors for tables
+    (cell rows on White, the header painted White on the text block itself, grid lines #DFE2E5).
+    Under the dark shell that paints light text on a white box, so the table reads as blank.
+
+    These setters must live in the viewer's OWN Styles collection, appended after the markdown
+    theme. MarkdownScrollViewer inserts its theme at index 0 of that collection, and for a control
+    inside the document the viewer's collection is closer than ChatPanel's, so it wins over anything
+    written in ChatPanel.axaml. Later index in the same collection is the only thing that beats it.
+  -->
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Border.Table">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+  </Style>
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Grid.Table > Border">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+  </Style>
+
+  <!-- The header band belongs on the cell, not on the text block: the theme's White box only covers
+       the glyphs, which is what made the header look like a row of white chips. -->
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Border.TableHeader">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+  </Style>
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Border.TableHeader ctxt|CTextBlock">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+  </Style>
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Border.OddTableRow">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Border.EvenTableRow">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+  </Style>
+
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer Grid.Table ctxt|CTextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+  </Style>
+</Styles>

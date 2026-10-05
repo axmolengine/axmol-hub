@@ -337,6 +337,8 @@ public partial class ShellCheckWindow : Window
             "聊天消息中的 fenced code block 交给已完成布局的 Markdown 控件渲染");
         Check(panel.HasScrollableMarkdownTable(),
             "Markdown 表格超出聊天栏时使用独立横向滚动区域，列表仍留在原有自动换行布局");
+        Check(panel.HasThemedMarkdownTable(),
+            "Markdown 表格使用 Hub 主题配色（表头/隔行底色与网格线），不是内置主题的浅色白底");
         panel.ApplyMarkdownSyntaxHighlightingForCheck();
         Check(panel.HasSyntaxHighlightedCode("cpp"),
             "C++ fenced code block 使用可用的语法定义高亮");

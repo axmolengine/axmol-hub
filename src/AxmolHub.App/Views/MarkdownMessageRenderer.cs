@@ -38,6 +38,10 @@ internal static class MarkdownMessageRenderer
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             Tag = markdown,
         };
+        // The markdown theme is inserted at index 0 of the viewer's own Styles collection, which is
+        // closer to the rendered content than ChatPanel's styles, so it wins there. Appending after it
+        // is what lets the Hub tokens override the table colors GithubLike hardcodes for light themes.
+        viewer.Styles.Add(new HubMarkdownStyles());
         var syntax = Syntax.Value;
         var plugins = new MdAvPlugins();
         plugins.Plugins.Add(syntax.Plugin);
@@ -231,6 +235,42 @@ internal static class MarkdownMessageRenderer
                              && scroller.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled
                              && scroller.Content is Grid { Classes: var classes }
                              && classes.Contains("Table"));
+
+    /// <summary>Whether every table in the document paints with Hub tokens instead of GithubLike's
+    /// hardcoded light colors. Those light colors are what made a table unreadable on the dark shell:
+    /// white cells under near-white text.</summary>
+    internal static bool HasThemedTable(MarkdownScrollViewer viewer)
+    {
+        var cells = viewer.GetVisualDescendants().OfType<Border>()
+            .Where(cell => cell.Parent is Grid { Classes: var grid } && grid.Contains("Table"))
+            .ToArray();
+        var header = cells.FirstOrDefault(cell => cell.Classes.Contains("TableHeader"));
+        var odd = cells.FirstOrDefault(cell => cell.Classes.Contains("OddTableRow"));
+        var even = cells.FirstOrDefault(cell => cell.Classes.Contains("EvenTableRow"));
+        if (header is null || odd is null && even is null) return false;
+        if (!cells.All(cell => MatchesToken(cell.BorderBrush, "Hub.BorderStrong"))) return false;
+        if (!MatchesToken(header.Background, "Hub.SurfaceRaised")) return false;
+        if (!IsTransparent(odd?.Background)) return false;
+        if (even is not null && !MatchesToken(even.Background, "Hub.SurfaceAlt")) return false;
+
+        var headerText = header.GetVisualDescendants().OfType<CTextBlock>().FirstOrDefault();
+        return headerText is not null
+               && IsTransparent(headerText.Background)
+               && MatchesToken(headerText.Foreground, "Hub.TextPrimary");
+    }
+
+    /// <summary>Compares resolved colors, not brush instances: a style setter and a resource token are
+    /// never the same object. The theme variant has to be named explicitly, because the Hub color
+    /// tokens live in ThemeDictionaries and a null variant skips them.</summary>
+    private static bool MatchesToken(IBrush? brush, string tokenKey)
+        => brush is ISolidColorBrush solid
+           && Application.Current is { } app
+           && app.TryGetResource(tokenKey, app.ActualThemeVariant, out var value)
+           && value is ISolidColorBrush token
+           && solid.Color == token.Color;
+
+    private static bool IsTransparent(IBrush? brush)
+        => brush is null || brush is ISolidColorBrush { Color: var color } && color == Colors.Transparent;
 
     private static string LinkifyBareUrls(string markdown)
     {
