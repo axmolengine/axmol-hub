@@ -1279,6 +1279,10 @@ public partial class SettingsPage : UserControl
         var enabled = new ToggleSwitch
         {
             IsChecked = model.Enabled,
+            // The Fluent theme labels the knob "On"/"Off" — English text in a bilingual UI that the row's
+            // knob position already says. Clear both contents rather than translating them.
+            OnContent = null,
+            OffContent = null,
             VerticalAlignment = VerticalAlignment.Center,
             Tag = SectionTags.ModelEnabled,
         };
