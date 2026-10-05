@@ -29,6 +29,7 @@
   <ItemGroup>
     <!-- 仓库仅有的 NuGet 依赖全部集中在这里：Avalonia 一组 + Velopack（P6 从 WPF 项目搬过来，
          依赖集合没有变，只是换了宿主项目）。Core 与 Cli 仍保持零依赖、可离线构建。 -->
+    <PackageReference Include="Markdig" Version="0.40.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Avalonia" Version="12.1.3" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />

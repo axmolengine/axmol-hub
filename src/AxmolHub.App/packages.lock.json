@@ -55,6 +55,12 @@
           "Microsoft.IO.RecyclableMemoryStream": "3.0.1"
         }
       },
+      "Markdig": {
+        "type": "Direct",
+        "requested": "[0.40.0, )",
+        "resolved": "0.40.0",
+        "contentHash": "4ve14zs+gt1irldTQE3y5FLAHuzmhW7T99lAAvVipe/q2LWT/nUCO0iICb9TXGvMX6n7Z1OZroFXkdSy91rO8w=="
+      },
       "Velopack": {
         "type": "Direct",
         "requested": "[1.2.161, )",

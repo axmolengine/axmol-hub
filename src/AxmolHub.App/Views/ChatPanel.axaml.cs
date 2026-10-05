@@ -1,10 +1,13 @@
 using System;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Threading;
 using AxmolHub.Core;
@@ -190,8 +193,11 @@ public partial class ChatPanel : UserControl
         InputBox.Text = "";
 
         AppendBubble(HubStrings.Get("You"), text, fromUser: true);
-        var assistantText = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "" };
-        AppendBubble(HubStrings.Get("Assistant"), assistantText, fromUser: false);
+        var assistantBody = new StackPanel { Spacing = 8 };
+        AppendBubble(HubStrings.Get("Assistant"), assistantBody, fromUser: false);
+        var assistantMarkdown = new StringBuilder();
+        var assistantPreview = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        assistantBody.Children.Add(assistantPreview);
 
         _send = new CancellationTokenSource();
         SendButton.Content = HubStrings.Get("Stop");
@@ -199,7 +205,8 @@ public partial class ChatPanel : UserControl
         {
             await foreach (var chunk in _chat.SendAsync(text, _send.Token).ConfigureAwait(true))
             {
-                assistantText.Text += chunk;
+                assistantMarkdown.Append(chunk);
+                assistantPreview.Text = assistantMarkdown.ToString();
                 ScrollToEnd();
             }
         }
@@ -213,6 +220,7 @@ public partial class ChatPanel : UserControl
         }
         finally
         {
+            MarkdownMessageRenderer.RenderInto(assistantBody, assistantMarkdown.ToString());
             _send.Dispose();
             _send = null;
             SendButton.Content = HubStrings.Get("Send");
@@ -245,9 +253,9 @@ public partial class ChatPanel : UserControl
     }
 
     private void AppendBubble(string speaker, string text, bool fromUser)
-        => AppendBubble(speaker, new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, fromUser);
+        => AppendBubble(speaker, MarkdownMessageRenderer.Render(text), fromUser);
 
-    private void AppendBubble(string speaker, TextBlock body, bool fromUser)
+    private void AppendBubble(string speaker, Control body, bool fromUser)
     {
         EmptyHint.IsVisible = false;
         var label = new TextBlock
@@ -292,8 +300,15 @@ public partial class ChatPanel : UserControl
 
     internal string FlowText => string.Join("\n", MessageFlow.Children
         .OfType<Border>()
-        .SelectMany(bubble => (bubble.Child as StackPanel)?.Children.OfType<TextBlock>() ?? [])
-        .Select(block => block.Text));
+        .SelectMany(bubble => bubble.GetLogicalDescendants().OfType<TextBlock>())
+        .Select(block => string.IsNullOrEmpty(block.Text)
+            ? string.Concat(block.Inlines?.Select(inline => inline switch
+            {
+                Run run => run.Text,
+                InlineUIContainer { Child: TextBlock { Tag: "markdown-link", Text: string linkText } } => linkText,
+                _ => "",
+            }) ?? [])
+            : block.Text));
 
     internal string ActiveModelText => ActiveModelLabel.Text ?? "";
     internal int ConversationCount => _chat.Conversations.Count;

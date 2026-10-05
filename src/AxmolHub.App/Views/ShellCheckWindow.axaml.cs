@@ -2,8 +2,10 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -202,6 +204,39 @@ public partial class ShellCheckWindow : Window
             "用户消息出现在消息流里");
         Check(panel.FlowText.Contains("你好，Axmol 助手。", StringComparison.Ordinal),
             "流式回复完整落进消息流（实际消息流：\n" + panel.FlowText + "）");
+        var markdown = MarkdownMessageRenderer.Render(
+            "# Heading\n\nA **bold** word and `inline code`.\n\n"
+            + "- **Official website:** https://axmol.dev/\n"
+            + "- **GitHub repository:** https://github.com/axmolengine/axmol\n"
+            + "- **Markdown link:** [Axmol documentation](https://axmol.dev/guide/)\n\n"
+            + "| Name | Value |\n| --- | --- |\n| answer | 42 |\n\n"
+            + "```csharp\nvar answer = 42;\n```");
+        Check(markdown.GetLogicalDescendants().OfType<TextBlock>().Any(block =>
+                  block.Tag as string == "markdown-heading" && RenderedText(block) == "Heading")
+              && markdown.GetLogicalDescendants().OfType<TextBlock>().Any(block =>
+                  block.Tag as string == "markdown-code" && block.Text?.Contains("var answer = 42;", StringComparison.Ordinal) == true)
+              && markdown.GetLogicalDescendants().OfType<StackPanel>().Any(panel => panel.Tag as string == "markdown-list")
+              && markdown.GetLogicalDescendants().OfType<ScrollViewer>().Any(viewer => viewer.Tag as string == "markdown-table")
+              && markdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Any(block => block.Tag as string == "markdown-link" && block.Text == "Axmol documentation")
+              && markdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Where(block => block.Tag as string == "markdown-link")
+                  .All(block => block.Foreground is Avalonia.Media.SolidColorBrush linkBrush && linkBrush.Color.A == 255)
+              && markdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Any(block => block.Inlines?.OfType<Run>()
+                      .Any(run => run.Text == "bold" && run.FontWeight == Avalonia.Media.FontWeight.Bold) == true),
+            "Markdown 标题、强调、列表、表格和 fenced code block 按格式渲染");
+        var linksMarkdown = MarkdownMessageRenderer.Render(
+            "- **Official website:** https://axmol.dev/\n"
+            + "- **GitHub repository:** https://github.com/axmolengine/axmol");
+        Check(linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Count(block => block.Tag as string == "markdown-link") == 2
+              && linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Any(block => block.Tag as string == "markdown-link" && block.Text == "https://axmol.dev/")
+              && linksMarkdown.GetLogicalDescendants().OfType<TextBlock>()
+                  .Any(block => block.Tag as string == "markdown-link"
+                                && block.Text == "https://github.com/axmolengine/axmol"),
+            "列表中的裸 URL 显示为始终可见的链接文本");
 
         // The conversation persists: the saved transcript must carry both turns, so the reply survives a
         // reload instead of living only in the UI.
@@ -1944,6 +1979,14 @@ public partial class ShellCheckWindow : Window
     private static string NavLabel(RadioButton button) => button.Content is Panel panel
         ? string.Join("", panel.Children.OfType<TextBlock>().Select(text => text.Text))
         : button.Content?.ToString() ?? "";
+
+    private static string RenderedText(TextBlock block)
+        => string.Concat(block.Inlines?.Select(inline => inline switch
+        {
+            Run run => run.Text,
+            InlineUIContainer { Child: TextBlock { Tag: "markdown-link", Text: string linkText } } => linkText,
+            _ => "",
+        }) ?? []);
 
     private static bool Throws<T>(Action action)
         where T : Exception
