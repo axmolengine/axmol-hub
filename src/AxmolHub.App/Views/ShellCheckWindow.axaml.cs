@@ -207,30 +207,34 @@ public partial class ShellCheckWindow : Window
               && panel.CheckedComposerMenuModesForCheck.Length == 0
               && panel.ComposerMenuModesAreCheckboxesForCheck
               && panel.ComposerMenuModeItemsCloseOnClickForCheck
+              && panel.ComposerMenuModesHaveIconsForCheck
               && !panel.ModeIndicatorVisibleForCheck,
-            "加号菜单提供可取消的提问、计划、目标复选项，默认全部未勾选且点击后关闭");
+            "加号菜单提供带图标、可取消的提问、计划、目标复选项，默认全部未勾选且点击后关闭");
         Check(panel.ModeIndicatorFollowsPlusForCheck,
             "模式按钮位于加号右侧");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
               && panel.SelectedModeForCheck == ChatModes.Ask
               && panel.SelectedComposerModeForCheck == ChatModes.Ask
               && panel.ModeIndicatorVisibleForCheck
+              && panel.ModeIndicatorIconMatchesSelectedModeForCheck
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Ask]),
             "点击提问后菜单关闭、只勾选提问，并显示模式按钮");
         Check(panel.ModeIndicatorKeepsLabelVisibleForCheck,
-            "悬停删除图标时模式名称仍在按钮固定的右侧文字区显示");
+            "悬停叉号时模式名称仍在按钮固定的右侧文字区显示");
         Check(panel.ModeIndicatorCloseIsRedForCheck,
             "模式按钮删除图标使用主题危险色（" + panel.ModeIndicatorCloseColorForCheck + "）");
         Check(panel.ModeIndicatorCloseIsLeftAndCenteredForCheck,
             "模式按钮删除图标位于文字左侧并垂直居中");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
               && panel.SelectedComposerModeForCheck == ChatModes.Plan
+              && panel.ModeIndicatorIconMatchesSelectedModeForCheck
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan]),
             "点击计划会取消提问并仅勾选计划，菜单立即关闭");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)
               && panel.SelectedModeForCheck == ChatModes.Agent
               && panel.SelectedComposerModeForCheck == ChatModes.Agent
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent])
+              && panel.ModeIndicatorIconMatchesSelectedModeForCheck
               && panel.ModeIndicatorVisibleForCheck,
             "点击目标后仅勾选目标并显示目标按钮，菜单立即关闭");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)

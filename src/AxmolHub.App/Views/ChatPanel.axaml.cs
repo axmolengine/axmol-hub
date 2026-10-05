@@ -152,6 +152,7 @@ public partial class ChatPanel : UserControl
     {
         RefreshModelPicker();
         ModeIndicatorButton.IsVisible = _selectedComposerMode is not null;
+        ModeIndicatorIcon.Data = ThemeGeometry(ComposerModeIconKey(_selectedComposerMode));
         ModeIndicatorLabel.Text = HubStrings.Get(_selectedComposerMode switch
         {
             ChatModes.Ask => "ChatModeAsk",
@@ -218,7 +219,7 @@ public partial class ChatPanel : UserControl
         {
             var item = new MenuItem
             {
-                Header = HubStrings.Get(key),
+                Header = BuildComposerModeHeader(mode, key),
                 ToggleType = MenuItemToggleType.CheckBox,
                 IsChecked = _selectedComposerMode == mode,
                 Tag = mode,
@@ -266,6 +267,50 @@ public partial class ChatPanel : UserControl
         menu.Items.Add(addProject);
         return menu;
     }
+
+    private static Control BuildComposerModeHeader(string mode, string labelKey)
+    {
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        header.Children.Add(BuildModeIcon(mode, 14));
+        header.Children.Add(new TextBlock
+        {
+            Text = HubStrings.Get(labelKey),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        return header;
+    }
+
+    private static Avalonia.Controls.Shapes.Path BuildModeIcon(string mode, double size)
+    {
+        var icon = new Avalonia.Controls.Shapes.Path
+        {
+            Width = size,
+            Height = size,
+            Stretch = Stretch.Uniform,
+            Data = ThemeGeometry(ComposerModeIconKey(mode)),
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        icon.Bind(
+            Avalonia.Controls.Shapes.Path.StrokeProperty,
+            new DynamicResourceExtension("Hub.TextSecondary"));
+        return icon;
+    }
+
+    private static string ComposerModeIconKey(string? mode) => mode switch
+    {
+        ChatModes.Ask => "Hub.Icon.ChatModeAsk",
+        ChatModes.Plan => "Hub.Icon.ChatModePlan",
+        _ => "Hub.Icon.ChatModeGoal",
+    };
 
     private void SetComposerMode(string mode)
     {
@@ -1246,21 +1291,29 @@ public partial class ChatPanel : UserControl
         => ModeIndicatorLabel.IsVisible && ModeIndicatorLabel.Parent is Grid grid
            && grid.ColumnDefinitions.Count == 2
            && Grid.GetColumn(ModeIndicatorLabel) == 1;
+    internal bool ModeIndicatorIconMatchesSelectedModeForCheck
+        => ReferenceEquals(ModeIndicatorIcon.Data, ThemeGeometry(ComposerModeIconKey(_selectedComposerMode)));
     internal bool ModeIndicatorCloseIsRedForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
-            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close")) is { } close
-           && close.Foreground is ISolidColorBrush closeBrush
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
+           && close.Stroke is ISolidColorBrush closeBrush
            && closeBrush.Color.R > closeBrush.Color.G
            && closeBrush.Color.R > closeBrush.Color.B;
     internal string ModeIndicatorCloseColorForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
-            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close"))?.Foreground?.ToString() ?? "unset";
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close"))?.Stroke?.ToString() ?? "unset";
     internal bool ModeIndicatorCloseIsLeftAndCenteredForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
-            .FirstOrDefault(block => block.Classes.Contains("mode-indicator-close")) is { } close
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
            && close.VerticalAlignment == VerticalAlignment.Center
            && close.Parent is Grid grid
            && Grid.GetColumn(close) == 0;
+    internal bool ComposerMenuModesHaveIconsForCheck
+        => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
+            .All(item => item.Header is StackPanel header
+                         && header.Children.OfType<Avalonia.Controls.Shapes.Path>().FirstOrDefault() is { } icon
+                         && ReferenceEquals(icon.Data, ThemeGeometry(ComposerModeIconKey(item.Tag?.ToString())))
+                         && header.Children.OfType<TextBlock>().Any());
     internal string[] ComposerMenuModesForCheck => BuildComposerMenu().Items.OfType<MenuItem>()
         .Where(IsComposerModeItem)
         .Select(item => (string)item.Tag!)

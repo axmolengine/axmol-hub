@@ -283,11 +283,13 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="CornerRadius" Value="15" />
     </Style>
-    <Style Selector="TextBlock.mode-indicator-close">
+    <Style Selector="Path.mode-indicator-close">
       <Setter Property="Opacity" Value="0" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
-    <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-close">
+    <Style Selector="Button.mode-indicator:pointerover Path.mode-indicator-icon">
+      <Setter Property="Opacity" Value="0" />
+    </Style>
+    <Style Selector="Button.mode-indicator:pointerover Path.mode-indicator-close">
       <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="WrapPanel.context-attachments">
@@ -402,9 +404,16 @@
               <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
                       VerticalAlignment="Center" IsVisible="False">
                 <Grid ColumnDefinitions="14,*">
-                  <TextBlock Classes="mode-indicator-close" Text="×" FontSize="16"
-                             HorizontalAlignment="Left" VerticalAlignment="Center"
-                             Foreground="{DynamicResource Hub.DangerText}" />
+                  <Path x:Name="ModeIndicatorIcon" Classes="mode-indicator-icon" Width="13" Height="13"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Stretch="Uniform" Fill="Transparent"
+                        Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
+                        StrokeLineCap="Round" StrokeJoin="Round" />
+                  <Path Classes="mode-indicator-close" Width="13" Height="13"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Stretch="Uniform" Data="{StaticResource Hub.Icon.Close}"
+                        Fill="Transparent" Stroke="{DynamicResource Hub.DangerText}"
+                        StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round" />
                   <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
                              Grid.Column="1" VerticalAlignment="Center" />
                 </Grid>

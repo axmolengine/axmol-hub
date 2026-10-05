@@ -55,7 +55,7 @@
 
   <!-- An upward arrow = send. Drawn as an open path so it is stroked, not filled: a filled arrowhead at
        15px reads as a solid blob, while the caret-plus-stem shape stays legible on the small round button. -->
-  <StreamGeometry x:Key="Hub.Icon.Send">M12 19.4V5.6M6.3 11.3L12 5.6L17.7 11.3</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Send">M12 18.8V7.2M7.2 12L12 7.2L16.8 12</StreamGeometry>
 
   <!-- A solid square = stop, the same button's other state. It contrasts with the arrow by fill rather than
        by colour, so the two states are distinguishable even in a monochrome screenshot. -->
@@ -72,5 +72,11 @@
 
   <!-- A four-point sparkle = neutral notice (e.g. model changed). Filled. -->
   <StreamGeometry x:Key="Hub.Icon.Notice">M12 5.5 L13.4 10.6 L18.5 12 L13.4 13.4 L12 18.5 L10.6 13.4 L5.5 12 L10.6 10.6 Z</StreamGeometry>
+
+  <!-- Chat modes: a question bubble, a checked plan, and a bullseye goal. -->
+  <StreamGeometry x:Key="Hub.Icon.ChatModeAsk">M5 5.5A2.5 2.5 0 0 1 7.5 3H16.5A2.5 2.5 0 0 1 19 5.5V13.5A2.5 2.5 0 0 1 16.5 16H10L6 20V16H7.5A2.5 2.5 0 0 1 5 13.5ZM9.6 8.1A2.1 2.1 0 1 1 12 10.2C11.1 10.7 10.8 11.2 10.8 12.1M10.8 14.1V14.2</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.ChatModePlan">M7 4.5H17A1.5 1.5 0 0 1 18.5 6V18A1.5 1.5 0 0 1 17 19.5H7A1.5 1.5 0 0 1 5.5 18V6A1.5 1.5 0 0 1 7 4.5ZM8 9L9 10L11 8M12.5 9H16M8 14L9 15L11 13M12.5 14H16M9 4.5V3.5H15V4.5</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.ChatModeGoal">M12 4A8 8 0 1 0 12 20A8 8 0 1 0 12 4ZM12 7A5 5 0 1 0 12 17A5 5 0 1 0 12 7ZM12 10A2 2 0 1 0 12 14A2 2 0 1 0 12 10Z</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Close">M6.5 6.5L17.5 17.5M17.5 6.5L6.5 17.5</StreamGeometry>
 
 </ResourceDictionary>
