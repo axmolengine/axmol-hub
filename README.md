@@ -98,7 +98,7 @@ Axmol Hub does not collect telemetry or personal information. It accesses the ne
 
 ## Code signing policy
 
-Installer packages are currently unsigned. The SignPath Foundation free OSS code-signing application was not approved, so no SignPath certificate is in use. Until code signing is arranged separately, Windows installers trigger a SmartScreen warning and macOS packages need `xattr -r -d com.apple.quarantine` (or Apple notarization) before opening.
+Installer packages are currently unsigned. Until code signing is arranged separately, Windows installers trigger a SmartScreen warning and macOS packages need `xattr -r -d com.apple.quarantine` (or Apple notarization) before opening.
 
 - Committers and reviewers: [@halx99](https://github.com/halx99)
 - Approvers: [@halx99](https://github.com/halx99)
