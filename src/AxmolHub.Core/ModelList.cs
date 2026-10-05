@@ -38,6 +38,9 @@ namespace AxmolHub.Core;
 /// </summary>
 public sealed record ModelFetchResult(IReadOnlyList<string> Models, string? Problem)
 {
+    public IReadOnlyDictionary<string, AiModelReasoning> ReasoningModels { get; init; }
+        = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Whether the endpoint answered — including with an empty list.</summary>
     public bool Reachable => Problem is null;
 
@@ -52,9 +55,8 @@ public sealed record ModelFetchResult(IReadOnlyList<string> Models, string? Prob
 /// be on the network — right after a browser sign-in closes — so a failure has to arrive as a value the
 /// caller can ignore, not as an exception that unwinds the settings page.</para>
 ///
-/// <para>The parser walks <c>JsonDocument</c> rather than deserializing a model, because the only field that
-/// matters is <c>data[].id</c> and a gateway is free to attach whatever else it likes to each entry. Binding
-/// the whole object would make an unexpected extra field a hard failure.</para>
+/// <para>The parser walks <c>JsonDocument</c> rather than deserializing provider models, so unknown fields from
+/// gateways remain harmless. It reads <c>data[].id</c> and, when present, the standard <c>effort</c> metadata.</para>
 /// </summary>
 public static class ModelList
 {
@@ -124,7 +126,8 @@ public static class ModelList
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            return new ModelFetchResult(Parse(await ReadBoundedAsync(stream, cancellationToken).ConfigureAwait(false)), null);
+            var parsed = ParseMetadata(await ReadBoundedAsync(stream, cancellationToken).ConfigureAwait(false));
+            return new ModelFetchResult(parsed.Models, null) { ReasoningModels = parsed.ReasoningModels };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -162,11 +165,10 @@ public static class ModelList
     }
 
     /// <summary>
-    /// Pulls <c>data[].id</c> out of the response.
+    /// Pulls <c>data[].id</c> and optional <c>data[].effort</c> metadata out of the response.
     ///
-    /// <para>De-duplicated case-insensitively and kept in the endpoint's order, because a gateway that lists
-    /// its preferred model first has told us something worth preserving. Entries without a usable
-    /// <c>id</c> are skipped rather than turned into empty rows.</para>
+    /// <para>Model IDs are de-duplicated case-insensitively and kept in endpoint order. Effort levels are
+    /// normalized to the supported composer values; unknown fields and unsupported level names are ignored.</para>
     ///
     /// <para>A body that is not this shape at all — an HTML error page from a proxy, an empty object — yields
     /// an <b>empty list, not a problem</b>. The endpoint answered 200; it just did not answer in the
@@ -182,7 +184,11 @@ public static class ModelList
     /// implementation detail of the fetch: an assertion that only exercises it through a live request would be
     /// asserting on the network rather than on the rules, and could not cover the malformed shapes at all.</para>
     /// </summary>
-    public static IReadOnlyList<string> Parse(byte[] payload)
+    public static IReadOnlyList<string> Parse(byte[] payload) => ParseMetadata(payload).Models;
+
+    /// <summary>Parses model IDs plus the optional effort metadata published by richer model-list endpoints.</summary>
+    public static (IReadOnlyList<string> Models, IReadOnlyDictionary<string, AiModelReasoning> ReasoningModels)
+        ParseMetadata(byte[] payload)
     {
         JsonDocument document;
         try
@@ -191,13 +197,15 @@ public static class ModelList
         }
         catch (JsonException)
         {
-            return [];
+            return ([], new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase));
         }
 
         using (document)
         {
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return [];
-            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return [];
+            var reasoningModels = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return ([], reasoningModels);
+            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return ([], reasoningModels);
 
             var models = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -211,15 +219,48 @@ public static class ModelList
                 if (!seen.Add(name)) continue;
 
                 models.Add(name);
+                if (TryParseReasoning(entry, out var reasoning)) reasoningModels[name] = reasoning;
                 if (models.Count >= MaxModels) break;
             }
 
-            return models;
+            return (models, reasoningModels);
         }
+    }
+
+    private static bool TryParseReasoning(JsonElement model, out AiModelReasoning reasoning)
+    {
+        reasoning = new AiModelReasoning();
+        if (!model.TryGetProperty("effort", out var effort)
+            || effort.ValueKind != JsonValueKind.Object
+            || !effort.TryGetProperty("supported_levels", out var levels)
+            || levels.ValueKind != JsonValueKind.Array) return false;
+
+        foreach (var level in levels.EnumerateArray())
+        {
+            if (level.ValueKind != JsonValueKind.String) continue;
+            var normalized = level.GetString()?.Trim().ToLowerInvariant();
+            if (normalized is null
+                || normalized is not (ChatReasoningEfforts.Low or ChatReasoningEfforts.Medium
+                    or ChatReasoningEfforts.High or ChatReasoningEfforts.XHigh
+                    or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra)
+                || reasoning.Efforts.Contains(normalized, StringComparer.OrdinalIgnoreCase)) continue;
+            reasoning.Efforts.Add(normalized);
+        }
+
+        if (effort.TryGetProperty("default_level", out var defaultLevel)
+            && defaultLevel.ValueKind == JsonValueKind.String)
+        {
+            var normalized = defaultLevel.GetString()?.Trim().ToLowerInvariant();
+            if (normalized is not null
+                && reasoning.Efforts.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                reasoning.DefaultEffort = normalized;
+        }
+
+        return reasoning.Efforts.Count > 0;
     }
 }
 
-/// <summary>One provider's last known model list, and when it was read.</summary>
+/// <summary>One provider's last known model list and optional per-model effort metadata.</summary>
 public sealed class ModelListCacheEntry
 {
     /// <summary>The provider this belongs to. The identity of a cache entry, so it is written by the caller.</summary>
@@ -227,6 +268,7 @@ public sealed class ModelListCacheEntry
 
     public DateTimeOffset FetchedAt { get; set; }
     public List<string> Models { get; set; } = [];
+    public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -235,8 +277,8 @@ public sealed class ModelListCacheEntry
 /// <para><b>Separate from <c>providers.json</c> on purpose.</b> That file is configuration — what the user
 /// chose; this is an observation — what the endpoint said, and when. They change for different reasons and at
 /// different rates, and the one thing this cache exists to answer is "which of these models did the endpoint
-/// actually report?", which is exactly the question a configuration file cannot answer once the user starts
-/// adding names by hand.</para>
+/// actually report, and what effort options it advertises?", which is exactly the question a configuration
+/// file cannot answer once the user starts adding names by hand.</para>
 /// </summary>
 public sealed class ModelListCacheDocument
 {
@@ -275,7 +317,10 @@ public sealed class ModelListStore(string root)
     /// physically cannot clear a good list (see <see cref="ModelList"/>'s rule 2). Passing <c>null</c> is how
     /// a removed provider's entry is forgotten.</para>
     /// </summary>
-    public void Save(string providerId, IReadOnlyList<string>? models)
+    public void Save(
+        string providerId,
+        IReadOnlyList<string>? models,
+        IReadOnlyDictionary<string, AiModelReasoning>? reasoningModels = null)
     {
         var document = new ModelListCacheDocument { Providers = Load() };
         document.Providers.RemoveAll(entry => entry.Id == providerId);
@@ -287,6 +332,12 @@ public sealed class ModelListStore(string root)
                 Id = providerId,
                 FetchedAt = DateTimeOffset.Now,
                 Models = [.. models],
+                ReasoningModels = reasoningModels is null
+                    ? new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase)
+                    : reasoningModels.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value,
+                        StringComparer.OrdinalIgnoreCase),
             });
         }
 

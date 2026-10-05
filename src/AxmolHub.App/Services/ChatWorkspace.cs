@@ -110,7 +110,7 @@ public sealed class ChatWorkspace : IDisposable
     public string ActiveMode => _active is null ? _selectedMode : NormalizeMode(_active.Mode);
     public string ActiveReasoningEffort => _active?.ReasoningEffort ?? _selectedReasoningEffort;
     public bool SupportsReasoningEffort
-        => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.ModelName);
+        => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
     public IReadOnlyList<ConversationSummary> Conversations => _conversations.List();
 
@@ -130,8 +130,11 @@ public sealed class ChatWorkspace : IDisposable
     public bool SelectReasoningEffort(string effort)
     {
         if (effort is not (ChatReasoningEfforts.Auto or ChatReasoningEfforts.Low
-            or ChatReasoningEfforts.Medium or ChatReasoningEfforts.High)) return false;
-        if (effort != ChatReasoningEfforts.Auto && !SupportsReasoningEffort) return false;
+            or ChatReasoningEfforts.Medium or ChatReasoningEfforts.High or ChatReasoningEfforts.XHigh
+            or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra)) return false;
+        if (effort != ChatReasoningEfforts.Auto
+            && (SelectedChatModel is not { } choice
+                || !ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, effort))) return false;
         _selectedReasoningEffort = effort;
         if (_active is not null)
         {
@@ -196,9 +199,13 @@ public sealed class ChatWorkspace : IDisposable
         // A saved provider records only its id; the built-in defaults (base URL, model, affiliate flag,
         // description, auth methods) come from the manifest. Re-deriving them here means editing
         // ai-providers.json updates existing installs instead of only new ones.
-        foreach (var provider in _providerList.Where(provider => !provider.IsCustom))
+        var cachedModelLists = _modelLists.Load()
+            .GroupBy(entry => entry.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        foreach (var provider in _providerList)
         {
-            if (AiProviderManifest.CreateBuiltIn(provider.Id) is { } builtIn)
+            var builtIn = provider.IsCustom ? null : AiProviderManifest.CreateBuiltIn(provider.Id);
+            if (builtIn is not null)
             {
                 provider.Name = provider.Name.Length == 0 ? builtIn.Name : provider.Name;
                 provider.BaseUrl = provider.BaseUrl.Length == 0 ? builtIn.BaseUrl : provider.BaseUrl;
@@ -216,6 +223,11 @@ public sealed class ChatWorkspace : IDisposable
                 // Same reasoning as the two lines above: the probe is a manifest fact, refreshed every load.
                 provider.KeyValidation = builtIn.KeyValidation;
             }
+
+            cachedModelLists.TryGetValue(provider.Id, out var modelCache);
+            provider.ReasoningModels = MergeReasoningModels(
+                builtIn?.ReasoningModels,
+                modelCache?.ReasoningModels);
         }
 
         // First run (nothing saved yet): adopt the single default preset so the conversation page has a
@@ -842,7 +854,8 @@ public sealed class ChatWorkspace : IDisposable
         // retired model from a hand-written one — both are simply absent — and guessing wrong in either
         // direction is bad: dropping a name the user typed deletes work they did on purpose, and keeping one
         // the provider retired offers a name that will 404 on first use and blames their key.
-        var reported = _modelLists.Load().FirstOrDefault(entry => entry.Id == providerId)?.Models ?? [];
+        var cachedEntry = _modelLists.Load().FirstOrDefault(entry => entry.Id == providerId);
+        var reported = cachedEntry?.Models ?? [];
         var kept = ManualModelsOf(provider, result.Models, reported).ToList();
 
         // An empty list is a real answer (rule 3 in ModelList): adopt it, so a provider that retired
@@ -870,7 +883,9 @@ public sealed class ChatWorkspace : IDisposable
         provider.Models.AddRange(kept);
 
         provider.Normalize();
-        _modelLists.Save(providerId, result.Models);
+        var declaredReasoning = AiProviderManifest.CreateBuiltIn(providerId)?.ReasoningModels;
+        provider.ReasoningModels = MergeReasoningModels(declaredReasoning, result.ReasoningModels);
+        _modelLists.Save(providerId, result.Models, result.ReasoningModels);
         SaveProviders();
         return result;
     }
@@ -911,6 +926,34 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     public IReadOnlyList<string> CachedModels(string providerId)
         => _modelLists.Load().FirstOrDefault(entry => entry.Id == providerId)?.Models ?? [];
+
+    private static Dictionary<string, AiModelReasoning> MergeReasoningModels(
+        IReadOnlyDictionary<string, AiModelReasoning>? declared,
+        IReadOnlyDictionary<string, AiModelReasoning>? fetched)
+    {
+        var result = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
+        if (declared is not null)
+            foreach (var (name, profile) in declared)
+                result[name] = profile;
+
+        if (fetched is not null)
+        {
+            foreach (var (name, profile) in fetched)
+            {
+                result.TryGetValue(name, out var declaredProfile);
+                result[name] = new AiModelReasoning
+                {
+                    Efforts = profile.Efforts.Count > 0
+                        ? [.. profile.Efforts]
+                        : declaredProfile is null ? [] : [.. declaredProfile.Efforts],
+                    DefaultEffort = profile.DefaultEffort ?? declaredProfile?.DefaultEffort,
+                    RequestOptions = declaredProfile?.RequestOptions ?? [],
+                };
+            }
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// Injectable transport for the model-list fetch; a self-check supplies one so no request leaves the box.
@@ -1418,7 +1461,7 @@ public sealed class ChatWorkspace : IDisposable
         IReadOnlyList<AITool> tools = mode == ChatModes.Ask
             ? Array.Empty<AITool>()
             : CreateReadOnlyTools();
-        var reasoning = SupportsReasoningEffort && conversation.ReasoningEffort != ChatReasoningEfforts.Auto
+        var reasoning = ModelCatalog.SupportsReasoningEffort(provider, modelName, conversation.ReasoningEffort)
             ? conversation.ReasoningEffort
             : null;
 
@@ -1443,7 +1486,8 @@ public sealed class ChatWorkspace : IDisposable
                 _conversations.Save(conversation);
                 ToolActivityChanged?.Invoke(name, true);
             },
-            cancellationToken);
+            modelName: modelName,
+            cancellationToken: cancellationToken);
     }
 
     private IReadOnlyList<AITool> CreateReadOnlyTools()

@@ -100,6 +100,19 @@ public sealed class AiProviderKeyValidation
         && !Path.Contains("://", StringComparison.Ordinal);
 }
 
+/// <summary>Model-specific reasoning metadata and request-body fields declared by a built-in provider manifest.</summary>
+public sealed class AiModelReasoning
+{
+    /// <summary>Effort values accepted by this model and surfaced by the composer.</summary>
+    public List<string> Efforts { get; set; } = [];
+
+    /// <summary>The provider's default effort, when its model-list metadata declares one.</summary>
+    public string? DefaultEffort { get; set; }
+
+    /// <summary>Provider-specific JSON fields required to enable reasoning for this model.</summary>
+    public Dictionary<string, JsonElement> RequestOptions { get; set; } = [];
+}
+
 /// <summary>One provider entry in the built-in manifest (<c>manifests/ai-providers.json</c>, camelCase keys).</summary>
 public sealed class AiProviderEntry
 {
@@ -122,6 +135,8 @@ public sealed class AiProviderEntry
     public int? MaxContextTokens { get; set; }
     /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
     public List<string> DefaultEnabledModels { get; set; } = [];
+    /// <summary>Explicit capabilities for models whose reasoning support is known.</summary>
+    public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = [];
     public bool Affiliate { get; set; }
     public string? ReferralUrl { get; set; }
 
@@ -283,6 +298,18 @@ public static class AiProviderManifest
                 BaseUrl = entry.BaseUrl,
                 ApiKeyRequired = entry.ApiKeyRequired,
                 DefaultEnabledModels = [.. entry.DefaultEnabledModels],
+                ReasoningModels = entry.ReasoningModels.ToDictionary(
+                    pair => pair.Key,
+                    pair => new AiModelReasoning
+                    {
+                        Efforts = [.. pair.Value.Efforts],
+                        DefaultEffort = pair.Value.DefaultEffort,
+                        RequestOptions = pair.Value.RequestOptions.ToDictionary(
+                            option => option.Key,
+                            option => option.Value.Clone(),
+                            StringComparer.Ordinal),
+                    },
+                    StringComparer.OrdinalIgnoreCase),
                 // No model is seeded. The manifest deliberately does not name one: a name written into a
                 // shipped JSON file goes stale the moment the provider adds or retires a model, and a stale
                 // default is worse than none — it is offered in the list and fails on first use with a 404

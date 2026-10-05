@@ -77,6 +77,10 @@ public sealed class ModelProvider
     [JsonIgnore]
     public List<string> DefaultEnabledModels { get; set; } = [];
 
+    /// <summary>Per-model capabilities derived from the built-in manifest and refreshed on every load.</summary>
+    [JsonIgnore]
+    public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// The auth methods this provider actually offers: the declared list with unknown values dropped, or
     /// <c>["apiKey"]</c> when nothing usable was declared.

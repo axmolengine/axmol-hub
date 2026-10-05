@@ -27,6 +27,9 @@ public static class ChatReasoningEfforts
     public const string Low = "low";
     public const string Medium = "medium";
     public const string High = "high";
+    public const string XHigh = "xhigh";
+    public const string Max = "max";
+    public const string Ultra = "ultra";
 }
 
 /// <summary>

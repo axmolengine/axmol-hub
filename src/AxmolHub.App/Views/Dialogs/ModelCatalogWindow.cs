@@ -135,7 +135,7 @@ public sealed class ModelCatalogWindow : Window
         var query = (_search.Text ?? "").Trim();
         var rows = _models
             .Where(name => query.Length == 0 || name.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .Select(name => new ModelRow(name, _isEnabled(name), ModelCatalog.Describe(name)))
+            .Select(name => new ModelRow(name, _isEnabled(name), ModelCatalog.Describe(name, HubStrings.Language)))
             .ToList();
 
         _list.ItemsSource = rows;

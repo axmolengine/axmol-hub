@@ -136,7 +136,8 @@ public partial class ChatPanel : UserControl
                 && string.Equals(choice.ModelName, active.ModelName, StringComparison.OrdinalIgnoreCase))
             : null;
         SelectedModelLabel.Text = selected?.ModelName ?? HubStrings.Get("NoAvailableChatModels");
-        var supportsReasoning = selected is not null && ModelCatalog.SupportsReasoningEffort(selected.ModelName);
+        var supportsReasoning = selected is not null
+            && ModelCatalog.SupportsReasoningEffort(selected.Provider, selected.ModelName);
         SelectedReasoningLabel.IsVisible = supportsReasoning;
         SelectedReasoningLabel.Text = supportsReasoning
             ? ReasoningChoiceLabel(_chat.ActiveReasoningEffort)
@@ -304,10 +305,12 @@ public partial class ChatPanel : UserControl
             };
             item.Click += (_, _) => _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
 
-            if (ModelCatalog.SupportsReasoningEffort(choice.ModelName))
+            if (ModelCatalog.ReasoningFor(choice.Provider, choice.ModelName) is { Efforts.Count: > 0 } reasoning)
             {
                 var currentEffort = isSelected ? _chat.ActiveReasoningEffort : ChatReasoningEfforts.Auto;
-                foreach (var (effort, labelKey) in ReasoningChoices)
+                foreach (var (effort, labelKey) in ReasoningChoices.Where(choice =>
+                             choice.Value == ChatReasoningEfforts.Auto
+                             || reasoning.Efforts.Contains(choice.Value, StringComparer.OrdinalIgnoreCase)))
                 {
                     var effortItem = new MenuItem
                     {
@@ -337,6 +340,9 @@ public partial class ChatPanel : UserControl
         (ChatReasoningEfforts.Low, "ChatReasoningLow"),
         (ChatReasoningEfforts.Medium, "ChatReasoningMedium"),
         (ChatReasoningEfforts.High, "ChatReasoningHigh"),
+        (ChatReasoningEfforts.XHigh, "ChatReasoningXHigh"),
+        (ChatReasoningEfforts.Max, "ChatReasoningMax"),
+        (ChatReasoningEfforts.Ultra, "ChatReasoningUltra"),
     ];
 
     private static string ReasoningChoiceLabel(string effort)

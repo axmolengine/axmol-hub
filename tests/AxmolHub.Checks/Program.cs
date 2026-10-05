@@ -296,15 +296,17 @@ if (args.Contains("--check-ai-providers"))
     // The description catalog is a nicety, so the contract is asymmetric on purpose: a known name gets copy,
     // an unknown one gets nothing (rather than a guess or a failure). A newly released model must be usable
     // before Hub ships an update.
-    if (ModelCatalog.Describe("gpt-5.1-codex-mini").Length == 0)
+    if (ModelCatalog.Describe("gpt-5.1-codex-mini", HubTexts.EnglishLanguage).Length == 0)
         throw new Exception("A model the catalog knows should carry a description.");
-    if (ModelCatalog.Describe("some-brand-new-model-2099") != "")
+    if (ModelCatalog.Describe("some-brand-new-model-2099", HubTexts.EnglishLanguage) != "")
         throw new Exception("An unknown model should simply have no description.");
-    if (ModelCatalog.Describe("") != "") throw new Exception("An empty name should have no description.");
+    if (ModelCatalog.Describe("", HubTexts.EnglishLanguage) != "") throw new Exception("An empty name should have no description.");
     // Exact entries must win over family prefixes, or a specific model would inherit its family's blurb.
-    if (ModelCatalog.Describe("gpt-4o") == ModelCatalog.Describe("gpt-4o-mini"))
+    if (ModelCatalog.Describe("gpt-4o", HubTexts.EnglishLanguage) == ModelCatalog.Describe("gpt-4o-mini", HubTexts.EnglishLanguage))
         throw new Exception("Exact catalog entries should not collapse into one family description.");
-    Console.WriteLine("PASS: the model description catalog is additive and never fails closed.");
+    if (ModelCatalog.Describe("gpt-4o", HubTexts.EnglishLanguage) == ModelCatalog.Describe("gpt-4o", HubTexts.ChineseLanguage))
+        throw new Exception("Model descriptions should follow the selected UI language.");
+    Console.WriteLine("PASS: model descriptions are localized, additive, and never fail closed.");
 
     // ── Key validation is declared per provider, and absence means "do not check" ──
     // The load-bearing property is the negative one: a provider with no declaration must report
@@ -432,15 +434,32 @@ if (args.Contains("--check-ai-sessions"))
         throw new Exception("Context estimator ignored attached file contents.");
     Console.WriteLine("PASS: ContextTrimmer accounts for attached context.");
 
-    if (!ModelCatalog.SupportsReasoningEffort("gpt-5.1")
-        || !ModelCatalog.SupportsReasoningEffort("o3-mini")
-        || ModelCatalog.SupportsReasoningEffort("deepseek-flash")
-        || ModelCatalog.SupportsReasoningEffort("gpt-50")
-        || ModelCatalog.SupportsReasoningEffort("unknown-model")
-        || ModelCatalog.SupportsReasoningEffort(null)
-        || ModelCatalog.SupportsReasoningEffort(" "))
-        throw new Exception("Reasoning support should be enabled only for explicitly known model families.");
-    Console.WriteLine("PASS: Reasoning effort is limited to explicitly known model families.");
+    var openAiProvider = AiProviderManifest.CreateBuiltIn("openai")!;
+    var deepSeekProvider = AiProviderManifest.CreateBuiltIn("deepseek")!;
+    if (!ModelCatalog.SupportsReasoningEffort(openAiProvider, "gpt-6.1-sol")
+        || ModelCatalog.SupportsReasoningEffort(deepSeekProvider, "deepseek-flash")
+        || ModelCatalog.SupportsReasoningEffort(openAiProvider, "unknown-model"))
+        throw new Exception("Reasoning support should be explicit, model-scoped, and unknown by default.");
+    var openAiReasoning = ModelCatalog.ReasoningFor(openAiProvider, "gpt-6.1-sol");
+    if (openAiReasoning is not { DefaultEffort: ChatReasoningEfforts.Low }
+        || !openAiReasoning.Efforts.SequenceEqual(["low", "medium", "high", "xhigh", "max", "ultra"]))
+        throw new Exception("GPT-6.1-Sol's declared reasoning choices or default were not loaded.");
+    var parsedReasoning = ModelList.ParseMetadata(Encoding.UTF8.GetBytes(
+        """{"object":"list","data":[{"id":"deepseek-flash","effort":{"supported_levels":["low","high","max"],"default_level":"high"}},{"id":"deepseek-v4-pro","effort":{"supported_levels":["low","high","max"],"default_level":"high"}}]}"""));
+    if (!parsedReasoning.Models.SequenceEqual(["deepseek-flash", "deepseek-v4-pro"])
+        || !parsedReasoning.ReasoningModels["deepseek-flash"].Efforts.SequenceEqual(["low", "high", "max"])
+        || parsedReasoning.ReasoningModels["deepseek-flash"].DefaultEffort != "high")
+        throw new Exception("DeepSeek /models effort metadata was not parsed as declared.");
+    deepSeekProvider.ReasoningModels["deepseek-flash"] = new AiModelReasoning
+    {
+        Efforts = [.. parsedReasoning.ReasoningModels["deepseek-flash"].Efforts],
+        DefaultEffort = parsedReasoning.ReasoningModels["deepseek-flash"].DefaultEffort,
+        RequestOptions = deepSeekProvider.ReasoningModels["deepseek-flash"].RequestOptions,
+    };
+    if (!ModelCatalog.SupportsReasoningEffort(deepSeekProvider, "deepseek-flash", ChatReasoningEfforts.Max)
+        || ModelCatalog.SupportsReasoningEffort(deepSeekProvider, "deepseek-flash", ChatReasoningEfforts.Medium))
+        throw new Exception("DeepSeek effort choices should match the live /models metadata.");
+    Console.WriteLine("PASS: reasoning efforts come from explicit model metadata, including DeepSeek /models.");
 
     // Pipeline: turn <-> ChatMessage conversion is lossless, and streaming yields the fake text.
     var turns = new List<ChatTurn> { ChatTurn.System("sys"), ChatTurn.User("hello"), ChatTurn.Assistant("hi"), new(ChatRoles.Tool, "result", DateTimeOffset.Now) };
@@ -474,6 +493,68 @@ if (args.Contains("--check-ai-sessions"))
     if (streamed.ToString() != "Hello!") throw new Exception($"Streamed text was '{streamed}' instead of 'Hello!'.");
     if (fake.LastMessages is null || fake.LastMessages.Count != 4) throw new Exception("Pipeline did not forward the full trimmed history.");
     Console.WriteLine("PASS: ChatPipeline streams assistant text through the fake client.");
+
+    var reasoningClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(reasoningClient).SendAsync(
+                       deepSeekProvider,
+                       [ChatTurn.User("test")],
+                       reasoningEffort: ChatReasoningEfforts.Max,
+                       modelName: "deepseek-flash")) { }
+    var rawReasoningOptions = reasoningClient.LastOptions?.RawRepresentationFactory?.Invoke(reasoningClient)
+        as OpenAI.Chat.ChatCompletionOptions;
+#pragma warning disable SCME0001 // Assert the provider-specific JSON extension passed to the OpenAI adapter.
+    var reasoningPatch = rawReasoningOptions?.Patch.ToString();
+#pragma warning restore SCME0001
+    if (reasoningPatch is null
+        || !reasoningPatch.Contains("/reasoning_effort", StringComparison.Ordinal)
+        || !reasoningPatch.Contains("\"max\"", StringComparison.Ordinal)
+        || !reasoningPatch.Contains("/thinking", StringComparison.Ordinal)
+        || !reasoningPatch.Contains("\"enabled\"", StringComparison.Ordinal))
+        throw new Exception($"DeepSeek reasoning effort and thinking mode were not sent as raw request fields: {reasoningPatch ?? "<null>"}");
+    Console.WriteLine("PASS: DeepSeek effort and thinking settings reach the OpenAI-compatible request.");
+
+    var defaultDeepSeekClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(defaultDeepSeekClient).SendAsync(
+                       deepSeekProvider,
+                       [ChatTurn.User("test")],
+                       modelName: "deepseek-flash")) { }
+    if (defaultDeepSeekClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.High)
+        throw new Exception("DeepSeek Auto did not honor the /models default effort.");
+    Console.WriteLine("PASS: DeepSeek Auto uses the default effort declared by /models.");
+
+    var defaultOpenAiClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(defaultOpenAiClient).SendAsync(
+                       openAiProvider,
+                       [ChatTurn.User("test")],
+                       modelName: "gpt-6.1-sol")) { }
+    if (defaultOpenAiClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.Low)
+        throw new Exception("GPT-6.1-Sol Auto did not use the declared low default.");
+    Console.WriteLine("PASS: GPT-6.1-Sol Auto uses its manifest default effort.");
+
+    var extraHighClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(extraHighClient).SendAsync(
+                       openAiProvider,
+                       [ChatTurn.User("test")],
+                       reasoningEffort: ChatReasoningEfforts.XHigh,
+                       modelName: "gpt-6.1-sol")) { }
+    if (extraHighClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.ExtraHigh)
+        throw new Exception("GPT-6.1-Sol xhigh was not mapped to Microsoft.Extensions.AI ExtraHigh.");
+    Console.WriteLine("PASS: GPT-6.1-Sol xhigh maps to the OpenAI adapter's ExtraHigh effort.");
+
+    var ultraClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(ultraClient).SendAsync(
+                       openAiProvider,
+                       [ChatTurn.User("test")],
+                       reasoningEffort: ChatReasoningEfforts.Ultra,
+                       modelName: "gpt-6.1-sol")) { }
+    var rawUltraOptions = ultraClient.LastOptions?.RawRepresentationFactory?.Invoke(ultraClient)
+        as OpenAI.Chat.ChatCompletionOptions;
+#pragma warning disable SCME0001
+    var ultraPatch = rawUltraOptions?.Patch.ToString();
+#pragma warning restore SCME0001
+    if (ultraPatch is null || !ultraPatch.Contains("\"ultra\"", StringComparison.Ordinal))
+        throw new Exception("GPT-6.1-Sol ultra was not forwarded as an API effort value.");
+    Console.WriteLine("PASS: GPT-6.1-Sol ultra is forwarded through the provider-specific request field.");
 
     // The pipeline applies the budget it is given: an oversized history reaches the client trimmed.
     var longHistory = new List<ChatTurn>();
@@ -1575,6 +1656,7 @@ sealed class InMemorySecretStore : ISecretStore
 sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation = false) : IChatClient
 {
     public IList<ChatMessage>? LastMessages { get; private set; }
+    public ChatOptions? LastOptions { get; private set; }
 
     public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Checks only use the streaming path.");
@@ -1585,6 +1667,7 @@ sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         LastMessages = messages.ToList();
+        LastOptions = options;
         foreach (var chunk in chunks)
         {
             if (honorCancellation) cancellationToken.ThrowIfCancellationRequested();

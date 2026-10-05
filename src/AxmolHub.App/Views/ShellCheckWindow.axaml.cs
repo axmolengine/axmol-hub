@@ -179,8 +179,16 @@ public partial class ShellCheckWindow : Window
             "模型选择器排除未鉴权 provider，只列出可用模型（实际 " + panel.ModelChoiceCount + " 项）");
         Check(panel.SelectModelForCheck(checkProvider!.Id, checkModel)
               && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
+              && !panel.ReasoningPickerEnabledForCheck,
+            "未知模型仍可选择，但不会臆测其推理档位");
+        checkProvider.ReasoningModels[checkModel] = new AiModelReasoning
+        {
+            Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.High],
+        };
+        panel.Reload();
+        Check(panel.SelectModelForCheck(checkProvider.Id, checkModel)
               && panel.ReasoningPickerEnabledForCheck,
-            "可以选择任意已配置模型，并显示推理等级选项（实际「" + panel.SelectedModelText + "」）");
+            "存在明确推理元数据的模型显示推理档位选项");
         Check(panel.ActiveModelText.Contains(checkProvider.Name, StringComparison.Ordinal)
               && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
@@ -1156,6 +1164,12 @@ public partial class ShellCheckWindow : Window
         Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
                 """{"object":"list","data":[{"id":"m","owned_by":"me","permission":[],"extra":{"x":1}}]}""")) is ["m"],
             "只读 data[].id，多余字段不影响解析");
+        var effortMetadata = ModelList.ParseMetadata(System.Text.Encoding.UTF8.GetBytes(
+            """{"object":"list","data":[{"id":"deepseek-flash","effort":{"supported_levels":["low","high","max"],"default_level":"high"}}]}"""));
+        Check(effortMetadata.Models is ["deepseek-flash"]
+              && effortMetadata.ReasoningModels["deepseek-flash"].Efforts is ["low", "high", "max"]
+              && effortMetadata.ReasoningModels["deepseek-flash"].DefaultEffort == "high",
+            "解析 DeepSeek /models 返回的推理档位与默认档位");
         // An HTML error page from a proxy is a 200 with no models in it. That is "this provider will not tell
         // us", not "we could not ask" — and the two lead to different user advice.
         Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes("<html>gateway</html>")).Count == 0,
@@ -1204,8 +1218,24 @@ public partial class ShellCheckWindow : Window
         {
             data = new[]
             {
-                new { id = recommendedModel },
-                new { id = "unlisted-manifest-probe" },
+                new
+                {
+                    id = recommendedModel,
+                    effort = new
+                    {
+                        supported_levels = new[] { "low", "high", "max" },
+                        default_level = (string?)"high",
+                    },
+                },
+                new
+                {
+                    id = "unlisted-manifest-probe",
+                    effort = new
+                    {
+                        supported_levels = Array.Empty<string>(),
+                        default_level = (string?)null,
+                    },
+                },
             },
         });
         var defaultsRoot = Path.Combine(scratchRoot, "manifest-defaults-" + Guid.NewGuid().ToString("N"));
@@ -1221,9 +1251,12 @@ public partial class ShellCheckWindow : Window
             var defaultsResult = await defaultsWorkspace.RefreshModelsAsync("deepseek");
             var configured = defaultsWorkspace.Providers.First(provider => provider.Id == "deepseek");
             var enabledDefault = configured.Models.FirstOrDefault(model => model.Name == recommendedModel);
+            var reasoning = ModelCatalog.ReasoningFor(configured, recommendedModel);
             Check(defaultProvider is not null && defaultsResult.Reachable
                   && defaultProvider.DefaultEnabledModels.Contains(recommendedModel)
                   && enabledDefault is { Enabled: true }
+                  && reasoning is { DefaultEffort: "high" }
+                  && reasoning.Efforts.SequenceEqual(["low", "high", "max"])
                   && !configured.Models.Any(model => model.Name == "unlisted-manifest-probe"),
                 "manifest 中的 defaultEnabledModels 只启用与目录匹配的模型（defaults ["
                     + string.Join(",", defaultProvider?.DefaultEnabledModels ?? [])
@@ -1231,6 +1264,11 @@ public partial class ShellCheckWindow : Window
                     + " fetch=" + defaultsResult.Reachable + " problem=" + defaultsResult.Problem
                     + " configured=[" + string.Join(",", configured.Models.Select(model => model.Name + ":" + model.Enabled))
                     + "]）");
+            var cachedEffort = new ModelListStore(defaultsRoot).Load().Single()
+                .ReasoningModels.GetValueOrDefault(recommendedModel);
+            Check(cachedEffort is { DefaultEffort: "high" }
+                  && cachedEffort.Efforts.SequenceEqual(["low", "high", "max"]),
+                "刷新模型列表时将推理档位元数据一并写入本地缓存");
             Check(credentialAdded is not null
                   && defaultsWorkspace.SetModelEnabled("deepseek", recommendedModel, false),
                 "用户可以关闭 manifest 默认启用的模型");

@@ -4,96 +4,79 @@ using System.Collections.Generic;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// One-line descriptions for model names Hub knows about, so a model row reads like the Codex CLI's
-/// <c>/model</c> list ("gpt-5.1-codex-mini · Small, fast, and cost-effective") instead of a bare string.
-///
-/// <para><b>This is a presentation nicety, not a registry.</b> Nothing here decides which models may be
-/// configured — the user can type any name, and a name with no entry simply renders without a description.
-/// That asymmetry is deliberate: a lookup that failed closed would make a newly released model unusable until
-/// Hub shipped an update, which is exactly the coupling the manifest-driven design avoids elsewhere.</para>
-///
-/// <para>Keys are matched case-insensitively, and an exact match is tried before any prefix/family match, so
-/// <c>gpt-4o</c> and <c>gpt-4o-mini</c> do not fight over one entry.</para>
+/// Explicit per-model reasoning capabilities plus optional descriptions for model-picker rows.
 /// </summary>
 public static class ModelCatalog
 {
     /// <summary>
-    /// Whether Hub has explicit knowledge that a model accepts reasoning-effort options.
-    /// Unknown models fail closed because the provider's model-list endpoint usually exposes IDs only.
+    /// Returns explicit reasoning metadata for a provider/model pair. Unknown models fail closed because
+    /// OpenAI-compatible model-list responses generally expose IDs only.
     /// </summary>
-    public static bool SupportsReasoningEffort(string? modelName)
+    public static AiModelReasoning? ReasoningFor(ModelProvider? provider, string? modelName)
     {
-        if (string.IsNullOrWhiteSpace(modelName)) return false;
-        var name = modelName.Trim();
-        return IsFamily(name, "gpt-5")
-               || IsFamily(name, "o1")
-               || IsFamily(name, "o3")
-               || IsFamily(name, "o4");
+        if (provider is null || string.IsNullOrWhiteSpace(modelName)) return null;
+        return provider.ReasoningModels.TryGetValue(modelName.Trim(), out var reasoning) ? reasoning : null;
     }
 
-    private static bool IsFamily(string modelName, string family)
-        => modelName.StartsWith(family, StringComparison.OrdinalIgnoreCase)
-           && (modelName.Length == family.Length || modelName[family.Length] is '-' or '.');
+    public static bool SupportsReasoningEffort(ModelProvider? provider, string? modelName)
+        => ReasoningFor(provider, modelName) is { Efforts.Count: > 0 };
 
-    /// <summary>The description for a model name, or an empty string when nothing is known about it.</summary>
-    public static string Describe(string? modelName)
+    public static bool SupportsReasoningEffort(ModelProvider? provider, string? modelName, string effort)
+        => ReasoningFor(provider, modelName)?.Efforts.Contains(effort, StringComparer.OrdinalIgnoreCase) == true;
+
+    /// <summary>The localized description for a model name, or an empty string when nothing is known about it.</summary>
+    public static string Describe(string? modelName, string? language)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return "";
 
         var name = modelName.Trim();
-
-        // An exact hit wins, so a family prefix cannot shadow a specific model.
-        if (Exact.TryGetValue(name, out var description)) return description;
-
-        // Then family prefixes, longest first: "gpt-5.1-codex-mini" must not be answered by the "gpt-5" row.
+        if (Exact.TryGetValue(name, out var exactKey)) return HubTexts.Get(exactKey, language);
         foreach (var (prefix, text) in Prefixes)
-        {
-            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return text;
-        }
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return HubTexts.Get(text, language);
 
         return "";
     }
 
     private static readonly Dictionary<string, string> Exact = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["orcarouter/auto"] = "由 OrcaRouter 在多个上游模型之间自动路由",
-        ["gpt-4o"] = "通用多模态模型，兼顾质量与成本",
-        ["gpt-4o-mini"] = "轻量、便宜、响应快，适合日常改代码",
-        ["gpt-4.1"] = "长上下文与工具调用更强",
-        ["gpt-4.1-mini"] = "gpt-4.1 的轻量版本",
-        ["o3"] = "偏重推理的模型，擅长复杂问题",
-        ["o4-mini"] = "推理能力强，价格较低的轻量版本",
-        ["deepseek-chat"] = "通用对话模型，性价比高",
-        ["deepseek-reasoner"] = "带思维链的推理模型，适合难题",
-        ["llama3"] = "Meta 的开源通用模型",
+        ["orcarouter/auto"] = "ModelDescriptionOrcaRouterAuto",
+        ["gpt-4o"] = "ModelDescriptionGpt4o",
+        ["gpt-4o-mini"] = "ModelDescriptionGpt4oMini",
+        ["gpt-4.1"] = "ModelDescriptionGpt41",
+        ["gpt-4.1-mini"] = "ModelDescriptionGpt41Mini",
+        ["o3"] = "ModelDescriptionO3",
+        ["o4-mini"] = "ModelDescriptionO4Mini",
+        ["deepseek-chat"] = "ModelDescriptionDeepSeekChat",
+        ["deepseek-reasoner"] = "ModelDescriptionDeepSeekReasoner",
+        ["llama3"] = "ModelDescriptionLlama3",
     };
 
-    /// <summary>Family prefixes, matched longest-first so the most specific one applies.</summary>
+    /// <summary>Family descriptions, matched longest-first so a specific family takes precedence.</summary>
     private static readonly (string Prefix, string Text)[] Prefixes =
     [
-        ("gpt-5.1-codex-mini", "代码专用的小型模型，快且便宜"),
-        ("gpt-5.1-codex", "代码专用模型，长任务表现更稳"),
-        ("gpt-5-codex", "代码专用模型"),
-        ("gpt-5-mini", "小型通用模型，快且便宜"),
-        ("gpt-5-nano", "最小的通用模型，适合简单任务"),
-        ("gpt-5", "通用模型，推理与写作均衡"),
-        ("gpt-4o", "通用多模态模型，兼顾质量与成本"),
-        ("gpt-4", "上一代通用模型"),
-        ("o3", "偏重推理的模型，擅长复杂问题"),
-        ("o4", "偏重推理的模型"),
-        ("claude-opus", "Anthropic 的高能力模型，适合难任务"),
-        ("claude-sonnet", "Anthropic 的均衡模型，日常首选"),
-        ("claude-haiku", "Anthropic 的轻量模型，最快"),
-        ("gemini-2.5-pro", "Google 的高能力多模态模型"),
-        ("gemini-2.5-flash", "Google 的快速多模态模型"),
-        ("deepseek-chat", "通用对话模型，性价比高"),
-        ("deepseek-reasoner", "带思维链的推理模型，适合难题"),
-        ("qwen3", "通义千问第三代，中文与代码见长"),
-        ("qwen", "通义千问系列"),
-        ("llama3", "Meta 的开源通用模型"),
-        ("llama", "Meta 的开源模型系列"),
-        ("mistral", "Mistral 的开源模型"),
-        ("codellama", "面向代码的开源模型"),
-        ("phi", "微软的小型开源模型"),
+        ("gpt-5.1-codex-mini", "ModelDescriptionGpt51CodexMini"),
+        ("gpt-5.1-codex", "ModelDescriptionGpt51Codex"),
+        ("gpt-5-codex", "ModelDescriptionGpt5Codex"),
+        ("gpt-5-mini", "ModelDescriptionGpt5Mini"),
+        ("gpt-5-nano", "ModelDescriptionGpt5Nano"),
+        ("gpt-5", "ModelDescriptionGpt5"),
+        ("gpt-4o", "ModelDescriptionGpt4o"),
+        ("gpt-4", "ModelDescriptionGpt4"),
+        ("o3", "ModelDescriptionO3"),
+        ("o4", "ModelDescriptionO4"),
+        ("claude-opus", "ModelDescriptionClaudeOpus"),
+        ("claude-sonnet", "ModelDescriptionClaudeSonnet"),
+        ("claude-haiku", "ModelDescriptionClaudeHaiku"),
+        ("gemini-2.5-pro", "ModelDescriptionGemini25Pro"),
+        ("gemini-2.5-flash", "ModelDescriptionGemini25Flash"),
+        ("deepseek-chat", "ModelDescriptionDeepSeekChat"),
+        ("deepseek-reasoner", "ModelDescriptionDeepSeekReasoner"),
+        ("qwen3", "ModelDescriptionQwen3"),
+        ("qwen", "ModelDescriptionQwen"),
+        ("llama3", "ModelDescriptionLlama3"),
+        ("llama", "ModelDescriptionLlama"),
+        ("mistral", "ModelDescriptionMistral"),
+        ("codellama", "ModelDescriptionCodeLlama"),
+        ("phi", "ModelDescriptionPhi"),
     ];
 }

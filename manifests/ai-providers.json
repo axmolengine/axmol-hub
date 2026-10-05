@@ -1,5 +1,5 @@
 {
-  "_comment": "Built-in AI provider presets. This is a CATALOG, not a configured list: nothing here is added to the user's provider list on its own. The settings page offers these in the 'Add provider' search dialog, and exactly one of them (orcarouter, see defaultProvider) is seeded on a fresh install. Optional defaultEnabledModels lists model IDs to enable only when the live catalog reports them. Keys are camelCase and map onto AxmolHub.Core.AiProviderEntry.",
+  "_comment": "Built-in AI provider presets. This is a CATALOG, not a configured list: nothing here is added to the user's provider list on its own. The settings page offers these in the 'Add provider' search dialog, and exactly one of them (orcarouter, see defaultProvider) is seeded on a fresh install. Optional defaultEnabledModels lists model IDs to enable only when the live catalog reports them. reasoningModels carries explicit model capabilities; DeepSeek effort tiers are read dynamically from its /models response. Keys are camelCase and map onto AxmolHub.Core.AiProviderEntry.",
   "defaultProvider": "orcarouter",
   "providers": [
     {
@@ -29,7 +29,13 @@
       "descriptionZh": "OpenAI 官方接口。需要 platform.openai.com 的密钥，以及你的账户可调用的模型名。",
       "baseUrl": "https://api.openai.com/v1",
       "apiKeyRequired": true,
-      "defaultEnabledModels": ["gpt-4o-mini"],
+      "defaultEnabledModels": ["gpt-6.1-sol"],
+      "reasoningModels": {
+        "gpt-6.1-sol": {
+          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "defaultEffort": "low"
+        }
+      },
       "authMethods": ["apiKey"],
       "keyValidation": { "type": "httpGetModels", "path": "/models" }
     },
@@ -41,6 +47,18 @@
       "baseUrl": "https://api.deepseek.com/v1",
       "apiKeyRequired": true,
       "defaultEnabledModels": ["deepseek-flash"],
+      "reasoningModels": {
+        "deepseek-flash": {
+          "requestOptions": {
+            "thinking": { "type": "enabled" }
+          }
+        },
+        "deepseek-v4-pro": {
+          "requestOptions": {
+            "thinking": { "type": "enabled" }
+          }
+        }
+      },
       "authMethods": ["apiKey"],
       "keyValidation": { "type": "httpGetModels", "path": "/models" }
     },

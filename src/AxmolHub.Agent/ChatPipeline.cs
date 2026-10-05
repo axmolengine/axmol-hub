@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.ClientModel.Primitives;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
 
@@ -31,12 +32,13 @@ public sealed class ChatPipeline(IChatClient client)
         IReadOnlyList<AITool>? tools = null,
         Action<string, string, string>? onToolStarted = null,
         Action<string, string, string, bool>? onToolCompleted = null,
+        string? modelName = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var budget = provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
         var trimmed = ContextTrimmer.Trim(history, budget, systemPrompt);
         var messages = ToChatMessages(trimmed);
-        var options = BuildOptions(provider, reasoningEffort, tools);
+        var options = BuildOptions(provider, modelName, reasoningEffort, tools);
         IChatClient effectiveClient = client;
         if (tools is { Count: > 0 })
         {
@@ -117,19 +119,64 @@ public sealed class ChatPipeline(IChatClient client)
     /// <summary>Maps the provider's pass-through options onto the request; unknown keys are ignored rather
     /// than rejected, so a manifest entry can carry an option this build does not know yet.</summary>
     private static ChatOptions? BuildOptions(
-        ModelProvider provider, string? reasoningEffort, IReadOnlyList<AITool>? tools)
+        ModelProvider provider, string? modelName, string? reasoningEffort, IReadOnlyList<AITool>? tools)
     {
         var options = new ChatOptions();
         var any = false;
+        var modelReasoning = ModelCatalog.ReasoningFor(provider, modelName);
+        var requestOptions = modelReasoning?.RequestOptions.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Clone(),
+            StringComparer.Ordinal);
+        var effectiveReasoningEffort = ModelCatalog.SupportsReasoningEffort(provider, modelName, reasoningEffort ?? "")
+            ? reasoningEffort
+            : null;
+        if (effectiveReasoningEffort is null
+            && modelReasoning?.DefaultEffort is { } defaultEffort
+            && ModelCatalog.SupportsReasoningEffort(provider, modelName, defaultEffort))
+            effectiveReasoningEffort = defaultEffort;
         if (tools is { Count: > 0 })
         {
             options.Tools = [.. tools];
             any = true;
         }
-        if (Enum.TryParse<ReasoningEffort>(reasoningEffort, true, out var effort)
-            && effort != ReasoningEffort.None)
+        if (effectiveReasoningEffort is not null)
         {
-            options.Reasoning = new ReasoningOptions { Effort = effort };
+            if (string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.Max, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.Ultra, StringComparison.OrdinalIgnoreCase))
+            {
+                requestOptions ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                requestOptions["reasoning_effort"] = JsonSerializer.SerializeToElement(effectiveReasoningEffort);
+                any = true;
+            }
+            else if (string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.XHigh, StringComparison.OrdinalIgnoreCase))
+            {
+                options.Reasoning = new ReasoningOptions { Effort = ReasoningEffort.ExtraHigh };
+                any = true;
+            }
+            else if (Enum.TryParse<ReasoningEffort>(effectiveReasoningEffort, true, out var effort)
+                     && effort != ReasoningEffort.None)
+            {
+                options.Reasoning = new ReasoningOptions { Effort = effort };
+                any = true;
+            }
+        }
+
+        if (requestOptions is { Count: > 0 })
+        {
+            options.RawRepresentationFactory = _ =>
+            {
+                var rawOptions = new OpenAI.Chat.ChatCompletionOptions();
+#pragma warning disable SCME0001 // Required to add provider-specific JSON fields not modeled by ChatOptions.
+                var patch = new JsonPatch(BinaryData.FromString("[]").ToMemory());
+                foreach (var (key, value) in requestOptions)
+                    patch.Set(
+                        System.Text.Encoding.UTF8.GetBytes("$." + key),
+                        BinaryData.FromString(value.GetRawText()));
+                rawOptions.Patch = patch;
+#pragma warning restore SCME0001
+                return rawOptions;
+            };
             any = true;
         }
 

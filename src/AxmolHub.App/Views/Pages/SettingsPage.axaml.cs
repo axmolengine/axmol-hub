@@ -1316,7 +1316,7 @@ public partial class SettingsPage : UserControl
         }
         text.Children.Add(nameRow);
 
-        var description = ModelCatalog.Describe(model.Name);
+        var description = ModelCatalog.Describe(model.Name, HubStrings.Language);
         if (description.Length > 0)
         {
             text.Children.Add(new TextBlock
