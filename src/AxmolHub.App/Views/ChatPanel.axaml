@@ -1,37 +1,17 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="using:AxmolHub.App"
-             xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
              xmlns:ae="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
              x:Class="AxmolHub.App.ChatPanel"
              x:DataType="local:ChatPanel">
 
   <UserControl.Styles>
-    <!-- Markdown rendering metrics. -->
-    <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CTextBlock">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-      <Setter Property="FontSize" Value="13" />
-    </Style>
-    <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CHyperlink">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.Link}" />
-      <Setter Property="HoverForeground" Value="{DynamicResource Hub.LinkHover}" />
-      <Setter Property="IsUnderline" Value="True" />
-    </Style>
-    <Style Selector="Border.CodeBlock">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Margin" Value="0,10" />
-    </Style>
-    <Style Selector="ScrollViewer.CodeBlock">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Padding" Value="16,14" />
-    </Style>
-    <Style Selector="TextBlock.CodeBlock">
-      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
-      <Setter Property="FontSize" Value="13" />
-    </Style>
+    <!--
+      Markdown document elements (text, headings, links, code blocks, tables) are styled in
+      Theme/HubMarkdownStyles.axaml instead of here: the markdown theme is inserted into the viewer's
+      own Styles collection, which is closer to the content than this UserControl's, so a rule written
+      here silently loses. Only the controls our renderer creates are safe to style below.
+    -->
     <Style Selector="ae|TextEditor.markdown-code-editor">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -73,9 +53,6 @@
     <Style Selector="Button.markdown-code-copy:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    </Style>
-    <Style Selector="Border.CodeBlock:pointerover">
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
     </Style>
 
     <!-- User message: a right-aligned subtle pill, no border, no speaker label. -->

@@ -1197,6 +1197,10 @@ public partial class ChatPanel : UserControl
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
             .Any(MarkdownMessageRenderer.HasThemedTable);
 
+    internal bool HasThemedMarkdownDocument()
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(MarkdownMessageRenderer.HasThemedDocument);
+
     internal void ApplyMarkdownSyntaxHighlightingForCheck()
     {
         foreach (var viewer in MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>())

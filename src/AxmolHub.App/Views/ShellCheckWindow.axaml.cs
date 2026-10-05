@@ -296,7 +296,9 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
 
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
-        var scriptedReply = "你好，Axmol 助手。\n\n"
+        // The Markdown it carries is deliberately the full element set the chat can receive: heading,
+        // inline code, link, bare URL, list, table and a fenced block.
+        var scriptedReply = "# 工具链\n\n你好，Axmol 助手，状态 `Configured`。\n\n"
                                      + "[Axmol 官网](https://axmol.dev/)\n\n"
                                      + "更多信息：https://github.com/axmolengine/axmol\n\n"
                                      + "- First item\n- Second item\n\n"
@@ -304,7 +306,7 @@ public partial class ShellCheckWindow : Window
                                      + "```cpp\nint main() {}\n```";
         shell.Chat.ClientOverride = _ => new ScriptedChatClient(
             [
-                "你好，Axmol 助手。",
+                "# 工具链\n\n你好，Axmol 助手，状态 `Configured`。",
                 "\n\n[Axmol 官网](https://axmol.dev/)",
                 "\n\n更多信息：https://github.com/axmolengine/axmol",
                 "\n\n- First item\n- Second item\n\n| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |",
@@ -339,6 +341,8 @@ public partial class ShellCheckWindow : Window
             "Markdown 表格超出聊天栏时使用独立横向滚动区域，列表仍留在原有自动换行布局");
         Check(panel.HasThemedMarkdownTable(),
             "Markdown 表格使用 Hub 主题配色（表头/隔行底色与网格线），不是内置主题的浅色白底");
+        Check(panel.HasThemedMarkdownDocument(),
+            "标题/正文/行内代码/代码块/链接都解析为 Hub 令牌，内置主题写死的黑色与浅灰没有漏出来");
         panel.ApplyMarkdownSyntaxHighlightingForCheck();
         Check(panel.HasSyntaxHighlightedCode("cpp"),
             "C++ fenced code block 使用可用的语法定义高亮");

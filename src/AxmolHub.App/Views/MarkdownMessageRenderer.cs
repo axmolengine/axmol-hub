@@ -84,14 +84,9 @@ internal static class MarkdownMessageRenderer
 
         var foundTable = InstallTableScrollViewers(viewer);
 
-        var foundLink = false;
-        foreach (var link in viewer.GetLogicalDescendants().OfType<CHyperlink>())
-        {
-            foundLink = true;
-            link.Bind(CInline.ForegroundProperty, new DynamicResourceExtension("Hub.Link"));
-            link.Bind(CHyperlink.HoverForegroundProperty, new DynamicResourceExtension("Hub.LinkHover"));
-            link.IsUnderline = true;
-        }
+        // Link colors are a style now (HubMarkdownStyles), not a per-element bind. The scan stays so a
+        // document made only of links still unsubscribes from LayoutUpdated after this pass.
+        var foundLink = viewer.GetLogicalDescendants().OfType<CHyperlink>().Any();
 
         return foundEditor || foundTable || foundLink;
     }
@@ -257,6 +252,33 @@ internal static class MarkdownMessageRenderer
         return headerText is not null
                && IsTransparent(headerText.Background)
                && MatchesToken(headerText.Foreground, "Hub.TextPrimary");
+    }
+
+    /// <summary>Whether the document's own elements resolve to Hub tokens. GithubLike hardcodes black
+    /// headings, LightGray inline code and a translucent navy code block, and because its styles sit in
+    /// the viewer's own collection this is the only way to tell a live override from one that silently
+    /// does nothing.</summary>
+    internal static bool HasThemedDocument(MarkdownScrollViewer viewer)
+    {
+        var blocks = viewer.GetVisualDescendants().OfType<CTextBlock>().ToArray();
+        var heading = blocks.FirstOrDefault(block => block.Classes.Contains("Heading1"));
+        var body = blocks.FirstOrDefault(block =>
+            !block.Classes.Any(name => name.StartsWith("Heading", StringComparison.Ordinal)));
+        var inline = viewer.GetLogicalDescendants().OfType<CCode>().FirstOrDefault();
+        var codeBlock = viewer.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(border => border.Classes.Contains("CodeBlock"));
+        var link = viewer.GetLogicalDescendants().OfType<CHyperlink>().FirstOrDefault();
+
+        // The heading size is part of the assertion because this file is the winning style layer: a body
+        // FontSize written here outranks the theme's heading sizes by position, not by specificity.
+        return heading is not null && body is not null
+               && MatchesToken(heading.Foreground, "Hub.TextPrimary")
+               && body.FontSize == 13 && heading.FontSize > body.FontSize
+               && inline is not null && MatchesToken(inline.Foreground, "Hub.TextPrimary")
+               && MatchesToken(inline.Background, "Hub.SurfaceRaised")
+               && codeBlock is not null && MatchesToken(codeBlock.Background, "Hub.SurfaceSunken")
+               && MatchesToken(codeBlock.BorderBrush, "Hub.BorderSubtle")
+               && link is not null && MatchesToken(link.Foreground, "Hub.Link");
     }
 
     /// <summary>Compares resolved colors, not brush instances: a style setter and a resource token are
