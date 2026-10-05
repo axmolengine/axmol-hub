@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -79,12 +80,17 @@ public partial class ChatPanel : UserControl
         InputBox.GotFocus += (_, _) => SetComposerFocus(true);
         InputBox.LostFocus += (_, _) => SetComposerFocus(false);
 
-        InputBox.KeyDown += async (_, e) =>
+        // KeyDown is registered for both tunnel and bubble. Subscribe on the tunnel: it runs before the
+        // TextBox's own Enter handling, which (with AcceptsReturn=true) inserts a newline and marks the
+        // bubble handled, silently swallowing a normal KeyDown subscriber.
+        InputBox.AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
+            // While an IME composition is open, Enter arrives as Key.ImeProcessed (confirm candidate), so it
+            // falls through; only a bare Enter sends. Shift+Enter is left alone so it still inserts a newline.
             if (e.Key != Key.Enter || e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
             e.Handled = true;
-            await SendAsync();
-        };
+            _ = SendAsync();
+        }, RoutingStrategies.Tunnel);
 
         Reload();
     }
