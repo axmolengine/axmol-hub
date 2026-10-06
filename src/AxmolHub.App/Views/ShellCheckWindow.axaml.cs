@@ -406,7 +406,18 @@ public partial class ShellCheckWindow : Window
         Check(shell.PageTitleText == saved.Title,
             "会话首条消息完成后顶栏标题更新（实际「" + shell.PageTitleText + "」）");
 
+        // A chat that holds nothing is the composer's blank state rather than a conversation, so it earns its
+        // row with its first message.
         var second = shell.Chat.StartConversation();
+        sidebar.Reload();
+        Check(sidebar.ConversationCount == 1
+              && !sidebar.ConversationListText.Contains(HubStrings.Get("NewConversation"), StringComparison.Ordinal),
+            "空的新会话不占会话列表项（实际 " + sidebar.ConversationCount + " 项）");
+        var seededSecond = shell.Chat.SeedTurnForCheck(second.Id, "第二个会话");
+        sidebar.Reload();
+        Check(seededSecond && sidebar.ConversationCount == 2
+              && sidebar.ConversationListText.Contains("第二个会话", StringComparison.Ordinal),
+            "会话写入第一条消息后才出现在历史列表");
         Check(sidebar.SessionMenuCount == 2 && sidebar.SessionHasDeleteMenu(saved.Id),
             "每个会话项提供独立的操作菜单（含删除）");
         Check(sidebar.SessionMenuHasAccessibleHitArea(saved.Id),
@@ -433,20 +444,29 @@ public partial class ShellCheckWindow : Window
         // ── New-conversation (+) reuses an existing empty session instead of stacking empties ──
         var emptyA = shell.Chat.StartOrOpenEmptyConversation();
         var emptyB = shell.Chat.StartOrOpenEmptyConversation();
-        Check(emptyA.Id == emptyB.Id && sidebar.ConversationCount == 1,
-            "＋ 在已有空会话时直接打开它而不是再建一个（实际会话 " + sidebar.ConversationCount + "）");
+        Check(emptyA.Id == emptyB.Id && sidebar.ConversationCount == 0,
+            "＋ 复用已有的空会话，而空会话本身不占列表项（实际会话 " + sidebar.ConversationCount + "）");
 
         // ── The conversation list scrolls inside its bounded slot ──
-        for (var i = 0; i < 18; i++) shell.Chat.StartConversation();
+        // Each filler carries a turn: a session with nothing in it has no row to scroll to.
+        var fillers = new List<string>();
+        for (var i = 0; i < 18; i++)
+        {
+            var filler = shell.Chat.StartConversation();
+            shell.Chat.SeedTurnForCheck(filler.Id, "滚动占位 " + (i + 1));
+            fillers.Add(filler.Id);
+        }
         sidebar.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(sidebar.ListIsScrollableForCheck,
-            "会话超出侧栏高度时列表可滚动（而不是覆盖底部品牌行）");
+        Check(sidebar.ConversationCount == 18 && sidebar.ListIsScrollableForCheck,
+            "会话超出侧栏高度时列表可滚动（而不是覆盖底部品牌行，实际 " + sidebar.ConversationCount + " 项）");
 
-        // Cleanup: all nineteen are empty, so the prune path clears the fixture in one call.
-        Check(shell.Chat.PruneEmptyConversations() >= 19 && sidebar.ConversationCount == 0,
-            "自检清理：空会话被一次性移除");
+        // Cleanup: the fillers have messages so they go the ordinary way; the empty draft left over from ＋ is
+        // what the prune path clears.
+        foreach (var id in fillers) shell.Chat.DeleteConversation(id);
+        Check(shell.Chat.PruneEmptyConversations() >= 1 && sidebar.ConversationCount == 0,
+            "自检清理：滚动夹具删除后空会话也被一次性移除");
         sidebar.Reload();
 
         // ── Sidebar collapse: the ☰ toggle hides the whole panel and nothing peeks through ──
@@ -771,9 +791,12 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.SessionHasRenameMenu(opsConversation.Id) && sidebar.SessionHasPinMenu(opsConversation.Id),
             "会话操作菜单提供重命名与置顶");
 
+        // Read off the files, not the list: an empty session has no row to disappear from, so the list would
+        // say yes to this whether the prune worked or not.
         var emptyConversation = shell.Chat.StartConversation();
         Check(shell.Chat.PruneEmptyConversations() >= 1
-              && shell.Chat.Conversations.All(summary => summary.Id != emptyConversation.Id),
+              && emptyConversation.Messages.Count == 0
+              && shell.Chat.StoredCopyForCheck(emptyConversation.Id) is null,
             "清空空会话移除从未使用的新会话");
 
         await CheckParallelRunsAsync(shell, panel, sidebar);

@@ -120,7 +120,12 @@ public sealed class ChatWorkspace : IDisposable
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
-    public IReadOnlyList<ConversationSummary> Conversations => _sessions.List();
+    /// <summary>The history the sidebar lists: every session that holds something. A new chat is the composer's
+    /// blank state rather than a conversation, so it earns its row with its first message — a session that only
+    /// exists because someone clicked ＋ is not history. A streaming reply has its question stored by then, so
+    /// no session is ever hidden while it is working.</summary>
+    public IReadOnlyList<ConversationSummary> Conversations
+        => [.. _sessions.List().Where(summary => summary.MessageCount > 0)];
 
     public bool SelectMode(string mode)
     {
@@ -1442,6 +1447,12 @@ public sealed class ChatWorkspace : IDisposable
 
     /// <summary>What the session file says right now, cache aside. For the self-check only.</summary>
     internal Conversation? StoredCopyForCheck(string conversationId) => _sessions.LoadFromDisk(conversationId);
+
+    /// <summary>Appends one turn to a session through the real write path. For the self-check only: a session
+    /// earns its place in the history list with its first message, so a check that needs a long list has to
+    /// give those sessions something in them rather than just starting them.</summary>
+    internal bool SeedTurnForCheck(string conversationId, string text)
+        => _sessions.TryUpdate(conversationId, opened => opened.Append(ChatTurn.User(text)));
 
     public bool IsRunning(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) && run.IsStreaming;
