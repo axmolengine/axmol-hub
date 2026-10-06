@@ -58,8 +58,16 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// card then has to show exactly what the gate saw.</summary>
     public string? ApprovalPreview { get; init; }
 
-    public static ChatTurn User(string text, string? attachedContext = null) =>
-        new(ChatRoles.User, text, DateTimeOffset.Now) { AttachedContext = attachedContext };
+    /// <summary>For a user-role turn the assistant did not receive from the keyboard: the id of the Hub session
+    /// that wrote it. The id rather than a title because the peer's reply has to be addressed to it, and titles
+    /// are user-editable text. Nullable, so every conversation file written before cross-session messaging
+    /// existed still loads — and the persisted <see cref="Text"/> stays exactly what was sent, since the marker
+    /// telling the model this came from a peer is added at the request boundary
+    /// (<see cref="ChatPipeline.ToChatMessage"/>) and never stored.</summary>
+    public string? InjectedFrom { get; init; }
+
+    public static ChatTurn User(string text, string? attachedContext = null, string? injectedFrom = null) =>
+        new(ChatRoles.User, text, DateTimeOffset.Now) { AttachedContext = attachedContext, InjectedFrom = injectedFrom };
     public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
     public static ChatTurn System(string text) => new(ChatRoles.System, text, DateTimeOffset.Now);
 
