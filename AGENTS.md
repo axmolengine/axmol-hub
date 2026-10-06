@@ -1,5 +1,18 @@
 # AGENTS.md
 
+## Product charter
+
+The AI assistant is, first, a **general programming and debugging tool** — the same job opencode, ChatGPT
+Desktop and GitHub Copilot Desktop do: read the code, edit it, run commands, chase a compiler error until
+it is fixed. That baseline is the entry requirement, not a feature. Being Axmol-aware (engine source
+index, project digest, locked toolchain) comes *second*; it is the reason to use this client rather than a
+generic one, but it is not what the assistant is limited to.
+
+- **Never narrow the topic scope.** An Axmol-unrelated question is in scope — answer it. Don't refuse
+  because it "isn't about Axmol".
+- **Engine knowledge is a layer on top of general capability**, inserted where the model would otherwise
+  be wrong (v3 has no reliable corpus online). It is not a fence.
+
 ## UI interaction charter
 
 The shell is deliberately minimal. GitHub Copilot Desktop is the reference benchmark for visual
