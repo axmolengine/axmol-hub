@@ -413,6 +413,8 @@ public static class HubTexts
         // The tooltip is now the only place that warns editing drops the rest of the conversation: the
         // confirm dialog it used to precede went away when editing moved inline.
         ["EditMessage"] = ("编辑并重发（丢弃其后对话）", "Edit and resend (drops everything after)"),
+        // The two exits of the inline editor, shown in the row's own action slot so they need not be guessed.
+        ["ConfirmEdit"] = ("保存并重发", "Save and resend"),
         ["RegenerateMessage"] = ("重新生成", "Regenerate"),
         ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
         // Shown above a forked transcript; the line itself is the link back to the source session.

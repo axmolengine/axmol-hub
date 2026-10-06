@@ -561,13 +561,40 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        // In-place edit: the bubble's own text turns into the editor, Escape abandons it, Enter commits and
-        // re-runs the reply. No dialog anywhere in the path.
+        // In-place edit: the bubble's own text turns into the editor, the row's hover actions become cancel
+        // and confirm, and Escape / a click away both abandon it. No dialog anywhere in the path.
+        async Task WaitForStreamAsync()
+        {
+            for (var wait = 0; wait < 200 && panel.IsStreamingForCheck; wait++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(25);
+            }
+        }
+        bool ShowsEditExits(int row)
+            => panel.BubbleIconActionCount(row) == 2 && panel.BubbleHasIconAction(row, "Cancel")
+               && panel.BubbleHasIconAction(row, "ConfirmEdit")
+               && !panel.BubbleHasIconAction(row, "CopyMessage") && !panel.BubbleHasIconAction(row, "EditMessage");
+
         var firstQuestion = opsConversation.Messages[0].Text;
         Check(panel.ClickBubbleAction(0, "EditMessage")
-              && panel.BubbleEditorForCheck(0) is { } opener && opener.Text == firstQuestion,
-            "点击编辑图标后气泡文字就地变成编辑框，并预填该条原文");
-        Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Escape)
+              && panel.BubbleEditorForCheck(0) is { } opener && opener.Text == firstQuestion
+              && ShowsEditExits(0),
+            "点击编辑图标后气泡文字就地变成编辑框，操作条同时换成取消与确认两个图标");
+        Check(panel.ClickBubbleAction(0, "Cancel")
+              && panel.BubbleEditorForCheck(0) is null
+              && panel.BubbleHasIconAction(0, "EditMessage")
+              && opsConversation.Messages[0].Text == firstQuestion,
+            "点取消退出编辑，操作条恢复原样，历史不变");
+        Check(panel.ClickBubbleAction(0, "EditMessage") && panel.BubbleEditorForCheck(0) is not null
+              && ShowsEditExits(0),
+            "再次进入就地编辑，同样给出取消与确认");
+        panel.FocusComposerForCheck();
+        Dispatcher.UIThread.RunJobs();
+        Check(panel.BubbleEditorForCheck(0) is null && opsConversation.Messages[0].Text == firstQuestion,
+            "点击其他区域（焦点离开编辑框）自动取消编辑");
+        Check(panel.ClickBubbleAction(0, "EditMessage")
+              && panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Escape)
               && panel.BubbleEditorForCheck(0) is null
               && opsConversation.Messages[0].Text == firstQuestion,
             "Esc 放弃就地编辑，原文与历史都不变");
@@ -580,13 +607,19 @@ public partial class ShellCheckWindow : Window
             "Enter 提交后编辑框关闭，气泡回到普通文字");
         Check(opsConversation.Messages[0].Text == "就地改写的提问",
             "提交就地编辑改写了该条消息并截断其后的回复");
-        for (var wait = 0; wait < 200 && panel.IsStreamingForCheck; wait++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(25);
-        }
+        await WaitForStreamAsync();
         Check(!panel.IsStreamingForCheck && opsConversation.Messages.Count == 2,
             "改写后就地重新生成了回复（实际 " + opsConversation.Messages.Count + " 条）");
+        Check(panel.ClickBubbleAction(0, "EditMessage") && panel.BubbleEditorForCheck(0) is not null,
+            "为确认按钮再开一次就地编辑");
+        var confirmEditor = panel.BubbleEditorForCheck(0)!;
+        confirmEditor.Text = "确认按钮改写的提问";
+        Check(panel.ClickBubbleAction(0, "ConfirmEdit") && panel.BubbleEditorForCheck(0) is null,
+            "点确认图标提交就地编辑");
+        await WaitForStreamAsync();
+        Check(opsConversation.Messages[0].Text == "确认按钮改写的提问"
+              && opsConversation.Messages.Count == 2 && !panel.IsStreamingForCheck,
+            "确认图标提交后同样改写并重新生成（实际 " + opsConversation.Messages.Count + " 条）");
         Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
               && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
             "消息操作文案支持中英文");

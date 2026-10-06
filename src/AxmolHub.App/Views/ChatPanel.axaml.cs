@@ -699,7 +699,7 @@ public partial class ChatPanel : UserControl
         if (role == ChatRoles.User)
         {
             bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
-            bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => BeginInlineEdit(index, body)));
+            bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => BeginInlineEdit(index, body, bar)));
         }
         else
         {
@@ -948,18 +948,21 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>
-    /// Puts a user message back into an editable box where it stands. Enter commits and re-runs the reply,
-    /// Shift+Enter adds a line, Escape restores the original text.
+    /// Puts a user message back into an editable box where it stands, and swaps the row's hover actions for
+    /// cancel and confirm so both exits are visible instead of something to remember. Enter commits,
+    /// Shift+Enter adds a line, Escape or a click anywhere outside abandons the edit.
     ///
     /// Committing drops everything after this turn. That used to be gated by a confirmation dialog that only
     /// appeared once the retyping was already done; the edit icon's tooltip carries the consequence now, at
     /// the moment the edit is chosen instead.
     /// </summary>
-    private void BeginInlineEdit(int index, StackPanel body)
+    private void BeginInlineEdit(int index, StackPanel body, StackPanel bar)
     {
         if (_send is not null || body.Children.FirstOrDefault() is not TextBlock original) return;
 
         var untouched = original.Text ?? "";
+        var normalActions = bar.Children.ToList();
+        var closed = false;
         var editor = new TextBox
         {
             Text = untouched,
@@ -968,16 +971,41 @@ public partial class ChatPanel : UserControl
             FontSize = original.FontSize,
         };
         editor.Classes.Add("message-edit");
-        body.Children.Remove(original);
-        body.Children.Insert(0, editor);
-        editor.Focus();
-        editor.CaretIndex = editor.Text.Length;
 
-        void Restore()
+        void Close()
         {
+            if (closed) return;
+            closed = true;
             body.Children.Remove(editor);
             body.Children.Insert(0, original);
+            bar.Children.Clear();
+            foreach (var action in normalActions) bar.Children.Add(action);
         }
+
+        void Commit()
+        {
+            if (closed) return;
+            var edited = editor.Text.Trim();
+            if (edited.Length == 0 || edited == untouched
+                || _send is not null || _chat.ActiveConversation is null || !_chat.EditAndResend(index, edited))
+            {
+                Close();
+                return;
+            }
+
+            // The rebuild throws this whole subtree away, so there is nothing left to restore.
+            closed = true;
+            ForceRebuildMessages();
+            _ = StreamReplyAsync(token => _chat.ResendAsync(token));
+        }
+
+        body.Children.Remove(original);
+        body.Children.Insert(0, editor);
+        bar.Children.Clear();
+        bar.Children.Add(IconActionButton("Cancel", "Hub.Icon.Close", Close));
+        bar.Children.Add(IconActionButton("ConfirmEdit", "Hub.Icon.Tick", Commit));
+        editor.Focus();
+        editor.CaretIndex = editor.Text.Length;
 
         // Registered on the tunnel for the same reason the composer is: a TextBox with AcceptsReturn marks
         // Enter handled in order to insert a newline, so a plain subscriber never sees the key.
@@ -986,30 +1014,25 @@ public partial class ChatPanel : UserControl
             if (e.Key == Key.Escape)
             {
                 e.Handled = true;
-                Restore();
+                Close();
             }
             else if (e.Key == Key.Enter && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
             {
                 e.Handled = true;
-                var edited = editor.Text.Trim();
-                if (edited.Length == 0 || edited == untouched) Restore();
-                else CommitEdit(index, edited, Restore);
+                Commit();
             }
         }, RoutingStrategies.Tunnel);
-    }
 
-    /// <summary>Applies an in-place edit. The rebuild on success discards the editor; a refusal has to put the
-    /// original text back by hand, because nothing else will.</summary>
-    private void CommitEdit(int index, string edited, Action restore)
-    {
-        if (_send is not null || !_chat.EditAndResend(index, edited))
+        // Clicking away abandons the edit — but not when focus only moved to this editor's own two buttons,
+        // which have to be allowed to receive the click, and not when the window itself lost focus, which
+        // would discard a draft nobody meant to drop.
+        editor.LostFocus += (_, e) =>
         {
-            restore();
-            return;
-        }
-
-        ForceRebuildMessages();
-        _ = StreamReplyAsync(token => _chat.ResendAsync(token));
+            if (e.NewFocusedElement is not Visual next || ReferenceEquals(next, editor)) return;
+            if (next.GetLogicalAncestors().Any(ancestor
+                    => ReferenceEquals(ancestor, bar) || ReferenceEquals(ancestor, body))) return;
+            Close();
+        };
     }
 
     /// <summary>Drives one streamed reply: appends a live assistant bubble, appends chunks as they arrive, and
@@ -1554,6 +1577,9 @@ public partial class ChatPanel : UserControl
     internal bool ForkNoticeVisibleForCheck => ForkNotice.IsVisible;
     internal string? ForkNoticeTextForCheck => ForkNotice.IsVisible ? ForkNotice.Content?.ToString() : null;
     internal void ClickForkNoticeForCheck() => ForkNotice.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+    /// <summary>Moves focus out of an open inline editor, the way clicking anywhere else in the window would.</summary>
+    internal void FocusComposerForCheck() => InputBox.Focus();
 
     /// <summary>Sends one key to the in-place editor, so the Enter/Escape bindings themselves are what a check
     /// exercises rather than the method they call.</summary>
