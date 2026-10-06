@@ -9,7 +9,7 @@
       "descriptionZh": "OrcaRouter 是一个 OpenAI 兼容的路由服务，用一个端点、一把密钥调用上游多家模型。可用 OrcaRouter 账号登录，也可粘贴已有密钥。首次安装时默认写入。",
       "baseUrl": "https://api.orcarouter.ai/v1",
       "apiKeyRequired": true,
-      "defaultEnabledModels": ["orcarouter/auto"],
+      "defaultEnabledModels": ["orcarouter/auto", "deepseek/deepseek-v4-flash-free"],
       "maxContextTokens": 128000,
       "affiliate": true,
       "referralUrl": "https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359",
