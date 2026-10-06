@@ -1350,18 +1350,12 @@ public sealed class ChatWorkspace : IDisposable
         return emptyIds.Count;
     }
 
-    /// <summary>Removes one message from a conversation and persists the result. Removing is the primitive
-    /// behind the per-message delete action; edit/regenerate are built on top of it.</summary>
-    public bool RemoveTurn(string conversationId, int index)
-    {
-        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
-        if (conversation is null || index < 0 || index >= conversation.Messages.Count) return false;
-
-        conversation.Messages.RemoveAt(index);
-        _conversations.Save(conversation);
-        Changed?.Invoke();
-        return true;
-    }
+    // There is deliberately no "delete this one message" operation. A turn cannot be lifted out of the
+    // history on its own: a function call and its result are one exchange as far as the provider is
+    // concerned, so removing either half leaves an orphan that ChatPipeline.ToChatMessage would still
+    // send, and the request comes back rejected. Edit-and-resend and regenerate both truncate from a
+    // chosen turn instead, which keeps the history consistent; whole sessions go through
+    // DeleteConversation.
 
     /// <summary>
     /// Streams an assistant reply to <paramref name="text"/> in the active conversation, appending the user
@@ -1430,22 +1424,6 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
-    /// <summary>Continues a reply the model stopped early: the instruction is appended as a user turn so the
-    /// persisted history reads honestly (the user really did ask it to go on).</summary>
-    public async IAsyncEnumerable<string> ContinueAsync(
-        string instruction,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-
-        var conversation = _active;
-        conversation.Append(ChatTurn.User(instruction));
-        _conversations.Save(conversation);
-
-        await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
-            yield return chunk;
-    }
-
     /// <summary>Streams a reply against the conversation's current history without appending a user turn.
     /// Used by edit-and-resend and regenerate, whose history change already happened.</summary>
     public async IAsyncEnumerable<string> ResendAsync(
@@ -1458,7 +1436,7 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>Streams against the conversation's current history and writes the assistant turn on the way
-    /// out. Shared by send / edit / regenerate / continue so the partial-reply-on-cancel rule holds once.</summary>
+    /// out. Shared by send / edit / regenerate so the partial-reply-on-cancel rule holds once.</summary>
     private async IAsyncEnumerable<string> StreamReplyAsync(
         Conversation conversation,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)

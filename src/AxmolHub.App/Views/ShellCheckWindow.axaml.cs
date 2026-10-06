@@ -528,7 +528,7 @@ public partial class ShellCheckWindow : Window
             "用户消息操作栏未悬停时保持隐藏");
         Check(panel.BubbleHasIconAction(1, "CopyMessage") && panel.BubbleHasIconAction(1, "RegenerateMessage")
               && panel.BubbleHasIconAction(1, "BranchFromHere") && panel.BubbleIconActionCount(1) == 3
-              && !panel.BubbleHasAction(1, "ContinueReply") && !panel.BubbleHasAction(1, "DeleteMessage"),
+              && !panel.BubbleHasIconAction(1, "ContinueReply") && !panel.BubbleHasIconAction(1, "DeleteMessage"),
             "最后一条助手消息只有复制 / 重新生成 / 分叉三个图标，继续与删除已退出操作条（实际 "
             + panel.BubbleIconActionCount(1) + " 个）");
         Check(HubTexts.Get("BranchFromHere", HubTexts.ChineseLanguage) == "从此处创建分支任务"

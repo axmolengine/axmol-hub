@@ -110,14 +110,14 @@
     <Style Selector="Grid.message-row:focus-within StackPanel.message-actions">
       <Setter Property="Opacity" Value="1" />
     </Style>
+    <!-- Every action is an icon button now, so the row only carries what an icon needs: the plate itself
+         and its hover colour. Size and padding live on the icon class below. -->
     <Style Selector="Button.message-action">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="5" />
-      <Setter Property="Padding" Value="6,2" />
       <Setter Property="Margin" Value="0" />
-      <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     </Style>
     <Style Selector="Button.message-action.message-action-icon">

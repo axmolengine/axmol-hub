@@ -710,15 +710,6 @@ public partial class ChatPanel : UserControl
             (int)elapsed.TotalDays);
     }
 
-    private static Button ActionButton(string textKey, Action onClick)
-    {
-        var button = new Button { Content = HubStrings.Get(textKey), Tag = textKey };
-        button.Classes.Add("message-action");
-        ToolTip.SetTip(button, HubStrings.Get(textKey));
-        button.Click += (_, _) => onClick();
-        return button;
-    }
-
     private static Button IconActionButton(string textKey, string geometryKey, Action onClick)
     {
         var icon = new Avalonia.Controls.Shapes.Path
@@ -926,15 +917,6 @@ public partial class ChatPanel : UserControl
         await StreamReplyAsync(token => _chat.ResendAsync(token));
     }
 
-    private async Task ContinueAsync()
-    {
-        if (_send is not null) return;
-        if (_chat.ActiveConversation is null || _chat.SelectedChatModel is null) return;
-
-        AppendPlainBubble(HubStrings.Get("ContinueInstruction"), fromUser: true);
-        await StreamReplyAsync(token => _chat.ContinueAsync(HubStrings.Get("ContinueInstruction"), token));
-    }
-
     /// <summary>Forks the conversation at this message into a fresh session and switches to it. Refused while
     /// a reply is streaming, because the history is still growing and the cut point would not be the one that
     /// was clicked. The message flow and the sidebar both repaint through the workspace's Changed event.</summary>
@@ -960,19 +942,6 @@ public partial class ChatPanel : UserControl
         if (!_chat.EditAndResend(index, edited)) return;
         ForceRebuildMessages();
         await StreamReplyAsync(token => _chat.ResendAsync(token));
-    }
-
-    private async Task DeleteMessageAsync(int index)
-    {
-        var conversation = _chat.ActiveConversation;
-        if (conversation is null) return;
-
-        var confirm = await HubDialog.ShowAsync(
-            GetOwner(), HubStrings.Get("DeleteMessage"), HubStrings.Get("DeleteMessageConfirm"),
-            HubDialogButtons.OkCancel, danger: true);
-        if (confirm != HubDialogResult.Ok) return;
-
-        _chat.RemoveTurn(conversation.Id, index);
     }
 
     /// <summary>Drives one streamed reply: appends a live assistant bubble, appends chunks as they arrive, and
