@@ -49,6 +49,15 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public bool ToolFailed { get; init; }
     public string? AttachedContext { get; init; }
 
+    /// <summary>Permission state of a tool call that needed one; <c>null</c> means there was nothing to decide.
+    /// Values come from <see cref="ChatApprovalStates"/>.</summary>
+    public string? ApprovalState { get; init; }
+
+    /// <summary>What approving this call would do, frozen when it was asked for — a diff for a write, a command
+    /// line for a build. Frozen rather than recomputed because the decision can come after a restart, and the
+    /// card then has to show exactly what the gate saw.</summary>
+    public string? ApprovalPreview { get; init; }
+
     public static ChatTurn User(string text, string? attachedContext = null) =>
         new(ChatRoles.User, text, DateTimeOffset.Now) { AttachedContext = attachedContext };
     public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
@@ -101,6 +110,18 @@ public sealed class Conversation
     /// <summary>Index in the source conversation of the last turn this branch kept: the cut point.</summary>
     public int? BranchSourceIndex { get; set; }
 
+    /// <summary>Permission mode for this session, or <c>null</c> to follow the global default — nullability is
+    /// what separates "never set" from "deliberately ask". Values come from <see cref="ToolApprovalModes"/>.</summary>
+    public string? ApprovalMode { get; set; }
+
+    /// <summary>Tools the user answered "always allow in this session" to. Persisted for the same reason a
+    /// pending approval is: the grant outlives the window that made it.</summary>
+    public List<string> AutoApprovedTools { get; set; } = [];
+
+    /// <summary>Directory this session's file tools are confined to. Held per session rather than re-derived
+    /// per request, so an approval granted after a restart applies to the same place it was shown for.</summary>
+    public string? WorkspaceRoot { get; set; }
+
     /// <summary>Longest auto-title before ellipsis; short enough to fit the session list.</summary>
     private const int MaxTitleLength = 48;
 
@@ -140,6 +161,11 @@ public sealed class ConversationSummary
     public DateTimeOffset UpdatedAt { get; set; }
     public bool Pinned { get; set; }
 
+    /// <summary>How many tool calls in this session are waiting for a decision. Derived from the transcript on
+    /// every save rather than counted separately, so a session cannot advertise a decision nobody can make —
+    /// and a file written before the field existed simply reads as zero.</summary>
+    public int PendingApprovals { get; set; }
+
     public static ConversationSummary From(Conversation conversation) => new()
     {
         Id = conversation.Id,
@@ -148,6 +174,8 @@ public sealed class ConversationSummary
         MessageCount = conversation.Messages.Count,
         UpdatedAt = conversation.UpdatedAt,
         Pinned = conversation.Pinned,
+        PendingApprovals = conversation.Messages
+            .Count(turn => turn.ApprovalState == ChatApprovalStates.Pending),
     };
 
     /// <summary>

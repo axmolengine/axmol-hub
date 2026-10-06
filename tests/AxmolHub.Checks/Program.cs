@@ -655,6 +655,95 @@ if (args.Contains("--check-ai-sessions"))
     Console.WriteLine("PASS: ChatPipeline propagates cancellation.");
     return;
 }
+if (args.Contains("--check-ai-tool-policy"))
+{
+    // The permission model is one pure function over two small enums, so all nine cells are asserted rather
+    // than sampled: a transposed table is the difference between "auto lets a build run" and "auto stops at a
+    // build", and neither reads as an error at compile time.
+    var table = new (string Mode, ToolRisk Risk, bool Expected)[]
+    {
+        (ToolApprovalModes.Ask, ToolRisk.ReadOnly, false),
+        (ToolApprovalModes.Ask, ToolRisk.WorkspaceWrite, true),
+        (ToolApprovalModes.Ask, ToolRisk.SystemCommand, true),
+        (ToolApprovalModes.Auto, ToolRisk.ReadOnly, false),
+        (ToolApprovalModes.Auto, ToolRisk.WorkspaceWrite, false),
+        (ToolApprovalModes.Auto, ToolRisk.SystemCommand, true),
+        (ToolApprovalModes.Full, ToolRisk.ReadOnly, false),
+        (ToolApprovalModes.Full, ToolRisk.WorkspaceWrite, false),
+        (ToolApprovalModes.Full, ToolRisk.SystemCommand, false),
+    };
+    foreach (var (mode, risk, expected) in table)
+    {
+        if (ToolApprovalPolicy.RequiresApproval(mode, risk) != expected)
+            throw new Exception($"Approval decision for {mode} × {risk} was wrong.");
+    }
+    Console.WriteLine("PASS: the approval decision table asks exactly where it should.");
+
+    // Fail closed on anything unrecognized, including null: the settings file is user-editable, and a newer
+    // Hub may write a mode this build has never heard of.
+    foreach (var unknown in new[] { null, "", "yolo", "ASK", "auto-approve" })
+    {
+        if (ToolApprovalModes.Normalize(unknown) != ToolApprovalModes.Ask)
+            throw new Exception($"Unrecognized approval mode 「{unknown}」 did not fall back to ask.");
+    }
+    if (!ToolApprovalPolicy.RequiresApproval(null, ToolRisk.WorkspaceWrite))
+        throw new Exception("A null approval mode let a workspace write through.");
+    Console.WriteLine("PASS: an unrecognized approval mode falls back to asking.");
+
+    // The per-session override rides on the session file, and a file written before approval existed must
+    // still load — with the pending count reading as zero rather than throwing.
+    var policyStore = new ConversationStore(root);
+    var workspaceRoot = Path.Combine(root, "project");
+    var policyConversation = Conversation.Create("orcarouter");
+    policyConversation.Append(ChatTurn.User("写一个文件"));
+    policyConversation.ApprovalMode = ToolApprovalModes.Auto;
+    policyConversation.WorkspaceRoot = workspaceRoot;
+    policyConversation.AutoApprovedTools.Add("file_write");
+    policyConversation.Messages.Add(ChatTurn.FunctionCall("c1", "file_write", """{"path":"x.cpp"}""") with
+    {
+        ApprovalState = ChatApprovalStates.Pending,
+        ApprovalPreview = "--- a/x.cpp\n+++ b/x.cpp\n+hi",
+    });
+    policyStore.Save(policyConversation);
+
+    var policyReloaded = policyStore.Load(policyConversation.Id)
+                         ?? throw new Exception("Session with approval settings did not reload.");
+    if (policyReloaded.ApprovalMode != ToolApprovalModes.Auto || policyReloaded.WorkspaceRoot != workspaceRoot
+        || policyReloaded.AutoApprovedTools.Count != 1 || policyReloaded.AutoApprovedTools[0] != "file_write")
+        throw new Exception("The session's approval settings did not round-trip.");
+    var pendingCall = policyReloaded.Messages[^1];
+    if (pendingCall.ApprovalState != ChatApprovalStates.Pending
+        || pendingCall.ApprovalPreview is not { Length: > 0 }
+        || pendingCall.ToolName != "file_write")
+        throw new Exception("A pending tool call lost its state, its preview, or its name.");
+    var pendingSummary = policyStore.List().First(summary => summary.Id == policyConversation.Id);
+    if (pendingSummary.PendingApprovals != 1)
+        throw new Exception($"The index did not report the pending approval (reported {pendingSummary.PendingApprovals}).");
+
+    File.WriteAllText(Path.Combine(root, "ai", "sessions", "legacy-no-approval.json"),
+        """{"Id":"legacy-no-approval","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"assistant","Text":"","ToolCallId":"c1","ToolName":"get_projects"}]}""");
+    if (policyStore.Load("legacy-no-approval") is not
+        { ApprovalMode: null, WorkspaceRoot: null, AutoApprovedTools: { Count: 0 } } legacy)
+        throw new Exception("A session file predating tool approval no longer loads.");
+    if (legacy.Messages[0].ApprovalState is not null || legacy.Messages[0].ApprovalPreview is not null)
+        throw new Exception("A tool call from before approval gained a state.");
+    // The file was written by hand, so it is not in the index — what matters is that summarizing it, which is
+    // what the index is built from, reports no pending decision rather than throwing.
+    if (ConversationSummary.From(legacy).PendingApprovals != 0)
+        throw new Exception("A legacy session advertised pending approvals it cannot have.");
+
+    // A resolved call stops counting as pending, which is what keeps the badge from outliving the decision.
+    var resolved = policyStore.Load(policyConversation.Id)!;
+    resolved.Messages[^1] = resolved.Messages[^1] with { ApprovalState = ChatApprovalStates.Approved };
+    policyStore.Save(resolved);
+    if (policyStore.List().First(summary => summary.Id == policyConversation.Id).PendingApprovals != 0)
+        throw new Exception("An approved call was still counted as pending in the index.");
+
+    policyStore.Delete("legacy-no-approval");
+    policyStore.Delete(policyConversation.Id);
+    Console.WriteLine("PASS: approval fields round-trip, pending counts derive, and pre-approval sessions still load.");
+    return;
+}
 if (args.Contains("--check-release-receipt"))
 {
     var entry = new StateStore(root).Load().Projects.Single(p => p.Name == "HelloAndroidRelease");

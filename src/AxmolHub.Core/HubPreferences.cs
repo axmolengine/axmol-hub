@@ -29,6 +29,14 @@ public sealed class HubPreferences
     /// </summary>
     public bool AutoDownloadUpdates { get; set; } = true;
 
+    /// <summary>
+    /// Default permission mode for the assistant's tools: <see cref="ToolApprovalModes.Ask"/> /
+    /// <see cref="ToolApprovalModes.Auto"/> / <see cref="ToolApprovalModes.Full"/>. A session can override it
+    /// (<see cref="Conversation.ApprovalMode"/>), which is the only way one risky project gets tightened
+    /// without tightening everything else.
+    /// </summary>
+    public string ToolApprovalMode { get; set; } = ToolApprovalModes.Ask;
+
     /// <summary>左侧导航/会话侧栏展开时的宽度（px），范围 240–420；由侧栏拖拽手柄调整。</summary>
     public double SidebarWidth { get; set; } = 300;
 
@@ -51,6 +59,9 @@ public sealed class PreferencesStore(string path)
         // Same for the download source: DownloadSources owns the known ids. An unknown value (hand
         // edited, or written by a newer Hub) must not become "download from nowhere".
         preferences.DownloadSource = DownloadSources.Normalize(preferences.DownloadSource);
+        // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
+        // has to come back as "ask", never as "let it through".
+        preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);
         return preferences;
     }
     public void Save(HubPreferences preferences) => StateStore.WriteJson(path, preferences);
