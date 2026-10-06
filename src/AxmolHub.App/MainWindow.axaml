@@ -239,7 +239,7 @@
 
       <!-- Slim status strip. -->
       <Grid Grid.Row="2" Height="28" Margin="18,0,18,0"
-            ColumnDefinitions="Auto,*,Auto,Auto">
+            ColumnDefinitions="Auto,*,Auto,Auto,Auto">
         <Ellipse Grid.Column="0" Width="6" Height="6"
                  Fill="{DynamicResource Hub.Success}"
                  VerticalAlignment="Center" />
@@ -249,10 +249,19 @@
                    FontSize="11" Margin="8,0,0,0"
                    TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center" />
+        <!-- Background replies get their own slot rather than overwriting the operation status: a session
+             streaming is not a Hub operation, and neither should erase the other. Hidden while nothing is
+             answering, so the strip is as bare as it was. It is the only sign of a running reply outside the
+             assistant page, where the conversation list — and its per-session dot — is not shown. -->
+        <TextBlock x:Name="ChatRuns" Grid.Column="2"
+                   IsVisible="False"
+                   Foreground="{DynamicResource Hub.TextSecondary}"
+                   FontSize="11" Margin="8,0,0,0"
+                   VerticalAlignment="Center" />
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
-                Grid.Column="2" Classes="strip"
+                Grid.Column="3" Classes="strip"
                 IsEnabled="False" Margin="6,0,0,0" />
-        <Button x:Name="LogToggle" Grid.Column="3" Classes="icon-ghost"
+        <Button x:Name="LogToggle" Grid.Column="4" Classes="icon-ghost"
                 Padding="6">
           <Path x:Name="LogToggleChevron" Classes="stroked"
                 Data="{StaticResource Hub.Icon.Chevron}"

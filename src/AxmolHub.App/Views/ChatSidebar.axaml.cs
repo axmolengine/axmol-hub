@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -26,6 +27,10 @@ public partial class ChatSidebar : UserControl
 {
     private readonly ChatWorkspace _chat;
 
+    /// <summary>Which sessions were answering the last time this list was painted. See
+    /// <see cref="RefreshRunDots"/>.</summary>
+    private string _runsSignature = "";
+
     public ChatSidebar()
     {
         _chat = null!;
@@ -38,6 +43,7 @@ public partial class ChatSidebar : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
+        _chat.RunsChanged += _ => RefreshRunDots();
 
         // Listen on the Text property rather than TextChanged: in Avalonia 12 a programmatic assignment to
         // TextBox.Text does not raise TextChanged, so a handler on it would only see real keystrokes.
@@ -79,9 +85,25 @@ public partial class ChatSidebar : UserControl
 
     // ───────────────────────── Session list ─────────────────────────
 
+    /// <summary>
+    /// Repaints only when the set of running sessions actually changed. A run flips at start and finish, never
+    /// per chunk, and rebuilding a list whose dots are identical is how a reload and a change event end up
+    /// chasing each other.
+    /// </summary>
+    private void RefreshRunDots()
+    {
+        if (RunSignature() == _runsSignature) return;
+        RefreshConversationList();
+    }
+
+    private string RunSignature() => string.Join(",", _chat.Conversations
+        .Where(summary => _chat.IsRunning(summary.Id))
+        .Select(summary => summary.Id));
+
     private void RefreshConversationList()
     {
         if (_chat is null) return;
+        _runsSignature = RunSignature();
         var query = (SearchBox.Text ?? "").Trim();
         var activeId = _chat.ActiveConversation?.Id;
         var matches = _chat.Conversations
@@ -136,7 +158,7 @@ public partial class ChatSidebar : UserControl
             CornerRadius = new CornerRadius(6),
         };
         row.Classes.Add("session-row");
-        var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,36") };
+        var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,10,36") };
         var item = new Button
         {
             Content = title,
@@ -179,7 +201,23 @@ public partial class ChatSidebar : UserControl
         menuButton.Tag = menu;
 
         layout.Children.Add(item);
-        Grid.SetColumn(menuButton, 1);
+        if (_chat.IsRunning(summary.Id))
+        {
+            // A dot is the whole indicator: a reply is arriving in this session whether or not anyone is
+            // looking at it, and it leaves with the run instead of waiting to be noticed.
+            var running = new Ellipse
+            {
+                Width = 6,
+                Height = 6,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            running.Bind(Shape.FillProperty, new DynamicResourceExtension("Hub.Accent"));
+            Grid.SetColumn(running, 1);
+            layout.Children.Add(running);
+        }
+
+        Grid.SetColumn(menuButton, 2);
         layout.Children.Add(menuButton);
         row.Child = layout;
         row.Tag = summary.Id;

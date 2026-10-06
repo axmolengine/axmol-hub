@@ -94,6 +94,7 @@ public partial class MainWindow : Window
         _workspace.Owner = this;
         _chat = new ChatWorkspace(dataRoot);
         _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
+        WireChatRuns();
 
         InitializeComponent();
         InitializeSidebar();
@@ -253,6 +254,20 @@ public partial class MainWindow : Window
     internal void SetStatus(string text) => Status.Text = text;
 
     /// <summary>
+    /// Puts how many sessions are answering right now on the strip. Called for every <see cref="ChatWorkspace"/>
+    /// the shell builds, including the one a data-root switch replaces — an unresubscribed strip would quietly
+    /// stop reporting replies, which is exactly the kind of failure nobody sees.
+    /// </summary>
+    private void WireChatRuns() => _chat.RunsChanged += _ => UpdateChatRunsStatus();
+
+    private void UpdateChatRunsStatus()
+    {
+        var running = _chat.RunningCount;
+        ChatRuns.IsVisible = running > 0;
+        ChatRuns.Text = running > 0 ? string.Format(HubStrings.Get("RunningSessionsFormat"), running) : "";
+    }
+
+    /// <summary>
     /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
     /// up a <c>MainWindow</c> and closes the old one because its state, pages, and log are all bound
     /// to the root. Here we only rebuild <see cref="HubWorkspace"/> and drop the page cache: pages
@@ -321,6 +336,7 @@ public partial class MainWindow : Window
         _chat.Dispose();
         _chat = new ChatWorkspace(next.Store.Root);
         _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
+        WireChatRuns();
         _chatPanel = null;
 
         // The conversation sidebar holds the old workspace; rebuild it for the new one.
@@ -466,6 +482,7 @@ public partial class MainWindow : Window
         InitializeChrome();
         _chatSidebar?.Reload();
         UpdatePageTitle();
+        UpdateChatRunsStatus();
 
         foreach (var page in _pages.Values)
         {

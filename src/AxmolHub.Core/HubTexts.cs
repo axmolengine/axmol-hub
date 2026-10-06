@@ -405,6 +405,12 @@ public static class HubTexts
         ["ChatTimedOut"] = ("模型请求超时，请检查网络或服务状态后重试。", "The model request timed out. Check your connection or the provider status and try again."),
         ["ChatNoResponse"] = ("模型没有返回内容，请重试或检查模型配置。", "The model returned no content. Try again or check the model configuration."),
         ["ChatCancelled"] = ("已停止。", "Stopped."),
+        // Refusals a send can get back now that several sessions answer at once. The cap is deliberately not
+        // spelled out as a number: the limit lives in code, and a literal here would go stale silently.
+        ["ChatSessionBusy"] = ("这个会话正在生成回复，请先停止它或等回复结束。", "This session is already answering. Stop it or wait for the reply to finish."),
+        ["ChatParallelLimit"] = ("同时运行的会话已达上限，请先停止一个。", "That is as many sessions as can run at once. Stop one before starting another."),
+        ["ChatSessionMissing"] = ("这个会话已被删除。", "This session has been deleted."),
+        ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),
         ["You"] = ("你", "You"),
