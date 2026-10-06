@@ -81,8 +81,10 @@ public partial class ShellCheckWindow : Window
             lifetime.Shutdown(_failed == 0 ? 0 : 1);
         }
 
+        var checksStarted = false;
         Opened += (_, _) => Dispatcher.UIThread.Post(async () =>
         {
+            checksStarted = true;
             try
             {
                 UpdateLayout();
@@ -97,15 +99,18 @@ public partial class ShellCheckWindow : Window
             Finish();
         }, DispatcherPriority.Background);
 
-        // Fallback: don't let the process hang forever if the window never shows (in automation, hanging is harder to diagnose than failing).
+        // Fallback: don't let the process hang forever. Two different failures look the same from here — a window
+        // that never shows, and an assertion waiting on something that never arrives — and they used to be
+        // reported as one, which turned a slow-but-complete run into a lie about the window. The ceiling is now
+        // generous enough that suite length cannot trip it; a trip means a check is genuinely stuck.
         DispatcherTimer.RunOnce(() =>
         {
-            if (!finished)
-            {
-                Check(false, "窗口在 10 秒内没有触发 Opened，断言未执行");
-                Finish();
-            }
-        }, TimeSpan.FromSeconds(10));
+            if (finished) return;
+            Check(false, checksStarted
+                ? "自检在 30 秒内没有跑完：有断言卡在等待上，请检查最近加入的断言组"
+                : "窗口在 30 秒内没有触发 Opened，断言未执行");
+            Finish();
+        }, TimeSpan.FromSeconds(30));
     }
 
     private void Check(bool ok, string message)
@@ -758,7 +763,7 @@ public partial class ShellCheckWindow : Window
             "清空空会话移除从未使用的新会话");
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
-        await CheckToolApprovalAsync(shell);
+        await CheckToolApprovalAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -976,7 +981,7 @@ public partial class ShellCheckWindow : Window
     /// run registry, so all of it runs on scripted clients: no network, and no waiting on a model that would
     /// have to be asked nicely to request a tool.
     /// </summary>
-    private async Task CheckToolApprovalAsync(MainWindow shell)
+    private async Task CheckToolApprovalAsync(MainWindow shell, ChatPanel panel)
     {
         var chat = shell.Chat;
         var savedIdleTimeout = chat.IdleTimeout;
@@ -1049,6 +1054,10 @@ public partial class ShellCheckWindow : Window
             Check(chat.Conversations.Any(summary => summary.Id == readSession.Id
                   && summary.PendingApprovals == 0),
                 "只读调用不进入会话索引的待批准计数");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 0,
+                "只读调用不在消息流里插审批卡片（没有要问的事就不该出现提问）");
 
             // Now the same registered call is judged as a write, which is what gives the gate something to stop.
             chat.RiskOverrideForCheck = name => name == "get_projects" ? ToolRisk.WorkspaceWrite : ToolRisk.ReadOnly;
@@ -1073,6 +1082,33 @@ public partial class ShellCheckWindow : Window
             Check(chat.Conversations.Any(summary => summary.Id == parkSession.Id && summary.PendingApprovals == 1),
                 "会话索引报告有一个待批准");
 
+            // The card is what makes a parked call answerable, so it is read back as painted: on screen without
+            // hovering, naming the tool and showing what it would do, with the three exits and nothing else.
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 1 && panel.ApprovalCardOnScreenForCheck,
+                "待批准的调用画出占位的可见卡片（实际 " + panel.PendingApprovalCardsForCheck + " 张）");
+            Check(panel.ApprovalCardTextForCheck.Contains("get_projects", StringComparison.Ordinal)
+                  && panel.ApprovalCardTextForCheck.Contains(HubStrings.Get("ChatApprovalArguments"), StringComparison.Ordinal),
+                "卡片说出是哪个工具、并给出它的参数（实际「" + panel.ApprovalCardTextForCheck + "」）");
+            Check(panel.ApprovalCardActionsForCheck.SequenceEqual(new[]
+                      { "ApprovalAllow", "ApprovalAllowAlways", "ApprovalDeny" }, StringComparer.Ordinal),
+                "卡片给出批准 / 总是允许 / 拒绝三个出口（实际 "
+                + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
+            Check(panel.ApprovalCardActionsAreCalmForCheck,
+                "拒绝按钮不按危险操作上色（destructive 留给「不问就干且后果重」）");
+
+            // And it is really painted: an object graph can describe a card that lays out to nothing.
+            var cardVisual = panel.ApprovalCardForCheck;
+            var cardShot = System.IO.Path.Combine(ScratchDirectory.Resolve("approval-card"), "card.png");
+            var cardStats = cardVisual is null ? null : SmokeCapture.Capture(cardVisual, cardShot);
+            Check(cardStats is not null && System.IO.File.Exists(cardShot) && !cardStats.IsBlank(),
+                "审批卡片真实渲染出非空白帧（distinct=" + (cardStats?.DistinctColors ?? 0)
+                + "，variance="
+                + (cardStats?.LuminanceVariance.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) ?? "0")
+                + "，写在 " + cardShot + "）");
+
             // Waiting for a person is not stalling: the inactivity deadline is allowed to fire (150ms above) and
             // the decision still has to be answerable afterwards.
             var deadlineFired = await WaitForStaleDeadlineAsync(chat, parkSession.Id);
@@ -1082,13 +1118,12 @@ public partial class ShellCheckWindow : Window
                 "空闲超时确实到期了，而没有把等待批准的调用一起取消掉（到期 " + deadlineFired + "）");
 
             // Approving runs that very call — the arguments the model chose, not a fresh request — writes its
-            // real result, and the reply continues from there.
-            var approved = chat.TryResolveApproval(parkSession.Id, parkedCallId ?? "", approved: true,
-                alwaysAllow: true, out var approveRefusal);
+            // real result, and the reply continues from there. Clicked through the card, so the button's wiring
+            // is part of what is asserted rather than a call the check makes on its behalf.
+            panel.ClickApprovalActionForCheck("ApprovalAllowAlways");
             await WaitForIdleAsync(chat);
             var afterApprove = chat.StoredCopyForCheck(parkSession.Id);
-            Check(approved && approveRefusal is null
-                  && afterApprove?.Messages.Any(turn => turn.ToolCallId == parkedCallId
+            Check(afterApprove?.Messages.Any(turn => turn.ToolCallId == parkedCallId
                       && turn.Role == ChatRoles.Assistant
                       && turn.ApprovalState == ChatApprovalStates.Approved) == true
                   && afterApprove!.Messages.Any(turn => turn.ToolCallId == parkedCallId
@@ -1096,6 +1131,13 @@ public partial class ShellCheckWindow : Window
                   && afterApprove.Messages[^1].Text == ApprovalChatClient.Answer,
                 "批准后按原调用执行、真实结果入库、回复接着说完（实际 "
                 + (afterApprove?.Messages.Count ?? -1) + " 条）");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 0
+                  && panel.ApprovalRecordsForCheck.Any(line =>
+                      line.Contains(HubStrings.Get("ChatApprovalResolvedApproved"), StringComparison.Ordinal)),
+                "决定之后卡片折成一行记录，按钮不再留在界面上（实际记录 "
+                + string.Join(" / ", panel.ApprovalRecordsForCheck) + "）");
             Check(chat.RunFor(parkSession.Id) is null && chat.RunningCount == 0,
                 "批准后的续答跑完即让出运行位（实际仍有 " + chat.RunningCount + " 路）");
             Check(afterApprove?.AutoApprovedTools.Contains("get_projects") == true,
@@ -1118,12 +1160,13 @@ public partial class ShellCheckWindow : Window
             chat.OpenConversation(denySession.Id);
             chat.TryEnqueueSend(denySession.Id, "别写", null, out _);
             var deniedCallId = await WaitForPendingCallAsync(denySession);
-            var refused = chat.TryResolveApproval(denySession.Id, deniedCallId ?? "", approved: false,
-                alwaysAllow: false, out var denyRefusal);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            panel.ClickApprovalActionForCheck("ApprovalDeny");
             await WaitForIdleAsync(chat);
             var afterDeny = chat.StoredCopyForCheck(denySession.Id);
-            Check(refused && denyRefusal is null
-                  && afterDeny?.Messages.Any(turn => turn.ToolCallId == deniedCallId
+            Check(afterDeny?.Messages.Any(turn => turn.ToolCallId == deniedCallId
                       && turn.Role == ChatRoles.Assistant
                       && turn.ApprovalState == ChatApprovalStates.Denied) == true
                   && afterDeny!.Messages.Any(turn => turn.Role == ChatRoles.Tool
@@ -1144,6 +1187,9 @@ public partial class ShellCheckWindow : Window
             chat.OpenConversation(supersededSession.Id);
             chat.TryEnqueueSend(supersededSession.Id, "先问一次", null, out _);
             var waitingCallId = await WaitForPendingCallAsync(supersededSession);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 1, "新消息到达前，被查看会话里确实摆着一张卡片");
             var supersededSent = chat.TryEnqueueSend(supersededSession.Id, "换个说法", null, out _);
             await WaitForIdleAsync(chat);
             var afterSupersede = chat.StoredCopyForCheck(supersededSession.Id);
@@ -1155,6 +1201,12 @@ public partial class ShellCheckWindow : Window
                 "待批准期间的新消息取代该调用，并补上「已被取代」的结果");
             Check(afterSupersede is not null && EveryToolCallAnswered(afterSupersede),
                 "取代后的会话可重放：每个调用都有配对结果（否则 provider 会整段拒收）");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 0
+                  && panel.ApprovalRecordsForCheck.Any(line => line.Contains(
+                      HubStrings.Get("ChatApprovalResolvedSuperseded"), StringComparison.Ordinal)),
+                "被新消息取代的调用从卡片退回一行记录，按钮不再留着");
             Check(chat.RunFor(supersededSession.Id) is null && chat.RunningCount == 0,
                 "取代挂起调用后不留运行记录（实际 " + chat.RunningCount + " 路）");
 

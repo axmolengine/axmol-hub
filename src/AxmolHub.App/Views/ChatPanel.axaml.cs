@@ -72,6 +72,23 @@ public partial class ChatPanel : UserControl
     private string? _renderedConversationId;
     private int _renderedCount;
 
+    /// <summary>The approval states as they were when the flow was laid down. An approval decision rewrites the
+    /// state on a turn that is already on screen, so the turn count alone cannot notice it.</summary>
+    private string _renderedApprovalStamp = "";
+
+    private static string ApprovalStamp(Conversation? conversation)
+    {
+        if (conversation is null) return "";
+        var stamp = new StringBuilder();
+        foreach (var turn in conversation.Messages)
+        {
+            if (turn.ApprovalState is not { Length: > 0 } state) continue;
+            stamp.Append(turn.ToolCallId).Append(':').Append(state).Append(';');
+        }
+
+        return stamp.ToString();
+    }
+
     /// <summary>Raised when the active conversation or its title may have changed, so the shell can update
     /// its top-bar title (the panel no longer owns a title of its own).</summary>
     internal event Action? ConversationStateChanged;
@@ -593,6 +610,13 @@ public partial class ChatPanel : UserControl
             }
         }
 
+        // A decision changes what an already-rendered turn looks like without changing how many turns there
+        // are, which is precisely the case incremental rendering cannot see: the stamp is what lets a card
+        // collapse into its one-line record instead of keeping buttons that no longer mean anything.
+        var approvalStamp = ApprovalStamp(conversation);
+        var approvalChanged = approvalStamp != _renderedApprovalStamp;
+        _renderedApprovalStamp = approvalStamp;
+
         if (visible.Count == 0)
         {
             MessageFlow.Children.Clear();
@@ -604,7 +628,7 @@ public partial class ChatPanel : UserControl
             return;
         }
 
-        if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount)
+        if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount || approvalChanged)
         {
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation.Id;
@@ -615,7 +639,8 @@ public partial class ChatPanel : UserControl
         for (var i = _renderedCount; i < visible.Count; i++)
         {
             var (index, turn) = visible[i];
-            AppendRenderedTurn(index, turn, isLast: index == lastIndex, markdown: i >= visible.Count - EagerMarkdownLimit);
+            AppendRenderedTurn(conversation.Id, index, turn, isLast: index == lastIndex,
+                markdown: i >= visible.Count - EagerMarkdownLimit);
         }
 
         EmptyState.IsVisible = false;
@@ -632,11 +657,22 @@ public partial class ChatPanel : UserControl
         RenderMessages();
     }
 
-    private void AppendRenderedTurn(int index, ChatTurn turn, bool isLast, bool markdown)
+    private void AppendRenderedTurn(string conversationId, int index, ChatTurn turn, bool isLast, bool markdown)
     {
         var fromUser = turn.Role == ChatRoles.User;
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
+
+        // A call that needed permission carries its own record: the question with its buttons while it waits,
+        // one quiet line once it does not. A call that never needed asking gets nothing drawn here, which is why
+        // the approval state — not the presence of a tool call — is what decides.
+        if (turn.ToolCallId is { Length: > 0 } callId)
+        {
+            if (turn.ApprovalState == ChatApprovalStates.Pending)
+                body.Children.Add(BuildApprovalCard(conversationId, callId, turn));
+            else if (turn.ApprovalState is { Length: > 0 })
+                body.Children.Add(BuildApprovalRecord(turn));
+        }
 
         // A function-call or tool-result turn gets no action bar: it is not a readable message, and acting on
         // half of a call/result pair orphans the other half (the pipeline sends them to the provider as one
@@ -649,6 +685,86 @@ public partial class ChatPanel : UserControl
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
         if (!fromUser && markdown && turn.Text.Length > 0)
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
+    }
+
+    /// <summary>The question stated once: which tool, with what, and the three answers it accepts. The arguments
+    /// stay visible because "run file_write" is not a decision — what it writes is.</summary>
+    private Control BuildApprovalCard(string conversationId, string callId, ChatTurn turn)
+    {
+        var card = new StackPanel { Spacing = 4 };
+        card.Children.Add(new TextBlock
+        {
+            Classes = { "approval-question" },
+            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatApprovalQuestionFormat"), turn.ToolName ?? ""),
+        });
+        AddApprovalDetail(card, "ChatApprovalArguments", turn.ToolArguments);
+        AddApprovalDetail(card, "ChatApprovalChangePreview", turn.ApprovalPreview);
+
+        var actions = new StackPanel { Classes = { "approval-actions" } };
+        actions.Children.Add(ApprovalButton("ApprovalAllow",
+            () => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false)));
+        actions.Children.Add(ApprovalButton("ApprovalAllowAlways",
+            () => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true)));
+        actions.Children.Add(ApprovalButton("ApprovalDeny",
+            () => ResolveApproval(conversationId, callId, approved: false, alwaysAllow: false)));
+        card.Children.Add(actions);
+
+        return new Border { Classes = { "approval-card" }, ClipToBounds = true, Child = card };
+    }
+
+    private static void AddApprovalDetail(StackPanel card, string labelKey, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        card.Children.Add(new TextBlock { Classes = { "approval-label" }, Text = HubStrings.Get(labelKey) });
+        card.Children.Add(new TextBlock
+        {
+            Classes = { "approval-detail" },
+            Text = value,
+            MaxHeight = 180,
+            TextWrapping = TextWrapping.Wrap,
+        });
+    }
+
+    private Button ApprovalButton(string textKey, Action onClick)
+    {
+        var button = new Button
+        {
+            Classes = { "approval-action" },
+            Content = HubStrings.Get(textKey),
+            Tag = textKey,
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    /// <summary>The decided call, still in the record and no longer actionable: what became of it is the only
+    /// thing worth the space.</summary>
+    private Control BuildApprovalRecord(ChatTurn turn)
+    {
+        var outcome = turn.ApprovalState switch
+        {
+            ChatApprovalStates.Approved => "ChatApprovalResolvedApproved",
+            ChatApprovalStates.Denied => "ChatApprovalResolvedDenied",
+            _ => "ChatApprovalResolvedSuperseded",
+        };
+        return new Border
+        {
+            Classes = { "approval-record" },
+            Child = new TextBlock
+            {
+                Classes = { "approval-record-text" },
+                Text = $"{HubStrings.Get(outcome)} · {turn.ToolName ?? ""}",
+            },
+        };
+    }
+
+    /// <summary>Hands one decision to the workspace. A refusal is spoken out loud rather than swallowed: the card
+    /// would otherwise sit there having done nothing, which reads as a broken button.</summary>
+    private void ResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow)
+    {
+        if (_chat.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out var refusalKey)) return;
+        AppendNotice(HubStrings.Get(refusalKey ?? "ChatApprovalGone"), danger: true);
     }
 
     private void AppendPlainBubble(string text, bool fromUser)
@@ -1333,6 +1449,56 @@ public partial class ChatPanel : UserControl
     /// <summary>The first rendered message row, so a check can prove a reload reuses it instead of rebuilding
     /// the whole flow (the incremental path's whole point).</summary>
     internal object? FirstBubbleForCheck => MessageRows.FirstOrDefault();
+
+    // ── Approval card ──
+    private IEnumerable<Border> ApprovalCards
+        => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Border>())
+            .Where(card => card.Classes.Contains("approval-card"));
+
+    /// <summary>How many calls are asking. A request the user has to answer is never hover-gated — a hidden
+    /// actionable request looks exactly like a reply that stopped working — so this reads the flow as painted.</summary>
+    internal int PendingApprovalCardsForCheck => ApprovalCards.Count();
+
+    internal Border? ApprovalCardForCheck => ApprovalCards.FirstOrDefault();
+
+    internal bool ApprovalCardOnScreenForCheck
+        => ApprovalCards.FirstOrDefault() is { IsVisible: true } card && card.Bounds is { Width: > 0, Height: > 0 };
+
+    internal string ApprovalCardTextForCheck
+        => ApprovalCards.FirstOrDefault() is { } card
+            ? string.Join(" | ", card.GetLogicalDescendants().OfType<TextBlock>()
+                .Select(block => block.Text ?? "").Where(text => text.Length > 0))
+            : "";
+
+    internal string[] ApprovalCardActionsForCheck
+        => ApprovalCards.FirstOrDefault() is { } card
+            ? card.GetLogicalDescendants().OfType<Button>()
+                .Where(button => button.Classes.Contains("approval-action"))
+                .Select(button => button.Tag as string ?? "").ToArray()
+            : [];
+
+    /// <summary>Whether any of the card's buttons is drawn as a destructive act. Refusing a tool call is an
+    /// ordinary answer to an ordinary question, and painting it as a detonation is how a permission UI ends up
+    /// trained on saying yes.</summary>
+    internal bool ApprovalCardActionsAreCalmForCheck
+        => ApprovalCards.FirstOrDefault() is { } card
+           && !card.GetLogicalDescendants().OfType<Button>().Any(button => button.Classes.Contains("destructive"));
+
+    internal void ClickApprovalActionForCheck(string actionKey)
+    {
+        var button = ApprovalCards.FirstOrDefault()?
+            .GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Tag as string == actionKey);
+        if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>The one-line records of calls already decided, in the order they appear.</summary>
+    internal string[] ApprovalRecordsForCheck
+        => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Border>())
+            .Where(record => record.Classes.Contains("approval-record"))
+            .Select(record => record.GetLogicalDescendants().OfType<TextBlock>()
+                .FirstOrDefault()?.Text ?? "")
+            .ToArray();
 
     /// <summary>Appends a notice row through the real path, so the row's layout can be read back off the
     /// controls instead of inferred from code.</summary>

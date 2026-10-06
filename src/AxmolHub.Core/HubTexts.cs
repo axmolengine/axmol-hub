@@ -412,6 +412,19 @@ public static class HubTexts
         ["ChatSessionMissing"] = ("这个会话已被删除。", "This session has been deleted."),
         // The decision was already made, or a newer message took the call away while the question was on screen.
         ["ChatApprovalGone"] = ("这个待批准的调用已经不在了，可能已被处理或被新消息取代。", "This pending approval is no longer there — it was already decided, or a newer message took its place."),
+        // Inline approval card. The card states what will happen rather than describing a permission level: the
+        // tool name and its arguments are the whole question, and the answer is one of the three buttons.
+        ["ChatApprovalQuestionFormat"] = ("要执行 {0} 吗？", "Run {0}?"),
+        ["ChatApprovalArguments"] = ("参数", "Arguments"),
+        ["ChatApprovalChangePreview"] = ("改动预览", "Change preview"),
+        ["ApprovalAllow"] = ("批准", "Allow"),
+        ["ApprovalAllowAlways"] = ("总是允许", "Always allow"),
+        ["ApprovalDeny"] = ("拒绝", "Deny"),
+        // After the decision the card collapses to one of these lines — the record stays in the transcript, the
+        // buttons do not.
+        ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),
+        ["ChatApprovalResolvedDenied"] = ("已拒绝", "Refused"),
+        ["ChatApprovalResolvedSuperseded"] = ("未执行（换了话题）", "Not run (the conversation moved on)"),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),

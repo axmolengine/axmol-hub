@@ -189,6 +189,67 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
     </Style>
 
+    <!-- A call that needs permission stays on screen until it is answered. Hover-reveal would be exactly
+         wrong here: an actionable request you cannot see is a reply that appears to have stalled. The card is
+         framed with Hub.Border (Hub.BorderSubtle equals the raised surface, so a frame drawn with it is
+         invisible), and its buttons are not red — refusing is an ordinary answer, not a destructive act. -->
+    <Style Selector="Border.approval-card">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Margin" Value="0,4,0,0" />
+      <Setter Property="MaxWidth" Value="560" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+    </Style>
+    <Style Selector="TextBlock.approval-question">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.approval-label">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="TextBlock.approval-detail">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="StackPanel.approval-actions">
+      <Setter Property="Orientation" Value="Horizontal" />
+      <Setter Property="Spacing" Value="6" />
+      <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+    <Style Selector="Button.approval-action">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.approval-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <!-- The same call once answered: the record stays, the buttons go. -->
+    <Style Selector="Border.approval-record">
+      <Setter Property="Margin" Value="0,4,0,0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+    </Style>
+    <Style Selector="TextBlock.approval-record-text">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+
     <!-- Floating "scroll to latest" affordance: a square plate with a down arrow, matching the other
          square ghost buttons rather than the pill/chip shapes in this page. -->
     <Style Selector="Button.scroll-bottom">
