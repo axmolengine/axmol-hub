@@ -15,8 +15,9 @@ generic one, but it is not what the assistant is limited to.
 
 ## UI interaction charter
 
-The shell is deliberately minimal. GitHub Copilot Desktop and GitHub Copilot Desktop is the reference benchmark for visual
-language (chat-centric, low chrome, generous whitespace) — copy its *principles*, not its screens.
+The shell is deliberately minimal. ChatGPT Desktop and GitHub Copilot Desktop are the reference benchmarks
+for visual language (chat-centric, low chrome, generous whitespace) — copy their *principles*, not their
+screens.
 Axmol Hub is a multi-page developer tool, so adapt rather than replicate; optimize for the local
 workflow when it makes sense.
 
