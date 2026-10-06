@@ -37,8 +37,9 @@ public sealed record WorkspaceGuards(string? DataRoot, IReadOnlyList<string> Eng
 /// </summary>
 public static class WorkspacePaths
 {
-    /// <summary>Project memory lives inside the workspace, and the assistant is expected to write there.</summary>
-    public const string MemoryDirectory = ".agents/memory";
+    /// <summary>Project memory lives inside the workspace, and the assistant is expected to write there.
+    /// Composed rather than a literal so it carries the host's separator.</summary>
+    public static string MemoryDirectory => Path.Combine(".agents", "memory");
 
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {

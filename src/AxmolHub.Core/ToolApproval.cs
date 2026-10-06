@@ -15,6 +15,10 @@ public enum ToolRisk
     /// <summary>Runs something on the machine. A tool this build has never heard of lands here rather than
     /// nowhere: an unknown name is the one least able to vouch for itself.</summary>
     SystemCommand,
+
+    /// <summary>The assistant's own notes, written inside a directory Hub owns. Never asks — a note that costs
+    /// a card is a note that never gets written — but every write is audited, and the path guard still runs.</summary>
+    AssistantNote,
 }
 
 /// <summary>
@@ -42,12 +46,17 @@ public static class ToolApprovalModes
 /// <summary>The whole decision table, as one pure function.</summary>
 public static class ToolApprovalPolicy
 {
-    /// <summary>Whether <paramref name="risk"/> has to be approved before it runs under <paramref name="mode"/>.</summary>
-    public static bool RequiresApproval(string? mode, ToolRisk risk) => ToolApprovalModes.Normalize(mode) switch
+    /// <summary>Whether <paramref name="risk"/> has to be approved before it runs under <paramref name="mode"/>.
+    /// The assistant's own notes are exempt in every mode; everything else follows the table.</summary>
+    public static bool RequiresApproval(string? mode, ToolRisk risk) => risk switch
     {
-        ToolApprovalModes.Full => false,
-        ToolApprovalModes.Auto => risk == ToolRisk.SystemCommand,
-        _ => risk != ToolRisk.ReadOnly,
+        ToolRisk.AssistantNote => false,
+        _ => ToolApprovalModes.Normalize(mode) switch
+        {
+            ToolApprovalModes.Full => false,
+            ToolApprovalModes.Auto => risk == ToolRisk.SystemCommand,
+            _ => risk != ToolRisk.ReadOnly,
+        },
     };
 }
 

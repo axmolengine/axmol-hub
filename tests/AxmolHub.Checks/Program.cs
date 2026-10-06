@@ -655,6 +655,119 @@ if (args.Contains("--check-ai-sessions"))
     Console.WriteLine("PASS: ChatPipeline propagates cancellation.");
     return;
 }
+if (args.Contains("--check-ai-memory"))
+{
+    var memoryRoot = Path.Combine(root, "memory");
+    if (Directory.Exists(memoryRoot)) Directory.Delete(memoryRoot, recursive: true);
+    var projectDir = Path.Combine(memoryRoot, "project");
+    var dataRoot = Path.Combine(memoryRoot, "data");
+    Directory.CreateDirectory(projectDir);
+    Directory.CreateDirectory(dataRoot);
+
+    if (MemoryStore.RootFor(MemoryScope.Project, projectDir, dataRoot) != Path.Combine(projectDir, ".agents", "memory"))
+        throw new Exception("Project memory does not live in .agents/memory inside the workspace.");
+    if (MemoryStore.RootFor(MemoryScope.Global, null, dataRoot) != Path.Combine(dataRoot, "ai", "memory"))
+        throw new Exception("Global memory does not live beside the other ai/ state.");
+    if (MemoryStore.RootFor(MemoryScope.Project, null, dataRoot) is not null)
+        throw new Exception("Project memory invented a root without a workspace.");
+    if (MemoryStore.IndexFileName(MemoryScope.Project) == MemoryStore.IndexFileName(MemoryScope.Global))
+        throw new Exception("The project index would overwrite a global-style MEMORY.md.");
+
+    // A repository may already keep its own memory. Hub reads it and must never rewrite it.
+    var projectRoot = MemoryStore.RootFor(MemoryScope.Project, projectDir, dataRoot)!;
+    Directory.CreateDirectory(projectRoot);
+    var foreignIndex = Path.Combine(projectRoot, "MEMORY.md");
+    const string foreignText = "# 人工维护的项目记忆\n\n这一行不属于 Hub，不能被改写。\n";
+    File.WriteAllText(foreignIndex, foreignText);
+
+    var first = MemoryStore.Write(projectRoot, MemoryScope.Project, "build-conventions.md",
+        "构建约定", "本工程用 Ninja 而不是 MSBuild", "project", "构建走 1k/1kiss.ps1，不要直接调 msbuild。", append: false);
+    var second = MemoryStore.Write(projectRoot, MemoryScope.Project, "shading-rules.md",
+        "着色器规则", "axslcc 输出的 SPIR-V 必须过一遍 spirv-val", "decision", "着色器改完必须重编。", append: false);
+    if (!first.Written || !second.Written) throw new Exception($"A topic write was refused: {first.Message} {second.Message}");
+
+    var indexText = File.ReadAllText(Path.Combine(projectRoot, "AXHUB.md"));
+    if (!indexText.Contains("[构建约定](topics/build-conventions.md)") || !indexText.Contains("本工程用 Ninja"))
+        throw new Exception($"The derived index does not match the topic frontmatter:{Environment.NewLine}{indexText}");
+    if (File.ReadAllText(foreignIndex) != foreignText)
+        throw new Exception("Writing a memory topic rewrote the repository's own MEMORY.md.");
+    if (MemoryStore.ReadText(projectRoot, MemoryScope.Project, "MEMORY.md") != foreignText)
+        throw new Exception("A project's existing MEMORY.md was not readable.");
+    if (MemoryStore.ReadText(projectRoot, MemoryScope.Project, "build-conventions.md") is not { } body
+        || !body.Contains("1kiss.ps1") || body.Contains("---"))
+        throw new Exception("Reading a topic did not return its body alone.");
+
+    // Append keeps one file with both facts; replace leaves only the new one.
+    MemoryStore.Write(projectRoot, MemoryScope.Project, "build-conventions.md", "", "", "", "补充：构建目录是 build-hub。", append: true);
+    var appended = MemoryStore.ReadText(projectRoot, MemoryScope.Project, "build-conventions.md")!;
+    if (!appended.Contains("1kiss.ps1") || !appended.Contains("build-hub"))
+        throw new Exception("Appending replaced the topic instead of adding to it.");
+    MemoryStore.Write(projectRoot, MemoryScope.Project, "build-conventions.md", "", "", "", "只剩这一条。", append: false);
+    var replaced = MemoryStore.ReadText(projectRoot, MemoryScope.Project, "build-conventions.md")!;
+    if (replaced.Contains("1kiss.ps1") || !replaced.Contains("只剩这一条"))
+        throw new Exception("A replace left the old body behind.");
+
+    foreach (var bad in new[] { "../evil.md", "MEMORY.md", "AXHUB.md", "Build.md", "no-extension", "a--b.md", "-lead.md", "C:\\evil.md", "" })
+        if (MemoryStore.Write(projectRoot, MemoryScope.Project, bad, "t", "d", "note", "内容", append: false).Written)
+            throw new Exception($"'{bad}' was accepted as a memory topic name.");
+    if (MemoryStore.Write(projectRoot, MemoryScope.Project, "ok.md", "t", "d", "note", "   ", append: false).Written)
+        throw new Exception("An empty memory write was accepted.");
+    if (MemoryStore.Write(null, MemoryScope.Project, "ok.md", "t", "d", "note", "内容", append: false).Written)
+        throw new Exception("A project memory write succeeded with no workspace.");
+    if (!MemoryStore.Write(MemoryStore.RootFor(MemoryScope.Global, null, dataRoot), MemoryScope.Global, "user-prefers-chinese.md",
+            "语言偏好", "回复用中文", "user", "用户要求中文回复。", append: false).Written)
+        throw new Exception("Global memory refused a write with no workspace bound.");
+    if (!File.ReadAllText(Path.Combine(dataRoot, "ai", "memory", "MEMORY.md")).Contains("语言偏好"))
+        throw new Exception("The global index was not written as MEMORY.md.");
+
+    // The index goes into the system prompt on every turn, so its size is bounded — and an entry that did not
+    // fit has to be counted rather than silently dropped, or the model cannot know to ask for it.
+    var manyRoot = Path.Combine(memoryRoot, "many");
+    for (var index = 0; index < 60; index++)
+        MemoryStore.Write(manyRoot, MemoryScope.Project, $"topic-{index:D2}.md", $"标题 {index:D2}",
+            new string('描', 40), "note", "内容", append: false);
+    var many = MemoryStore.Index(manyRoot);
+    if (many.Count != 60) throw new Exception($"Only {many.Count} of 60 topics reached the index.");
+    var rendered = MemoryStore.RenderIndex(many);
+    if (rendered.Length > MemoryStore.MaxIndexCharacters + 32)
+        throw new Exception($"The rendered index grew past its cap: {rendered.Length} characters.");
+    if (!rendered.Contains("…(+")) throw new Exception("An index that dropped entries did not say how many.");
+    if (!File.ReadAllText(Path.Combine(manyRoot, "AXHUB.md")).Contains("…(+"))
+        throw new Exception("The index written to disk is not the truncated one.");
+    Console.WriteLine("PASS: memory topics persist, the index is derived, and a foreign MEMORY.md survives untouched.");
+
+    var logDay = new DateTimeOffset(2026, 10, 6, 9, 30, 0, TimeSpan.Zero);
+    var logFile = MemoryLog.FileFor(projectDir, logDay);
+    if (!logFile.EndsWith(Path.Combine(".agents", "memory", "2026-10-06.md"), StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"The daily log path is wrong: {logFile}");
+
+    var runLines = MemoryLog.LinesForRun(new MemoryRunSummary("abcdef12-3456", "修构建", "auto",
+        ["read_file（允许）", "file_write（批准）"], "完成", Compacted: true), logDay);
+    if (!MemoryLog.Append(logFile, runLines).Written) throw new Exception("The first log append failed.");
+    var quietLines = MemoryLog.LinesForRun(new MemoryRunSummary("99999999-0000", "闲聊", "ask", [], null, false), logDay);
+    if (!quietLines.Any(line => line.Contains("没有调用工具"))) throw new Exception("A run with no tools logged nothing about itself.");
+
+    // Two sessions share one daily file, so the append has to survive being concurrent rather than merely sequential.
+    await Task.WhenAll(
+        Task.Run(() => { for (var index = 0; index < 20; index++) MemoryLog.Append(logFile, [$"- A{index:D3}"]); }),
+        Task.Run(() => { for (var index = 0; index < 20; index++) MemoryLog.Append(logFile, [$"- B{index:D3}"]); }));
+    var logged = File.ReadAllText(logFile);
+    var lost = Enumerable.Range(0, 20)
+        .SelectMany(index => new[] { $"A{index:D3}", $"B{index:D3}" })
+        .Where(marker => !logged.Contains(marker, StringComparison.Ordinal))
+        .ToList();
+    if (lost.Count > 0) throw new Exception($"Parallel appends lost {lost.Count} lines, for example {lost[0]}.");
+
+    var capped = Path.Combine(memoryRoot, "capped.md");
+    MemoryLogAppend last = default;
+    for (var index = 0; index < 400; index++) last = MemoryLog.Append(capped, [new string('z', 200)], 4096);
+    if (last.Written || !File.ReadAllText(capped).Contains("上限") || new FileInfo(capped).Length > 4096 + 200)
+        throw new Exception($"The log cap did not hold (written={last.Written}, size={new FileInfo(capped).Length}).");
+    Console.WriteLine("PASS: the daily log survives parallel sessions and stops at its cap.");
+
+    Directory.Delete(memoryRoot, recursive: true);
+    return;
+}
 if (args.Contains("--check-ai-context"))
 {
     // The diff is what the user approves, so headers and caps are asserted as text: a wrong hunk header is not
@@ -995,7 +1108,7 @@ if (args.Contains("--check-ai-workspace"))
 }
 if (args.Contains("--check-ai-tool-policy"))
 {
-    // The permission model is one pure function over two small enums, so all nine cells are asserted rather
+    // The permission model is one pure function over two small enums, so all twelve cells are asserted rather
     // than sampled: a transposed table is the difference between "auto lets a build run" and "auto stops at a
     // build", and neither reads as an error at compile time.
     var table = new (string Mode, ToolRisk Risk, bool Expected)[]
@@ -1009,6 +1122,10 @@ if (args.Contains("--check-ai-tool-policy"))
         (ToolApprovalModes.Full, ToolRisk.ReadOnly, false),
         (ToolApprovalModes.Full, ToolRisk.WorkspaceWrite, false),
         (ToolApprovalModes.Full, ToolRisk.SystemCommand, false),
+        // The assistant's own notes never ask, in any mode: a note that costs a card is a note never written.
+        (ToolApprovalModes.Ask, ToolRisk.AssistantNote, false),
+        (ToolApprovalModes.Auto, ToolRisk.AssistantNote, false),
+        (ToolApprovalModes.Full, ToolRisk.AssistantNote, false),
     };
     foreach (var (mode, risk, expected) in table)
     {
