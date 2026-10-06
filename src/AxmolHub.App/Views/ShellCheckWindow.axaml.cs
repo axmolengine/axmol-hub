@@ -1221,6 +1221,7 @@ public partial class ShellCheckWindow : Window
                 HubSnapshotProvider = chat.HubSnapshotProvider,
                 PreferencesProvider = chat.PreferencesProvider,
                 RiskOverrideForCheck = chat.RiskOverrideForCheck,
+                AuditWrite = chat.AuditWrite,
             };
             reopened.OpenConversation(restartSession.Id);
             Check(orphanCallId is not null && reopened.RunFor(restartSession.Id) is null,
@@ -1248,6 +1249,18 @@ public partial class ShellCheckWindow : Window
             chat.DeleteConversation(restartSession.Id);
             Check(chat.RunFor(restartSession.Id) is null,
                 "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
+
+            // ── every decision leaves a line ──
+            // A durable approval is only defensible if the record says who granted it: the same decision made
+            // after a restart, by a workspace that never saw the stream, has to show up too.
+            var audit = System.IO.File.ReadAllText(shell.Workspace.Log.FilePath);
+            Check(audit.Contains($"Tool approval: always allowed get_projects in \"{parkSession.Title}\"",
+                    StringComparison.Ordinal)
+                  && audit.Contains($"Tool approval: refused get_projects in \"{denySession.Title}\"",
+                      StringComparison.Ordinal)
+                  && audit.Contains($"Tool approval: allowed get_projects in \"{restartSession.Title}\"",
+                      StringComparison.Ordinal),
+                "批准、总是允许、拒绝与重启后的批准各留下一行审计");
 
             // ── the mode is pickable: per session in the composer, app-wide in Settings ──
             chat.PreferencesProvider = savedPreferencesProvider;

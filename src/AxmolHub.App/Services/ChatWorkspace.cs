@@ -1638,6 +1638,21 @@ public sealed class ChatWorkspace : IDisposable
         };
     }
 
+    /// <summary>Where an approval decision is recorded. Set by the shell to Hub's activity log: a decision that
+    /// outlives the window (a parked call answered after a restart) has to leave a trace behind, or the audit
+    /// trail for "who let this run" is whatever the transcript happens to say.</summary>
+    internal Action<string>? AuditWrite { get; set; }
+
+    /// <summary>The session's title at decision time rather than its id: the log is read by a person looking
+    /// for the conversation they remember.</summary>
+    private void AuditApproval(string conversationId, string toolName, string verdict)
+    {
+        if (AuditWrite is not { } write) return;
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        var title = conversation?.Title is { Length: > 0 } named ? named : conversationId;
+        write($"Tool approval: {verdict} {toolName} in \"{title}\"");
+    }
+
     /// <summary>
     /// Answers a call that is waiting. Approving runs it here rather than asking the model again — a second ask
     /// is a different call, with different arguments and no guarantee it comes back — then writes the real
@@ -1688,6 +1703,7 @@ public sealed class ChatWorkspace : IDisposable
                 opened.Messages[at] = opened.Messages[at] with { ApprovalState = ChatApprovalStates.Denied };
                 opened.Append(ChatTurn.FunctionResult(callId, ToolApprovalResults.Denied, failed: true));
             });
+            AuditApproval(conversationId, conversation.Messages[index].ToolName ?? "tool", "refused");
             Changed?.Invoke();
             // receivedText: no model reply follows a refusal by design, and an empty answer would otherwise be
             // reported as "the model returned nothing" — a provider bug that never happened.
@@ -1705,6 +1721,8 @@ public sealed class ChatWorkspace : IDisposable
             if (alwaysAllow && call.ToolName is { } name && !opened.AutoApprovedTools.Contains(name))
                 opened.AutoApprovedTools.Add(name);
         });
+        AuditApproval(conversationId, conversation.Messages[index].ToolName ?? "tool",
+            alwaysAllow ? "always allowed" : "allowed");
         Changed?.Invoke();
         _ = PumpApprovedCallAsync(run, callId);
         return true;
