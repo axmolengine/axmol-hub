@@ -504,7 +504,7 @@ public static class HubTexts
         ["ProviderCustomRow"] = ("自定义接口", "Custom endpoint"),
         ["ProviderCustomRowHint"] = ("手动填写 OpenAI 兼容的接口地址与模型，适用于自建网关或局域网内的本地模型。", "Enter an OpenAI-compatible base URL and model by hand — for a self-hosted gateway or a local model on another machine."),
         ["ProviderAlreadyAdded"] = ("该提供商已在列表中。", "That provider is already in the list."),
-        // 认证方式与账号（对齐 opencode 的 account 模型：一份凭据 = 一个账号，不分来源）。
+        // 认证方式与账号（一份凭据 = 一个账号，不分来源）。
         ["AuthMethod"] = ("认证方式", "Sign-in method"),
         ["AuthMethodApiKey"] = ("API 密钥", "API key"),
         ["AuthMethodOAuth"] = ("浏览器登录", "Sign in with browser"),

@@ -1939,10 +1939,10 @@ public partial class ShellCheckWindow : Window
         Check(presets.All(preset => shell.Chat.Providers.All(provider => provider.Id != preset.Id)),
             "已配置的 provider 不再出现在可选预设里（不会重复添加）");
 
-        // ── Multiple accounts for one service: the opencode rule ──
+        // ── Multiple accounts for one service ──
         //
         // A provider id names one account, so a second account for the same service is a second provider
-        // pointing at the same base URL. That is what opencode does, and it is why the list filters an
+        // pointing at the same base URL. That is why the list filters an
         // already-configured preset out rather than offering a "add another account" affordance on it: a
         // built-in's id is its identity in the manifest, and two entries sharing it would be one entry.
         //

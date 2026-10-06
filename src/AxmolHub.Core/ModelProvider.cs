@@ -116,7 +116,7 @@ public sealed class ModelProvider
     /// <summary>
     /// The credential resolved for this provider in the current session, or <c>null</c> when it has none.
     ///
-    /// <para><b>One provider, one credential.</b> This is the opencode shape: a provider id names a single
+    /// <para><b>One provider, one credential.</b> A provider id names a single
     /// account, and having a second account for the same service means adding a second provider that points at
     /// the same base URL. The earlier one-to-many design needed an "active" pointer on top of the list, and that
     /// pointer was the part that made the model hard to reason about — there was a state ("has credentials but

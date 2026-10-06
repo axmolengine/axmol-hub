@@ -13,12 +13,12 @@ public static class CredentialSources
 }
 
 /// <summary>
-/// One saved credential for a provider — an <b>account</b>, in opencode/Copilot terms.
+/// One saved credential for a provider — an <b>account</b>, in GitHub Copilot's terms.
 ///
 /// <para><b>Why this is not just "a key field on the provider".</b> A provider can legitimately be used with
 /// several credentials at once: a personal OrcaRouter account and a work one, or a project key and a fallback.
-/// opencode models exactly this with its account list (<c>auth list</c> / <c>auth switch</c> / <c>auth logout</c>)
-/// and GitHub Copilot does the same, so "one provider, one key" is the shape that has to be stretched.</para>
+/// Copilot models exactly this with its account list, so "one provider, one key" is the shape that has to be
+/// stretched.</para>
 ///
 /// <para><b>Why the source is not a type.</b> OrcaRouter's OAuth flow is documented as minting <i>a normal API
 /// key</i>: the same <c>sk-yoex-…</c> string a user could have pasted, with no refresh token, no expiry and no
