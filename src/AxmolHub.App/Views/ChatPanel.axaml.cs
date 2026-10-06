@@ -1277,6 +1277,25 @@ public partial class ChatPanel : UserControl
 
     internal bool ScrollToBottomVisible => ScrollToBottomButton.IsVisible;
 
+    /// <summary>The floating button's shape: a square plate, not the pill it used to be. Read off the
+    /// properties rather than <c>Bounds</c> because the button is collapsed until the flow scrolls.</summary>
+    internal bool ScrollToBottomIsSquarePlateForCheck
+        => ScrollToBottomButton is { Width: 28, Height: 28, CornerRadius: { TopLeft: 8 } };
+
+    /// <summary>Whether the button carries the down-arrow glyph, matched against the resource itself so a
+    /// different arrow cannot pass.</summary>
+    internal bool ScrollToBottomShowsArrowForCheck
+    {
+        get
+        {
+            if (ScrollToBottomButton.GetLogicalDescendants()
+                    .OfType<Avalonia.Controls.Shapes.Path>().FirstOrDefault()?.Data is not { } data) return false;
+            return Application.Current is { } app
+                   && app.TryGetResource("Hub.Icon.ArrowDown", app.ActualThemeVariant, out var arrow)
+                   && ReferenceEquals(data, arrow);
+        }
+    }
+
     /// <summary>The first rendered message row, so a check can prove a reload reuses it instead of rebuilding
     /// the whole flow (the incremental path's whole point).</summary>
     internal object? FirstBubbleForCheck => MessageRows.FirstOrDefault();

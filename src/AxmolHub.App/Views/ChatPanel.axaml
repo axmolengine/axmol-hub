@@ -189,14 +189,34 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
     </Style>
 
+    <!-- Floating "scroll to latest" affordance: a square plate with a down arrow, matching the other
+         square ghost buttons rather than the pill/chip shapes in this page. -->
     <Style Selector="Button.scroll-bottom">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="14" />
-      <Setter Property="Padding" Value="12,5" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.scroll-bottom Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="StrokeThickness" Value="1.8" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+      <Setter Property="Fill" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.scroll-bottom:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.scroll-bottom:pointerover Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
     <!-- The composer frame. -->
@@ -379,8 +399,9 @@
       </StackPanel>
 
       <Button x:Name="ScrollToBottomButton" Classes="scroll-bottom"
-              HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,14"
-              IsVisible="False" />
+              VerticalAlignment="Bottom" Margin="0,0,0,14" IsVisible="False">
+        <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ArrowDown}" />
+      </Button>
     </Grid>
 
     <!-- Composer: centered to the same column. -->

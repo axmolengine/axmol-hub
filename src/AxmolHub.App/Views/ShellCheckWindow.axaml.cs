@@ -606,6 +606,8 @@ public partial class ShellCheckWindow : Window
         }
         Check(GlyphFitsItsSquareSlot("Hub.Icon.Refresh") && GlyphFitsItsSquareSlot("Hub.Icon.Branch"),
             "重新生成与分叉图标的包围盒为正方形且居中于 24 网格（Uniform 缩放后不会偏心）");
+        Check(panel.ScrollToBottomIsSquarePlateForCheck && panel.ScrollToBottomShowsArrowForCheck,
+            "回到底部按钮是 28 见方的底板配垂直向下箭头（不再是空心胶囊）");
 
         var failureCheckConversation = shell.Chat.StartConversation();
         panel.Reload();

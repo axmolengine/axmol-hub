@@ -73,6 +73,10 @@
        reason. -->
   <StreamGeometry x:Key="Hub.Icon.Send">M12 18V6M6 12L12 6L18 12</StreamGeometry>
 
+  <!-- A downward arrow = scroll to the latest message, the vertical mirror of the send glyph. Stroked, and
+       square-bounded (12x12 centred) for the same reason Send is. -->
+  <StreamGeometry x:Key="Hub.Icon.ArrowDown">M12 6V18M6 12L12 18L18 12</StreamGeometry>
+
   <!-- A solid square = stop, the same button's other state. It contrasts with the arrow by fill rather than
        by colour, so the two states are distinguishable even in a monochrome screenshot. -->
   <StreamGeometry x:Key="Hub.Icon.Stop">M7.3 7.3H16.7V16.7H7.3Z</StreamGeometry>
