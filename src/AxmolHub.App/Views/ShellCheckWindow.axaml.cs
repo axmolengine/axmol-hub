@@ -847,6 +847,7 @@ public partial class ShellCheckWindow : Window
         await CheckToolApprovalAsync(shell, panel);
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
         await CheckWorkspaceChipAsync(shell, panel);
+        await CheckCrossSessionAsync(shell, panel, sidebar);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1057,6 +1058,256 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         Check(chat.RunningCount == 0 && sidebar.RunningDotCountForCheck == 0,
             "自检清理：并行夹具会话全部删除且没有残留运行");
+    }
+
+    /// <summary>
+    /// Two sessions writing to each other. The rules themselves are pure and asserted in Checks; what only a live
+    /// shell can prove is the half with a run registry behind it — that a wake really starts the peer, that a
+    /// reply back to the asker never restarts it, that a wake which found no slot waits for one instead of being
+    /// lost, and that what lands in the peer's file is the message and nothing of the prompt around it.
+    /// </summary>
+    private async Task CheckCrossSessionAsync(MainWindow shell, ChatPanel panel, ChatSidebar sidebar)
+    {
+        var chat = shell.Chat;
+        var asker = chat.StartConversation();
+        var answerer = chat.StartConversation();
+        var writer = chat.StartConversation();
+        var reader = chat.StartConversation();
+        var budget = chat.StartConversation();
+        var woken = chat.StartConversation();
+        var waiting = chat.StartConversation();
+        var skipped = chat.StartConversation();
+        var doomed = chat.StartConversation();
+
+        // The sender's mode is what gates its own calls; the peer is started by a wake and answers with text.
+        foreach (var session in new[] { asker, answerer, writer, reader, budget, doomed })
+            chat.SetApprovalMode(session.Id, ToolApprovalModes.Auto);
+
+        // Seven gates each way: three fill the fleet in scene 3 and hold their slots, one holds the source there,
+        // and the rest do the same in scene 4. Every gate is released in the finally, whatever an assertion did
+        // next — one left closed holds the whole suite to the window's watchdog.
+        var parks = new[] { PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate() };
+        var arrivals = new[] { PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate(), PeerGate() };
+        try
+        {
+            await CheckCrossSessionBodyAsync(shell, panel, sidebar, chat,
+                asker, answerer, writer, reader, budget, woken, waiting, skipped, doomed, parks, arrivals);
+        }
+        finally
+        {
+            // A gate left closed holds the whole suite to the window's watchdog, not just this group.
+            foreach (var park in parks) park.TrySetResult(true);
+            chat.ClientOverride = null;
+            foreach (var id in new[] { asker.Id, answerer.Id, writer.Id, reader.Id, budget.Id,
+                                       woken.Id, waiting.Id, skipped.Id, doomed.Id })
+                chat.DeleteConversation(id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    private static TaskCompletionSource<bool> PeerGate() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static Dictionary<string, object?> PeerSend(string target, string text, bool wake) => new()
+    {
+        ["target"] = target,
+        ["text"] = text,
+        ["wake"] = wake,
+    };
+
+    private async Task CheckCrossSessionBodyAsync(MainWindow shell, ChatPanel panel, ChatSidebar sidebar,
+        ChatWorkspace chat, Conversation asker, Conversation answerer, Conversation writer, Conversation reader,
+        Conversation budget, Conversation woken, Conversation waiting, Conversation skipped, Conversation doomed,
+        TaskCompletionSource<bool>[] parks, TaskCompletionSource<bool>[] arrivals)
+    {
+        // ── scene 1: a wake that answers, and a reply that must not bounce back ──
+        chat.ClientOverride = (_, id) => id switch
+        {
+            var session when session == asker.Id => new PeerChatClient(
+                [("send_to_session", PeerSend(answerer.Id, "把 include 的结论发我", true))], "已经请它去查了"),
+            var session when session == answerer.Id => new PeerChatClient(
+                [("send_to_session", PeerSend(asker.Id, "结论：include 路径已修", true))], "它那边查完了"),
+            _ => new ScriptedChatClient(["不该被用到"]),
+        };
+        chat.OpenConversation(asker.Id);
+        Dispatcher.UIThread.RunJobs();
+        chat.TryEnqueueSend(asker.Id, "请让另一个会话查一下 include", null, out var firstRefusal);
+        await WaitForIdleAsync(chat);
+
+        var askedFile = chat.StoredCopyForCheck(asker.Id);
+        var answeredFile = chat.StoredCopyForCheck(answerer.Id);
+        Check(firstRefusal is null && answeredFile is not null
+              && answeredFile.Messages[0] is { Role: ChatRoles.User } peerTurn
+              && peerTurn.InjectedFrom == asker.Id && peerTurn.Text == "把 include 的结论发我",
+            "一路的唤醒真的跑完了另一路，且它收到的是原话而不是提示词脚手架（对方第一条："
+            + (answeredFile?.Messages.Count > 0 ? answeredFile.Messages[0].Text : "无") + "）");
+
+        Check(answeredFile!.Messages.Any(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is null
+                                                && turn.Text == "它那边查完了"),
+            "被唤醒的会话把问题答完了，而不是只收到一条消息");
+
+        // The loop stops here: the answer going back to the asker writes into its history but never restarts it.
+        // Which rule stopped it — echo or busy — depends on which stream finished first, so the guarantee asserted
+        // is the one that matters: one reply, no second run.
+        var askedReplies = askedFile!.Messages.Count(turn => turn.Role == ChatRoles.Assistant
+                                                            && turn.ToolCallId is null);
+        Check(askedFile.Messages.Any(turn => turn.Role == ChatRoles.User && turn.InjectedFrom == answerer.Id)
+              && askedReplies == 1,
+            "对方回信写进了发起方的记录，但没有把它再跑一遍（实际回答 " + askedReplies + " 次）");
+
+        var askedResult = askedFile.Messages.First(turn => turn.Role == ChatRoles.Tool).Text;
+        var answeredResult = answeredFile.Messages.First(turn => turn.Role == ChatRoles.Tool).Text;
+        Check(askedResult.Contains("answering now", StringComparison.Ordinal)
+              && answeredResult.Contains("not woken", StringComparison.Ordinal)
+              && !answeredResult.Contains("already started", StringComparison.Ordinal),
+            "唤醒成功与回声回信各拿到自己的那句结果（实际「" + answeredResult + "」）");
+
+        // The view has to say who wrote a bubble: without the label a peer's message is indistinguishable from
+        // something the user typed.
+        chat.OpenConversation(answerer.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        var origin = panel.PeerOriginTextForCheck(0);
+        Check(origin == string.Format(CultureInfo.CurrentCulture, HubStrings.Get("ChatPeerOriginFormat"),
+                asker.Title.Length > 0 ? asker.Title : asker.Id)
+              && panel.PeerOriginCountForCheck == 1 && panel.PeerOriginTextForCheck(1) is null,
+            "对方写来的那条在气泡上标出了来源会话，且只标那一条（实际「" + origin + "」，共 "
+            + panel.PeerOriginCountForCheck + " 个标签）");
+
+        // ── scene 2: a note left without a wake is read on the next answer ──
+        chat.ClientOverride = (_, id) => id == writer.Id
+            ? new PeerChatClient([("send_to_session", PeerSend(reader.Id, "顺手记一笔：这条不用现在答", false))], "笔记已留下")
+            : new ScriptedChatClient(["读到笔记之后的回答"]);
+        chat.OpenConversation(writer.Id);
+        chat.TryEnqueueSend(writer.Id, "给另一个会话留个话", null, out _);
+        await WaitForIdleAsync(chat);
+
+        var notedFile = chat.StoredCopyForCheck(reader.Id);
+        Check(chat.RunningCount == 0 && notedFile!.Messages.Count == 1
+              && notedFile.Messages[0].InjectedFrom == writer.Id
+              && notedFile.Messages[0].Role == ChatRoles.User,
+            "不带唤醒的送达只写进对方的记录，没有替它开一路（对方实际 "
+            + (notedFile?.Messages.Count ?? -1) + " 条）");
+
+        var writtenResult = chat.StoredCopyForCheck(writer.Id)!.Messages
+            .First(turn => turn.Role == ChatRoles.Tool).Text;
+        Check(writtenResult.Contains("not woken", StringComparison.Ordinal),
+            "送达未唤醒这件事写进了发送方的工具结果（实际「" + writtenResult + "」）");
+
+        chat.ClientOverride = (_, id) => id == reader.Id
+            ? new ScriptedChatClient(["读到之后回答"])
+            : new ScriptedChatClient(["不该被用到"]);
+        chat.OpenConversation(reader.Id);
+        chat.TryEnqueueSend(reader.Id, "你自己也再看看", null, out _);
+        await WaitForIdleAsync(chat);
+
+        var readFile = chat.StoredCopyForCheck(reader.Id);
+        Check(readFile!.Messages.Count == 3 && readFile.Messages[^1].Role == ChatRoles.Assistant
+              && readFile.Messages[^1].Text == "读到之后回答",
+            "对方下次回答时那条笔记就在它的历史里（现在 " + (readFile?.Messages.Count ?? -1) + " 条）");
+
+        // ── scene 3: the fleet is full, so a wake queues and a third one hits its budget ──
+        // One filler is parked first, because the cap is three and the source needs a slot of its own: filler +
+        // source + the session the first wake starts is exactly the fleet, which is what makes the second wake
+        // queue rather than start.
+        chat.ClientOverride = (_, id) => id switch
+        {
+            var session when session == budget.Id => new PeerChatClient(
+                [
+                    ("send_to_session", PeerSend(woken.Id, "第一条：现在就去答", true)),
+                    ("send_to_session", PeerSend(waiting.Id, "第二条：排队也要答", true)),
+                    ("send_to_session", PeerSend(skipped.Id, "第三条：预算已经用尽", true)),
+                ], "三次都发了", arrivals[5], parks[3].Task),
+            var session when session == asker.Id => new ScriptedChatClient(
+                ["先占住一路"], null, parks[2].Task, arrivals[2]),
+            var session when session == woken.Id => new ScriptedChatClient(
+                ["一路占着不放"], null, parks[0].Task, arrivals[0]),
+            var session when session == waiting.Id => new ScriptedChatClient(
+                ["等到空位才答"], null, parks[1].Task, arrivals[1]),
+            _ => new ScriptedChatClient(["不该被用到"]),
+        };
+        chat.OpenConversation(budget.Id);
+        chat.TryEnqueueSend(asker.Id, "先占住一路", null, out _);
+        await WaitForSignalAsync(arrivals[2].Task);
+        chat.TryEnqueueSend(budget.Id, "去叫醒三个会话", null, out _);
+        await WaitForSignalAsync(arrivals[0].Task);
+        // The source holds its slot at the answer, so the queued wake is caught *waiting*: a check that only
+        // looked after the fleet emptied would see it start and conclude nothing about the queue.
+        await WaitForSignalAsync(arrivals[5].Task);
+        Dispatcher.UIThread.RunJobs();
+
+        Check(chat.RunningCount == 3, "三路占满上限，第四条只能排队（实际运行 " + chat.RunningCount + " 路）");
+        Check(chat.IsWakeQueued(waiting.Id) && !chat.IsRunning(waiting.Id)
+              && sidebar.QueuedWakeDotCountForCheck == 1 && sidebar.RunningDotCountForCheck == 3,
+            "满员时第二次唤醒进了 FIFO，侧栏画的是空心点而不是第二个实心点（空心 "
+            + sidebar.QueuedWakeDotCountForCheck + "、实心 " + sidebar.RunningDotCountForCheck + "）");
+
+        var budgetResults = chat.StoredCopyForCheck(budget.Id)!.Messages
+            .Where(turn => turn.Role == ChatRoles.Tool).Select(turn => turn.Text).ToArray();
+        Check(budgetResults.Length == 3
+              && budgetResults[0].Contains("answering now", StringComparison.Ordinal)
+              && budgetResults[1].Contains("queued: true", StringComparison.Ordinal)
+              && budgetResults[2].Contains("not woken", StringComparison.Ordinal)
+              && budgetResults[2].Contains("own reply", StringComparison.Ordinal),
+            "同一路里三次唤醒分别拿到「已启动」「已排队」「预算用尽」（实际 " + budgetResults.Length
+            + " 条：「" + string.Join(" / ", budgetResults) + "」）");
+        Check(chat.StoredCopyForCheck(skipped.Id)!.Messages.Count == 1
+              && chat.StoredCopyForCheck(skipped.Id)!.Messages[0].InjectedFrom == budget.Id,
+            "预算之外的第三条只是送达，没有替对方开一路");
+
+        // A freed slot is what the queue waits for: releasing the filler must start the queued session by itself,
+        // with no timer polling and no second wake asked for.
+        parks[0].TrySetResult(true);
+        await WaitForSignalAsync(arrivals[1].Task);
+        Dispatcher.UIThread.RunJobs();
+        Check(chat.IsRunning(waiting.Id) && !chat.IsWakeQueued(waiting.Id)
+              && sidebar.QueuedWakeDotCountForCheck == 0,
+            "空位一释放，排队那路就自己顶上，空心点同时消失（仍在排队：" + chat.IsWakeQueued(waiting.Id) + "）");
+
+        // Empty the fleet before the next scene, so the three slots that one fills are its own and not leftovers:
+        // the source is released from its pause, then the filler and the session that had been queued.
+        parks[3].TrySetResult(true);
+        parks[2].TrySetResult(true);
+        parks[1].TrySetResult(true);
+        await WaitForIdleAsync(chat);
+
+        // ── scene 4: a wake queued for a session that gets deleted leaves the queue ──
+        chat.ClientOverride = (_, id) => id switch
+        {
+            var session when session == writer.Id => new ScriptedChatClient(
+                ["补一路占位"], null, parks[4].Task, arrivals[3]),
+            var session when session == reader.Id => new ScriptedChatClient(
+                ["再补一路占位"], null, parks[5].Task, arrivals[4]),
+            var session when session == budget.Id => new PeerChatClient(
+                [("send_to_session", PeerSend(doomed.Id, "发给一个即将删除的会话", true))], "发完了",
+                arrivals[6], parks[6].Task),
+            _ => new ScriptedChatClient(["不该被用到"]),
+        };
+        chat.OpenConversation(budget.Id);
+        chat.TryEnqueueSend(writer.Id, "占住第二路", null, out _);
+        chat.TryEnqueueSend(reader.Id, "占住第三路", null, out _);
+        chat.TryEnqueueSend(budget.Id, "再叫一次", null, out _);
+        await WaitForSignalAsync(Task.WhenAll(arrivals[3].Task, arrivals[4].Task));
+        await WaitForSignalAsync(arrivals[6].Task);
+        Dispatcher.UIThread.RunJobs();
+
+        Check(chat.RunningCount == 3 && chat.QueuedWakeCount == 1 && chat.IsWakeQueued(doomed.Id),
+            "满员时发给一个闲着的会话确实排进了队（运行 " + chat.RunningCount + "、队列 "
+            + chat.QueuedWakeCount + "）");
+        chat.DeleteConversation(doomed.Id);
+        Dispatcher.UIThread.RunJobs();
+        Check(chat.QueuedWakeCount == 0 && sidebar.QueuedWakeDotCountForCheck == 0,
+            "删掉一个会话就撤掉它排着的唤醒，不留一个永远亮着的空心点（队列 "
+            + chat.QueuedWakeCount + " 条）");
+
+        parks[6].TrySetResult(true);
+        parks[4].TrySetResult(true);
+        parks[5].TrySetResult(true);
+        await WaitForIdleAsync(chat);
+        Check(chat.RunningCount == 0 && chat.QueuedWakeCount == 0
+              && sidebar.RunningDotCountForCheck == 0 && sidebar.QueuedWakeDotCountForCheck == 0,
+            "自检清理：互发夹具没有留下运行、队列或指示点");
     }
 
     /// <summary>
@@ -3030,6 +3281,61 @@ public partial class ShellCheckWindow : Window
 
     /// <summary>A scripted <c>IChatClient</c> for the assistant checks: yields fixed text chunks and touches
     /// no network. Mirrors the one in the Checks project; the App cannot reference that project.</summary>
+    /// <summary>
+    /// Asks for a fixed list of tool calls, one per model response, then answers. A list rather than a single call
+    /// because the cross-session rules only show themselves across several calls: the wake budget is spent by the
+    /// second and third, and the fleet cap bites between them. One instance serves a whole tool loop, so the call
+    /// index is the response count within that segment.
+    /// </summary>
+    /// <param name="answerReached">Signalled once the calls are all sent and the fixture is at the answer — the
+    /// check waits on that to read the queue while it is still full.</param>
+    /// <param name="beforeAnswer">Held by the check, so the source keeps its slot while paused. Signal and gate are
+    /// two objects on purpose: one TCS cannot both announce arrival and wait for permission.</param>
+    private sealed class PeerChatClient(
+        System.Collections.Generic.IReadOnlyList<(string Tool, System.Collections.Generic.Dictionary<string, object?> Arguments)> calls,
+        string answer,
+        TaskCompletionSource<bool>? answerReached = null,
+        Task? beforeAnswer = null) : Microsoft.Extensions.AI.IChatClient
+    {
+        private int _responses;
+
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            System.Threading.CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The cross-session check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
+        {
+            var index = _responses++;
+            if (index < calls.Count)
+            {
+                var call = calls[index];
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant,
+                    [new Microsoft.Extensions.AI.FunctionCallContent(
+                        "peer-" + index, call.Tool, call.Arguments)]);
+            }
+            else
+            {
+                answerReached?.TrySetResult(true);
+                if (beforeAnswer is not null) await beforeAnswer.WaitAsync(cancellationToken);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, answer);
+            }
+
+            await Task.Yield();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
     private sealed class ScriptedChatClient(
         IReadOnlyList<string> chunks,
         Task? gate = null,
