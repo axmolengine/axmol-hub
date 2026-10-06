@@ -1423,6 +1423,9 @@ public sealed class ChatWorkspace : IDisposable
     internal ConversationRun? RunFor(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) ? run : null;
 
+    /// <summary>What the session file says right now, cache aside. For the self-check only.</summary>
+    internal Conversation? StoredCopyForCheck(string conversationId) => _sessions.LoadFromDisk(conversationId);
+
     public bool IsRunning(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) && run.IsStreaming;
 

@@ -757,6 +757,8 @@ public partial class ShellCheckWindow : Window
               && shell.Chat.Conversations.All(summary => summary.Id != emptyConversation.Id),
             "清空空会话移除从未使用的新会话");
 
+        await CheckParallelRunsAsync(shell, panel, sidebar);
+
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
         panel.Reload();
@@ -785,6 +787,276 @@ public partial class ShellCheckWindow : Window
 
         shell.Chat.ClientOverride = null;
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Several sessions answering at once, driven entirely through scripted clients with a gate per session —
+    /// no network, no timing luck. Each assertion is written so that putting the run back in the panel (one
+    /// stream, one cancellation source, one bubble) turns it red rather than merely different.
+    /// </summary>
+    private async Task CheckParallelRunsAsync(MainWindow shell, ChatPanel panel, ChatSidebar sidebar)
+    {
+        var chat = shell.Chat;
+        var savedIdleTimeout = chat.IdleTimeout;
+        var gated = chat.StartConversation();
+        var other = chat.StartConversation();
+        var third = chat.StartConversation();
+        var fourth = chat.StartConversation();
+
+        TaskCompletionSource<bool> Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gatedPark = Gate();
+        var gatedArrived = Gate();
+        var thirdPark = Gate();
+        var thirdArrived = Gate();
+        var capParks = new[] { Gate(), Gate(), Gate() };
+        var capArrived = new[] { Gate(), Gate(), Gate() };
+        var renamePark = Gate();
+        var renameArrived = Gate();
+        var capIds = new[] { gated.Id, other.Id, third.Id };
+        var allGates = new[] { gatedPark, thirdPark, renamePark }.Concat(capParks).ToArray();
+        // Every parked stream is released on the way out, whatever an assertion did. A gate left closed does
+        // not just fail this group — it holds the whole check until the window's watchdog fires.
+        try
+        {
+            await CheckParallelRunsBodyAsync(shell, panel, sidebar, chat, gated, other, third, fourth,
+                gatedPark, gatedArrived, thirdPark, thirdArrived, capParks, capArrived, capIds,
+                renamePark, renameArrived);
+        }
+        finally
+        {
+            foreach (var park in allGates) park.TrySetResult(true);
+            chat.ClientOverride = null;
+            chat.IdleTimeout = savedIdleTimeout;
+        }
+    }
+
+    private async Task CheckParallelRunsBodyAsync(MainWindow shell, ChatPanel panel, ChatSidebar sidebar,
+        ChatWorkspace chat, Conversation gated, Conversation other, Conversation third, Conversation fourth,
+        TaskCompletionSource<bool> gatedPark, TaskCompletionSource<bool> gatedArrived,
+        TaskCompletionSource<bool> thirdPark, TaskCompletionSource<bool> thirdArrived,
+        TaskCompletionSource<bool>[] capParks, TaskCompletionSource<bool>[] capArrived, string[] capIds,
+        TaskCompletionSource<bool> renamePark, TaskCompletionSource<bool> renameArrived)
+    {
+        chat.ClientOverride = (_, conversationId) => conversationId switch
+        {
+            var id when id == gated.Id => new ScriptedChatClient(["看不见时到达的第一段"], null, gatedPark.Task, gatedArrived),
+            var id when id == other.Id => new ScriptedChatClient(["后台会话的完整回复"]),
+            var id when id == third.Id => new ScriptedChatClient(["第二条挂起的回复"], null, thirdPark.Task, thirdArrived),
+            _ => new ScriptedChatClient(["多余的回复"]),
+        };
+
+        // The viewed session is `other`, so everything `gated` produces arrives out of sight.
+        chat.OpenConversation(other.Id);
+        Dispatcher.UIThread.RunJobs();
+
+        chat.TryEnqueueSend(gated.Id, "看不见的提问", null, out _);
+        await WaitForSignalAsync(gatedArrived.Task);
+        Check(chat.IsRunning(gated.Id) && panel.LivePreviewTextForCheck.Length == 0,
+            "后台会话正在流式时，被查看会话不接管它的气泡");
+
+        // One session parked is the precondition; the point is that a second one answers start to finish
+        // anyway. A single shared stream cannot be mid-reply in two sessions at once.
+        chat.TryEnqueueSend(other.Id, "眼前的提问", null, out _);
+        await WaitForRunAsync(chat, other.Id);
+
+        Check(!chat.IsRunning(other.Id) && chat.IsRunning(gated.Id)
+              && other.Messages.Count == 2 && other.Messages[1].Text == "后台会话的完整回复",
+            "一路挂在首个文本块时，另一路完整答完（实际 " + other.Messages.Count + " 条）");
+
+        chat.TryEnqueueSend(third.Id, "第三条提问", null, out _);
+        await WaitForSignalAsync(thirdArrived.Task);
+        Check(chat.RunningCount == 2 && sidebar.RunningDotCountForCheck == 2
+              && shell.ChatRunsVisibleForCheck
+              && shell.ChatRunsTextForCheck == string.Format(HubStrings.Get("RunningSessionsFormat"), 2),
+            "侧栏两个运行点同亮，状态条计数与会话数一致（实际 " + sidebar.RunningDotCountForCheck + " 个点）");
+
+        // The bubble is rebuilt from the run, so a reply that arrived while the session was hidden is on screen
+        // the moment it is not — no lost output, no second copy kept by the view.
+        chat.OpenConversation(gated.Id);
+        Dispatcher.UIThread.RunJobs();
+        Check(panel.LivePreviewTextForCheck == "看不见时到达的第一段" && panel.IsStreamingForCheck,
+            "切回运行中的会话，气泡带回隐藏期间到达的文本（实际「" + panel.LivePreviewTextForCheck + "」）");
+
+        // Stopping is per session: the button cancels the reply on screen and leaves the other running. The
+        // composer has to be empty for that click to mean stop at all — with text in it the same button steers.
+        panel.SetInputForCheck("");
+        Dispatcher.UIThread.RunJobs();
+        panel.ClickSendButtonForCheck();
+        await WaitForRunAsync(chat, gated.Id);
+
+        Check(!chat.IsRunning(gated.Id) && chat.IsRunning(third.Id)
+              && panel.LastNoticeTextForCheck == HubStrings.Get("ChatCancelled")
+              && gated.Messages.Count == 2 && gated.Messages[1].Text == "看不见时到达的第一段",
+            "停止只结束被查看会话，其部分回复仍写入记录（另一路实际仍在跑：" + chat.IsRunning(third.Id) + "）");
+
+        thirdPark.SetResult(true);
+        await WaitForIdleAsync(chat);
+
+        Check(chat.RunningCount == 0 && sidebar.RunningDotCountForCheck == 0 && !shell.ChatRunsVisibleForCheck,
+            "会话跑完后运行点熄灭、状态条计数消失（实际 " + sidebar.RunningDotCountForCheck + " 个点）");
+
+        // The cap is refused out loud. A click nobody heard back from, parked behind three streams, is worse
+        // than a refusal — and the notice has to be real text, not a key that fell through.
+        chat.ClientOverride = (_, conversationId) =>
+        {
+            var slot = Array.IndexOf(capIds, conversationId);
+            return slot < 0
+                ? new ScriptedChatClient(["不该被使用"])
+                : new ScriptedChatClient(["占住一路"], null, capParks[slot].Task, capArrived[slot]);
+        };
+        foreach (var id in capIds) chat.TryEnqueueSend(id, "占位提问", null, out _);
+        await WaitForSignalAsync(Task.WhenAll(capArrived.Select(arrived => arrived.Task)));
+        var refused = !chat.TryEnqueueSend(fourth.Id, "第四个提问", null, out var refusalKey);
+        Check(refused && refusalKey == "ChatParallelLimit" && chat.RunningCount == 3
+              && HubStrings.Get("ChatParallelLimit").Length > 0 && refusalKey != HubStrings.Get(refusalKey ?? ""),
+            "第四个发送被拒并说明已达并行上限（实际运行 " + chat.RunningCount + " 路）");
+        foreach (var park in capParks) park.SetResult(true);
+        await WaitForIdleAsync(chat);
+
+        // Renaming a session that is answering used to write a reloaded copy over the live one, and whichever
+        // side wrote last silently dropped the other's change. Both must survive.
+        chat.ClientOverride = (_, conversationId) => conversationId == other.Id
+            ? new ScriptedChatClient(["流式中的回复"], null, renamePark.Task, renameArrived)
+            : new ScriptedChatClient(["不该被使用"]);
+        chat.OpenConversation(gated.Id);
+        chat.TryEnqueueSend(other.Id, "改名期间的提问", null, out _);
+        await WaitForSignalAsync(renameArrived.Task);
+        Check(chat.RenameConversation(other.Id, "运行中改名") && chat.IsRunning(other.Id),
+            "会话正在流式时可以改名");
+        renamePark.SetResult(true);
+        await WaitForRunAsync(chat, other.Id);
+
+        var renamedOnDisk = chat.StoredCopyForCheck(other.Id);
+        // This session has answered several times already, so the claim is about the tail: the rename and the
+        // reply that was still arriving must both be in the file, not one of them.
+        Check(renamedOnDisk is not null && renamedOnDisk.Title == "运行中改名"
+              && renamedOnDisk.Messages[^1].Role == ChatRoles.Assistant
+              && renamedOnDisk.Messages[^1].Text == "流式中的回复"
+              && renamedOnDisk.Messages[^2].Text == "改名期间的提问",
+            "改名与流式写入互不覆盖，落盘两者都在（实际标题「" + renamedOnDisk?.Title + "」，"
+            + (renamedOnDisk?.Messages.Count ?? -1) + " 条）");
+
+        // An inactivity deadline is not a user stop, and the two messages must not be guessed from each other.
+        var savedIdleTimeoutValue = chat.IdleTimeout;
+        chat.IdleTimeout = TimeSpan.FromMilliseconds(150);
+        chat.ClientOverride = (_, _) => new StalledChatClient(TimeSpan.FromSeconds(10));
+        chat.OpenConversation(third.Id);
+        chat.TryEnqueueSend(third.Id, "卡住的提问", null, out _);
+        await WaitForRunAsync(chat, third.Id);
+
+        Check(!chat.IsRunning(third.Id) && panel.LastNoticeTextForCheck == HubStrings.Get("ChatTimedOut"),
+            "空闲超时给出超时提示而不是「已停止」（实际「" + panel.LastNoticeTextForCheck + "」）");
+        chat.IdleTimeout = savedIdleTimeoutValue;
+
+        // What the model said before asking for a tool belongs ahead of that call in the record; a replay that
+        // puts the words after the result is a transcript nobody can read back.
+        var ordered = chat.StartConversation();
+        chat.ClientOverride = (_, _) => new ToolCallingChatClient();
+        chat.OpenConversation(ordered.Id);
+        await panel.SendForCheckAsync("改之前先看一眼");
+        var transcript = chat.StoredCopyForCheck(ordered.Id)?.Messages;
+        Check(transcript is not null && transcript.Count == 4
+              && transcript[0].Role == ChatRoles.User
+              && transcript[1].ToolName == "get_projects" && transcript[1].Text == "先说的话"
+              && transcript[2].Role == ChatRoles.Tool && transcript[3].Text == "后说的话",
+            "工具调用前说的话随调用一起落库，顺序不乱（实际 "
+            + (transcript?.Count ?? -1) + " 条：" + string.Join(" / ", transcript?.Select(turn => turn.Role + ":" + turn.Text) ?? []));
+
+        foreach (var id in new[] { gated.Id, other.Id, third.Id, fourth.Id, ordered.Id }) chat.DeleteConversation(id);
+        chat.ClientOverride = null;
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        Check(chat.RunningCount == 0 && sidebar.RunningDotCountForCheck == 0,
+            "自检清理：并行夹具会话全部删除且没有残留运行");
+    }
+
+    /// <summary>Waits for one session's run to end, pumping the dispatcher so its writes and repaints land.</summary>
+    private static async Task WaitForRunAsync(ChatWorkspace chat, string conversationId)
+    {
+        for (var wait = 0; wait < 200 && chat.IsRunning(conversationId); wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    /// <summary>
+    /// Waits for a scripted stream to reach the point the check parked it at, with a ceiling. A fixture that
+    /// never gets there has to fail an assertion, not stall the window — an unbounded await here once cost the
+    /// whole check group its remaining assertions to the Opened watchdog.
+    /// </summary>
+    private static Task WaitForSignalAsync(Task signal) => Task.WhenAny(signal, Task.Delay(TimeSpan.FromSeconds(3)));
+
+    private static async Task WaitForIdleAsync(ChatWorkspace chat)
+    {
+        for (var wait = 0; wait < 200 && chat.RunningCount > 0; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    /// <summary>A client that goes silent without stopping the world: it never produces a chunk, but it does
+    /// honour cancellation, which is what makes an idle deadline observable in a check instead of a hang.</summary>
+    private sealed class StalledChatClient(TimeSpan silence) : Microsoft.Extensions.AI.IChatClient
+    {
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The assistant check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(silence, cancellationToken);
+            yield break;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    /// <summary>Streams text, asks for a real read-only Hub tool, then finishes the answer — the shape a tool
+    /// turn actually has, so the transcript ordering is proven on the path that produces it.</summary>
+    private sealed class ToolCallingChatClient : Microsoft.Extensions.AI.IChatClient
+    {
+        private int _calls;
+
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The assistant check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            _calls++;
+            if (_calls == 1)
+            {
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, "先说的话");
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant,
+                    [new Microsoft.Extensions.AI.FunctionCallContent(
+                        "call-ui", "get_projects", new Dictionary<string, object?>())]);
+            }
+            else
+            {
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, "后说的话");
+            }
+
+            await Task.Yield();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 
     /// <summary>
@@ -1964,8 +2236,10 @@ public partial class ShellCheckWindow : Window
             [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
         {
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
-            // composer button can be asserted instead of only its end state.
-            if (gate is not null) await gate;
+            // composer button can be asserted instead of only its end state. The wait is cancellation-aware:
+            // a real stream dies when its token is cancelled, and "stop pressed while parked mid-reply" is
+            // one of the paths a check has to be able to take.
+            if (gate is not null) await gate.WaitAsync(cancellationToken);
             if (exception is not null) throw exception;
             var firstChunk = true;
             foreach (var chunk in chunks)
@@ -1976,7 +2250,7 @@ public partial class ShellCheckWindow : Window
                 {
                     firstChunk = false;
                     firstChunkReached?.TrySetResult(true);
-                    if (afterFirstChunkGate is not null) await afterFirstChunkGate;
+                    if (afterFirstChunkGate is not null) await afterFirstChunkGate.WaitAsync(cancellationToken);
                 }
                 await Task.Yield();
             }

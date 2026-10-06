@@ -7,6 +7,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -99,6 +100,10 @@ public partial class ChatSidebar : UserControl
     private string RunSignature() => string.Join(",", _chat.Conversations
         .Where(summary => _chat.IsRunning(summary.Id))
         .Select(summary => summary.Id));
+
+    /// <summary>How many rows carry a running dot. Counted rather than sampled: a dot on a row nobody asked
+    /// for is the same bug as one that never appears.</summary>
+    internal int RunningDotCountForCheck => ConversationList.GetLogicalDescendants().OfType<Ellipse>().Count();
 
     private void RefreshConversationList()
     {

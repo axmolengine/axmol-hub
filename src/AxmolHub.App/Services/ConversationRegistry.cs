@@ -58,6 +58,10 @@ internal sealed class ConversationRegistry(ConversationStore store)
         }
     }
 
+    /// <summary>Reads the file behind a session, past the cache. Only a self-check should want this: it is how
+    /// a test proves what actually landed on disk rather than what the shell remembers telling itself.</summary>
+    public Conversation? LoadFromDisk(string id) => store.Load(id);
+
     public void Delete(string id)
     {
         store.Delete(id);

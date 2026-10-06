@@ -1600,6 +1600,14 @@ public partial class ChatPanel : UserControl
 
     internal bool IsStreamingForCheck => IsViewedStreaming;
 
+    /// <summary>What the live bubble on screen says. It is read off the run, so this is also the proof that a
+    /// reply kept arriving while its session was out of sight.</summary>
+    internal string LivePreviewTextForCheck => _live?.Preview.Text ?? "";
+
+    /// <summary>Presses the round button the way a click would, so stopping goes through the view instead of
+    /// cancelling a run behind the panel's back.</summary>
+    internal void ClickSendButtonForCheck() => SendButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
     internal bool ForkNoticeVisibleForCheck => ForkNotice.IsVisible;
     internal string? ForkNoticeTextForCheck => ForkNotice.IsVisible ? ForkNotice.Content?.ToString() : null;
     internal void ClickForkNoticeForCheck() => ForkNotice.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
