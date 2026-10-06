@@ -1,4 +1,5 @@
 using System.Text;
+using AxmolHub.Core;
 
 namespace AxmolHub.App;
 
@@ -8,19 +9,6 @@ internal static class ChatContextReader
     private const int MaxFileBytes = 32 * 1024;
     private const int MaxTotalBytes = 160 * 1024;
     private const int MaxScannedEntries = 2000;
-
-    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".axproj", ".bat", ".c", ".cc", ".cmake", ".cpp", ".cs", ".css", ".gradle",
-        ".h", ".hpp", ".html", ".in", ".java", ".js", ".json", ".md", ".mm",
-        ".m", ".plist", ".properties", ".ps1", ".py", ".sh", ".toml", ".ts",
-        ".tsx", ".txt", ".xml", ".yaml", ".yml",
-    };
-
-    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".git", ".idea", ".vs", "bin", "build", "dist", "node_modules", "obj", "out",
-    };
 
     public static string ReadFolder(string path, string displayName)
     {
@@ -48,7 +36,7 @@ internal static class ChatContextReader
                     break;
                 }
 
-                if (!ExcludedDirectories.Contains(Path.GetFileName(child))) pending.Push(child);
+                if (!WorkspacePaths.IsExcludedDirectory(Path.GetFileName(child))) pending.Push(child);
             }
 
             if (scanLimitReached) break;
@@ -60,11 +48,7 @@ internal static class ChatContextReader
                     break;
                 }
 
-                var extension = Path.GetExtension(file);
-                if (!TextExtensions.Contains(extension)
-                    && !Path.GetFileName(file).Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase)
-                    && !Path.GetFileName(file).Equals(".gitignore", StringComparison.OrdinalIgnoreCase))
-                    continue;
+                if (!WorkspacePaths.IsTextFile(Path.GetFileName(file))) continue;
 
                 if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
                 var length = new FileInfo(file).Length;

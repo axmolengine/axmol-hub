@@ -655,6 +655,161 @@ if (args.Contains("--check-ai-sessions"))
     Console.WriteLine("PASS: ChatPipeline propagates cancellation.");
     return;
 }
+if (args.Contains("--check-ai-workspace"))
+{
+    // The sandbox is a pure function over strings plus one link check, so it is asserted here rather than
+    // through a screen: a guardrail that only exists in the UI layer does not exist in `full` mode.
+    var guardRoot = Path.Combine(root, "guard");
+    // A junction left behind by an earlier failed run makes Directory.Delete(recursive: true) throw
+    // UnauthorizedAccessException, so the link goes first — otherwise one red run poisons the next.
+    var staleLink = Path.Combine(guardRoot, "ws", "link");
+    if (Directory.Exists(staleLink)) Directory.Delete(staleLink, recursive: false);
+    if (Directory.Exists(guardRoot)) Directory.Delete(guardRoot, recursive: true);
+    var workspace = Path.Combine(guardRoot, "ws");
+    Directory.CreateDirectory(Path.Combine(workspace, "src"));
+    Directory.CreateDirectory(Path.Combine(workspace, ".git"));
+    Directory.CreateDirectory(Path.Combine(workspace, "hubdata"));
+    Directory.CreateDirectory(Path.Combine(workspace, "engine-2.11.5", "core"));
+    File.WriteAllText(Path.Combine(workspace, "src", "hello.cpp"), "int main() { return 0; }\r\n");
+    var guards = new WorkspaceGuards(Path.Combine(workspace, "hubdata"), [Path.Combine(workspace, "engine-2.11.5")]);
+
+    var allowed = WorkspacePaths.ResolveRead(workspace, "src/hello.cpp", guards);
+    if (!allowed.IsAllowed || allowed.Full != Path.Combine(workspace, "src", "hello.cpp")
+        || allowed.Relative != Path.Combine("src", "hello.cpp"))
+        throw new Exception($"A plain relative path was not resolved inside the workspace ({allowed.Verdict}).");
+
+    // Forward slashes are what a model emits; they must resolve without becoming a second code path.
+    if (!WorkspacePaths.ResolveRead(workspace, "src/hello.cpp", guards).IsAllowed)
+        throw new Exception("A forward-slash relative path was refused.");
+
+    foreach (var escaping in new[] { "../outside.cpp", "src/../../outside.cpp", "/etc/passwd", "C:\\Windows\\win.ini", "" })
+    {
+        var verdict = WorkspacePaths.ResolveWrite(workspace, escaping, guards).Verdict;
+        if (verdict != WorkspacePathVerdict.EscapesWorkspace)
+            throw new Exception($"'{escaping}' was answered with {verdict} instead of EscapesWorkspace.");
+    }
+
+    // Protected roots are refused identically by both verbs: the one rule no approval mode relaxes.
+    foreach (var path in new[] { ".git/config", "hubdata/state.json", "engine-2.11.5/core/axmol.h" })
+    {
+        if (WorkspacePaths.ResolveWrite(workspace, path, guards).Verdict != WorkspacePathVerdict.ProtectedRoot
+            || WorkspacePaths.ResolveRead(workspace, path, guards).Verdict != WorkspacePathVerdict.ProtectedRoot)
+            throw new Exception($"'{path}' was not refused as a protected root by both verbs.");
+    }
+
+    // The allowlist is a WRITE rule: reading a build log is legitimate, writing one is not.
+    File.WriteAllText(Path.Combine(workspace, "src", "build.log"), "error: nope\n");
+    if (WorkspacePaths.ResolveRead(workspace, "src/build.log", guards).Verdict != WorkspacePathVerdict.Allowed)
+        throw new Exception("A build log inside the workspace could not be read.");
+    foreach (var blocked in new[] { "src/build.log", "src/tool.exe", "src/notes.nitwit" })
+        if (WorkspacePaths.ResolveWrite(workspace, blocked, guards).Verdict != WorkspacePathVerdict.ExtensionNotAllowed)
+            throw new Exception($"Writing '{blocked}' was not refused by the extension allowlist.");
+
+    // A file that is absent is a write target, not a read target; a directory is neither.
+    if (WorkspacePaths.ResolveWrite(workspace, "src/new.cpp", guards).Verdict != WorkspacePathVerdict.Allowed)
+        throw new Exception("A new .cpp file was refused as a write target.");
+    if (WorkspacePaths.ResolveRead(workspace, "src/new.cpp", guards).Verdict != WorkspacePathVerdict.NotAFile
+        || WorkspacePaths.ResolveRead(workspace, "src", guards).Verdict != WorkspacePathVerdict.NotAFile
+        || WorkspacePaths.ResolveWrite(workspace, "src", guards).Verdict != WorkspacePathVerdict.NotAFile)
+        throw new Exception("A missing file or a directory was not reported as NotAFile.");
+    // Names without a usable extension are still writable when the name itself is known build metadata.
+    foreach (var name in new[] { "CMakeLists.txt", ".gitignore", "Makefile" })
+        if (WorkspacePaths.ResolveWrite(workspace, name, guards).Verdict != WorkspacePathVerdict.Allowed)
+            throw new Exception($"{name} was refused as a write target.");
+
+    if (WorkspacePaths.ResolveRead(null, "src/hello.cpp", guards).Verdict != WorkspacePathVerdict.NoWorkspace
+        || WorkspacePaths.ResolveRead(Path.Combine(guardRoot, "nope"), "a.cpp", guards).Verdict != WorkspacePathVerdict.MissingWorkspace)
+        throw new Exception("A missing workspace was not reported as such.");
+    if (WorkspacePaths.VerifyCommandRoot(null, guards) != WorkspacePathVerdict.NoWorkspace
+        || WorkspacePaths.VerifyCommandRoot(workspace, guards) != WorkspacePathVerdict.Allowed
+        || WorkspacePaths.VerifyCommandRoot(Path.Combine(workspace, "hubdata"), guards) != WorkspacePathVerdict.ProtectedRoot)
+        throw new Exception("The command root was not verified against the same guards.");
+
+    // The refusal text is part of the contract: a sentence without "do not retry" buys nine more attempts.
+    foreach (var verdict in new[]
+             {
+                 WorkspacePathVerdict.NoWorkspace, WorkspacePathVerdict.EscapesWorkspace,
+                 WorkspacePathVerdict.ProtectedRoot, WorkspacePathVerdict.ReparsePoint,
+                 WorkspacePathVerdict.ExtensionNotAllowed,
+             })
+    {
+        var sentence = WorkspacePaths.ResultFor(verdict, "x");
+        if (sentence.Length == 0 || !sentence.Contains("retry", StringComparison.OrdinalIgnoreCase))
+            throw new Exception($"The refusal for {verdict} does not tell the model to stop retrying.");
+    }
+    Console.WriteLine("PASS: workspace paths stay inside the sandbox and refuse protected roots.");
+
+    if (OperatingSystem.IsWindows())
+    {
+        var outside = Path.Combine(guardRoot, "outside");
+        Directory.CreateDirectory(outside);
+        var link = Path.Combine(workspace, "link");
+        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                   "cmd.exe", $"/c mklink /J \"{link}\" \"{outside}\"")
+                   { UseShellExecute = false, CreateNoWindow = true })!)
+            mklink.WaitForExit();
+        if (!Directory.Exists(link)) throw new Exception("The junction fixture could not be created.");
+        try
+        {
+            // SafePath only normalizes strings, so containment passes; the link walk is what catches this.
+            if (WorkspacePaths.ResolveWrite(workspace, "link/evil.cpp", guards).Verdict != WorkspacePathVerdict.ReparsePoint
+                || WorkspacePaths.ResolveRead(workspace, "link/evil.cpp", guards).Verdict != WorkspacePathVerdict.ReparsePoint)
+                throw new Exception("A write through a directory junction was not refused.");
+        }
+        finally
+        {
+            // Removed even when the assertion above fails: a dangling junction breaks the next run's cleanup.
+            if (Directory.Exists(link)) Directory.Delete(link, recursive: false);
+        }
+        Console.WriteLine("PASS: a directory junction inside the workspace cannot be written through.");
+    }
+
+    // The anchored edit: every verdict is a different thing the model must do next, so each is asserted.
+    if (FileEdit.Apply(null, "", "hello\n", false) is not { Verdict: FileEditVerdict.Created, Updated: "hello\r\n" or "hello\n" })
+        throw new Exception("Creating a file with an empty anchor did not report Created.");
+    if (FileEdit.Apply(null, "anchor", "x", false).Verdict != FileEditVerdict.NotFound)
+        throw new Exception("An anchor against a missing file was not NotFound.");
+    if (FileEdit.Apply("existing", "", "x", false).Verdict != FileEditVerdict.AlreadyExists)
+        throw new Exception("Creating over an existing file was not refused.");
+    if (FileEdit.Apply("a\nb\nc\n", "zzz", "y", false).Verdict != FileEditVerdict.NotFound)
+        throw new Exception("A missing anchor was not NotFound.");
+    if (FileEdit.Apply("a\nb\na\n", "a", "z", false) is not { Verdict: FileEditVerdict.Ambiguous, Matches: 2 })
+        throw new Exception("Two matches without replace_all was not Ambiguous.");
+    if (FileEdit.Apply("a\nb\na\n", "a", "z", true) is not { Verdict: FileEditVerdict.Applied, Updated: "z\nb\nz\n", Matches: 2 })
+        throw new Exception("replace_all did not replace every match.");
+    if (FileEdit.Apply("a\nb\n", "b", "b", false).Verdict != FileEditVerdict.Unchanged)
+        throw new Exception("An identical replacement was not Unchanged.");
+
+    // Models emit \n; the file is CRLF. The edit must land anyway and must not convert the rest of the file.
+    const string crlfFile = "int main() {\r\n    return 0;\r\n}\r\n";
+    var crlfEdit = FileEdit.Apply(crlfFile, "    return 0;\n", "    return 1;\n", false);
+    if (crlfEdit.Verdict != FileEditVerdict.Applied || crlfEdit.Updated != "int main() {\r\n    return 1;\r\n}\r\n")
+        throw new Exception($"A CRLF file was not edited by an LF anchor ({crlfEdit.Verdict}: {crlfEdit.Updated.Replace("\r", "\\r")}).");
+    if (!FileEdit.ResultFor(FileEditVerdict.Ambiguous, 3, "src/a.cpp").Contains("3 places"))
+        throw new Exception("The ambiguous refusal does not say how many places matched.");
+    Console.WriteLine("PASS: an anchored edit lands once, loudly, and never rewrites the file's line endings.");
+
+    // Shell choice is per host and must be assertable on any host, so it is a pure function of two values.
+    var windows = CommandShells.For("windows", pwshAvailable: false);
+    // WindowsShell.PowerShell mixes separators on purpose (Path.Combine over a literal with '/'), so compare
+    // normalized rather than asserting a spelling the Hub itself does not use.
+    if (!windows.Executable.Replace('/', '\\').EndsWith("\\WindowsPowerShell\\v1.0\\powershell.exe", StringComparison.OrdinalIgnoreCase)
+        || !windows.ArgumentsFor("dir").SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "dir"]))
+        throw new Exception($"Windows did not get the system PowerShell with Bypass: {windows.Executable} {string.Join(' ', windows.PrefixArguments)}");
+    var unixPwsh = CommandShells.For("linux", pwshAvailable: true);
+    if (unixPwsh.Executable != "pwsh" || unixPwsh.ArgumentsFor("ls").Contains("-ExecutionPolicy")
+        || !unixPwsh.ArgumentsFor("ls").SequenceEqual(["-NoProfile", "-NonInteractive", "-Command", "ls"]))
+        throw new Exception("Unix pwsh was given Windows-only arguments.");
+    var unixSh = CommandShells.For("macos", pwshAvailable: false);
+    if (unixSh.Executable != "/bin/sh" || !unixSh.ArgumentsFor("ls").SequenceEqual(["-c", "ls"]))
+        throw new Exception("Unix without pwsh did not fall back to /bin/sh -c.");
+    if (OperatingSystem.IsWindows() != CommandShells.ForCurrent().Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("ForCurrent disagreed with the host it is running on.");
+    Console.WriteLine("PASS: the command tool picks one shell per host and never mixes their arguments.");
+
+    Directory.Delete(guardRoot, recursive: true);
+    return;
+}
 if (args.Contains("--check-ai-tool-policy"))
 {
     // The permission model is one pure function over two small enums, so all nine cells are asserted rather
