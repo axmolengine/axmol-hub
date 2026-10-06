@@ -373,6 +373,40 @@
     <Style Selector="Button.context-ring-button:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
+    <Style Selector="Border.context-popover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="18" />
+      <Setter Property="Width" Value="400" />
+    </Style>
+    <Style Selector="TextBlock.context-popover-title">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="TextBlock.context-popover-detail">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.context-popover-status">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Button.context-compress">
+      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.context-compress:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
     <Style Selector="Button.model-picker:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
@@ -398,13 +432,13 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="CornerRadius" Value="15" />
     </Style>
-    <Style Selector="Path.mode-indicator-close">
+    <Style Selector="TextBlock.mode-indicator-close">
       <Setter Property="Opacity" Value="0" />
     </Style>
     <Style Selector="Button.mode-indicator:pointerover Path.mode-indicator-icon">
       <Setter Property="Opacity" Value="0" />
     </Style>
-    <Style Selector="Button.mode-indicator:pointerover Path.mode-indicator-close">
+    <Style Selector="Button.mode-indicator:pointerover TextBlock.mode-indicator-close">
       <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="WrapPanel.context-attachments">
@@ -520,26 +554,6 @@
                       Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
                       StrokeThickness="1.8" StrokeLineCap="Round" />
               </Button>
-              <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
-                      VerticalAlignment="Center" IsVisible="False">
-                <Grid ColumnDefinitions="14,*">
-                  <Path x:Name="ModeIndicatorIcon" Classes="mode-indicator-icon" Width="13" Height="13"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Stretch="Uniform" Fill="Transparent"
-                        Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
-                        StrokeLineCap="Round" StrokeJoin="Round" />
-                  <!-- The hover replacement for the mode glyph. It is a warning colour because it drops a
-                       choice, but at the size of its neighbour a full 1.7 pen made the two crossing strokes
-                       read as one solid mark, so it is drawn smaller and lighter than the icon it covers. -->
-                  <Path Classes="mode-indicator-close" Width="11" Height="11"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Stretch="Uniform" Data="{StaticResource Hub.Icon.Close}"
-                        Fill="Transparent" Stroke="{DynamicResource Hub.DangerText}"
-                        StrokeThickness="1.4" StrokeLineCap="Round" StrokeJoin="Round" />
-                  <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
-                             Grid.Column="1" VerticalAlignment="Center" />
-                </Grid>
-              </Button>
               <!-- What the assistant may do without asking, named where the asking would happen. The label is
                    the *effective* mode, so a session that merely follows a permissive default reads as
                    permissive rather than looking safe. -->
@@ -551,6 +565,22 @@
                   <TextBlock x:Name="PermissionChipLabel" VerticalAlignment="Center" />
                   <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
                 </StackPanel>
+              </Button>
+              <Button x:Name="ModeIndicatorButton" Classes="mode-indicator"
+                      VerticalAlignment="Center" IsVisible="False">
+                <Grid ColumnDefinitions="14,*">
+                  <Path x:Name="ModeIndicatorIcon" Classes="mode-indicator-icon" Width="13" Height="13"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Stretch="Uniform" Fill="Transparent"
+                        Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
+                        StrokeLineCap="Round" StrokeJoin="Round" />
+                  <TextBlock Classes="mode-indicator-close" Text="×" FontFamily="Segoe UI"
+                             FontSize="15" TextAlignment="Center" Width="14" Height="18"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                             Foreground="{DynamicResource Hub.DangerText}" />
+                  <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
+                             Grid.Column="1" VerticalAlignment="Center" />
+                </Grid>
               </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"
@@ -575,5 +605,29 @@
         </Grid>
       </Border>
     </Grid>
+    <Popup x:Name="ContextPopup" IsLightDismissEnabled="True">
+    <Border Classes="context-popover">
+      <StackPanel Spacing="10">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock x:Name="ContextPopoverTitle" Classes="context-popover-title"
+                     Text="{DynamicResource ChatContextWindow}" />
+          <TextBlock x:Name="ContextPopoverPercent" Grid.Column="1"
+                     Classes="context-popover-title" />
+        </Grid>
+        <TextBlock Classes="context-popover-detail"
+                   Text="{DynamicResource ChatContextPopoverHint}" />
+        <Grid x:Name="ContextProgressTrack" Height="6" ClipToBounds="True">
+          <Border Background="{DynamicResource Hub.SurfaceRaised}" CornerRadius="3" />
+          <Border x:Name="ContextProgressFill" HorizontalAlignment="Left"
+                  Background="{DynamicResource Hub.Success}" CornerRadius="3" />
+        </Grid>
+        <TextBlock Classes="context-popover-status"
+                   Text="{DynamicResource ChatContextCategoriesPending}" />
+        <Button x:Name="CompressContextButton" Classes="context-compress"
+                HorizontalContentAlignment="Center"
+                Content="{DynamicResource ChatCompressContext}" />
+      </StackPanel>
+    </Border>
+    </Popup>
   </Grid>
 </UserControl>

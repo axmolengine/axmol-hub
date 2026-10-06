@@ -209,6 +209,22 @@ public partial class ShellCheckWindow : Window
             "上下文用量圆环位于模型选择器左侧");
         Check(panel.ComposerPlusCenteredForCheck,
             "添加上下文的圆形加号按钮在水平和垂直方向居中");
+        panel.OpenContextPopoverForCheck();
+        Dispatcher.UIThread.RunJobs();
+        Check(panel.ContextPopoverOpenForCheck
+              && panel.ContextPopoverTitleForCheck == HubStrings.Get("ChatContextWindow")
+              && panel.ContextPopoverPercentForCheck.EndsWith("%", StringComparison.Ordinal),
+            "点击上下文圆环打开用量面板，显示窗口标题与百分比");
+        var contextRoot = panel.ContextPopoverContentForCheck.GetSelfAndVisualAncestors()
+            .OfType<Avalonia.Controls.TopLevel>().FirstOrDefault();
+        var contextStats = contextRoot is null ? null : SmokeCapture.Capture(
+            contextRoot, System.IO.Path.Combine(ScratchDirectory.Resolve("context-popover"), "context.png"));
+        Check(contextStats is not null && !contextStats.IsBlank(),
+            "上下文用量面板真实渲染出非空白帧");
+        Check(!panel.ContextCompressButtonEnabledForCheck
+              && panel.ContextCompressButtonTextForCheck == HubStrings.Get("ChatCompressContext"),
+            "没有足够对话历史时，压缩上下文按钮保持禁用");
+        panel.CloseContextPopoverForCheck();
         Check(panel.ComposerMenuModesForCheck.SequenceEqual(
                   [ChatModes.Ask, ChatModes.Plan, ChatModes.Agent])
               && panel.CheckedComposerMenuModesForCheck.Length == 0
@@ -217,8 +233,8 @@ public partial class ShellCheckWindow : Window
               && panel.ComposerMenuModesHaveIconsForCheck
               && !panel.ModeIndicatorVisibleForCheck,
             "加号菜单提供带图标、可取消的提问、计划、目标复选项，默认全部未勾选且点击后关闭");
-        Check(panel.ModeIndicatorFollowsPlusForCheck,
-            "模式按钮位于加号右侧");
+        Check(panel.PermissionChipFollowsPlusForCheck && panel.ModeIndicatorFollowsPermissionForCheck,
+            "工具权限按钮紧跟加号，启用的模式按钮按序排在权限按钮右侧");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
               && panel.SelectedModeForCheck == ChatModes.Ask
               && panel.SelectedComposerModeForCheck == ChatModes.Ask
@@ -226,18 +242,17 @@ public partial class ShellCheckWindow : Window
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Ask]),
             "点击提问后菜单关闭、只勾选提问，并显示模式按钮");
-        Check(panel.ModeIndicatorKeepsLabelVisibleForCheck,
+        Check(panel.ModeIndicatorKeepsLabelVisibleForCheck
+              && panel.PermissionChipFollowsPlusForCheck
+              && panel.ModeIndicatorFollowsPermissionForCheck,
             "悬停叉号时模式名称仍在按钮固定的右侧文字区显示");
         Check(panel.ModeIndicatorCloseIsRedForCheck,
             "模式按钮删除图标使用主题危险色（" + panel.ModeIndicatorCloseColorForCheck + "）");
         Check(panel.ModeIndicatorCloseIsLeftAndCenteredForCheck,
             "模式按钮删除图标位于文字左侧并垂直居中");
         var closeGlyph = panel.ModeIndicatorCloseGlyphForCheck;
-        Check(closeGlyph is { Extent: > 0 and <= 11.5, Pen: > 0 and <= 1.5 },
-            "模式按钮的叉号比它替换掉的图标更小、笔画更细（"
-            + closeGlyph.Extent.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture)
-            + " DIP / 笔宽 "
-            + closeGlyph.Pen.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) + "）");
+        Check(closeGlyph is { Glyph: "×", FontSize: >= 14 and <= 16, FontFamily: "Segoe UI" },
+            "模式取消图标使用轻量的文字叉号，而不是生硬的交叉描边");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
               && panel.SelectedComposerModeForCheck == ChatModes.Plan
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
@@ -636,11 +651,8 @@ public partial class ShellCheckWindow : Window
         // and let the rest of the run continue, not as an exception that truncates the whole report.
         Check(panel.ClickBubbleAction(0, "EditMessage"), "可以再次进入就地编辑");
         var cancelGlyph = panel.BubbleCancelGlyphForCheck(0);
-        Check(cancelGlyph is { Extent: > 0 and <= 11.5, Pen: > 0 and <= 1.5 },
-            "就地编辑的叉号与输入行那个一样收着（"
-            + cancelGlyph.Extent.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture)
-            + " DIP / 笔宽 "
-            + cancelGlyph.Pen.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) + "）");
+        Check(cancelGlyph is { Glyph: "×", FontSize: >= 14 and <= 16, FontFamily: "Segoe UI" },
+            "就地编辑的取消叉号与模式胶囊统一使用轻量字形");
         if (panel.BubbleEditorForCheck(0) is { } editor) editor.Text = "就地改写的提问";
         Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Enter)
               && panel.BubbleEditorForCheck(0) is null,
@@ -798,6 +810,38 @@ public partial class ShellCheckWindow : Window
               && emptyConversation.Messages.Count == 0
               && shell.Chat.StoredCopyForCheck(emptyConversation.Id) is null,
             "清空空会话移除从未使用的新会话");
+
+        var compressionSession = shell.Chat.StartConversation(checkProvider.Id);
+        for (var i = 0; i < 10; i++)
+            shell.Chat.SeedTurnForCheck(compressionSession.Id, $"较早的上下文 {i}: " + new string('x', 500));
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(["保留的历史摘要"]);
+        panel.SetInputForCheck("");
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var usageBeforeCompression = panel.ContextUsageForCheck;
+        panel.OpenContextPopoverForCheck();
+        Check(panel.ContextCompressButtonEnabledForCheck,
+            "有足够的早期对话且模型可用时，压缩上下文按钮启用");
+        panel.ClickContextCompressForCheck();
+        var compressionTask = panel.ContextCompressionTaskForCheck;
+        Check(compressionTask is not null, "压缩按钮触发了实际模型摘要请求");
+        if (compressionTask is not null) await compressionTask;
+
+        var compressedCopy = shell.Chat.StoredCopyForCheck(compressionSession.Id);
+        Check(compressedCopy?.ContextSummary == "保留的历史摘要"
+              && compressedCopy.ContextSummaryThroughMessageCount == 6
+              && compressedCopy.Messages.Count == 10,
+            "摘要落盘并记录压缩边界，原始对话仍保留以供查看");
+        Check(shell.Chat.PreparedHistoryCountForCheck(compressionSession.Id) == 4
+              && shell.Chat.PreparedSystemPromptForCheck(compressionSession.Id)
+                  .Contains("保留的历史摘要", StringComparison.Ordinal),
+            "后续模型请求使用摘要与最近四条消息，而不再发送已压缩的前缀");
+        Check(panel.ContextUsageForCheck < usageBeforeCompression
+              && !panel.ContextCompressButtonEnabledForCheck,
+            "压缩后估算占用下降，且没有更多可压缩的早期内容时按钮禁用");
+        panel.CloseContextPopoverForCheck();
+        shell.Chat.DeleteConversation(compressionSession.Id);
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
         await CheckToolApprovalAsync(shell, panel);

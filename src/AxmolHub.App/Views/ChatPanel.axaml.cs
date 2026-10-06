@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -39,6 +40,7 @@ public partial class ChatPanel : UserControl
     private readonly List<ContextAttachment> _contextAttachments = [];
     private string? _selectedComposerMode;
     private bool _stickToBottom = true;
+    private Task? _contextCompressionTask;
 
     /// <summary>
     /// The bubble showing the reply arriving in the session on screen, or null while none is. Everything it
@@ -135,6 +137,10 @@ public partial class ChatPanel : UserControl
         };
         ModeIndicatorButton.Click += (_, _) => ClearComposerMode();
         ContextButton.Click += (_, _) => ShowContextMenu();
+        ContextPopup.PlacementTarget = ContextButton;
+        ContextPopup.Placement = PlacementMode.TopEdgeAlignedRight;
+        ContextProgressTrack.SizeChanged += (_, _) => UpdateContextProgressFill();
+        CompressContextButton.Click += (_, _) => _contextCompressionTask = CompressContextAsync();
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
         PermissionChip.Click += (_, _) => ShowPermissionMenu();
@@ -250,6 +256,10 @@ public partial class ChatPanel : UserControl
         var (used, budget) = CurrentContextUsage();
         var ratio = budget > 0 ? (double)used / budget : 0;
         ContextRing.Usage = Math.Clamp(ratio, 0, 1);
+        ContextPopoverPercent.Text = Math.Clamp((int)Math.Round(ratio * 100), 0, 100).ToString(
+            System.Globalization.CultureInfo.CurrentCulture) + "%";
+        UpdateContextProgressFill();
+        RefreshContextCompressionButton();
         ToolTip.SetTip(ContextButton, string.Format(
             System.Globalization.CultureInfo.CurrentCulture,
             HubStrings.Get("ChatContextEstimateFormat"),
@@ -261,27 +271,50 @@ public partial class ChatPanel : UserControl
     private (int Used, int Budget) CurrentContextUsage()
         => _chat.EstimateContextUsage(InputBox.Text ?? "");
 
+    private void UpdateContextProgressFill()
+    {
+        if (ContextProgressTrack is null || ContextProgressFill is null) return;
+        var (used, budget) = CurrentContextUsage();
+        var ratio = budget > 0 ? Math.Clamp((double)used / budget, 0, 1) : 0;
+        ContextProgressFill.Width = ContextProgressTrack.Bounds.Width * ratio;
+    }
+
+    private void RefreshContextCompressionButton()
+    {
+        if (_chat is null) return;
+        var conversation = _chat.ActiveConversation;
+        var compressing = conversation is not null && _chat.IsCompressingContext(conversation.Id);
+        CompressContextButton.IsEnabled = conversation is not null
+                                          && !compressing
+                                          && _chat.CanCompressContext(conversation.Id);
+        CompressContextButton.Content = HubStrings.Get(
+            compressing ? "ChatCompressingContext" : "ChatCompressContext");
+    }
+
     private void ShowContextMenu()
     {
-        var (used, budget) = CurrentContextUsage();
-        var ratio = budget > 0 ? (double)used / budget : 0;
-        var menu = new MenuFlyout();
-        menu.Items.Add(new MenuItem
+        UpdateContextRing();
+        ContextPopup.IsOpen = true;
+    }
+
+    private async Task CompressContextAsync()
+    {
+        if (_chat.ActiveConversation is not { } conversation) return;
+        CompressContextButton.IsEnabled = false;
+        CompressContextButton.Content = HubStrings.Get("ChatCompressingContext");
+        try
         {
-            Header = string.Format(
-                System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ChatContextEstimateFormat"),
-                used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-                budget.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-                Math.Clamp((int)Math.Round(ratio * 100), 0, 100)),
-            IsEnabled = false,
-        });
-        menu.Items.Add(new MenuItem
+            if (!await _chat.CompressContextAsync(conversation.Id))
+                AppendNotice(HubStrings.Get("ChatContextCompressUnavailable"), danger: false);
+        }
+        catch (Exception ex)
         {
-            Header = HubStrings.Get("ChatContextEstimateHint"),
-            IsEnabled = false,
-        });
-        menu.ShowAt(ContextButton);
+            AppendNotice(HubStrings.Get("ChatContextCompressFailed") + ex.Message, danger: true);
+        }
+        finally
+        {
+            UpdateContextRing();
+        }
     }
 
     private void ShowAddContextMenu() => ShowMenu(BuildComposerMenu(), AddContextButton);
@@ -903,6 +936,27 @@ public partial class ChatPanel : UserControl
         return button;
     }
 
+    private static Button CloseActionButton(Action onClick)
+    {
+        var glyph = new TextBlock
+        {
+            Text = "×",
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 15,
+            Width = 15,
+            Height = 18,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        glyph.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        var button = new Button { Content = glyph, Tag = "Cancel" };
+        button.Classes.Add("message-action");
+        button.Classes.Add("message-action-icon");
+        ToolTip.SetTip(button, HubStrings.Get("Cancel"));
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
     /// <summary>The decided call, still in the record and no longer actionable: what became of it is the only
     /// thing worth the space.</summary>
     private Control BuildApprovalRecord(ChatTurn turn)
@@ -1324,7 +1378,7 @@ public partial class ChatPanel : UserControl
         body.Children.Remove(original);
         body.Children.Insert(0, editor);
         bar.Children.Clear();
-        bar.Children.Add(IconActionButton("Cancel", "Hub.Icon.Close", Close, size: 11, thickness: 1.4));
+        bar.Children.Add(CloseActionButton(Close));
         bar.Children.Add(IconActionButton("ConfirmEdit", "Hub.Icon.Tick", Commit));
         editor.Focus();
         editor.CaretIndex = editor.Text.Length;
@@ -1720,6 +1774,17 @@ public partial class ChatPanel : UserControl
     internal bool ReasoningPickerEnabledForCheck => SelectedReasoningLabel.IsVisible;
     internal double ContextUsageForCheck => ContextRing.Usage;
     internal string ContextTooltipForCheck => ToolTip.GetTip(ContextButton)?.ToString() ?? "";
+    internal string ContextPopoverTitleForCheck => ContextPopoverTitle.Text ?? "";
+    internal string ContextPopoverPercentForCheck => ContextPopoverPercent.Text ?? "";
+    internal bool ContextPopoverOpenForCheck => ContextPopup.IsOpen;
+    internal bool ContextCompressButtonEnabledForCheck => CompressContextButton.IsEnabled;
+    internal string ContextCompressButtonTextForCheck => CompressContextButton.Content?.ToString() ?? "";
+    internal Visual ContextPopoverContentForCheck => (Visual)ContextPopup.Child!;
+    internal Task? ContextCompressionTaskForCheck => _contextCompressionTask;
+    internal void OpenContextPopoverForCheck() => ShowContextMenu();
+    internal void CloseContextPopoverForCheck() => ContextPopup.IsOpen = false;
+    internal void ClickContextCompressForCheck()
+        => CompressContextButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     internal int ContextAttachmentCountForCheck => _contextAttachments.Count;
     internal bool HasComposerAddMenuForCheck => AddContextButton is not null;
     internal bool ModeIndicatorVisibleForCheck => ModeIndicatorButton.IsVisible;
@@ -1729,9 +1794,12 @@ public partial class ChatPanel : UserControl
     internal bool ContextRingPrecedesModelForCheck
         => ContextButton.Parent is Panel panel
            && panel.Children.IndexOf(ContextButton) < panel.Children.IndexOf(ModelPicker);
-    internal bool ModeIndicatorFollowsPlusForCheck
+    internal bool PermissionChipFollowsPlusForCheck
+        => PermissionChip.Parent is Panel panel
+           && panel.Children.IndexOf(PermissionChip) == panel.Children.IndexOf(AddContextButton) + 1;
+    internal bool ModeIndicatorFollowsPermissionForCheck
         => ModeIndicatorButton.Parent is Panel panel
-           && panel.Children.IndexOf(ModeIndicatorButton) == panel.Children.IndexOf(AddContextButton) + 1;
+           && panel.Children.IndexOf(ModeIndicatorButton) == panel.Children.IndexOf(PermissionChip) + 1;
     internal bool ModeIndicatorKeepsLabelVisibleForCheck
         => ModeIndicatorLabel.IsVisible && ModeIndicatorLabel.Parent is Grid grid
            && grid.ColumnDefinitions.Count == 2
@@ -1739,28 +1807,25 @@ public partial class ChatPanel : UserControl
     internal bool ModeIndicatorIconMatchesSelectedModeForCheck
         => ReferenceEquals(ModeIndicatorIcon.Data, ThemeGeometry(ComposerModeIconKey(_selectedComposerMode)));
     internal bool ModeIndicatorCloseIsRedForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
-            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
-           && close.Stroke is ISolidColorBrush closeBrush
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(text => text.Classes.Contains("mode-indicator-close")) is { } close
+           && close.Foreground is ISolidColorBrush closeBrush
            && closeBrush.Color.R > closeBrush.Color.G
            && closeBrush.Color.R > closeBrush.Color.B;
     internal string ModeIndicatorCloseColorForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
-            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close"))?.Stroke?.ToString() ?? "unset";
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(text => text.Classes.Contains("mode-indicator-close"))?.Foreground?.ToString() ?? "unset";
     internal bool ModeIndicatorCloseIsLeftAndCenteredForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
-            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(text => text.Classes.Contains("mode-indicator-close")) is { } close
            && close.VerticalAlignment == VerticalAlignment.Center
            && close.Parent is Grid grid
            && Grid.GetColumn(close) == 0;
-    /// <summary>The cross that replaces the mode glyph on hover, measured. It is deliberately smaller and
-    /// lighter than the icon it covers: two full-weight strokes meeting in the middle read as one solid mark,
-    /// and this one is red on top of that.</summary>
-    internal (double Extent, double Pen) ModeIndicatorCloseGlyphForCheck
-        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
-            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
-            ? (Math.Max(close.Width, close.Height), close.StrokeThickness)
-            : (0, 0);
+    internal (string Glyph, double FontSize, string FontFamily) ModeIndicatorCloseGlyphForCheck
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(text => text.Classes.Contains("mode-indicator-close")) is { } close
+            ? (close.Text ?? "", close.FontSize, close.FontFamily?.ToString() ?? "")
+            : ("", 0, "");
     internal bool ComposerMenuModesHaveIconsForCheck
         => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
             .All(item => item.Header is StackPanel header
@@ -2027,14 +2092,14 @@ public partial class ChatPanel : UserControl
 
     /// <summary>The in-place editor's cancel cross, measured the same way as the composer's: the two checks
     /// together are what keep one ✕ from being redrawn heavy while the other was softened.</summary>
-    internal (double Extent, double Pen) BubbleCancelGlyphForCheck(int visibleIndex)
+    internal (string Glyph, double FontSize, string FontFamily) BubbleCancelGlyphForCheck(int visibleIndex)
         => MessageRows.ElementAtOrDefault(visibleIndex)?
             .GetLogicalDescendants().OfType<Button>()
             .FirstOrDefault(button => button.Classes.Contains("message-action-icon")
                                       && string.Equals(button.Tag?.ToString(), "Cancel", StringComparison.Ordinal))
-            is { Content: Avalonia.Controls.Shapes.Path glyph }
-            ? (Math.Max(glyph.Width, glyph.Height), glyph.StrokeThickness)
-            : (0, 0);
+            is { Content: TextBlock glyph }
+            ? (glyph.Text ?? "", glyph.FontSize, glyph.FontFamily?.ToString() ?? "")
+            : ("", 0, "");
 
     /// <summary>The in-place editor a bubble is hosting right now, or null while it shows plain text.</summary>
     internal TextBox? BubbleEditorForCheck(int visibleIndex)

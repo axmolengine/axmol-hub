@@ -93,6 +93,8 @@ public sealed class Conversation
     public string ProviderId { get; set; } = "";
     public string ModelName { get; set; } = "";
     public List<ChatTurn> Messages { get; set; } = [];
+    public string ContextSummary { get; set; } = "";
+    public int ContextSummaryThroughMessageCount { get; set; }
     public string Mode { get; set; } = ChatModes.Agent;
     public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Auto;
     public DateTimeOffset CreatedAt { get; set; }
