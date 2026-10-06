@@ -14,6 +14,10 @@ namespace AxmolHub.Core;
 /// <param name="ApplyWorkspaceRoot">Persists a new sandbox root and answers the model. Async because the caller
 /// owns a UI thread and a session registry; null when nothing can persist one, which is the case in a self-check
 /// that only exercises the guard.</param>
+/// <param name="Sessions">Where the other sessions live, for the cross-session tools. Null in a scope that has no
+/// session store to read — those tools then say so instead of inventing a peer.</param>
+/// <param name="CrossSession">Live run state and the write path for another session, both of which belong to the
+/// app. Null when nothing can answer for a peer.</param>
 public sealed record WorkspaceToolScope(
     string? WorkspaceRoot,
     WorkspaceGuards Guards,
@@ -21,7 +25,9 @@ public sealed record WorkspaceToolScope(
     string ConversationId,
     IReadOnlyList<string> SensitiveValues,
     HubLog? Log,
-    Func<string, Task<string>>? ApplyWorkspaceRoot)
+    Func<string, Task<string>>? ApplyWorkspaceRoot,
+    ConversationStore? Sessions = null,
+    CrossSessionBridge? CrossSession = null)
 {
     /// <summary>A scope with nothing in it. Every file and command tool answers
     /// <see cref="WorkspacePathVerdict.NoWorkspace"/> rather than guessing a directory.</summary>
@@ -52,6 +58,17 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
     public const int MaxReadLimit = 2000;
     public const int DefaultCommandTimeoutSeconds = 300;
     public const int MaxCommandTimeoutSeconds = 900;
+
+    /// <summary>Sessions listed before the answer is cut, newest first — enough to pick a peer, short enough not
+    /// to be the majority of a context window.</summary>
+    public const int MaxListedSessions = 20;
+    public const int DefaultReadTurns = 20;
+    public const int MaxReadTurns = 60;
+    public const int MaxTurnCharacters = 600;
+
+    /// <summary>A peer message goes into another session's context and stays there. A limit that generous is what
+    /// lets one assistant bury another.</summary>
+    public const int MaxMessageCharacters = 4000;
 
     /// <summary>Compiler errors are at the end and the command line is at the beginning, so both ends are kept
     /// and the middle is dropped. The full output is in Hub's log either way, and the result says so.</summary>
@@ -273,6 +290,153 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
             ? result.Message + $" Created {WorkspacePaths.MemoryDirectory}/ in the workspace; tell the user once "
                                + "that committing it is their choice."
             : result.Message;
+    }
+
+    /// <summary>
+    /// The other sessions in this Hub. A list that left the sending session out would be one the model cannot
+    /// check itself against — "who else is there" and "which one am I" are the same question.
+    /// </summary>
+    [Description("List this Hub's chat sessions with their ids and titles, for send_to_session and read_session.")]
+    public string ListSessions()
+    {
+        if (context.Sessions is not { } store) return NoPeers();
+
+        var summaries = store.List().Take(MaxListedSessions).ToList();
+        if (summaries.Count == 0) return "There are no chat sessions in this Hub yet, so nobody to write to.";
+
+        var builder = new StringBuilder($"Sessions, newest first ({summaries.Count} shown of "
+                                        + $"{store.List().Count}, ids are what send_to_session takes):");
+        foreach (var summary in summaries)
+        {
+            var title = summary.Title.Length > 0 ? summary.Title : "(untitled)";
+            var notes = new List<string> { $"{summary.MessageCount} messages" };
+            if (summary.PendingApprovals > 0) notes.Add($"{summary.PendingApprovals} awaiting approval");
+            if (string.Equals(summary.Id, context.ConversationId, StringComparison.Ordinal)) notes.Add("this session");
+            builder.Append($"\n- {summary.Id} · {title} · {string.Join(" · ", notes)} · "
+                           + $"updated {summary.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm}");
+        }
+
+        return builder.ToString();
+    }
+
+    [Description("Read the last turns of another session, to see what it already knows or decided.")]
+    public string ReadSession(
+        [Description("Another session's id or exact title, as list_sessions returns them.")] string target,
+        [Description("How many of its most recent turns to read, up to 60.")] int limit = DefaultReadTurns)
+    {
+        if (context.Sessions is not { } store) return NoPeers();
+        if (string.IsNullOrWhiteSpace(target)) return MissingTarget();
+
+        var resolved = ResolveTarget(target, store);
+        if (resolved is null) return AmbiguousOrMissing(target);
+        if (resolved.Value.Id == context.ConversationId)
+            return "Refused: that is the session you are in — its history is already in front of you.";
+        if (store.Load(resolved.Value.Id) is not { } peer)
+            return $"Refused: session {resolved.Value.Id} disappeared while it was being read.";
+
+        var count = Math.Clamp(limit, 1, MaxReadTurns);
+        var shown = peer.Messages.TakeLast(count).ToList();
+        if (shown.Count == 0) return $"{resolved.Value.Title} has no turns yet.";
+
+        var builder = new StringBuilder($"{resolved.Value.Title} — last {shown.Count} of "
+                                        + $"{peer.Messages.Count} turns, oldest first:");
+        foreach (var turn in shown)
+        {
+            // A tool result is the peer's raw command output, and forwarding it would spend this session's
+            // context on bytes nobody asked for. The call itself is shown: "it is mid-way through file_write"
+            // is a fact about the peer that a reader came here for.
+            if (turn.Role == ChatRoles.Tool) continue;
+            builder.Append('\n').Append(Describe(turn));
+        }
+
+        if (peer.Messages.Count > shown.Count)
+            builder.Append($"\n… ({peer.Messages.Count - shown.Count} earlier turns not shown; raise limit)");
+        return builder.ToString();
+    }
+
+    [Description("Write a message into another Hub session's history. Set wake only when that session has to act on "
+                 + "it now; otherwise it reads the message when it next answers.")]
+    public async Task<string> SendToSession(
+        [Description("The other session's id or exact title, as list_sessions returns them.")] string target,
+        [Description("What to tell that session. Short: it goes into the other session's context for good.")]
+        string text,
+        [Description("Start the other session answering now. Leave false for a note it can read later.")]
+        bool wake = false)
+    {
+        if (context.Sessions is not { } store || context.CrossSession is not { } bridge) return NoPeers();
+        if (string.IsNullOrWhiteSpace(target)) return MissingTarget();
+        if (string.IsNullOrWhiteSpace(text))
+            return "Refused: the message is empty. Say nothing instead of sending an empty turn.";
+        if (text.Length > MaxMessageCharacters)
+            return $"Refused: the message is {text.Length} characters, over the {MaxMessageCharacters} limit. "
+                   + "Summarize what the other session needs; do not resend it as is.";
+
+        var resolved = ResolveTarget(target, store);
+        if (resolved is null) return AmbiguousOrMissing(target);
+
+        // R2 needs one fact only the source's own transcript has: is this run answering the session it is about
+        // to write back to. Read before deciding, because that is what the rule is about.
+        var echo = store.Load(context.ConversationId)?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User)
+            ?.InjectedFrom is string origin && string.Equals(origin, resolved.Value.Id, StringComparison.Ordinal);
+
+        var live = await bridge.RunState(context.ConversationId, resolved.Value.Id).ConfigureAwait(false);
+        var decision = CrossSessionRules.Decide(new CrossSessionFacts(
+            context.ConversationId, resolved.Value.Id, true, wake, echo, live.WakesUsed,
+            live.TargetRunning, resolved.Value.AwaitingApproval, live.FleetHasRoom, live.QueueHasRoom));
+
+        var title = resolved.Value.Title.Length > 0 ? resolved.Value.Title : resolved.Value.Id;
+        if (decision.Verdict is CrossSessionVerdict.RefusedSelf or CrossSessionVerdict.RefusedTarget)
+            return CrossSessionRules.ResultFor(decision, title);
+
+        if (!await bridge.Deliver(context.ConversationId, resolved.Value.Id, text, decision).ConfigureAwait(false))
+            return $"Refused: session {resolved.Value.Id} was deleted while the message was being delivered.";
+
+        return CrossSessionRules.ResultFor(decision, title);
+    }
+
+    private static string NoPeers()
+        => "Refused: this session cannot reach the other sessions of this Hub. Answer in your own reply instead.";
+
+    private static string MissingTarget()
+        => "Refused: no session was named. Call list_sessions first and use one of the ids it gives.";
+
+    /// <summary>A title two sessions share is not a guess waiting to be right: refuse and hand back the ids.</summary>
+    private static string AmbiguousOrMissing(string target)
+        => $"Refused: 「{target}」 is not one session's exact title or id. Call list_sessions and use an id.";
+
+    /// <summary>One turn as the peer's model reads it. Tool results are left out — they are the other session's
+    /// raw command output, and forwarding them would spend this context on bytes nobody asked for.</summary>
+    private static string Describe(ChatTurn turn)
+    {
+        var speaker = turn.Role switch
+        {
+            ChatRoles.User when turn.InjectedFrom is { Length: > 0 } from => $"user (written by session {from})",
+            ChatRoles.User => "user",
+            _ => "assistant",
+        };
+        var body = turn.Text.Length <= MaxTurnCharacters
+            ? turn.Text
+            : turn.Text[..MaxTurnCharacters] + "…";
+        if (turn.ToolCallId is { Length: > 0 })
+            body += (body.Length > 0 ? " " : "") + $"[calls {turn.ToolName}"
+                    + (turn.ApprovalState == ChatApprovalStates.Pending ? ", awaiting approval" : "") + "]";
+        return $"{speaker}: {body}";
+    }
+
+    /// <summary>Id first, then an exact title match — and only when exactly one session has it.</summary>
+    private static (string Id, string Title, bool AwaitingApproval)? ResolveTarget(string wanted, ConversationStore store)
+    {
+        var name = wanted.Trim();
+        var byId = store.List().FirstOrDefault(summary => string.Equals(summary.Id, name, StringComparison.Ordinal));
+        if (byId is not null) return (byId.Id, byId.Title, byId.PendingApprovals > 0);
+
+        var byTitle = store.List()
+            .Where(summary => summary.Title.Length > 0
+                              && string.Equals(summary.Title, name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return byTitle.Count == 1
+            ? (byTitle[0].Id, byTitle[0].Title, byTitle[0].PendingApprovals > 0)
+            : null;
     }
 
     private static bool TryParseScope(string? value, out MemoryScope scope)

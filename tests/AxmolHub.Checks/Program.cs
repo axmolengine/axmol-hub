@@ -1656,6 +1656,195 @@ if (args.Contains("--check-ai-cross-session"))
         throw new Exception("Trimming dropped the source marker off a peer message.");
     Console.WriteLine("PASS: the source marker is added at the request boundary and never written to the archive.");
 
+    // ── the bodies: what one session may see of, and say to, another ──
+    var bodiesRoot = Path.Combine(root, "cross-session-bodies-" + Guid.NewGuid().ToString("N"));
+    var bodiesStore = new ConversationStore(bodiesRoot);
+
+    var talker = Conversation.Create("orcarouter");
+    talker.Title = "Ask the peer";
+    talker.Append(ChatTurn.User("谁来查一下构建？"));
+    var shaderPeer = Conversation.Create("orcarouter");
+    shaderPeer.Title = "Fix the shader build";
+    for (var fill = 0; fill < 20; fill++)
+        shaderPeer.Append(ChatTurn.Assistant($"结论第 {fill} 条，够长以便被裁掉。"));
+
+    // The interesting turns go last because the window is the tail: what a peer knows is its most recent work.
+    shaderPeer.Append(ChatTurn.User("为什么着色器构建失败？"));
+    shaderPeer.Append(ChatTurn.Assistant("include 路径没配对，我先看一眼 CMakeLists。"));
+    shaderPeer.Append(ChatTurn.FunctionCall("c1", "run_command", """{"command":"cmake --build build"}"""));
+    shaderPeer.Append(ChatTurn.FunctionResult("c1", "shadow: no such file or directory"));
+    var echoer = Conversation.Create("orcarouter");
+    echoer.Title = "Answering a peer";
+    echoer.Append(ChatTurn.User("帮我问 shader 会话", injectedFrom: shaderPeer.Id));
+    var twinA = Conversation.Create("orcarouter");
+    twinA.Title = "Same title";
+    var twinB = Conversation.Create("orcarouter");
+    twinB.Title = "Same title";
+    twinB.Append(ChatTurn.FunctionCall("c9", "file_write", """{"path":"x.cpp"}""") with
+    {
+        ApprovalState = ChatApprovalStates.Pending,
+    });
+    foreach (var session in new[] { talker, echoer, shaderPeer, twinA, twinB }) bodiesStore.Save(session);
+
+    var peerDeliveries = new List<(string Target, string Text, CrossSessionDecision Decision)>();
+    var peerLive = new CrossSessionRunState(TargetRunning: false, FleetHasRoom: true, QueueHasRoom: true, WakesUsed: 0);
+    var delivers = true;
+    var peerBridge = new CrossSessionBridge(
+        (_, _) => Task.FromResult(peerLive),
+        (_, target, text, decision) =>
+        {
+            peerDeliveries.Add((target, text, decision));
+            return Task.FromResult(delivers);
+        });
+    var peerScope = new WorkspaceToolScope(null, new WorkspaceGuards(bodiesRoot, []), bodiesRoot, talker.Id,
+        [], null, null, bodiesStore, peerBridge);
+    var peerTools = new WorkspaceTools(peerScope);
+    var echoTools = new WorkspaceTools(peerScope with { ConversationId = echoer.Id });
+    var selfTools = new WorkspaceTools(peerScope with { ConversationId = shaderPeer.Id });
+    var noPeers = new WorkspaceTools(WorkspaceToolScope.Empty);
+
+    var transcript = peerTools.ReadSession(shaderPeer.Title, 20);
+    if (!transcript.Contains("last 20 of 24 turns") || !transcript.Contains("为什么着色器构建失败？")
+        || !transcript.Contains("assistant: include 路径没配对") || !transcript.Contains("[calls run_command]")
+        || !transcript.Contains("4 earlier turns not shown"))
+        throw new Exception($"read_session did not show the peer's tail:{Environment.NewLine}{transcript}");
+    if (transcript.Contains("no such file or directory", StringComparison.Ordinal))
+        throw new Exception("read_session forwarded the peer's raw tool output.");
+    var wholeWindow = peerTools.ReadSession(shaderPeer.Id, 999);
+    if (!wholeWindow.Contains("last 24 of 24 turns") || wholeWindow.Contains("earlier turns not shown"))
+        throw new Exception($"read_session did not clamp its limit to the whole transcript:{Environment.NewLine}{wholeWindow}");
+    if (!peerTools.ReadSession(twinA.Id).Contains("has no turns yet", StringComparison.Ordinal))
+        throw new Exception("An empty peer was described as if it had a transcript.");
+    if (!selfTools.ReadSession(shaderPeer.Id).Contains("the session you are in", StringComparison.Ordinal)
+        || !noPeers.ReadSession("anything").Contains("cannot reach the other sessions", StringComparison.Ordinal)
+        || !peerTools.ReadSession("   ").Contains("no session was named", StringComparison.Ordinal)
+        || !peerTools.ReadSession("Same title").Contains("not one session's exact title", StringComparison.Ordinal))
+        throw new Exception("A read_session refusal said the wrong thing, or said nothing.");
+    Console.WriteLine("PASS: read_session shows the peer's tail without its raw tool output, and refuses the four ways it can.");
+
+    var listing = peerTools.ListSessions();
+    if (!listing.Contains(talker.Id, StringComparison.Ordinal) || !listing.Contains("this session", StringComparison.Ordinal)
+        || !listing.Contains(shaderPeer.Title, StringComparison.Ordinal)
+        || !listing.Contains($"{twinB.Id} · Same title · 1 messages · 1 awaiting approval", StringComparison.Ordinal))
+        throw new Exception($"list_sessions left something a sender needs out:{Environment.NewLine}{listing}");
+    for (var fill = 0; fill < 25; fill++)
+    {
+        var extra = Conversation.Create("orcarouter");
+        extra.Title = $"filler-{fill}";
+        bodiesStore.Save(extra);
+    }
+
+    var capped = peerTools.ListSessions();
+    var listed = capped.Split("\n- ").Length - 1;
+    if (listed != WorkspaceTools.MaxListedSessions || !capped.Contains($"of {bodiesStore.List().Count}"))
+        throw new Exception($"list_sessions listed {listed} sessions instead of {WorkspaceTools.MaxListedSessions}.");
+    if (!noPeers.ListSessions().Contains("cannot reach the other sessions", StringComparison.Ordinal))
+        throw new Exception("list_sessions with no session store pretended there were peers.");
+    Console.WriteLine("PASS: list_sessions names every peer an assistant needs and stops at its own bound.");
+
+    var started = await peerTools.SendToSession(shaderPeer.Id, "把你的结论发我一份", wake: true);
+    if (peerDeliveries.Count != 1 || peerDeliveries[0].Decision.Verdict != CrossSessionVerdict.Started
+        || !started.Contains("answering now", StringComparison.Ordinal))
+        throw new Exception($"A free send to a free session did not start it: {started}");
+    if (peerDeliveries[0].Text != "把你的结论发我一份")
+        throw new Exception("send_to_session delivered different text than the model sent.");
+
+    await peerTools.SendToSession(shaderPeer.Title, "顺手记一下", wake: false);
+    if (peerDeliveries[^1].Decision is not { Verdict: CrossSessionVerdict.Delivered, Suppressed: WakeSuppressed.NotAsked }
+        || !peerDeliveries[^1].Target.Equals(shaderPeer.Id, StringComparison.Ordinal))
+        throw new Exception("A wakeless send did not land as a plain delivery, or went to the wrong session.");
+    Console.WriteLine("PASS: a wake starts the peer, a note without one still lands.");
+
+    // The title is accepted as well as the id — but resolved here, so a renamed session cannot be addressed by
+    // the title a peer memorised last week without an error the model can act on.
+    await peerTools.SendToSession("fix the shader build", "大小写也应命中", wake: false);
+    if (peerDeliveries[^1].Target != shaderPeer.Id)
+        throw new Exception("A peer addressed by title in another case was not resolved.");
+
+    // R2, decided from the source's own transcript rather than from a fact the caller was told to pass.
+    var echoed = await echoTools.SendToSession(shaderPeer.Id, "它让我问的，结论给我", wake: true);
+    if (peerDeliveries[^1].Decision.Suppressed != WakeSuppressed.Echo
+        || !echoed.Contains("not woken", StringComparison.Ordinal))
+        throw new Exception($"A reply back to the asking session woke it anyway: {echoed}");
+
+    peerLive = peerLive with { WakesUsed = CrossSessionRules.MaxWakesPerRun };
+    var spent = await peerTools.SendToSession(twinA.Id, "再叫一个", wake: true);
+    if (peerDeliveries[^1].Decision.Suppressed != WakeSuppressed.WakeLimit || !spent.Contains("own reply", StringComparison.Ordinal))
+        throw new Exception($"The wake budget did not stop the third wake: {spent}");
+
+    peerLive = new CrossSessionRunState(TargetRunning: true, true, true, 0);
+    var busy = await peerTools.SendToSession(twinA.Id, "你在忙也要说", wake: true);
+    if (peerDeliveries[^1].Decision.Suppressed != WakeSuppressed.TargetBusy || !busy.Contains("already answering", StringComparison.Ordinal))
+        throw new Exception($"A streaming target was restarted: {busy}");
+
+    // A target parked on a decision is busy in a way the run registry cannot see — it comes off the index.
+    peerLive = new CrossSessionRunState(TargetRunning: false, true, true, 0);
+    var parked = await peerTools.SendToSession(twinB.Id, "催一下", wake: true);
+    if (peerDeliveries[^1].Decision.Suppressed != WakeSuppressed.TargetBusy)
+        throw new Exception("A target waiting on a person was woken, discarding the decision still on it.");
+    Console.WriteLine("PASS: echo, wake budget, a streaming peer and a peer awaiting a decision all defer.");
+
+    peerLive = new CrossSessionRunState(false, FleetHasRoom: false, QueueHasRoom: true, 0);
+    var queued = await peerTools.SendToSession(twinA.Id, "排一下", wake: true);
+    if (peerDeliveries[^1].Decision.Verdict != CrossSessionVerdict.Queued || !queued.Contains("queued: true", StringComparison.Ordinal))
+        throw new Exception($"A full fleet did not queue the wake: {queued}");
+    peerLive = peerLive with { QueueHasRoom = false };
+    var stuck = await peerTools.SendToSession(twinA.Id, "队也满了", wake: true);
+    if (peerDeliveries[^1].Decision.Suppressed != WakeSuppressed.FleetFull || !stuck.Contains("queue is full", StringComparison.Ordinal))
+        throw new Exception("A full wake queue lost the message instead of losing the wake.");
+    Console.WriteLine("PASS: the wake queues behind the fleet, and a full queue costs the wake, not the message.");
+
+    var deliveredCount = peerDeliveries.Count;
+    foreach (var (target, text, expectation) in new (string, string, string)[]
+             {
+                 (talker.Id, "自言自语", "itself"),
+                 ("没有这个会话", "hi", "list_sessions"),
+                 (shaderPeer.Id, new string('x', WorkspaceTools.MaxMessageCharacters + 1), "over the"),
+                 (shaderPeer.Id, "   ", "empty"),
+             })
+    {
+        var refused = await peerTools.SendToSession(target, text, wake: true);
+        if (!refused.Contains(expectation, StringComparison.Ordinal))
+            throw new Exception($"Sending {expectation} was not refused the way the model can act on: {refused}");
+    }
+
+    if (peerDeliveries.Count != deliveredCount)
+        throw new Exception($"A refused send still wrote into the peer ({peerDeliveries.Count - deliveredCount} extra).");
+    delivers = false;
+    var vanished = await peerTools.SendToSession(twinA.Id, "目标没了", wake: true);
+    if (!vanished.Contains("deleted while", StringComparison.Ordinal))
+        throw new Exception($"A target that vanished mid-send read as success: {vanished}");
+    Console.WriteLine("PASS: self-send, an unknown peer, an oversized message and an empty one write nothing anywhere.");
+
+    // The same contract the other tools are held to: the names on the wire are the names a call binds by.
+    var peerFunctions = new Dictionary<string, AIFunction>(StringComparer.Ordinal)
+    {
+        ["list_sessions"] = AIFunctionFactory.Create((Delegate)peerTools.ListSessions,
+            new AIFunctionFactoryOptions { Name = "list_sessions" }),
+        ["read_session"] = AIFunctionFactory.Create((Delegate)peerTools.ReadSession,
+            new AIFunctionFactoryOptions { Name = "read_session" }),
+        ["send_to_session"] = AIFunctionFactory.Create((Delegate)peerTools.SendToSession,
+            new AIFunctionFactoryOptions { Name = "send_to_session" }),
+    };
+    var peerSchema = string.Join("\n", peerFunctions.Values.Select(function => function.JsonSchema.GetRawText()));
+    foreach (var expected in new[] { "target", "text", "wake", "limit" })
+        if (!peerSchema.Contains(expected, StringComparison.Ordinal))
+            throw new Exception($"The wire schema does not advertise '{expected}'.");
+    peerLive = new CrossSessionRunState(false, true, true, 0);
+    delivers = true;
+    var wireSend = await peerFunctions["send_to_session"].InvokeAsync(new AIFunctionArguments(
+        new Dictionary<string, object?> { ["target"] = twinA.Id, ["text"] = "经接线发的一条", ["wake"] = true }));
+    if (peerDeliveries[^1].Target != twinA.Id || peerDeliveries[^1].Decision.Verdict != CrossSessionVerdict.Started)
+        throw new Exception($"A send_to_session call using the schema's own names did not bind: {wireSend}");
+    var wireRead = await peerFunctions["read_session"].InvokeAsync(new AIFunctionArguments(
+        new Dictionary<string, object?> { ["target"] = shaderPeer.Id, ["limit"] = 5 }));
+    if (!Convert.ToString(wireRead)!.Contains("last 5 of 24 turns"))
+        throw new Exception($"read_session did not accept its own limit parameter: {wireRead}");
+    Console.WriteLine("PASS: the three cross-session tools bind, and the schema names are the names a call is accepted by.");
+
+    foreach (var summary in bodiesStore.List()) bodiesStore.Delete(summary.Id);
+    Directory.Delete(bodiesRoot, recursive: true);
+
     peerStore.Delete(sender.Id);
     peerStore.Delete(receiver.Id);
     peerStore.Delete("legacy-no-peer");

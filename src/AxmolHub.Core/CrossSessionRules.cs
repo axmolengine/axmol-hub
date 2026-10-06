@@ -155,3 +155,24 @@ public static class CrossSessionRules
                  + "guess another one.",
         };
 }
+
+/// <summary>Which of the sending session's runs are live right now — the facts no file can answer, since a
+/// streaming session and a session waiting on a decision both look finished on disk.</summary>
+/// <param name="WakesUsed">Wakes this run has already started, so the budget is spent by the run that woke
+/// others rather than by the pair of sessions.</param>
+public readonly record struct CrossSessionRunState(
+    bool TargetRunning,
+    bool FleetHasRoom,
+    bool QueueHasRoom,
+    int WakesUsed);
+
+/// <summary>What the app gives the cross-session tools: the live run state, and the ability to write into another
+/// session. Kept as two operations rather than one because the rules have to be applied <b>between</b> them —
+/// the decision is Core's, and only its execution needs the UI thread and the run registry.</summary>
+/// <param name="RunState">(source id, target id) → what is live. Called before the decision.</param>
+/// <param name="Deliver">Applies a decision: appends the message and, when told to wake, starts or queues the
+/// answer. Returns false when the target vanished between the two calls, which is reported to the model rather
+/// than retried.</param>
+public sealed record CrossSessionBridge(
+    Func<string, string, Task<CrossSessionRunState>> RunState,
+    Func<string, string, string, CrossSessionDecision, Task<bool>> Deliver);

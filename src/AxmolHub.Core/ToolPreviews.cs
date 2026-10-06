@@ -23,6 +23,7 @@ public static class ToolPreviews
             "file_write" => WritePreview(arguments, scope),
             "run_command" => CommandPreview(arguments, scope),
             "set_workspace" => WorkspacePreview(Text(arguments, "path"), scope, projectPaths),
+            "send_to_session" => SendPreview(arguments),
             "memory_write" => MemoryPreview(arguments),
             "memory_read" => $"memory_read · {Text(arguments, "scope")} · {Text(arguments, "name")}",
             "read_file" => $"read_file · {Text(arguments, "path")}",
@@ -84,6 +85,15 @@ public static class ToolPreviews
             facts.Add("registered Hub project");
         if (WorkspacePaths.IsProtected(path, scope.Guards)) facts.Add("protected location — will be refused");
         return $"set_workspace · {path}\n{string.Join(" · ", facts)}";
+    }
+
+    /// <summary>Who is being written to, and whether that session is being started up to answer: a person
+    /// approving this is approving noise in another session's conversation, and the two differ.</summary>
+    private static string SendPreview(IReadOnlyDictionary<string, JsonElement> arguments)
+    {
+        var text = Text(arguments, "text");
+        var head = text.Length <= 400 ? text : text[..400] + "…";
+        return $"send_to_session → {Text(arguments, "target")} · wake: {(Flag(arguments, "wake") ? "yes" : "no")}\n{head}";
     }
 
     private static string MemoryPreview(IReadOnlyDictionary<string, JsonElement> arguments)
