@@ -660,24 +660,36 @@ public partial class ShellCheckWindow : Window
               && opsConversation.Messages.Count == branchSourceCount,
             "从第 2 条消息分叉出新会话，只保留切点及之前内容，源会话不动（实际 "
             + (branched?.Messages.Count ?? -1) + " 条）");
-        Check(branched is not null && branched.Title == opsConversation.Title
+        Check(branched is not null && branched.Title == opsConversation.Title + " (1)"
               && branched.ProviderId == opsConversation.ProviderId && branched.Mode == opsConversation.Mode
               && branched.BranchSourceId == branchSourceId && branched.BranchSourceIndex == 1
               && shell.Chat.ActiveConversation!.Id == branched.Id,
-            "分叉会话沿用标题与 provider/模式、记录来源，并立即成为当前会话");
+            "分叉会话编号沿用标题、带上 provider/模式与来源，并立即成为当前会话（实际「"
+            + branched?.Title + "」）");
         Check(branched is not null && shell.Chat.Conversations.Count(summary => summary.Id == branched.Id) == 1
               && sidebar.ConversationListText.Contains(branched.Title, StringComparison.Ordinal),
             "分叉会话写入索引并出现在左侧会话列表");
         Check(branched is not null && shell.Chat.OpenConversation(branched.Id)
               is { BranchSourceId: not null, BranchSourceIndex: 1 },
             "分叉来源经落盘重载后仍在（新可选字段不破坏读取）");
-        if (branched is not null)
-        {
-            shell.Chat.OpenConversation(branchSourceId);
-            shell.Chat.DeleteConversation(branched.Id);
-            Check(shell.Chat.Conversations.All(summary => summary.Id != branched.Id),
-                "自检清理：分叉出的会话被移除");
-        }
+
+        // Numbering: a second fork of the same session counts up, and forking a fork continues from the
+        // original base rather than stacking a suffix onto "title (1)". Index 0 because re-opening the source
+        // reads it back from disk, where only the persisted turn exists.
+        shell.Chat.OpenConversation(branchSourceId);
+        var secondBranch = shell.Chat.BranchFrom(0);
+        Check(secondBranch is not null && secondBranch.Title == opsConversation.Title + " (2)",
+            "同一会话再次分叉时编号递增（实际「" + secondBranch?.Title + "」）");
+        var thirdBranch = shell.Chat.BranchFrom(0);
+        Check(thirdBranch is not null && thirdBranch.Title == opsConversation.Title + " (3)",
+            "分叉的分叉仍从原始标题续号，不叠加后缀（实际「" + thirdBranch?.Title + "」）");
+
+        shell.Chat.OpenConversation(branchSourceId);
+        var forks = new[] { branched, secondBranch, thirdBranch }.OfType<Conversation>().ToList();
+        foreach (var fork in forks) shell.Chat.DeleteConversation(fork.Id);
+        Check(forks.Count == 3 && shell.Chat.Conversations.All(summary =>
+                  !forks.Any(fork => fork.Id == summary.Id)),
+            "自检清理：分叉出的会话全部移除");
 
         // Session management: rename, pin (its own group header), and pruning abandoned empty sessions.
         Check(shell.Chat.RenameConversation(opsConversation.Id, "重命名标题")

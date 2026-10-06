@@ -1303,8 +1303,8 @@ public sealed class ChatWorkspace : IDisposable
     ///
     /// Turns are shared rather than cloned — <see cref="ChatTurn"/> is written once and never mutated, and the
     /// history is a fresh list, so the source can keep streaming into its own list untouched. The title is
-    /// assigned explicitly because history written straight to <c>Messages</c> never goes through
-    /// <see cref="Conversation.Append"/>, which is what normally derives it.
+    /// assigned here because history written straight to <c>Messages</c> never goes through
+    /// <see cref="Conversation.Append"/>, which is what normally derives one.
     /// </summary>
     public Conversation? BranchFrom(int index)
     {
@@ -1315,7 +1315,7 @@ public sealed class ChatWorkspace : IDisposable
         var branch = new Conversation
         {
             Id = Guid.NewGuid().ToString("N"),
-            Title = source.Title,
+            Title = NextBranchTitle(source.Title),
             ProviderId = source.ProviderId,
             ModelName = source.ModelName,
             Mode = source.Mode,
@@ -1333,6 +1333,34 @@ public sealed class ChatWorkspace : IDisposable
         _selectedReasoningEffort = branch.ReasoningEffort;
         Changed?.Invoke();
         return branch;
+    }
+
+    /// <summary>
+    /// Titles a fork "base (n)": the source title with any fork number it already carries stripped off, plus
+    /// the next free slot among the sessions sharing that base. Forking one session twice therefore reads
+    /// "session A (1)" then "session A (2)", and forking a fork keeps counting from the original base instead
+    /// of stacking suffixes into "session A (1) (1)". An untitled source stays untitled — a bare "(1)" is
+    /// worse than the placeholder the sidebar already shows.
+    /// </summary>
+    private string NextBranchTitle(string sourceTitle)
+    {
+        var cut = sourceTitle.LastIndexOf(" (", StringComparison.Ordinal);
+        var baseTitle = cut > 0 && sourceTitle.EndsWith(')')
+                        && int.TryParse(sourceTitle.AsSpan(cut + 2, sourceTitle.Length - cut - 3), out _)
+            ? sourceTitle[..cut]
+            : sourceTitle;
+        if (baseTitle.Length == 0) return sourceTitle;
+
+        var prefix = baseTitle + " (";
+        var highest = 0;
+        foreach (var title in _conversations.List().Select(summary => summary.Title))
+        {
+            if (!title.StartsWith(prefix, StringComparison.Ordinal) || !title.EndsWith(')')) continue;
+            if (int.TryParse(title.AsSpan(prefix.Length, title.Length - prefix.Length - 1), out var number)
+                && number > highest) highest = number;
+        }
+
+        return baseTitle + " (" + (highest + 1) + ")";
     }
 
     /// <summary>Drops every conversation that never received a message. Starting a new session writes an
