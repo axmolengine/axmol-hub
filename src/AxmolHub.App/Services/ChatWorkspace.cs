@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using AxmolHub.Agent;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
@@ -48,7 +49,9 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>Raised when the provider or conversation lists change and the panel should repaint.</summary>
     public event Action? Changed;
 
-    internal event Action<string, bool>? ToolActivityChanged;
+    /// <summary>A tool started or finished in a given session. The id travels because the status line a tool
+    /// updates belongs to the session being looked at, and a background session's tool must not rewrite it.</summary>
+    internal event Action<string, string, bool>? ToolActivityChanged;
 
     public ChatWorkspace(string dataRoot)
     {
@@ -83,26 +86,28 @@ public sealed class ChatWorkspace : IDisposable
                 .Select(model => new ChatModelOption(provider, model.Name)))
             .ToList();
 
-    /// <summary>The choice attached to the active conversation, or the remembered/default choice for a new one.</summary>
+    /// <summary>The choice attached to the conversation on screen, or the remembered/default choice for a new
+    /// one. Reading it is a convenience: a run resolves its own through <see cref="ModelFor"/>, because the
+    /// session answering is not necessarily the one being looked at.</summary>
     public ChatModelOption? SelectedChatModel
+        => _active is { } viewed ? ModelFor(viewed.Id) : FindChatModel(_selectedProviderId, _selectedModelName) ?? AvailableChatModels.FirstOrDefault();
+
+    /// <summary>The provider/model a given session will use: what it was last set to, falling back to that
+    /// provider's active model, then to any usable model of the same provider.</summary>
+    public ChatModelOption? ModelFor(string conversationId)
     {
-        get
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        if (conversation is null) return null;
+
+        var modelName = conversation.ModelName;
+        if (string.IsNullOrWhiteSpace(modelName))
         {
-            if (_active is not null)
-            {
-                var modelName = _active.ModelName;
-                if (string.IsNullOrWhiteSpace(modelName))
-                {
-                    modelName = _providerList.FirstOrDefault(provider => provider.Id == _active.ProviderId)
-                        ?.ActiveModel?.Name;
-                }
-
-                return FindChatModel(_active.ProviderId, modelName)
-                       ?? AvailableChatModels.FirstOrDefault(choice => choice.Provider.Id == _active.ProviderId);
-            }
-
-            return FindChatModel(_selectedProviderId, _selectedModelName) ?? AvailableChatModels.FirstOrDefault();
+            modelName = _providerList.FirstOrDefault(provider => provider.Id == conversation.ProviderId)
+                ?.ActiveModel?.Name;
         }
+
+        return FindChatModel(conversation.ProviderId, modelName)
+               ?? AvailableChatModels.FirstOrDefault(choice => choice.Provider.Id == conversation.ProviderId);
     }
 
     public ModelProvider? ActiveProvider => SelectedChatModel?.Provider;
@@ -1256,6 +1261,9 @@ public sealed class ChatWorkspace : IDisposable
 
     public void DeleteConversation(string id)
     {
+        // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses
+        // those writes — but it should not spend the rest of a reply finding that out.
+        if (_runs.TryGetValue(id, out var deleted)) deleted.RequestStop();
         _sessions.Delete(id);
         if (_active?.Id == id)
         {
@@ -1297,10 +1305,10 @@ public sealed class ChatWorkspace : IDisposable
     /// assigned here because history written straight to <c>Messages</c> never goes through
     /// <see cref="Conversation.Append"/>, which is what normally derives one.
     /// </summary>
-    public Conversation? BranchFrom(int index)
+    public Conversation? BranchFrom(string conversationId, int index)
     {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-        var source = _active;
+        var source = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        if (source is null) return null;
 
         var title = NextBranchTitle(source.Title);
         // The cut point is decided with the source locked: the branch must not capture a turn that arrived
@@ -1364,7 +1372,7 @@ public sealed class ChatWorkspace : IDisposable
     public int PruneEmptyConversations()
     {
         var emptyIds = _sessions.List()
-            .Where(summary => summary.MessageCount == 0)
+            .Where(summary => summary.MessageCount == 0 && !_runs.ContainsKey(summary.Id))
             .Select(summary => summary.Id)
             .ToList();
 
@@ -1381,57 +1389,162 @@ public sealed class ChatWorkspace : IDisposable
     // chosen turn instead, which keeps the history consistent; whole sessions go through
     // DeleteConversation.
 
+    // ───────────────────────── Runs ─────────────────────────
+
     /// <summary>
-    /// Streams an assistant reply to <paramref name="text"/> in the active conversation, appending the user
-    /// turn first and the assistant turn when the stream completes.
-    ///
-    /// The assistant turn is written **even when the caller cancels mid-stream** (with what arrived so far):
-    /// dropping it would leave the user turn with no reply and no trace of what the model had already said.
-    /// An error, by contrast, is not written as an assistant turn — it is returned in the reply so the panel
-    /// can show it as a system notice rather than as the model's words.
+    /// How many sessions may be answering at once. The cap is there because a run is not free — it holds a
+    /// reply buffer, a history snapshot and a live connection — and three covers "keep the build talking in
+    /// the background while I work in the front" without letting the worst case grow with ambition.
     /// </summary>
-    public async IAsyncEnumerable<string> SendAsync(
-        string text,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    internal const int MaxConcurrentRuns = 3;
+
+    /// <summary>How long a run may go without producing anything. It is an inactivity deadline rather than a
+    /// total one: a reply that keeps arriving is not overdue however long it takes, and a stream that stopped
+    /// arriving is dead at any elapsed time. A run parked on a tool keeps its deadline re-armed by the tool
+    /// events, so a slow build is not mistaken for a stall.</summary>
+    internal TimeSpan IdleTimeout = TimeSpan.FromSeconds(120);
+
+    /// <summary>
+    /// Keyed by conversation id, and dispatcher-confined like everything else the panel reads: the pump only
+    /// reaches it through <see cref="ApplyOnUiAsync"/> or <see cref="RaiseOnUi"/>.
+    /// </summary>
+    private readonly Dictionary<string, ConversationRun> _runs = new(StringComparer.Ordinal);
+
+    /// <summary>Raised when a session starts or stops running. The sidebar's indicator reads this, not chunks.</summary>
+    internal event Action<string>? RunsChanged;
+
+    /// <summary>Raised when a run's partial text deserves a paint — at most once per frame, and only for the
+    /// session on screen, so a background reply costs nothing to look at.</summary>
+    internal event Action<string>? RunTextChanged;
+
+    /// <summary>Raised once when a run is over, carrying everything needed to say how it went.</summary>
+    internal event Action<string, RunOutcome>? RunCompleted;
+
+    internal ConversationRun? RunFor(string conversationId)
+        => _runs.TryGetValue(conversationId, out var run) ? run : null;
+
+    public bool IsRunning(string conversationId)
+        => _runs.TryGetValue(conversationId, out var run) && run.IsStreaming;
+
+    public int RunningCount => _runs.Count;
+
+    /// <summary>
+    /// The session the panel is painting. It is no longer the session that is allowed to send — telling those
+    /// two apart is what running several sessions at once means.
+    /// </summary>
+    public string? ViewedConversationId => _active?.Id;
+
+    /// <summary>
+    /// Appends <paramref name="text"/> as the user's turn and starts a run to answer it. Refuses, with a
+    /// localization key rather than an exception, when that session is already answering, when every slot is
+    /// taken, or when the session is gone.
+    ///
+    /// A refused send is not queued. Someone who pressed send wants to know it did not start, not to be told
+    /// three streams later; only an actor that cannot retry for itself (a peer session, later) earns a queue.
+    /// </summary>
+    public bool TryEnqueueSend(string conversationId, string text, string? attachedContext, out string? refusalKey)
     {
-        await foreach (var chunk in SendAsync(text, null, cancellationToken).ConfigureAwait(false))
-            yield return chunk;
+        refusalKey = null;
+        var choice = ModelFor(conversationId);
+        if (choice is null)
+        {
+            refusalKey = "NoAvailableChatModels";
+            return false;
+        }
+
+        if (IsRunning(conversationId))
+        {
+            refusalKey = "ChatSessionBusy";
+            return false;
+        }
+
+        if (_runs.Count >= MaxConcurrentRuns)
+        {
+            refusalKey = "ChatParallelLimit";
+            return false;
+        }
+
+        if (!_sessions.TryUpdate(conversationId, opened =>
+            {
+                opened.ProviderId = choice.Provider.Id;
+                opened.ModelName = choice.ModelName;
+                opened.Append(ChatTurn.User(text, attachedContext));
+            }))
+        {
+            refusalKey = "ChatSessionMissing";
+            return false;
+        }
+
+        Changed?.Invoke();
+        StartRun(conversationId);
+        return true;
     }
 
-    public async IAsyncEnumerable<string> SendAsync(
-        string text,
-        string? attachedContext,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    /// <summary>Streams a reply against a session whose history is already final — edit-and-resend,
+    /// regenerate, or a turn resumed from an approved tool call.</summary>
+    public bool TryEnqueueContinuation(string conversationId, out string? refusalKey)
     {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-        var choice = SelectedChatModel
-            ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
-
-        var conversation = _active;
-        _sessions.TryUpdate(conversation.Id, opened =>
+        refusalKey = null;
+        if (ModelFor(conversationId) is null)
         {
-            opened.ProviderId = choice.Provider.Id;
-            opened.ModelName = choice.ModelName;
-            opened.Append(ChatTurn.User(text, attachedContext));
-        });
+            refusalKey = "NoAvailableChatModels";
+            return false;
+        }
 
-        await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
-            yield return chunk;
+        if (IsRunning(conversationId))
+        {
+            refusalKey = "ChatSessionBusy";
+            return false;
+        }
+
+        if (_runs.Count >= MaxConcurrentRuns)
+        {
+            refusalKey = "ChatParallelLimit";
+            return false;
+        }
+
+        if (_sessions.Load(conversationId) is null)
+        {
+            refusalKey = "ChatSessionMissing";
+            return false;
+        }
+
+        StartRun(conversationId);
+        return true;
+    }
+
+    /// <summary>Steers a reply already in flight: the text waits on the run, the current segment is cancelled
+    /// and written as far as it got, and the next segment answers. The state lives on the run because the
+    /// reply that is being steered may not be on screen.</summary>
+    public bool TrySteer(string conversationId, string text, string? attachedContext)
+    {
+        if (RunFor(conversationId) is not { IsStreaming: true } run) return false;
+        run.QueueSteer(text, attachedContext);
+        run.RequestStop();
+        return true;
+    }
+
+    /// <summary>Cancels one session's reply and leaves every other running. This is why the stop button can no
+    /// longer hold a cancellation source of its own.</summary>
+    public bool RequestStop(string conversationId)
+    {
+        if (RunFor(conversationId) is not { IsStreaming: true } run) return false;
+        run.RequestStop();
+        return true;
     }
 
     /// <summary>
     /// Replaces the user turn at <paramref name="index"/> with <paramref name="text"/>. Everything after the
     /// edited turn is dropped: that text was answered once already, so the reply and any later turns are stale
-    /// the moment the question changes. Streaming is a separate call (<see cref="ResendAsync"/>) so the view
-    /// can repaint the shortened history before the new reply starts arriving.
+    /// the moment the question changes. Streaming is a separate call (<see cref="TryEnqueueContinuation"/>) so
+    /// the view can repaint the shortened history before the new reply starts arriving.
     /// </summary>
-    public bool EditAndResend(int index, string text)
+    public bool EditAndResend(string conversationId, int index, string text)
     {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-        if (index < 0 || index >= _active.Messages.Count) return false;
+        if (_sessions.Peek(conversationId) is not { } conversation) return false;
+        if (index < 0 || index >= conversation.Messages.Count) return false;
 
-        var conversation = _active;
-        return _sessions.TryUpdate(conversation.Id, opened =>
+        return _sessions.TryUpdate(conversationId, opened =>
         {
             var attachedContext = opened.Messages[index].AttachedContext;
             opened.Messages.RemoveRange(index, opened.Messages.Count - index);
@@ -1440,108 +1553,239 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>Drops the trailing assistant turn (if any) so the last user turn can be answered again.</summary>
-    public bool Regenerate()
-    {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-
-        var conversation = _active;
-        return _sessions.TryUpdate(conversation.Id, opened =>
+    public bool Regenerate(string conversationId)
+        => _sessions.TryUpdate(conversationId, opened =>
         {
             if (opened.Messages.Count > 0 && opened.Messages[^1].Role == ChatRoles.Assistant)
                 opened.Messages.RemoveAt(opened.Messages.Count - 1);
         });
+
+    private void StartRun(string conversationId)
+    {
+        var run = new ConversationRun(conversationId, IdleTimeout);
+        _runs[conversationId] = run;
+        _ = PumpAsync(run);
+        RunsChanged?.Invoke(conversationId);
     }
 
-    /// <summary>Streams a reply against the conversation's current history without appending a user turn.
-    /// Used by edit-and-resend and regenerate, whose history change already happened.</summary>
-    public async IAsyncEnumerable<string> ResendAsync(
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Answers one session until there is nothing left to answer: one segment, then another if the user steered
+    /// it. Nothing here is enumerated by a view, which is what lets the reply keep arriving while the user is
+    /// somewhere else.
+    /// </summary>
+    private async Task PumpAsync(ConversationRun run)
     {
-        if (_active is null) throw new InvalidOperationException("No active conversation.");
-
-        await foreach (var chunk in StreamReplyAsync(_active, cancellationToken).ConfigureAwait(false))
-            yield return chunk;
-    }
-
-    /// <summary>Streams against the conversation's current history and writes the assistant turn on the way
-    /// out. Shared by send / edit / regenerate so the partial-reply-on-cancel rule holds once.</summary>
-    private async IAsyncEnumerable<string> StreamReplyAsync(
-        Conversation conversation,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var choice = SelectedChatModel
-            ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
-        var provider = choice.Provider;
-
-        var received = new System.Text.StringBuilder();
+        var result = RunResult.Completed;
+        string? noticeKey = null;
+        var noticeDanger = false;
+        string? detail = null;
         try
         {
-            await foreach (var chunk in StreamAsync(provider, choice.ModelName, conversation, received, cancellationToken).ConfigureAwait(false))
+            while (true)
             {
-                received.Append(chunk);
-                yield return chunk;
+                (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false);
+                if (!run.TryTakeSteer(out var steerText, out var steerContext)) break;
+                if (!await AppendSteerTurnAsync(run, steerText, steerContext).ConfigureAwait(false))
+                {
+                    result = RunResult.Cancelled;
+                    break;
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            // The pump is fire-and-forget from the panel's point of view; an escape here would be a silent
+            // hang of that session instead of a visible failure.
+            result = RunResult.Failed;
+            noticeKey = "ChatFailed";
+            noticeDanger = true;
+            detail = ex.Message;
+        }
+
+        CompleteRun(run, result, run.LiveText.Length > 0, noticeKey, noticeDanger, detail);
+    }
+
+    /// <summary>Streams one segment and writes what arrived, even when it is cancelled halfway: dropping a
+    /// partial reply would leave the user turn with no answer and no trace of what the model had already said.
+    /// An error is different — it is reported through the outcome so the view can show it as a notice rather
+    /// than as the model's words.</summary>
+    private async Task<(RunResult Result, string? NoticeKey, bool Danger, string? Detail)> StreamSegmentAsync(
+        ConversationRun run)
+    {
+        run.BeginSegment();
+        var request = await ReadOnUiAsync(() => PrepareRequest(run.ConversationId)).ConfigureAwait(false);
+        if (request is null) return (RunResult.Failed, "NoAvailableChatModels", true, null);
+
+        try
+        {
+            await foreach (var chunk in StreamAsync(request.Value, run).ConfigureAwait(false))
+            {
+                run.AppendText(chunk);
+                run.Touch();
+                SchedulePaint(run);
+            }
+
+            return (RunResult.Completed, null, false, null);
+        }
+        catch (OperationCanceledException)
+        {
+            var stopped = run.StopRequested;
+            return (stopped ? RunResult.Cancelled : RunResult.TimedOut,
+                stopped ? "ChatCancelled" : "ChatTimedOut", !stopped, null);
+        }
+        catch (TimeoutException)
+        {
+            return (RunResult.TimedOut, "ChatTimedOut", true, null);
+        }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            return (RunResult.Failed, "ChatConnectionFailed", true, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return (RunResult.Failed, "ChatFailed", true, ex.Message);
         }
         finally
         {
-            // Runs on cancellation and on success alike — the partial reply is still the model's answer.
-            // On an exception from StreamAsync it also runs; the caller sees the exception re-thrown after.
-            // Only text that arrived after the last tool call is still in the buffer: whatever the model said
-            // before a call was handed to that call turn when the call was recorded.
-            if (received.Length > 0)
+            var reply = run.LiveText;
+            if (reply.Length > 0)
             {
-                var reply = received.ToString();
-                _sessions.TryUpdate(conversation.Id,
-                    opened => opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)));
+                await ApplyOnUiAsync(() => _sessions.TryUpdate(run.ConversationId, opened =>
+                    opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)))).ConfigureAwait(false);
             }
         }
     }
 
-    private IAsyncEnumerable<string> StreamAsync(
-        ModelProvider provider,
-        string modelName,
-        Conversation conversation,
-        System.Text.StringBuilder pendingText,
-        CancellationToken cancellationToken)
+    /// <summary>Builds one request against the transcript as it stands, on the UI thread: the history copy and
+    /// the Hub snapshot the read-only tools are drawn from are both things the panel is reading concurrently.
+    /// Returns null when the session or a usable model is gone.</summary>
+    private ChatRequest? PrepareRequest(string conversationId)
     {
-        var client = ClientOverride?.Invoke(provider, conversation.Id) ?? ChatClientFactory.Create(provider, modelName);
-        var pipeline = new ChatPipeline(client);
+        var conversation = _sessions.Peek(conversationId);
+        var choice = ModelFor(conversationId);
+        if (conversation is null || choice is null) return null;
+
         var mode = NormalizeMode(conversation.Mode);
+        var reasoning = ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, conversation.ReasoningEffort)
+            ? conversation.ReasoningEffort
+            : null;
         IReadOnlyList<AITool> tools = mode == ChatModes.Ask
             ? Array.Empty<AITool>()
             : CreateReadOnlyTools();
-        var reasoning = ModelCatalog.SupportsReasoningEffort(provider, modelName, conversation.ReasoningEffort)
-            ? conversation.ReasoningEffort
-            : null;
 
-        // The history handed to the pipeline is everything said so far *excluding* the trailing user turn we
-        // just appended and are about to answer; the pipeline adds it back as the last message.
-        var history = conversation.Messages.ToList();
-        return pipeline.SendAsync(
-            provider,
-            history,
-            ChatModePrompt.For(mode),
-            reasoning,
-            tools,
-            (name, callId, arguments) =>
-            {
-                // The iterator contract serializes this with the chunk loop above, so the buffer holds exactly
-                // the text streamed before this call — which is where it belongs in the transcript.
-                var said = pendingText.ToString();
-                pendingText.Clear();
-                var call = ChatTurn.FunctionCall(callId, name, arguments, said.Length > 0 ? said : null);
-                _sessions.TryUpdate(conversation.Id, opened => opened.Append(call));
-                ToolActivityChanged?.Invoke(name, false);
-            },
-            (name, callId, result, failed) =>
-            {
-                var turn = ChatTurn.FunctionResult(callId, result, failed);
-                _sessions.TryUpdate(conversation.Id, opened => opened.Append(turn));
-                ToolActivityChanged?.Invoke(name, true);
-            },
-            modelName: modelName,
-            cancellationToken: cancellationToken);
+        // The trailing user turn is part of the history; the pipeline sends it as the last message.
+        return new ChatRequest(choice.Provider, choice.ModelName, reasoning, tools, ChatModePrompt.For(mode),
+            conversation.Messages.ToList());
     }
+
+    private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)
+    {
+        var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
+                     ?? ChatClientFactory.Create(request.Provider, request.ModelName);
+        var pipeline = new ChatPipeline(client);
+        return pipeline.SendAsync(
+            request.Provider,
+            request.History,
+            request.SystemPrompt,
+            request.Reasoning,
+            request.Tools,
+            async info =>
+            {
+                // Whatever the model said before asking for this call belongs to the call's own turn, so it is
+                // taken out of the live buffer here rather than written after the result.
+                var said = run.LiveText;
+                var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson, said.Length > 0 ? said : null);
+                await ApplyOnUiAsync(() =>
+                {
+                    run.BeginSegment();
+                    _sessions.TryUpdate(run.ConversationId, opened => opened.Append(call));
+                    ToolActivityChanged?.Invoke(run.ConversationId, info.Name, false);
+                    Changed?.Invoke();
+                }).ConfigureAwait(false);
+                run.Touch();
+            },
+            async (info, result, failed) =>
+            {
+                var turn = ChatTurn.FunctionResult(info.CallId, result, failed);
+                await ApplyOnUiAsync(() =>
+                {
+                    _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
+                    ToolActivityChanged?.Invoke(run.ConversationId, info.Name, true);
+                    Changed?.Invoke();
+                }).ConfigureAwait(false);
+                run.Touch();
+            },
+            modelName: request.ModelName,
+            cancellationToken: run.Token);
+    }
+
+    /// <summary>Appends a steered message, or reports that the session went away while it was being typed.</summary>
+    private async Task<bool> AppendSteerTurnAsync(ConversationRun run, string text, string? attachedContext)
+    {
+        var written = false;
+        await ApplyOnUiAsync(() =>
+        {
+            written = _sessions.TryUpdate(run.ConversationId, opened => opened.Append(ChatTurn.User(text, attachedContext)));
+            if (written) Changed?.Invoke();
+        }).ConfigureAwait(false);
+        return written;
+    }
+
+    private void CompleteRun(ConversationRun run, RunResult result, bool receivedText, string? noticeKey,
+        bool danger, string? detail)
+    {
+        // One hop, in this order: the run leaves the registry so nothing can attach to a finished reply, the
+        // transcript's owner repaints, the indicator goes out, and only then does the view get told how it ended.
+        // The token sources are released last — a stop pressed on the final chunk is still being unwound here.
+        RaiseOnUi(() =>
+        {
+            run.Finish(result);
+            _runs.Remove(run.ConversationId);
+            Changed?.Invoke();
+            RunsChanged?.Invoke(run.ConversationId);
+            RunCompleted?.Invoke(run.ConversationId, new RunOutcome(result, receivedText, noticeKey, danger, detail));
+            run.Dispose();
+        });
+    }
+
+    private void SchedulePaint(ConversationRun run)
+    {
+        if (!run.TryRequestPaint()) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            run.ClearPaintRequest();
+            if (run.ConversationId == _active?.Id) RunTextChanged?.Invoke(run.ConversationId);
+        });
+    }
+
+    /// <summary>
+    /// Runs <paramref name="effect"/> on the UI thread and returns when it has run. The pump streams with
+    /// <c>ConfigureAwait(false)</c>, so every transcript write and every event a view consumes comes through
+    /// here — that is what keeps the shell's "events arrive on the UI thread" rule while several replies share
+    /// the thread pool. Awaited, never awaited-and-blocked: nothing in this class may call <c>.Result</c> or
+    /// <c>Wait()</c> on the pump, which would hold the dispatcher the operation is waiting for.
+    /// </summary>
+    private async Task ApplyOnUiAsync(Action effect) => await Dispatcher.UIThread.InvokeAsync(effect);
+
+    /// <summary>Reads something the UI thread owns — a history snapshot, a Hub snapshot — from the pump, and
+    /// waits for the answer. Same rule as <see cref="ApplyOnUiAsync"/>: never block on the returned task.</summary>
+    private async Task<T> ReadOnUiAsync<T>(Func<T> value) => await Dispatcher.UIThread.InvokeAsync(value);
+
+    private void RaiseOnUi(Action effect)
+    {
+        if (Dispatcher.UIThread.CheckAccess()) effect();
+        else Dispatcher.UIThread.Post(effect);
+    }
+
+    /// <summary>Everything one model request needs, decided on the UI thread and sent from anywhere.</summary>
+    private readonly record struct ChatRequest(
+        ModelProvider Provider,
+        string ModelName,
+        string? Reasoning,
+        IReadOnlyList<AITool> Tools,
+        string SystemPrompt,
+        IReadOnlyList<ChatTurn> History);
+
 
     private IReadOnlyList<AITool> CreateReadOnlyTools()
     {
@@ -1600,8 +1844,9 @@ public sealed class ChatWorkspace : IDisposable
 
     public void Dispose()
     {
-        // Nothing holds a live handle yet (the client and secret store are per-call), but the chat view's
-        // lifetime should match the shell's — keep the seam so a future cached client is released here.
+        // A run outlives the workspace that started it only by accident: switching data roots or closing the
+        // window must not leave a stream writing turns into a session the shell has already let go of.
+        foreach (var run in _runs.Values) run.RequestStop();
     }
 
     internal static class ChatModePrompt

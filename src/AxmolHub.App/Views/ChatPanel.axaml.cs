@@ -35,22 +35,36 @@ public partial class ChatPanel : UserControl
     /// <summary>How close to the bottom counts as "the user is at the bottom". A few pixels of slack stop
     /// sub-pixel scroll rounding from flipping the state on every scroll event.</summary>
     private const double StickEpsilon = 6;
-    private static readonly TimeSpan ChatRequestTimeout = TimeSpan.FromMinutes(2);
-
     private readonly ChatWorkspace _chat;
-    private CancellationTokenSource? _send;
-    private TextBlock? _streamStatusLabel;
-    private TextBlock? _streamElapsedLabel;
-    private Ellipse[] _activityDots = [];
-    private DispatcherTimer? _activityTimer;
-    private readonly Stopwatch _activityStopwatch = new();
     private readonly List<ContextAttachment> _contextAttachments = [];
     private string? _selectedComposerMode;
-    private int _activityFrame;
-    private bool _stopRequested;
     private bool _stickToBottom = true;
-    private string? _pendingSteerText;
-    private string? _pendingSteerContext;
+
+    /// <summary>
+    /// The bubble showing the reply arriving in the session on screen, or null while none is. Everything it
+    /// displays is read off the run, so leaving and coming back rebuilds it from what actually arrived instead
+    /// of from a copy this view kept — which is also what lets a session keep streaming while it is hidden.
+    /// </summary>
+    private LiveBubble? _live;
+
+    /// <summary>One attached run's worth of chrome: the row, the pieces of it that change while text arrives,
+    /// and the timer that animates them. Created on attach, thrown away on detach; the run outlives both.</summary>
+    private sealed class LiveBubble
+    {
+        public required string ConversationId { get; init; }
+        public required Control Row { get; init; }
+        public required TextBlock Preview { get; init; }
+        public required TextBlock Status { get; init; }
+        public required TextBlock Elapsed { get; init; }
+        public required Ellipse[] Dots { get; init; }
+        public DispatcherTimer? Timer { get; set; }
+        public Stopwatch Watch { get; } = new();
+        public int Frame { get; set; }
+
+        /// <summary>Whether this segment has produced any text yet — the status line says "preparing" until it
+        /// has, and a steer starts a new segment, so the flag has to be able to go back.</summary>
+        public bool ShowedText { get; set; }
+    }
 
     /// <summary>The conversation whose turns <see cref="MessageFlow"/> currently shows, and how many of its
     /// visible turns are already rendered. Together they let <see cref="RenderMessages"/> append only what is
@@ -74,11 +88,29 @@ public partial class ChatPanel : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
-        _chat.ToolActivityChanged += (name, completed) => Dispatcher.UIThread.Post(() =>
+        // Tool activity already arrives on the UI thread, and it carries the session it happened in: a reply
+        // running out of sight must not rewrite the status line of the one on screen.
+        _chat.ToolActivityChanged += (conversationId, name, completed) =>
         {
-            if (_streamStatusLabel is not null)
-                _streamStatusLabel.Text = ToolActivityText(name, completed);
-        });
+            if (_live is { } live && live.ConversationId == conversationId)
+                live.Status.Text = ToolActivityText(name, completed);
+        };
+        _chat.RunTextChanged += conversationId =>
+        {
+            if (_live is { } live && live.ConversationId == conversationId) RefreshLive(live);
+        };
+        _chat.RunsChanged += conversationId =>
+        {
+            if (conversationId == _chat.ViewedConversationId) RenderMessages();
+        };
+        _chat.RunCompleted += (conversationId, outcome) =>
+        {
+            if (conversationId != _chat.ViewedConversationId) return;
+            RenderMessages();
+            AppendRunNotice(outcome);
+            UpdateSendState();
+            ConversationStateChanged?.Invoke();
+        };
         ModelPicker.Click += (_, _) => ShowModelMenu();
         ForkNotice.Click += (_, _) =>
         {
@@ -538,10 +570,20 @@ public partial class ChatPanel : UserControl
     private void RenderMessages()
     {
         if (_chat is null) return;
-        // While a reply is streaming the live bubbles own the flow; a reload here would throw them away.
-        if (_send is not null) return;
-
         var conversation = _chat.ActiveConversation;
+        var run = conversation is null ? null : _chat.RunFor(conversation.Id);
+
+        // The live bubble is not a stored turn. It comes off the flow before the stored rows are laid down and
+        // goes back on the end afterwards, so a repaint in the middle of a reply cannot bury it mid-transcript.
+        // A bubble belonging to another session is closed for good: its run keeps going, and coming back to it
+        // rebuilds the bubble from what arrived while it was out of sight.
+        // A bubble that outlives its run would keep animating a reply that has already been written to the
+        // transcript, where it now belongs — so the absence of a streaming run for this session closes it,
+        // whoever happened to ask for a repaint.
+        if (_live is { } attached && (run is not { IsStreaming: true } || attached.ConversationId != conversation?.Id))
+            CloseLive();
+        if (_live is { } held) MessageFlow.Children.Remove(held.Row);
+
         var visible = new List<(int Index, ChatTurn Turn)>();
         if (conversation is not null)
         {
@@ -556,7 +598,8 @@ public partial class ChatPanel : UserControl
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation?.Id;
             _renderedCount = 0;
-            EmptyState.IsVisible = true;
+            EmptyState.IsVisible = run is not { IsStreaming: true };
+            if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
             UpdateScrollAffordance();
             return;
         }
@@ -576,6 +619,7 @@ public partial class ChatPanel : UserControl
         }
 
         EmptyState.IsVisible = false;
+        if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
         UpdateScrollAffordance();
     }
 
@@ -615,15 +659,6 @@ public partial class ChatPanel : UserControl
         MessageFlow.Children.Add(BuildMessageRow(fromUser, body, null,
             fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false,
             fromUser ? DateTimeOffset.Now : null));
-        _renderedCount++;
-        ScrollToEnd();
-    }
-
-    private void AppendStreamingBubble(StackPanel body)
-    {
-        EmptyState.IsVisible = false;
-        MessageFlow.Children.Add(BuildMessageRow(false, body, null,
-            ChatRoles.Assistant, "", isLast: true));
         _renderedCount++;
         ScrollToEnd();
     }
@@ -705,7 +740,7 @@ public partial class ChatPanel : UserControl
         {
             bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
             if (isLast)
-                bar.Children.Add(IconActionButton("RegenerateMessage", "Hub.Icon.Refresh", () => _ = RegenerateAsync()));
+                bar.Children.Add(IconActionButton("RegenerateMessage", "Hub.Icon.Refresh", RegenerateAsync));
             bar.Children.Add(IconActionButton("BranchFromHere", "Hub.Icon.Branch", () => BranchFromHere(index)));
         }
 
@@ -807,9 +842,10 @@ public partial class ChatPanel : UserControl
     private void UpdateSendState()
     {
         SendStateUpdates++;
-        var streaming = _send is not null;
+        var streaming = IsViewedStreaming;
         var hasText = (InputBox.Text ?? "").Trim().Length > 0;
-        SendButton.IsEnabled = _pendingSteerText is null && (streaming || hasText);
+        // A steer already waiting is spent: the button must not offer a second one before the first is taken.
+        SendButton.IsEnabled = ViewedRun?.HasQueuedSteer != true && (streaming || hasText);
         SendButton.Content = BuildSendIcon(streaming && !hasText);
         ToolTip.SetTip(SendButton, HubStrings.Get(streaming
             ? hasText ? "ChatSteer" : "Stop"
@@ -853,9 +889,9 @@ public partial class ChatPanel : UserControl
 
     private async Task SendAsync()
     {
-        if (_send is not null)
+        if (ViewedRun is { IsStreaming: true } run)
         {
-            if (_pendingSteerText is not null) return;
+            if (run.HasQueuedSteer) return;
             var steerText = (InputBox.Text ?? "").Trim();
             if (steerText.Length > 0)
             {
@@ -870,20 +906,18 @@ public partial class ChatPanel : UserControl
                     return;
                 }
 
-                _pendingSteerText = steerText;
-                _pendingSteerContext = steerContext;
                 InputBox.Text = "";
                 _contextAttachments.Clear();
                 RenderContextAttachments();
-                if (_streamStatusLabel is not null)
-                    _streamStatusLabel.Text = HubStrings.Get("ChatSteering");
+                if (_live is { } live) live.Status.Text = HubStrings.Get("ChatSteering");
                 UpdateSendState();
-                _send.Cancel();
+                // The run does the rest: the current segment is cancelled, written as far as it got, and the
+                // next one answers this text — none of which is this view's business any more.
+                _chat.TrySteer(run.ConversationId, steerText, steerContext);
                 return;
             }
 
-            _stopRequested = true;
-            _send.Cancel();
+            _chat.RequestStop(run.ConversationId);
             return;
         }
 
@@ -909,33 +943,34 @@ public partial class ChatPanel : UserControl
         _contextAttachments.Clear();
         RenderContextAttachments();
         InputBox.Text = "";
-        await SendTextAsync(text, context);
+        SendTextAsync(text, context);
     }
 
-    private async Task SendTextAsync(string text, string? attachedContext = null)
+    /// <summary>Hands the message to the workspace and starts a run for it. The user's own turn is painted from
+    /// the transcript like any other row, so there is no second copy of it here to keep in step.</summary>
+    private void SendTextAsync(string text, string? attachedContext = null)
     {
         if (text.Length == 0) return;
-        if (_chat.SelectedChatModel is null)
+        if (_chat.ActiveConversation is null) _chat.StartConversation();
+        if (_chat.ActiveConversation is not { } conversation) return;
+
+        if (!_chat.TryEnqueueSend(conversation.Id, text, attachedContext, out var refusalKey))
         {
-            AppendNotice(HubStrings.Get("NoAvailableChatModels"), danger: true);
+            AppendNotice(HubStrings.Get(refusalKey ?? "ChatFailed"), danger: true);
             return;
         }
 
-        if (_chat.ActiveConversation is null) _chat.StartConversation();
-
-        AppendPlainBubble(text, fromUser: true);
         ConversationStateChanged?.Invoke();
-        await StreamReplyAsync(token => _chat.SendAsync(text, attachedContext, token));
     }
 
-    private async Task RegenerateAsync()
+    private void RegenerateAsync()
     {
-        if (_send is not null) return;
-        if (_chat.ActiveConversation is null || _chat.SelectedChatModel is null) return;
-        if (!_chat.Regenerate()) return;
+        if (_chat.ActiveConversation is not { } conversation || IsViewedStreaming) return;
+        if (!_chat.Regenerate(conversation.Id)) return;
 
         ForceRebuildMessages();
-        await StreamReplyAsync(token => _chat.ResendAsync(token));
+        if (!_chat.TryEnqueueContinuation(conversation.Id, out var refusalKey))
+            AppendNotice(HubStrings.Get(refusalKey ?? "ChatFailed"), danger: true);
     }
 
     /// <summary>Forks the conversation at this message into a fresh session and switches to it. Refused while
@@ -943,8 +978,8 @@ public partial class ChatPanel : UserControl
     /// was clicked. The message flow and the sidebar both repaint through the workspace's Changed event.</summary>
     private void BranchFromHere(int index)
     {
-        if (_send is not null) return;
-        _chat.BranchFrom(index);
+        if (_chat.ActiveConversation is not { } conversation || IsViewedStreaming) return;
+        _chat.BranchFrom(conversation.Id, index);
     }
 
     /// <summary>
@@ -958,7 +993,7 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private void BeginInlineEdit(int index, StackPanel body, StackPanel bar)
     {
-        if (_send is not null || body.Children.FirstOrDefault() is not TextBlock original) return;
+        if (IsViewedStreaming || body.Children.FirstOrDefault() is not TextBlock original) return;
 
         var untouched = original.Text ?? "";
         var normalActions = bar.Children.ToList();
@@ -986,8 +1021,9 @@ public partial class ChatPanel : UserControl
         {
             if (closed) return;
             var edited = editor.Text.Trim();
+            var conversation = _chat.ActiveConversation;
             if (edited.Length == 0 || edited == untouched
-                || _send is not null || _chat.ActiveConversation is null || !_chat.EditAndResend(index, edited))
+                || IsViewedStreaming || conversation is null || !_chat.EditAndResend(conversation.Id, index, edited))
             {
                 Close();
                 return;
@@ -996,7 +1032,8 @@ public partial class ChatPanel : UserControl
             // The rebuild throws this whole subtree away, so there is nothing left to restore.
             closed = true;
             ForceRebuildMessages();
-            _ = StreamReplyAsync(token => _chat.ResendAsync(token));
+            if (!_chat.TryEnqueueContinuation(conversation.Id, out var refusalKey))
+                AppendNotice(HubStrings.Get(refusalKey ?? "ChatFailed"), danger: true);
         }
 
         body.Children.Remove(original);
@@ -1035,17 +1072,22 @@ public partial class ChatPanel : UserControl
         };
     }
 
-    /// <summary>Drives one streamed reply: appends a live assistant bubble, appends chunks as they arrive, and
-    /// rebuilds from the persisted history when the stream ends so the finished turn gains its action bar.</summary>
-    private async Task StreamReplyAsync(Func<CancellationToken, IAsyncEnumerable<string>> start)
+    /// <summary>
+    /// The bubble for the reply now arriving in this session, created when the session was not on screen a
+    /// moment ago. Its text is read off the run, which is what makes "switch away, switch back" show exactly
+    /// what arrived while it was hidden — the view keeps no copy of a reply it is not painting.
+    /// </summary>
+    private LiveBubble AttachLive(ConversationRun run)
     {
-        _send = new CancellationTokenSource();
-        _stopRequested = false;
-        _send.CancelAfter(ChatRequestTimeout);
-        var token = _send.Token;
+        if (_live is { } existing && existing.ConversationId == run.ConversationId)
+        {
+            RefreshLive(existing);
+            return existing;
+        }
 
-        var body = new StackPanel { Spacing = 8 };
+        CloseLive();
         var preview = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var body = new StackPanel { Spacing = 8 };
         body.Children.Add(preview);
         var activity = new StackPanel
         {
@@ -1053,137 +1095,106 @@ public partial class ChatPanel : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         activity.Classes.Add("chat-activity");
-        var dots = new StackPanel { Orientation = Orientation.Horizontal };
-        dots.Classes.Add("chat-activity-dots");
-        _activityDots = Enumerable.Range(0, 3).Select(_ =>
+        var dotsPanel = new StackPanel { Orientation = Orientation.Horizontal };
+        dotsPanel.Classes.Add("chat-activity-dots");
+        var dots = Enumerable.Range(0, 3).Select(_ =>
         {
             var dot = new Ellipse();
             dot.Classes.Add("chat-activity-dot");
             return dot;
         }).ToArray();
-        foreach (var dot in _activityDots) dots.Children.Add(dot);
-        activity.Children.Add(dots);
-        _streamStatusLabel = new TextBlock { Text = HubStrings.Get("ChatPreparing") };
-        _streamStatusLabel.Classes.Add("chat-activity-label");
-        activity.Children.Add(_streamStatusLabel);
+        foreach (var dot in dots) dotsPanel.Children.Add(dot);
+        activity.Children.Add(dotsPanel);
+        var status = new TextBlock { Text = HubStrings.Get("ChatPreparing") };
+        status.Classes.Add("chat-activity-label");
+        activity.Children.Add(status);
         activity.Children.Add(new TextBlock
         {
             Text = "·",
             Classes = { "chat-activity-elapsed" },
         });
-        _streamElapsedLabel = new TextBlock
+        var elapsed = new TextBlock
         {
             Text = "0s",
             Classes = { "chat-activity-elapsed" },
         };
-        activity.Children.Add(_streamElapsedLabel);
+        activity.Children.Add(elapsed);
         body.Children.Add(activity);
-        AppendStreamingBubble(body);
 
-        var buffer = new StringBuilder();
-        var receivedText = false;
-        string? completionNotice = null;
-        var completionNoticeIsDanger = false;
-        _activityStopwatch.Restart();
-        _activityFrame = 0;
-        UpdateActivityIndicator();
-        _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-        _activityTimer.Tick += (_, _) =>
+        var bubble = new LiveBubble
         {
-            _activityFrame++;
-            UpdateActivityIndicator();
-            UpdateActivityElapsed();
+            ConversationId = run.ConversationId,
+            Row = BuildMessageRow(false, body, null, ChatRoles.Assistant, "", isLast: true),
+            Preview = preview,
+            Status = status,
+            Elapsed = elapsed,
+            Dots = dots,
         };
-        _activityTimer.Start();
+        bubble.Timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        bubble.Timer.Tick += (_, _) =>
+        {
+            if (_live is not { } current) return;
+            current.Frame++;
+            for (var i = 0; i < current.Dots.Length; i++)
+                current.Dots[i].Opacity = (i + current.Frame) % current.Dots.Length == 0 ? 1 : 0.35;
+            var seconds = current.Watch.Elapsed;
+            current.Elapsed.Text = seconds.TotalMinutes >= 1
+                ? $"{(int)seconds.TotalMinutes}m {seconds.Seconds:D2}s"
+                : $"{Math.Max(0, (int)seconds.TotalSeconds)}s";
+        };
+        _live = bubble;
+        bubble.Watch.Restart();
+        bubble.Timer.Start();
+        RefreshLive(bubble);
         UpdateSendState();
-        try
-        {
-            await foreach (var chunk in start(token).ConfigureAwait(true))
-            {
-                if (!receivedText && chunk.Length > 0)
-                {
-                    receivedText = true;
-                    if (_streamStatusLabel is not null)
-                        _streamStatusLabel.Text = HubStrings.Get("ChatGenerating");
-                }
-
-                buffer.Append(chunk);
-                preview.Text = buffer.ToString();
-                ScrollToEndIfSticky();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (_pendingSteerText is null)
-            {
-                completionNotice = _stopRequested
-                    ? HubStrings.Get("ChatCancelled")
-                    : HubStrings.Get("ChatTimedOut");
-                completionNoticeIsDanger = !_stopRequested;
-            }
-        }
-        catch (TimeoutException)
-        {
-            completionNotice = HubStrings.Get("ChatTimedOut");
-            completionNoticeIsDanger = true;
-        }
-        catch (System.Net.Http.HttpRequestException ex)
-        {
-            completionNotice = HubStrings.Get("ChatConnectionFailed") + ex.Message;
-            completionNoticeIsDanger = true;
-        }
-        catch (Exception ex)
-        {
-            completionNotice = HubStrings.Get("ChatFailed") + ex.Message;
-            completionNoticeIsDanger = true;
-        }
-        finally
-        {
-            _activityTimer?.Stop();
-            _activityTimer = null;
-            _activityStopwatch.Stop();
-            _streamStatusLabel = null;
-            _streamElapsedLabel = null;
-            _activityDots = [];
-            _send.Dispose();
-            _send = null;
-            UpdateSendState();
-            ForceRebuildMessages();
-            ConversationStateChanged?.Invoke();
-            if (completionNotice is null && buffer.Length == 0)
-            {
-                completionNotice = HubStrings.Get("ChatNoResponse");
-                completionNoticeIsDanger = true;
-            }
-            if (completionNotice is not null)
-                AppendNotice(completionNotice, completionNoticeIsDanger);
-            ScrollToEnd();
-        }
-
-        if (_pendingSteerText is { } steerText)
-        {
-            _pendingSteerText = null;
-            var steerContext = _pendingSteerContext;
-            _pendingSteerContext = null;
-            UpdateSendState();
-            await SendTextAsync(steerText, steerContext);
-        }
+        ScrollToEnd();
+        return bubble;
     }
 
-    private void UpdateActivityIndicator()
+    /// <summary>Throws the bubble away, not the reply: the run keeps streaming and a later attach reads the
+    /// text back off it. The timer goes with the row, because nothing is being animated any more.</summary>
+    private void CloseLive()
     {
-        for (var i = 0; i < _activityDots.Length; i++)
-            _activityDots[i].Opacity = (i + _activityFrame) % _activityDots.Length == 0 ? 1 : 0.35;
+        if (_live is not { } live) return;
+        live.Timer?.Stop();
+        live.Timer = null;
+        live.Watch.Stop();
+        MessageFlow.Children.Remove(live.Row);
+        _live = null;
+        UpdateSendState();
     }
 
-    private void UpdateActivityElapsed()
+    private void RefreshLive(LiveBubble bubble)
     {
-        if (_streamElapsedLabel is null) return;
-        var elapsed = _activityStopwatch.Elapsed;
-        _streamElapsedLabel.Text = elapsed.TotalMinutes >= 1
-            ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s"
-            : $"{Math.Max(0, (int)elapsed.TotalSeconds)}s";
+        if (_chat.RunFor(bubble.ConversationId) is not { } run) return;
+        bubble.Preview.Text = run.LiveText;
+        if (run.LiveText.Length == 0) bubble.ShowedText = false;
+        else if (!bubble.ShowedText)
+        {
+            bubble.ShowedText = true;
+            bubble.Status.Text = HubStrings.Get("ChatGenerating");
+        }
+
+        ScrollToEndIfSticky();
     }
+
+    /// <summary>Says how a run ended. The reason is recorded where it happened rather than inferred here from
+    /// exception types, which is how "the user pressed stop" and "the stream stalled" used to blur together.</summary>
+    private void AppendRunNotice(RunOutcome outcome)
+    {
+        if (outcome.NoticeKey is { } key)
+        {
+            AppendNotice(HubStrings.Get(key) + (outcome.Detail ?? ""), outcome.NoticeDanger);
+            return;
+        }
+
+        if (!outcome.ReceivedText) AppendNotice(HubStrings.Get("ChatNoResponse"), danger: true);
+    }
+
+    private ConversationRun? ViewedRun
+        => _chat.ActiveConversation is { } viewed ? _chat.RunFor(viewed.Id) : null;
+
+    private bool IsViewedStreaming => ViewedRun is { IsStreaming: true };
 
     // ───────────────────────── Scrolling ─────────────────────────
 
@@ -1351,9 +1362,9 @@ public partial class ChatPanel : UserControl
     internal bool ComposerFocusedForCheck => ComposerFrame.Classes.Contains("focused");
     internal IBrush? ComposerBorderBrushForCheck => ComposerFrame.BorderBrush;
     internal bool SendButtonEnabledForCheck => SendButton.IsEnabled;
-    internal bool ChatActivityVisibleForCheck => _streamStatusLabel is { IsVisible: true };
-    internal string ChatActivityTextForCheck => _streamStatusLabel?.Text ?? "";
-    internal string ChatActivityElapsedForCheck => _streamElapsedLabel?.Text ?? "";
+    internal bool ChatActivityVisibleForCheck => _live is { Timer: not null };
+    internal string ChatActivityTextForCheck => _live?.Status.Text ?? "";
+    internal string ChatActivityElapsedForCheck => _live?.Elapsed.Text ?? "";
     internal string? LastNoticeTextForCheck
         => MessageFlow.Children.LastOrDefault() is Grid row
            && row.Classes.Contains("notice")
@@ -1514,10 +1525,25 @@ public partial class ChatPanel : UserControl
         return choice is not null && _chat.SelectChatModel(providerId, modelName);
     }
 
+    /// <summary>Types and sends, then waits for that session's run to be over. Sending no longer blocks a
+    /// caller until the reply lands — that is the whole point of a run — so a check that wants the finished
+    /// answer has to say so, one pump at a time.</summary>
     internal async Task SendForCheckAsync(string text)
     {
         InputBox.Text = text;
         await SendAsync();
+        await WaitForRunToFinishForCheck();
+    }
+
+    /// <summary>Pumps the dispatcher until the viewed session's run is over. A check that wants the finished
+    /// answer has to ask for it now: a reply arrives independently of whoever pressed send.</summary>
+    internal async Task WaitForRunToFinishForCheck()
+    {
+        for (var wait = 0; wait < 200 && IsStreamingForCheck; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
     }
 
     /// <summary>Starts a send without awaiting it, so a check can inspect the mid-stream state (the button
@@ -1572,7 +1598,7 @@ public partial class ChatPanel : UserControl
             .GetLogicalDescendants().OfType<TextBox>()
             .FirstOrDefault(box => box.Classes.Contains("message-edit"));
 
-    internal bool IsStreamingForCheck => _send is not null;
+    internal bool IsStreamingForCheck => IsViewedStreaming;
 
     internal bool ForkNoticeVisibleForCheck => ForkNotice.IsVisible;
     internal string? ForkNoticeTextForCheck => ForkNotice.IsVisible ? ForkNotice.Content?.ToString() : null;

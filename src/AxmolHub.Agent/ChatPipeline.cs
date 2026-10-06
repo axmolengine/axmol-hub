@@ -20,9 +20,17 @@ namespace AxmolHub.Agent;
 /// </summary>
 public sealed class ChatPipeline(IChatClient client)
 {
+    /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.</summary>
+    public readonly record struct ToolCallInfo(string Name, string CallId, string ArgumentsJson);
+
     /// <summary>
     /// Streams the assistant reply to <paramref name="history"/>. Semantics mirror the underlying client:
     /// text arrives incrementally and cancellation surfaces as <see cref="OperationCanceledException"/>.
+    ///
+    /// The tool callbacks are awaited, and they run on a thread-pool thread: <c>FunctionInvokingChatClient</c>
+    /// invokes the invoker after its own <c>ConfigureAwait(false)</c> hops. A caller that touches anything the
+    /// UI thread also reads (a transcript list, a control) has to marshal itself and must not return before
+    /// the write landed — the model is one step away from acting on what the callback records.
     /// </summary>
     public async IAsyncEnumerable<string> SendAsync(
         ModelProvider provider,
@@ -30,8 +38,8 @@ public sealed class ChatPipeline(IChatClient client)
         string? systemPrompt = null,
         string? reasoningEffort = null,
         IReadOnlyList<AITool>? tools = null,
-        Action<string, string, string>? onToolStarted = null,
-        Action<string, string, string, bool>? onToolCompleted = null,
+        Func<ToolCallInfo, Task>? onToolStarted = null,
+        Func<ToolCallInfo, string, bool, Task>? onToolCompleted = null,
         string? modelName = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -51,11 +59,13 @@ public sealed class ChatPipeline(IChatClient client)
             {
                 var call = context.CallContent;
                 var arguments = JsonSerializer.Serialize(call.Arguments);
-                onToolStarted?.Invoke(call.Name, call.CallId, arguments);
+                var info = new ToolCallInfo(call.Name, call.CallId, arguments);
+                if (onToolStarted is not null) await onToolStarted(info).ConfigureAwait(false);
                 try
                 {
                     var result = await context.Function.InvokeAsync(context.Arguments, token).ConfigureAwait(false);
-                    onToolCompleted?.Invoke(call.Name, call.CallId, SerializeToolResult(result), false);
+                    if (onToolCompleted is not null)
+                        await onToolCompleted(info, SerializeToolResult(result), false).ConfigureAwait(false);
                     return result;
                 }
                 catch (OperationCanceledException)
@@ -64,8 +74,8 @@ public sealed class ChatPipeline(IChatClient client)
                 }
                 catch (Exception ex)
                 {
-                    var error = "Tool failed: " + ex.Message;
-                    onToolCompleted?.Invoke(call.Name, call.CallId, error, true);
+                    if (onToolCompleted is not null)
+                        await onToolCompleted(info, "Tool failed: " + ex.Message, true).ConfigureAwait(false);
                     throw;
                 }
             };

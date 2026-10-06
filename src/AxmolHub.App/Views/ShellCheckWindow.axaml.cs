@@ -512,6 +512,7 @@ public partial class ShellCheckWindow : Window
             "收到首个文本块后切换为生成状态");
         firstChunkGate.SetResult(true);
         await streaming;
+        await panel.WaitForRunToFinishForCheck();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(!panel.SendIconIsStopForCheck && panel.SendButtonTooltipForCheck == HubStrings.Get("Send"),
@@ -674,9 +675,9 @@ public partial class ShellCheckWindow : Window
             "刷新复用已有气泡控件而不是全量重建（增量渲染）");
 
         // Regenerate drops the trailing assistant turn; edit-and-resend replaces the turn and truncates after it.
-        Check(shell.Chat.Regenerate() && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Role == ChatRoles.User,
+        Check(shell.Chat.Regenerate(opsConversation.Id) && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Role == ChatRoles.User,
             "重新生成先丢弃末尾的助手回复");
-        Check(shell.Chat.EditAndResend(0, "改写后的提问")
+        Check(shell.Chat.EditAndResend(opsConversation.Id, 0, "改写后的提问")
               && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Text == "改写后的提问",
             "编辑重发替换该消息并截断其后全部内容");
 
@@ -687,7 +688,7 @@ public partial class ShellCheckWindow : Window
         opsConversation.Append(ChatTurn.Assistant("第二条回复"));
         var branchSourceId = opsConversation.Id;
         var branchSourceCount = opsConversation.Messages.Count;
-        var branched = shell.Chat.BranchFrom(1);
+        var branched = shell.Chat.BranchFrom(branchSourceId, 1);
         Check(branched is not null && branched.Id != branchSourceId
               && branched.Messages.Count == 2 && branched.Messages[^1].Text == "第一条回复"
               && opsConversation.Messages.Count == branchSourceCount,
@@ -710,10 +711,10 @@ public partial class ShellCheckWindow : Window
         // original base rather than stacking a suffix onto "title (1)". Index 0 because re-opening the source
         // reads it back from disk, where only the persisted turn exists.
         shell.Chat.OpenConversation(branchSourceId);
-        var secondBranch = shell.Chat.BranchFrom(0);
+        var secondBranch = shell.Chat.BranchFrom(branchSourceId, 0);
         Check(secondBranch is not null && secondBranch.Title == opsConversation.Title + " (2)",
             "同一会话再次分叉时编号递增（实际「" + secondBranch?.Title + "」）");
-        var thirdBranch = shell.Chat.BranchFrom(0);
+        var thirdBranch = secondBranch is null ? null : shell.Chat.BranchFrom(secondBranch.Id, 0);
         Check(thirdBranch is not null && thirdBranch.Title == opsConversation.Title + " (3)",
             "分叉的分叉仍从原始标题续号，不叠加后缀（实际「" + thirdBranch?.Title + "」）");
 

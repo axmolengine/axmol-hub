@@ -588,6 +588,7 @@ if (args.Contains("--check-ai-sessions"))
     var startedTools = 0;
     var completedTools = 0;
     var toolResult = new StringBuilder();
+    var toolIdentity = "";
     var readOnlyTool = AIFunctionFactory.Create(
         (Func<string>)(() => "[{\"name\":\"Demo\"}]"),
         new AIFunctionFactoryOptions
@@ -599,17 +600,27 @@ if (args.Contains("--check-ai-sessions"))
                        provider,
                        [ChatTurn.User("List projects")],
                        tools: [readOnlyTool],
-                       onToolStarted: (_, _, _) => startedTools++,
-                       onToolCompleted: (_, _, result, failed) =>
+                       onToolStarted: info =>
+                       {
+                           startedTools++;
+                           // The transcript is written from this triple, so a call the pipeline cannot identify
+                           // is a call whose result can never be paired with it.
+                           toolIdentity = $"{info.Name}|{info.CallId}|{info.ArgumentsJson}";
+                           return Task.CompletedTask;
+                       },
+                       onToolCompleted: (_, result, failed) =>
                        {
                            if (failed) throw new Exception("Read-only tool unexpectedly failed.");
                            completedTools++;
                            toolResult.Append(result);
+                           return Task.CompletedTask;
                        }))
         streamed.Append(chunk);
     if (toolClient.CallCount != 2 || startedTools != 1 || completedTools != 1
         || toolResult.ToString() != "[{\"name\":\"Demo\"}]")
         throw new Exception($"Tool call → execution → result → final answer loop did not complete. Result handed back: {toolResult}");
+    if (toolIdentity != "get_projects|call-1|{}")
+        throw new Exception($"The pipeline reported the call as 「{toolIdentity}」.");
     if (!toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionCallContent))
         || !toolClient.SecondRequest.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
         throw new Exception("The tool loop did not send the function call and result back to the model.");
