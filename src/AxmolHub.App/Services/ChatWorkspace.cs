@@ -40,8 +40,10 @@ public sealed class ChatWorkspace : IDisposable
 
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
 
-    /// <summary>Set by the verification harness to answer with a scripted stream instead of a real endpoint.</summary>
-    internal Func<ModelProvider, IChatClient>? ClientOverride { get; set; }
+    /// <summary>Set by the verification harness to answer with a scripted stream instead of a real endpoint.
+    /// It is handed the conversation id because parallel runs need one script and one gate per session —
+    /// dispatching by call order would make those checks flaky in a way that looks like a product bug.</summary>
+    internal Func<ModelProvider, string, IChatClient>? ClientOverride { get; set; }
 
     /// <summary>Raised when the provider or conversation lists change and the panel should repaint.</summary>
     public event Action? Changed;
@@ -1503,7 +1505,7 @@ public sealed class ChatWorkspace : IDisposable
         System.Text.StringBuilder pendingText,
         CancellationToken cancellationToken)
     {
-        var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider, modelName);
+        var client = ClientOverride?.Invoke(provider, conversation.Id) ?? ChatClientFactory.Create(provider, modelName);
         var pipeline = new ChatPipeline(client);
         var mode = NormalizeMode(conversation.Mode);
         IReadOnlyList<AITool> tools = mode == ChatModes.Ask

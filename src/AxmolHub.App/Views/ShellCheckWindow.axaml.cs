@@ -304,7 +304,7 @@ public partial class ShellCheckWindow : Window
                                      + "- First item\n- Second item\n\n"
                                      + "| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |\n\n"
                                      + "```cpp\nint main() {}\n```";
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(
             [
                 "# 工具链\n\n你好，Axmol 助手，状态 `Configured`。",
                 "\n\n[Axmol 官网](https://axmol.dev/)",
@@ -489,7 +489,7 @@ public partial class ShellCheckWindow : Window
             System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
         var firstChunkReached = new System.Threading.Tasks.TaskCompletionSource<bool>(
             System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(
             ["改写前的回复"], streamGate.Task, firstChunkGate.Task, firstChunkReached);
         var opsConversation = shell.Chat.StartConversation();
         panel.Reload();
@@ -645,17 +645,17 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient([]);
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([]);
         await panel.SendForCheckAsync("空回复问题");
         Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatNoResponse"),
             "模型正常结束但没有文本时显示无回复提示");
 
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient([], exception: new TimeoutException());
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception: new TimeoutException());
         await panel.SendForCheckAsync("超时问题");
         Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatTimedOut"),
             "请求超时时显示明确的超时提示");
 
-        shell.Chat.ClientOverride = _ => new ScriptedChatClient(
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(
             [], exception: new System.Net.Http.HttpRequestException("连接被拒绝"));
         await panel.SendForCheckAsync("连接失败问题");
         Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatConnectionFailed"), StringComparison.Ordinal) == true,
