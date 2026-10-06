@@ -1352,6 +1352,29 @@ public partial class ShellCheckWindow : Window
                 "改默认后缓存的助手页也刷新了权限胶囊（导航不会重画这一页）");
             settings.SelectToolApproval(ToolApprovalModes.Ask);
             Dispatcher.UIThread.RunJobs();
+
+            // The chip is pickable before any session exists: deciding how much to allow is something a person
+            // does on the way into a task, not after the first message has already run under the default.
+            chat.DeleteConversation(parkSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ActiveConversation is null && panel.PermissionChipEnabledForCheck
+                  && panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalAsk"),
+                "没有会话时权限胶囊仍可点，并读出默认档位（实际「" + panel.PermissionChipLabelForCheck + "」）");
+            Check(panel.PermissionMenuTitlesForCheck.Length == 3 && panel.OpenPermissionMenuForCheck() is not null,
+                "没有会话时权限菜单照样铺出三档，而不是一个空弹层");
+            Check(panel.SelectPermissionMenuEntryForCheck(1)
+                  && chat.ActiveConversation is null
+                  && chat.SelectedApprovalMode == ToolApprovalModes.Auto
+                  && panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalAuto"),
+                "没有会话时选档只记下这一选择，不替用户建会话（实际「" + panel.PermissionChipLabelForCheck + "」）");
+            var pickedSession = chat.StartConversation();
+            Check(chat.ApprovalModeFor(pickedSession.Id) == ToolApprovalModes.Auto
+                  && chat.StoredCopyForCheck(pickedSession.Id)?.ApprovalMode == ToolApprovalModes.Auto
+                  && chat.SelectedApprovalMode is null,
+                "待用的权限档位交给新建的会话，并且只用一次");
+            chat.DeleteConversation(pickedSession.Id);
+            panel.Reload();
             shell.NavigateTo("Assistant");
             Dispatcher.UIThread.RunJobs();
         }

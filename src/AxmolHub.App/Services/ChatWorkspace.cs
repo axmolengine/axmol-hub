@@ -38,6 +38,7 @@ public sealed class ChatWorkspace : IDisposable
     private string? _selectedModelName;
     private string _selectedMode = ChatModes.Agent;
     private string _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+    private string? _selectedApprovalMode;
 
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
 
@@ -1203,6 +1204,10 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation StartConversation(string? providerId = null)
     {
+        // A permission mode picked while nothing was on screen was meant for the session started right then, so
+        // it is taken only from that state: a session started from a live one follows the app default again.
+        var approvalMode = _active is null ? _selectedApprovalMode : null;
+        _selectedApprovalMode = null;
         if (_active is not null)
         {
             _selectedMode = ChatModes.Agent;
@@ -1219,6 +1224,7 @@ public sealed class ChatWorkspace : IDisposable
         conversation.ModelName = modelName;
         conversation.Mode = _selectedMode;
         conversation.ReasoningEffort = _selectedReasoningEffort;
+        conversation.ApprovalMode = approvalMode;
         _sessions.Adopt(conversation);
         _active = conversation;
         Changed?.Invoke();
@@ -1588,6 +1594,30 @@ public sealed class ChatWorkspace : IDisposable
     {
         var normalized = mode is null ? null : ToolApprovalModes.Normalize(mode);
         if (!_sessions.TryUpdate(conversationId, conversation => conversation.ApprovalMode = normalized)) return false;
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>The pick made while no session was on screen, which is what the composer's chip reads out in
+    /// that state and what <see cref="StartConversation"/> stores on the session it starts. Null means
+    /// "follow the app default", so unlike every effective mode it is not normalized.</summary>
+    public string? SelectedApprovalMode => _selectedApprovalMode;
+
+    /// <summary>What the chip reads out: the effective mode of the session on screen, or, with none, the mode
+    /// the next started session answers under. The composer needs it to be pickable before the first message,
+    /// which is when a person decides how much to allow.</summary>
+    public string ActiveApprovalMode
+        => _active is { } session
+            ? ApprovalModeFor(session.Id)
+            : ToolApprovalModes.Normalize(_selectedApprovalMode ?? PreferencesProvider?.Invoke()?.ToolApprovalMode);
+
+    /// <summary>Picks the permission mode: this session's override when one is on screen, the pending choice
+    /// every later session starts from when none is.</summary>
+    public bool SelectApprovalMode(string? mode)
+    {
+        var normalized = mode is null ? null : ToolApprovalModes.Normalize(mode);
+        if (_active is { } session) return SetApprovalMode(session.Id, normalized);
+        _selectedApprovalMode = normalized;
         Changed?.Invoke();
         return true;
     }

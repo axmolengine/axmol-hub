@@ -234,15 +234,13 @@ public partial class ChatPanel : UserControl
         });
         ToolTip.SetTip(ModeIndicatorButton, HubStrings.Get("ChatModeResetHint"));
         // The chip names the *effective* mode, not the one someone clicked: a session that merely follows a
-        // permissive default is in it, and reading back the override would call that mode safe.
-        var permission = _chat.ActiveConversation is { } session
-            ? _chat.ApprovalModeFor(session.Id)
-            : ToolApprovalModes.Ask;
+        // permissive default is in it, and reading back the override would call that mode safe. With no session
+        // on screen yet it names the mode the first one starts under, because before the first message is the
+        // moment to decide how much to allow.
+        var permission = _chat.ActiveApprovalMode;
         PermissionChipIcon.Data = ThemeGeometry(ToolApprovalIconKey(permission));
         PermissionChipLabel.Text = HubStrings.Get(ToolApprovalModeKey(permission));
         PermissionChip.Classes.Set("danger", permission == ToolApprovalModes.Full);
-        // With no session on screen there is nothing whose mode to change, and an empty popup reads as a bug.
-        PermissionChip.IsEnabled = _chat.ActiveConversation is not null;
         ToolTip.SetTip(PermissionChip, HubStrings.Get(ToolApprovalModeHintKey(permission)));
     }
 
@@ -304,16 +302,14 @@ public partial class ChatPanel : UserControl
 
     /// <summary>
     /// The permission menu, hung off its own chip: three tiers, each stating what it lets through unasked, with
-    /// the effective one ticked. A fourth row appears only when this session has an override worth dropping —
-    /// otherwise it would be a second line on screen saying what the first already says.
+    /// the effective one ticked. A fourth row appears only when something overrides the app-wide default —
+    /// otherwise it would be a second line on screen saying what the first already says. It works with no
+    /// session on screen, where the pick lands on the one about to be started.
     /// </summary>
     private MenuFlyout BuildPermissionMenu()
     {
         var menu = new MenuFlyout();
-        var conversation = _chat.ActiveConversation;
-        if (conversation is null) return menu;
-
-        var effective = _chat.ApprovalModeFor(conversation.Id);
+        var effective = _chat.ActiveApprovalMode;
         foreach (var mode in new[] { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full })
         {
             var checkedItem = effective == mode;
@@ -327,13 +323,13 @@ public partial class ChatPanel : UserControl
             };
             item.Click += (_, _) =>
             {
-                _chat.SetApprovalMode(conversation.Id, mode);
+                _chat.SelectApprovalMode(mode);
                 menu.Hide();
             };
             menu.Items.Add(item);
         }
 
-        if (conversation.ApprovalMode is { Length: > 0 })
+        if ((_chat.ActiveConversation?.ApprovalMode ?? _chat.SelectedApprovalMode) is { Length: > 0 })
         {
             var follow = new MenuItem
             {
@@ -344,7 +340,7 @@ public partial class ChatPanel : UserControl
             };
             follow.Click += (_, _) =>
             {
-                _chat.SetApprovalMode(conversation.Id, null);
+                _chat.SelectApprovalMode(null);
                 menu.Hide();
             };
             menu.Items.Add(follow);
@@ -1701,6 +1697,7 @@ public partial class ChatPanel : UserControl
     internal bool ComposerFocusedForCheck => ComposerFrame.Classes.Contains("focused");
     internal IBrush? ComposerBorderBrushForCheck => ComposerFrame.BorderBrush;
     internal bool SendButtonEnabledForCheck => SendButton.IsEnabled;
+    internal bool PermissionChipEnabledForCheck => PermissionChip.IsEnabled;
     internal bool ChatActivityVisibleForCheck => _live is { Timer: not null };
     internal string ChatActivityTextForCheck => _live?.Status.Text ?? "";
     internal string ChatActivityElapsedForCheck => _live?.Elapsed.Text ?? "";
