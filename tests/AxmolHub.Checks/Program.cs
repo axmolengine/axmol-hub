@@ -1169,7 +1169,8 @@ if (args.Contains("--check-ai-tools"))
     var undoPath = edited.Contains("Undo copy: ") ? edited[(edited.IndexOf("Undo copy: ", StringComparison.Ordinal) + 11)..].Trim() : "";
     if (undoPath.Length == 0 || !File.Exists(undoPath) || !File.ReadAllText(undoPath).Contains("return 0;"))
         throw new Exception($"The pre-image was not kept before the write ('{undoPath}').");
-    if (!tools.FileWrite("src/notes.md", "", "# 记录\n").Contains("Created"))
+    var created = tools.FileWrite("src/notes.md", "", "# 记录\n");
+    if (!created.Contains("Created"))
         throw new Exception("An empty anchor did not create the file.");
     if (!tools.FileWrite("src/main.cpp", "不存在的锚点", "x").Contains("was not found"))
         throw new Exception("A missing anchor was not reported as NotFound.");
@@ -1186,7 +1187,78 @@ if (args.Contains("--check-ai-tools"))
     if (File.ReadAllText(Path.Combine(workspace, "src", "twice.txt")) != "dup\ndup\n")
         throw new Exception("A refused edit changed the file anyway.");
 
+    // ── the undo: one pre-image goes back over the one write it was made for, and over nothing else ──
     var undoRoot = ChatUndoStore.DirectoryFor(dataRoot, "conversation-1")!;
+    var writeArgs = """{"path":"src/main.cpp","old_string":"    return 0;","new_string":"    return 1;"}""";
+    var copyName = Path.GetFileName(undoPath);
+    if (ChatUndoStore.NameFromResult(edited) != copyName)
+        throw new Exception("A write result did not hand back the copy name its revert button needs.");
+    if (ChatUndoStore.NameFromResult(created) is not null)
+        throw new Exception("A write that created a file claimed a pre-image it never kept.");
+
+    var reverted = ChatUndoStore.Restore(dataRoot, "conversation-1", copyName, workspace, guards, writeArgs, out var revertedTo);
+    if (reverted != UndoVerdict.Reverted || revertedTo != "src/main.cpp")
+        throw new Exception($"Reverting an untouched file refused ({reverted}, {revertedTo}).");
+    if (!File.ReadAllText(Path.Combine(workspace, "src", "main.cpp")).Contains("return 0;"))
+        throw new Exception("A revert reported success but left the assistant's edit in the file.");
+    if (File.Exists(undoPath))
+        throw new Exception("A revert kept the copy it just spent, so the same undo could be taken twice.");
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", copyName, workspace, guards, writeArgs, out _)
+        != UndoVerdict.CopyMissing)
+        throw new Exception("Reverting a spent copy was not reported as having no copy.");
+
+    // The guard is the reason a revert is a command rather than a file copy: somebody else may have edited the
+    // file after the assistant, and their work is worth more than the regret.
+    var secondCopy = ChatUndoStore.NameFromResult(tools.FileWrite("src/main.cpp", "    return 0;", "    return 1;"))
+        ?? throw new Exception("The second write kept no pre-image to guard.");
+    File.AppendAllText(Path.Combine(workspace, "src", "main.cpp"), "// edited by hand\n");
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", secondCopy, workspace, guards, writeArgs, out _)
+        != UndoVerdict.ChangedSince)
+        throw new Exception("A revert overwrote a change made after the write.");
+    if (!File.ReadAllText(Path.Combine(workspace, "src", "main.cpp")).Contains("// edited by hand"))
+        throw new Exception("A refused revert still touched the file.");
+    if (!File.Exists(Path.Combine(undoRoot, secondCopy)))
+        throw new Exception("A revert that refused spent the copy, so the undo is gone with the hand edit kept.");
+
+    File.WriteAllBytes(Path.Combine(workspace, "src", "main.cpp"), [0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0xFF]);
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", secondCopy, workspace, guards, writeArgs, out _)
+        != UndoVerdict.NotText)
+        throw new Exception("A binary at the recorded path was reverted with a text pre-image.");
+    File.Delete(Path.Combine(workspace, "src", "main.cpp"));
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", secondCopy, workspace, guards, writeArgs, out _)
+        != UndoVerdict.TargetMissing)
+        throw new Exception("A revert recreated a file the user deleted.");
+
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", Path.Combine("src", secondCopy), workspace, guards, writeArgs, out _)
+        != UndoVerdict.RefusedPath)
+        throw new Exception("An undo name carrying a separator was resolved outside its conversation's directory.");
+    if (ChatUndoStore.Restore(dataRoot, "conversation-1", secondCopy, toolEngineRoot, guards, writeArgs, out _)
+        != UndoVerdict.RefusedPath)
+        throw new Exception("A revert followed its recorded path into a protected engine root.");
+    if (File.Exists(Path.Combine(toolEngineRoot, "src", "main.cpp")))
+        throw new Exception("The refused revert wrote into the engine root anyway.");
+    File.WriteAllText(Path.Combine(workspace, "src", "main.cpp"), "int main()\n{\n    return 1;\n}\n");
+
+    // The button lives or dies by this field, so it has to survive the session file — and a call that never
+    // wrote anything must come back without one.
+    var undoStore = new ConversationStore(dataRoot);
+    var undoSession = Conversation.Create("orcarouter");
+    undoSession.Append(ChatTurn.User("改一下 main.cpp"));
+    undoSession.Append(ChatTurn.FunctionCall("call-1", "file_write", writeArgs) with { UndoName = secondCopy });
+    undoSession.Append(ChatTurn.FunctionCall("call-2", "read_file", """{"path":"src/main.cpp"}"""));
+    undoStore.Save(undoSession);
+    var reopened = undoStore.Load(undoSession.Id) ?? throw new Exception("The undo session did not reload.");
+    if (reopened.Messages[1].UndoName != secondCopy)
+        throw new Exception("A recorded undo copy did not survive the session file.");
+    if (reopened.Messages[2].UndoName is not null)
+        throw new Exception("A read-only call came back with a revert to offer.");
+    File.WriteAllText(Path.Combine(dataRoot, "ai", "sessions", "legacy-no-undo.json"),
+        """{"Id":"legacy-no-undo","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"assistant","Text":"","ToolCallId":"c1","ToolName":"file_write"}]}""");
+    var legacyUndo = undoStore.Load("legacy-no-undo") ?? throw new Exception("A session file written before the undo stopped loading.");
+    if (legacyUndo.Messages[0].UndoName is not null)
+        throw new Exception("A write from before the undo existed invented a copy to revert to.");
+    Console.WriteLine("PASS: the undo restores only the write its copy was made for, and refuses everything else by name.");
+
     for (var index = 0; index < ChatUndoStore.MaxFiles + 10; index++)
         ChatUndoStore.Store(dataRoot, "conversation-1", $"file-{index:D3}.txt", "content");
     if (Directory.GetFiles(undoRoot).Length > ChatUndoStore.MaxFiles)

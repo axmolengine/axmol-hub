@@ -58,6 +58,12 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// card then has to show exactly what the gate saw.</summary>
     public string? ApprovalPreview { get; init; }
 
+    /// <summary>The file name of the pre-image this write left in <see cref="ChatUndoStore"/>, kept by name rather
+    /// than as a full path so a session file still means the same thing after the data root moves. Null when the
+    /// write created a file (there was nothing before it), kept no copy, or has already been reverted — the copy
+    /// is spent by one revert, which is what takes the button away.</summary>
+    public string? UndoName { get; init; }
+
     /// <summary>For a user-role turn the assistant did not receive from the keyboard: the id of the Hub session
     /// that wrote it. The id rather than a title because the peer's reply has to be addressed to it, and titles
     /// are user-editable text. Nullable, so every conversation file written before cross-session messaging

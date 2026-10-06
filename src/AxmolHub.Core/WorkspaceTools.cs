@@ -102,7 +102,7 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
                    + "limit. Read a window of it with offset and limit, or search it with run_command. Do not "
                    + "retry without a window.";
 
-        if (ReadText(resolved.Full) is not { } text) return NotText(resolved.Relative);
+        if (ReadAll(resolved.Full) is not { } text) return NotText(resolved.Relative);
 
         var lines = SplitLines(text);
         var from = Math.Clamp(offset, 1, Math.Max(1, lines.Count));
@@ -136,7 +136,7 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
         string? original = null;
         if (File.Exists(resolved.Full))
         {
-            if (ReadText(resolved.Full) is not { } text) return NotText(resolved.Relative);
+            if (ReadAll(resolved.Full) is not { } text) return NotText(resolved.Relative);
             original = text;
         }
 
@@ -158,8 +158,7 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
         }
 
         context.Log?.Write($"Assistant wrote {resolved.Full} ({edit.Verdict}, {edit.Matches} place(s))");
-        return FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Relative)
-               + (undo.Stored ? $" Undo copy: {undo.Path}" : undo.Message.Length > 0 ? $" ({undo.Message})" : "");
+        return FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Relative) + ChatUndoStore.NoteFor(undo);
     }
 
     [Description("Run one shell command in the session workspace and return its output. On Windows the shell is "
@@ -469,8 +468,9 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
 
     /// <summary>Decodes strictly: a byte sequence that is not UTF-8 is a binary file, and replacing its
     /// undecodable bytes would let a read/write round-trip corrupt it silently. Same rule
-    /// <c>ChatContextReader</c> already applies to attached files.</summary>
-    private static string? ReadText(string path)
+    /// <c>ChatContextReader</c> already applies to attached files. Public because <see cref="ChatUndoStore"/>
+    /// compares a file against what a write left there, and that comparison is only honest in one encoding.</summary>
+    public static string? ReadAll(string path)
     {
         try
         {
