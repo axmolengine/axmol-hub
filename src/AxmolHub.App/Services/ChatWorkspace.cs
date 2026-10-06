@@ -42,6 +42,7 @@ public sealed class ChatWorkspace : IDisposable
     private string _selectedMode = ChatModes.Agent;
     private string _selectedReasoningEffort = ChatReasoningEfforts.Auto;
     private string? _selectedApprovalMode;
+    private string? _selectedWorkspaceRoot;
 
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
 
@@ -374,6 +375,58 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     private IReadOnlyList<string> SensitiveValues()
         => [.. _credentialList.Select(credential => credential.Secret).Where(secret => secret is { Length: > 0 })!];
+
+    /// <summary>The directory this session's file and command tools are confined to, or null when none has been
+    /// chosen — in which case every one of them refuses instead of guessing.</summary>
+    public string? WorkspaceRootFor(string conversationId)
+        => (_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.WorkspaceRoot;
+
+    /// <summary>What the composer's chip reads out: the root of the session on screen, or the one picked while
+    /// nothing was on screen. Unlike the permission mode there is no app-wide default to fall back on — a
+    /// sandbox is a fact about one job, not a preference.</summary>
+    public string? ActiveWorkspaceRoot => _active is { } session ? WorkspaceRootFor(session.Id) : _selectedWorkspaceRoot;
+
+    /// <summary>Points the session on screen at a directory, or records the pick for the next one when there is
+    /// none. Null clears it, which puts every file and command tool back to refusing.</summary>
+    /// <returns>Null when the directory was accepted, otherwise why it was not. A verdict rather than a sentence
+    /// because the sentences in <see cref="WorkspacePaths.ResultFor"/> are written for the model, and the UI must
+    /// not show one — it has its own words for the same fact.</returns>
+    public WorkspacePathVerdict? SelectWorkspaceRoot(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            if (_active is { } clearing) SetWorkspaceRoot(clearing.Id, null);
+            else _selectedWorkspaceRoot = null;
+            Changed?.Invoke();
+            return null;
+        }
+
+        // The same guard the tool runs, so the two ways in cannot disagree: a directory the picker accepts and
+        // set_workspace refuses would be a chip reading out a sandbox the tools ignore.
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or System.Security.SecurityException or NotSupportedException)
+        {
+            return WorkspacePathVerdict.EscapesWorkspace;
+        }
+
+        if (!Path.IsPathRooted(path)) return WorkspacePathVerdict.EscapesWorkspace;
+        if (!Directory.Exists(full)) return WorkspacePathVerdict.MissingWorkspace;
+        if (WorkspacePaths.IsProtected(full, new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? [])))
+            return WorkspacePathVerdict.ProtectedRoot;
+
+        if (_active is { } session) SetWorkspaceRoot(session.Id, full);
+        else
+        {
+            _selectedWorkspaceRoot = full;
+            Changed?.Invoke();
+        }
+
+        return null;
+    }
 
     /// <summary>Points this session's file and command tools at a directory. Persisted on the session rather than
     /// held for the run, so a call approved after a restart acts on the directory its card was shown for.</summary>
@@ -1546,6 +1599,10 @@ public sealed class ChatWorkspace : IDisposable
         // it is taken only from that state: a session started from a live one follows the app default again.
         var approvalMode = _active is null ? _selectedApprovalMode : null;
         _selectedApprovalMode = null;
+        // Same rule for the sandbox: a directory picked before the first message was meant for the session that
+        // follows, and a session started from a live one gets its own.
+        var workspaceRoot = _active is null ? _selectedWorkspaceRoot : null;
+        _selectedWorkspaceRoot = null;
         if (_active is not null)
         {
             _selectedMode = ChatModes.Agent;
@@ -1563,6 +1620,7 @@ public sealed class ChatWorkspace : IDisposable
         conversation.Mode = _selectedMode;
         conversation.ReasoningEffort = _selectedReasoningEffort;
         conversation.ApprovalMode = approvalMode;
+        conversation.WorkspaceRoot = workspaceRoot;
         _sessions.Adopt(conversation);
         _active = conversation;
         Changed?.Invoke();

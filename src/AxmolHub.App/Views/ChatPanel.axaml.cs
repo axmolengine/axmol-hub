@@ -144,6 +144,7 @@ public partial class ChatPanel : UserControl
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
         PermissionChip.Click += (_, _) => ShowPermissionMenu();
+        WorkspaceChip.Click += (_, _) => ShowWorkspaceMenu();
         SendButton.Click += (_, _) => _ = SendAsync();
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
@@ -248,7 +249,20 @@ public partial class ChatPanel : UserControl
         PermissionChipLabel.Text = HubStrings.Get(ToolApprovalModeKey(permission));
         PermissionChip.Classes.Set("danger", permission == ToolApprovalModes.Full);
         ToolTip.SetTip(PermissionChip, HubStrings.Get(ToolApprovalModeHintKey(permission)));
+        // The chip reads out the directory itself rather than a label for it: "which folder may this assistant
+        // write to" has one answer and the folder name is it. With nothing bound it says so, because a chip that
+        // hid would leave the tools refusing with no visible reason.
+        var root = _chat.ActiveWorkspaceRoot;
+        WorkspaceChipLabel.Text = root is { Length: > 0 } ? FolderNameOf(root) : HubStrings.Get("ChatWorkspaceNone");
+        ToolTip.SetTip(WorkspaceChip, root is { Length: > 0 }
+            ? string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatWorkspaceChipHintFormat"), root)
+            : HubStrings.Get("ChatWorkspaceChipHint"));
     }
+
+    private static string FolderNameOf(string path)
+        => System.IO.Path.GetFileName(path.TrimEnd(
+            System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
 
     private void UpdateContextRing()
     {
@@ -320,6 +334,64 @@ public partial class ChatPanel : UserControl
     private void ShowAddContextMenu() => ShowMenu(BuildComposerMenu(), AddContextButton);
 
     private void ShowPermissionMenu() => ShowMenu(BuildPermissionMenu(), PermissionChip);
+
+    private void ShowWorkspaceMenu() => ShowMenu(BuildWorkspaceMenu(), WorkspaceChip);
+
+    /// <summary>
+    /// Pick a directory, and — only while one is bound — clear it. The bound path is not repeated as a row: the
+    /// chip reads it out and the tooltip gives it in full, so a third copy would be chrome saying a thing twice.
+    /// </summary>
+    private MenuFlyout BuildWorkspaceMenu()
+    {
+        var menu = new MenuFlyout();
+        var choose = new MenuItem { Header = HubStrings.Get("ChatWorkspaceMenuChoose") };
+        choose.Click += async (_, _) =>
+        {
+            menu.Hide();
+            await PickWorkspaceFolderAsync();
+        };
+        menu.Items.Add(choose);
+
+        if (_chat.ActiveWorkspaceRoot is { Length: > 0 })
+        {
+            var clear = new MenuItem { Header = HubStrings.Get("ChatWorkspaceMenuClear") };
+            clear.Click += (_, _) =>
+            {
+                _chat.SelectWorkspaceRoot(null);
+                menu.Hide();
+            };
+            menu.Items.Add(clear);
+        }
+
+        return menu;
+    }
+
+    /// <summary>Refusals come back as a verdict, not as text: the sentences in <c>WorkspacePaths</c> are written
+    /// for the model, and the panel has its own words for the same fact.</summary>
+    private async Task PickWorkspaceFolderAsync()
+    {
+        var owner = TopLevel.GetTopLevel(this);
+        if (owner is null) return;
+        var result = await Pickers.PickFolderAsync(owner, HubStrings.Get("ChatWorkspacePickTitle"));
+        if (result.Outcome == PickOutcome.Cancelled) return;
+        if (result.Outcome == PickOutcome.NotLocal)
+        {
+            AppendNotice(HubStrings.Get("ChatFolderNotLocal"), danger: true);
+            return;
+        }
+
+        switch (_chat.SelectWorkspaceRoot(result.Path))
+        {
+            case null:
+                return;
+            case WorkspacePathVerdict.ProtectedRoot:
+                AppendNotice(HubStrings.Get("ChatWorkspaceProtected"), danger: true);
+                return;
+            default:
+                AppendNotice(HubStrings.Get("ChatWorkspaceRejected") + result.Path, danger: true);
+                return;
+        }
+    }
 
     /// <summary>
     /// The flyout this panel last opened. A popup is its own top-level, so a screenshot of one has to start
@@ -1897,6 +1969,33 @@ public partial class ChatPanel : UserControl
 
     internal string[] PermissionMenuTitlesForCheck
         => BuildPermissionMenu().Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray();
+
+    // ── Verification hooks for the workspace chip (used by --verify-shell) ──
+    // The folder dialog is a modal and cannot be driven from a self-check, so these read the built state and
+    // drive the workspace through ChatWorkspace instead — the same split AuthDialog's hooks use.
+
+    internal string WorkspaceChipLabelForCheck => WorkspaceChipLabel.Text ?? "";
+    internal bool WorkspaceChipVisibleForCheck => WorkspaceChip.IsVisible;
+    internal string WorkspaceChipHintForCheck => ToolTip.GetTip(WorkspaceChip)?.ToString() ?? "";
+
+    internal string[] WorkspaceMenuTitlesForCheck
+        => BuildWorkspaceMenu().Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray();
+
+    internal Control? OpenWorkspaceMenuForCheck()
+    {
+        ShowWorkspaceMenu();
+        return _openMenu?.Items.OfType<MenuItem>().FirstOrDefault();
+    }
+
+    /// <summary>Clicks the "clear" row, which exists only while a directory is bound.</summary>
+    internal bool ClickWorkspaceMenuClearForCheck()
+    {
+        var clear = BuildWorkspaceMenu().Items.OfType<MenuItem>()
+            .FirstOrDefault(item => MenuItemTitle(item) == HubStrings.Get("ChatWorkspaceMenuClear"));
+        if (clear is null) return false;
+        clear.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        return true;
+    }
 
     internal string[] PermissionMenuHintsForCheck
         => BuildPermissionMenu().Items.OfType<MenuItem>().Select(MenuItemHint).ToArray();

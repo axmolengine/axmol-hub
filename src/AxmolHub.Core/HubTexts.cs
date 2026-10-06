@@ -384,6 +384,17 @@ public static class HubTexts
         ["ChatNoHubProjects"] = ("Hub 中尚未登记工程", "No projects registered in Hub"),
         ["ChatPickFolderTitle"] = ("选择要作为上下文的文件夹", "Choose a folder to use as context"),
         ["ChatFolderNotLocal"] = ("所选位置无法作为本地文件夹读取。", "The selected location cannot be read as a local folder."),
+        // The session sandbox. Distinct from "add a folder as context": that one attaches text to a message, this
+        // one decides where the assistant is allowed to write and run commands.
+        ["ChatWorkspaceNone"] = ("未设工作目录", "No workspace"),
+        ["ChatWorkspaceChipHint"] = ("助手可以读写文件、运行命令的目录。未设置时这些工具一律拒答。", "The directory the assistant may read, write and run commands in. Until one is set, those tools refuse."),
+        ["ChatWorkspaceChipHintFormat"] = ("助手被限制在这个目录内：{0}", "The assistant is confined to this directory: {0}"),
+        ["ChatWorkspacePickTitle"] = ("选择助手的工作目录", "Choose the assistant's workspace"),
+        ["ChatWorkspaceMenuChoose"] = ("选择工作目录…", "Choose a workspace folder…"),
+        ["ChatWorkspaceMenuClear"] = ("清除工作目录", "Clear the workspace"),
+        ["ChatWorkspaceCleared"] = ("已清除工作目录，文件与命令工具将拒答。", "Workspace cleared. The file and command tools will now refuse."),
+        ["ChatWorkspaceRejected"] = ("这个目录不能用作工作目录：", "That directory cannot be used as a workspace: "),
+        ["ChatWorkspaceProtected"] = ("这是 Hub 的数据目录、引擎安装目录或 .git，助手在任何审批档位下都不能写它。", "That is Hub's data directory, an engine installation or a .git directory. The assistant cannot write there in any approval mode."),
         ["ChatAttachmentFailed"] = ("读取聊天上下文失败：", "Could not read chat context: "),
         ["ChatFolderPrefix"] = ("文件夹：", "Folder: "),
         ["ChatProjectPrefix"] = ("工程：", "Project: "),

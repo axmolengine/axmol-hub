@@ -316,7 +316,7 @@
     <Style Selector="Button.permission-chip.danger TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
-    <!-- The caret both composer chips carry, so the two read as the same affordance: "this opens a menu".
+    <!-- The caret every composer chip carries, so they read as one affordance: "this opens a menu".
          Declared after the permission chip's own Path rules on purpose — the caret keeps its muted colour
          even when the tier it sits beside is the warning-red one. -->
     <Style Selector="Path.chip-caret">
@@ -581,6 +581,19 @@
                   <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
                              Grid.Column="1" VerticalAlignment="Center" />
                 </Grid>
+              </Button>
+              <!-- The sandbox the file and command tools are confined to. Shown even when nothing is bound:
+                   an invisible chip is a directory nobody knew was unset, and the tools refuse either way. -->
+              <Button x:Name="WorkspaceChip" Classes="chip workspace-chip" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                  <Path x:Name="WorkspaceChipIcon" Width="13" Height="13" Stretch="Uniform"
+                        Data="{StaticResource Hub.Icon.Folder}"
+                        Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
+                        StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round"
+                        VerticalAlignment="Center" />
+                  <TextBlock x:Name="WorkspaceChipLabel" VerticalAlignment="Center" />
+                  <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
+                </StackPanel>
               </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"

@@ -111,4 +111,8 @@
   <StreamGeometry x:Key="Hub.Icon.PermissionAuto">M12 3.8A8.2 8.2 0 1 0 12 20.2A8.2 8.2 0 1 0 12 3.8ZM10.4 8.9L15.4 12L10.4 15.1Z</StreamGeometry>
   <StreamGeometry x:Key="Hub.Icon.PermissionFull">M12 4.2L20.6 19.2H3.4ZM12 9.8V14.2M12 16.6V16.8</StreamGeometry>
 
+  <!-- The session's sandbox: the directory the assistant may read, write and run commands in. Stroked, on the
+       same 24 grid as the permission tiers so the composer chips share a baseline. -->
+  <StreamGeometry x:Key="Hub.Icon.Folder">M3.6 7.6A2 2 0 0 1 5.6 5.6H9.4L11.4 8H18.4A2 2 0 0 1 20.4 10V16.4A2 2 0 0 1 18.4 18.4H5.6A2 2 0 0 1 3.6 16.4Z</StreamGeometry>
+
 </ResourceDictionary>
