@@ -3094,6 +3094,13 @@ public partial class ShellCheckWindow : Window
         var next = ScratchDirectory.Resolve("shell-check-switch", Guid.NewGuid().ToString("N"));
         var nextRoot = new StateStore(next).Root;
 
+        // Captured before the switch. The point is that the *previous* root's log leaves the screen, not that
+        // the box ends up empty: building the new root's chrome can legitimately write a first line while the
+        // switch settles, and demanding an empty box turns that into a failure roughly one run in ten. Lines
+        // carry an ISO timestamp, so a surviving one cannot be a coincidence of wording.
+        var previousLogLines = (NamedDescendant<TextBox>(shell, "ActivityLog")?.Text ?? "")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         var changed = shell.SwitchDataRoot(next);
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
@@ -3115,8 +3122,12 @@ public partial class ShellCheckWindow : Window
             "重建出的设置页显示新数据根（实际 "
             + (rebuilt is null ? "页面为空" : NamedDescendant<TextBox>(rebuilt, "DataLocation")?.Text) + "）");
 
-        Check(NamedDescendant<TextBox>(shell, "ActivityLog")?.Text is null or "",
-            "切换后日志面板被清空（上一个根的日志不该继续摆在界面上）");
+        var logAfterSwitch = NamedDescendant<TextBox>(shell, "ActivityLog")?.Text ?? "";
+        var survived = previousLogLines.Where(line => logAfterSwitch.Contains(line, StringComparison.Ordinal)).ToArray();
+        Check(previousLogLines.Length > 0 && survived.Length == 0,
+            "切换后上一个根的日志行都不再摆在界面上（切换前 " + previousLogLines.Length
+            + " 行，残留 " + survived.Length + " 行"
+            + (survived.Length > 0 ? "，例如「" + survived[0] + "」" : "") + "）");
 
         // The state really comes from the new root: the new root is empty, so if the old root's two engines are still visible, the switch only changed a string.
         var installs = (InstallsPage)shell.NavigateTo("Installs");
