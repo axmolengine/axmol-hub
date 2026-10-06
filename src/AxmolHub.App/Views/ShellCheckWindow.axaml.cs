@@ -531,6 +531,9 @@ public partial class ShellCheckWindow : Window
               && !panel.BubbleHasIconAction(1, "ContinueReply") && !panel.BubbleHasIconAction(1, "DeleteMessage"),
             "最后一条助手消息只有复制 / 重新生成 / 分叉三个图标，继续与删除已退出操作条（实际 "
             + panel.BubbleIconActionCount(1) + " 个）");
+        var actionPlate = panel.BubbleIconActionWidth(1);
+        Check(actionPlate > 0 && actionPlate <= 20.5,
+            "消息操作图标的悬停底板缩到 20 DIP（实际 " + actionPlate.ToString("0.#", CultureInfo.CurrentCulture) + "）");
         Check(HubTexts.Get("BranchFromHere", HubTexts.ChineseLanguage) == "从此处创建分支任务"
               && HubTexts.Get("BranchFromHere", HubTexts.EnglishLanguage) == "Branch a new task from here",
             "分叉操作的悬停提示支持中英文");

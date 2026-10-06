@@ -714,11 +714,11 @@ public partial class ChatPanel : UserControl
     {
         var icon = new Avalonia.Controls.Shapes.Path
         {
-            Width = 15,
-            Height = 15,
+            Width = 13,
+            Height = 13,
             Stretch = Stretch.Uniform,
             Fill = Brushes.Transparent,
-            StrokeThickness = 1.8,
+            StrokeThickness = 1.7,
             StrokeLineCap = PenLineCap.Round,
             StrokeJoin = PenLineJoin.Round,
         };
@@ -1441,6 +1441,12 @@ public partial class ChatPanel : UserControl
         => MessageRows.ElementAtOrDefault(visibleIndex)?
             .GetLogicalDescendants().OfType<Button>()
             .Count(button => button.Classes.Contains("message-action-icon")) ?? -1;
+
+    /// <summary>Rendered width of one icon action, so a plate that quietly grows back is caught.</summary>
+    internal double BubbleIconActionWidth(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Classes.Contains("message-action-icon"))?.Bounds.Width ?? -1;
 
     internal double BubbleActionBarOpacity(int visibleIndex)
         => MessageRows.ElementAtOrDefault(visibleIndex)?
