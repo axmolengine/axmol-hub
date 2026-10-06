@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -137,6 +137,7 @@ public partial class ChatPanel : UserControl
         ContextButton.Click += (_, _) => ShowContextMenu();
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
+        PermissionChip.Click += (_, _) => ShowPermissionMenu();
         SendButton.Click += (_, _) => _ = SendAsync();
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
@@ -232,11 +233,15 @@ public partial class ChatPanel : UserControl
             _ => "ChatModeGoal",
         });
         ToolTip.SetTip(ModeIndicatorButton, HubStrings.Get("ChatModeResetHint"));
-        // Full access is the one mode where nothing will ask, so the chip carries that before the first
-        // surprise rather than after it. Only the effective mode matters: a session that follows a permissive
-        // default is in it, whether or not anyone clicked.
-        FullAccessDot.IsVisible = _chat.ActiveConversation is { } session
-                                  && _chat.ApprovalModeFor(session.Id) == ToolApprovalModes.Full;
+        // The chip names the *effective* mode, not the one someone clicked: a session that merely follows a
+        // permissive default is in it, and reading back the override would call that mode safe.
+        var permission = _chat.ActiveConversation is { } session
+            ? _chat.ApprovalModeFor(session.Id)
+            : ToolApprovalModes.Ask;
+        PermissionChipIcon.Data = ThemeGeometry(ToolApprovalIconKey(permission));
+        PermissionChipLabel.Text = HubStrings.Get(ToolApprovalModeKey(permission));
+        PermissionChip.Classes.Set("danger", permission == ToolApprovalModes.Full);
+        ToolTip.SetTip(PermissionChip, HubStrings.Get(ToolApprovalModeHintKey(permission)));
     }
 
     private void UpdateContextRing()
@@ -279,65 +284,153 @@ public partial class ChatPanel : UserControl
         menu.ShowAt(ContextButton);
     }
 
-    private void ShowAddContextMenu()
+    private void ShowAddContextMenu() => ShowMenu(BuildComposerMenu(), AddContextButton);
+
+    private void ShowPermissionMenu() => ShowMenu(BuildPermissionMenu(), PermissionChip);
+
+    /// <summary>
+    /// The flyout this panel last opened. A popup is its own top-level, so a screenshot of one has to start
+    /// from an item inside it — which is the only reason the instance is kept.
+    /// </summary>
+    private MenuFlyout? _openMenu;
+
+    private void ShowMenu(MenuFlyout menu, Control anchor)
     {
-        BuildComposerMenu().ShowAt(AddContextButton);
+        _openMenu = menu;
+        menu.ShowAt(anchor);
     }
 
     /// <summary>
-    /// The session's permission mode, as a section of the composer menu rather than a standing control: it is
-    /// changed rarely and it belongs to one conversation. The first entry is the honest one — "follow the
-    /// default" is a different choice from "ask", even when both currently mean ask.
+    /// The permission menu, hung off its own chip: three tiers, each stating what it lets through unasked, with
+    /// the effective one ticked. A fourth row appears only when this session has an override worth dropping —
+    /// otherwise it would be a second line on screen saying what the first already says.
     /// </summary>
-    private MenuItem BuildToolPermissionSection(MenuFlyout menu)
+    private MenuFlyout BuildPermissionMenu()
     {
+        var menu = new MenuFlyout();
         var conversation = _chat.ActiveConversation;
-        var section = new MenuItem
-        {
-            Header = HubStrings.Get("ChatToolPermission"),
-            IsEnabled = conversation is not null,
-        };
-        if (conversation is null) return section;
+        if (conversation is null) return menu;
 
-        var current = conversation.ApprovalMode;
-        section.Items.Add(PermissionItem(menu,
-            string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ChatToolPermissionFollowFormat"),
-                HubStrings.Get(ToolApprovalModeKey(_chat.DefaultApprovalMode))),
-            HubStrings.Get("ChatToolPermissionFollowHint"),
-            checkedItem: current is null,
-            apply: () => _chat.SetApprovalMode(conversation.Id, null)));
+        var effective = _chat.ApprovalModeFor(conversation.Id);
         foreach (var mode in new[] { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full })
         {
-            section.Items.Add(PermissionItem(menu,
-                HubStrings.Get(ToolApprovalModeKey(mode)),
-                HubStrings.Get(ToolApprovalModeHintKey(mode)),
-                checkedItem: current == mode,
-                apply: () => _chat.SetApprovalMode(conversation.Id, mode)));
+            var checkedItem = effective == mode;
+            var item = new MenuItem
+            {
+                // The tick is drawn inside the row rather than by a toggle column: the column would sit to the
+                // left of the tier's own icon and the two would read as one glyph doing a job twice. IsChecked
+                // is still set, so the state stays on the item and not only in its pixels.
+                Header = BuildPermissionHeader(mode, checkedItem),
+                IsChecked = checkedItem,
+            };
+            item.Click += (_, _) =>
+            {
+                _chat.SetApprovalMode(conversation.Id, mode);
+                menu.Hide();
+            };
+            menu.Items.Add(item);
         }
 
-        return section;
+        if (conversation.ApprovalMode is { Length: > 0 })
+        {
+            var follow = new MenuItem
+            {
+                Header = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("ChatToolPermissionFollowFormat"),
+                    HubStrings.Get(ToolApprovalModeKey(_chat.DefaultApprovalMode))),
+                FontSize = 12,
+            };
+            follow.Click += (_, _) =>
+            {
+                _chat.SetApprovalMode(conversation.Id, null);
+                menu.Hide();
+            };
+            menu.Items.Add(follow);
+        }
+
+        return menu;
     }
 
-    private MenuItem PermissionItem(MenuFlyout menu, string label, string hint, bool checkedItem, Action apply)
+    private static Control BuildPermissionHeader(string mode, bool checkedItem)
     {
-        var item = new MenuItem
+        var danger = mode == ToolApprovalModes.Full;
+        var icon = new Avalonia.Controls.Shapes.Path
         {
-            Header = label,
-            ToggleType = MenuItemToggleType.Radio,
-            IsChecked = checkedItem,
-            GroupName = "tool-permission",
+            Width = 15,
+            Height = 15,
+            Stretch = Stretch.Uniform,
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+            Data = ThemeGeometry(ToolApprovalIconKey(mode)),
         };
-        // The hint is what says where the boundary is; the three names alone do not, because the difference
-        // between the modes is which actions each one lets through unasked.
-        ToolTip.SetTip(item, hint);
-        item.Click += (_, _) =>
+        // Bound rather than read once: a brush taken by value here does not follow a theme switch.
+        icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty,
+            new DynamicResourceExtension(danger ? "Hub.DangerText" : "Hub.TextSecondary"));
+
+        var title = new TextBlock
         {
-            apply();
-            menu.Hide();
+            Text = HubStrings.Get(ToolApprovalModeKey(mode)),
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
         };
-        return item;
+        var hint = new TextBlock
+        {
+            Text = HubStrings.Get(ToolApprovalModeHintKey(mode)),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        if (danger)
+        {
+            title.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.DangerText"));
+            hint.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.DangerText"));
+        }
+        else
+        {
+            hint.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextTertiary"));
+        }
+
+        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(title);
+        text.Children.Add(hint);
+
+        var tick = new Avalonia.Controls.Shapes.Path
+        {
+            Width = 14,
+            Height = 14,
+            Stretch = Stretch.Uniform,
+            Data = ThemeGeometry("Hub.Icon.Tick"),
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.8,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
+            IsVisible = checkedItem,
+        };
+        tick.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+
+        // One width for every row, so the ticks land in a column rather than wherever each description happens
+        // to end.
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), MinWidth = 300 };
+        Grid.SetColumn(icon, 0);
+        Grid.SetColumn(text, 1);
+        Grid.SetColumn(tick, 2);
+        header.Children.Add(icon);
+        header.Children.Add(text);
+        header.Children.Add(tick);
+        return header;
     }
+
+    internal static string ToolApprovalIconKey(string mode) => mode switch
+    {
+        ToolApprovalModes.Auto => "Hub.Icon.PermissionAuto",
+        ToolApprovalModes.Full => "Hub.Icon.PermissionFull",
+        _ => "Hub.Icon.PermissionAsk",
+    };
 
     internal static string ToolApprovalModeKey(string mode) => mode switch
     {
@@ -380,8 +473,6 @@ public partial class ChatPanel : UserControl
             };
             menu.Items.Add(item);
         }
-
-        menu.Items.Add(BuildToolPermissionSection(menu));
 
         var addFolder = new MenuItem { Header = HubStrings.Get("ChatAddLocalFolder") };
         addFolder.Click += async (_, _) => await AddLocalFolderAsync();
@@ -1681,35 +1772,82 @@ public partial class ChatPanel : UserControl
             .All(item => item.ToggleType == MenuItemToggleType.CheckBox);
     internal string? SelectedComposerModeForCheck => _selectedComposerMode;
 
-    // ── Tool permission section ──
-    // Each probe builds a fresh menu, which is the same object a user's click would have arrived on: the
-    // section is composed from the session as it stands, not from state this view keeps.
-    private MenuItem? ToolPermissionSection
-        => BuildComposerMenu().Items.OfType<MenuItem>()
-            .FirstOrDefault(item => item.Header as string == HubStrings.Get("ChatToolPermission"));
-
-    internal string[] ToolPermissionLabelsForCheck
-        => ToolPermissionSection?.Items.OfType<MenuItem>()
-            .Select(item => item.Header as string ?? "").ToArray() ?? [];
-
-    internal int ToolPermissionCheckedCountForCheck
-        => ToolPermissionSection?.Items.OfType<MenuItem>().Count(item => item.IsChecked) ?? -1;
-
-    internal bool ToolPermissionItemsAreRadioWithHintsForCheck
-        => ToolPermissionSection?.Items.OfType<MenuItem>().All(item =>
-            item.ToggleType == MenuItemToggleType.Radio
-            && ToolTip.GetTip(item) is string tip && tip.Length > 0) == true;
-
-    /// <summary>Clicks one entry of the permission section, in the order the menu shows them.</summary>
-    internal bool SelectToolPermissionForCheck(int index)
+    // ── Permission chip and its menu ──
+    // Each probe builds a fresh menu, which is the same object a user's click would have arrived on: the list
+    // is composed from the session as it stands, not from state this view keeps.
+    private static string MenuItemTitle(MenuItem item) => item.Header switch
     {
-        if (ToolPermissionSection?.Items.OfType<MenuItem>().ElementAtOrDefault(index) is not { } item) return false;
+        Grid header => header.Children.OfType<StackPanel>().FirstOrDefault()?
+            .Children.OfType<TextBlock>().FirstOrDefault()?.Text ?? "",
+        string text => text,
+        _ => "",
+    };
+
+    private static string MenuItemHint(MenuItem item)
+        => item.Header is Grid header
+            ? header.Children.OfType<StackPanel>().FirstOrDefault()?
+                .Children.OfType<TextBlock>().ElementAtOrDefault(1)?.Text ?? ""
+            : "";
+
+    internal string PermissionChipLabelForCheck => PermissionChipLabel.Text ?? "";
+    internal bool PermissionChipMarksDangerForCheck => PermissionChip.Classes.Contains("danger");
+    internal bool PermissionChipIconIsDrawnForCheck => PermissionChipIcon.Data is not null;
+
+    /// <summary>Opens the permission menu through the same path the chip uses, and hands back an item of it:
+    /// the flyout presents in its own top-level, so a screenshot has to be taken from inside.</summary>
+    internal Control? OpenPermissionMenuForCheck()
+    {
+        ShowPermissionMenu();
+        return _openMenu?.Items.OfType<MenuItem>().FirstOrDefault();
+    }
+
+    internal Control? OpenComposerMenuForCheck()
+    {
+        ShowAddContextMenu();
+        return _openMenu?.Items.OfType<MenuItem>().FirstOrDefault();
+    }
+
+    internal string[] PermissionMenuTitlesForCheck
+        => BuildPermissionMenu().Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray();
+
+    internal string[] PermissionMenuHintsForCheck
+        => BuildPermissionMenu().Items.OfType<MenuItem>().Select(MenuItemHint).ToArray();
+
+    internal int PermissionMenuCheckedCountForCheck
+        => BuildPermissionMenu().Items.OfType<MenuItem>().Count(item => item.IsChecked);
+
+    /// <summary>Which tier the menu marks as current, read off the tick's own visibility rather than a flag:
+    /// the mark is what a person sees, so that is the thing that has to be right. -1 when nothing is marked.</summary>
+    internal int PermissionMenuMarkedIndexForCheck
+    {
+        get
+        {
+            var items = BuildPermissionMenu().Items.OfType<MenuItem>().ToList();
+            for (var i = 0; i < items.Count; i++)
+            {
+                // The row's two Paths are the tier's icon and then the tick; the text column is a panel.
+                if (items[i].Header is Grid grid
+                    && grid.Children.OfType<Avalonia.Controls.Shapes.Path>().LastOrDefault()
+                        is { IsVisible: true } tick
+                    && ReferenceEquals(tick.Data, ThemeGeometry("Hub.Icon.Tick"))) return i;
+            }
+
+            return -1;
+        }
+    }
+
+    /// <summary>Whether the quiet "follow the default" row is offered — it exists only while this session has
+    /// an override that could be dropped.</summary>
+    internal bool PermissionMenuOffersFollowDefaultForCheck
+        => BuildPermissionMenu().Items.OfType<MenuItem>().Any(item => item.Header is string);
+
+    /// <summary>Clicks one entry of the permission menu, in the order the menu shows them.</summary>
+    internal bool SelectPermissionMenuEntryForCheck(int index)
+    {
+        if (BuildPermissionMenu().Items.OfType<MenuItem>().ElementAtOrDefault(index) is not { } item) return false;
         item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         return true;
     }
-
-    internal bool FullAccessDotVisibleForCheck => FullAccessDot.IsVisible;
-    internal (double Width, double Height) FullAccessDotSizeForCheck => (FullAccessDot.Width, FullAccessDot.Height);
 
     /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
     /// rather than by string, because the icons are resolved from the same cached resource.</summary>

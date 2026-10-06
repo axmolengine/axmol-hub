@@ -335,5 +335,42 @@ public partial class App : Application
                 }
             });
         }
+        else if (Options.ShotComposerMenuPath is { } composerShot)
+        {
+            // --shot-composer-menu <png>: the composer's two popups (the + attachments menu and the tool
+            // permission menu) are their own top-levels, so --smoke-pages can never photograph them. A file
+            // name containing "perm" opens the permission menu instead of the + menu — only one flyout can be
+            // on screen at a time, and the two answer different questions.
+            window.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    var panel = window.OpenAssistant();
+                    window.Chat.StartOrOpenEmptyConversation();
+                    Dispatcher.UIThread.RunJobs();
+                    var anchor = composerShot.Contains("perm", StringComparison.OrdinalIgnoreCase)
+                        ? panel.OpenPermissionMenuForCheck()
+                        : panel.OpenComposerMenuForCheck();
+                    Dispatcher.UIThread.RunJobs();
+
+                    var popupRoot = anchor?.GetSelfAndVisualAncestors().OfType<TopLevel>().FirstOrDefault();
+                    if (popupRoot is null)
+                    {
+                        Console.Error.WriteLine("composer menu did not open.");
+                        desktop.Shutdown(1);
+                        return;
+                    }
+
+                    var stats = SmokeCapture.Capture(popupRoot, composerShot);
+                    Console.WriteLine(stats.IsBlank() ? $"BLANK {composerShot}" : $"OK    {composerShot}");
+                    desktop.Shutdown(stats.IsBlank() ? 1 : 0);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    desktop.Shutdown(1);
+                }
+            });
+        }
     }
 }

@@ -425,12 +425,9 @@ public static class HubTexts
         ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),
         ["ChatApprovalResolvedDenied"] = ("已拒绝", "Refused"),
         ["ChatApprovalResolvedSuperseded"] = ("未执行（换了话题）", "Not run (the conversation moved on)"),
-        // The permission mode: a standing policy set in Settings, overridden per session in the composer where
-        // the exception is actually being made. Each hint states what the mode lets through, because the three
-        // names alone do not say where the boundary is.
-        ["ChatToolPermission"] = ("工具权限", "Tool permission"),
+        // The permission tiers, spelled out where the choice is made: each hint says what that tier lets through
+        // unasked, which is the only thing the three names cannot carry themselves.
         ["ChatToolPermissionFollowFormat"] = ("跟随默认（{0}）", "Follow the default ({0})"),
-        ["ChatToolPermissionFollowHint"] = ("使用设置页里的全局默认", "Use the app-wide default set in Settings"),
         ["ToolApprovalAsk"] = ("询问审批", "Ask for approval"),
         ["ToolApprovalAskHint"] = ("除只读查询外，每个操作都先问一次", "Everything except a read asks first"),
         ["ToolApprovalAuto"] = ("自动审批", "Auto-approve"),

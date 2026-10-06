@@ -1262,40 +1262,56 @@ public partial class ShellCheckWindow : Window
                       StringComparison.Ordinal),
                 "批准、总是允许、拒绝与重启后的批准各留下一行审计");
 
-            // ── the mode is pickable: per session in the composer, app-wide in Settings ──
+            // ── the mode is pickable: a chip on the composer row, app-wide default in Settings ──
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.OpenConversation(parkSession.Id);
             panel.Reload();
+            shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            var permissionLabels = panel.ToolPermissionLabelsForCheck;
-            Check(permissionLabels.Length == 4
-                  && permissionLabels[0].Contains(HubStrings.Get("ToolApprovalAsk"), StringComparison.Ordinal)
-                  && permissionLabels[1] == HubStrings.Get("ToolApprovalAsk")
-                  && permissionLabels[2] == HubStrings.Get("ToolApprovalAuto")
-                  && permissionLabels[3] == HubStrings.Get("ToolApprovalFull"),
-                "composer 的「工具权限」给出跟随默认加三档模式（实际 " + string.Join(" / ", permissionLabels) + "）");
-            Check(panel.ToolPermissionCheckedCountForCheck == 1 && panel.ToolPermissionItemsAreRadioWithHintsForCheck,
-                "权限档位单选、恰好一个选中，每项都带一句说明边界的提示（实际选中 "
-                + panel.ToolPermissionCheckedCountForCheck + " 项）");
-            Check(panel.SelectToolPermissionForCheck(2)
-                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Auto
-                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode == ToolApprovalModes.Auto,
-                "从 composer 选「自动审批」写进本会话并落盘（实际 "
-                + chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode + "）");
-            Check(panel.ToolPermissionCheckedCountForCheck == 1
-                  && panel.ToolPermissionLabelsForCheck[2] == HubStrings.Get("ToolApprovalAuto"),
-                "重开菜单时单选状态指向刚选的那一档，而不是仍然指着默认");
-            Check(panel.SelectToolPermissionForCheck(0)
-                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode is null
-                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Ask,
-                "「跟随默认」清掉本会话覆盖，重新回到应用默认");
+            Check(panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalAsk")
+                  && panel.PermissionChipIconIsDrawnForCheck && !panel.PermissionChipMarksDangerForCheck,
+                "输入行上的权限胶囊写出当前生效档位（实际「" + panel.PermissionChipLabelForCheck + "」）");
 
-            Check(!panel.FullAccessDotVisibleForCheck && panel.FullAccessDotSizeForCheck is (6, 6),
-                "非完全访问时模型胶囊上没有警示点，点本身是 6 像素（实际 "
-                + panel.FullAccessDotSizeForCheck.Width + "×" + panel.FullAccessDotSizeForCheck.Height + "）");
+            var titles = panel.PermissionMenuTitlesForCheck;
+            Check(titles.SequenceEqual(new[]
+                      { HubStrings.Get("ToolApprovalAsk"), HubStrings.Get("ToolApprovalAuto"), HubStrings.Get("ToolApprovalFull") },
+                      StringComparer.Ordinal)
+                  && panel.PermissionMenuHintsForCheck.All(hint => hint.Length > 0),
+                "权限菜单平铺三档，每档都带一句说明边界的描述（实际 " + string.Join(" / ", titles) + "）");
+            Check(panel.PermissionMenuCheckedCountForCheck == 1 && panel.PermissionMenuMarkedIndexForCheck == 0
+                  && !panel.PermissionMenuOffersFollowDefaultForCheck,
+                "菜单里勾号只标当前档，且没有覆盖时不显示「跟随默认」那行（实际勾在第 "
+                + panel.PermissionMenuMarkedIndexForCheck + " 项）");
+
+            Check(panel.SelectPermissionMenuEntryForCheck(1)
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Auto
+                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode == ToolApprovalModes.Auto
+                  && panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalAuto"),
+                "点「自动审批」写进本会话、落盘，胶囊立刻改口（实际 "
+                + panel.PermissionChipLabelForCheck + "）");
+            Check(panel.PermissionMenuCheckedCountForCheck == 1 && panel.PermissionMenuMarkedIndexForCheck == 1
+                  && panel.PermissionMenuOffersFollowDefaultForCheck,
+                "重开菜单时勾指向刚选的那一档，并多出可以撤销的「跟随默认」行（实际勾在第 "
+                + panel.PermissionMenuMarkedIndexForCheck + " 项）");
+            Check(panel.SelectPermissionMenuEntryForCheck(3)
+                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode is null
+                  && !panel.PermissionMenuOffersFollowDefaultForCheck,
+                "「跟随默认」清掉本会话覆盖，那一行也就跟着消失");
+
             chat.SetApprovalMode(parkSession.Id, ToolApprovalModes.Full);
             panel.Reload();
-            Check(panel.FullAccessDotVisibleForCheck, "会话切到「完全访问」后模型胶囊上出现警示点");
+            Check(panel.PermissionChipMarksDangerForCheck
+                  && panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalFull"),
+                "完全访问时权限胶囊换成警示色（不再另设第二个提示）");
+            var permissionShot = System.IO.Path.Combine(ScratchDirectory.Resolve("composer-menu"), "perm.png");
+            var permissionAnchor = panel.OpenPermissionMenuForCheck();
+            Dispatcher.UIThread.RunJobs();
+            var permissionRoot = permissionAnchor?.GetSelfAndVisualAncestors()
+                .OfType<Avalonia.Controls.TopLevel>().FirstOrDefault();
+            var permissionStats = permissionRoot is null ? null : SmokeCapture.Capture(permissionRoot, permissionShot);
+            Check(permissionStats is not null && System.IO.File.Exists(permissionShot) && !permissionStats.IsBlank(),
+                "权限菜单真实渲染出非空白帧（distinct=" + (permissionStats?.DistinctColors ?? 0)
+                + "，写在 " + permissionShot + "）");
             chat.SetApprovalMode(parkSession.Id, null);
             panel.Reload();
 
@@ -1317,8 +1333,9 @@ public partial class ShellCheckWindow : Window
                   && chat.DefaultApprovalMode == ToolApprovalModes.Full
                   && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Full,
                 "改默认档位落进设置文件，并立刻对跟随默认的会话生效（实际 " + savedDefault + "）");
-            Check(panel.FullAccessDotVisibleForCheck,
-                "改默认后缓存的助手页也刷新了警示点（导航不会重画这一页）");
+            Check(panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalFull")
+                  && panel.PermissionChipMarksDangerForCheck,
+                "改默认后缓存的助手页也刷新了权限胶囊（导航不会重画这一页）");
             settings.SelectToolApproval(ToolApprovalModes.Ask);
             Dispatcher.UIThread.RunJobs();
             shell.NavigateTo("Assistant");

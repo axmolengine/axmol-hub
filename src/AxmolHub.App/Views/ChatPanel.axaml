@@ -301,12 +301,20 @@
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
-    <!-- The full-access marker on the model chip: six pixels and no label, because what it marks is the chip
-         the model name already lives on. -->
-    <Style Selector="Ellipse.chip-warning">
-      <Setter Property="Width" Value="6" />
-      <Setter Property="Height" Value="6" />
-      <Setter Property="Fill" Value="{DynamicResource Hub.Danger}" />
+    <!-- The permission chip: neutral until the mode is the one that never asks, and then the tier's own
+         warning colour without adding a second label anywhere else. -->
+    <Style Selector="Button.permission-chip Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.permission-chip TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.permission-chip.danger Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="Button.permission-chip.danger TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
     <Style Selector="ComboBox.composer-choice">
       <Setter Property="MinHeight" Value="28" />
@@ -515,6 +523,20 @@
                              Grid.Column="1" VerticalAlignment="Center" />
                 </Grid>
               </Button>
+              <!-- What the assistant may do without asking, named where the asking would happen. The label is
+                   the *effective* mode, so a session that merely follows a permissive default reads as
+                   permissive rather than looking safe. -->
+              <Button x:Name="PermissionChip" Classes="chip permission-chip" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                  <Path x:Name="PermissionChipIcon" Width="13" Height="13" Stretch="Uniform"
+                        Fill="Transparent" StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round"
+                        VerticalAlignment="Center" />
+                  <TextBlock x:Name="PermissionChipLabel" VerticalAlignment="Center" />
+                  <Path Width="9" Height="9" Stretch="Uniform" Data="{StaticResource Hub.Icon.Chevron}"
+                        Fill="Transparent" Stroke="{DynamicResource Hub.TextTertiary}" StrokeThickness="1.8"
+                        VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"
                         VerticalAlignment="Center" Margin="8,0,0,0">
@@ -524,10 +546,6 @@
               <Button x:Name="ModelPicker" Classes="chip model-picker"
                       HorizontalAlignment="Left" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-                  <!-- Full access is the one mode where nothing will ask, so the chip says that before the
-                       first surprise rather than after it. -->
-                  <Ellipse x:Name="FullAccessDot" Classes="chip-warning" IsVisible="False"
-                           VerticalAlignment="Center" />
                   <TextBlock x:Name="SelectedModelLabel" MaxWidth="130"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                   <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="76"
