@@ -746,6 +746,96 @@ if (args.Contains("--check-ai-context"))
     if (ContextCompression.CutPoint([], 4) != 0 || ContextCompression.CutPoint([ChatTurn.User("hi")], 4) != 0)
         throw new Exception("A short transcript did not collapse to a zero cut.");
     Console.WriteLine("PASS: the compression cut never archives half of a tool call.");
+
+    // ── The bounds on one tool result ──
+    if (ToolResultCap.TokensFor(8192) != 1024 || ToolResultCap.TokensFor(128000) != ToolResultCap.MaximumTokens
+        || ToolResultCap.TokensFor(1000) != ToolResultCap.MinimumTokens)
+        throw new Exception("The result cap is not proportional to the window.");
+    var longResult = string.Concat(Enumerable.Repeat("0123456789", 12000));
+    var cappedResult = ToolResultCap.Apply(longResult, 8192);
+    if (cappedResult.Length > ToolResultCap.TokensFor(8192) * ContextTrimmer.CharactersPerToken + 64
+        || !cappedResult.Contains("characters truncated")
+        || !cappedResult.StartsWith(longResult[..512], StringComparison.Ordinal)
+        || !cappedResult.EndsWith(longResult[^512..], StringComparison.Ordinal))
+        throw new Exception($"The capped result lost its head, its tail, or its marker ({cappedResult.Length} characters).");
+    if (ToolResultCap.Apply("short", 8192) != "short") throw new Exception("A result inside the cap was rewritten.");
+
+    // ── The window cannot open on an orphaned tool result ──
+    var trimmedOrphan = ContextTrimmer.Trim(
+        [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);
+    if (trimmedOrphan.Count == 0 || trimmedOrphan[0].Role == ChatRoles.Tool)
+        throw new Exception("Trimming kept an orphaned tool result at the front of the window.");
+    var heavyCall = ChatTurn.FunctionCall("c1", "file_write", """{"old_string":"aaaa","new_string":"bbbb"}""");
+    if (ContextTrimmer.EstimateTokens(heavyCall) <= ContextTrimmer.EstimateTokens(heavyCall with { ToolArguments = null }))
+        throw new Exception("A tool call's arguments were not charged against the budget.");
+    Console.WriteLine("PASS: one tool result cannot push the conversation out of the window.");
+
+    // ── Inside the loop, results shrink but messages never disappear ──
+    var loopMessages = new List<ChatMessage>
+    {
+        new(ChatRole.System, "system rules"),
+        new(ChatRole.User, "第一个问题"),
+    };
+    for (var index = 0; index < 6; index++)
+    {
+        loopMessages.Add(new ChatMessage(ChatRole.Assistant,
+            [new FunctionCallContent($"call-{index}", "read_file", new Dictionary<string, object?> { ["path"] = $"f{index}.cpp" })]));
+        loopMessages.Add(new ChatMessage(ChatRole.Tool, [new FunctionResultContent($"call-{index}", new string('x', 4000))]));
+    }
+    var elided = ToolLoopContextGuard.Elide(loopMessages, 1200);
+    if (elided.Count != loopMessages.Count) throw new Exception("Elision removed messages instead of shrinking them.");
+    if (!elided.SelectMany(message => message.Contents).OfType<FunctionCallContent>().Select(call => call.CallId)
+             .SequenceEqual(elided.SelectMany(message => message.Contents).OfType<FunctionResultContent>().Select(result => result.CallId)))
+        throw new Exception("Elision broke the call/result pairing.");
+    if (elided[0].Text != "system rules" || elided[1].Text != "第一个问题")
+        throw new Exception("Elision touched the system prompt or the question being answered.");
+    var resultTexts = elided.SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+        .Select(result => result.Result?.ToString() ?? "").ToList();
+    if (resultTexts.Take(2).Any(text => !text.Contains("elided"))
+        || resultTexts.Skip(2).Any(text => text.Contains("elided") || text.Length != 4000))
+        throw new Exception($"Elision did not spare exactly the newest {ToolLoopContextGuard.KeepRecentResults} results.");
+
+    // ── The loop ends on its own, and stays inside the window while it runs ──
+    var insistent = new InsistentToolClient();
+    var probeProvider = new ModelProvider
+        { Id = "probe", Name = "probe", BaseUrl = "https://example.invalid/v1", Model = "probe" };
+    var probeTool = AIFunctionFactory.Create((Func<string>)(() => new string('y', 20000)),
+        new AIFunctionFactoryOptions { Name = "get_projects", Description = "probe" });
+    var answered = new StringBuilder();
+    string? capFailure = null;
+    try
+    {
+        await foreach (var chunk in new ChatPipeline(insistent)
+                           .SendAsync(probeProvider, [ChatTurn.User("一直调用工具")], tools: [probeTool]))
+            answered.Append(chunk);
+    }
+    catch (Exception exception)
+    {
+        capFailure = exception.GetType().Name + ": " + exception.Message;
+    }
+    if (capFailure is not null) throw new Exception($"The iteration cap surfaced as an exception instead of an answer: {capFailure}");
+    if (insistent.CallCount != ChatPipeline.MaximumToolIterations + 1)
+        throw new Exception($"The loop made {insistent.CallCount} requests instead of {ChatPipeline.MaximumToolIterations} tool rounds plus one final answer.");
+    if (answered.Length == 0) throw new Exception("The loop hit its cap without leaving the user any text.");
+    if (insistent.LastOptions?.AllowMultipleToolCalls != false)
+        throw new Exception("A request went out still allowing several tool calls in one response.");
+    if (insistent.LastOptions?.Tools is not null)
+        throw new Exception("The final request still offered tools, so the model could ask for another round.");
+
+    // Every round returned 20 000 characters against an 8192-token window, so by the last request the older
+    // results must have been elided — with the messages themselves still there, pairing intact.
+    var lastResults = insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+        .Select(result => result.Result?.ToString() ?? "").ToList();
+    if (lastResults.Count < ChatPipeline.MaximumToolIterations)
+        throw new Exception($"The final request carried only {lastResults.Count} tool results.");
+    if (!lastResults.Any(text => text.Contains("elided")) || !lastResults.Any(text => !text.Contains("elided")))
+        throw new Exception("The loop either elided nothing or elided the result it is reasoning about.");
+    if (lastResults.Any(text => text.Length > ToolResultCap.TokensFor(ContextTrimmer.DefaultBudgetTokens) * ContextTrimmer.CharactersPerToken + 64))
+        throw new Exception("A tool result reached the model without being capped.");
+    if (!insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionCallContent>().Select(call => call.CallId)
+             .SequenceEqual(insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionResultContent>().Select(result => result.CallId)))
+        throw new Exception("The loop's own request lost the call/result pairing.");
+    Console.WriteLine("PASS: the tool loop stops at its cap, caps every result, and elides the old ones.");
     return;
 }
 if (args.Contains("--check-ai-workspace"))
@@ -2198,6 +2288,38 @@ sealed class ToolLoopChatClient(bool honorCancellation = false) : IChatClient
             yield return new ChatResponseUpdate(ChatRole.Assistant, "Projects loaded.");
         }
 
+        await Task.Yield();
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public void Dispose() { }
+}
+
+/// <summary>Asks for another tool call on every turn: the only thing that can end this loop is the pipeline's
+/// iteration cap, which is exactly what the assertion needs to prove.</summary>
+sealed class InsistentToolClient : IChatClient
+{
+    public int CallCount { get; private set; }
+    public ChatOptions? LastOptions { get; private set; }
+    public IList<ChatMessage> LastRequest { get; private set; } = [];
+
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Checks only use the streaming path.");
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        LastOptions = options;
+        LastRequest = messages.ToList();
+        yield return new ChatResponseUpdate(ChatRole.Assistant, new List<AIContent>
+        {
+            new FunctionCallContent($"call-{CallCount}", "get_projects", new Dictionary<string, object?>()),
+            new TextContent($"第 {CallCount} 轮"),
+        });
         await Task.Yield();
     }
 

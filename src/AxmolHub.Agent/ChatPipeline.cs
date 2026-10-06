@@ -24,6 +24,14 @@ namespace AxmolHub.Agent;
 /// </summary>
 public sealed class ChatPipeline(IChatClient client)
 {
+    /// <summary>How many tool round-trips one user message may cost. Reaching it is not an error: the client
+    /// stops offering tools and the model answers with what it has, which is the behaviour the guardrails
+    /// promise — stop and hand the log back rather than loop.</summary>
+    public const int MaximumToolIterations = 8;
+
+    /// <summary>A tool that keeps failing is a stuck loop, not a hard problem; three in a row ends the turn.</summary>
+    public const int MaximumConsecutiveToolErrors = 3;
+
     /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.</summary>
     public readonly record struct ToolCallInfo(string Name, string CallId, string ArgumentsJson);
 
@@ -78,10 +86,14 @@ public sealed class ChatPipeline(IChatClient client)
         IChatClient effectiveClient = client;
         if (tools is { Count: > 0 })
         {
-            var functionClient = new FunctionInvokingChatClient(client, null, null)
+            // The guard sits inside the invoking client so it sees the message list as the loop grows it;
+            // ContextTrimmer only ever sees the first iteration.
+            var functionClient = new FunctionInvokingChatClient(new ToolLoopContextGuard(client, budget), null, null)
             {
                 AllowConcurrentInvocation = false,
                 TerminateOnUnknownCalls = true,
+                MaximumIterationsPerRequest = MaximumToolIterations,
+                MaximumConsecutiveErrorsPerRequest = MaximumConsecutiveToolErrors,
             };
             functionClient.FunctionInvoker = async (context, token) =>
             {
@@ -112,9 +124,13 @@ public sealed class ChatPipeline(IChatClient client)
                 try
                 {
                     var result = await context.Function.InvokeAsync(context.Arguments, token).ConfigureAwait(false);
+                    // Capped once, here, so the transcript records exactly what the model was shown. Two
+                    // renderings of one result is how a replayed conversation diverges from the run that
+                    // produced it — and an uncapped result can push the whole window out on its own.
+                    var text = ToolResultCap.Apply(SerializeToolResult(result), budget);
                     if (onToolCompleted is not null)
-                        await onToolCompleted(info, SerializeToolResult(result), false).ConfigureAwait(false);
-                    return result;
+                        await onToolCompleted(info, text, false).ConfigureAwait(false);
+                    return text;
                 }
                 catch (OperationCanceledException)
                 {
@@ -210,6 +226,9 @@ public sealed class ChatPipeline(IChatClient client)
         if (tools is { Count: > 0 })
         {
             options.Tools = [.. tools];
+            // One call per response: two calls in one message would park two approvals at once, and the card
+            // resolves one decision at a time. Sequential calls also keep the transcript order obvious.
+            options.AllowMultipleToolCalls = false;
             any = true;
         }
         if (effectiveReasoningEffort is not null)

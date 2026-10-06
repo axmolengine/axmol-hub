@@ -1931,6 +1931,8 @@ public sealed class ChatWorkspace : IDisposable
         run.RearmAfterApproval();
         var result = ToolApprovalResults.Unavailable;
         var failed = true;
+        var budget = await ReadOnUiAsync(() => ModelFor(run.ConversationId)?.Provider.MaxContextTokens
+                                               ?? ContextTrimmer.DefaultBudgetTokens).ConfigureAwait(false);
         var snapshot = await ReadOnUiAsync(() => HubSnapshotProvider?.Invoke()).ConfigureAwait(false);
         if (ChatTools.Find(call.Value.Name, call.Value.Mode, snapshot) is { } tool)
         {
@@ -1941,7 +1943,9 @@ public sealed class ChatWorkspace : IDisposable
                 // Invoked directly rather than through the model loop: the call was already made, and this is
                 // the same function the loop would have run.
                 var value = await tool.InvokeAsync(new AIFunctionArguments(arguments), run.Token).ConfigureAwait(false);
-                result = ChatPipeline.SerializeToolResult(value);
+                // Capped with the same bound the pipeline uses, so a call reads identically whether or not it
+                // needed permission first.
+                result = ToolResultCap.Apply(ChatPipeline.SerializeToolResult(value), budget);
                 failed = false;
             }
             catch (OperationCanceledException)

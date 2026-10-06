@@ -24,13 +24,17 @@ public static class ContextTrimmer
     public const int CharactersPerToken = 3;
 
     /// <summary>Estimates the token cost of a turn: its text plus a small per-message overhead for the role
-    /// and delimiters every chat format adds.</summary>
+    /// and delimiters every chat format adds. A tool call's arguments are counted too — an anchored edit
+    /// carries the old and new text there, which is regularly the largest part of the turn.</summary>
     public static int EstimateTokens(ChatTurn turn)
-        => EstimateTokens(turn.Text) + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext));
+        => EstimateTokens(turn.Text)
+           + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext))
+           + (string.IsNullOrEmpty(turn.ToolArguments) ? 0 : EstimateTokens(turn.ToolArguments));
 
     public static int EstimateTokens(string text) => text.Length / CharactersPerToken + MessageOverheadTokens;
 
-    private const int MessageOverheadTokens = 4;
+    /// <summary>Per-message cost of the role and delimiters every chat format adds.</summary>
+    public const int MessageOverheadTokens = 4;
 
     /// <summary>
     /// Returns the turns that fit in <paramref name="budget"/> tokens, newest-first selection with the
@@ -59,6 +63,11 @@ public static class ContextTrimmer
         }
 
         kept.Reverse();
+
+        // A tool result whose call was dropped cannot open the window: providers reject a `tool` message that
+        // does not follow the assistant message carrying its call. Dropping the orphaned front is cheaper than
+        // widening the window, and the alternative is a request that fails before the model sees it.
+        while (kept.Count > 0 && kept[0].Role == ChatRoles.Tool) kept.RemoveAt(0);
 
         var result = new List<ChatTurn>();
         if (!string.IsNullOrEmpty(systemPrompt)) result.Add(ChatTurn.System(systemPrompt));
