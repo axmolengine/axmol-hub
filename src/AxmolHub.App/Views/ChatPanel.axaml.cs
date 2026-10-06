@@ -613,7 +613,7 @@ public partial class ChatPanel : UserControl
     /// action bar: there is nothing stable to act on until the turn is persisted.
     /// </summary>
     private Control BuildMessageRow(
-        bool fromUser, Control body, int? index, string role, string text, bool isLast, DateTimeOffset? at = null)
+        bool fromUser, StackPanel body, int? index, string role, string text, bool isLast, DateTimeOffset? at = null)
     {
         var column = new StackPanel { Spacing = 6 };
 
@@ -633,7 +633,7 @@ public partial class ChatPanel : UserControl
 
         if (index is { } messageIndex)
         {
-            var actions = BuildActionBar(messageIndex, role, text, isLast, at);
+            var actions = BuildActionBar(messageIndex, role, text, isLast, at, body);
             actions.HorizontalAlignment = fromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
             column.Children.Add(actions);
         }
@@ -653,7 +653,7 @@ public partial class ChatPanel : UserControl
         };
     }
 
-    private Control BuildActionBar(int index, string role, string text, bool isLast, DateTimeOffset? at)
+    private Control BuildActionBar(int index, string role, string text, bool isLast, DateTimeOffset? at, StackPanel body)
     {
         var bar = new StackPanel
         {
@@ -676,7 +676,7 @@ public partial class ChatPanel : UserControl
         if (role == ChatRoles.User)
         {
             bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
-            bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => _ = EditMessageAsync(index, text)));
+            bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => BeginInlineEdit(index, body)));
         }
         else
         {
@@ -764,8 +764,6 @@ public partial class ChatPanel : UserControl
     }
 
     // ───────────────────────── Actions ─────────────────────────
-
-    private Window? GetOwner() => TopLevel.GetTopLevel(this) as Window;
 
     private void CopyToClipboard(string text)
     {
@@ -926,22 +924,69 @@ public partial class ChatPanel : UserControl
         _chat.BranchFrom(index);
     }
 
-    private async Task EditMessageAsync(int index, string text)
+    /// <summary>
+    /// Puts a user message back into an editable box where it stands. Enter commits and re-runs the reply,
+    /// Shift+Enter adds a line, Escape restores the original text.
+    ///
+    /// Committing drops everything after this turn. That used to be gated by a confirmation dialog that only
+    /// appeared once the retyping was already done; the edit icon's tooltip carries the consequence now, at
+    /// the moment the edit is chosen instead.
+    /// </summary>
+    private void BeginInlineEdit(int index, StackPanel body)
     {
-        if (_send is not null) return;
+        if (_send is not null || body.Children.FirstOrDefault() is not TextBlock original) return;
 
-        var edited = await PromptWindow.ShowAsync(GetOwner(), HubStrings.Get("EditMessageTitle"), text);
-        if (edited is null || edited.Trim().Length == 0) return;
+        var untouched = original.Text ?? "";
+        var editor = new TextBox
+        {
+            Text = untouched,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = original.FontSize,
+        };
+        editor.Classes.Add("message-edit");
+        body.Children.Remove(original);
+        body.Children.Insert(0, editor);
+        editor.Focus();
+        editor.CaretIndex = editor.Text.Length;
 
-        // Everything after the edited turn is dropped, so ask before doing something irreversible.
-        var confirm = await HubDialog.ShowAsync(
-            GetOwner(), HubStrings.Get("EditMessage"), HubStrings.Get("EditMessageConfirm"),
-            HubDialogButtons.OkCancel, danger: true);
-        if (confirm != HubDialogResult.Ok) return;
+        void Restore()
+        {
+            body.Children.Remove(editor);
+            body.Children.Insert(0, original);
+        }
 
-        if (!_chat.EditAndResend(index, edited)) return;
+        // Registered on the tunnel for the same reason the composer is: a TextBox with AcceptsReturn marks
+        // Enter handled in order to insert a newline, so a plain subscriber never sees the key.
+        editor.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                Restore();
+            }
+            else if (e.Key == Key.Enter && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                e.Handled = true;
+                var edited = editor.Text.Trim();
+                if (edited.Length == 0 || edited == untouched) Restore();
+                else CommitEdit(index, edited, Restore);
+            }
+        }, RoutingStrategies.Tunnel);
+    }
+
+    /// <summary>Applies an in-place edit. The rebuild on success discards the editor; a refusal has to put the
+    /// original text back by hand, because nothing else will.</summary>
+    private void CommitEdit(int index, string edited, Action restore)
+    {
+        if (_send is not null || !_chat.EditAndResend(index, edited))
+        {
+            restore();
+            return;
+        }
+
         ForceRebuildMessages();
-        await StreamReplyAsync(token => _chat.ResendAsync(token));
+        _ = StreamReplyAsync(token => _chat.ResendAsync(token));
     }
 
     /// <summary>Drives one streamed reply: appends a live assistant bubble, appends chunks as they arrive, and
@@ -1443,6 +1488,42 @@ public partial class ChatPanel : UserControl
             .Count(button => button.Classes.Contains("message-action-icon")) ?? -1;
 
     /// <summary>Rendered width of one icon action, so a plate that quietly grows back is caught.</summary>
+    /// <summary>Raises one icon action by its string key, exactly as a click would.</summary>
+    internal bool ClickBubbleAction(int visibleIndex, string textKey)
+    {
+        if (MessageRows.ElementAtOrDefault(visibleIndex)?
+                .GetLogicalDescendants().OfType<Button>()
+                .FirstOrDefault(button => button.Classes.Contains("message-action-icon")
+                                          && string.Equals(button.Tag?.ToString(), textKey, StringComparison.Ordinal))
+            is not { } button) return false;
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        return true;
+    }
+
+    /// <summary>The in-place editor a bubble is hosting right now, or null while it shows plain text.</summary>
+    internal TextBox? BubbleEditorForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<TextBox>()
+            .FirstOrDefault(box => box.Classes.Contains("message-edit"));
+
+    internal bool IsStreamingForCheck => _send is not null;
+
+    /// <summary>Sends one key to the in-place editor, so the Enter/Escape bindings themselves are what a check
+    /// exercises rather than the method they call.</summary>
+    internal bool SendKeyToBubbleEditor(int visibleIndex, Key key, KeyModifiers modifiers = KeyModifiers.None)
+    {
+        if (BubbleEditorForCheck(visibleIndex) is not { } editor) return false;
+        editor.RaiseEvent(new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = key,
+            KeyModifiers = modifiers,
+            Source = editor,
+        });
+        return true;
+    }
+
     internal double BubbleIconActionWidth(int visibleIndex)
         => MessageRows.ElementAtOrDefault(visibleIndex)?
             .GetLogicalDescendants().OfType<Button>()

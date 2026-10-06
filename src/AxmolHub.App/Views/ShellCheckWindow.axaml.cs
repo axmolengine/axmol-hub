@@ -560,6 +560,33 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
+
+        // In-place edit: the bubble's own text turns into the editor, Escape abandons it, Enter commits and
+        // re-runs the reply. No dialog anywhere in the path.
+        var firstQuestion = opsConversation.Messages[0].Text;
+        Check(panel.ClickBubbleAction(0, "EditMessage")
+              && panel.BubbleEditorForCheck(0) is { } opener && opener.Text == firstQuestion,
+            "点击编辑图标后气泡文字就地变成编辑框，并预填该条原文");
+        Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Escape)
+              && panel.BubbleEditorForCheck(0) is null
+              && opsConversation.Messages[0].Text == firstQuestion,
+            "Esc 放弃就地编辑，原文与历史都不变");
+        Check(panel.ClickBubbleAction(0, "EditMessage") && panel.BubbleEditorForCheck(0) is not null,
+            "可以再次进入就地编辑");
+        var editor = panel.BubbleEditorForCheck(0)!;
+        editor.Text = "就地改写的提问";
+        Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Enter)
+              && panel.BubbleEditorForCheck(0) is null,
+            "Enter 提交后编辑框关闭，气泡回到普通文字");
+        Check(opsConversation.Messages[0].Text == "就地改写的提问",
+            "提交就地编辑改写了该条消息并截断其后的回复");
+        for (var wait = 0; wait < 200 && panel.IsStreamingForCheck; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(25);
+        }
+        Check(!panel.IsStreamingForCheck && opsConversation.Messages.Count == 2,
+            "改写后就地重新生成了回复（实际 " + opsConversation.Messages.Count + " 条）");
         Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
               && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
             "消息操作文案支持中英文");

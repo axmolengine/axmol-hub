@@ -410,9 +410,9 @@ public static class HubTexts
         ["You"] = ("你", "You"),
         // 消息级操作（气泡 hover 时出现的操作条）。
         ["CopyMessage"] = ("复制", "Copy"),
-        ["EditMessage"] = ("编辑并重发", "Edit and resend"),
-        ["EditMessageTitle"] = ("编辑消息", "Edit message"),
-        ["EditMessageConfirm"] = ("编辑后将删除该消息之后的全部对话，并重新生成回复。", "Editing removes everything after this message and generates a new reply."),
+        // The tooltip is now the only place that warns editing drops the rest of the conversation: the
+        // confirm dialog it used to precede went away when editing moved inline.
+        ["EditMessage"] = ("编辑并重发（丢弃其后对话）", "Edit and resend (drops everything after)"),
         ["RegenerateMessage"] = ("重新生成", "Regenerate"),
         ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
         ["MessageTimeJustNow"] = ("刚刚", "now"),
