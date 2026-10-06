@@ -1248,6 +1248,68 @@ public partial class ShellCheckWindow : Window
             chat.DeleteConversation(restartSession.Id);
             Check(chat.RunFor(restartSession.Id) is null,
                 "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
+
+            // ── the mode is pickable: per session in the composer, app-wide in Settings ──
+            chat.PreferencesProvider = savedPreferencesProvider;
+            chat.OpenConversation(parkSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            var permissionLabels = panel.ToolPermissionLabelsForCheck;
+            Check(permissionLabels.Length == 4
+                  && permissionLabels[0].Contains(HubStrings.Get("ToolApprovalAsk"), StringComparison.Ordinal)
+                  && permissionLabels[1] == HubStrings.Get("ToolApprovalAsk")
+                  && permissionLabels[2] == HubStrings.Get("ToolApprovalAuto")
+                  && permissionLabels[3] == HubStrings.Get("ToolApprovalFull"),
+                "composer 的「工具权限」给出跟随默认加三档模式（实际 " + string.Join(" / ", permissionLabels) + "）");
+            Check(panel.ToolPermissionCheckedCountForCheck == 1 && panel.ToolPermissionItemsAreRadioWithHintsForCheck,
+                "权限档位单选、恰好一个选中，每项都带一句说明边界的提示（实际选中 "
+                + panel.ToolPermissionCheckedCountForCheck + " 项）");
+            Check(panel.SelectToolPermissionForCheck(2)
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Auto
+                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode == ToolApprovalModes.Auto,
+                "从 composer 选「自动审批」写进本会话并落盘（实际 "
+                + chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode + "）");
+            Check(panel.ToolPermissionCheckedCountForCheck == 1
+                  && panel.ToolPermissionLabelsForCheck[2] == HubStrings.Get("ToolApprovalAuto"),
+                "重开菜单时单选状态指向刚选的那一档，而不是仍然指着默认");
+            Check(panel.SelectToolPermissionForCheck(0)
+                  && chat.StoredCopyForCheck(parkSession.Id)?.ApprovalMode is null
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Ask,
+                "「跟随默认」清掉本会话覆盖，重新回到应用默认");
+
+            Check(!panel.FullAccessDotVisibleForCheck && panel.FullAccessDotSizeForCheck is (6, 6),
+                "非完全访问时模型胶囊上没有警示点，点本身是 6 像素（实际 "
+                + panel.FullAccessDotSizeForCheck.Width + "×" + panel.FullAccessDotSizeForCheck.Height + "）");
+            chat.SetApprovalMode(parkSession.Id, ToolApprovalModes.Full);
+            panel.Reload();
+            Check(panel.FullAccessDotVisibleForCheck, "会话切到「完全访问」后模型胶囊上出现警示点");
+            chat.SetApprovalMode(parkSession.Id, null);
+            panel.Reload();
+
+            // The app-wide default is a standing policy, so it lives in Settings — and changing it has to reach
+            // the cached assistant page, which navigation alone does not reload.
+            var settings = (SettingsPage)shell.NavigateTo("Settings");
+            Dispatcher.UIThread.RunJobs();
+            Check(settings.DeclaredToolApprovalModesForCheck.SequenceEqual(new[]
+                      { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full }, StringComparer.Ordinal)
+                  && settings.SelectedToolApprovalModeForCheck == ToolApprovalModes.Ask
+                  && settings.ToolApprovalLabelsAreLocalizedForCheck,
+                "设置页给出三档工具权限、显示当前默认且标签已本地化（实际 "
+                + string.Join("/", settings.DeclaredToolApprovalModesForCheck) + "）");
+            settings.SelectToolApproval(ToolApprovalModes.Full);
+            Dispatcher.UIThread.RunJobs();
+            var savedDefault = new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root))
+                .Load().ToolApprovalMode;
+            Check(savedDefault == ToolApprovalModes.Full
+                  && chat.DefaultApprovalMode == ToolApprovalModes.Full
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Full,
+                "改默认档位落进设置文件，并立刻对跟随默认的会话生效（实际 " + savedDefault + "）");
+            Check(panel.FullAccessDotVisibleForCheck,
+                "改默认后缓存的助手页也刷新了警示点（导航不会重画这一页）");
+            settings.SelectToolApproval(ToolApprovalModes.Ask);
+            Dispatcher.UIThread.RunJobs();
+            shell.NavigateTo("Assistant");
+            Dispatcher.UIThread.RunJobs();
         }
         finally
         {

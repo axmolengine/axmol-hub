@@ -1561,6 +1561,16 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     internal Func<string, ToolRisk>? RiskOverrideForCheck { get; set; }
 
+    /// <summary>The app-wide default, normalized: what a session with no override of its own answers with. The
+    /// composer needs it to say which mode "follow the default" would actually give it.</summary>
+    public string DefaultApprovalMode
+        => ToolApprovalModes.Normalize(PreferencesProvider?.Invoke()?.ToolApprovalMode);
+
+    /// <summary>Tells the shell that an app-wide setting the assistant reads has moved. The assistant page is
+    /// cached and navigation does not reload it, so without this a surface showing the effective permission
+    /// mode keeps reporting the previous default until something else happens to repaint it.</summary>
+    public void NotifyAppSettingsChanged() => Changed?.Invoke();
+
     /// <summary>
     /// The permission mode one session answers under: its own override, else the app default, else ask. A
     /// session with no setting is not a session with no guard.

@@ -121,6 +121,7 @@ public partial class SettingsPage : UserControl
         // The custom URL is committed on focus loss rather than on every keystroke: each commit
         // writes the settings file, and "typed half a URL" is not a state worth persisting.
         DownloadSourcePicker.SelectionChanged += (_, _) => OnDownloadSourceChanged();
+        ToolApprovalPicker.SelectionChanged += (_, _) => OnToolApprovalChanged();
         CustomDownloadSourceBox.LostFocus += (_, _) => OnCustomDownloadSourceChanged();
         ChooseDataDirectoryButton.Click += async (_, _) => await ChooseDataDirectoryAsync();
         ChooseProjectDirectoryButton.Click += async (_, _) => await ChooseProjectDirectoryAsync();
@@ -194,9 +195,11 @@ public partial class SettingsPage : UserControl
         {
             LocalizeThemeItems();
             LocalizeDownloadSourceItems();
+            LocalizeToolApprovalItems();
             SelectLanguage(HubStrings.Language);
             SelectTheme(_preferences.Theme);
             SelectDownloadSource(_preferences.DownloadSource);
+            SelectToolApproval(_preferences.ToolApprovalMode);
             CustomDownloadSourceBox.Text = _preferences.CustomDownloadSource ?? "";
             DataLocation.Text = _workspace.Store.Root;
             DefaultProjectLocation.Text = _preferences.ProjectDirectory ?? HubStrings.Get("NotSelected");
@@ -336,6 +339,76 @@ public partial class SettingsPage : UserControl
     }
 
     private string CustomText => (CustomDownloadSourceBox.Text ?? "").Trim();
+
+    /// <summary>
+    /// Writes the three permission-mode labels. Imperative for the same measured reason as
+    /// <see cref="LocalizeThemeItems"/>: a ComboBoxItem inside <c>Items</c> is not attached to the logical tree
+    /// until the dropdown opens, so <c>DynamicResource</c> resolves empty. Only <c>Content</c> is touched, so
+    /// this cannot re-enter <see cref="OnToolApprovalChanged"/>.
+    /// </summary>
+    private void LocalizeToolApprovalItems()
+    {
+        foreach (var item in ToolApprovalPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } mode && IsToolApprovalMode(tag))
+            {
+                mode.Content = HubStrings.Get(ChatPanel.ToolApprovalModeKey(tag));
+            }
+        }
+    }
+
+    private static bool IsToolApprovalMode(string tag)
+        => tag is ToolApprovalModes.Ask or ToolApprovalModes.Auto or ToolApprovalModes.Full;
+
+    /// <summary>The permission modes declared in XAML, in order. Same contract as <see cref="DeclaredThemes"/>.</summary>
+    internal string[] DeclaredToolApprovalModesForCheck
+        => ToolApprovalPicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
+
+    /// <summary>The selected mode, with an unrecognized value falling back to ask — the same rule the gate uses,
+    /// so the picker cannot offer a setting the runtime would ignore in a different direction.</summary>
+    internal string SelectedToolApprovalModeForCheck
+        => ToolApprovalPicker.SelectedItem is ComboBoxItem { Tag: string tag } && IsToolApprovalMode(tag)
+            ? tag
+            : ToolApprovalModes.Ask;
+
+    internal void SelectToolApproval(string mode)
+    {
+        var normalized = ToolApprovalModes.Normalize(mode);
+        var index = 0;
+        foreach (var item in ToolApprovalPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } && tag == normalized)
+            {
+                ToolApprovalPicker.SelectedIndex = index;
+                return;
+            }
+
+            index++;
+        }
+
+        ToolApprovalPicker.SelectedIndex = 0;
+    }
+
+    /// <summary>The three labels really were written from the text table — a <c>ComboBoxItem</c> in
+    /// <c>Items</c> is the one place a bound resource is known to resolve empty.</summary>
+    internal bool ToolApprovalLabelsAreLocalizedForCheck
+        => ToolApprovalPicker.Items.OfType<ComboBoxItem>()
+            .All(item => item.Content is string text && text.Length > 0);
+
+    private void OnToolApprovalChanged()
+    {
+        if (!_ready) return;
+
+        var mode = SelectedToolApprovalModeForCheck;
+        if (mode == _preferences.ToolApprovalMode) return;
+
+        _preferences.ToolApprovalMode = mode;
+        _preferencesStore.Save(_preferences);
+        // Sessions that follow this default change meaning with it, including the chip on the assistant page
+        // that says so. That page is cached and navigation does not reload it, so this is the only moment the
+        // new default can arrive.
+        _chat.NotifyAppSettingsChanged();
+    }
 
     private bool TrySaveDownloadSource(string source, string custom)
     {

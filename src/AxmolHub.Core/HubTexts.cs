@@ -425,6 +425,20 @@ public static class HubTexts
         ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),
         ["ChatApprovalResolvedDenied"] = ("已拒绝", "Refused"),
         ["ChatApprovalResolvedSuperseded"] = ("未执行（换了话题）", "Not run (the conversation moved on)"),
+        // The permission mode: a standing policy set in Settings, overridden per session in the composer where
+        // the exception is actually being made. Each hint states what the mode lets through, because the three
+        // names alone do not say where the boundary is.
+        ["ChatToolPermission"] = ("工具权限", "Tool permission"),
+        ["ChatToolPermissionFollowFormat"] = ("跟随默认（{0}）", "Follow the default ({0})"),
+        ["ChatToolPermissionFollowHint"] = ("使用设置页里的全局默认", "Use the app-wide default set in Settings"),
+        ["ToolApprovalAsk"] = ("询问审批", "Ask for approval"),
+        ["ToolApprovalAskHint"] = ("除只读查询外，每个操作都先问一次", "Everything except a read asks first"),
+        ["ToolApprovalAuto"] = ("自动审批", "Auto-approve"),
+        ["ToolApprovalAutoHint"] = ("工程内的写入直接执行，运行命令仍要问", "Workspace writes run on their own; running a command still asks"),
+        ["ToolApprovalFull"] = ("完全访问", "Full access"),
+        ["ToolApprovalFullHint"] = ("什么都不再问，包括运行命令", "Nothing asks any more, including running commands"),
+        ["ToolPermission"] = ("工具权限", "Tool permission"),
+        ["ToolPermissionHint"] = ("助手动手之前的默认严格程度。单个会话可以在聊天里改，不影响这里。", "How strict the assistant is by default before it acts. A single session can override this in the chat without changing it here."),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),

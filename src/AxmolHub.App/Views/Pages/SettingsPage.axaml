@@ -117,6 +117,23 @@
         </StackPanel>
       </Border>
 
+      <!-- What the assistant may do without asking. The default belongs here because it is a standing policy
+           across sessions; the per-session override lives in the composer, where the exception is actually
+           being made. Labels are written in code for the same reason as the theme and source lists: a
+           ComboBoxItem in Items is not attached to the logical tree until the dropdown opens. -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock Text="{DynamicResource ToolPermission}" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource ToolPermissionHint}" />
+
+          <ComboBox x:Name="ToolApprovalPicker" HorizontalAlignment="Stretch">
+            <ComboBoxItem Tag="ask" />
+            <ComboBoxItem Tag="auto" />
+            <ComboBoxItem Tag="full" />
+          </ComboBox>
+        </StackPanel>
+      </Border>
+
       <!-- Storage and projects -->
       <Border Classes="card">
         <StackPanel Spacing="18">

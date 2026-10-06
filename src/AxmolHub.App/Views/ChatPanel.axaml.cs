@@ -232,6 +232,11 @@ public partial class ChatPanel : UserControl
             _ => "ChatModeGoal",
         });
         ToolTip.SetTip(ModeIndicatorButton, HubStrings.Get("ChatModeResetHint"));
+        // Full access is the one mode where nothing will ask, so the chip carries that before the first
+        // surprise rather than after it. Only the effective mode matters: a session that follows a permissive
+        // default is in it, whether or not anyone clicked.
+        FullAccessDot.IsVisible = _chat.ActiveConversation is { } session
+                                  && _chat.ApprovalModeFor(session.Id) == ToolApprovalModes.Full;
     }
 
     private void UpdateContextRing()
@@ -279,6 +284,75 @@ public partial class ChatPanel : UserControl
         BuildComposerMenu().ShowAt(AddContextButton);
     }
 
+    /// <summary>
+    /// The session's permission mode, as a section of the composer menu rather than a standing control: it is
+    /// changed rarely and it belongs to one conversation. The first entry is the honest one — "follow the
+    /// default" is a different choice from "ask", even when both currently mean ask.
+    /// </summary>
+    private MenuItem BuildToolPermissionSection(MenuFlyout menu)
+    {
+        var conversation = _chat.ActiveConversation;
+        var section = new MenuItem
+        {
+            Header = HubStrings.Get("ChatToolPermission"),
+            IsEnabled = conversation is not null,
+        };
+        if (conversation is null) return section;
+
+        var current = conversation.ApprovalMode;
+        section.Items.Add(PermissionItem(menu,
+            string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatToolPermissionFollowFormat"),
+                HubStrings.Get(ToolApprovalModeKey(_chat.DefaultApprovalMode))),
+            HubStrings.Get("ChatToolPermissionFollowHint"),
+            checkedItem: current is null,
+            apply: () => _chat.SetApprovalMode(conversation.Id, null)));
+        foreach (var mode in new[] { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full })
+        {
+            section.Items.Add(PermissionItem(menu,
+                HubStrings.Get(ToolApprovalModeKey(mode)),
+                HubStrings.Get(ToolApprovalModeHintKey(mode)),
+                checkedItem: current == mode,
+                apply: () => _chat.SetApprovalMode(conversation.Id, mode)));
+        }
+
+        return section;
+    }
+
+    private MenuItem PermissionItem(MenuFlyout menu, string label, string hint, bool checkedItem, Action apply)
+    {
+        var item = new MenuItem
+        {
+            Header = label,
+            ToggleType = MenuItemToggleType.Radio,
+            IsChecked = checkedItem,
+            GroupName = "tool-permission",
+        };
+        // The hint is what says where the boundary is; the three names alone do not, because the difference
+        // between the modes is which actions each one lets through unasked.
+        ToolTip.SetTip(item, hint);
+        item.Click += (_, _) =>
+        {
+            apply();
+            menu.Hide();
+        };
+        return item;
+    }
+
+    internal static string ToolApprovalModeKey(string mode) => mode switch
+    {
+        ToolApprovalModes.Auto => "ToolApprovalAuto",
+        ToolApprovalModes.Full => "ToolApprovalFull",
+        _ => "ToolApprovalAsk",
+    };
+
+    internal static string ToolApprovalModeHintKey(string mode) => mode switch
+    {
+        ToolApprovalModes.Auto => "ToolApprovalAutoHint",
+        ToolApprovalModes.Full => "ToolApprovalFullHint",
+        _ => "ToolApprovalAskHint",
+    };
+
     private MenuFlyout BuildComposerMenu()
     {
         var menu = new MenuFlyout();
@@ -306,6 +380,8 @@ public partial class ChatPanel : UserControl
             };
             menu.Items.Add(item);
         }
+
+        menu.Items.Add(BuildToolPermissionSection(menu));
 
         var addFolder = new MenuItem { Header = HubStrings.Get("ChatAddLocalFolder") };
         addFolder.Click += async (_, _) => await AddLocalFolderAsync();
@@ -1604,6 +1680,36 @@ public partial class ChatPanel : UserControl
         => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
             .All(item => item.ToggleType == MenuItemToggleType.CheckBox);
     internal string? SelectedComposerModeForCheck => _selectedComposerMode;
+
+    // ── Tool permission section ──
+    // Each probe builds a fresh menu, which is the same object a user's click would have arrived on: the
+    // section is composed from the session as it stands, not from state this view keeps.
+    private MenuItem? ToolPermissionSection
+        => BuildComposerMenu().Items.OfType<MenuItem>()
+            .FirstOrDefault(item => item.Header as string == HubStrings.Get("ChatToolPermission"));
+
+    internal string[] ToolPermissionLabelsForCheck
+        => ToolPermissionSection?.Items.OfType<MenuItem>()
+            .Select(item => item.Header as string ?? "").ToArray() ?? [];
+
+    internal int ToolPermissionCheckedCountForCheck
+        => ToolPermissionSection?.Items.OfType<MenuItem>().Count(item => item.IsChecked) ?? -1;
+
+    internal bool ToolPermissionItemsAreRadioWithHintsForCheck
+        => ToolPermissionSection?.Items.OfType<MenuItem>().All(item =>
+            item.ToggleType == MenuItemToggleType.Radio
+            && ToolTip.GetTip(item) is string tip && tip.Length > 0) == true;
+
+    /// <summary>Clicks one entry of the permission section, in the order the menu shows them.</summary>
+    internal bool SelectToolPermissionForCheck(int index)
+    {
+        if (ToolPermissionSection?.Items.OfType<MenuItem>().ElementAtOrDefault(index) is not { } item) return false;
+        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        return true;
+    }
+
+    internal bool FullAccessDotVisibleForCheck => FullAccessDot.IsVisible;
+    internal (double Width, double Height) FullAccessDotSizeForCheck => (FullAccessDot.Width, FullAccessDot.Height);
 
     /// <summary>True when the round button currently shows the stop square. Compared by geometry identity
     /// rather than by string, because the icons are resolved from the same cached resource.</summary>

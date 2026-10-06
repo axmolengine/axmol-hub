@@ -301,6 +301,13 @@
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
+    <!-- The full-access marker on the model chip: six pixels and no label, because what it marks is the chip
+         the model name already lives on. -->
+    <Style Selector="Ellipse.chip-warning">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="Height" Value="6" />
+      <Setter Property="Fill" Value="{DynamicResource Hub.Danger}" />
+    </Style>
     <Style Selector="ComboBox.composer-choice">
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="9,4" />
@@ -517,6 +524,10 @@
               <Button x:Name="ModelPicker" Classes="chip model-picker"
                       HorizontalAlignment="Left" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                  <!-- Full access is the one mode where nothing will ask, so the chip says that before the
+                       first surprise rather than after it. -->
+                  <Ellipse x:Name="FullAccessDot" Classes="chip-warning" IsVisible="False"
+                           VerticalAlignment="Center" />
                   <TextBlock x:Name="SelectedModelLabel" MaxWidth="130"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                   <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="76"
