@@ -655,6 +655,99 @@ if (args.Contains("--check-ai-sessions"))
     Console.WriteLine("PASS: ChatPipeline propagates cancellation.");
     return;
 }
+if (args.Contains("--check-ai-context"))
+{
+    // The diff is what the user approves, so headers and caps are asserted as text: a wrong hunk header is not
+    // cosmetic, it is a preview that does not describe what lands on disk.
+    if (FileDiff.Unified("same\n", "same\n", "a.txt").Length != 0)
+        throw new Exception("Identical text produced a diff.");
+
+    var created = FileDiff.Unified("", "one\ntwo\n", "src/new.cpp");
+    if (!created.Contains("--- /dev/null") || !created.Contains("+++ b/src/new.cpp")
+        || !created.Contains("@@ -0,0 +1,2 @@") || !created.Contains("+one") || !created.Contains("+two"))
+        throw new Exception($"A created file did not diff as a pure addition:{Environment.NewLine}{created}");
+
+    var deleted = FileDiff.Unified("one\ntwo\n", "", "src/gone.cpp");
+    if (!deleted.Contains("+++ /dev/null") || !deleted.Contains("@@ -1,2 +0,0 @@") || !deleted.Contains("-one"))
+        throw new Exception($"A deleted file did not diff as a pure removal:{Environment.NewLine}{deleted}");
+
+    var nine = string.Join('\n', Enumerable.Range(1, 9).Select(index => $"line{index}")) + "\n";
+    var middle = FileDiff.Unified(nine, nine.Replace("line5\n", "LINE5\n"), "src/a.cpp");
+    if (!middle.Contains("@@ -2,7 +2,7 @@") || !middle.Contains("-line5") || !middle.Contains("+LINE5")
+        || middle.Split('\n').Count(line => line.StartsWith(' ')) != 6)
+        throw new Exception($"A one-line edit did not produce one hunk with three context lines each side:{Environment.NewLine}{middle}");
+
+    var crlf = FileDiff.Unified("a\r\nb\r\nc\r\n", "a\r\nB\r\nc\r\n", "src/crlf.cpp");
+    if (crlf.Contains('\r') || !crlf.Contains("-b") || !crlf.Contains("+B"))
+        throw new Exception($"A CRLF file leaked carriage returns into the diff:{Environment.NewLine}{crlf.Replace("\r", "\\r")}");
+
+    var twenty = string.Join('\n', Enumerable.Range(1, 20).Select(index => $"l{index}")) + "\n";
+    var twoEdits = twenty.Replace("l3\n", "L3\n").Replace("l18\n", "L18\n");
+    if (FileDiff.Unified(twenty, twoEdits, "src/b.cpp").Split("@@").Length - 1 != 4)
+        throw new Exception("Two distant edits did not produce two hunks.");
+
+    var huge = FileDiff.Unified(
+        string.Join('\n', Enumerable.Range(1, 5000).Select(index => $"old{index}")) + "\n",
+        string.Join('\n', Enumerable.Range(1, 5000).Select(index => $"new{index}")) + "\n",
+        "src/huge.cpp");
+    if (!huge.Contains("@@ -1,5000 +1,5000 @@") || !huge.Contains("more changed lines") || huge.Split('\n').Length > 63)
+        throw new Exception($"A whole-file rewrite was not capped ({huge.Split('\n').Length} lines).");
+
+    // The prefix/suffix trim is what keeps a small edit inside the edit-script bound. Without it this degrades
+    // to "the file was rewritten", which is the negative control for the assertion below.
+    var big = string.Join('\n', Enumerable.Range(1, 2000).Select(index => $"row{index}")) + "\n";
+    if (!FileDiff.Unified(big, big.Replace("row1000\n", "ROW1000\n"), "src/big.cpp").Contains("@@ -997,7 +997,7 @@"))
+        throw new Exception("A one-line edit in a 2000-line file lost its hunk.");
+    Console.WriteLine("PASS: the unified diff names its hunks correctly and stays inside the preview cap.");
+
+    // An independent recount is the oracle: CutPoint and SplitsToolCall must agree with a second, dumb
+    // implementation at every boundary, or one of them is reasoning about a shape the other does not handle.
+    static bool OrphanCallBefore(IReadOnlyList<ChatTurn> messages, int cut)
+    {
+        for (var i = 0; i < cut; i++)
+        {
+            if (messages[i].Role != ChatRoles.Assistant || messages[i].ToolCallId is not { Length: > 0 } callId) continue;
+            var answered = false;
+            for (var j = 0; j < cut; j++)
+                if (messages[j].Role == ChatRoles.Tool && messages[j].ToolCallId == callId) { answered = true; break; }
+            if (!answered) return true;
+        }
+        return false;
+    }
+
+    var transcript = new List<ChatTurn> { ChatTurn.User("修一下构建") };
+    for (var step = 0; step < 6; step++)
+    {
+        transcript.Add(ChatTurn.FunctionCall($"c{step}", "read_file", """{"path":"a.cpp"}"""));
+        transcript.Add(ChatTurn.FunctionResult($"c{step}", "ok"));
+        transcript.Add(ChatTurn.Assistant($"第 {step} 步做完了"));
+    }
+    for (var keep = 0; keep <= 6; keep++)
+    {
+        var cut = ContextCompression.CutPoint(transcript, keep);
+        if (cut > transcript.Count - keep) throw new Exception($"The cut kept fewer than the requested {keep} turns.");
+        if (OrphanCallBefore(transcript, cut)) throw new Exception($"keepRecent={keep} archived an unanswered tool call.");
+    }
+    for (var boundary = 1; boundary < transcript.Count; boundary++)
+        if (ContextCompression.SplitsToolCall(transcript, boundary) != OrphanCallBefore(transcript, boundary))
+            throw new Exception($"SplitsToolCall disagreed with the oracle at cut {boundary}.");
+
+    // The case that matters: "everything but the newest four" lands between a call and its result, and the cut
+    // has to walk back. This is exactly what the workspace's one-step backoff cannot do.
+    var pairStraddling = new List<ChatTurn>
+    {
+        ChatTurn.User("看一下"), ChatTurn.FunctionCall("c0", "read_file", "{}"), ChatTurn.FunctionResult("c0", "ok"),
+        ChatTurn.User("再看"), ChatTurn.FunctionCall("c1", "read_file", "{}"), ChatTurn.FunctionResult("c1", "ok"),
+    };
+    if (!OrphanCallBefore(pairStraddling, pairStraddling.Count - 4))
+        throw new Exception("The fixture no longer straddles a call/result pair, so it proves nothing.");
+    if (ContextCompression.CutPoint(pairStraddling, 4) != 1)
+        throw new Exception($"The cut did not walk back off the tool call (landed at {ContextCompression.CutPoint(pairStraddling, 4)}).");
+    if (ContextCompression.CutPoint([], 4) != 0 || ContextCompression.CutPoint([ChatTurn.User("hi")], 4) != 0)
+        throw new Exception("A short transcript did not collapse to a zero cut.");
+    Console.WriteLine("PASS: the compression cut never archives half of a tool call.");
+    return;
+}
 if (args.Contains("--check-ai-workspace"))
 {
     // The sandbox is a pure function over strings plus one link check, so it is asserted here rather than
