@@ -526,8 +526,14 @@ public partial class ShellCheckWindow : Window
             "用户消息悬停操作栏提供复制图标与编辑图标");
         Check(panel.BubbleActionBarOpacity(0) == 0,
             "用户消息操作栏未悬停时保持隐藏");
-        Check(panel.BubbleHasAction(1, "CopyMessage") && panel.BubbleHasAction(1, "RegenerateMessage") && panel.BubbleHasAction(1, "ContinueReply"),
-            "最后一条助手消息气泡提供复制 / 重新生成 / 继续操作");
+        Check(panel.BubbleHasIconAction(1, "CopyMessage") && panel.BubbleHasIconAction(1, "RegenerateMessage")
+              && panel.BubbleHasIconAction(1, "BranchFromHere") && panel.BubbleIconActionCount(1) == 3
+              && !panel.BubbleHasAction(1, "ContinueReply") && !panel.BubbleHasAction(1, "DeleteMessage"),
+            "最后一条助手消息只有复制 / 重新生成 / 分叉三个图标，继续与删除已退出操作条（实际 "
+            + panel.BubbleIconActionCount(1) + " 个）");
+        Check(HubTexts.Get("BranchFromHere", HubTexts.ChineseLanguage) == "从此处创建分支任务"
+              && HubTexts.Get("BranchFromHere", HubTexts.EnglishLanguage) == "Branch a new task from here",
+            "分叉操作的悬停提示支持中英文");
         Check(!string.IsNullOrWhiteSpace(panel.MessageTimestampTextForCheck(0))
               && panel.MessageTimestampTooltipForCheck(0)
                  == opsConversation.Messages[0].At.ToLocalTime().ToString(
@@ -535,6 +541,22 @@ public partial class ShellCheckWindow : Window
               && panel.MessageTimestampTextForCheck(1) is null,
             "用户消息操作条显示相对时间，悬停提示为完整本地时间，助手消息不重复显示");
         Check(panel.MessageActionCount > 0, "消息操作条渲染进消息流（实际 " + panel.MessageActionCount + " 个按钮）");
+
+        // A tool exchange still renders as a bubble but must carry no action bar at all: it is not a readable
+        // message, and acting on one half of a call/result pair orphans the other half.
+        opsConversation.Messages.Add(ChatTurn.FunctionCall("call_check", "get_projects", "{}"));
+        opsConversation.Messages.Add(ChatTurn.FunctionResult("call_check", "[]"));
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(panel.BubbleActionBarOpacity(2) == -1 && panel.BubbleActionBarOpacity(3) == -1
+              && panel.BubbleIconActionCount(2) == 0 && panel.BubbleIconActionCount(3) == 0,
+            "工具调用与工具结果气泡不带任何操作条（实际 opacity "
+            + panel.BubbleActionBarOpacity(2) + " / " + panel.BubbleActionBarOpacity(3) + "）");
+        opsConversation.Messages.RemoveRange(opsConversation.Messages.Count - 2, 2);
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
         Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
               && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
             "消息操作文案支持中英文");

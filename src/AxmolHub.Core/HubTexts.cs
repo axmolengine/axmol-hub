@@ -416,6 +416,7 @@ public static class HubTexts
         ["EditMessageTitle"] = ("编辑消息", "Edit message"),
         ["EditMessageConfirm"] = ("编辑后将删除该消息之后的全部对话，并重新生成回复。", "Editing removes everything after this message and generates a new reply."),
         ["RegenerateMessage"] = ("重新生成", "Regenerate"),
+        ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
         ["ContinueReply"] = ("继续", "Continue"),
         ["ContinueInstruction"] = ("请继续。", "Please continue."),
         ["MessageTimeJustNow"] = ("刚刚", "now"),

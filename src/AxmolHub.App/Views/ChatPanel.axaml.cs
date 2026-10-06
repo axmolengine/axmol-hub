@@ -571,7 +571,12 @@ public partial class ChatPanel : UserControl
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
 
-        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, index, turn.Role, turn.Text, isLast, turn.At));
+        // A function-call or tool-result turn gets no action bar: it is not a readable message, and acting on
+        // half of a call/result pair orphans the other half (the pipeline sends them to the provider as one
+        // exchange). `index` is the only thing that gates the bar, so nulling it here leaves stored indexes
+        // untouched for every other turn.
+        var actionableIndex = turn.ToolCallId is { Length: > 0 } ? (int?)null : index;
+        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, actionableIndex, turn.Role, turn.Text, isLast, turn.At));
         _renderedCount++;
 
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
@@ -675,13 +680,10 @@ public partial class ChatPanel : UserControl
         }
         else
         {
-            bar.Children.Add(ActionButton("CopyMessage", () => CopyToClipboard(text)));
+            bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
             if (isLast)
-            {
-                bar.Children.Add(ActionButton("RegenerateMessage", () => _ = RegenerateAsync()));
-                bar.Children.Add(ActionButton("ContinueReply", () => _ = ContinueAsync()));
-            }
-            bar.Children.Add(ActionButton("DeleteMessage", () => _ = DeleteMessageAsync(index)));
+                bar.Children.Add(IconActionButton("RegenerateMessage", "Hub.Icon.Refresh", () => _ = RegenerateAsync()));
+            bar.Children.Add(IconActionButton("BranchFromHere", "Hub.Icon.Branch", () => BranchFromHere(index)));
         }
 
         return bar;
@@ -931,6 +933,15 @@ public partial class ChatPanel : UserControl
 
         AppendPlainBubble(HubStrings.Get("ContinueInstruction"), fromUser: true);
         await StreamReplyAsync(token => _chat.ContinueAsync(HubStrings.Get("ContinueInstruction"), token));
+    }
+
+    /// <summary>Forks the conversation at this message into a fresh session and switches to it. Refused while
+    /// a reply is streaming, because the history is still growing and the cut point would not be the one that
+    /// was clicked. The message flow and the sidebar both repaint through the workspace's Changed event.</summary>
+    private void BranchFromHere(int index)
+    {
+        if (_send is not null) return;
+        _chat.BranchFrom(index);
     }
 
     private async Task EditMessageAsync(int index, string text)
@@ -1454,6 +1465,13 @@ public partial class ChatPanel : UserControl
             .GetLogicalDescendants().OfType<Button>()
             .Any(button => button.Classes.Contains("message-action-icon")
                            && string.Equals(button.Tag?.ToString(), textKey, StringComparison.Ordinal)) == true;
+
+    /// <summary>How many icon actions one bubble offers. Counted rather than sampled, because a button that
+    /// quietly comes back is exactly the regression this row has already had once.</summary>
+    internal int BubbleIconActionCount(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<Button>()
+            .Count(button => button.Classes.Contains("message-action-icon")) ?? -1;
 
     internal double BubbleActionBarOpacity(int visibleIndex)
         => MessageRows.ElementAtOrDefault(visibleIndex)?
