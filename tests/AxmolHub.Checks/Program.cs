@@ -1106,6 +1106,202 @@ if (args.Contains("--check-ai-workspace"))
     Directory.Delete(guardRoot, recursive: true);
     return;
 }
+if (args.Contains("--check-ai-tools"))
+{
+    // The tools are the part that touches the disk, so they are asserted here rather than through a window.
+    // Every refusal is model-facing: one that does not say what to do instead becomes a retry loop nobody sees.
+    var toolRoot = Path.Combine(root, "tools");
+    if (Directory.Exists(toolRoot)) Directory.Delete(toolRoot, recursive: true);
+    var workspace = Path.Combine(toolRoot, "ws");
+    var dataRoot = Path.Combine(toolRoot, "data");
+    var toolEngineRoot = Path.Combine(toolRoot, "engine");
+    Directory.CreateDirectory(Path.Combine(workspace, "src"));
+    Directory.CreateDirectory(dataRoot);
+    Directory.CreateDirectory(toolEngineRoot);
+    File.WriteAllText(Path.Combine(workspace, "src", "main.cpp"), "int main()\n{\n    return 0;\n}\n");
+    File.WriteAllBytes(Path.Combine(workspace, "src", "logo.png"), [0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0xFF]);
+    File.WriteAllText(Path.Combine(workspace, "src", "long.txt"),
+        string.Concat(Enumerable.Range(1, 50).Select(index => $"line-{index:D2}\n")));
+
+    var guards = new WorkspaceGuards(dataRoot, [toolEngineRoot]);
+    var log = new HubLog(Path.Combine(toolRoot, "log"));
+    string? appliedRoot = null;
+    var scope = new WorkspaceToolScope(workspace, guards, dataRoot, "conversation-1", ["SUPERSECRET"], log,
+        path =>
+        {
+            appliedRoot = path;
+            return Task.FromResult($"Workspace set to {path}.");
+        });
+    var tools = new WorkspaceTools(scope);
+    var homeless = new WorkspaceTools(new WorkspaceToolScope(null, guards, dataRoot, "c", [], null, null));
+
+    // ── read_file: a window, no line numbers, and one sentence per way it can fail ──
+    var whole = tools.ReadFile("src/main.cpp");
+    if (!whole.Contains("lines 1-4 of 4 (UTF-8)") || !whole.Contains("int main()")
+        || whole.Contains("\n1\t", StringComparison.Ordinal) || whole.Contains("\n1|", StringComparison.Ordinal))
+        throw new Exception($"read_file did not return the file as a plain window:{Environment.NewLine}{whole}");
+    var window = tools.ReadFile("src/long.txt", 10, 5);
+    if (!window.Contains("lines 10-14 of 50") || !window.Contains("line-10") || !window.Contains("line-14")
+        || window.Contains("line-15") || !window.Contains("offset=15"))
+        throw new Exception($"The read window was wrong:{Environment.NewLine}{window}");
+    if (!homeless.ReadFile("a.txt").Contains("no workspace directory", StringComparison.Ordinal))
+        throw new Exception("read_file without a workspace did not say so.");    if (!tools.ReadFile("../outside.txt").Contains("Refused", StringComparison.Ordinal)
+        || !tools.ReadFile("src/logo.png").Contains("not UTF-8", StringComparison.Ordinal))
+        throw new Exception("read_file let an escaping path or a binary through.");
+    File.WriteAllText(Path.Combine(workspace, "src", "huge.txt"), new string('x', WorkspaceTools.MaxReadFileBytes + 16));
+    if (!tools.ReadFile("src/huge.txt").Contains("read limit", StringComparison.Ordinal))
+        throw new Exception("An oversized file was read whole instead of being refused with a window hint.");
+    Console.WriteLine("PASS: read_file returns a window of text only, and says what to do in every refusal.");
+
+    // ── file_write: the five verdicts, the pre-image, and the same guards ──
+    var edited = tools.FileWrite("src/main.cpp", "    return 0;", "    return 1;");
+    if (!edited.Contains("Edited") || !File.ReadAllText(Path.Combine(workspace, "src", "main.cpp")).Contains("return 1;"))
+        throw new Exception($"An anchored edit did not land:{Environment.NewLine}{edited}");
+    var undoPath = edited.Contains("Undo copy: ") ? edited[(edited.IndexOf("Undo copy: ", StringComparison.Ordinal) + 11)..].Trim() : "";
+    if (undoPath.Length == 0 || !File.Exists(undoPath) || !File.ReadAllText(undoPath).Contains("return 0;"))
+        throw new Exception($"The pre-image was not kept before the write ('{undoPath}').");
+    if (!tools.FileWrite("src/notes.md", "", "# 记录\n").Contains("Created"))
+        throw new Exception("An empty anchor did not create the file.");
+    if (!tools.FileWrite("src/main.cpp", "不存在的锚点", "x").Contains("was not found"))
+        throw new Exception("A missing anchor was not reported as NotFound.");
+    File.WriteAllText(Path.Combine(workspace, "src", "twice.txt"), "dup\ndup\n");
+    if (!tools.FileWrite("src/twice.txt", "dup", "one").Contains("matched 2 places"))
+        throw new Exception("An anchor matching twice was not reported as Ambiguous.");
+    if (!tools.FileWrite("src/main.cpp", "    return 1;", "    return 1;").Contains("identical"))
+        throw new Exception("A no-op edit was not reported as Unchanged.");
+    if (!tools.FileWrite("src/main.cpp", "", "whole file").Contains("already exists"))
+        throw new Exception("An empty anchor against an existing file did not refuse to overwrite it.");
+    if (!tools.FileWrite("src/tool.exe", "", "MZ").Contains("not a text file")
+        || !tools.FileWrite("../escape.cpp", "a", "b").Contains("Refused"))
+        throw new Exception("file_write ignored the write allowlist or the sandbox.");
+    if (File.ReadAllText(Path.Combine(workspace, "src", "twice.txt")) != "dup\ndup\n")
+        throw new Exception("A refused edit changed the file anyway.");
+
+    var undoRoot = ChatUndoStore.DirectoryFor(dataRoot, "conversation-1")!;
+    for (var index = 0; index < ChatUndoStore.MaxFiles + 10; index++)
+        ChatUndoStore.Store(dataRoot, "conversation-1", $"file-{index:D3}.txt", "content");
+    if (Directory.GetFiles(undoRoot).Length > ChatUndoStore.MaxFiles)
+        throw new Exception($"The undo directory grew past its bound ({Directory.GetFiles(undoRoot).Length} files).");
+    if (ChatUndoStore.Store(null, "conversation-1", "a.txt", "x").Stored
+        || ChatUndoStore.Store(dataRoot, "", "a.txt", "x").Stored)
+        throw new Exception("An undo copy was written with no data root or no conversation.");
+    Console.WriteLine("PASS: file_write edits once, keeps the pre-image, and leaves the file alone on every refusal.");
+
+    // ── run_command: the header, redaction, both ends of a long output, and the idle timeout ──
+    var echoed = await tools.RunCommand("echo key=SUPERSECRET");
+    if (!echoed.Contains("cwd: ") || !echoed.Contains(workspace) || !echoed.Contains("exit: 0"))
+        throw new Exception($"The command result did not name its shell, directory and exit code:{Environment.NewLine}{echoed}");
+    if (echoed.Contains("SUPERSECRET", StringComparison.Ordinal) || !echoed.Contains("[REDACTED]", StringComparison.Ordinal))
+        throw new Exception("A secret reached the transcript instead of being redacted.");
+    if (!echoed.Contains($"full output in {log.FilePath}", StringComparison.Ordinal))
+        throw new Exception("A truncated-by-policy result did not point at the log that has the whole thing.");
+
+    File.WriteAllText(Path.Combine(workspace, "src", "big.txt"),
+        string.Concat(Enumerable.Range(1, 4000).Select(index => $"row-{index:D4} padding padding padding\n")));
+    var verbose = await tools.RunCommand(OperatingSystem.IsWindows() ? "Get-Content src/big.txt" : "cat src/big.txt");
+    if (!verbose.Contains("characters of output omitted") || !verbose.Contains("row-0001") || !verbose.Contains("row-4000"))
+        throw new Exception($"A long output was not shaped to both ends:{Environment.NewLine}{verbose[..Math.Min(400, verbose.Length)]}");
+
+    var stalled = await tools.RunCommand(OperatingSystem.IsWindows() ? "Start-Sleep -Seconds 20" : "sleep 20", 1);
+    if (!stalled.Contains("killed after 1s", StringComparison.Ordinal))
+        throw new Exception($"An idle command was not killed by its timeout:{Environment.NewLine}{stalled}");
+    if (!(await homeless.RunCommand("echo hi")).Contains("no workspace directory", StringComparison.Ordinal))
+        throw new Exception("run_command without a workspace did not say so.");
+    Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends and dies when idle.");
+
+    // ── set_workspace: choosing the sandbox is itself guarded ──
+    if (!(await tools.SetWorkspace("relative/path")).Contains("not an absolute path", StringComparison.Ordinal)
+        || !(await tools.SetWorkspace(Path.Combine(toolRoot, "nope"))).Contains("does not exist", StringComparison.Ordinal)
+        || !(await tools.SetWorkspace(toolEngineRoot)).Contains("protected location", StringComparison.Ordinal))
+        throw new Exception("set_workspace accepted a relative, a missing or a protected directory.");
+    if (!(await tools.SetWorkspace(workspace)).Contains("Workspace set to") || appliedRoot != Path.GetFullPath(workspace))
+        throw new Exception("A valid directory was not handed to the caller to persist.");
+
+    // ── memory through the same tool surface ──
+    if (!tools.MemoryWrite("project", "build-rules.md", "构建走 1kiss.ps1。", "构建约定", "改构建前先看", "project")
+            .Contains("Saved topics/build-rules.md"))
+        throw new Exception("A project memory write was refused.");
+    if (tools.MemoryRead("project", "build-rules.md") != "构建走 1kiss.ps1。")
+        throw new Exception("Reading back a memory topic did not return its body alone.");
+    if (!tools.MemoryWrite("project", "build-rules.md", "补充一行。", "", "", "", "append").Contains("Saved")
+        || tools.MemoryRead("project", "build-rules.md") != "构建走 1kiss.ps1。\n\n补充一行。")
+        throw new Exception("Appending to a memory topic did not keep what was there.");
+    if (!tools.MemoryRead("project", "AXHUB.md").Contains("构建约定"))
+        throw new Exception("The derived project index was not readable through the tool.");
+    if (!tools.MemoryWrite("global", "prefers-chinese.md", "回复用中文。", "语言偏好", "always", "user").Contains("Saved"))
+        throw new Exception("A global memory write was refused with no workspace bound.");
+    if (!tools.MemoryRead("neither", "x.md").Contains("neither project nor global")
+        || !tools.MemoryWrite("project", "../evil.md", "x").Contains("not a memory topic name")
+        || !homeless.MemoryWrite("project", "x.md", "内容").Contains("no workspace directory", StringComparison.Ordinal))
+        throw new Exception("The memory tools accepted a bad scope, a traversing name or a missing workspace.");
+    Console.WriteLine("PASS: the memory tools write both scopes, append, and refuse a bad name or scope.");
+
+    // ── the frozen card text for every tool ──
+    string Preview(string name, string json)
+        => ToolPreviews.PreviewFor(name, json, scope, [workspace]);
+    var writePreview = Preview("file_write", """{"path":"src/main.cpp","old_string":"    return 1;","new_string":"    return 2;"}""");
+    if (!writePreview.Contains("--- a/src/main.cpp") || !writePreview.Contains("+    return 2;")
+        || !writePreview.Contains("-    return 1;"))
+        throw new Exception($"A write did not preview as a diff:{Environment.NewLine}{writePreview}");
+    if (!Preview("file_write", """{"path":"../escape.cpp","old_string":"a","new_string":"b"}""").Contains("Refused"))
+        throw new Exception("A write outside the workspace previewed as something other than a refusal.");
+    if (!Preview("file_write", """{"path":"src/twice.txt","old_string":" absent ","new_string":"x"}""").Contains("was not found"))
+        throw new Exception("A write that would change nothing previewed as a diff.");
+    var commandPreview = Preview("run_command", """{"command":"cmake --build build","timeout_seconds":60}""");
+    if (!commandPreview.Contains("cmake --build build") || !commandPreview.Contains(workspace)
+        || !commandPreview.Contains("idle timeout 60s"))
+        throw new Exception($"A command did not preview with its shell, directory and timeout:{Environment.NewLine}{commandPreview}");
+    var workspacePreview = Preview("set_workspace", JsonSerializer.Serialize(new { path = workspace }));
+    if (!workspacePreview.Contains("exists") || !workspacePreview.Contains("registered Hub project"))
+        throw new Exception($"A workspace preview did not state the facts:{Environment.NewLine}{workspacePreview}");
+    if (!Preview("set_workspace", JsonSerializer.Serialize(new { path = toolEngineRoot })).Contains("protected location"))
+        throw new Exception("A protected directory did not preview as one.");
+    if (!Preview("memory_write", """{"scope":"project","name":"a.md","mode":"append","content":"内容"}""")
+            .Contains("memory_append · project · a.md"))
+        throw new Exception("A memory write did not preview with its scope, name and mode.");
+    if (Preview("read_file", """{"path":"src/main.cpp"}""") != "read_file · src/main.cpp"
+        || Preview("memory_read", """{"scope":"global","name":"MEMORY.md"}""") != "memory_read · global · MEMORY.md"
+        || Preview("没登记过的工具", "{}") != "没登记过的工具")
+        throw new Exception("A read-only or unknown call did not preview as itself.");
+    if (ToolPreviews.PreviewFor("file_write", "{ not json", scope) is not { Length: > 0 })
+        throw new Exception("Arguments that do not parse produced no card text at all.");
+    Console.WriteLine("PASS: every tool previews what approving it would actually do.");
+
+    // ── the wire shape: every body binds, and every parameter name is the one the model is told to send ──
+    // AIFunctionFactory exports parameters by name and applies no naming policy to them, so a serializer-level
+    // snake_case policy renames the schema without renaming what the invoker looks for. The mismatch is invisible
+    // at build time and arrives at run time as "missing required parameter", which reads like a model bug.
+    var bound = new Dictionary<string, AIFunction>(StringComparer.Ordinal);
+    foreach (var (wireName, body) in new (string, Delegate)[]
+             {
+                 ("read_file", (Delegate)tools.ReadFile), ("file_write", tools.FileWrite),
+                 ("run_command", tools.RunCommand), ("set_workspace", tools.SetWorkspace),
+                 ("memory_read", tools.MemoryRead), ("memory_write", tools.MemoryWrite),
+             })
+        bound[wireName] = AIFunctionFactory.Create(body, new AIFunctionFactoryOptions { Name = wireName });
+
+    var schema = string.Join("\n", bound.Values.Select(function => function.JsonSchema.GetRawText()));
+    foreach (var expected in new[] { "old_string", "new_string", "replace_all", "timeout_seconds" })
+        if (!schema.Contains(expected, StringComparison.Ordinal))
+            throw new Exception($"The wire schema does not advertise '{expected}'.");
+    foreach (var leaked in new[] { "oldString", "newString", "replaceAll", "timeoutSeconds" })
+        if (schema.Contains(leaked, StringComparison.Ordinal))
+            throw new Exception($"The wire schema advertises the C# spelling '{leaked}' instead of snake_case.");
+
+    // And the names the schema advertises are the names an invocation actually accepts — the two halves of the
+    // same contract, asserted together because only one of them fails loudly.
+    var boundEdit = await bound["file_write"].InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+    {
+        ["path"] = "src/twice.txt", ["old_string"] = "dup", ["new_string"] = "single", ["replace_all"] = true,
+    }));
+    if (!Convert.ToString(boundEdit)!.Contains("Edited") || File.ReadAllText(Path.Combine(workspace, "src", "twice.txt")) != "single\nsingle\n")
+        throw new Exception($"A call using the schema's own parameter names did not bind ({boundEdit}).");
+    Console.WriteLine("PASS: all six tools bind, and the schema names are the names a call is accepted by.");
+
+    log.Write("self-check finished");
+    Directory.Delete(toolRoot, recursive: true);
+    return;
+}
 if (args.Contains("--check-ai-tool-policy"))
 {
     // The permission model is one pure function over two small enums, so all twelve cells are asserted rather

@@ -30,9 +30,12 @@ public static class FileDiff
         var capped = limits ?? new DiffLimits();
         var edits = Diff(original, updated, capped);
 
+        // Forward slashes in the header whatever the host: a unified diff is a text format with its own
+        // convention, and `--- a/src\main.cpp` would not apply with patch(1) or read as a path anywhere else.
+        var shown = relativePath.Replace(Path.DirectorySeparatorChar, '/');
         var output = new StringBuilder();
-        output.Append(original.Length == 0 ? "--- /dev/null" : $"--- a/{relativePath}").Append('\n');
-        output.Append(updated.Length == 0 ? "+++ /dev/null" : $"+++ b/{relativePath}").Append('\n');
+        output.Append(original.Length == 0 ? "--- /dev/null" : $"--- a/{shown}").Append('\n');
+        output.Append(updated.Length == 0 ? "+++ /dev/null" : $"+++ b/{shown}").Append('\n');
 
         var hunks = Hunks(edits, capped.ContextLines);
         var totalChanges = hunks.Sum(hunk => hunk.Lines.Count(line => line[0] is '-' or '+'));

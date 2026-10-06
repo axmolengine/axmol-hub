@@ -93,9 +93,7 @@ public partial class MainWindow : Window
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
         _workspace.Owner = this;
         _chat = new ChatWorkspace(dataRoot);
-        _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
-        _chat.PreferencesProvider = () => _preferences;
-        _chat.AuditWrite = _workspace.Log.Write;
+        WireChatSeams();
         WireChatRuns();
 
         InitializeComponent();
@@ -210,6 +208,20 @@ public partial class MainWindow : Window
             UpdatePageTitle();
         };
         return panel;
+    }
+
+    /// <summary>
+    /// What the assistant reads from the rest of the app, wired in one place because the workspace is rebuilt
+    /// whenever the data root changes and a seam missed on the rebuild is a silent downgrade: no engine roots
+    /// means engine installs stop being read-only, no log means command output is truncated with nowhere left.
+    /// </summary>
+    private void WireChatSeams()
+    {
+        _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
+        _chat.PreferencesProvider = () => _preferences;
+        _chat.AuditWrite = _workspace.Log.Write;
+        _chat.LogProvider = () => _workspace.Log;
+        _chat.EngineRootsProvider = () => [.. _workspace.State.Engines.Select(engine => engine.Path)];
     }
 
     private ChatWorkspace.HubReadOnlySnapshot CreateReadOnlyChatSnapshot()
@@ -337,9 +349,7 @@ public partial class MainWindow : Window
         // longer current. Rebuilding rather than re-pointing mirrors how the pages are handled.
         _chat.Dispose();
         _chat = new ChatWorkspace(next.Store.Root);
-        _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
-        _chat.PreferencesProvider = () => _preferences;
-        _chat.AuditWrite = _workspace.Log.Write;
+        WireChatSeams();
         WireChatRuns();
         _chatPanel = null;
 

@@ -1066,7 +1066,6 @@ public partial class ShellCheckWindow : Window
     {
         var chat = shell.Chat;
         var savedIdleTimeout = chat.IdleTimeout;
-        var savedRiskOverride = chat.RiskOverrideForCheck;
         var savedPreferencesProvider = chat.PreferencesProvider;
         var readSession = chat.StartConversation();
         var parkSession = chat.StartConversation();
@@ -1090,9 +1089,24 @@ public partial class ShellCheckWindow : Window
                 var id when id == restartSession.Id => restartClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
-            // Hub registers only read-only tools until the write tier ships, so a registered call's blast radius
-            // is overridden below the read-only case: everything downstream of the tier — asking the user,
-            // recording the wait, resuming after it — is the real code path.
+            // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
+            // genuine file_write, so the gate, the frozen diff on the card and the edit that lands on approval are
+            // all the production path rather than a stand-in for one.
+            var workspace = ScratchDirectory.Resolve("approval-workspace");
+            var target = System.IO.Path.Combine(workspace, "note.txt");
+            System.IO.File.WriteAllText(target, "第一行\n第二行\n");
+            var editArguments = new Dictionary<string, object?>
+            {
+                ["path"] = "note.txt",
+                ["old_string"] = "第二行",
+                ["new_string"] = "第二行（已改）",
+            };
+            foreach (var client in new[] { parkClient, denyClient, supersededClient, restartClient })
+                client.Arguments = editArguments;
+            readClient.ToolName = "read_file";
+            readClient.Arguments = new Dictionary<string, object?> { ["path"] = "note.txt" };
+            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession })
+                chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
             var appPreferences = new HubPreferences();
@@ -1113,12 +1127,42 @@ public partial class ShellCheckWindow : Window
                 "清除覆盖后重新跟随应用默认（实际「" + chat.ApprovalModeFor(parkSession.Id) + "」）");
             appPreferences.ToolApprovalMode = ToolApprovalModes.Ask;
 
-            // The tier map itself, asserted next to the stand-in above: a name this build has never heard is the
-            // one least able to vouch for itself, so it lands on the tier that has to ask.
-            Check(ChatTools.RiskOf("get_projects") == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("file_write") == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("没登记过的工具") == ToolRisk.SystemCommand,
-                "只读查询登记为只读，没听过的工具名按系统命令兜底而不是放行");
+            // The tier map itself, asserted next to the calls above: a name this build has never heard is the one
+            // least able to vouch for itself, so it lands on the tier that has to ask.
+            Check(ChatTools.RiskOf("get_projects", null) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("read_file", null) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("file_write", null) == ToolRisk.WorkspaceWrite
+                  && ChatTools.RiskOf("run_command", null) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("set_workspace", null) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("没登记过的工具", null) == ToolRisk.SystemCommand,
+                "只读查询登记为只读，写文件是工作区写，没听过的工具名按系统命令兜底而不是放行");
+            Check(ChatTools.RiskOf("memory_write", """{"scope":"project"}""") == ToolRisk.AssistantNote
+                  && ChatTools.RiskOf("memory_write", """{"scope":"global"}""") == ToolRisk.WorkspaceWrite
+                  && ChatTools.RiskOf("memory_write", null) == ToolRisk.WorkspaceWrite,
+                "记忆笔记按参数分档：项目内免批，写到全局（沙箱之外）要批，参数读不出来时按要批兜底");
+
+            // The wire schema is snake_case because that is what a model emits. A tool registered without the
+            // naming policy advertises `oldString` and the call comes back as "missing required parameter" —
+            // which reads like a model bug, not like a registration bug, so it is pinned here.
+            var agentTools = ChatTools.CreateFor(ChatModes.Agent, new ChatToolScope(
+                chat.HubSnapshotProvider?.Invoke(),
+                new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
+            var schema = string.Join("\n", agentTools.OfType<Microsoft.Extensions.AI.AIFunction>()
+                .Select(tool => tool.JsonSchema.GetRawText()));
+            Check(agentTools.Count == 9
+                  && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Select(tool => tool.Name)
+                      .All(name => name.Contains('_', StringComparison.Ordinal))
+                  && schema.Contains("old_string") && schema.Contains("new_string")
+                  && schema.Contains("replace_all") && schema.Contains("timeout_seconds")
+                  && !schema.Contains("oldString"),
+                "Agent 档注册九个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
+                + agentTools.Count + " 个）");
+            Check(ChatTools.CreateFor(ChatModes.Ask, ChatToolScope.Empty).Count == 0
+                  && ChatTools.CreateFor(ChatModes.Plan, new ChatToolScope(
+                      chat.HubSnapshotProvider?.Invoke(),
+                      new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)))
+                      .All(tool => ChatTools.RiskOf(tool.Name, null) == ToolRisk.ReadOnly),
+                "「询问审批」不给任何工具，「计划」只给只读的那些");
 
             // A read is not a decision: under the strictest mode the read-only tools still run, and the record
             // says nothing was ever asked.
@@ -1139,9 +1183,6 @@ public partial class ShellCheckWindow : Window
             Dispatcher.UIThread.RunJobs();
             Check(panel.PendingApprovalCardsForCheck == 0,
                 "只读调用不在消息流里插审批卡片（没有要问的事就不该出现提问）");
-
-            // Now the same registered call is judged as a write, which is what gives the gate something to stop.
-            chat.RiskOverrideForCheck = name => name == "get_projects" ? ToolRisk.WorkspaceWrite : ToolRisk.ReadOnly;
 
             // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
             // because a decision made after a restart is made against the file, not against memory.
@@ -1170,9 +1211,10 @@ public partial class ShellCheckWindow : Window
             Dispatcher.UIThread.RunJobs();
             Check(panel.PendingApprovalCardsForCheck == 1 && panel.ApprovalCardOnScreenForCheck,
                 "待批准的调用画出占位的可见卡片（实际 " + panel.PendingApprovalCardsForCheck + " 张）");
-            Check(panel.ApprovalCardTextForCheck.Contains("get_projects", StringComparison.Ordinal)
-                  && panel.ApprovalCardTextForCheck.Contains(HubStrings.Get("ChatApprovalArguments"), StringComparison.Ordinal),
-                "卡片说出是哪个工具、并给出它的参数（实际「" + panel.ApprovalCardTextForCheck + "」）");
+            Check(panel.ApprovalCardTextForCheck.Contains("file_write", StringComparison.Ordinal)
+                  && panel.ApprovalCardTextForCheck.Contains("note.txt", StringComparison.Ordinal)
+                  && panel.ApprovalCardTextForCheck.Contains("+第二行（已改）", StringComparison.Ordinal),
+                "卡片说出是哪个工具、并给出它冻结下来的真实 diff（实际「" + panel.ApprovalCardTextForCheck + "」）");
             Check(panel.ApprovalCardActionsForCheck.SequenceEqual(new[]
                       { "ApprovalAllow", "ApprovalAllowAlways", "ApprovalDeny" }, StringComparer.Ordinal),
                 "卡片给出批准 / 总是允许 / 拒绝三个出口（实际 "
@@ -1208,10 +1250,11 @@ public partial class ShellCheckWindow : Window
                       && turn.Role == ChatRoles.Assistant
                       && turn.ApprovalState == ChatApprovalStates.Approved) == true
                   && afterApprove!.Messages.Any(turn => turn.ToolCallId == parkedCallId
-                      && turn.Role == ChatRoles.Tool && turn.Text.StartsWith("[", StringComparison.Ordinal))
+                      && turn.Role == ChatRoles.Tool && turn.Text.Contains("Edited note.txt", StringComparison.Ordinal))
                   && afterApprove.Messages[^1].Text == ApprovalChatClient.Answer,
                 "批准后按原调用执行、真实结果入库、回复接着说完（实际 "
-                + (afterApprove?.Messages.Count ?? -1) + " 条）");
+                + (afterApprove?.Messages.Count ?? -1) + " 条，工具结果「"
+                + (afterApprove?.Messages.FirstOrDefault(turn => turn.Role == ChatRoles.Tool)?.Text ?? "无") + "」）");
             panel.Reload();
             Dispatcher.UIThread.RunJobs();
             Check(panel.PendingApprovalCardsForCheck == 0
@@ -1221,8 +1264,10 @@ public partial class ShellCheckWindow : Window
                 + string.Join(" / ", panel.ApprovalRecordsForCheck) + "）");
             Check(chat.RunFor(parkSession.Id) is null && chat.RunningCount == 0,
                 "批准后的续答跑完即让出运行位（实际仍有 " + chat.RunningCount + " 路）");
-            Check(afterApprove?.AutoApprovedTools.Contains("get_projects") == true,
+            Check(afterApprove?.AutoApprovedTools.Contains("file_write") == true,
                 "「总是允许」作为本会话的授权落进会话文件");
+            Check(System.IO.File.ReadAllText(target).Contains("第二行（已改）", StringComparison.Ordinal),
+                "批准的那一次编辑真的落到了 tmp/ 工作区里的文件上，而不只是写进转录");
 
             // …which is why the next call of the same tool does not ask again.
             parkClient.CallsRemaining = 1;
@@ -1301,7 +1346,10 @@ public partial class ShellCheckWindow : Window
                 ClientOverride = (_, _) => restartClient,
                 HubSnapshotProvider = chat.HubSnapshotProvider,
                 PreferencesProvider = chat.PreferencesProvider,
-                RiskOverrideForCheck = chat.RiskOverrideForCheck,
+                // The guards travel with it: a restarted Hub that forgot which directories are read-only would be
+                // a different, more dangerous program than the one that parked the call.
+                EngineRootsProvider = chat.EngineRootsProvider,
+                LogProvider = chat.LogProvider,
                 AuditWrite = chat.AuditWrite,
             };
             reopened.OpenConversation(restartSession.Id);
@@ -1335,11 +1383,11 @@ public partial class ShellCheckWindow : Window
             // A durable approval is only defensible if the record says who granted it: the same decision made
             // after a restart, by a workspace that never saw the stream, has to show up too.
             var audit = System.IO.File.ReadAllText(shell.Workspace.Log.FilePath);
-            Check(audit.Contains($"Tool approval: always allowed get_projects in \"{parkSession.Title}\"",
+            Check(audit.Contains($"Tool approval: always allowed file_write in \"{parkSession.Title}\"",
                     StringComparison.Ordinal)
-                  && audit.Contains($"Tool approval: refused get_projects in \"{denySession.Title}\"",
+                  && audit.Contains($"Tool approval: refused file_write in \"{denySession.Title}\"",
                       StringComparison.Ordinal)
-                  && audit.Contains($"Tool approval: allowed get_projects in \"{restartSession.Title}\"",
+                  && audit.Contains($"Tool approval: allowed file_write in \"{restartSession.Title}\"",
                       StringComparison.Ordinal),
                 "批准、总是允许、拒绝与重启后的批准各留下一行审计");
 
@@ -1448,7 +1496,6 @@ public partial class ShellCheckWindow : Window
         finally
         {
             reopened?.Dispose();
-            chat.RiskOverrideForCheck = savedRiskOverride;
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
@@ -1515,6 +1562,12 @@ public partial class ShellCheckWindow : Window
         public int CallsRemaining { get; set; } = 1;
         public int Requests { get; private set; }
 
+        /// <summary>The call the fixture asks for. A real write by default: the gate is what is under test, and a
+        /// read-only call would sail through it without proving anything.</summary>
+        public string ToolName { get; set; } = "file_write";
+
+        public Dictionary<string, object?> Arguments { get; set; } = new();
+
         /// <summary>How many times the fixture actually answered. A parked turn attempts a follow-up request and
         /// dies in it, so counting requests would say nothing about whether a reply was produced.</summary>
         public int Answers { get; private set; }
@@ -1537,7 +1590,7 @@ public partial class ShellCheckWindow : Window
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
                     Microsoft.Extensions.AI.ChatRole.Assistant,
                     [new Microsoft.Extensions.AI.FunctionCallContent(
-                        "call-" + Requests, "get_projects", new Dictionary<string, object?>())]);
+                        "call-" + Requests, ToolName, Arguments)]);
             }
             else
             {

@@ -242,7 +242,9 @@ public static class MemoryStore
         return "";
     }
 
-    private static string NoRootMessage(MemoryScope scope) => scope == MemoryScope.Project
+    /// <summary>The sentence a tool answers with when the scope has nowhere to live. Public because the tool
+    /// bodies in <see cref="WorkspaceTools"/> report it, and a refusal has to reach the model verbatim.</summary>
+    public static string NoRootMessage(MemoryScope scope) => scope == MemoryScope.Project
         ? WorkspacePaths.ResultFor(WorkspacePathVerdict.NoWorkspace, "")
         : "Global memory is unavailable because Hub has no data root. Do not retry; tell the user.";
 
