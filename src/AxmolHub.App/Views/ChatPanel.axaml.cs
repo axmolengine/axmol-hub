@@ -241,6 +241,8 @@ public partial class ChatPanel : UserControl
         PermissionChipIcon.Data = ThemeGeometry(ToolApprovalIconKey(permission));
         PermissionChipLabel.Text = HubStrings.Get(ToolApprovalModeKey(permission));
         PermissionChip.Classes.Set("danger", permission == ToolApprovalModes.Full);
+        // With no session on screen there is nothing whose mode to change, and an empty popup reads as a bug.
+        PermissionChip.IsEnabled = _chat.ActiveConversation is not null;
         ToolTip.SetTip(PermissionChip, HubStrings.Get(ToolApprovalModeHintKey(permission)));
     }
 
