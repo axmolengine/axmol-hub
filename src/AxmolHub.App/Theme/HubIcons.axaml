@@ -40,6 +40,12 @@
 
   <StreamGeometry x:Key="Hub.Icon.Chevron">M6.4 9.5H17.6L12 16Z</StreamGeometry>
 
+  <!-- A two-stroke caret for the composer's chips. The filled triangle above is right for a combo box at 11
+       DIP, but stroked at 9–10 its three edges are closer together than the pen is wide, so it reads as a
+       blob. Its bounding box is 11×5.4 centred on 12,12, which is what Stretch="Uniform" needs to keep the
+       caret on the text's middle line. -->
+  <StreamGeometry x:Key="Hub.Icon.Caret">M6.5 9.3L12 14.7L17.5 9.3</StreamGeometry>
+
   <StreamGeometry x:Key="Hub.Icon.Tick">M9.6 16.6L4.4 11.4L2.6 13.2L9.6 20.2L21.4 8.4L19.6 6.6Z</StreamGeometry>
 
   <StreamGeometry x:Key="Hub.Icon.ChevronRight">M9 5L16.5 12L9 19L6.5 16.5L11.5 12L6.5 7.5Z</StreamGeometry>

@@ -316,6 +316,20 @@
     <Style Selector="Button.permission-chip.danger TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
+    <!-- The caret both composer chips carry, so the two read as the same affordance: "this opens a menu".
+         Declared after the permission chip's own Path rules on purpose — the caret keeps its muted colour
+         even when the tier it sits beside is the warning-red one. -->
+    <Style Selector="Path.chip-caret">
+      <Setter Property="Width" Value="10" />
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="StrokeThickness" Value="1.6" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
     <Style Selector="ComboBox.composer-choice">
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="9,4" />
@@ -514,11 +528,14 @@
                         Stretch="Uniform" Fill="Transparent"
                         Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
                         StrokeLineCap="Round" StrokeJoin="Round" />
-                  <Path Classes="mode-indicator-close" Width="13" Height="13"
+                  <!-- The hover replacement for the mode glyph. It is a warning colour because it drops a
+                       choice, but at the size of its neighbour a full 1.7 pen made the two crossing strokes
+                       read as one solid mark, so it is drawn smaller and lighter than the icon it covers. -->
+                  <Path Classes="mode-indicator-close" Width="11" Height="11"
                         HorizontalAlignment="Center" VerticalAlignment="Center"
                         Stretch="Uniform" Data="{StaticResource Hub.Icon.Close}"
                         Fill="Transparent" Stroke="{DynamicResource Hub.DangerText}"
-                        StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round" />
+                        StrokeThickness="1.4" StrokeLineCap="Round" StrokeJoin="Round" />
                   <TextBlock x:Name="ModeIndicatorLabel" Classes="mode-indicator-label"
                              Grid.Column="1" VerticalAlignment="Center" />
                 </Grid>
@@ -532,9 +549,7 @@
                         Fill="Transparent" StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round"
                         VerticalAlignment="Center" />
                   <TextBlock x:Name="PermissionChipLabel" VerticalAlignment="Center" />
-                  <Path Width="9" Height="9" Stretch="Uniform" Data="{StaticResource Hub.Icon.Chevron}"
-                        Fill="Transparent" Stroke="{DynamicResource Hub.TextTertiary}" StrokeThickness="1.8"
-                        VerticalAlignment="Center" />
+                  <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
                 </StackPanel>
               </Button>
             </WrapPanel>
@@ -551,6 +566,7 @@
                   <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="76"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                              Foreground="{DynamicResource Hub.TextTertiary}" />
+                  <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
                 </StackPanel>
               </Button>
               <Button x:Name="SendButton" Classes="send" VerticalAlignment="Center" />

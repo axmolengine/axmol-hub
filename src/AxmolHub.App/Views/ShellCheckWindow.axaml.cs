@@ -203,6 +203,8 @@ public partial class ShellCheckWindow : Window
             "模型选择器以胶囊呈现，而不是占满整行的字段");
         Check(panel.ModelPickerUsesContentWidthForCheck,
             "模型选择器按模型名称内容自适应宽度，不再固定占用过宽空间");
+        Check(panel.ComposerChipsShareLineCaretForCheck,
+            "权限与模型两个胶囊右侧是同一枚两笔画的尖角线，而不是会糊成一团的填充三角");
         Check(panel.ContextRingPrecedesModelForCheck,
             "上下文用量圆环位于模型选择器左侧");
         Check(panel.ComposerPlusCenteredForCheck,
@@ -230,6 +232,12 @@ public partial class ShellCheckWindow : Window
             "模式按钮删除图标使用主题危险色（" + panel.ModeIndicatorCloseColorForCheck + "）");
         Check(panel.ModeIndicatorCloseIsLeftAndCenteredForCheck,
             "模式按钮删除图标位于文字左侧并垂直居中");
+        var closeGlyph = panel.ModeIndicatorCloseGlyphForCheck;
+        Check(closeGlyph is { Extent: > 0 and <= 11.5, Pen: > 0 and <= 1.5 },
+            "模式按钮的叉号比它替换掉的图标更小、笔画更细（"
+            + closeGlyph.Extent.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture)
+            + " DIP / 笔宽 "
+            + closeGlyph.Pen.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) + "）");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
               && panel.SelectedComposerModeForCheck == ChatModes.Plan
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
@@ -607,6 +615,12 @@ public partial class ShellCheckWindow : Window
         // Deliberately no `!` on the editor: if a click ever fails to open it, that has to surface as a FAIL
         // and let the rest of the run continue, not as an exception that truncates the whole report.
         Check(panel.ClickBubbleAction(0, "EditMessage"), "可以再次进入就地编辑");
+        var cancelGlyph = panel.BubbleCancelGlyphForCheck(0);
+        Check(cancelGlyph is { Extent: > 0 and <= 11.5, Pen: > 0 and <= 1.5 },
+            "就地编辑的叉号与输入行那个一样收着（"
+            + cancelGlyph.Extent.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture)
+            + " DIP / 笔宽 "
+            + cancelGlyph.Pen.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) + "）");
         if (panel.BubbleEditorForCheck(0) is { } editor) editor.Text = "就地改写的提问";
         Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Enter)
               && panel.BubbleEditorForCheck(0) is null,

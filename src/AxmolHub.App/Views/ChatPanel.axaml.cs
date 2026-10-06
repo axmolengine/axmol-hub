@@ -1053,15 +1053,19 @@ public partial class ChatPanel : UserControl
             (int)elapsed.TotalDays);
     }
 
-    private static Button IconActionButton(string textKey, string geometryKey, Action onClick)
+    /// <summary>One icon in a message's action row. The size and pen are per-glyph because a cross is two
+    /// strokes meeting in the middle: at the weight an outline icon carries it, the crossing fills its plate
+    /// and reads as one solid mark.</summary>
+    private static Button IconActionButton(
+        string textKey, string geometryKey, Action onClick, double size = 13, double thickness = 1.7)
     {
         var icon = new Avalonia.Controls.Shapes.Path
         {
-            Width = 13,
-            Height = 13,
+            Width = size,
+            Height = size,
             Stretch = Stretch.Uniform,
             Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
+            StrokeThickness = thickness,
             StrokeLineCap = PenLineCap.Round,
             StrokeJoin = PenLineJoin.Round,
         };
@@ -1324,7 +1328,7 @@ public partial class ChatPanel : UserControl
         body.Children.Remove(original);
         body.Children.Insert(0, editor);
         bar.Children.Clear();
-        bar.Children.Add(IconActionButton("Cancel", "Hub.Icon.Close", Close));
+        bar.Children.Add(IconActionButton("Cancel", "Hub.Icon.Close", Close, size: 11, thickness: 1.4));
         bar.Children.Add(IconActionButton("ConfirmEdit", "Hub.Icon.Tick", Commit));
         editor.Focus();
         editor.CaretIndex = editor.Text.Length;
@@ -1752,6 +1756,14 @@ public partial class ChatPanel : UserControl
            && close.VerticalAlignment == VerticalAlignment.Center
            && close.Parent is Grid grid
            && Grid.GetColumn(close) == 0;
+    /// <summary>The cross that replaces the mode glyph on hover, measured. It is deliberately smaller and
+    /// lighter than the icon it covers: two full-weight strokes meeting in the middle read as one solid mark,
+    /// and this one is red on top of that.</summary>
+    internal (double Extent, double Pen) ModeIndicatorCloseGlyphForCheck
+        => ModeIndicatorButton.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("mode-indicator-close")) is { } close
+            ? (Math.Max(close.Width, close.Height), close.StrokeThickness)
+            : (0, 0);
     internal bool ComposerMenuModesHaveIconsForCheck
         => BuildComposerMenu().Items.OfType<MenuItem>().Where(IsComposerModeItem)
             .All(item => item.Header is StackPanel header
@@ -1794,6 +1806,18 @@ public partial class ChatPanel : UserControl
     internal string PermissionChipLabelForCheck => PermissionChipLabel.Text ?? "";
     internal bool PermissionChipMarksDangerForCheck => PermissionChip.Classes.Contains("danger");
     internal bool PermissionChipIconIsDrawnForCheck => PermissionChipIcon.Data is not null;
+
+    /// <summary>Both composer chips have to carry the same caret: on a chip that is otherwise plain text it is
+    /// the only thing saying "this opens a menu", and a stroked triangle at this size collapses into a blob.
+    /// </summary>
+    internal bool ComposerChipsShareLineCaretForCheck => HasLineCaret(PermissionChip) && HasLineCaret(ModelPicker);
+
+    private static bool HasLineCaret(Control anchor)
+        => anchor.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("chip-caret")) is { } caret
+           && ReferenceEquals(caret.Data, ThemeGeometry("Hub.Icon.Caret"))
+           && caret.Fill is ISolidColorBrush { Color.A: 0 }
+           && caret.Stroke is not null;
 
     /// <summary>Opens the permission menu through the same path the chip uses, and hands back an item of it:
     /// the flyout presents in its own top-level, so a screenshot has to be taken from inside.</summary>
@@ -2003,6 +2027,17 @@ public partial class ChatPanel : UserControl
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         return true;
     }
+
+    /// <summary>The in-place editor's cancel cross, measured the same way as the composer's: the two checks
+    /// together are what keep one ✕ from being redrawn heavy while the other was softened.</summary>
+    internal (double Extent, double Pen) BubbleCancelGlyphForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Classes.Contains("message-action-icon")
+                                      && string.Equals(button.Tag?.ToString(), "Cancel", StringComparison.Ordinal))
+            is { Content: Avalonia.Controls.Shapes.Path glyph }
+            ? (Math.Max(glyph.Width, glyph.Height), glyph.StrokeThickness)
+            : (0, 0);
 
     /// <summary>The in-place editor a bubble is hosting right now, or null while it shows plain text.</summary>
     internal TextBox? BubbleEditorForCheck(int visibleIndex)
