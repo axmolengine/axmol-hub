@@ -931,6 +931,25 @@ public partial class ChatPanel : UserControl
     {
         var fromUser = turn.Role == ChatRoles.User;
         var body = new StackPanel { Spacing = 8 };
+
+        // Whose words these are is not optional information: a peer session's message would otherwise read as
+        // something the user typed. The stored turn carries the source's id, so the title is looked up here — and
+        // a session deleted since still gets a line rather than no label at all.
+        if (turn.InjectedFrom is { Length: > 0 } peer)
+        {
+            var name = _chat.SessionTitleFor(peer);
+            var origin = new TextBlock
+            {
+                Classes = { "muted", "peer-origin" },
+                Text = name is { Length: > 0 } titled
+                    ? string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                        HubStrings.Get("ChatPeerOriginFormat"), titled)
+                    : HubStrings.Get("ChatPeerOriginGone"),
+            };
+            ToolTip.SetTip(origin, peer);
+            body.Children.Add(origin);
+        }
+
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
 
         // A call that needed permission carries its own record: the question with its buttons while it waits,
@@ -2259,4 +2278,16 @@ public partial class ChatPanel : UserControl
             .FirstOrDefault(block => block.Classes.Contains("message-timestamp")) is { } label
             ? ToolTip.GetTip(label)?.ToString()
             : null;
+
+    /// <summary>Who a bubble says wrote it — the peer label when the message came from another session, null when
+    /// the user typed it. Asserted as text because an absent label is exactly the misreading it exists to stop.</summary>
+    internal string? PeerOriginTextForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("peer-origin"))?.Text;
+
+    /// <summary>How many bubbles on screen are labelled as another session's. Counted rather than sampled: a
+    /// label on a turn nobody sent is the same bug as one that never appears.</summary>
+    internal int PeerOriginCountForCheck => MessageFlow.GetLogicalDescendants()
+        .OfType<TextBlock>().Count(block => block.Classes.Contains("peer-origin"));
 }

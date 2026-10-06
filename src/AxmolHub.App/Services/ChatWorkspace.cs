@@ -383,6 +383,11 @@ public sealed class ChatWorkspace : IDisposable
     public string? WorkspaceRootFor(string conversationId)
         => (_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.WorkspaceRoot;
 
+    /// <summary>What a session is called, for a surface that has to name a session other than the one on screen —
+    /// a peer message says who wrote it. Null when the session is gone, which the view words for itself.</summary>
+    public string? SessionTitleFor(string conversationId)
+        => (_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.Title;
+
     /// <summary>What the composer's chip reads out: the root of the session on screen, or the one picked while
     /// nothing was on screen. Unlike the permission mode there is no app-wide default to fall back on — a
     /// sandbox is a fact about one job, not a preference.</summary>

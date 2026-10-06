@@ -89,7 +89,7 @@ public partial class ChatSidebar : UserControl
     /// <summary>
     /// Repaints only when the set of running sessions actually changed. A run flips at start and finish, never
     /// per chunk, and rebuilding a list whose dots are identical is how a reload and a change event end up
-    /// chasing each other.
+    /// chasing each other. A queued wake is part of the signature for the same reason: it is a dot on a row.
     /// </summary>
     private void RefreshRunDots()
     {
@@ -98,12 +98,17 @@ public partial class ChatSidebar : UserControl
     }
 
     private string RunSignature() => string.Join(",", _chat.Conversations
-        .Where(summary => _chat.IsRunning(summary.Id))
-        .Select(summary => summary.Id));
+        .Where(summary => _chat.IsRunning(summary.Id) || _chat.IsWakeQueued(summary.Id))
+        .Select(summary => summary.Id + ":" + (_chat.IsRunning(summary.Id) ? "running" : "queued")));
 
     /// <summary>How many rows carry a running dot. Counted rather than sampled: a dot on a row nobody asked
     /// for is the same bug as one that never appears.</summary>
-    internal int RunningDotCountForCheck => ConversationList.GetLogicalDescendants().OfType<Ellipse>().Count();
+    internal int RunningDotCountForCheck => ConversationList.GetLogicalDescendants()
+        .OfType<Ellipse>().Count(dot => dot.Name == "RunningDot");
+
+    /// <summary>How many rows are waiting for an answer slot rather than answering.</summary>
+    internal int QueuedWakeDotCountForCheck => ConversationList.GetLogicalDescendants()
+        .OfType<Ellipse>().Count(dot => dot.Name == "QueuedWakeDot");
 
     private void RefreshConversationList()
     {
@@ -212,6 +217,7 @@ public partial class ChatSidebar : UserControl
             // looking at it, and it leaves with the run instead of waiting to be noticed.
             var running = new Ellipse
             {
+                Name = "RunningDot",
                 Width = 6,
                 Height = 6,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -220,6 +226,24 @@ public partial class ChatSidebar : UserControl
             running.Bind(Shape.FillProperty, new DynamicResourceExtension("Hub.Accent"));
             Grid.SetColumn(running, 1);
             layout.Children.Add(running);
+        }
+        else if (_chat.IsWakeQueued(summary.Id))
+        {
+            // Hollow rather than filled: another session has already written to this one and nothing is being
+            // said yet. A second filled dot would read as two replies, and the difference is the whole point.
+            var queued = new Ellipse
+            {
+                Name = "QueuedWakeDot",
+                Width = 6,
+                Height = 6,
+                StrokeThickness = 1,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            queued.Bind(Shape.StrokeProperty, new DynamicResourceExtension("Hub.Accent"));
+            ToolTip.SetTip(queued, HubStrings.Get("ConversationQueuedTip"));
+            Grid.SetColumn(queued, 1);
+            layout.Children.Add(queued);
         }
 
         Grid.SetColumn(menuButton, 2);
