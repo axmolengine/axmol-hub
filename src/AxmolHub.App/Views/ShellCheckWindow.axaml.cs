@@ -455,6 +455,21 @@ public partial class ShellCheckWindow : Window
         Check(shell.SidebarExpandedForCheck && shell.SidebarWidthForCheck >= 240,
             "再次点击 ☰ 后侧栏恢复原宽度");
 
+        // The ghost icon buttons hover as a square around their glyph. They sit in fixed-height rows, so
+        // a stretching default makes the plate a tall rectangle; the remaining slack below is the icon's
+        // own Uniform-scaled box, which is a fraction of a DIP off square and invisible.
+        static bool IsSquarePlate(Button button)
+            => button.Bounds.Width > 0 && Math.Abs(button.Bounds.Width - button.Bounds.Height) <= 1.5;
+        static string PlateOf(MainWindow shell, string name)
+            => NamedDescendant<Button>(shell, name) is { } button
+                ? $"{button.Bounds.Width:0.#}×{button.Bounds.Height:0.#}"
+                : "找不到";
+        Check(NamedDescendant<Button>(shell, "SidebarToggle") is { } sidebarToggle
+              && NamedDescendant<Button>(shell, "LogToggle") is { } logToggle
+              && IsSquarePlate(sidebarToggle) && IsSquarePlate(logToggle),
+            "☰ 折叠按钮与日志按钮的悬停底板是正方形（实际 "
+            + PlateOf(shell, "SidebarToggle") + " / " + PlateOf(shell, "LogToggle") + "）");
+
         // The title block is text only — two lines, no icon tile. A mark nobody can decode is chrome,
         // and "the tile came back" would be invisible to every other assertion (it changes no key, no
         // click path), so the "no image tile in the title block" rule is pinned here.

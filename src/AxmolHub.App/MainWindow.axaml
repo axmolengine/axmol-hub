@@ -75,12 +75,16 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
 
-    <!-- Ghost icon buttons: the top-bar ☰ toggle and the status-strip log chevron. -->
+    <!-- Ghost icon buttons: the top-bar ☰ toggle and the status-strip log chevron. Both sit in a
+         fixed-height row, so without the centering they stretch to that row's height and the hover
+         plate becomes a tall rectangle around a square icon. -->
     <Style Selector="Button.icon-ghost">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7" />
       <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
