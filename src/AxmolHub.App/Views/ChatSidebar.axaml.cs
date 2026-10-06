@@ -169,9 +169,18 @@ public partial class ChatSidebar : UserControl
         };
         row.Classes.Add("session-row");
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,10,36") };
+        var label = new DockPanel { LastChildFill = true };
+        var titleBlock = new TextBlock
+        {
+            Text = title,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (summary.PendingApprovals > 0) label.Children.Add(BuildApprovalBadge(summary));
+        label.Children.Add(titleBlock);
         var item = new Button
         {
-            Content = title,
+            Content = label,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(10, 8),
@@ -253,6 +262,36 @@ public partial class ChatSidebar : UserControl
         return row;
     }
 
+    /// <summary>
+    /// That a session owes somebody a decision. It stays visible rather than waiting for a hover because a hidden
+    /// actionable request is a blocked stream: the run is parked on this row until a person clicks. The row itself
+    /// is still the only click target, so opening the session is how the question gets answered.
+    ///
+    /// A glyph alone, never a number: a session parks on its first unanswered call and a newer message supersedes
+    /// it, so what a row can owe is exactly one decision. Counting to two would be a second mark for one fact.
+    /// </summary>
+    private static Control BuildApprovalBadge(ConversationSummary summary)
+    {
+        var badge = new StackPanel
+        {
+            Name = "ApprovalBadge",
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(6, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var glyph = new Avalonia.Controls.Shapes.Path { Width = 11, Height = 11, Stretch = Stretch.Uniform };
+        // A Geometry resource is theme-independent, so no variant is passed — the same lookup shape
+        // MarkdownMessageRenderer uses for its success tick.
+        if (Application.Current?.TryGetResource("Hub.Icon.PermissionAsk", null, out var geometry) == true)
+            glyph.Data = geometry as Geometry;
+        glyph.Bind(Shape.FillProperty, new DynamicResourceExtension("Hub.Accent"));
+        badge.Children.Add(glyph);
+        ToolTip.SetTip(badge, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("PendingApprovalsTip"), summary.PendingApprovals));
+        DockPanel.SetDock(badge, Dock.Right);
+        return badge;
+    }
+
     private async Task RenameConversationAsync(string id, string currentTitle)
     {
         var title = await PromptWindow.ShowAsync(GetOwner(), HubStrings.Get("RenameConversationTitle"), currentTitle);
@@ -268,7 +307,35 @@ public partial class ChatSidebar : UserControl
 
     internal string ConversationListText => string.Join("\n", ConversationList.Children
         .OfType<Border>()
-        .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault()?.Content?.ToString()));
+        .Select(row => TitleOf((row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault())));
+
+    /// <summary>A row's label is a DockPanel now (title plus, when a decision is owed, the approval badge), so the
+    /// title is read off its text block rather than out of the button's content string.</summary>
+    private static string? TitleOf(Button? button) => button?.Content switch
+    {
+        DockPanel label => label.Children.OfType<TextBlock>().FirstOrDefault()?.Text,
+        var content => content?.ToString(),
+    };
+
+    private IEnumerable<StackPanel> ApprovalBadges(string id) => Rows(id)
+        .Select(row => (row.Child as Grid)?.Children.OfType<Button>().FirstOrDefault())
+        .OfType<Button>()
+        .SelectMany(button => (button.Content as DockPanel)?.GetLogicalDescendants() ?? [])
+        .OfType<StackPanel>()
+        .Where(panel => panel.Name == "ApprovalBadge");
+
+    internal bool HasApprovalBadgeForCheck(string id) => ApprovalBadges(id).Any();
+
+    /// <summary>Whether a badge carries its picture. A geometry resource that failed to resolve leaves a row with
+    /// nothing but a tooltip to find, which is the silent half of this feature.</summary>
+    internal bool ApprovalBadgeGlyphIsDrawnForCheck(string id)
+        => ApprovalBadges(id).Any(badge => badge.Children.OfType<Avalonia.Controls.Shapes.Path>()
+            .Any(shape => shape.Data is not null));
+
+    /// <summary>The badge's own words, or empty when the row has no badge — a missing element has to read as a
+    /// failed assertion, not as an exception that takes the rest of the suite with it.</summary>
+    internal string ApprovalBadgeTipForCheck(string id)
+        => ApprovalBadges(id).Select(badge => ToolTip.GetTip(badge)?.ToString() ?? "").FirstOrDefault() ?? "";
 
     internal string GroupHeaderText => string.Join("\n", ConversationList.Children
         .OfType<TextBlock>()
@@ -312,6 +379,9 @@ public partial class ChatSidebar : UserControl
         => SessionMenuItems(id).Any(item =>
             string.Equals(item.Header?.ToString(), HubStrings.Get("PinConversation"), StringComparison.Ordinal)
             || string.Equals(item.Header?.ToString(), HubStrings.Get("UnpinConversation"), StringComparison.Ordinal));
+
+    private IEnumerable<Border> Rows(string id) => ConversationList.Children.OfType<Border>()
+        .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal));
 
     private IEnumerable<Button> SessionMenuButtons(string id) => ConversationList.Children.OfType<Border>()
         .Where(row => string.Equals(row.Tag?.ToString(), id, StringComparison.Ordinal))

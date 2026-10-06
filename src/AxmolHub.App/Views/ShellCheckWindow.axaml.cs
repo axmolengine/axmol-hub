@@ -844,7 +844,7 @@ public partial class ShellCheckWindow : Window
         shell.Chat.DeleteConversation(compressionSession.Id);
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
-        await CheckToolApprovalAsync(shell, panel);
+        await CheckToolApprovalAsync(shell, panel, sidebar);
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
@@ -1315,7 +1315,7 @@ public partial class ShellCheckWindow : Window
     /// run registry, so all of it runs on scripted clients: no network, and no waiting on a model that would
     /// have to be asked nicely to request a tool.
     /// </summary>
-    private async Task CheckToolApprovalAsync(MainWindow shell, ChatPanel panel)
+    private async Task CheckToolApprovalAsync(MainWindow shell, ChatPanel panel, ChatSidebar sidebar)
     {
         var chat = shell.Chat;
         var savedIdleTimeout = chat.IdleTimeout;
@@ -1325,11 +1325,13 @@ public partial class ShellCheckWindow : Window
         var denySession = chat.StartConversation();
         var supersededSession = chat.StartConversation();
         var restartSession = chat.StartConversation();
+        var badgeSession = chat.StartConversation();
         var readClient = new ApprovalChatClient();
         var parkClient = new ApprovalChatClient();
         var denyClient = new ApprovalChatClient();
         var supersededClient = new ApprovalChatClient();
         var restartClient = new ApprovalChatClient();
+        var badgeClient = new ApprovalChatClient();
         ChatWorkspace? reopened = null;
         try
         {
@@ -1340,6 +1342,7 @@ public partial class ShellCheckWindow : Window
                 var id when id == denySession.Id => denyClient,
                 var id when id == supersededSession.Id => supersededClient,
                 var id when id == restartSession.Id => restartClient,
+                var id when id == badgeSession.Id => badgeClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
             // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
@@ -1354,11 +1357,11 @@ public partial class ShellCheckWindow : Window
                 ["old_string"] = "第二行",
                 ["new_string"] = "第二行（已改）",
             };
-            foreach (var client in new[] { parkClient, denyClient, supersededClient, restartClient })
+            foreach (var client in new[] { parkClient, denyClient, supersededClient, restartClient, badgeClient })
                 client.Arguments = editArguments;
             readClient.ToolName = "read_file";
             readClient.Arguments = new Dictionary<string, object?> { ["path"] = "note.txt" };
-            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession })
+            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -1456,6 +1459,15 @@ public partial class ShellCheckWindow : Window
             Check(parkClient.Answers == 0, "停在待批准时没有替模型把回复说完（占位结果不该被当成答案）");
             Check(chat.Conversations.Any(summary => summary.Id == parkSession.Id && summary.PendingApprovals == 1),
                 "会话索引报告有一个待批准");
+            // A decision only helps if the session that owes it is findable, and the session list is where a person
+            // looks first. A hidden actionable request is a blocked stream.
+            Check(sidebar.HasApprovalBadgeForCheck(parkSession.Id)
+                  && sidebar.ApprovalBadgeGlyphIsDrawnForCheck(parkSession.Id)
+                  && sidebar.ApprovalBadgeTipForCheck(parkSession.Id)
+                      .Contains(string.Format(CultureInfo.CurrentCulture,
+                          HubStrings.Get("PendingApprovalsTip"), 1), StringComparison.Ordinal),
+                "等待批准的那一行在侧栏标出角标，图形真取到了、话说清了（提示："
+                + sidebar.ApprovalBadgeTipForCheck(parkSession.Id) + "）");
             // A call waiting for permission is the record of a decision owed. Archiving it behind a summary would
             // answer that decision by losing it, so compression stays refused for as long as it waits — including
             // from inside the run that parked it.
@@ -1547,6 +1559,24 @@ public partial class ShellCheckWindow : Window
             panel.Reload();
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
+
+            // The reason the sidebar says this at all: a *different* session can be waiting while you are looking
+            // somewhere else, and the row nobody is reading is the one that has to say so.
+            chat.SetApprovalMode(badgeSession.Id, ToolApprovalModes.Ask);
+            chat.TryEnqueueSend(badgeSession.Id, "另一个会话也要写", null, out _);
+            var otherWaiting = await WaitForPendingCallAsync(badgeSession);
+            Dispatcher.UIThread.RunJobs();
+            Check(sidebar.HasApprovalBadgeForCheck(denySession.Id)
+                  && sidebar.HasApprovalBadgeForCheck(badgeSession.Id),
+                "两个会话同时等批准时两条行都标出角标，包括没在看的那一个");
+            chat.TryResolveApproval(badgeSession.Id, otherWaiting ?? "", approved: false,
+                alwaysAllow: false, out _);
+            Dispatcher.UIThread.RunJobs();
+            Check(!sidebar.HasApprovalBadgeForCheck(badgeSession.Id)
+                  && sidebar.HasApprovalBadgeForCheck(denySession.Id),
+                "做完其中一个会话的决定，只有它自己的角标消失，另一个仍留着（还在等的："
+                + sidebar.HasApprovalBadgeForCheck(denySession.Id) + "）");
+
             panel.ClickApprovalActionForCheck("ApprovalDeny");
             await WaitForIdleAsync(chat);
             var afterDeny = chat.StoredCopyForCheck(denySession.Id);
@@ -1757,12 +1787,12 @@ public partial class ShellCheckWindow : Window
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
-            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id })
+            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id, badgeSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);
             Check(chat.RunningCount == 0
                   && chat.Conversations.All(summary => summary.PendingApprovals == 0)
-                  && new[] { readSession, parkSession, denySession, supersededSession, restartSession }
+                  && new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession }
                       .All(session => chat.StoredCopyForCheck(session.Id) is null),
                 "自检清理：审批夹具会话全部删除且没有残留运行（实际 " + chat.RunningCount + " 路）");
         }

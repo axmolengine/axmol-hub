@@ -437,6 +437,9 @@ public static class HubTexts
         ["ChatPeerOriginFormat"] = ("来自会话「{0}」", "From session 「{0}」"),
         ["ChatPeerOriginGone"] = ("来自一个已删除的会话", "From a session that no longer exists"),
         ["ConversationQueuedTip"] = ("另一个会话给它发了话，正等待空闲的回答位。", "Another session sent it something to answer; it starts when an answer slot frees."),
+        // The badge itself is a glyph with no number — a session can owe exactly one decision at a time — so the
+        // count lives here, where it can say 「两个」 if a later build ever can park two.
+        ["PendingApprovalsTip"] = ("有 {0} 个操作在等你批准。", "{0} action(s) in this session are waiting for you."),
         // The decision was already made, or a newer message took the call away while the question was on screen.
         ["ChatApprovalGone"] = ("这个待批准的调用已经不在了，可能已被处理或被新消息取代。", "This pending approval is no longer there — it was already decided, or a newer message took its place."),
         // Inline approval card. The card states what will happen rather than describing a permission level: the
