@@ -74,6 +74,22 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
+    <!-- The fork provenance line: muted text that is also the way back to the source session. -->
+    <Style Selector="Button.fork-notice">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.fork-notice:pointerover">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Link}" />
+    </Style>
+
     <!-- Assistant message: no frame at all, plain text on the background. -->
     <Style Selector="Border.assistant-msg">
       <Setter Property="Background" Value="Transparent" />
@@ -339,11 +355,14 @@
     <!-- Message area: messages flow directly on the background, centered 820px column. -->
     <Grid Grid.Row="0">
       <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto">
-        <Grid>
+        <StackPanel>
+          <!-- Fork provenance: one quiet line above the transcript, doubling as the jump back to the source. -->
+          <Button x:Name="ForkNotice" Classes="fork-notice" IsVisible="False"
+                  MaxWidth="820" HorizontalAlignment="Center" Margin="0,12,0,0" />
           <StackPanel x:Name="MessageFlow"
                       MaxWidth="820" HorizontalAlignment="Center"
                       Margin="0,16,0,16" Spacing="10" />
-        </Grid>
+        </StackPanel>
       </ScrollViewer>
 
       <!-- Empty state: centered greeting without prefilled prompts. -->

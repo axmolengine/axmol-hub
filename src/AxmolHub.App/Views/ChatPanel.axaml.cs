@@ -80,6 +80,10 @@ public partial class ChatPanel : UserControl
                 _streamStatusLabel.Text = ToolActivityText(name, completed);
         });
         ModelPicker.Click += (_, _) => ShowModelMenu();
+        ForkNotice.Click += (_, _) =>
+        {
+            if (ForkNotice.Tag is string sourceId) _chat.OpenConversation(sourceId);
+        };
         ModeIndicatorButton.Click += (_, _) => ClearComposerMode();
         ContextButton.Click += (_, _) => ShowContextMenu();
         ToolTip.SetTip(AddContextButton, HubStrings.Get("ChatAddContext"));
@@ -123,8 +127,27 @@ public partial class ChatPanel : UserControl
 
         RefreshModelPicker();
         RefreshComposerChoices();
+        UpdateForkNotice();
         RenderMessages();
         UpdateContextRing();
+    }
+
+    /// <summary>
+    /// Names the session the current one was forked from, above the transcript. Hidden for a normal session
+    /// and for a fork whose source has since been deleted — a link to nothing would be worse than no link.
+    /// </summary>
+    private void UpdateForkNotice()
+    {
+        var source = _chat.ActiveConversation?.BranchSourceId is { Length: > 0 } sourceId
+            ? _chat.Conversations.FirstOrDefault(summary => summary.Id == sourceId)
+            : null;
+
+        ForkNotice.IsVisible = source is not null;
+        if (source is null) return;
+
+        ForkNotice.Tag = source.Id;
+        ForkNotice.Content = string.Format(
+            System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("ForkedFrom"), source.Title);
     }
 
     private void RefreshModelPicker()
@@ -1508,6 +1531,10 @@ public partial class ChatPanel : UserControl
             .FirstOrDefault(box => box.Classes.Contains("message-edit"));
 
     internal bool IsStreamingForCheck => _send is not null;
+
+    internal bool ForkNoticeVisibleForCheck => ForkNotice.IsVisible;
+    internal string? ForkNoticeTextForCheck => ForkNotice.IsVisible ? ForkNotice.Content?.ToString() : null;
+    internal void ClickForkNoticeForCheck() => ForkNotice.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>Sends one key to the in-place editor, so the Enter/Escape bindings themselves are what a check
     /// exercises rather than the method they call.</summary>

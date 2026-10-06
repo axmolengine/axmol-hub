@@ -415,6 +415,8 @@ public static class HubTexts
         ["EditMessage"] = ("编辑并重发（丢弃其后对话）", "Edit and resend (drops everything after)"),
         ["RegenerateMessage"] = ("重新生成", "Regenerate"),
         ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
+        // Shown above a forked transcript; the line itself is the link back to the source session.
+        ["ForkedFrom"] = ("分支自 {0}", "Forked from {0}"),
         ["MessageTimeJustNow"] = ("刚刚", "now"),
         ["MessageTimeMinutesAgo"] = ("{0} 分钟前", "{0}m ago"),
         ["MessageTimeHoursAgo"] = ("{0} 小时前", "{0}h ago"),

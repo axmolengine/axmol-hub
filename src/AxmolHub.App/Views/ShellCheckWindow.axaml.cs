@@ -684,6 +684,20 @@ public partial class ShellCheckWindow : Window
         Check(thirdBranch is not null && thirdBranch.Title == opsConversation.Title + " (3)",
             "分叉的分叉仍从原始标题续号，不叠加后缀（实际「" + thirdBranch?.Title + "」）");
 
+        // The fork says where it came from above the transcript, and that line is how you get back.
+        Check(shell.Chat.OpenConversation(branchSourceId) is not null && !panel.ForkNoticeVisibleForCheck,
+            "普通会话顶部不显示分叉来源提示");
+        Check(branched is not null && shell.Chat.OpenConversation(branched.Id) is not null
+              && panel.ForkNoticeVisibleForCheck
+              && panel.ForkNoticeTextForCheck?.Contains(opsConversation.Title, StringComparison.Ordinal) == true,
+            "分叉会话顶部提示分叉自哪条会话（实际「" + panel.ForkNoticeTextForCheck + "」）");
+        panel.ClickForkNoticeForCheck();
+        Check(shell.Chat.ActiveConversation?.Id == branchSourceId && !panel.ForkNoticeVisibleForCheck,
+            "点击来源提示跳回原会话，提示随之消失");
+        Check(HubTexts.Get("ForkedFrom", HubTexts.ChineseLanguage).Contains("{0}", StringComparison.Ordinal)
+              && HubTexts.Get("ForkedFrom", HubTexts.EnglishLanguage).Contains("{0}", StringComparison.Ordinal),
+            "分叉来源提示中英两份都带格式化占位符");
+
         shell.Chat.OpenConversation(branchSourceId);
         var forks = new[] { branched, secondBranch, thirdBranch }.OfType<Conversation>().ToList();
         foreach (var fork in forks) shell.Chat.DeleteConversation(fork.Id);
