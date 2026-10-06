@@ -90,6 +90,14 @@ public sealed class Conversation
     /// itself (not only the index) so a rebuild from the message files restores the pin.</summary>
     public bool Pinned { get; set; }
 
+    /// <summary>Set when this session was branched out of another one. Nullable, so every file written
+    /// before branching existed still deserializes. Recording it here rather than deriving it means a
+    /// future "derived from …" affordance costs one property read instead of a scan of all sessions.</summary>
+    public string? BranchSourceId { get; set; }
+
+    /// <summary>Index in the source conversation of the last turn this branch kept: the cut point.</summary>
+    public int? BranchSourceIndex { get; set; }
+
     /// <summary>Longest auto-title before ellipsis; short enough to fit the session list.</summary>
     private const int MaxTitleLength = 48;
 

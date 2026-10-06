@@ -385,6 +385,24 @@ if (args.Contains("--check-ai-sessions"))
         throw new Exception("Composer settings or attached context did not round-trip.");
     Console.WriteLine("PASS: Conversation mode, reasoning effort, and attached context persist.");
 
+    // Branch provenance is optional on purpose: a branch records where it was cut, and a session written
+    // before the field existed must still load (the store ignores absent properties).
+    var branch = Conversation.Create("orcarouter");
+    branch.Append(ChatTurn.User("从这条提问分叉"));
+    branch.BranchSourceId = conversation.Id;
+    branch.BranchSourceIndex = 1;
+    store.Save(branch);
+    var reloadedBranch = store.Load(branch.Id) ?? throw new Exception("Branched conversation did not reload.");
+    if (reloadedBranch.BranchSourceId != conversation.Id || reloadedBranch.BranchSourceIndex != 1)
+        throw new Exception("Branch provenance did not round-trip through the session file.");
+    File.WriteAllText(Path.Combine(root, "ai", "sessions", "legacy-no-provenance.json"),
+        """{"Id":"legacy-no-provenance","Title":"legacy","ProviderId":"orcarouter","ModelName":"","Messages":[]}""");
+    if (store.Load("legacy-no-provenance") is not { BranchSourceId: null, BranchSourceIndex: null })
+        throw new Exception("A session file predating branch provenance no longer loads.");
+    store.Delete("legacy-no-provenance");
+    store.Delete(branch.Id);
+    Console.WriteLine("PASS: branch provenance round-trips, and pre-branch session files still load.");
+
     // A hostile id may not escape the sessions directory.
     var escaped = false;
     try { store.Delete("../../evil"); } catch (ArgumentException) { escaped = true; }
