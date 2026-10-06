@@ -539,6 +539,22 @@ public partial class ShellCheckWindow : Window
               && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
             "消息操作文案支持中英文");
 
+        // A glyph whose bounding box is not square sits off-centre in its square slot, because
+        // Stretch="Uniform" puts the leftover axis' slack on one side — the failure Hub.Icon.Send's
+        // comment documents. The two new message-action glyphs are measured rather than eyeballed.
+        static bool GlyphFitsItsSquareSlot(string key)
+        {
+            if (Application.Current is not { } app
+                || app.TryGetResource(key, app.ActualThemeVariant, out var value) != true
+                || value is not Avalonia.Media.Geometry glyph) return false;
+            var box = glyph.Bounds;
+            return Math.Abs(box.Width - box.Height) <= 0.6
+                   && Math.Abs(box.X + box.Width / 2 - 12) <= 0.8
+                   && Math.Abs(box.Y + box.Height / 2 - 12) <= 0.8;
+        }
+        Check(GlyphFitsItsSquareSlot("Hub.Icon.Refresh") && GlyphFitsItsSquareSlot("Hub.Icon.Branch"),
+            "重新生成与分叉图标的包围盒为正方形且居中于 24 网格（Uniform 缩放后不会偏心）");
+
         var failureCheckConversation = shell.Chat.StartConversation();
         panel.Reload();
         shell.UpdateLayout();
