@@ -17,11 +17,32 @@ namespace AxmolHub.Agent;
 ///
 /// Trimming happens inside the pipeline rather than at the call site so every caller gets a request that fits
 /// the model's window; the caller still owns the full history.
+///
+/// A parked tool call is only safe because of one invariant: <b>every entry rebuilds its history from the
+/// persisted turns</b>. The message table the invoking client accumulates for itself dies with the stream, so
+/// a call it was told to wait on cannot come back in a later request and cannot run by itself.
 /// </summary>
 public sealed class ChatPipeline(IChatClient client)
 {
     /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.</summary>
     public readonly record struct ToolCallInfo(string Name, string CallId, string ArgumentsJson);
+
+    /// <summary>The answer to "may this call run now".</summary>
+    public enum ToolGateOutcome
+    {
+        Allow,
+
+        /// <summary>Refused. The model is told so in the transcript and the loop continues without the call
+        /// having run — a refusal the model does not hear becomes a retry.</summary>
+        Deny,
+
+        /// <summary>Recorded as waiting for a human. The stream ends here; the call stays unanswered in the
+        /// transcript, which is the record of the decision that is still owed.</summary>
+        Pending,
+    }
+
+    /// <summary>Asked before every tool call. Awaited, so a gate may consult anything it likes.</summary>
+    public delegate Task<ToolGateOutcome> ToolGate(ToolCallInfo call, CancellationToken cancellationToken);
 
     /// <summary>
     /// Streams the assistant reply to <paramref name="history"/>. Semantics mirror the underlying client:
@@ -31,6 +52,11 @@ public sealed class ChatPipeline(IChatClient client)
     /// invokes the invoker after its own <c>ConfigureAwait(false)</c> hops. A caller that touches anything the
     /// UI thread also reads (a transcript list, a control) has to marshal itself and must not return before
     /// the write landed — the model is one step away from acting on what the callback records.
+    ///
+    /// A <see cref="ToolGateOutcome.Pending"/> answer ends the turn: the gate is expected to have cancelled the
+    /// stream, the cancellation surfaces to the caller as <see cref="OperationCanceledException"/>, and nothing
+    /// is written as a tool result. Resuming is the caller's job — it runs the approved call itself and starts
+    /// a new request whose history ends with the real result.
     /// </summary>
     public async IAsyncEnumerable<string> SendAsync(
         ModelProvider provider,
@@ -38,6 +64,7 @@ public sealed class ChatPipeline(IChatClient client)
         string? systemPrompt = null,
         string? reasoningEffort = null,
         IReadOnlyList<AITool>? tools = null,
+        ToolGate? gate = null,
         Func<ToolCallInfo, Task>? onToolStarted = null,
         Func<ToolCallInfo, string, bool, Task>? onToolCompleted = null,
         string? modelName = null,
@@ -47,6 +74,7 @@ public sealed class ChatPipeline(IChatClient client)
         var trimmed = ContextTrimmer.Trim(history, budget, systemPrompt);
         var messages = ToChatMessages(trimmed);
         var options = BuildOptions(provider, modelName, reasoningEffort, tools);
+        var parked = new GateState();
         IChatClient effectiveClient = client;
         if (tools is { Count: > 0 })
         {
@@ -61,6 +89,26 @@ public sealed class ChatPipeline(IChatClient client)
                 var arguments = JsonSerializer.Serialize(call.Arguments);
                 var info = new ToolCallInfo(call.Name, call.CallId, arguments);
                 if (onToolStarted is not null) await onToolStarted(info).ConfigureAwait(false);
+
+                var outcome = gate is null
+                    ? ToolGateOutcome.Allow
+                    : await gate(info, token).ConfigureAwait(false);
+                if (outcome == ToolGateOutcome.Deny)
+                {
+                    if (onToolCompleted is not null)
+                        await onToolCompleted(info, ToolApprovalResults.Denied, true).ConfigureAwait(false);
+                    return ToolApprovalResults.Denied;
+                }
+
+                if (outcome == ToolGateOutcome.Pending)
+                {
+                    // The placeholder never reaches the model: the gate cancelled the stream, so no further
+                    // request is made and the loop below stops. What is left behind is the transcript, where
+                    // this call is still unanswered — and that is the record of the decision still owed.
+                    parked.Parked = true;
+                    return PendingPlaceholder;
+                }
+
                 try
                 {
                     var result = await context.Function.InvokeAsync(context.Arguments, token).ConfigureAwait(false);
@@ -84,6 +132,7 @@ public sealed class ChatPipeline(IChatClient client)
 
         await foreach (var update in effectiveClient.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
+            if (parked.Parked) break;
             // M.E.AI streams updates that may carry only non-text contents (usage, tool calls); emit the text
             // and let the UI decide what to show. Joining happens in the caller so partial chunks stay partial.
             foreach (var content in update.Contents)
@@ -91,6 +140,15 @@ public sealed class ChatPipeline(IChatClient client)
                     yield return text.Text;
         }
     }
+
+    /// <summary>One bit crossing from the invoker, which runs on a thread-pool thread, back to the iterator.</summary>
+    private sealed class GateState
+    {
+        public volatile bool Parked;
+    }
+
+    /// <summary>Handed back to the invoking client when a call parks for approval. Never sent anywhere.</summary>
+    private const string PendingPlaceholder = "awaiting user approval";
 
     /// <summary>Converts persisted turns into the wire shape, in order.</summary>
     public static List<ChatMessage> ToChatMessages(IReadOnlyList<ChatTurn> turns) =>
@@ -219,8 +277,12 @@ public sealed class ChatPipeline(IChatClient client)
     /// string, and serializing that element again wraps the payload in a second JSON layer: the tool's
     /// own quotes come back as escaped unicode code units and the whole result gains surrounding
     /// quotes. Unwrapping is what keeps a JSON-returning tool readable on both sides.
+    ///
+    /// Public because an approved call is executed outside this pipeline — the caller invokes the function
+    /// itself and has to format its result exactly the same way, or the same tool would read differently
+    /// depending on whether it needed permission.
     /// </summary>
-    private static string SerializeToolResult(object? result)
+    public static string SerializeToolResult(object? result)
         => result switch
         {
             string text => text,

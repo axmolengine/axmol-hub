@@ -742,6 +742,100 @@ if (args.Contains("--check-ai-tool-policy"))
     policyStore.Delete("legacy-no-approval");
     policyStore.Delete(policyConversation.Id);
     Console.WriteLine("PASS: approval fields round-trip, pending counts derive, and pre-approval sessions still load.");
+
+    // The three answers a gate can give are asserted here, at the pipeline, rather than through a screen: this
+    // is the layer where "the call did not run" is decided, and a UI built later can only be as correct as it is.
+    var gateProvider = new ModelProvider { Id = "orcarouter", Name = "OrcaRouter", BaseUrl = "https://api.orcarouter.ai/v1" };
+    // A function that objects to being run: every gate answer other than Allow has to keep it from executing.
+    var gatedFunction = AIFunctionFactory.Create(
+        (Func<string>)(() => throw new Exception("A gated tool ran without being allowed.")),
+        new AIFunctionFactoryOptions
+        {
+            Name = "get_projects",
+            Description = "Return registered projects.",
+        });
+
+    // Deny: the refusal has to reach the model, or the model asks again.
+    var order = new List<string>();
+    var denyCompleted = 0;
+    var denyResult = "";
+    var denyFailed = false;
+    var denyClient = new ToolLoopChatClient();
+    var denyAnswer = new StringBuilder();
+    await foreach (var chunk in new ChatPipeline(denyClient).SendAsync(
+                       gateProvider,
+                       [ChatTurn.User("write a file")],
+                       tools: [gatedFunction],
+                       gate: (info, _) =>
+                       {
+                           order.Add("gate:" + info.Name);
+                           return Task.FromResult(ChatPipeline.ToolGateOutcome.Deny);
+                       },
+                       onToolStarted: info =>
+                       {
+                           order.Add("started:" + info.Name);
+                           return Task.CompletedTask;
+                       },
+                       onToolCompleted: (_, result, failed) =>
+                       {
+                           denyCompleted++;
+                           denyResult = result;
+                           denyFailed = failed;
+                           return Task.CompletedTask;
+                       }))
+        denyAnswer.Append(chunk);
+    // The call is recorded before the gate is asked, which is what lets a pending call be marked after the fact
+    // instead of needing a side table of its own.
+    if (string.Join(",", order) != "started:get_projects,gate:get_projects")
+        throw new Exception($"The pipeline asked the gate in the wrong order: {string.Join(",", order)}.");
+    if (denyCompleted != 1 || denyFailed != true || denyResult != ToolApprovalResults.Denied)
+        throw new Exception($"A refused call was not reported to the model as a failure: 「{denyResult}」 (failed={denyFailed}).");
+    if (denyClient.CallCount != 2 || denyAnswer.ToString() != "Projects loaded.")
+        throw new Exception("A refusal stopped the reply loop instead of letting the model answer about it.");
+    if (!denyClient.SecondRequest.Any(message => message.Contents.Any(content =>
+            content is FunctionResultContent result && result.Result as string == ToolApprovalResults.Denied)))
+        throw new Exception("The refusal the model was sent is not the refusal it was given.");
+    Console.WriteLine("PASS: a denied call never runs, and the model is told it was refused.");
+
+    // Pending: the stream ends, nothing is written as the call's result, and the placeholder stays inside.
+    using var parkCancellation = new CancellationTokenSource();
+    var parkCompleted = 0;
+    var parkClient = new ToolLoopChatClient(honorCancellation: true);
+    var parkAnswer = new StringBuilder();
+    var parkThrew = false;
+    try
+    {
+        await foreach (var chunk in new ChatPipeline(parkClient).SendAsync(
+                           gateProvider,
+                           [ChatTurn.User("write a file")],
+                           tools: [gatedFunction],
+                           gate: (_, _) =>
+                           {
+                               parkCancellation.Cancel();
+                               return Task.FromResult(ChatPipeline.ToolGateOutcome.Pending);
+                           },
+                           onToolCompleted: (_, _, _) =>
+                           {
+                               parkCompleted++;
+                               return Task.CompletedTask;
+                           },
+                           cancellationToken: parkCancellation.Token))
+            parkAnswer.Append(chunk);
+    }
+    catch (OperationCanceledException)
+    {
+        parkThrew = true;
+    }
+
+    // Whether the turn ends by cancellation or by the stream simply stopping is the pipeline's choice; either is
+    // how the caller learns to wait, and ChatWorkspace reads the run's phase rather than the exception for that.
+    if (parkAnswer.Length > 0)
+        throw new Exception($"Parking let the reply keep going (threw={parkThrew}): 「{parkAnswer}」.");
+    if (parkCompleted != 0)
+        throw new Exception("A parked call was written a tool result, which is a decision nobody made.");
+    if (parkClient.SecondRequest.Count > 0)
+        throw new Exception("The follow-up request went out with the approval placeholder: " + parkClient.SecondRequest.Count + " messages.");
+    Console.WriteLine("PASS: a parked call ends the turn with no result, and its placeholder never reaches the model.");
     return;
 }
 if (args.Contains("--check-release-receipt"))
@@ -1815,7 +1909,10 @@ sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation
     public void Dispose() { }
 }
 
-sealed class ToolLoopChatClient : IChatClient
+/// <summary>A scripted <see cref="IChatClient"/> that asks for one tool call and then answers: the follow-up
+/// request is what proves the result was handed back. <c>honorCancellation</c> matters because parking works by
+/// cancelling the stream — a client that ignored the token would answer a turn that was supposed to stop.</summary>
+sealed class ToolLoopChatClient(bool honorCancellation = false) : IChatClient
 {
     public int CallCount { get; private set; }
     public IList<ChatMessage> SecondRequest { get; private set; } = [];
@@ -1844,6 +1941,9 @@ sealed class ToolLoopChatClient : IChatClient
         }
         else
         {
+            // A real client refuses to send on a cancelled token, and that is what ends a parked turn, so the
+            // stand-in has to behave the same way or the assertion would pass on a fake nobody could ship.
+            if (honorCancellation) cancellationToken.ThrowIfCancellationRequested();
             SecondRequest = request;
             if (!request.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
                 throw new Exception("The function result was missing from the follow-up request.");

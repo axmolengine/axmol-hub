@@ -410,6 +410,8 @@ public static class HubTexts
         ["ChatSessionBusy"] = ("这个会话正在生成回复，请先停止它或等回复结束。", "This session is already answering. Stop it or wait for the reply to finish."),
         ["ChatParallelLimit"] = ("同时运行的会话已达上限，请先停止一个。", "That is as many sessions as can run at once. Stop one before starting another."),
         ["ChatSessionMissing"] = ("这个会话已被删除。", "This session has been deleted."),
+        // The decision was already made, or a newer message took the call away while the question was on screen.
+        ["ChatApprovalGone"] = ("这个待批准的调用已经不在了，可能已被处理或被新消息取代。", "This pending approval is no longer there — it was already decided, or a newer message took its place."),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),

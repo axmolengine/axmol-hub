@@ -141,6 +141,42 @@ public sealed class Conversation
         if (Title.Length == 0 && turn.Role == ChatRoles.User) Title = DeriveTitle(turn.Text);
     }
 
+    /// <summary>
+    /// Gives every tool call that has no result one, so the history stays replayable: a provider rejects an
+    /// assistant message whose call is left unanswered. A call can be left hanging by a fork, by an edit, by a
+    /// restart mid-approval, or by a message arriving while a call waits for permission — all of which end up
+    /// here, because this runs at the top of every new reply rather than at each of those four places.
+    /// </summary>
+    /// <returns>How many calls were closed.</returns>
+    public int CloseUnansweredToolCalls(string reason)
+    {
+        var answered = Messages
+            .Where(turn => turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var closed = 0;
+        for (var i = 0; i < Messages.Count; i++)
+        {
+            var turn = Messages[i];
+            if (turn.Role != ChatRoles.Assistant || turn.ToolCallId is not { Length: > 0 } callId) continue;
+            if (answered.Contains(callId)) continue;
+
+            Messages[i] = turn with { ApprovalState = ChatApprovalStates.Superseded };
+            Messages.Insert(i + 1, ChatTurn.FunctionResult(callId, reason, failed: true));
+            answered.Add(callId);
+            closed++;
+            i++;
+        }
+
+        return closed;
+    }
+
+    /// <summary>The turn carrying a given tool call, or -1. The call turn is the approval record, so resolving
+    /// a decision starts by finding it rather than by looking one up somewhere else.</summary>
+    public int IndexOfToolCall(string callId)
+        => Messages.FindIndex(turn => turn.ToolCallId == callId && turn.Role == ChatRoles.Assistant);
+
     /// <summary>Trims the first line of the first user message to <see cref="MaxTitleLength"/> characters.</summary>
     public static string DeriveTitle(string text)
     {

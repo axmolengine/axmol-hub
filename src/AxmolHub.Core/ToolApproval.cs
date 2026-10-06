@@ -52,6 +52,23 @@ public static class ToolApprovalPolicy
 }
 
 /// <summary>
+/// What the model is told when a call it asked for did not run. Model-facing and therefore English: this is
+/// transcript text, not UI text, and the UI must never match against it — the card derives what it says from
+/// <see cref="ChatApprovalStates"/> alone.
+/// </summary>
+public static class ToolApprovalResults
+{
+    /// <summary>Refused. Telling the model not to retry is the difference between one refusal and a loop.</summary>
+    public const string Denied = "The user rejected this action. Do not retry it; ask the user what to do instead.";
+
+    /// <summary>Never ran because a newer message came in first.</summary>
+    public const string Superseded = "This call was not executed: a newer message superseded it.";
+
+    /// <summary>The tool is gone — renamed or dropped between the request and the approval.</summary>
+    public const string Unavailable = "This tool is no longer available, so the approved call was not executed.";
+}
+
+/// <summary>
 /// What became of a tool call that needed permission. The pending call turn <b>is</b> the approval record —
 /// there is no side table to fall out of step with — which is why the state has to survive a restart.
 /// </summary>

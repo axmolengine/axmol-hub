@@ -1263,7 +1263,18 @@ public sealed class ChatWorkspace : IDisposable
     {
         // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses
         // those writes — but it should not spend the rest of a reply finding that out.
-        if (_runs.TryGetValue(id, out var deleted)) deleted.RequestStop();
+        if (_runs.TryGetValue(id, out var deleted))
+        {
+            deleted.RequestStop();
+            // A run waiting on a decision has no stream to cancel, so stopping it leaves the slot held until the
+            // app closes. Deleting the session is somebody deciding.
+            if (!deleted.IsStreaming)
+            {
+                _runs.Remove(id);
+                deleted.Dispose();
+                RunsChanged?.Invoke(id);
+            }
+        }
         _sessions.Delete(id);
         if (_active?.Id == id)
         {
@@ -1536,6 +1547,219 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
+    // ───────────────────────── Tool permission ─────────────────────────
+
+    /// <summary>Set by the shell so the assistant can read app-wide settings — today the default permission
+    /// mode — without owning a preferences store of its own. Same seam shape as
+    /// <see cref="HubSnapshotProvider"/>, which keeps the workspace constructible on its own.</summary>
+    internal Func<HubPreferences>? PreferencesProvider { get; set; }
+
+    /// <summary>
+    /// Replaces how a call's blast radius is judged. Every tool this build registers is read-only, so the gate
+    /// has nothing to stop yet and the whole pending machine would ship unasserted; the self-check uses this to
+    /// make one registered call look like a write. Real risky tools (B3) classify themselves and leave it null.
+    /// </summary>
+    internal Func<string, ToolRisk>? RiskOverrideForCheck { get; set; }
+
+    /// <summary>
+    /// The permission mode one session answers under: its own override, else the app default, else ask. A
+    /// session with no setting is not a session with no guard.
+    /// </summary>
+    public string ApprovalModeFor(string conversationId)
+    {
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        return ToolApprovalModes.Normalize(
+            conversation?.ApprovalMode ?? PreferencesProvider?.Invoke()?.ToolApprovalMode);
+    }
+
+    /// <summary>Sets this session's override of the app-wide mode, or clears it (null) so the session follows
+    /// the default again.</summary>
+    public bool SetApprovalMode(string conversationId, string? mode)
+    {
+        var normalized = mode is null ? null : ToolApprovalModes.Normalize(mode);
+        if (!_sessions.TryUpdate(conversationId, conversation => conversation.ApprovalMode = normalized)) return false;
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask
+    /// the call is recorded as waiting and the stream ends. The run keeps its slot and the decision can be made
+    /// later — after a restart, even — because the pending call is in the transcript rather than in memory.
+    /// </summary>
+    private async Task<ChatPipeline.ToolGateOutcome> GateToolCallAsync(
+        ConversationRun run, ChatPipeline.ToolCallInfo call)
+    {
+        var verdict = await ReadOnUiAsync(() =>
+        {
+            var conversation = _sessions.Peek(run.ConversationId);
+            return (
+                Mode: ApprovalModeFor(run.ConversationId),
+                Risk: RiskOverrideForCheck?.Invoke(call.Name) ?? ChatTools.RiskOf(call.Name),
+                AlwaysAllowed: conversation?.AutoApprovedTools.Contains(call.Name) == true);
+        }).ConfigureAwait(false);
+
+        if (verdict.AlwaysAllowed || !ToolApprovalPolicy.RequiresApproval(verdict.Mode, verdict.Risk))
+            return ChatPipeline.ToolGateOutcome.Allow;
+
+        await ApplyOnUiAsync(() =>
+        {
+            // Recorded as waiting *before* the stream is told to end: a call that is cancelled but not recorded
+            // would disappear, and the model's request would go with it.
+            _sessions.TryUpdate(run.ConversationId, opened => MarkPending(opened, call.CallId));
+            run.ParkForApproval();
+            run.SuspendForApproval();
+            Changed?.Invoke();
+            RunsChanged?.Invoke(run.ConversationId);
+        }).ConfigureAwait(false);
+        return ChatPipeline.ToolGateOutcome.Pending;
+    }
+
+    /// <summary>Flips a recorded call to waiting. Nothing is written as its result: an unanswered call in the
+    /// transcript is the record that a decision is owed, and <see cref="Conversation.CloseUnansweredToolCalls"/>
+    /// is what turns it into a result if nobody ever makes one.</summary>
+    private static void MarkPending(Conversation conversation, string callId)
+    {
+        var index = conversation.IndexOfToolCall(callId);
+        if (index < 0) return;
+        conversation.Messages[index] = conversation.Messages[index] with
+        {
+            ApprovalState = ChatApprovalStates.Pending,
+        };
+    }
+
+    /// <summary>
+    /// Answers a call that is waiting. Approving runs it here rather than asking the model again — a second ask
+    /// is a different call, with different arguments and no guarantee it comes back — then writes the real
+    /// result and continues the reply. Refusing writes a result saying so and stops: "the user said no" should
+    /// not be answered by more talking, and <see cref="Regenerate"/> is how a wrap-up gets asked for.
+    /// </summary>
+    public bool TryResolveApproval(
+        string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey)
+    {
+        refusalKey = null;
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        var index = conversation?.IndexOfToolCall(callId) ?? -1;
+        if (conversation is null || index < 0
+            || conversation.Messages[index].ApprovalState != ChatApprovalStates.Pending)
+        {
+            refusalKey = "ChatApprovalGone";
+            return false;
+        }
+
+        var run = RunFor(conversationId);
+        if (run is null)
+        {
+            // The pending call outlived the run that made it: a restart, a data-root switch, or a stop pressed
+            // while nobody was reading the question. Attach a parked run so the decision has something to resume
+            // into — the record of what is owed is the transcript, not a live stream.
+            if (_runs.Count >= MaxConcurrentRuns)
+            {
+                refusalKey = "ChatParallelLimit";
+                return false;
+            }
+
+            run = new ConversationRun(conversationId, IdleTimeout);
+            run.ParkForApproval();
+            _runs[conversationId] = run;
+            RunsChanged?.Invoke(conversationId);
+        }
+        else if (run.IsStreaming)
+        {
+            refusalKey = "ChatSessionBusy";
+            return false;
+        }
+
+        if (!approved)
+        {
+            _sessions.TryUpdate(conversationId, opened =>
+            {
+                var at = opened.IndexOfToolCall(callId);
+                opened.Messages[at] = opened.Messages[at] with { ApprovalState = ChatApprovalStates.Denied };
+                opened.Append(ChatTurn.FunctionResult(callId, ToolApprovalResults.Denied, failed: true));
+            });
+            Changed?.Invoke();
+            // receivedText: no model reply follows a refusal by design, and an empty answer would otherwise be
+            // reported as "the model returned nothing" — a provider bug that never happened.
+            CompleteRun(run, RunResult.Completed, receivedText: true, null, false, null);
+            return true;
+        }
+
+        _sessions.TryUpdate(conversationId, opened =>
+        {
+            var at = opened.IndexOfToolCall(callId);
+            var call = opened.Messages[at];
+            opened.Messages[at] = call with { ApprovalState = ChatApprovalStates.Approved };
+            // "Always allow" is this session's grant, so it is stored with the session: it has to outlive the
+            // window that made it, exactly like the pending call it is answering.
+            if (alwaysAllow && call.ToolName is { } name && !opened.AutoApprovedTools.Contains(name))
+                opened.AutoApprovedTools.Add(name);
+        });
+        Changed?.Invoke();
+        _ = PumpApprovedCallAsync(run, callId);
+        return true;
+    }
+
+    /// <summary>Runs one approved call and then answers with its result in the history.</summary>
+    private async Task PumpApprovedCallAsync(ConversationRun run, string callId)
+    {
+        var call = await ReadOnUiAsync<ApprovedCall?>(() =>
+        {
+            var conversation = _sessions.Peek(run.ConversationId);
+            var index = conversation?.IndexOfToolCall(callId) ?? -1;
+            if (conversation is null || index < 0) return null;
+            var turn = conversation.Messages[index];
+            return new ApprovedCall(turn.ToolName ?? "", turn.ToolArguments ?? "{}", NormalizeMode(conversation.Mode));
+        }).ConfigureAwait(false);
+
+        if (call is null)
+        {
+            CompleteRun(run, RunResult.Failed, true, "ChatApprovalGone", true, null);
+            return;
+        }
+
+        run.RearmAfterApproval();
+        var result = ToolApprovalResults.Unavailable;
+        var failed = true;
+        var snapshot = await ReadOnUiAsync(() => HubSnapshotProvider?.Invoke()).ConfigureAwait(false);
+        if (ChatTools.Find(call.Value.Name, call.Value.Mode, snapshot) is { } tool)
+        {
+            try
+            {
+                var arguments = System.Text.Json.JsonSerializer
+                    .Deserialize<Dictionary<string, object?>>(call.Value.ArgumentsJson) ?? [];
+                // Invoked directly rather than through the model loop: the call was already made, and this is
+                // the same function the loop would have run.
+                var value = await tool.InvokeAsync(new AIFunctionArguments(arguments), run.Token).ConfigureAwait(false);
+                result = ChatPipeline.SerializeToolResult(value);
+                failed = false;
+            }
+            catch (OperationCanceledException)
+            {
+                // Stopped while the approved call was running. The call gets no result turn, and the next
+                // reply closes it — which is the same path a restart mid-call takes.
+                CompleteRun(run, RunResult.Cancelled, run.LiveText.Length > 0, "ChatCancelled", false, null);
+                return;
+            }
+            catch (Exception ex)
+            {
+                result = "Tool failed: " + ex.Message;
+            }
+        }
+
+        var turn = ChatTurn.FunctionResult(callId, result, failed);
+        await ApplyOnUiAsync(() =>
+        {
+            _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
+            ToolActivityChanged?.Invoke(run.ConversationId, call.Value.Name, true);
+            Changed?.Invoke();
+        }).ConfigureAwait(false);
+
+        await PumpSegmentsAsync(run).ConfigureAwait(false);
+    }
+
+    private readonly record struct ApprovedCall(string Name, string ArgumentsJson, string Mode);
+
     /// <summary>
     /// Replaces the user turn at <paramref name="index"/> with <paramref name="text"/>. Everything after the
     /// edited turn is dropped: that text was answered once already, so the reply and any later turns are stale
@@ -1565,18 +1789,33 @@ public sealed class ChatWorkspace : IDisposable
 
     private void StartRun(string conversationId)
     {
+        // A call left without a result would be rejected by the provider on replay, and this is the one place
+        // every start goes through — a fork, an edit, a restart, or a message arriving while a call waits for
+        // permission all end up here, so none of them needs its own copy of the rule.
+        _sessions.TryUpdate(conversationId,
+            opened => opened.CloseUnansweredToolCalls(ToolApprovalResults.Superseded));
+
+        if (_runs.TryGetValue(conversationId, out var waiting) && !waiting.IsStreaming)
+        {
+            // A run parked on an approval is superseded rather than resumed: saying something new *is* the
+            // answer to the question that was waiting.
+            _runs.Remove(conversationId);
+            waiting.Dispose();
+        }
+
         var run = new ConversationRun(conversationId, IdleTimeout);
         _runs[conversationId] = run;
-        _ = PumpAsync(run);
+        _ = PumpSegmentsAsync(run);
         RunsChanged?.Invoke(conversationId);
     }
 
     /// <summary>
     /// Answers one session until there is nothing left to answer: one segment, then another if the user steered
-    /// it. Nothing here is enumerated by a view, which is what lets the reply keep arriving while the user is
-    /// somewhere else.
+    /// it, and nothing at all if a segment parked on an approval — that run stays in the registry until the
+    /// decision arrives. Nothing here is enumerated by a view, which is what lets a reply keep arriving while
+    /// the user is somewhere else.
     /// </summary>
-    private async Task PumpAsync(ConversationRun run)
+    private async Task PumpSegmentsAsync(ConversationRun run)
     {
         var result = RunResult.Completed;
         string? noticeKey = null;
@@ -1587,6 +1826,7 @@ public sealed class ChatWorkspace : IDisposable
             while (true)
             {
                 (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false);
+                if (result == RunResult.Parked) return;
                 if (!run.TryTakeSteer(out var steerText, out var steerContext)) break;
                 if (!await AppendSteerTurnAsync(run, steerText, steerContext).ConfigureAwait(false))
                 {
@@ -1628,7 +1868,17 @@ public sealed class ChatWorkspace : IDisposable
                 SchedulePaint(run);
             }
 
-            return (RunResult.Completed, null, false, null);
+            // Either the stream ran out or the gate parked it and the enumeration stopped without throwing; the
+            // run's phase is what tells those apart, and a parked run must not be reported as an answer that end.
+            return run.Phase == RunPhase.AwaitingApproval
+                ? (RunResult.Parked, null, false, null)
+                : (RunResult.Completed, null, false, null);
+        }
+        catch (OperationCanceledException) when (run.Phase == RunPhase.AwaitingApproval)
+        {
+            // Parking cancels the request on purpose: the stream is gone, the decision is not, and the run stays
+            // in the registry until it arrives.
+            return (RunResult.Parked, null, false, null);
         }
         catch (OperationCanceledException)
         {
@@ -1672,9 +1922,7 @@ public sealed class ChatWorkspace : IDisposable
         var reasoning = ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, conversation.ReasoningEffort)
             ? conversation.ReasoningEffort
             : null;
-        IReadOnlyList<AITool> tools = mode == ChatModes.Ask
-            ? Array.Empty<AITool>()
-            : CreateReadOnlyTools();
+        var tools = ChatTools.CreateFor(mode, HubSnapshotProvider?.Invoke());
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
         return new ChatRequest(choice.Provider, choice.ModelName, reasoning, tools, ChatModePrompt.For(mode),
@@ -1692,7 +1940,8 @@ public sealed class ChatWorkspace : IDisposable
             request.SystemPrompt,
             request.Reasoning,
             request.Tools,
-            async info =>
+            gate: (info, _) => GateToolCallAsync(run, info),
+            onToolStarted: async info =>
             {
                 // Whatever the model said before asking for this call belongs to the call's own turn, so it is
                 // taken out of the live buffer here rather than written after the result.
@@ -1707,7 +1956,7 @@ public sealed class ChatWorkspace : IDisposable
                 }).ConfigureAwait(false);
                 run.Touch();
             },
-            async (info, result, failed) =>
+            onToolCompleted: async (info, result, failed) =>
             {
                 var turn = ChatTurn.FunctionResult(info.CallId, result, failed);
                 await ApplyOnUiAsync(() =>
@@ -1788,45 +2037,6 @@ public sealed class ChatWorkspace : IDisposable
         IReadOnlyList<AITool> Tools,
         string SystemPrompt,
         IReadOnlyList<ChatTurn> History);
-
-
-    private IReadOnlyList<AITool> CreateReadOnlyTools()
-    {
-        var snapshot = HubSnapshotProvider?.Invoke()
-            ?? throw new InvalidOperationException("The Hub read-only tool snapshot is unavailable.");
-
-        return
-        [
-            AIFunctionFactory.Create(
-                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Projects.Select(project => new
-                {
-                    project.Name,
-                    project.EngineVersion,
-                    project.Platform,
-                    project.Configuration,
-                    project.BuildStatus,
-                }))),
-                new AIFunctionFactoryOptions
-                {
-                    Name = "get_projects",
-                    Description = "List registered Hub projects with their engine version and build target.",
-                }),
-            AIFunctionFactory.Create(
-                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Engines)),
-                new AIFunctionFactoryOptions
-                {
-                    Name = "get_engines",
-                    Description = "List installed Axmol engine versions and channels.",
-                }),
-            AIFunctionFactory.Create(
-                (Func<string>)(() => System.Text.Json.JsonSerializer.Serialize(snapshot.Toolchains)),
-                new AIFunctionFactoryOptions
-                {
-                    Name = "get_toolchain_status",
-                    Description = "Read the latest already-known toolchain detection status; does not run probes or change anything.",
-                }),
-        ];
-    }
 
     public sealed record ChatModelOption(ModelProvider Provider, string ModelName)
     {

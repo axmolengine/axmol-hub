@@ -758,6 +758,7 @@ public partial class ShellCheckWindow : Window
             "清空空会话移除从未使用的新会话");
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
+        await CheckToolApprovalAsync(shell);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -968,6 +969,340 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         Check(chat.RunningCount == 0 && sidebar.RunningDotCountForCheck == 0,
             "自检清理：并行夹具会话全部删除且没有残留运行");
+    }
+
+    /// <summary>
+    /// The permission gate and the state a call waits in. A parked call is a fact about the session file and the
+    /// run registry, so all of it runs on scripted clients: no network, and no waiting on a model that would
+    /// have to be asked nicely to request a tool.
+    /// </summary>
+    private async Task CheckToolApprovalAsync(MainWindow shell)
+    {
+        var chat = shell.Chat;
+        var savedIdleTimeout = chat.IdleTimeout;
+        var savedRiskOverride = chat.RiskOverrideForCheck;
+        var savedPreferencesProvider = chat.PreferencesProvider;
+        var readSession = chat.StartConversation();
+        var parkSession = chat.StartConversation();
+        var denySession = chat.StartConversation();
+        var supersededSession = chat.StartConversation();
+        var restartSession = chat.StartConversation();
+        var readClient = new ApprovalChatClient();
+        var parkClient = new ApprovalChatClient();
+        var denyClient = new ApprovalChatClient();
+        var supersededClient = new ApprovalChatClient();
+        var restartClient = new ApprovalChatClient();
+        ChatWorkspace? reopened = null;
+        try
+        {
+            chat.ClientOverride = (_, conversationId) => conversationId switch
+            {
+                var id when id == readSession.Id => readClient,
+                var id when id == parkSession.Id => parkClient,
+                var id when id == denySession.Id => denyClient,
+                var id when id == supersededSession.Id => supersededClient,
+                var id when id == restartSession.Id => restartClient,
+                _ => new ScriptedChatClient(["不该被使用"]),
+            };
+            // Hub registers only read-only tools until the write tier ships, so a registered call's blast radius
+            // is overridden below the read-only case: everything downstream of the tier — asking the user,
+            // recording the wait, resuming after it — is the real code path.
+
+            // ── what the mode answers are, in priority order ──
+            var appPreferences = new HubPreferences();
+            chat.PreferencesProvider = () => appPreferences;
+            Check(chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Ask,
+                "会话没设过模式、应用默认也没设过时，按「询问审批」兜底");
+            appPreferences.ToolApprovalMode = ToolApprovalModes.Full;
+            Check(chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Full,
+                "会话没设过模式时跟随应用默认（实际「" + chat.ApprovalModeFor(parkSession.Id) + "」）");
+            Check(chat.SetApprovalMode(parkSession.Id, ToolApprovalModes.Auto)
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Auto,
+                "本会话的覆盖压过应用默认（实际「" + chat.ApprovalModeFor(parkSession.Id) + "」）");
+            chat.SetApprovalMode(parkSession.Id, "不认识的模式");
+            Check(chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Ask,
+                "写坏的模式串回到「询问审批」而不是放开权限（实际「" + chat.ApprovalModeFor(parkSession.Id) + "」）");
+            Check(chat.SetApprovalMode(parkSession.Id, null)
+                  && chat.ApprovalModeFor(parkSession.Id) == ToolApprovalModes.Full,
+                "清除覆盖后重新跟随应用默认（实际「" + chat.ApprovalModeFor(parkSession.Id) + "」）");
+            appPreferences.ToolApprovalMode = ToolApprovalModes.Ask;
+
+            // The tier map itself, asserted next to the stand-in above: a name this build has never heard is the
+            // one least able to vouch for itself, so it lands on the tier that has to ask.
+            Check(ChatTools.RiskOf("get_projects") == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("file_write") == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("没登记过的工具") == ToolRisk.SystemCommand,
+                "只读查询登记为只读，没听过的工具名按系统命令兜底而不是放行");
+
+            // A read is not a decision: under the strictest mode the read-only tools still run, and the record
+            // says nothing was ever asked.
+            chat.OpenConversation(readSession.Id);
+            chat.TryEnqueueSend(readSession.Id, "列一下工程", null, out var readRefusal);
+            await WaitForIdleAsync(chat);
+            Check(readRefusal is null
+                  && readSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 1
+                  && readSession.Messages.All(turn => turn.ApprovalState is null)
+                  && readSession.Messages[^1].Text == ApprovalChatClient.Answer,
+                "「询问审批」下只读工具照跑，记录里不产生任何审批状态（实际 "
+                + readSession.Messages.Count + " 条、工具结果 "
+                + readSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) + " 条）");
+            Check(chat.Conversations.Any(summary => summary.Id == readSession.Id
+                  && summary.PendingApprovals == 0),
+                "只读调用不进入会话索引的待批准计数");
+
+            // Now the same registered call is judged as a write, which is what gives the gate something to stop.
+            chat.RiskOverrideForCheck = name => name == "get_projects" ? ToolRisk.WorkspaceWrite : ToolRisk.ReadOnly;
+
+            // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
+            // because a decision made after a restart is made against the file, not against memory.
+            chat.OpenConversation(parkSession.Id);
+            chat.IdleTimeout = TimeSpan.FromMilliseconds(150);
+            chat.TryEnqueueSend(parkSession.Id, "写一个文件", null, out _);
+            var parkedCallId = await WaitForPendingCallAsync(parkSession);
+            var parked = chat.StoredCopyForCheck(parkSession.Id);
+            Check(parkedCallId is not null
+                  && parked?.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 0
+                  && parked!.Messages.All(turn => !turn.Text.Contains("awaiting user approval", StringComparison.Ordinal)),
+                "有风险的工具调用被记为待批准、停在流上，且没有写出任何结果（停在 "
+                + (parked?.Messages.Count ?? -1) + " 条）");
+            Check(parkSession.Messages.Any(turn => turn.ToolCallId == parkedCallId && turn.ApprovalState == ChatApprovalStates.Pending),
+                "挂起的调用仍占住本会话的运行记录");
+            Check(chat.RunFor(parkSession.Id) is not null && !chat.IsRunning(parkSession.Id),
+                "挂起的会话不再算作流式，但运行记录还在等决定");
+            Check(parkClient.Answers == 0, "停在待批准时没有替模型把回复说完（占位结果不该被当成答案）");
+            Check(chat.Conversations.Any(summary => summary.Id == parkSession.Id && summary.PendingApprovals == 1),
+                "会话索引报告有一个待批准");
+
+            // Waiting for a person is not stalling: the inactivity deadline is allowed to fire (150ms above) and
+            // the decision still has to be answerable afterwards.
+            var deadlineFired = await WaitForStaleDeadlineAsync(chat, parkSession.Id);
+            Check(deadlineFired && chat.RunFor(parkSession.Id) is not null
+                  && chat.StoredCopyForCheck(parkSession.Id)?.Messages.Any(turn =>
+                      turn.ToolCallId == parkedCallId && turn.ApprovalState == ChatApprovalStates.Pending) == true,
+                "空闲超时确实到期了，而没有把等待批准的调用一起取消掉（到期 " + deadlineFired + "）");
+
+            // Approving runs that very call — the arguments the model chose, not a fresh request — writes its
+            // real result, and the reply continues from there.
+            var approved = chat.TryResolveApproval(parkSession.Id, parkedCallId ?? "", approved: true,
+                alwaysAllow: true, out var approveRefusal);
+            await WaitForIdleAsync(chat);
+            var afterApprove = chat.StoredCopyForCheck(parkSession.Id);
+            Check(approved && approveRefusal is null
+                  && afterApprove?.Messages.Any(turn => turn.ToolCallId == parkedCallId
+                      && turn.Role == ChatRoles.Assistant
+                      && turn.ApprovalState == ChatApprovalStates.Approved) == true
+                  && afterApprove!.Messages.Any(turn => turn.ToolCallId == parkedCallId
+                      && turn.Role == ChatRoles.Tool && turn.Text.StartsWith("[", StringComparison.Ordinal))
+                  && afterApprove.Messages[^1].Text == ApprovalChatClient.Answer,
+                "批准后按原调用执行、真实结果入库、回复接着说完（实际 "
+                + (afterApprove?.Messages.Count ?? -1) + " 条）");
+            Check(chat.RunFor(parkSession.Id) is null && chat.RunningCount == 0,
+                "批准后的续答跑完即让出运行位（实际仍有 " + chat.RunningCount + " 路）");
+            Check(afterApprove?.AutoApprovedTools.Contains("get_projects") == true,
+                "「总是允许」作为本会话的授权落进会话文件");
+
+            // …which is why the next call of the same tool does not ask again.
+            parkClient.CallsRemaining = 1;
+            chat.TryEnqueueSend(parkSession.Id, "再写一次", null, out _);
+            await WaitForIdleAsync(chat);
+            var afterAllow = chat.StoredCopyForCheck(parkSession.Id);
+            Check(afterAllow?.Messages.Count(turn => turn.ApprovalState == ChatApprovalStates.Pending) == 0
+                  && afterAllow!.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 2
+                  && afterAllow.Messages[^1].Text == ApprovalChatClient.Answer,
+                "同名工具第二次调用不再询问（实际工具结果 "
+                + (afterAllow?.Messages.Count(turn => turn.Role == ChatRoles.Tool) ?? -1) + " 条）");
+
+            // Refusing is an ending: the model is told it was refused, and it is not asked to talk about it.
+            chat.IdleTimeout = savedIdleTimeout;
+            chat.SetApprovalMode(denySession.Id, ToolApprovalModes.Ask);
+            chat.OpenConversation(denySession.Id);
+            chat.TryEnqueueSend(denySession.Id, "别写", null, out _);
+            var deniedCallId = await WaitForPendingCallAsync(denySession);
+            var refused = chat.TryResolveApproval(denySession.Id, deniedCallId ?? "", approved: false,
+                alwaysAllow: false, out var denyRefusal);
+            await WaitForIdleAsync(chat);
+            var afterDeny = chat.StoredCopyForCheck(denySession.Id);
+            Check(refused && denyRefusal is null
+                  && afterDeny?.Messages.Any(turn => turn.ToolCallId == deniedCallId
+                      && turn.Role == ChatRoles.Assistant
+                      && turn.ApprovalState == ChatApprovalStates.Denied) == true
+                  && afterDeny!.Messages.Any(turn => turn.Role == ChatRoles.Tool
+                      && turn.Text == ToolApprovalResults.Denied)
+                  && afterDeny.Messages[^1].Role == ChatRoles.Tool,
+                "拒绝写入「已被拒绝」的结果并结束本轮，模型不会再多说一句");
+            Check(denyClient.Answers == 0 && chat.RunFor(denySession.Id) is null,
+                "拒绝之后模型一句也没接着说，运行位同时被让出（实际答了 " + denyClient.Answers + " 次）");
+
+            // A decision that is no longer there is refused with a readable reason, not a silent no-op.
+            var restale = !chat.TryResolveApproval(denySession.Id, deniedCallId ?? "", approved: true,
+                alwaysAllow: false, out var staleKey);
+            Check(restale && staleKey == "ChatApprovalGone" && HubStrings.Get("ChatApprovalGone") != "ChatApprovalGone",
+                "对已经处理过的调用再点批准会被拒绝并给出可读原因（实际 " + staleKey + "）");
+
+            // Saying something new *is* an answer to the question that was waiting: the pending call gets a
+            // synthetic result, because an assistant turn carrying an unanswered call is rejected on replay.
+            chat.OpenConversation(supersededSession.Id);
+            chat.TryEnqueueSend(supersededSession.Id, "先问一次", null, out _);
+            var waitingCallId = await WaitForPendingCallAsync(supersededSession);
+            var supersededSent = chat.TryEnqueueSend(supersededSession.Id, "换个说法", null, out _);
+            await WaitForIdleAsync(chat);
+            var afterSupersede = chat.StoredCopyForCheck(supersededSession.Id);
+            Check(supersededSent && waitingCallId is not null
+                  && afterSupersede?.Messages.Any(turn => turn.Role == ChatRoles.Tool
+                      && turn.ToolCallId == waitingCallId
+                      && turn.Text == ToolApprovalResults.Superseded) == true
+                  && afterSupersede!.Messages.All(turn => turn.ApprovalState != ChatApprovalStates.Pending),
+                "待批准期间的新消息取代该调用，并补上「已被取代」的结果");
+            Check(afterSupersede is not null && EveryToolCallAnswered(afterSupersede),
+                "取代后的会话可重放：每个调用都有配对结果（否则 provider 会整段拒收）");
+            Check(chat.RunFor(supersededSession.Id) is null && chat.RunningCount == 0,
+                "取代挂起调用后不留运行记录（实际 " + chat.RunningCount + " 路）");
+
+            // The record of a pending call outlives the process, so the answer has to be given by a workspace
+            // that never saw the stream — which is exactly what a restart leaves behind.
+            chat.OpenConversation(restartSession.Id);
+            chat.TryEnqueueSend(restartSession.Id, "重启前的问题", null, out _);
+            var orphanCallId = await WaitForPendingCallAsync(restartSession);
+            reopened = new ChatWorkspace(shell.Workspace.Store.Root)
+            {
+                ClientOverride = (_, _) => restartClient,
+                HubSnapshotProvider = chat.HubSnapshotProvider,
+                PreferencesProvider = chat.PreferencesProvider,
+                RiskOverrideForCheck = chat.RiskOverrideForCheck,
+            };
+            reopened.OpenConversation(restartSession.Id);
+            Check(orphanCallId is not null && reopened.RunFor(restartSession.Id) is null,
+                "新加载的会话里没有任何运行记录（正是重启后的形状）");
+            var resumedAfterRestart = reopened.TryResolveApproval(restartSession.Id, orphanCallId ?? "",
+                approved: true, alwaysAllow: false, out var restartRefusal);
+            for (var wait = 0; wait < 200 && reopened.RunningCount > 0; wait++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            var afterRestart = reopened.StoredCopyForCheck(restartSession.Id);
+            Check(resumedAfterRestart && restartRefusal is null
+                  && afterRestart?.Messages.Any(turn => turn.ToolCallId == orphanCallId
+                      && turn.Role == ChatRoles.Tool) == true
+                  && afterRestart!.Messages[^1].Text == ApprovalChatClient.Answer,
+                "重启后依然能执行待批准的调用并把回复接上（实际 "
+                + (afterRestart?.Messages.Count ?? -1) + " 条）");
+
+            // Deleting a session that was waiting drops the decision with it, and the slot it was holding: the
+            // run the original workspace still had parked is now answering to nothing.
+            Check(chat.RunFor(restartSession.Id) is not null && !chat.IsRunning(restartSession.Id),
+                "另一个进程答完决定之后，原进程的运行记录仍占着会话");
+            chat.DeleteConversation(restartSession.Id);
+            Check(chat.RunFor(restartSession.Id) is null,
+                "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
+        }
+        finally
+        {
+            reopened?.Dispose();
+            chat.RiskOverrideForCheck = savedRiskOverride;
+            chat.PreferencesProvider = savedPreferencesProvider;
+            chat.ClientOverride = null;
+            chat.IdleTimeout = savedIdleTimeout;
+            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id })
+                chat.DeleteConversation(id);
+            await WaitForIdleAsync(chat);
+            Check(chat.RunningCount == 0
+                  && chat.Conversations.All(summary => summary.PendingApprovals == 0)
+                  && new[] { readSession, parkSession, denySession, supersededSession, restartSession }
+                      .All(session => chat.StoredCopyForCheck(session.Id) is null),
+                "自检清理：审批夹具会话全部删除且没有残留运行（实际 " + chat.RunningCount + " 路）");
+        }
+    }
+
+    /// <summary>The call a session is waiting on, read off the live transcript so a park is noticed in one poll
+    /// rather than one file load per attempt; the assertions that follow read the file.</summary>
+    private static async Task<string?> WaitForPendingCallAsync(Conversation session)
+    {
+        for (var wait = 0; wait < 400; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            var callId = session.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
+                && turn.ToolCallId is { Length: > 0 }
+                && turn.ApprovalState == ChatApprovalStates.Pending)?.ToolCallId;
+            if (callId is not null) return callId;
+            await Task.Delay(2);
+        }
+
+        return null;
+    }
+
+    /// <summary>Waits until a parked run's inactivity deadline has really fired, so the next assertion is about
+    /// a call that survived the deadline rather than one that was never tested by it.</summary>
+    private static async Task<bool> WaitForStaleDeadlineAsync(ChatWorkspace chat, string conversationId)
+    {
+        for (var wait = 0; wait < 400; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (chat.RunFor(conversationId)?.Token.IsCancellationRequested == true) return true;
+            await Task.Delay(2);
+        }
+
+        return false;
+    }
+
+    private static bool EveryToolCallAnswered(Conversation conversation)
+    {
+        var answered = conversation.Messages
+            .Where(turn => turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId)
+            .ToHashSet(StringComparer.Ordinal);
+        return conversation.Messages
+            .Where(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 })
+            .All(turn => answered.Contains(turn.ToolCallId));
+    }
+
+    /// <summary>Asks for one tool call per <see cref="CallsRemaining"/> and then answers. The answer honours
+    /// cancellation, because parking ends a turn by cancelling the stream — a fixture that ignored the token
+    /// would keep answering a turn production stopped, and the check would pass anyway.</summary>
+    private sealed class ApprovalChatClient : Microsoft.Extensions.AI.IChatClient
+    {
+        public const string Answer = "批准之后接着说的话";
+
+        public int CallsRemaining { get; set; } = 1;
+        public int Requests { get; private set; }
+
+        /// <summary>How many times the fixture actually answered. A parked turn attempts a follow-up request and
+        /// dies in it, so counting requests would say nothing about whether a reply was produced.</summary>
+        public int Answers { get; private set; }
+
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The approval check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Requests++;
+            if (CallsRemaining > 0)
+            {
+                CallsRemaining--;
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant,
+                    [new Microsoft.Extensions.AI.FunctionCallContent(
+                        "call-" + Requests, "get_projects", new Dictionary<string, object?>())]);
+            }
+            else
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, Answer);
+            }
+
+            await Task.Yield();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 
     /// <summary>Waits for one session's run to end, pumping the dispatcher so its writes and repaints land.</summary>

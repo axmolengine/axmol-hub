@@ -10,6 +10,11 @@ namespace AxmolHub.App;
 internal enum RunPhase
 {
     Streaming,
+
+    /// <summary>A tool call is waiting for permission. The run keeps its slot, but no stream is open, so no
+    /// inactivity deadline applies. A new message does not wait for the decision — it supersedes it.</summary>
+    AwaitingApproval,
+
     Completed,
 }
 
@@ -21,6 +26,9 @@ internal enum RunResult
     Cancelled,
     TimedOut,
     Failed,
+
+    /// <summary>Not an ending: the run parked on an approval and stays in the registry until that is decided.</summary>
+    Parked,
 }
 
 /// <summary>
@@ -37,12 +45,14 @@ internal sealed class ConversationRun : IDisposable
     private readonly object _gate = new();
     private readonly StringBuilder _text = new();
     private readonly CancellationTokenSource _stop = new();
-    private readonly CancellationTokenSource _idle = new();
-    private readonly CancellationTokenSource _linked;
     private readonly TimeSpan _idleTimeout;
+    private CancellationTokenSource _idle = new();
+    private CancellationTokenSource _suspend = new();
+    private CancellationTokenSource _linked;
     private string? _steerText;
     private string? _steerContext;
     private int _paintQueued;
+    private bool _parked;
 
     public string ConversationId { get; }
     public RunPhase Phase { get; private set; } = RunPhase.Streaming;
@@ -57,7 +67,7 @@ internal sealed class ConversationRun : IDisposable
     {
         ConversationId = conversationId;
         _idleTimeout = idleTimeout;
-        _linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, _idle.Token);
+        _linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, _idle.Token, _suspend.Token);
         Touch();
     }
 
@@ -86,15 +96,52 @@ internal sealed class ConversationRun : IDisposable
     }
 
     /// <summary>Re-arms the inactivity deadline: for every chunk, and for every tool event, because a tool that
-    /// runs for two minutes while streaming nothing is working rather than stalled.</summary>
+    /// runs for two minutes while streaming nothing is working rather than stalled. A parked run has no stream,
+    /// so nothing re-arms — waiting for a human is not the same as stalling.</summary>
     internal void Touch()
     {
+        if (_parked) return;
         // CancelAfter is a no-op once the source fired and throws once it is disposed; disposal happens only
         // after the pump is finished with this run.
         if (!_idle.IsCancellationRequested) _idle.CancelAfter(_idleTimeout);
     }
 
     internal void RequestStop() => _stop.Cancel();
+
+    /// <summary>Ends the in-flight request without ending the run. This is the only cancellation a parked
+    /// approval uses: the stream goes away, the decision stays, and the slot is still held.</summary>
+    internal void SuspendForApproval() => _suspend.Cancel();
+
+    /// <summary>Marks the run as waiting. Called from the gate, before the pipeline is told to park.</summary>
+    internal void ParkForApproval()
+    {
+        _parked = true;
+        Phase = RunPhase.AwaitingApproval;
+    }
+
+    /// <summary>
+    /// Takes the run out of the parked state with a fresh inactivity deadline. The old one may well have fired
+    /// while a person was deciding, and an expired deadline reused for the resumed stream would cancel the
+    /// first request it made; the old sources are dropped rather than reused for the same reason.
+    /// </summary>
+    internal void RearmAfterApproval()
+    {
+        var staleIdle = _idle;
+        var staleSuspend = _suspend;
+        var staleLinked = _linked;
+
+        _idle = new CancellationTokenSource();
+        _suspend = new CancellationTokenSource();
+        _linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, _idle.Token, _suspend.Token);
+        _parked = false;
+        Phase = RunPhase.Streaming;
+        Touch();
+
+        // Nothing holds the old token any more — the stream that used it ended when the run parked.
+        staleLinked.Dispose();
+        staleSuspend.Dispose();
+        staleIdle.Dispose();
+    }
 
     internal void QueueSteer(string text, string? context)
     {
@@ -138,6 +185,7 @@ internal sealed class ConversationRun : IDisposable
     public void Dispose()
     {
         _linked.Dispose();
+        _suspend.Dispose();
         _idle.Dispose();
         _stop.Dispose();
     }

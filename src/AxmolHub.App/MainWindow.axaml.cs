@@ -94,6 +94,7 @@ public partial class MainWindow : Window
         _workspace.Owner = this;
         _chat = new ChatWorkspace(dataRoot);
         _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
+        _chat.PreferencesProvider = () => _preferences;
         WireChatRuns();
 
         InitializeComponent();
@@ -336,6 +337,7 @@ public partial class MainWindow : Window
         _chat.Dispose();
         _chat = new ChatWorkspace(next.Store.Root);
         _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
+        _chat.PreferencesProvider = () => _preferences;
         WireChatRuns();
         _chatPanel = null;
 
