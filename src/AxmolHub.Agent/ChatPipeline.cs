@@ -93,8 +93,12 @@ public sealed class ChatPipeline(IChatClient client)
             var arguments = turn.ToolArguments is { Length: > 0 }
                 ? JsonSerializer.Deserialize<Dictionary<string, object?>>(turn.ToolArguments) ?? []
                 : [];
-            return new ChatMessage(ChatRole.Assistant,
-                [new FunctionCallContent(callId, name, arguments)]);
+            // Text recorded on the call turn was streamed before the model asked for it, and belongs ahead of
+            // the call in the same assistant message — replaying it as a separate message is not what was sent.
+            var contents = new List<AIContent>();
+            if (turn.Text.Length > 0) contents.Add(new TextContent(turn.Text));
+            contents.Add(new FunctionCallContent(callId, name, arguments));
+            return new ChatMessage(ChatRole.Assistant, contents);
         }
 
         if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } resultId)

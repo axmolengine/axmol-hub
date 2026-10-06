@@ -618,6 +618,22 @@ if (args.Contains("--check-ai-sessions"))
     streamed.Clear();
     Console.WriteLine("PASS: ChatPipeline completes the read-only function-call loop.");
 
+    // What the model streamed before asking for a call is stored on the call turn, and must come back as the
+    // one assistant message it was sent as: text then call in a single message, not two assistant messages.
+    var spoken = ChatPipeline.ToChatMessages([
+        ChatTurn.User("改之前先看一眼"),
+        ChatTurn.FunctionCall("c1", "get_projects", "{}", "先说的话"),
+    ]);
+    var spokenAssistant = spoken.Single(message => message.Role == ChatRole.Assistant);
+    if (spoken.Count != 2 || spokenAssistant.Contents.Count != 2
+        || spokenAssistant.Contents[0] is not TextContent { Text: "先说的话" }
+        || spokenAssistant.Contents[1] is not FunctionCallContent { CallId: "c1" })
+        throw new Exception("The text streamed before a tool call did not replay as one assistant message.");
+    var bareCall = ChatPipeline.ToChatMessages([ChatTurn.FunctionCall("c2", "get_projects", "{}")]);
+    if (bareCall.Single().Contents.Count != 1 || bareCall.Single().Contents[0] is not FunctionCallContent)
+        throw new Exception("A call turn without leading text gained an empty text content.");
+    Console.WriteLine("PASS: pre-call text replays inside the assistant's tool-call message.");
+
     // Cancellation propagates as OperationCanceledException.
     using var cancellation = new CancellationTokenSource();
     cancellation.Cancel();

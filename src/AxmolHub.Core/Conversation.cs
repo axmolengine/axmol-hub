@@ -54,8 +54,11 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
     public static ChatTurn System(string text) => new(ChatRoles.System, text, DateTimeOffset.Now);
 
-    public static ChatTurn FunctionCall(string callId, string name, string arguments) =>
-        new(ChatRoles.Assistant, "", DateTimeOffset.Now)
+    /// <summary>The text the model streamed <b>before</b> asking for this call rides on the call turn instead of
+    /// forming a turn of its own: two assistant messages in a row is what the model actually sent as one, and
+    /// replaying it as two breaks bridges that require alternating roles.</summary>
+    public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null) =>
+        new(ChatRoles.Assistant, text ?? "", DateTimeOffset.Now)
         {
             ToolCallId = callId,
             ToolName = name,

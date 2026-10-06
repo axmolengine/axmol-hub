@@ -1476,7 +1476,7 @@ public sealed class ChatWorkspace : IDisposable
         var received = new System.Text.StringBuilder();
         try
         {
-            await foreach (var chunk in StreamAsync(provider, choice.ModelName, conversation, cancellationToken).ConfigureAwait(false))
+            await foreach (var chunk in StreamAsync(provider, choice.ModelName, conversation, received, cancellationToken).ConfigureAwait(false))
             {
                 received.Append(chunk);
                 yield return chunk;
@@ -1486,6 +1486,8 @@ public sealed class ChatWorkspace : IDisposable
         {
             // Runs on cancellation and on success alike — the partial reply is still the model's answer.
             // On an exception from StreamAsync it also runs; the caller sees the exception re-thrown after.
+            // Only text that arrived after the last tool call is still in the buffer: whatever the model said
+            // before a call was handed to that call turn when the call was recorded.
             if (received.Length > 0)
             {
                 conversation.Append(new ChatTurn(ChatRoles.Assistant, received.ToString(), DateTimeOffset.Now));
@@ -1498,6 +1500,7 @@ public sealed class ChatWorkspace : IDisposable
         ModelProvider provider,
         string modelName,
         Conversation conversation,
+        System.Text.StringBuilder pendingText,
         CancellationToken cancellationToken)
     {
         var client = ClientOverride?.Invoke(provider) ?? ChatClientFactory.Create(provider, modelName);
@@ -1521,7 +1524,11 @@ public sealed class ChatWorkspace : IDisposable
             tools,
             (name, callId, arguments) =>
             {
-                conversation.Append(ChatTurn.FunctionCall(callId, name, arguments));
+                // The iterator contract serializes this with the chunk loop above, so the buffer holds exactly
+                // the text streamed before this call — which is where it belongs in the transcript.
+                var said = pendingText.ToString();
+                pendingText.Clear();
+                conversation.Append(ChatTurn.FunctionCall(callId, name, arguments, said.Length > 0 ? said : null));
                 _conversations.Save(conversation);
                 ToolActivityChanged?.Invoke(name, false);
             },
