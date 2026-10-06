@@ -579,6 +579,38 @@ public partial class ShellCheckWindow : Window
               && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Text == "改写后的提问",
             "编辑重发替换该消息并截断其后全部内容");
 
+        // Branching forks the transcript at one message into a new session and switches to it. The source is
+        // only mutated in memory here: BranchFrom reads the live object, so nothing has to be re-saved first.
+        opsConversation.Append(ChatTurn.Assistant("第一条回复"));
+        opsConversation.Append(ChatTurn.User("第二个提问"));
+        opsConversation.Append(ChatTurn.Assistant("第二条回复"));
+        var branchSourceId = opsConversation.Id;
+        var branchSourceCount = opsConversation.Messages.Count;
+        var branched = shell.Chat.BranchFrom(1);
+        Check(branched is not null && branched.Id != branchSourceId
+              && branched.Messages.Count == 2 && branched.Messages[^1].Text == "第一条回复"
+              && opsConversation.Messages.Count == branchSourceCount,
+            "从第 2 条消息分叉出新会话，只保留切点及之前内容，源会话不动（实际 "
+            + (branched?.Messages.Count ?? -1) + " 条）");
+        Check(branched is not null && branched.Title == opsConversation.Title
+              && branched.ProviderId == opsConversation.ProviderId && branched.Mode == opsConversation.Mode
+              && branched.BranchSourceId == branchSourceId && branched.BranchSourceIndex == 1
+              && shell.Chat.ActiveConversation!.Id == branched.Id,
+            "分叉会话沿用标题与 provider/模式、记录来源，并立即成为当前会话");
+        Check(branched is not null && shell.Chat.Conversations.Count(summary => summary.Id == branched.Id) == 1
+              && sidebar.ConversationListText.Contains(branched.Title, StringComparison.Ordinal),
+            "分叉会话写入索引并出现在左侧会话列表");
+        Check(branched is not null && shell.Chat.OpenConversation(branched.Id)
+              is { BranchSourceId: not null, BranchSourceIndex: 1 },
+            "分叉来源经落盘重载后仍在（新可选字段不破坏读取）");
+        if (branched is not null)
+        {
+            shell.Chat.OpenConversation(branchSourceId);
+            shell.Chat.DeleteConversation(branched.Id);
+            Check(shell.Chat.Conversations.All(summary => summary.Id != branched.Id),
+                "自检清理：分叉出的会话被移除");
+        }
+
         // Session management: rename, pin (its own group header), and pruning abandoned empty sessions.
         Check(shell.Chat.RenameConversation(opsConversation.Id, "重命名标题")
               && shell.Chat.ActiveConversation!.Title == "重命名标题",

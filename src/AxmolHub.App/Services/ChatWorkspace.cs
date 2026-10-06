@@ -1296,6 +1296,45 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Forks the active conversation at <paramref name="index"/> into a new session holding turns 0..index and
+    /// nothing after, then switches to it: the way to chase a different answer without rewriting the original
+    /// transcript. Returns null when the index is out of range.
+    ///
+    /// Turns are shared rather than cloned — <see cref="ChatTurn"/> is written once and never mutated, and the
+    /// history is a fresh list, so the source can keep streaming into its own list untouched. The title is
+    /// assigned explicitly because history written straight to <c>Messages</c> never goes through
+    /// <see cref="Conversation.Append"/>, which is what normally derives it.
+    /// </summary>
+    public Conversation? BranchFrom(int index)
+    {
+        if (_active is null) throw new InvalidOperationException("No active conversation.");
+        var source = _active;
+        if (index < 0 || index >= source.Messages.Count) return null;
+
+        var branch = new Conversation
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Title = source.Title,
+            ProviderId = source.ProviderId,
+            ModelName = source.ModelName,
+            Mode = source.Mode,
+            ReasoningEffort = source.ReasoningEffort,
+            Messages = [.. source.Messages.Take(index + 1)],
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+            BranchSourceId = source.Id,
+            BranchSourceIndex = index,
+        };
+
+        _conversations.Save(branch);
+        _active = branch;
+        _selectedMode = NormalizeMode(branch.Mode);
+        _selectedReasoningEffort = branch.ReasoningEffort;
+        Changed?.Invoke();
+        return branch;
+    }
+
     /// <summary>Drops every conversation that never received a message. Starting a new session writes an
     /// empty one immediately, so without this the sidebar slowly fills with abandoned "new chat" rows.</summary>
     public int PruneEmptyConversations()
