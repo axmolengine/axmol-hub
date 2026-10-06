@@ -413,6 +413,9 @@ public static class HubTexts
         ["ChatTimedOut"] = ("模型请求超时，请检查网络或服务状态后重试。", "The model request timed out. Check your connection or the provider status and try again."),
         ["ChatNoResponse"] = ("模型没有返回内容，请重试或检查模型配置。", "The model returned no content. Try again or check the model configuration."),
         ["ChatCancelled"] = ("已停止。", "Stopped."),
+        // Not an error and not silent: the earlier turns were replaced by a summary, so a reply that seems to
+        // have forgotten something has a reason the user can see.
+        ["ChatContextCompacted"] = ("已自动压缩较早的上下文。", "Compacted the earlier context automatically."),
         // Refusals a send can get back now that several sessions answer at once. The cap is deliberately not
         // spelled out as a number: the limit lives in code, and a literal here would go stale silently.
         ["ChatSessionBusy"] = ("这个会话正在生成回复，请先停止它或等回复结束。", "This session is already answering. Stop it or wait for the reply to finish."),

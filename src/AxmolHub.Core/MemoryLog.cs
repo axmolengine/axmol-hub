@@ -52,6 +52,12 @@ public static class MemoryLog
         return lines;
     }
 
+    /// <summary>Written at the moment compaction happens rather than folded into the run's closing block: a long
+    /// session may compact several times, and a run killed by hand would otherwise leave no trace of any of
+    /// them.</summary>
+    public static IReadOnlyList<string> LinesForCompaction(string conversationId, DateTimeOffset at)
+        => [$"- {at:HH:mm} · 会话 {ShortId(conversationId)} 自动压缩了上下文"];
+
     public static MemoryLogAppend Append(string path, IReadOnlyList<string> lines, int maxFileBytes = MaxFileBytes)
     {
         if (lines.Count == 0) return new MemoryLogAppend(false, path, "nothing to record");

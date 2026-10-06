@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,7 +52,9 @@ internal sealed class ConversationRun : IDisposable
     private CancellationTokenSource _linked;
     private string? _steerText;
     private string? _steerContext;
+    private readonly List<string> _toolOutcomes = [];
     private int _paintQueued;
+    private int _compactionRequested;
     private bool _parked;
 
     public string ConversationId { get; }
@@ -173,6 +176,27 @@ internal sealed class ConversationRun : IDisposable
 
     /// <summary>Coalesces paints: the first chunk of a frame asks, the rest are folded into that one.</summary>
     internal bool TryRequestPaint() => Interlocked.Exchange(ref _paintQueued, 1) == 0;
+
+    /// <summary>
+    /// Asks the pump to consider compacting. A flag rather than a call because the only place that knows a tool
+    /// result just landed is inside the model's tool loop, where nothing may be awaited — the pump picks it up
+    /// between segments, which is the nearest point with no stream open.
+    /// </summary>
+    internal void RequestCompaction() => Interlocked.Exchange(ref _compactionRequested, 1);
+
+    internal bool TryTakeCompactionRequest() => Interlocked.Exchange(ref _compactionRequested, 0) == 1;
+
+    /// <summary>What each tool call did, in order, for the project's daily log. Recorded rather than derived from
+    /// the transcript because the transcript does not say whether a call was allowed, approved or refused.</summary>
+    internal void RecordToolOutcome(string outcome)
+    {
+        lock (_gate) _toolOutcomes.Add(outcome);
+    }
+
+    internal IReadOnlyList<string> ToolOutcomes
+    {
+        get { lock (_gate) return [.. _toolOutcomes]; }
+    }
 
     internal void ClearPaintRequest() => Interlocked.Exchange(ref _paintQueued, 0);
 

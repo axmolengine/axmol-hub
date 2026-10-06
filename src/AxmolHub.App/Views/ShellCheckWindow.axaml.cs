@@ -845,6 +845,7 @@ public partial class ShellCheckWindow : Window
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
         await CheckToolApprovalAsync(shell, panel);
+        await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1203,6 +1204,11 @@ public partial class ShellCheckWindow : Window
             Check(parkClient.Answers == 0, "停在待批准时没有替模型把回复说完（占位结果不该被当成答案）");
             Check(chat.Conversations.Any(summary => summary.Id == parkSession.Id && summary.PendingApprovals == 1),
                 "会话索引报告有一个待批准");
+            // A call waiting for permission is the record of a decision owed. Archiving it behind a summary would
+            // answer that decision by losing it, so compression stays refused for as long as it waits — including
+            // from inside the run that parked it.
+            Check(!chat.CanCompressContext(parkSession.Id),
+                "存在待批准调用时压缩被拒（哪怕压缩是运行中合法的操作）");
 
             // The card is what makes a parked call answerable, so it is read back as painted: on screen without
             // hovering, naming the tool and showing what it would do, with the three exits and nothing else.
@@ -1540,6 +1546,92 @@ public partial class ShellCheckWindow : Window
 
         return false;
     }
+
+    /// <summary>
+    /// A run that outgrows its window compacts itself between segments, and every run leaves a block in the
+    /// project's daily log. Both on scripted clients: the summary is a model call and the log is a file, so
+    /// neither needs a network or a repository the user cares about.
+    /// </summary>
+    private async Task CheckAutoCompactionAsync(MainWindow shell, ChatPanel panel, string providerId)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var workspace = ScratchDirectory.Resolve("compaction-workspace");
+        var logFile = MemoryLog.FileFor(workspace, DateTimeOffset.Now);
+        if (System.IO.File.Exists(logFile)) System.IO.File.Delete(logFile);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(workspace, "big.txt"),
+            string.Concat(Enumerable.Range(1, 4000).Select(index => $"row-{index:D4} " + new string('y', 40) + "\n")));
+
+        // The self-check provider, which declares no window and so falls back to the 8 KiB default: against a
+        // provider that advertises 128k, five tool results are nowhere near half the budget and nothing would
+        // compact. The threshold is the thing under test, so the window has to be a known small one.
+        var session = chat.StartConversation(providerId);
+        // Five calls rather than the eight the loop allows: each one is a request, and the reply that follows is
+        // another, so the fixture has to stay inside the iteration cap it is not testing.
+        var client = new ApprovalChatClient
+        {
+            CallsRemaining = 5,
+            ToolName = "read_file",
+            Arguments = new Dictionary<string, object?> { ["path"] = "big.txt" },
+        };
+        try
+        {
+            chat.ClientOverride = (_, _) => client;
+            chat.SetWorkspaceRoot(session.Id, workspace);
+            chat.OpenConversation(session.Id);
+            chat.TryEnqueueSend(session.Id, "把大文件读五次", null, out var refusal);
+            await WaitForIdleAsync(chat);
+
+            var copy = chat.StoredCopyForCheck(session.Id);
+            var (used, budget) = chat.TranscriptUsageForCheck(session.Id);
+            var firstResult = copy?.Messages.FirstOrDefault(turn => turn.Role == ChatRoles.Tool).Text ?? "无";
+            Check(refusal is null && copy is not null
+                  && copy.ContextSummaryThroughMessageCount > 0
+                  && copy.ContextSummary.Length > 0
+                  && EveryToolCallAnswered(copy)
+                  && copy.Messages[^1].Text == ApprovalChatClient.Answer,
+                "工具循环把上下文顶过半窗之后自动压缩，且每个调用仍有配对结果（压缩边界 "
+                + (copy?.ContextSummaryThroughMessageCount ?? -1) + "，共 " + (copy?.Messages.Count ?? -1)
+                + " 条，占用 " + used + "/" + budget + " tokens，首个工具结果「"
+                + firstResult[..Math.Min(160, firstResult.Length)] + "」）");
+            Check(copy is not null && copy.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 5
+                  && copy.Messages.Skip(SummaryBoundary(copy)).All(turn => turn.ApprovalState is null),
+                "压缩只归档较早的前缀，磁盘上的转录一条没少（工具结果 "
+                + (copy?.Messages.Count(turn => turn.Role == ChatRoles.Tool) ?? -1) + " 条）");
+
+            Check(HubStrings.Get("ChatContextCompacted") is { Length: > 0 } notice
+                  && notice != "ChatContextCompacted",
+                "自动压缩有一行用户可见的提示文案，而不是把键名显示出来");
+
+            var logged = System.IO.File.Exists(logFile) ? System.IO.File.ReadAllText(logFile) : "";
+            Check(logged.Contains("read_file（允许）", StringComparison.Ordinal)
+                  && logged.Contains("自动压缩了上下文", StringComparison.Ordinal)
+                  && logged.Contains("## ", StringComparison.Ordinal),
+                "运行收尾把这一次的工具与压缩写进当天的项目日志（" + logFile + "）");
+
+            // A second run appends to the same day's file. Overwriting instead would be silent: the log would
+            // look right until the second session of a day erased the first.
+            chat.TryEnqueueSend(session.Id, "再读五次", null, out _);
+            await WaitForIdleAsync(chat);
+            var twice = System.IO.File.ReadAllText(logFile);
+            Check(twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) == 2
+                  && twice.Contains(logged.Split('\n').First(line => line.StartsWith("## ", StringComparison.Ordinal)),
+                      StringComparison.Ordinal),
+                "第二次运行追加到同一天的日志，第一次的记录仍在（实际 "
+                + twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) + " 段）");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            chat.DeleteConversation(session.Id);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    private static int SummaryBoundary(Conversation conversation)
+        => Math.Clamp(conversation.ContextSummaryThroughMessageCount, 0, conversation.Messages.Count);
 
     private static bool EveryToolCallAnswered(Conversation conversation)
     {

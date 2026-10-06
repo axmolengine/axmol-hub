@@ -758,6 +758,15 @@ if (args.Contains("--check-ai-memory"))
         .ToList();
     if (lost.Count > 0) throw new Exception($"Parallel appends lost {lost.Count} lines, for example {lost[0]}.");
 
+    // A compaction is recorded when it happens rather than only in the run's closing block, and as a plain line
+    // rather than a header: a session may compact several times, and the header count is what tells one run's
+    // block from another's.
+    var compactionLine = MemoryLog.LinesForCompaction("abcdef12-3456", logDay).Single();
+    MemoryLog.Append(logFile, MemoryLog.LinesForCompaction("abcdef12-3456", logDay));
+    if (compactionLine.StartsWith("## ", StringComparison.Ordinal)
+        || !File.ReadAllText(logFile).Contains(compactionLine, StringComparison.Ordinal))
+        throw new Exception("A compaction was not appended as a plain line of its own.");
+
     var capped = Path.Combine(memoryRoot, "capped.md");
     MemoryLogAppend last = default;
     for (var index = 0; index < 400; index++) last = MemoryLog.Append(capped, [new string('z', 200)], 4096);

@@ -175,15 +175,21 @@ public sealed class ChatWorkspace : IDisposable
         return (trimmed.Sum(ContextTrimmer.EstimateTokens), budget);
     }
 
+    /// <summary>
+    /// Whether the earlier turns can be summarized now. Legal during a run and not only between runs: a session
+    /// that fills the window mid-reply has to be able to compact mid-reply, because waiting for the run to end is
+    /// waiting for the request that overflows. Still excluded is a call waiting for permission — that turn is the
+    /// record of a decision owed, and archiving it behind a summary would answer it by losing it.
+    /// </summary>
     public bool CanCompressContext(string conversationId)
     {
-        if (_runs.ContainsKey(conversationId) || _compressingConversations.Contains(conversationId)) return false;
+        if (_compressingConversations.Contains(conversationId)) return false;
         var conversation = _sessions.Peek(conversationId);
         if (conversation is null || conversation.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending))
             return false;
 
         var start = SummaryMessageCount(conversation);
-        var end = CompressionCut(conversation.Messages);
+        var end = ContextCompression.CutPoint(conversation.Messages);
         return end - start >= 2 && ModelFor(conversationId) is not null;
     }
 
@@ -198,7 +204,9 @@ public sealed class ChatWorkspace : IDisposable
 
         try
         {
-            Changed?.Invoke();
+            // Posted rather than raised: the button path calls this on the UI thread, but so does the pump
+            // between segments, and there the caller is a thread-pool thread. `Changed` repaints controls.
+            RaiseOnUi(() => Changed?.Invoke());
             var request = await ReadOnUiAsync(() => PrepareCompressionRequest(conversationId)).ConfigureAwait(false);
             if (request is null) return false;
 
@@ -247,11 +255,11 @@ public sealed class ChatWorkspace : IDisposable
     {
         var conversation = _sessions.Peek(conversationId);
         var choice = ModelFor(conversationId);
-        if (conversation is null || choice is null || _runs.ContainsKey(conversationId)
+        if (conversation is null || choice is null
             || conversation.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending)) return null;
 
         var start = SummaryMessageCount(conversation);
-        var end = CompressionCut(conversation.Messages);
+        var end = ContextCompression.CutPoint(conversation.Messages);
         if (end - start < 2) return null;
         var archived = conversation.Messages.Skip(start).Take(end - start).ToList();
         var systemPrompt = "You are compressing conversation context for future turns. Produce a concise, factual " +
@@ -273,16 +281,6 @@ public sealed class ChatWorkspace : IDisposable
 
     private static int SummaryMessageCount(Conversation conversation)
         => Math.Clamp(conversation.ContextSummaryThroughMessageCount, 0, conversation.Messages.Count);
-
-    private static int CompressionCut(IReadOnlyList<ChatTurn> messages)
-    {
-        var cut = Math.Max(0, messages.Count - 4);
-        if (cut > 0 && cut < messages.Count
-            && messages[cut - 1].ToolCallId is { Length: > 0 } callId
-            && messages[cut].ToolCallId == callId)
-            cut--;
-        return cut;
-    }
 
     private string EffectiveSystemPrompt(Conversation? conversation)
     {
@@ -396,6 +394,104 @@ public sealed class ChatWorkspace : IDisposable
         Audit(conversationId, $"Workspace root: {path}");
         return $"Workspace set to {path}. File and command tools are confined to it.";
     }
+
+    /// <summary>
+    /// The transcript's cost against its model's window, with no draft attached: what the pump asks between
+    /// segments to decide whether the run has outgrown the window it is writing into.
+    /// </summary>
+    private (int Used, int Budget) EstimateTranscript(string conversationId)
+    {
+        var budget = ModelFor(conversationId)?.Provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
+        var conversation = _sessions.Peek(conversationId);
+        var history = conversation is null
+            ? new List<ChatTurn>()
+            : conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList();
+        var trimmed = ContextTrimmer.Trim(history, budget, EffectiveSystemPrompt(conversation));
+        return (trimmed.Sum(ContextTrimmer.EstimateTokens), budget);
+    }
+
+    /// <summary>
+    /// Compacts the earlier turns once the transcript passes half the model's window. Half rather than the whole
+    /// budget because this runs between segments: waiting for an overflow means compacting the request that
+    /// already failed.
+    /// </summary>
+    private async Task<bool> CompactIfNeededAsync(ConversationRun run)
+    {
+        if (!run.TryTakeCompactionRequest()) return false;
+        try
+        {
+            var over = await ReadOnUiAsync(() =>
+            {
+                var (used, budget) = EstimateTranscript(run.ConversationId);
+                return used * 2 >= budget;
+            }).ConfigureAwait(false);
+            if (!over) return false;
+            if (!await CompressContextAsync(run.ConversationId, run.Token).ConfigureAwait(false)) return false;
+
+            var facts = await ReadOnUiAsync(() => LogFactsFor(run.ConversationId)).ConfigureAwait(false);
+            if (facts.Root is { Length: > 0 } root)
+                MemoryLog.Append(MemoryLog.FileFor(root, DateTimeOffset.Now),
+                    MemoryLog.LinesForCompaction(run.ConversationId, DateTimeOffset.Now));
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A compaction that fails leaves the transcript exactly as it was, so the run carries on with the
+            // window it already had. Failing the reply over it would be the worse outcome.
+            Audit(run.ConversationId, $"Context compaction failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The run's block in the project's daily log. Every line comes from a fact the run already produced, so it
+    /// costs no tokens and cannot invent anything. Skipped when the session has no workspace: the log lives
+    /// inside the user's repository, and Hub does not get to pick one on their behalf.
+    /// </summary>
+    private async Task WriteRunLogAsync(ConversationRun run, RunResult result, bool compacted)
+    {
+        try
+        {
+            var facts = await ReadOnUiAsync(() => LogFactsFor(run.ConversationId)).ConfigureAwait(false);
+            if (facts.Root is not { Length: > 0 } root) return;
+
+            var at = DateTimeOffset.Now;
+            var summary = new MemoryRunSummary(run.ConversationId, facts.Title, facts.Mode,
+                run.ToolOutcomes, StopReasonFor(result), compacted);
+            MemoryLog.Append(MemoryLog.FileFor(root, at), MemoryLog.LinesForRun(summary, at));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Audit(run.ConversationId, $"Daily log write failed: {ex.Message}");
+        }
+    }
+
+    private readonly record struct RunLogFacts(string? Root, string Title, string Mode);
+
+    private RunLogFacts LogFactsFor(string conversationId)
+    {
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        return conversation is null
+            ? default
+            : new RunLogFacts(conversation.WorkspaceRoot,
+                conversation.Title is { Length: > 0 } titled ? titled : conversationId,
+                ApprovalModeFor(conversationId));
+    }
+
+    private static string? StopReasonFor(RunResult result) => result switch
+    {
+        RunResult.Cancelled => "用户停止",
+        RunResult.TimedOut => "空闲超时",
+        RunResult.Failed => "失败",
+        _ => null,
+    };
+
+    /// <summary>The word the daily log uses for one call. A refusal and a failure are different facts and the log
+    /// is the only place that keeps them apart after the transcript scrolls away.</summary>
+    private static string OutcomeWord(bool failed, string result)
+        => !failed ? "允许"
+            : string.Equals(result, ToolApprovalResults.Denied, StringComparison.Ordinal) ? "拒绝"
+            : "失败";
 
     /// <summary>Selects a usable provider/model for the current conversation or the next new conversation.</summary>
     public bool SelectChatModel(string providerId, string modelName)
@@ -1689,8 +1785,13 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>What the session file says right now, cache aside. For the self-check only.</summary>
     internal Conversation? StoredCopyForCheck(string conversationId) => _sessions.LoadFromDisk(conversationId);
     internal int PreparedHistoryCountForCheck(string conversationId) => PrepareRequest(conversationId)?.History.Count ?? -1;
+
     internal string PreparedSystemPromptForCheck(string conversationId)
         => PrepareRequest(conversationId)?.SystemPrompt ?? "";
+
+    /// <summary>What the pump measures between segments. Exposed so a check can tell "compaction did not run"
+    /// from "the transcript was never over the threshold" — the two look identical from outside.</summary>
+    internal (int Used, int Budget) TranscriptUsageForCheck(string conversationId) => EstimateTranscript(conversationId);
 
     /// <summary>Appends one turn to a session through the real write path. For the self-check only: a session
     /// earns its place in the history list with its first message, so a check that needs a long list has to
@@ -2081,6 +2182,9 @@ public sealed class ChatWorkspace : IDisposable
         }
 
         var turn = ChatTurn.FunctionResult(callId, result, failed);
+        // "批准" and not "允许": this call was answered by a person, and the daily log is the only record that
+        // keeps the two apart once the card has folded into a line.
+        run.RecordToolOutcome($"{call.Value.Name}（{(failed ? "失败" : "批准")}）");
         await ApplyOnUiAsync(() =>
         {
             _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
@@ -2161,12 +2265,16 @@ public sealed class ChatWorkspace : IDisposable
         string? noticeKey = null;
         var noticeDanger = false;
         string? detail = null;
+        var compacted = false;
         try
         {
             while (true)
             {
                 (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false);
                 if (result == RunResult.Parked) return;
+                // Between segments is the only point in a run with no stream open, so it is where a transcript
+                // that has outgrown the window gets compacted before the next request is built from it.
+                compacted |= await CompactIfNeededAsync(run).ConfigureAwait(false);
                 if (!run.TryTakeSteer(out var steerText, out var steerContext)) break;
                 if (!await AppendSteerTurnAsync(run, steerText, steerContext).ConfigureAwait(false))
                 {
@@ -2185,7 +2293,11 @@ public sealed class ChatWorkspace : IDisposable
             detail = ex.Message;
         }
 
-        CompleteRun(run, result, run.LiveText.Length > 0, noticeKey, noticeDanger, detail);
+        await WriteRunLogAsync(run, result, compacted).ConfigureAwait(false);
+        // Compaction is reported only when nothing more important happened: a failure the user has to act on
+        // must not be replaced by an informational line.
+        CompleteRun(run, result, run.LiveText.Length > 0,
+            noticeKey ?? (compacted ? "ChatContextCompacted" : null), noticeDanger, detail);
     }
 
     /// <summary>Streams one segment and writes what arrived, even when it is cancelled halfway: dropping a
@@ -2299,6 +2411,7 @@ public sealed class ChatWorkspace : IDisposable
             onToolCompleted: async (info, result, failed) =>
             {
                 var turn = ChatTurn.FunctionResult(info.CallId, result, failed);
+                run.RecordToolOutcome($"{info.Name}（{OutcomeWord(failed, result)}）");
                 await ApplyOnUiAsync(() =>
                 {
                     _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
@@ -2310,6 +2423,9 @@ public sealed class ChatWorkspace : IDisposable
                 // nothing clicked, so the trail is the only thing showing it happened.
                 if (!failed && ChatTools.RiskOf(info.Name, info.ArgumentsJson) == ToolRisk.AssistantNote)
                     Audit(run.ConversationId, $"Tool note: {info.Name} ran without approval");
+                // Asked for here, acted on by the pump: this callback runs inside the model's tool loop, where
+                // awaiting a compression request would deadlock the loop that is waiting for the result.
+                run.RequestCompaction();
                 run.Touch();
             },
             modelName: request.ModelName,
