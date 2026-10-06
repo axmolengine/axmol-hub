@@ -2,7 +2,7 @@
 
 ## Product charter
 
-The AI assistant is, first, a **general programming and debugging tool** — the same job opencode, ChatGPT
+The AI assistant is, first, a **general programming and debugging tool** — the same job ChatGPT
 Desktop and GitHub Copilot Desktop do: read the code, edit it, run commands, chase a compiler error until
 it is fixed. That baseline is the entry requirement, not a feature. Being Axmol-aware (engine source
 index, project digest, locked toolchain) comes *second*; it is the reason to use this client rather than a
@@ -15,7 +15,7 @@ generic one, but it is not what the assistant is limited to.
 
 ## UI interaction charter
 
-The shell is deliberately minimal. GitHub Copilot Desktop is the reference benchmark for visual
+The shell is deliberately minimal. GitHub Copilot Desktop and GitHub Copilot Desktop is the reference benchmark for visual
 language (chat-centric, low chrome, generous whitespace) — copy its *principles*, not its screens.
 Axmol Hub is a multi-page developer tool, so adapt rather than replicate; optimize for the local
 workflow when it makes sense.
