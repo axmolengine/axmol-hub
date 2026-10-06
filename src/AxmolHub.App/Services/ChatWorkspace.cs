@@ -364,7 +364,9 @@ public sealed class ChatWorkspace : IDisposable
                 conversationId,
                 SensitiveValues(),
                 LogProvider?.Invoke(),
-                path => ApplyWorkspaceRootAsync(conversationId, path)));
+                path => ApplyWorkspaceRootAsync(conversationId, path),
+                _sessions.Store,
+                new CrossSessionBridge(CrossSessionRunStateAsync, CrossSessionDeliverAsync)));
     }
 
     /// <summary>
@@ -1678,6 +1680,7 @@ public sealed class ChatWorkspace : IDisposable
             }
         }
         _sessions.Delete(id);
+        _wakeQueue.Remove(id);
         if (_active?.Id == id)
         {
             _active = null;
@@ -1977,6 +1980,94 @@ public sealed class ChatWorkspace : IDisposable
         if (RunFor(conversationId) is not { IsStreaming: true } run) return false;
         run.RequestStop();
         return true;
+    }
+
+    // ───────────────────────── Cross-session ─────────────────────────
+
+    /// <summary>Wakes waiting for an answer slot, oldest first. One entry per session rather than one per message:
+    /// a peer that has been told three things answers them in one reply, and a second wake for the same session
+    /// would be a second stream saying the same thing.</summary>
+    private readonly List<string> _wakeQueue = [];
+
+    /// <summary>Whether this session is waiting to be woken by another one. The sidebar draws a hollow dot for
+    /// it, because "somebody asked you something and there was no slot" is not the same as "nobody is home".</summary>
+    internal bool IsWakeQueued(string conversationId) => _wakeQueue.Contains(conversationId);
+
+    internal int QueuedWakeCount => _wakeQueue.Count;
+
+    /// <summary>The live half of what <see cref="CrossSessionRules"/> needs. Everything else the rules ask about is
+    /// on disk already — this is only what a file cannot say: who is answering right now, how many slots are left,
+    /// and how many wakes the sending run has already spent.</summary>
+    private Task<CrossSessionRunState> CrossSessionRunStateAsync(string sourceId, string targetId)
+        => ReadOnUiAsync(() => new CrossSessionRunState(
+            RunFor(targetId) is { IsStreaming: true },
+            _runs.Count < MaxConcurrentRuns,
+            _wakeQueue.Count < CrossSessionRules.MaxQueuedWakes,
+            RunFor(sourceId)?.WakesUsed ?? 0));
+
+    /// <summary>Writes the message into the peer's transcript and, where the rules allowed it, starts or queues
+    /// its answer. Delivery and wake are separate because only the first is what the sender asked for: the message
+    /// lands even when this run has no right to start another one.</summary>
+    private async Task<bool> CrossSessionDeliverAsync(
+        string sourceId, string targetId, string text, CrossSessionDecision decision)
+    {
+        var written = false;
+        var title = "";
+        await ApplyOnUiAsync(() =>
+        {
+            written = _sessions.TryUpdate(targetId,
+                opened => opened.Append(ChatTurn.User(text, injectedFrom: sourceId)));
+            if (!written) return;
+
+            title = _sessions.Peek(targetId)?.Title ?? targetId;
+            if (decision.Woke)
+            {
+                RunFor(sourceId)?.SpendWake();
+                if (decision.Verdict == CrossSessionVerdict.Started) StartRun(targetId);
+                else if (!_wakeQueue.Contains(targetId)) _wakeQueue.Add(targetId);
+            }
+
+            Changed?.Invoke();
+            RunsChanged?.Invoke(targetId);
+        }).ConfigureAwait(false);
+
+        if (written)
+            Audit(sourceId, $"Cross-session note → 「{title}」 ({decision.Verdict}): "
+                            + (text.Length <= 80 ? text : text[..80] + "…"));
+        return written;
+    }
+
+    /// <summary>Answers the oldest wake that still needs an answer, one per freed slot. Called where a slot has
+    /// just freed rather than on a timer, so a queued session starts as soon as one ends and never before.</summary>
+    private void StartNextQueuedWake()
+    {
+        foreach (var id in _wakeQueue.ToArray())
+        {
+            // Answering or parked: leave the wake queued and let that run's ending try again, rather than
+            // dropping a request nobody has answered yet.
+            if (_runs.ContainsKey(id)) continue;
+
+            var session = _sessions.Peek(id) ?? _sessions.Load(id);
+            if (session is null)
+            {
+                _wakeQueue.Remove(id);
+                continue;
+            }
+
+            // Nothing owed any more: a run the user started, or an earlier wake, already answered the peer
+            // messages. Keeping the entry would start a third reply to the same silence.
+            if (session.Messages.Count == 0 || session.Messages[^1].Role != ChatRoles.User
+                || ModelFor(id) is null
+                || session.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending))
+            {
+                _wakeQueue.Remove(id);
+                continue;
+            }
+
+            _wakeQueue.Remove(id);
+            StartRun(id);
+            return;
+        }
     }
 
     // ───────────────────────── Tool permission ─────────────────────────
@@ -2291,6 +2382,10 @@ public sealed class ChatWorkspace : IDisposable
 
     private void StartRun(string conversationId)
     {
+        // Whoever starts a session answering has taken care of the messages a wake was queued for — including a
+        // message the user typed themselves, which outranks waiting for someone else's slot.
+        _wakeQueue.Remove(conversationId);
+
         // A call left without a result would be rejected by the provider on replay, and this is the one place
         // every start goes through — a fork, an edit, a restart, or a message arriving while a call waits for
         // permission all end up here, so none of them needs its own copy of the rule.
@@ -2516,6 +2611,9 @@ public sealed class ChatWorkspace : IDisposable
             RunsChanged?.Invoke(run.ConversationId);
             RunCompleted?.Invoke(run.ConversationId, new RunOutcome(result, receivedText, noticeKey, danger, detail));
             run.Dispose();
+            // Last, after the slot is really gone: a wake waiting for one may only start once this run has left
+            // the registry, or the fleet would be one session over its own cap.
+            StartNextQueuedWake();
         });
     }
 
@@ -2593,8 +2691,8 @@ public sealed class ChatWorkspace : IDisposable
     {
         public static string For(string mode) => mode switch
         {
-            ChatModes.Plan => "You are a general-purpose programming assistant with read-only tools: Hub's project, engine and toolchain lists, read_file inside the session workspace, and memory_read. Investigate, then return a concise, actionable plan. Do not claim to have performed actions.",
-            ChatModes.Agent => "You are a general-purpose programming assistant. You can read Hub's project, engine and toolchain lists, read and edit text files inside the session workspace, run shell commands there, and keep memory notes. Edit by replacing exact text you have read, not by rewriting a whole file. When no workspace is set, ask the user which directory to work in and call set_workspace with its absolute path. Nothing outside the workspace is reachable in any mode.",
+            ChatModes.Plan => "You are a general-purpose programming assistant with read-only tools: Hub's project, engine and toolchain lists, read_file inside the session workspace, memory_read, and the other sessions of this Hub (list_sessions, read_session). Investigate, then return a concise, actionable plan. Do not claim to have performed actions.",
+            ChatModes.Agent => "You are a general-purpose programming assistant. You can read Hub's project, engine and toolchain lists, read and edit text files inside the session workspace, run shell commands there, keep memory notes, and write into another session's history with send_to_session. Edit by replacing exact text you have read, not by rewriting a whole file. When no workspace is set, ask the user which directory to work in and call set_workspace with its absolute path. Nothing outside the workspace is reachable in any mode. Wake another session only when it has to act now — a note it can read later does not need wake.",
             _ => "You are a general-purpose assistant. Answer from the conversation without calling tools.",
         };
     }

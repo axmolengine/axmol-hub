@@ -18,6 +18,11 @@ internal sealed class ConversationRegistry(ConversationStore store)
     /// <summary>Guards the two maps only; a session's own gate is what serializes its writes.</summary>
     private readonly object _maintenance = new();
 
+    /// <summary>The one <see cref="ConversationStore"/> this shell writes through, handed to the cross-session
+    /// tool bodies. Sharing it rather than opening a second one is the point: the store's gate is what keeps two
+    /// index read-modify-writes from dropping a row, and a second instance would have its own.</summary>
+    internal ConversationStore Store => store;
+
     private readonly Dictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, object> _gates = new(StringComparer.Ordinal);
 

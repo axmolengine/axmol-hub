@@ -55,6 +55,7 @@ internal sealed class ConversationRun : IDisposable
     private readonly List<string> _toolOutcomes = [];
     private int _paintQueued;
     private int _compactionRequested;
+    private int _wakesUsed;
     private bool _parked;
 
     public string ConversationId { get; }
@@ -191,6 +192,19 @@ internal sealed class ConversationRun : IDisposable
     internal void RecordToolOutcome(string outcome)
     {
         lock (_gate) _toolOutcomes.Add(outcome);
+    }
+
+    /// <summary>How many other sessions this run has started answering. Counted on the run, not on the pair of
+    /// sessions, because the loop that has to stop is one assistant waking others — and a run that survives its
+    /// own tool calls keeps the count it accumulated.</summary>
+    internal int WakesUsed
+    {
+        get { lock (_gate) return _wakesUsed; }
+    }
+
+    internal void SpendWake()
+    {
+        lock (_gate) _wakesUsed++;
     }
 
     internal IReadOnlyList<string> ToolOutcomes
