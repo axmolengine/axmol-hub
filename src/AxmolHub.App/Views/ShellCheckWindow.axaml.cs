@@ -598,10 +598,10 @@ public partial class ShellCheckWindow : Window
               && panel.BubbleEditorForCheck(0) is null
               && opsConversation.Messages[0].Text == firstQuestion,
             "Esc 放弃就地编辑，原文与历史都不变");
-        Check(panel.ClickBubbleAction(0, "EditMessage") && panel.BubbleEditorForCheck(0) is not null,
-            "可以再次进入就地编辑");
-        var editor = panel.BubbleEditorForCheck(0)!;
-        editor.Text = "就地改写的提问";
+        // Deliberately no `!` on the editor: if a click ever fails to open it, that has to surface as a FAIL
+        // and let the rest of the run continue, not as an exception that truncates the whole report.
+        Check(panel.ClickBubbleAction(0, "EditMessage"), "可以再次进入就地编辑");
+        if (panel.BubbleEditorForCheck(0) is { } editor) editor.Text = "就地改写的提问";
         Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Enter)
               && panel.BubbleEditorForCheck(0) is null,
             "Enter 提交后编辑框关闭，气泡回到普通文字");
@@ -610,10 +610,8 @@ public partial class ShellCheckWindow : Window
         await WaitForStreamAsync();
         Check(!panel.IsStreamingForCheck && opsConversation.Messages.Count == 2,
             "改写后就地重新生成了回复（实际 " + opsConversation.Messages.Count + " 条）");
-        Check(panel.ClickBubbleAction(0, "EditMessage") && panel.BubbleEditorForCheck(0) is not null,
-            "为确认按钮再开一次就地编辑");
-        var confirmEditor = panel.BubbleEditorForCheck(0)!;
-        confirmEditor.Text = "确认按钮改写的提问";
+        Check(panel.ClickBubbleAction(0, "EditMessage"), "为确认按钮再开一次就地编辑");
+        if (panel.BubbleEditorForCheck(0) is { } confirmEditor) confirmEditor.Text = "确认按钮改写的提问";
         Check(panel.ClickBubbleAction(0, "ConfirmEdit") && panel.BubbleEditorForCheck(0) is null,
             "点确认图标提交就地编辑");
         await WaitForStreamAsync();
