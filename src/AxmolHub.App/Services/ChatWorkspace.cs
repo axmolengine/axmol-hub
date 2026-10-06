@@ -26,7 +26,7 @@ public sealed class ChatWorkspace : IDisposable
 {
     private readonly ProviderStore _providers;
     private readonly CredentialStore _credentials;
-    private readonly ConversationStore _conversations;
+    private readonly ConversationRegistry _sessions;
     private readonly ModelListStore _modelLists;
     private readonly ISecretStore? _secrets;
 
@@ -52,7 +52,7 @@ public sealed class ChatWorkspace : IDisposable
 
     public ChatWorkspace(string dataRoot)
     {
-        _conversations = new ConversationStore(dataRoot);
+        _sessions = new ConversationRegistry(new ConversationStore(dataRoot));
 
         // The secret store is platform-specific and, on macOS/Linux, deliberately unimplemented rather than
         // falling back to plaintext. A failure here must not take the whole app down — chat simply cannot
@@ -114,17 +114,13 @@ public sealed class ChatWorkspace : IDisposable
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
-    public IReadOnlyList<ConversationSummary> Conversations => _conversations.List();
+    public IReadOnlyList<ConversationSummary> Conversations => _sessions.List();
 
     public bool SelectMode(string mode)
     {
         if (mode is not (ChatModes.Ask or ChatModes.Plan or ChatModes.Agent)) return false;
         _selectedMode = mode;
-        if (_active is not null)
-        {
-            _active.Mode = mode;
-            _conversations.Save(_active);
-        }
+        if (_active is not null) _sessions.TryUpdate(_active.Id, conversation => conversation.Mode = mode);
         Changed?.Invoke();
         return true;
     }
@@ -138,11 +134,7 @@ public sealed class ChatWorkspace : IDisposable
             && (SelectedChatModel is not { } choice
                 || !ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, effort))) return false;
         _selectedReasoningEffort = effort;
-        if (_active is not null)
-        {
-            _active.ReasoningEffort = effort;
-            _conversations.Save(_active);
-        }
+        if (_active is not null) _sessions.TryUpdate(_active.Id, conversation => conversation.ReasoningEffort = effort);
         Changed?.Invoke();
         return true;
     }
@@ -167,9 +159,11 @@ public sealed class ChatWorkspace : IDisposable
         _selectedModelName = choice.ModelName;
         if (_active is not null)
         {
-            _active.ProviderId = choice.Provider.Id;
-            _active.ModelName = choice.ModelName;
-            _conversations.Save(_active);
+            _sessions.TryUpdate(_active.Id, conversation =>
+            {
+                conversation.ProviderId = choice.Provider.Id;
+                conversation.ModelName = choice.ModelName;
+            });
         }
 
         Changed?.Invoke();
@@ -1220,7 +1214,7 @@ public sealed class ChatWorkspace : IDisposable
         conversation.ModelName = modelName;
         conversation.Mode = _selectedMode;
         conversation.ReasoningEffort = _selectedReasoningEffort;
-        _conversations.Save(conversation);
+        _sessions.Adopt(conversation);
         _active = conversation;
         Changed?.Invoke();
         return conversation;
@@ -1233,14 +1227,14 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     public Conversation StartOrOpenEmptyConversation()
     {
-        var empty = _conversations.List()
+        var empty = _sessions.List()
             .Where(summary => summary.MessageCount == 0)
             .OrderByDescending(summary => summary.UpdatedAt)
             .FirstOrDefault();
 
         if (empty is null) return StartConversation();
 
-        var conversation = _conversations.Load(empty.Id)
+        var conversation = _sessions.Load(empty.Id)
             ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
         _active = conversation;
         _selectedMode = NormalizeMode(conversation.Mode);
@@ -1251,7 +1245,9 @@ public sealed class ChatWorkspace : IDisposable
 
     public Conversation? OpenConversation(string id)
     {
-        _active = _conversations.Load(id);
+        // The registry hands back the one instance, so opening a session that is streaming does not swap in a
+        // copy that a later write would silently replace.
+        _active = _sessions.Load(id);
         _selectedMode = _active is null ? ChatModes.Agent : NormalizeMode(_active.Mode);
         _selectedReasoningEffort = _active?.ReasoningEffort ?? ChatReasoningEfforts.Auto;
         Changed?.Invoke();
@@ -1260,7 +1256,7 @@ public sealed class ChatWorkspace : IDisposable
 
     public void DeleteConversation(string id)
     {
-        _conversations.Delete(id);
+        _sessions.Delete(id);
         if (_active?.Id == id)
         {
             _active = null;
@@ -1271,17 +1267,14 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>Renames a conversation; an empty title is refused so a session can never lose its label.
-    /// Renaming writes only the conversation file, so the pin and the messages are untouched.</summary>
+    /// Renaming writes only the conversation file, so the pin and the messages are untouched. It goes through
+    /// the registry rather than a reloaded copy because a session that is streaming keeps appending while the
+    /// rename dialog is open, and a copy written whole would drop those turns.</summary>
     public bool RenameConversation(string conversationId, string title)
     {
         var trimmed = title.Trim();
         if (trimmed.Length == 0) return false;
-
-        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
-        if (conversation is null) return false;
-
-        conversation.Title = trimmed;
-        _conversations.Save(conversation);
+        if (!_sessions.TryUpdate(conversationId, conversation => conversation.Title = trimmed)) return false;
         Changed?.Invoke();
         return true;
     }
@@ -1289,11 +1282,7 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>Pins or unpins a conversation. Pinned sessions sort above the rest (see ConversationStore).</summary>
     public bool SetPinned(string conversationId, bool pinned)
     {
-        var conversation = _active?.Id == conversationId ? _active : _conversations.Load(conversationId);
-        if (conversation is null) return false;
-
-        conversation.Pinned = pinned;
-        _conversations.Save(conversation);
+        if (!_sessions.TryUpdate(conversationId, conversation => conversation.Pinned = pinned)) return false;
         Changed?.Invoke();
         return true;
     }
@@ -1312,24 +1301,29 @@ public sealed class ChatWorkspace : IDisposable
     {
         if (_active is null) throw new InvalidOperationException("No active conversation.");
         var source = _active;
-        if (index < 0 || index >= source.Messages.Count) return null;
+
+        var title = NextBranchTitle(source.Title);
+        // The cut point is decided with the source locked: the branch must not capture a turn that arrived
+        // after the click, and the list a running session is growing must not be enumerated unlocked.
+        var prefix = _sessions.Snapshot(source.Id, index + 1);
+        if (prefix is null) return null;
 
         var branch = new Conversation
         {
             Id = Guid.NewGuid().ToString("N"),
-            Title = NextBranchTitle(source.Title),
+            Title = title,
             ProviderId = source.ProviderId,
             ModelName = source.ModelName,
             Mode = source.Mode,
             ReasoningEffort = source.ReasoningEffort,
-            Messages = [.. source.Messages.Take(index + 1)],
+            Messages = prefix,
             CreatedAt = DateTimeOffset.Now,
             UpdatedAt = DateTimeOffset.Now,
             BranchSourceId = source.Id,
             BranchSourceIndex = index,
         };
 
-        _conversations.Save(branch);
+        _sessions.Adopt(branch);
         _active = branch;
         _selectedMode = NormalizeMode(branch.Mode);
         _selectedReasoningEffort = branch.ReasoningEffort;
@@ -1355,7 +1349,7 @@ public sealed class ChatWorkspace : IDisposable
 
         var prefix = baseTitle + " (";
         var highest = 0;
-        foreach (var title in _conversations.List().Select(summary => summary.Title))
+        foreach (var title in _sessions.List().Select(summary => summary.Title))
         {
             if (!title.StartsWith(prefix, StringComparison.Ordinal) || !title.EndsWith(')')) continue;
             if (int.TryParse(title.AsSpan(prefix.Length, title.Length - prefix.Length - 1), out var number)
@@ -1369,12 +1363,12 @@ public sealed class ChatWorkspace : IDisposable
     /// empty one immediately, so without this the sidebar slowly fills with abandoned "new chat" rows.</summary>
     public int PruneEmptyConversations()
     {
-        var emptyIds = _conversations.List()
+        var emptyIds = _sessions.List()
             .Where(summary => summary.MessageCount == 0)
             .Select(summary => summary.Id)
             .ToList();
 
-        foreach (var id in emptyIds) _conversations.Delete(id);
+        foreach (var id in emptyIds) _sessions.Delete(id);
         if (_active is not null && emptyIds.Contains(_active.Id)) _active = null;
         if (emptyIds.Count > 0) Changed?.Invoke();
         return emptyIds.Count;
@@ -1414,10 +1408,12 @@ public sealed class ChatWorkspace : IDisposable
             ?? throw new InvalidOperationException("No authenticated provider with a configured model is available.");
 
         var conversation = _active;
-        conversation.ProviderId = choice.Provider.Id;
-        conversation.ModelName = choice.ModelName;
-        conversation.Append(ChatTurn.User(text, attachedContext));
-        _conversations.Save(conversation);
+        _sessions.TryUpdate(conversation.Id, opened =>
+        {
+            opened.ProviderId = choice.Provider.Id;
+            opened.ModelName = choice.ModelName;
+            opened.Append(ChatTurn.User(text, attachedContext));
+        });
 
         await foreach (var chunk in StreamReplyAsync(conversation, cancellationToken).ConfigureAwait(false))
             yield return chunk;
@@ -1435,11 +1431,12 @@ public sealed class ChatWorkspace : IDisposable
         if (index < 0 || index >= _active.Messages.Count) return false;
 
         var conversation = _active;
-        var attachedContext = conversation.Messages[index].AttachedContext;
-        conversation.Messages.RemoveRange(index, conversation.Messages.Count - index);
-        conversation.Append(ChatTurn.User(text, attachedContext));
-        _conversations.Save(conversation);
-        return true;
+        return _sessions.TryUpdate(conversation.Id, opened =>
+        {
+            var attachedContext = opened.Messages[index].AttachedContext;
+            opened.Messages.RemoveRange(index, opened.Messages.Count - index);
+            opened.Append(ChatTurn.User(text, attachedContext));
+        });
     }
 
     /// <summary>Drops the trailing assistant turn (if any) so the last user turn can be answered again.</summary>
@@ -1448,10 +1445,11 @@ public sealed class ChatWorkspace : IDisposable
         if (_active is null) throw new InvalidOperationException("No active conversation.");
 
         var conversation = _active;
-        if (conversation.Messages.Count > 0 && conversation.Messages[^1].Role == ChatRoles.Assistant)
-            conversation.Messages.RemoveAt(conversation.Messages.Count - 1);
-        _conversations.Save(conversation);
-        return true;
+        return _sessions.TryUpdate(conversation.Id, opened =>
+        {
+            if (opened.Messages.Count > 0 && opened.Messages[^1].Role == ChatRoles.Assistant)
+                opened.Messages.RemoveAt(opened.Messages.Count - 1);
+        });
     }
 
     /// <summary>Streams a reply against the conversation's current history without appending a user turn.
@@ -1492,8 +1490,9 @@ public sealed class ChatWorkspace : IDisposable
             // before a call was handed to that call turn when the call was recorded.
             if (received.Length > 0)
             {
-                conversation.Append(new ChatTurn(ChatRoles.Assistant, received.ToString(), DateTimeOffset.Now));
-                _conversations.Save(conversation);
+                var reply = received.ToString();
+                _sessions.TryUpdate(conversation.Id,
+                    opened => opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)));
             }
         }
     }
@@ -1530,14 +1529,14 @@ public sealed class ChatWorkspace : IDisposable
                 // the text streamed before this call — which is where it belongs in the transcript.
                 var said = pendingText.ToString();
                 pendingText.Clear();
-                conversation.Append(ChatTurn.FunctionCall(callId, name, arguments, said.Length > 0 ? said : null));
-                _conversations.Save(conversation);
+                var call = ChatTurn.FunctionCall(callId, name, arguments, said.Length > 0 ? said : null);
+                _sessions.TryUpdate(conversation.Id, opened => opened.Append(call));
                 ToolActivityChanged?.Invoke(name, false);
             },
             (name, callId, result, failed) =>
             {
-                conversation.Append(ChatTurn.FunctionResult(callId, result, failed));
-                _conversations.Save(conversation);
+                var turn = ChatTurn.FunctionResult(callId, result, failed);
+                _sessions.TryUpdate(conversation.Id, opened => opened.Append(turn));
                 ToolActivityChanged?.Invoke(name, true);
             },
             modelName: modelName,

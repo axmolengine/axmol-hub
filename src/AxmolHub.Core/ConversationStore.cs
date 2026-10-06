@@ -15,6 +15,13 @@ public sealed class ConversationStore(string root)
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
+    /// <summary>
+    /// The index is read-modify-written as a whole file, so two saves that overlap would drop one of the two
+    /// rows. Every path that reads or rewrites it takes this gate; it is re-entrant, so the helpers below can
+    /// call each other.
+    /// </summary>
+    private readonly object _indexGate = new();
+
     private string SessionsDirectory => Path.Combine(root, "ai", "sessions");
     private string IndexPath => Path.Combine(SessionsDirectory, "index.json");
     private string ConversationPath(string id) => Path.Combine(SessionsDirectory, SanitizeId(id) + ".json");
@@ -22,13 +29,16 @@ public sealed class ConversationStore(string root)
     /// <summary>Session headers, pinned first then newest first. Rebuilds the index when it is absent or unreadable.</summary>
     public List<ConversationSummary> List()
     {
-        if (!File.Exists(IndexPath)) return RebuildIndex();
-        try
+        lock (_indexGate)
         {
-            var index = JsonSerializer.Deserialize<List<ConversationSummary>>(File.ReadAllText(IndexPath), Json);
-            return index is null ? RebuildIndex() : [.. Order(index)];
+            if (!File.Exists(IndexPath)) return RebuildIndex();
+            try
+            {
+                var index = JsonSerializer.Deserialize<List<ConversationSummary>>(File.ReadAllText(IndexPath), Json);
+                return index is null ? RebuildIndex() : [.. Order(index)];
+            }
+            catch (JsonException) { return RebuildIndex(); }
         }
-        catch (JsonException) { return RebuildIndex(); }
     }
 
     /// <summary>Loads one conversation; <c>null</c> when the id is unknown.</summary>
@@ -44,10 +54,13 @@ public sealed class ConversationStore(string root)
     public void Save(Conversation conversation)
     {
         StateStore.WriteJson(ConversationPath(conversation.Id), conversation);
-        var index = List();
-        index.RemoveAll(summary => summary.Id == conversation.Id);
-        index.Add(ConversationSummary.From(conversation));
-        StateStore.WriteJson(IndexPath, Order(index).ToList());
+        lock (_indexGate)
+        {
+            var index = List();
+            index.RemoveAll(summary => summary.Id == conversation.Id);
+            index.Add(ConversationSummary.From(conversation));
+            StateStore.WriteJson(IndexPath, Order(index).ToList());
+        }
     }
 
     /// <summary>Deletes a conversation and its index entry. Deleting an unknown id is not an error.</summary>
@@ -55,31 +68,39 @@ public sealed class ConversationStore(string root)
     {
         var path = ConversationPath(id);
         if (File.Exists(path)) File.Delete(path);
-        var index = List();
-        index.RemoveAll(summary => summary.Id == id);
-        StateStore.WriteJson(IndexPath, index);
+        lock (_indexGate)
+        {
+            var index = List();
+            index.RemoveAll(summary => summary.Id == id);
+            // Ordered like every other write: an unordered rewrite would reshuffle the list on a delete,
+            // which is the one operation the user never asked to reorder.
+            StateStore.WriteJson(IndexPath, Order(index).ToList());
+        }
     }
 
     private List<ConversationSummary> RebuildIndex()
     {
-        var summaries = new List<ConversationSummary>();
-        if (Directory.Exists(SessionsDirectory))
+        lock (_indexGate)
         {
-            foreach (var file in Directory.EnumerateFiles(SessionsDirectory, "*.json"))
+            var summaries = new List<ConversationSummary>();
+            if (Directory.Exists(SessionsDirectory))
             {
-                if (Path.GetFileName(file).Equals("index.json", StringComparison.OrdinalIgnoreCase)) continue;
-                try
+                foreach (var file in Directory.EnumerateFiles(SessionsDirectory, "*.json"))
                 {
-                    var conversation = JsonSerializer.Deserialize<Conversation>(File.ReadAllText(file), Json);
-                    if (conversation is not null) summaries.Add(ConversationSummary.From(conversation));
+                    if (Path.GetFileName(file).Equals("index.json", StringComparison.OrdinalIgnoreCase)) continue;
+                    try
+                    {
+                        var conversation = JsonSerializer.Deserialize<Conversation>(File.ReadAllText(file), Json);
+                        if (conversation is not null) summaries.Add(ConversationSummary.From(conversation));
+                    }
+                    catch (JsonException) { /* A corrupt session file is skipped, not fatal — the rest still load. */ }
                 }
-                catch (JsonException) { /* A corrupt session file is skipped, not fatal — the rest still load. */ }
             }
-        }
 
-        summaries = [.. Order(summaries)];
-        StateStore.WriteJson(IndexPath, summaries);
-        return summaries;
+            summaries = [.. Order(summaries)];
+            StateStore.WriteJson(IndexPath, summaries);
+            return summaries;
+        }
     }
 
     /// <summary>The single ordering rule for the session list: pinned first, then most recently updated.</summary>
