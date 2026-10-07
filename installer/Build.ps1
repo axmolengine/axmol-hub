@@ -5,6 +5,7 @@ param(
     [string]$PackId,
     [string]$PackTitle,
     [string]$OutputDir,
+    [switch]$PrereleaseBuild,
     # delta 包的前提是打包时输出目录里已经有上一版的 .nupkg。Publish.ps1 先用
     # `vpk download github` 把上一版取回来，再以 -NoClean 调本脚本；默认仍然清空，
     # 因为 releases.<channel>.json 是单一索引，残留的旧版本会一并列进发布内容。
@@ -53,7 +54,9 @@ if ($NoClean) {
 }
 # publish 目录只覆盖不清理，与旧的 Inno 链路一致：假定 artifacts/ 是干净的。
 # 已被删名的文件不会被 publish 清掉，需要彻底重来时手工删除 artifacts/app。
-dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish
+$taskIsPrereleaseBuild = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
+$taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
+dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
 # 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。

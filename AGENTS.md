@@ -68,8 +68,10 @@ Do not add `Co-authored-by` trailers to commit messages.
 
 - **No long-winded commit bodies.** The commit message body must not be a long essay — keep it short.
 
-A release is cut by a commit titled `Version x.y.z`. Its **only** change is the version in
-`Directory.Build.props` — it is the release marker, not a change, and the release notes skip it.
+A release is cut by a commit titled `Version x.y.z` (also `Version x.y.z-beta` or
+`Version x.y.z (Preview)`). Its **only** change is the version in `Directory.Build.props` — it is the
+release marker, not a change, and the release notes skip it. Versions beginning with `0.` and titles
+ending in `(Preview)` are published as GitHub Pre-releases.
 Anything else belongs in its own commit; if it rides along with the version bump, CI warns and the
 commit stays in the notes.
 

@@ -6,9 +6,11 @@ param(
     [string]$Stage = 'All',
     [string]$RepoUrl = 'https://github.com/axmolengine/axmol-hub',
     [string]$Version,
-    [string]$Channel
+    [string]$Channel,
+    [switch]$PrereleaseBuild
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/GitHubRelease.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
@@ -22,6 +24,7 @@ if (-not $Version) {
     $Version = @($taskProduct.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
 }
 if (-not $Version) { throw 'Version was not supplied and could not be read from Directory.Build.props.' }
+$taskIsPrerelease = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 
 if (-not $Channel) {
     # 与 Build.ps1 保持一致：channel = 完整 RID，feed 名 releases.<rid>.json 即客户端查找名。
@@ -58,7 +61,7 @@ if ($Stage -in @('All', 'Build')) {
         Write-Warning "No previous release could be downloaded ($($_.Exception.Message)). This release will be full-only."
     }
 
-    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -OutputDir $taskOutput -NoClean
+    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -OutputDir $taskOutput -NoClean -PrereleaseBuild:$taskIsPrerelease
     if ($LASTEXITCODE -ne 0) { throw 'Build.ps1 failed.' }
 }
 
@@ -136,9 +139,12 @@ if ($Stage -in @('All', 'Upload')) {
     if ($taskExists) {
         Write-Warning "Release $taskTag already exists; uploading into it."
     } else {
-        & gh release create $taskTag --repo $taskSlug --title "Axmol Hub $Version" --generate-notes
+        $taskCreateArgs = @('release', 'create', $taskTag, '--repo', $taskSlug, '--title', "Axmol Hub $Version", '--generate-notes')
+        if ($taskIsPrerelease) { $taskCreateArgs += '--prerelease' }
+        & gh @taskCreateArgs
         if ($LASTEXITCODE -ne 0) { throw "gh release create failed with $LASTEXITCODE." }
     }
+    Set-GitHubReleasePrerelease -RepoSlug $taskSlug -Tag $taskTag -Prerelease $taskIsPrerelease
     & gh release upload $taskTag --repo $taskSlug --clobber $taskUpload
     if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with $LASTEXITCODE." }
 

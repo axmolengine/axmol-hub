@@ -11,9 +11,11 @@ param(
     [string]$RepoUrl = 'https://github.com/axmolengine/axmol-hub',
     [string]$ArtifactDir,
     [string]$TargetCommit,
-    [string]$NotesFile
+    [string]$NotesFile,
+    [switch]$Prerelease
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/GitHubRelease.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
@@ -36,6 +38,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'The GitHub CLI
 if (-not $env:GH_TOKEN) { throw 'GH_TOKEN is not set.' }
 
 $taskTag = "v$Version"
+$taskIsPrerelease = $Prerelease -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskSlug = ($RepoUrl -replace '^https?://[^/]+/', '') -replace '\.git$', ''
 
 # 平台 → (channel=完整 RID, 安装包后缀, 产物目录)。channel 用 RID 是为了让 feed 名
@@ -130,6 +133,7 @@ if ($taskExists) {
 } else {
     $taskCreateArgs = @('release', 'create', $taskTag, '--repo', $taskSlug, '--title', "Axmol Hub $Version")
     if ($TargetCommit) { $taskCreateArgs += @('--target', $TargetCommit) }
+    if ($taskIsPrerelease) { $taskCreateArgs += '--prerelease' }
     if ($NotesFile) {
         $taskCreateArgs += @('--notes-file', $NotesFile)
     } else {
@@ -138,6 +142,7 @@ if ($taskExists) {
     & gh @taskCreateArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed with $LASTEXITCODE." }
 }
+Set-GitHubReleasePrerelease -RepoSlug $taskSlug -Tag $taskTag -Prerelease $taskIsPrerelease
 & gh release upload $taskTag --repo $taskSlug --clobber $taskUpload
 if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with $LASTEXITCODE." }
 

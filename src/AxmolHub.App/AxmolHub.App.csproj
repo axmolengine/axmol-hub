@@ -23,6 +23,7 @@
          原生资产。2026-10-04 补上原先漏掉的 osx-x64；同日把注释里的 `ci.yml` 改成 `build.yml`
          （前者已不存在），并把"三平台矩阵"写清楚：那是 verify 矩阵，打包是四个。 -->
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <DefineConstants Condition="'$(HubIsPrereleaseBuild)' == 'true'">$(DefineConstants);HUB_PRERELEASE_BUILD</DefineConstants>
     <!-- P6 起接管发行：图标随项目走（原先在 WPF 项目里，跨项目引用正是 P1 拆掉的那类耦合）。 -->
     <ApplicationIcon>Assets/hub-icon.ico</ApplicationIcon>
   </PropertyGroup>

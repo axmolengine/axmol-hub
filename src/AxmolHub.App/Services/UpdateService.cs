@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AxmolHub.Core;
 using Velopack;
 using Velopack.Sources;
 
@@ -90,6 +91,26 @@ internal sealed class UpdateService
     /// </summary>
     public bool AutoDownload { get; set; }
 
+    /// <summary>The selected update channel. Preview builds always include GitHub pre-releases.</summary>
+    public string UpdateChannel
+    {
+        get => _updateChannel;
+        set
+        {
+            var normalized = UpdateChannels.Normalize(value);
+            if (normalized == _updateChannel) return;
+
+            CancelDownload();
+            _updateChannel = normalized;
+            Last = null;
+            Download = DownloadState.None;
+            DownloadPercent = 0;
+            DownloadBytesPerSecond = 0;
+            DownloadError = null;
+            Changed?.Invoke();
+        }
+    }
+
     /// <summary>Where the download of the pending update is (independent of the check result).</summary>
     public enum DownloadState
     {
@@ -123,6 +144,7 @@ internal sealed class UpdateService
     public bool IsInstalled => CanUpdate();
 
     private CancellationTokenSource? _downloadCancel;
+    private string _updateChannel = UpdateChannels.DefaultChannel;
 
     /// <summary>
     /// The one <see cref="UpdateOptions"/> Hub updates with. Shared between <see cref="CreateManager"/>
@@ -187,11 +209,15 @@ internal sealed class UpdateService
     /// <c>IsInstalled</c> property is an **instance** member, so "can we self-update" is answered
     /// by constructing a manager — that construction itself is side-effect free.
     /// </summary>
-    private static UpdateManager CreateManager()
-        => new(new GithubSource(RepositoryUrl, null, false, null), Options, null);
+    private UpdateManager CreateManager()
+        => new(new GithubSource(
+            RepositoryUrl,
+            null,
+            UpdateChannels.IncludesPrereleases(UpdateChannel, HubReleaseInfo.IsPrereleaseBuild),
+            null), Options, null);
 
     /// <summary>True when the app was installed by Velopack (not run from a dev/portable copy).</summary>
-    private static bool CanUpdate() => CreateManager().IsInstalled;
+    private bool CanUpdate() => CreateManager().IsInstalled;
 
     /// <summary>
     /// Silent check. Never throws (a failure becomes <see cref="CheckResult.Failed"/>) and records the

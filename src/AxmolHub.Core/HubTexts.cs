@@ -311,6 +311,10 @@ public static class HubTexts
         // 更新检查（Velopack 自更新）。"检查更新"按钮在设置页，启动时也会自动静默检查一次。
         ["Updates"] = ("软件更新", "Software update"),
         ["UpdatesHint"] = ("检查 Axmol Hub 的新版本。只有安装版才会自动更新。", "Check for a new version of Axmol Hub. Only installed copies update automatically."),
+        ["UpdateChannel"] = ("更新通道", "Update channel"),
+        ["UpdateChannelHint"] = ("Stable 仅接收正式版；Preview 也会检查预发布版本。切换后可点击「检查更新」立即检查；预发布版 Hub 始终使用 Preview。", "Stable receives stable releases only; Preview also checks pre-releases. Click Check for updates after switching; Preview builds always use Preview."),
+        ["UpdateChannelStable"] = ("稳定版", "Stable"),
+        ["UpdateChannelPreview"] = ("预览版", "Preview"),
         ["CurrentVersion"] = ("当前版本", "Current version"),
         ["CheckForUpdates"] = ("检查更新", "Check for updates"),
         ["CheckingUpdate"] = ("正在检查更新…", "Checking for updates…"),

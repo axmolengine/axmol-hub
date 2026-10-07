@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (fallback when commit message is not "Version x.y.z")'
+        description: 'Version to release (fallback when the commit subject has no release version)'
         required: false
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
 
-      # 提交信息模板：Version 1.8.0（也接受 Version 1.8.0-beta 这类带预发布后缀）。
+      # 发布标记：Version 1.8.0；也接受 Version 1.8.0-beta 与 Version 1.8.0 (Preview)。
       # 匹配不到时用手动输入的 version；两者都无 → release_ver 为空，后续步骤全部跳过。
       - name: Check release version
         id: check_ver
@@ -37,18 +37,20 @@ jobs:
         run: |
           $commit_msg = "$(git show -s --format=%s)"
           Write-Host "Parsing release version from commit message: $commit_msg"
-          $m = [Regex]::Match($commit_msg, '^Version\s+(?<ver>\d+\.\d+\.\d+(-\w+)?)$')
-          if (-not $m.Success) { $m = [Regex]::Match($env:MANUAL_VERSION, '^(?<ver>\d+\.\d+\.\d+(-\w+)?)$') }
-          $release_ver = if ($m.Success) { $m.Groups['ver'].Value } else { '' }
+          . ./installer/ReleaseMetadata.ps1
+          $release = Get-ReleaseMetadata -CommitMessage $commit_msg -FallbackVersion $env:MANUAL_VERSION
+          $release_ver = $release.Version
+          $prerelease = if ($release.IsPrerelease) { 'true' } else { 'false' }
           Write-Host "release_ver=$release_ver"
           "release_ver=$release_ver" >> $env:GITHUB_OUTPUT
+          "is_prerelease=$prerelease" >> $env:GITHUB_OUTPUT
           "release_tag=v$release_ver" >> $env:GITHUB_OUTPUT
           "release_target=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
           # Convention guard: a "Version x.y.z" commit must be a version bump and nothing else. It is
           # the release marker, so anything riding along with it either belongs in its own commit or
           # will be missing from the release notes (the step below drops pure version bumps).
-          if ($m.Success) {
+          if ($release.IsVersionCommit) {
             $touched = @(& git show --name-only --format='' HEAD | Where-Object { $_ })
             $extra = @($touched | Where-Object { $_ -ne 'Directory.Build.props' })
             if ($extra) {
@@ -80,7 +82,7 @@ jobs:
           $listed = [System.Collections.Generic.List[string[]]]::new()
           foreach ($commit in $commits) {
             $parts = $commit -split "`t", 3
-            if ($parts[2] -match '^Version\s+\d+\.\d+\.\d+(-\w+)?$') {
+            if ($parts[2] -match '^Version\s+\d+\.\d+\.\d+(-\w+)?(\s+\(Preview\))?$') {
               $touched = @(& git show --name-only --format='' $parts[0] | Where-Object { $_ })
               if ($touched.Count -eq 1 -and $touched[0] -eq 'Directory.Build.props') {
                 Write-Host "Skipping version marker $($parts[1]): it only bumps Directory.Build.props."
@@ -132,6 +134,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ steps.check_ver.outputs.release_ver }}
+          RELEASE_PRERELEASE: ${{ steps.check_ver.outputs.is_prerelease }}
           RELEASE_TARGET: ${{ steps.check_ver.outputs.release_target }}
           RELEASE_NOTES_FILE: ${{ steps.release_notes.outputs.notes_file }}
-        run: ./installer/Publish-All.ps1 -Version $env:RELEASE_VERSION -ArtifactDir ./downloaded -TargetCommit $env:RELEASE_TARGET -NotesFile $env:RELEASE_NOTES_FILE
+        run: |
+          $prerelease = $env:RELEASE_PRERELEASE -eq 'true'
+          ./installer/Publish-All.ps1 -Version $env:RELEASE_VERSION -ArtifactDir ./downloaded -TargetCommit $env:RELEASE_TARGET -NotesFile $env:RELEASE_NOTES_FILE -Prerelease:$prerelease

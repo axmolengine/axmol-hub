@@ -29,6 +29,9 @@ public sealed class HubPreferences
     /// </summary>
     public bool AutoDownloadUpdates { get; set; } = true;
 
+    /// <summary>Which Hub releases to search for: stable only, or include GitHub pre-releases.</summary>
+    public string UpdateChannel { get; set; } = UpdateChannels.DefaultChannel;
+
     /// <summary>
     /// Default permission mode for the assistant's tools: <see cref="ToolApprovalModes.Ask"/> /
     /// <see cref="ToolApprovalModes.Auto"/> / <see cref="ToolApprovalModes.Full"/>. A session can override it
@@ -59,6 +62,7 @@ public sealed class PreferencesStore(string path)
         // Same for the download source: DownloadSources owns the known ids. An unknown value (hand
         // edited, or written by a newer Hub) must not become "download from nowhere".
         preferences.DownloadSource = DownloadSources.Normalize(preferences.DownloadSource);
+        preferences.UpdateChannel = UpdateChannels.Normalize(preferences.UpdateChannel);
         // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
         // has to come back as "ask", never as "let it through".
         preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);

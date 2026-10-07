@@ -2711,12 +2711,25 @@ var state = new HubState { Engines = [engine], Projects = [project], DefaultEngi
 stateStore.Save(state);
 Check(stateStore.Load().Projects.Single().Version == engine.Version, "State persistence");
 var preferencesStore = new PreferencesStore(Path.Combine(root, "preferences.json"));
+File.WriteAllText(Path.Combine(root, "preferences.json"), "{}");
+Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable,
+    "A pre-existing preferences file without an update-channel key keeps the Stable default");
+Check(UpdateChannels.All.SequenceEqual(new[] { UpdateChannels.Stable, UpdateChannels.Preview })
+      && UpdateChannels.IncludesPrereleases(UpdateChannels.Stable, false) == false
+      && UpdateChannels.IncludesPrereleases(UpdateChannels.Preview, false)
+      && UpdateChannels.IncludesPrereleases(UpdateChannels.Stable, true)
+      && UpdateChannels.Normalize("unknown") == UpdateChannels.Stable,
+    "Stable / Preview policy defaults and normalizes safely, while preview builds always include pre-releases");
 var preferences = new HubPreferences { Language = "en-US", DataRoot = Path.Combine(root, "独立资料库"), ProjectDirectory = Path.Combine(root, "用户项目") };
+preferences.UpdateChannel = UpdateChannels.Preview;
 preferencesStore.Save(preferences);
-Check(preferencesStore.Load().Language == "en-US" && preferencesStore.Load().ProjectDirectory == preferences.ProjectDirectory && preferencesStore.Load().DataRoot == preferences.DataRoot, "Language and selected directories survive restart");
+Check(preferencesStore.Load().Language == "en-US" && preferencesStore.Load().ProjectDirectory == preferences.ProjectDirectory && preferencesStore.Load().DataRoot == preferences.DataRoot
+      && preferencesStore.Load().UpdateChannel == UpdateChannels.Preview, "Language, update channel and selected directories survive restart");
 preferences.Language = "unsupported";
+preferences.UpdateChannel = "unknown";
 preferencesStore.Save(preferences);
 Check(preferencesStore.Load().Language == "en-US", "Unknown language falls back to the default (English)");
+Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable, "Unknown update channel falls back to Stable");
 Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
 // 构建目录已由引擎决定（不再是 Hub 的 build-hub*），所以断言的是**发现规则**：
 // 引擎在工程里生成的 run 脚本写着 BUILD_DIR，那是权威来源；没有它才扫描 build*。

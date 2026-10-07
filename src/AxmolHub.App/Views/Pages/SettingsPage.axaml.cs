@@ -122,6 +122,7 @@ public partial class SettingsPage : UserControl
         // writes the settings file, and "typed half a URL" is not a state worth persisting.
         DownloadSourcePicker.SelectionChanged += (_, _) => OnDownloadSourceChanged();
         ToolApprovalPicker.SelectionChanged += (_, _) => OnToolApprovalChanged();
+        UpdateChannelPicker.SelectionChanged += (_, _) => OnUpdateChannelChanged();
         CustomDownloadSourceBox.LostFocus += (_, _) => OnCustomDownloadSourceChanged();
         ChooseDataDirectoryButton.Click += async (_, _) => await ChooseDataDirectoryAsync();
         ChooseProjectDirectoryButton.Click += async (_, _) => await ChooseProjectDirectoryAsync();
@@ -196,10 +197,13 @@ public partial class SettingsPage : UserControl
             LocalizeThemeItems();
             LocalizeDownloadSourceItems();
             LocalizeToolApprovalItems();
+            LocalizeUpdateChannelItems();
             SelectLanguage(HubStrings.Language);
             SelectTheme(_preferences.Theme);
             SelectDownloadSource(_preferences.DownloadSource);
             SelectToolApproval(_preferences.ToolApprovalMode);
+            SelectUpdateChannel(HubReleaseInfo.IsPrereleaseBuild ? UpdateChannels.Preview : _preferences.UpdateChannel);
+            UpdateChannelPicker.IsEnabled = !HubReleaseInfo.IsPrereleaseBuild;
             CustomDownloadSourceBox.Text = _preferences.CustomDownloadSource ?? "";
             DataLocation.Text = _workspace.Store.Root;
             DefaultProjectLocation.Text = _preferences.ProjectDirectory ?? HubStrings.Get("NotSelected");
@@ -394,6 +398,63 @@ public partial class SettingsPage : UserControl
     internal bool ToolApprovalLabelsAreLocalizedForCheck
         => ToolApprovalPicker.Items.OfType<ComboBoxItem>()
             .All(item => item.Content is string text && text.Length > 0);
+
+    private void LocalizeUpdateChannelItems()
+    {
+        foreach (var item in UpdateChannelPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } channel && UpdateChannels.IsSupported(tag))
+            {
+                channel.Content = HubStrings.Get(tag == UpdateChannels.Preview
+                    ? "UpdateChannelPreview"
+                    : "UpdateChannelStable");
+            }
+        }
+    }
+
+    internal string[] DeclaredUpdateChannels
+        => UpdateChannelPicker.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string ?? "").ToArray();
+
+    internal string SelectedUpdateChannel
+        => UpdateChannelPicker.SelectedItem is ComboBoxItem { Tag: string tag } && UpdateChannels.IsSupported(tag)
+            ? UpdateChannels.Normalize(tag)
+            : UpdateChannels.DefaultChannel;
+
+    internal bool UpdateChannelLabelsAreLocalizedForCheck
+        => UpdateChannelPicker.Items.OfType<ComboBoxItem>()
+            .All(item => item.Content is string text && text.Length > 0);
+
+    internal bool UpdateChannelPickerEnabledForCheck => UpdateChannelPicker.IsEnabled;
+
+    internal void SelectUpdateChannel(string channel)
+    {
+        var normalized = UpdateChannels.Normalize(channel);
+        var index = 0;
+        foreach (var item in UpdateChannelPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } && tag == normalized)
+            {
+                UpdateChannelPicker.SelectedIndex = index;
+                return;
+            }
+
+            index++;
+        }
+
+        UpdateChannelPicker.SelectedIndex = 0;
+    }
+
+    private void OnUpdateChannelChanged()
+    {
+        if (!_ready || HubReleaseInfo.IsPrereleaseBuild) return;
+
+        var channel = SelectedUpdateChannel;
+        if (channel == _preferences.UpdateChannel) return;
+
+        _preferences.UpdateChannel = channel;
+        _preferencesStore.Save(_preferences);
+        UpdateService.Instance.UpdateChannel = channel;
+    }
 
     private void OnToolApprovalChanged()
     {

@@ -46,6 +46,9 @@
       <SolidColorBrush x:Key="Hub.LinkHover" Color="#9BCBFA" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#70D7AF" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#594313" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#FFE08A" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#80611F" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#F294A7" />
       <!-- Danger split in two weights. Hub.Danger is a fill: on a dark page it is a bright block, which is
            why only HubDialog's confirm key uses it. Hub.DangerText is the same hue used as ink, and
@@ -112,6 +115,9 @@
       <SolidColorBrush x:Key="Hub.LinkHover" Color="#0E4F88" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#1E9E76" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#FFF1BF" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#664D00" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#E5C75C" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#E5A6B2" />

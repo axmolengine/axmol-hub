@@ -600,9 +600,8 @@ public partial class MainWindow : Window
     internal bool BrandHeaderHasNoIconForCheck => !BrandHeader.GetVisualDescendants().Any(
         descendant => descendant is Avalonia.Controls.Shapes.Shape or Avalonia.Controls.Image);
 
-    internal int BrandHeaderLinesForCheck => BrandHeader.GetVisualDescendants()
-        .OfType<TextBlock>()
-        .Count(text => text.Text is { Length: > 0 });
+    internal int BrandHeaderLinesForCheck
+        => new[] { BrandTitle.Text, BrandVersion.Text }.Count(text => text is { Length: > 0 });
 
     internal string BrandTitleTextForCheck => BrandHeader.GetVisualDescendants()
         .OfType<TextBlock>()
@@ -610,6 +609,16 @@ public partial class MainWindow : Window
         .FirstOrDefault(text => text == "Axmol Hub") ?? "";
 
     internal string BrandVersionTextForCheck => BrandVersion.Text ?? "";
+    internal bool PreviewBadgeVisibleForCheck => PreviewBadge.IsVisible;
+    internal string PreviewBadgeTextForCheck
+        => PreviewBadge.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault()?.Text ?? "";
+    internal bool PreviewBadgeUsesThemeTokensForCheck
+        => ThemeProbe.IsToken(PreviewBadge.Background, "Hub.PreviewBadgeBackground")
+           && ThemeProbe.IsToken(PreviewBadge.BorderBrush, "Hub.PreviewBadgeBorder")
+           && PreviewBadge.GetVisualDescendants().OfType<TextBlock>()
+               .Any(text => ThemeProbe.IsToken(text.Foreground, "Hub.PreviewBadgeForeground"));
+
+    internal void SetPreviewBadgeVisibleForCheck(bool visible) => PreviewBadge.IsVisible = visible;
 
     /// <summary>
     /// The assistant's state, for the shell self-check to assert against — and to install a scripted chat
@@ -820,6 +829,7 @@ public partial class MainWindow : Window
     private void InitializeChrome()    {
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         BrandVersion.Text = "v" + version;
+        PreviewBadge.IsVisible = HubReleaseInfo.IsPrereleaseBuild;
         Title = "Axmol Hub " + BrandVersion.Text;
         // Installed once (see _updateDotTip); only its text moves, and it is rewritten on every
         // InitializeChrome — which ApplyLanguage calls — so a language switch reaches it too.

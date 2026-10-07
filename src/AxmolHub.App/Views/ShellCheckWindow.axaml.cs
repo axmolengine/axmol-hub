@@ -518,15 +518,21 @@ public partial class ShellCheckWindow : Window
             "☰ 折叠按钮与日志按钮的悬停底板是正方形（实际 "
             + PlateOf(shell, "SidebarToggle") + " / " + PlateOf(shell, "LogToggle") + "）");
 
-        // The title block is text only — two lines, no icon tile. A mark nobody can decode is chrome,
-        // and "the tile came back" would be invisible to every other assertion (it changes no key, no
-        // click path), so the "no image tile in the title block" rule is pinned here.
+        // The title block is two text lines plus the release-channel label; an icon tile is still not part of
+        // the brand. The Preview label must agree with the build marker and retain its semantic theme tokens.
         Check(shell.BrandHeaderHasNoIconForCheck && shell.BrandHeaderLinesForCheck == 2,
-            "标题块是纯文字两行、没有图标方块（实际图标 " + shell.BrandHeaderHasNoIconForCheck
+            "标题块是两行文字、没有图标方块（实际图标 " + shell.BrandHeaderHasNoIconForCheck
             + "、文字行 " + shell.BrandHeaderLinesForCheck + "）");
         Check(shell.BrandTitleTextForCheck == "Axmol Hub" && shell.BrandVersionTextForCheck.StartsWith("v"),
             "标题块文字是 「Axmol Hub」+ 版本号（实际「" + shell.BrandTitleTextForCheck + "」/「"
             + shell.BrandVersionTextForCheck + "」）");
+        Check(shell.PreviewBadgeVisibleForCheck == HubReleaseInfo.IsPrereleaseBuild,
+            "Preview 标记仅随预发布构建显示");
+        var initialBadgeVisible = shell.PreviewBadgeVisibleForCheck;
+        shell.SetPreviewBadgeVisibleForCheck(true);
+        Check(shell.PreviewBadgeTextForCheck == "Preview" && shell.PreviewBadgeUsesThemeTokensForCheck,
+            "Preview 标记文字、底色、边框和文字颜色均正确绑定主题令牌");
+        shell.SetPreviewBadgeVisibleForCheck(initialBadgeVisible);
 
         // ── Message-level actions and session management ──
         // The action bar is per bubble: user turns expose edit/delete, the last assistant turn exposes
@@ -2762,6 +2768,21 @@ public partial class ShellCheckWindow : Window
         Check(settings.ProviderGroupForId("orcarouter") is { IsLinked: true },
             "换来源之后仍然是已鉴权，不需要用户再点一次");
 
+        // `apiKeyRequired` is a promise about *a credential existing*, not about a key being pasted — otherwise a
+        // provider that offers browser sign-in would still refuse to work after a successful sign-in. Asserted on
+        // a model added here rather than one the catalog happens to ship, so it cannot pass by accident, and
+        // asserted while the OAuth credential is the only one in the slot.
+        var oauthProbeModel = "oauth-only-probe";
+        shell.Chat.AddModel("orcarouter", oauthProbeModel);
+        var oauthProvider = shell.Chat.Providers.First(candidate => candidate.Id == "orcarouter");
+        Check(oauthProvider.ApiKeyRequired && oauthProvider.Credential?.Source == CredentialSources.OAuth
+              && shell.Chat.AvailableChatModels.Any(choice =>
+                  choice.Provider.Id == "orcarouter" && choice.ModelName == oauthProbeModel),
+            "只要鉴权过就能用它的模型，不必是粘贴的密钥（实际来源「"
+            + (oauthProvider.Credential?.Source ?? "无凭据") + "」、可用模型 "
+            + shell.Chat.AvailableChatModels.Count(choice => choice.Provider.Id == "orcarouter") + " 个）");
+        shell.Chat.RemoveModel("orcarouter", oauthProbeModel);
+
         // Re-authenticating rotates the secret on the credential already there.
         var again = shell.Chat.AddOAuthCredential("orcarouter", "acct-77", "api", "sk-yoex-rotated");
         Check(again?.Id == oauthCredential?.Id, "同一 provider 再次登录是轮换密钥而不是新增一份");
@@ -4069,6 +4090,30 @@ public partial class ShellCheckWindow : Window
         Check(settings.SelectedLanguage == HubStrings.Language,
             "设置页打开时选中的就是当前语言（" + settings.SelectedLanguage + "）");
 
+        var expectedUpdateChannel = HubReleaseInfo.IsPrereleaseBuild ? UpdateChannels.Preview : UpdateChannels.Stable;
+        Check(settings.DeclaredUpdateChannels.SequenceEqual(UpdateChannels.All)
+              && settings.SelectedUpdateChannel == expectedUpdateChannel
+              && settings.UpdateChannelLabelsAreLocalizedForCheck
+              && settings.UpdateChannelPickerEnabledForCheck == !HubReleaseInfo.IsPrereleaseBuild,
+            "更新设置声明 Stable / Preview、默认 Stable，标签已本地化且预发布构建锁定 Preview");
+        if (HubReleaseInfo.IsPrereleaseBuild)
+        {
+            Check(UpdateChannels.IncludesPrereleases(UpdateService.Instance.UpdateChannel, HubReleaseInfo.IsPrereleaseBuild),
+                "预发布构建即使偏好仍为 Stable 也强制纳入预发布更新");
+        }
+        else
+        {
+            settings.SelectUpdateChannel(UpdateChannels.Preview);
+            Check(settings.SelectedUpdateChannel == UpdateChannels.Preview
+                  && new PreferencesStore(preferencesPath).Load().UpdateChannel == UpdateChannels.Preview
+                  && UpdateService.Instance.UpdateChannel == UpdateChannels.Preview,
+                "选择 Preview 会持久化并更新客户端通道");
+            settings.SelectUpdateChannel(UpdateChannels.Stable);
+            Check(new PreferencesStore(preferencesPath).Load().UpdateChannel == UpdateChannels.Stable
+                  && UpdateService.Instance.UpdateChannel == UpdateChannels.Stable,
+                "切回 Stable 会持久化且保持自动化自检离线");
+        }
+
         Check(NamedDescendant<TextBox>(settings, "DataLocation")?.Text == new StateStore(scratchRoot).Root,
             "数据目录显示的是实际数据根而不是默认目录");
 
@@ -4265,6 +4310,8 @@ public partial class ShellCheckWindow : Window
             "切回中文后主题三项的文案也是中文（实际 " + ThemeLabels(settings) + "）");
 
         var darkToken = TokenColor("Hub.Background");
+        shell.SetPreviewBadgeVisibleForCheck(true);
+        var darkPreviewBadge = TokenColor("Hub.PreviewBadgeBackground");
         settings.SelectTheme(HubTheme.Light);
         shell.UpdateLayout();
         settings.UpdateLayout();
@@ -4275,8 +4322,12 @@ public partial class ShellCheckWindow : Window
 
         // The variant name changing is not enough: what the user sees is the token **values**.
         var lightToken = TokenColor("Hub.Background");
+        var lightPreviewBadge = TokenColor("Hub.PreviewBadgeBackground");
         Check(lightToken is not null && lightToken != darkToken,
             "切浅色后 Hub.Background 令牌换成另一组值（" + darkToken + " → " + lightToken + "）");
+        Check(darkPreviewBadge is not null && lightPreviewBadge is not null && lightPreviewBadge != darkPreviewBadge
+              && shell.PreviewBadgeUsesThemeTokensForCheck,
+            "切浅色后 Preview 标记背景令牌也随主题变化（" + darkPreviewBadge + " → " + lightPreviewBadge + "）");
 
         Check(new PreferencesStore(preferencesPath).Load().Theme == HubTheme.Light,
             "主题切换已写入设置文件（" + preferencesPath + "）");
@@ -4288,6 +4339,7 @@ public partial class ShellCheckWindow : Window
         Check(Application.Current!.ActualThemeVariant == ThemeVariant.Dark
               && new PreferencesStore(preferencesPath).Load().Theme == HubTheme.Dark,
             "切回深色也落了盘（自检收尾不留浅色设置，否则后面的渲染断言会拍成浅色）");
+        shell.SetPreviewBadgeVisibleForCheck(HubReleaseInfo.IsPrereleaseBuild);
 
         await Task.CompletedTask;
     }

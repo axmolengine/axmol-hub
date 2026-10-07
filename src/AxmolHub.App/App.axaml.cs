@@ -81,6 +81,7 @@ public partial class App : Application
         // Seed the update service with the user's background-download preference before the startup
         // check runs, so a check that finds an update can start fetching it right away.
         UpdateService.Instance.AutoDownload = preferences.AutoDownloadUpdates;
+        UpdateService.Instance.UpdateChannel = preferences.UpdateChannel;
 
         // P4's three self-check/verification modes each use a dedicated window; the product mode
         // opens the main window.

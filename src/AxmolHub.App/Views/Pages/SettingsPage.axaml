@@ -183,6 +183,15 @@
           <TextBlock Text="{DynamicResource Updates}" FontSize="16" FontWeight="SemiBold" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource UpdatesHint}" />
 
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource UpdateChannel}" FontWeight="SemiBold" />
+            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource UpdateChannelHint}" />
+            <ComboBox x:Name="UpdateChannelPicker" HorizontalAlignment="Stretch">
+              <ComboBoxItem Tag="stable" />
+              <ComboBoxItem Tag="preview" />
+            </ComboBox>
+          </StackPanel>
+
           <!-- Off by default? No: with it on, finding an update is enough and the only thing left is a
                restart, which is the whole point of a background updater. Unchecking it hands the
                download back to the "Download & restart" button. -->

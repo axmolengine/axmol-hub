@@ -160,10 +160,19 @@
           </StackPanel>
 
           <StackPanel DockPanel.Dock="Top">
-            <!-- Slim brand: two compact text lines. It deliberately carries no icon — a mark with no
-                 established meaning is just chrome, and the title block already reads as "Axmol Hub". -->
+            <!-- Slim brand: two compact text lines, with a compact release-channel marker beside the title. -->
             <StackPanel x:Name="BrandHeader" Margin="2,0,0,16" VerticalAlignment="Center">
-              <TextBlock Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
+              <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                <TextBlock x:Name="BrandTitle" Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
+                <Border x:Name="PreviewBadge" IsVisible="False"
+                        Background="{DynamicResource Hub.PreviewBadgeBackground}"
+                        BorderBrush="{DynamicResource Hub.PreviewBadgeBorder}"
+                        BorderThickness="1" CornerRadius="4" Padding="5,1"
+                        VerticalAlignment="Center">
+                  <TextBlock Text="Preview" Foreground="{DynamicResource Hub.PreviewBadgeForeground}"
+                             FontSize="9" FontWeight="SemiBold" />
+                </Border>
+              </StackPanel>
               <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
                          FontSize="10" Margin="0,2,0,0" />
             </StackPanel>
