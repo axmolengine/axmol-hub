@@ -45,6 +45,15 @@ public static class ChatReasoningEfforts
 }
 
 /// <summary>
+/// One image attached to a turn. The bytes live in a directory beside the session's JSON, not inside it: a
+/// session file is rewritten on every message and replayed into every later request, and a megabyte of PNG
+/// encoded through <c>System.Text.Json</c>'s default escaper would be re-escaped each time. What the turn keeps
+/// is the <b>file name</b> inside that directory — a full path would stop meaning anything once the data root
+/// moves, which is the same reason <see cref="ChatTurn.UndoName"/> is a name.
+/// </summary>
+public sealed record ChatImage(string File, string MediaType, long Bytes);
+
+/// <summary>
 /// One message in a conversation, in <b>Hub's own</b> persisted shape.
 ///
 /// This is deliberately not <c>Microsoft.Extensions.AI.ChatMessage</c>: that type carries a polymorphic
@@ -84,8 +93,19 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// (<see cref="ChatPipeline.ToChatMessage"/>) and never stored.</summary>
     public string? InjectedFrom { get; init; }
 
-    public static ChatTurn User(string text, string? attachedContext = null, string? injectedFrom = null) =>
-        new(ChatRoles.User, text, DateTimeOffset.Now) { AttachedContext = attachedContext, InjectedFrom = injectedFrom };
+    /// <summary>Images the user attached to this turn, in the order they were added, each one named by the file
+    /// the session's image directory holds it under. The default is empty rather than null because a conversation
+    /// written before attachments existed has no such property and still has to load.</summary>
+    public IReadOnlyList<ChatImage> Images { get; init; } = [];
+
+    public static ChatTurn User(string text, string? attachedContext = null, IReadOnlyList<ChatImage>? images = null,
+        string? injectedFrom = null) =>
+        new(ChatRoles.User, text, DateTimeOffset.Now)
+        {
+            AttachedContext = attachedContext,
+            Images = images ?? [],
+            InjectedFrom = injectedFrom,
+        };
     public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
     public static ChatTurn System(string text) => new(ChatRoles.System, text, DateTimeOffset.Now);
 

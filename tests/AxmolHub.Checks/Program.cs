@@ -2348,6 +2348,84 @@ if (args.Contains("--check-ai-cross-session"))
         Console.WriteLine("PASS: " + name + ".");
     }
 }
+if (args.Contains("--check-ai-images"))
+{
+    // A session file is rewritten on every message and replayed into every later request, so the bytes of an
+    // attachment live in a directory beside it and the turn keeps only the file name. These are the properties
+    // that shape buys: the name survives a reload, a session written before attachments existed still loads,
+    // deleting a conversation takes its pictures with it, and nothing about the storage lets a session file
+    // name a path outside its own directory.
+    var imageRoot = Path.Combine(root, "images");
+    var store = new ConversationStore(imageRoot);
+    var album = Conversation.Create("orcarouter");
+    album.Append(ChatTurn.User("先说一句没有附件的话"));
+    var png = new byte[64];
+    png[0] = 0x89;
+    png[1] = (byte)'P';
+    png[2] = (byte)'N';
+    png[3] = (byte)'G';
+    var jpeg = new byte[44];
+    jpeg[0] = 0xFF;
+    jpeg[1] = 0xD8;
+    jpeg[2] = 0xFF;
+    var first = store.SaveImage(album.Id, png, "image/png");
+    var second = store.SaveImage(album.Id, jpeg, "image/jpeg");
+    if (first is not { File: "1.png", MediaType: "image/png" } || first.Bytes != png.Length
+        || second.File != "2.jpg")
+        throw new Exception($"The stored name, type or size is wrong: {first} / {second}");
+    if (!jpeg.SequenceEqual(store.ReadImage(album.Id, "2.jpg")))
+        throw new Exception("A stored image did not read back byte for byte.");
+
+    album.Append(ChatTurn.User("这两张图是什么报错？", images: [first, second]));
+    store.Save(album);
+    var reloadedAlbum = store.Load(album.Id) ?? throw new Exception("A session with attachments no longer loads.");
+    if (reloadedAlbum.Messages[^1].Images.SequenceEqual([first, second]) == false
+        || reloadedAlbum.Messages[0].Images.Count != 0)
+        throw new Exception($"Attachments did not round-trip: {reloadedAlbum.Messages[^1].Images.Count} on the last turn.");
+
+    // The file name is read from a session file, which is user-editable data: a name carrying a separator is
+    // refused instead of resolved, or a hand-written transcript would be an arbitrary file read.
+    if (store.ReadImage(album.Id, "../images.json") is not null
+        || store.ReadImage(album.Id, "gone.png") is not null
+        || store.ReadImage(album.Id, "") is not null)
+        throw new Exception("An attachment name outside the session's directory was resolved anyway.");
+    try
+    {
+        store.SaveImage(album.Id, png, "image/tiff");
+        throw new Exception("A media type Hub has no file name for was stored.");
+    }
+    catch (ArgumentException) { /* the only answer that lets the caller fix its type instead of guessing a suffix */ }
+
+    // A session written before this field existed has no Images property at all, and must still load — the
+    // forward-compatibility rule every optional turn field follows.
+    File.WriteAllText(Path.Combine(imageRoot, "ai", "sessions", "legacy-no-images.json"),
+        """{"Id":"legacy-no-images","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"user","Text":"早于附件功能"}]}""");
+    if (store.Load("legacy-no-images") is not { } legacy || legacy.Messages[0].Images.Count != 0)
+        throw new Exception("A session file predating attachments no longer loads.");
+
+    // The image directory is named after the session, in the same folder the index lives in. Listing reads files,
+    // so a directory cannot become a row — but the rebuild path is the one that walks the folder, so it is what
+    // gets asserted once the derived index is gone.
+    if (store.List().Count(summary => summary.Id == album.Id) != 1)
+        throw new Exception("The attachment directory made the session appear twice in the list.");
+    File.Delete(Path.Combine(imageRoot, "ai", "sessions", "index.json"));
+    var rebuilt = store.List();
+    if (rebuilt.Count(summary => summary.Id == album.Id) != 1
+        || !rebuilt.Any(summary => summary.Id == "legacy-no-images")
+        || rebuilt.Count != 2)
+        throw new Exception("Rebuilding the index from the files miscounted the sessions: "
+                            + string.Join(", ", rebuilt.Select(summary => summary.Id)));
+
+    store.Delete(album.Id);
+    if (File.Exists(Path.Combine(imageRoot, "ai", "sessions", album.Id + ".json"))
+        || Directory.Exists(Path.Combine(imageRoot, "ai", "sessions", album.Id)))
+        throw new Exception("A deleted session left its images behind in a directory nothing can reach again.");
+
+    Console.WriteLine("PASS: attachments live beside the session file, keep their names across a reload, and go "
+                      + "with the session.");
+    Directory.Delete(imageRoot, recursive: true);
+    return;
+}
 if (args.Contains("--check-release-receipt"))
 {
     var entry = new StateStore(root).Load().Projects.Single(p => p.Name == "HelloAndroidRelease");
