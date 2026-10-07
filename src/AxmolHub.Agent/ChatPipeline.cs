@@ -26,8 +26,13 @@ public sealed class ChatPipeline(IChatClient client)
 {
     /// <summary>How many tool round-trips one user message may cost. Reaching it is not an error: the client
     /// stops offering tools and the model answers with what it has, which is the behaviour the guardrails
-    /// promise — stop and hand the log back rather than loop.</summary>
-    public const int MaximumToolIterations = 8;
+    /// promise — stop and hand the log back rather than loop.
+    ///
+    /// Sixteen, not the eight a demo run needed: one ordinary debugging cycle — search, read the file, edit it,
+    /// build, read the compiler's answer — is five round-trips, and a request that touches two files before a
+    /// green build is two of those cycles. Stopping at eight cut the model off before it could verify its own
+    /// work, which is the one thing an agent has to be allowed to do.</summary>
+    public const int MaximumToolIterations = 16;
 
     /// <summary>A tool that keeps failing is a stuck loop, not a hard problem; three in a row ends the turn.</summary>
     public const int MaximumConsecutiveToolErrors = 3;

@@ -992,6 +992,12 @@ if (args.Contains("--check-ai-context"))
         || resultTexts.Skip(2).Any(text => text.Contains("elided") || text.Length != 4000))
         throw new Exception($"Elision did not spare exactly the newest {ToolLoopContextGuard.KeepRecentResults} results.");
 
+    // The round budget is a floor, not a magic number: one debug cycle is search, read, edit, build, read what the
+    // compiler said — five rounds — and a run that cannot fit two of those stops the model before it has verified
+    // its own change, which is the one thing an agent has to be allowed to finish.
+    if (ChatPipeline.MaximumToolIterations < 11)
+        throw new Exception($"Two debug cycles do not fit in {ChatPipeline.MaximumToolIterations} tool rounds.");
+
     // ── The loop ends on its own, and stays inside the window while it runs ──
     var insistent = new InsistentToolClient();
     var probeProvider = new ModelProvider
