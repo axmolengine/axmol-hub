@@ -73,10 +73,10 @@ public sealed class ChatWorkspace : IDisposable
         _dataRoot = dataRoot;
         _sessions = new ConversationRegistry(new ConversationStore(dataRoot));
 
-        // The secret store is platform-specific and, on macOS/Linux, deliberately unimplemented rather than
-        // falling back to plaintext. A failure here must not take the whole app down — chat simply cannot
-        // store keys on those platforms yet, and the panel reports that when the user tries to configure one.
-        // Windows (the shipping target) always succeeds.
+        // The secret store is platform-specific, and where a platform has no backend it is deliberately left
+        // unimplemented rather than given a plaintext fallback. A failure here must not take the whole app down —
+        // chat simply cannot store keys on that platform, and the panel reports that when the user tries to
+        // configure one. Windows (DPAPI) and Linux (an AES-GCM blob file) both always succeed; only macOS throws.
         try { _secrets = SecretStoreFactory.Create(dataRoot); }
         catch (PlatformNotSupportedException) { _secrets = null; }
 
@@ -86,8 +86,15 @@ public sealed class ChatWorkspace : IDisposable
         LoadProviders();
     }
 
-    /// <summary>Whether API keys can be persisted at all on this platform (Windows today).</summary>
+    /// <summary>Whether API keys can be persisted at all on this platform (not macOS).</summary>
     public bool CanStoreSecrets => _secrets is not null;
+
+    /// <summary>
+    /// Where keys actually go, so the settings page can say it. The tiers differ in what they stop — DPAPI binds
+    /// to the login, the file tier binds to a 0600 key outside the data root — and one flat "stored securely"
+    /// sentence would cover up the difference on exactly the platform where the user chose it.
+    /// </summary>
+    public SecretStoreDescriptor SecretBackend => _secrets?.Descriptor ?? SecretStoreDescriptor.None;
 
     public IReadOnlyList<ModelProvider> Providers => _providerList;
 
@@ -1116,13 +1123,18 @@ public sealed class ChatWorkspace : IDisposable
     /// than asked, and a transport failure — and folding them into one exception type would leave the UI
     /// string-matching on messages.</para>
     ///
-    /// <para><b>The flow is built here, not injected, except for the HTTP handler and the browser opener.</b>
-    /// Those two are the only things a self-check must not do for real, and they are exactly what the flow's
-    /// constructor takes.</para>
+    /// <para><b>The flow is built here, not injected, except for the three things it cannot do on its own</b> —
+    /// the HTTP transport, the browser, and asking a person for the URL their browser ended up on. Those are
+    /// exactly what a self-check must not do for real, and exactly what the flow's constructor takes.</para>
+    ///
+    /// <para><paramref name="onManualCallback"/> is what makes a sign-in finish on WSL2 and in a container: the
+    /// browser opens on the host, so the redirect to <c>127.0.0.1</c> never reaches the listener here, and the
+    /// only way the code can get to Hub is through the user's clipboard.</para>
     /// </summary>
     public async Task<OAuthSignInOutcome?> SignInWithOAuthAsync(
         string providerId,
         Action<string>? onManualUrl = null,
+        Func<string, CancellationToken, Task<string?>>? onManualCallback = null,
         CancellationToken cancellationToken = default)
     {
         if (!CanStoreSecrets) return null;
@@ -1130,14 +1142,26 @@ public sealed class ChatWorkspace : IDisposable
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider?.OAuth is not { DiscoveryUrl.Length: > 0 } oauth) return null;
 
+        // Wrapped rather than passed straight through: the caller's shape is a Func, the flow's is its own
+        // delegate type, and the two are only interchangeable through a lambda the compiler can name.
+        OrcaRouterOAuthFlow.ManualCallbackSource? askManual = null;
+        if (onManualCallback is not null)
+        {
+            askManual = (url, cancellation) => onManualCallback(url, cancellation);
+        }
+
         var flow = new OrcaRouterOAuthFlow(
             _oauthHttp ?? new HttpClient { Timeout = TimeSpan.FromMinutes(2) },
             url =>
             {
                 // Try the browser first; when that fails the URL is handed to the caller instead of being
-                // swallowed, because a sign-in with no browser and no link is a dead end.
-                if (!BrowserOpener(url)) onManualUrl?.Invoke(url);
+                // swallowed, because a sign-in with no browser and no link is a dead end. The flow is told
+                // whether it opened, because "no browser" is the case where it must not make the user wait.
+                if (BrowserOpener(url)) return true;
+                onManualUrl?.Invoke(url);
+                return false;
             },
+            askManual,
             OAuthTimeout);
 
         try
@@ -1183,34 +1207,14 @@ public sealed class ChatWorkspace : IDisposable
         return start > 0 && end > start ? message[start..end] : "";
     }
 
-    /// <summary>Opens a URL in the default browser. Windows and macOS have a launcher; elsewhere the caller
-    /// falls back to showing the link. Injectable because launching a real browser from an assertion harness
-    /// is both a side effect and a hang risk.</summary>
-    internal Func<string, bool> BrowserOpener { get; set; } = TryOpenBrowser;
-
-    private static bool TryOpenBrowser(string url)
-    {
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
-                return true;
-            }
-
-            if (OperatingSystem.IsMacOS())
-            {
-                System.Diagnostics.Process.Start("open", url);
-                return true;
-            }
-
-            return false;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
+    /// <summary>
+    /// Opens a URL in the default browser on all three platforms; elsewhere the caller falls back to showing the
+    /// link. Injectable because launching a real browser from an assertion harness is both a side effect and a
+    /// hang risk. The platform rules — including why Linux execs <c>xdg-open</c> rather than shell-executing —
+    /// live in <see cref="UrlLauncher"/>, so the settings page's referral link and the shell's "open a folder"
+    /// reach the browser the same way the sign-in flow does instead of each writing its own <c>UseShellExecute</c>.
+    /// </summary>
+    internal Func<string, bool> BrowserOpener { get; set; } = UrlLauncher.TryOpen;
 
     /// <summary>Injectable transport for the sign-in flow; a self-check supplies one so no request leaves the box.</summary>
     internal HttpClient? OAuthHttp

@@ -471,8 +471,14 @@ public static class HubTexts
         ["ActiveModelFormat"] = ("当前模型：{0} · {1}", "Current model: {0} · {1}"),
         ["NoProvider"] = ("尚未配置模型提供商。", "No model provider is configured yet."),
         ["ApiKey"] = ("API 密钥", "API key"),
-        ["ApiKeyHint"] = ("密钥保存在操作系统的凭据存储中，不会写入配置文件或日志。", "The key is kept in the OS credential store, never written to config files or logs."),
-        ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI；macOS/Linux 待补）。", "Secure key storage is not available on this platform yet (Windows uses DPAPI; macOS/Linux are pending)."),
+        // 措辞只声明两档后端都成立的事实。「保存在操作系统的凭据存储中」在 Linux 的文件档上是错的，
+        // 而后端那一行（AuthSecretBackendFile）负责把「这次到底存在哪」说清楚。
+        ["ApiKeyHint"] = ("密钥只保存在本机，不会写入配置文件或日志。", "The key stays on this machine and is never written to config files or logs."),
+        ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI，Linux 使用本机加密文件；macOS 的 Keychain 待补）。", "Secure key storage is not available on this platform (Windows uses DPAPI, Linux uses an encrypted local file; the macOS Keychain backend is pending)."),
+        // 后端披露：三档防住的东西不同，一句笼统的「已安全保存」会把差异抹掉，所以由存储自己报是哪一档。
+        ["AuthSecretBackendFile"] = ("此平台的密钥保存在本机加密文件中（数据密钥在用户配置目录，权限 600），而非系统凭据存储。", "On this platform keys are kept in an encrypted local file (data key in your profile directory, mode 600) rather than the OS credential store."),
+        ["AuthSecretBackendDegraded"] = ("已存储的密钥有无法读取的项，重新输入即可覆盖：", "A stored key could not be read; entering it again replaces it: "),
+        ["AuthNoBrowserLink"] = ("无法打开浏览器，请手动访问：", "No browser could be opened. Visit this link by hand: "),
         ["SaveApiKey"] = ("保存密钥", "Save key"),
         // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，Simdsoft 可获得分成，所得收入全部用于 Axmol 引擎及相关工具的研发（见规划 D5）。
         ["AffiliateDisclosure"] = ("通过本项目的推荐链接注册 {0}，Simdsoft 可获得分成，所得收入将全部用于 Axmol 引擎及相关工具的研发。", "Signing up for {0} through this project's referral link earns Simdsoft a commission, all of which goes toward developing the Axmol engine and its tooling."),
@@ -638,6 +644,9 @@ public static class HubTexts
         ["AuthOAuthCancelled"] = ("已取消登录。", "Sign-in cancelled."),
         ["AuthOAuthScopeRejected"] = ("授权返回的权限范围比请求的更宽（{0}），已拒绝该密钥。请在授权页面仅勾选接口访问权限。", "The granted scope ({0}) is wider than the one requested, so the key was refused. On the consent page, grant API access only."),
         ["AuthOAuthNoBrowser"] = ("无法自动打开浏览器，请手动访问下面的地址：", "Could not open a browser automatically; open this address by hand:"),
+        // WSL2 / 容器：浏览器在宿主机上，回调打到宿主机的 127.0.0.1，永远回不到 Hub 的监听端口。
+        // 唯一的出路是人把地址栏粘回来，所以这句话必须在流程还开着的时候出现。
+        ["AuthOAuthPastePrompt"] = ("把浏览器最后打开的地址粘贴到下面（用于取回授权码；地址打不开时尤其需要）", "Paste the address your browser ended up on, so the authorization code can be retrieved (needed when the callback page will not load)"),
         ["AuthOAuthPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥，无法完成登录。", "Secure key storage is not available on this platform yet, so sign-in cannot complete."),
         // 两种登录入口同时出现时，中间的分隔文案。
         ["AuthOrSeparator"] = ("或", "or"),

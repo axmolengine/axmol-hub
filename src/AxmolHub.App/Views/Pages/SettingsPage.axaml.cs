@@ -1028,6 +1028,60 @@ public partial class SettingsPage : UserControl
         {
             ProviderGroupList.Children.Add(BuildProviderGroup(provider));
         }
+
+        // One line for the whole card rather than one per provider: which backend holds the keys is a fact about
+        // this machine, not about OrcaRouter. Windows says nothing, because DPAPI is the promise every install
+        // already got; the file tier and an unreadable blob both speak up, because there "stored in the OS
+        // credential store" would be an overstatement the user could act on.
+        if (BuildSecretBackendLine(_chat.SecretBackend) is { } backend)
+        {
+            ProviderGroupList.Children.Add(backend);
+        }
+    }
+
+    /// <summary>Whether the card currently carries the backend disclosure line. Read for the assertion.</summary>
+    internal bool SecretBackendLineShown
+        => ProviderGroupList.Children.OfType<Control>().Any(child => SectionTags.SecretBackend.Equals(child.Tag));
+
+    /// <summary>
+    /// The disclosure line as it would render for a given tier. Not a second copy of the wording: it calls the
+    /// same builder the card calls, which is what lets the assertion cover the two tiers this host is not running.
+    /// </summary>
+    internal string? SecretBackendTextForCheck(SecretStoreKind kind, string? degradedReason)
+        => (BuildSecretBackendLine(new SecretStoreDescriptor(kind, "", degradedReason)) as TextBlock)?.Text;
+
+    /// <summary>
+    /// The line that names where keys actually go, or <c>null</c> when the tier needs no explaining.
+    /// Static and descriptor-driven on purpose: the same function renders the real card and the verification
+    /// hook, so an assertion about the file tier's wording is an assertion about what the page would show.
+    /// </summary>
+    private static Control? BuildSecretBackendLine(SecretStoreDescriptor backend)
+    {
+        if (backend.DegradedReason is { Length: > 0 } degraded)
+        {
+            return new TextBlock
+            {
+                Text = HubStrings.Get("AuthSecretBackendDegraded") + degraded,
+                Classes = { "danger" },
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Tag = SectionTags.SecretBackend,
+            };
+        }
+
+        // Only the file tier explains itself. DPAPI is the promise every Windows install already got, a None
+        // descriptor already surfaces through the auth dialog's own refusal, and repeating either here would be
+        // a second label for information the screen carries once already.
+        if (backend.Kind != SecretStoreKind.EncryptedFile) return null;
+
+        return new TextBlock
+        {
+            Text = HubStrings.Get("AuthSecretBackendFile"),
+            Classes = { "muted" },
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Tag = SectionTags.SecretBackend,
+        };
     }
 
     /// <summary>
@@ -1899,7 +1953,12 @@ public partial class SettingsPage : UserControl
                 // is about to be rebuilt anyway), so it goes to the status line, which is already the channel
                 // for every other outcome of this flow.
                 SetProviderStatus(false, HubStrings.Get("AuthOAuthNoBrowser") + "\n" + url);
-            });
+            },
+            // The one exception to "status line only": that rule is about *reporting*, and a redirect URL cannot
+            // be read off a status line — it has to be typed. It fires only when the loopback callback could not
+            // land here (WSL2 and containers, where the browser runs on the host) or after the flow's own nudge,
+            // so a working desktop browser never sees it.
+            (authorizationUrl, cancellation) => PromptCallbackUrlAsync(cancellation));
 
             if (result is null)
             {
@@ -1942,6 +2001,28 @@ public partial class SettingsPage : UserControl
         {
             if (button is not null) button.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// Asks for the address the browser ended up on, so a sign-in can finish where the loopback callback cannot
+    /// reach Hub (WSL2, a container, a browser on another host).
+    ///
+    /// <para>The flow calls this from a worker thread, so the window is created through the dispatcher. Nothing
+    /// here validates the pasted text: <c>ReadCallback</c> does, on the same path the browser's own redirect
+    /// goes through, which is the property that keeps the paste route from becoming the weak one.</para>
+    /// </summary>
+    private async Task<string?> PromptCallbackUrlAsync(System.Threading.CancellationToken cancellationToken)
+    {
+        // One await: the dispatcher unwraps the returned task, so the value here is what the dialog produced.
+        var pasted = await Dispatcher.UIThread.InvokeAsync(() => PromptWindow.ShowAsync(
+            Owner(),
+            HubStrings.Get("AuthOAuthPastePrompt"),
+            "",
+            "http://127.0.0.1:0/callback?code=…&state=…"));
+
+        // A dialog the user walked away from must not outlive the sign-in: if the flow was cancelled while it was
+        // open, whatever comes back is discarded rather than traded for a token.
+        return cancellationToken.IsCancellationRequested ? null : pasted;
     }
 
     /// <summary>
@@ -2098,21 +2179,21 @@ public partial class SettingsPage : UserControl
     /// case the dialog still opens (it degrades to a standalone window).</summary>
     private Window? Owner() => TopLevel.GetTopLevel(this) as Window;
 
+    /// <summary>
+    /// Opens the affiliate/referral page. This is the same entrance the sign-in flow uses
+    /// (<see cref="UrlLauncher"/>), because the disclosure link and the OAuth link are one job — telling the user
+    /// where their key came from — and two launchers means one of them silently stops working on a platform the
+    /// other added. A <c>directory</c> is deliberately not routed here: shell-opening a folder has to skip
+    /// <c>$BROWSER</c>, and <c>MainWindow.OpenFolder</c> keeps its own path for that reason.
+    /// </summary>
     private void OpenReferral(ModelProvider provider)
     {
-        if (provider.ReferralUrl is { Length: > 0 } url)
-        {
-            try
-            {
-                using var process = System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                SetStatusLineError(true);
-                UpdateStatusLine.Text = ex.Message;
-            }
-        }
+        if (provider.ReferralUrl is not { Length: > 0 } url) return;
+        if (UrlLauncher.TryOpen(url)) return;
+
+        // No browser: report rather than throw, and hand over the link itself, which is what the sign-in
+        // fallback does too. On a headless box the URL is still actionable — copy it and open it elsewhere.
+        SetProviderStatus(true, HubStrings.Get("AuthNoBrowserLink") + url);
     }
 
     // ── Verification hooks for the update card (used by --verify-shell) ──
@@ -2599,6 +2680,13 @@ public partial class SettingsPage : UserControl
         // failures with the same shape in the tree.
         internal const string AuthButton = "provider-auth-button";
         internal const string NoCredential = "provider-no-credential";
+
+        /// <summary>
+        /// The one line under the provider cards that names where keys are actually stored. Tagged because it is
+        /// the only place the honesty about the file tier is visible, and an assertion has to be able to tell
+        /// "the line is missing" from "the line is there and empty".
+        /// </summary>
+        internal const string SecretBackend = "provider-secret-backend";
         internal const string Affiliate = "provider-affiliate";
     }
 }
