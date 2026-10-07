@@ -2509,7 +2509,7 @@ if (args.Contains("--check-ai-cross-session"))
         request =>
         {
             spawnRequests.Add(request);
-            return Task.FromResult("child-9");
+            return Task.FromResult<string?>("child-9");
         });
     var spawnTools = new WorkspaceTools(peerScope with { CrossSession = spawnBridge });
     var firstChild = await spawnTools.SpawnSession("  把那两个断言文件读完，只回 5 行结论  ", "agent", true);
