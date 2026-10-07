@@ -15,6 +15,8 @@ using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
@@ -38,6 +40,14 @@ public partial class ChatPanel : UserControl
     private const double StickEpsilon = 6;
     private readonly ChatWorkspace _chat;
     private readonly List<ContextAttachment> _contextAttachments = [];
+
+    /// <summary>
+    /// The pictures this composer is holding, in the order they were added, still in memory. A draft that is
+    /// abandoned leaves nothing on disk, and the conversation the pictures would be stored into may not exist
+    /// yet — Hub creates it when the message is sent, which is also when these bytes get a file name.
+    /// </summary>
+    private readonly List<PendingPicture> _pendingPictures = [];
+
     private string? _selectedComposerMode;
     private bool _stickToBottom = true;
     private Task? _contextCompressionTask;
@@ -172,6 +182,27 @@ public partial class ChatPanel : UserControl
             e.Handled = true;
             _ = SendAsync();
         }, RoutingStrategies.Tunnel);
+
+        // Ctrl+V is claimed here rather than left to the box, and the text paste is then asked for by name: a
+        // clipboard holding a screenshot has to become a chip, and a clipboard holding text has to keep pasting
+        // text. Reading the clipboard is async, so the alternative — peek and decide — would either drop the
+        // picture or paste the file path a copied image also carries.
+        InputBox.AddHandler(InputElement.KeyDownEvent, async (_, e) =>
+        {
+            if (e.Key != Key.V) return;
+            if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Meta)) return;
+            e.Handled = true;
+            if (!await TryPastePictureAsync()) InputBox.Paste();
+        }, RoutingStrategies.Tunnel);
+
+        // Dropping a capture onto the composer is how a picture arrives while the answer is still being written.
+        // The frame is the target rather than the whole page, so a drop beside it does nothing at all.
+        DragDrop.SetAllowDrop(ComposerFrame, true);
+        DragDrop.AddDragOverHandler(ComposerFrame, (_, e) =>
+        {
+            if (DragCarriesFiles(e)) e.DragEffects = DragDropEffects.Copy;
+        });
+        DragDrop.AddDropHandler(ComposerFrame, OnComposerDrop);
 
         Reload();
     }
@@ -591,6 +622,10 @@ public partial class ChatPanel : UserControl
         addFolder.Click += async (_, _) => await AddLocalFolderAsync();
         menu.Items.Add(addFolder);
 
+        var addPicture = new MenuItem { Header = HubStrings.Get("ChatAddImage") };
+        addPicture.Click += async (_, _) => await AddLocalPictureAsync();
+        menu.Items.Add(addPicture);
+
         var projects = _chat.HubSnapshotProvider?.Invoke()?.Projects ?? [];
         var addProject = new MenuItem
         {
@@ -860,7 +895,42 @@ public partial class ChatPanel : UserControl
             ContextAttachmentPanel.Children.Add(border);
         }
 
-        ContextAttachmentPanel.IsVisible = _contextAttachments.Count > 0;
+        foreach (var picture in _pendingPictures)
+        {
+            var remove = new Button { Content = "×", Tag = picture };
+            remove.Classes.Add("context-attachment-remove");
+            remove.Click += (_, _) =>
+            {
+                if (remove.Tag is PendingPicture selected)
+                {
+                    _pendingPictures.Remove(selected);
+                    RenderContextAttachments();
+                    UpdateSendState();
+                }
+            };
+
+            // The thumbnail is the label: a picture's file name says nothing about it, and a person deciding
+            // whether this is the capture they meant has to see it. Bytes rather than a path because nothing of
+            // this draft has reached the disk yet.
+            var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            var thumb = TryOpenBitmap(picture.Bytes);
+            chip.Children.Add(thumb is null
+                ? new TextBlock { Classes = { "muted" }, Text = picture.Name, MaxWidth = 120 }
+                : new Image
+                {
+                    Source = thumb,
+                    Width = 34,
+                    Height = 34,
+                    Stretch = Stretch.Uniform,
+                });
+            chip.Children.Add(remove);
+            var frame = new Border { Child = chip };
+            frame.Classes.Add("context-attachment");
+            ToolTip.SetTip(frame, $"{picture.Name} · {picture.Bytes.LongLength} bytes");
+            ContextAttachmentPanel.Children.Add(frame);
+        }
+
+        ContextAttachmentPanel.IsVisible = _contextAttachments.Count > 0 || _pendingPictures.Count > 0;
     }
 
     private Task<string?> ReadAttachmentContextAsync()
@@ -878,6 +948,260 @@ public partial class ChatPanel : UserControl
             });
             return string.Join("\n\n", sections);
         });
+    }
+
+    // ───────────────────────── Pictures ─────────────────────────
+    //
+    // A picture is a second channel next to the text attachments: a folder becomes prompt text, a picture stays
+    // bytes on the wire. They share the chip row and nothing else — reading one through the other would either
+    // send a PNG as source code or quietly drop it.
+
+    /// <summary>Offers one picture to the composer. The rules are Core's, the same four a captured frame is
+    /// admitted by, and the notice names which one fired: "capture a smaller region" and "attach fewer at once"
+    /// are different fixes, and a notice that only says "no" gets the same file picked again.</summary>
+    private void AddPendingPicture(byte[] bytes, string name)
+    {
+        var verdict = ChatImageFormat.Admit(bytes, _pendingPictures.Count);
+        if (verdict != ChatImageVerdict.Accepted)
+        {
+            AppendNotice(ImageNotice(verdict), danger: true);
+            return;
+        }
+
+        _pendingPictures.Add(new PendingPicture(bytes, name));
+        RenderContextAttachments();
+        UpdateSendState();
+    }
+
+    /// <summary>Same admission for a picture that arrives as a file — picked, dropped, or copied from Explorer.
+    /// The size is checked before the bytes are read, so dropping a folder of raw captures cannot freeze the
+    /// window on a gigabyte Hub was going to refuse anyway.</summary>
+    private void AddPictureFromPath(string path)
+    {
+        byte[]? bytes;
+        ChatImageVerdict verdict;
+        try
+        {
+            bytes = ConversationStore.ReadCandidateFile(path, out verdict);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException
+                                   or System.Security.SecurityException or ArgumentException)
+        {
+            AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
+            return;
+        }
+
+        if (bytes is null)
+        {
+            AppendNotice(ImageNotice(verdict), danger: true);
+            return;
+        }
+
+        AddPendingPicture(bytes, System.IO.Path.GetFileName(path));
+    }
+
+    private static string ImageNotice(ChatImageVerdict verdict) => verdict switch
+    {
+        ChatImageVerdict.Empty => HubStrings.Get("ChatImageEmpty"),
+        ChatImageVerdict.Unrecognized => HubStrings.Get("ChatImageUnrecognized"),
+        ChatImageVerdict.TooLarge => string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatImageTooLarge"), ChatImageFormat.MaxImageBytes / (1024 * 1024)),
+        _ => string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatImageTooMany"), ChatImageFormat.MaxImagesPerMessage),
+    };
+
+    /// <summary>What a refused send should say. The picture refusals are worded with the limit in them, so they
+    /// go through the same formatter the composer used when it refused the picture on the way in — a key shown
+    /// raw would print the brace.</summary>
+    private static string NoticeFor(string? refusalKey) => refusalKey switch
+    {
+        "ChatImageEmpty" => ImageNotice(ChatImageVerdict.Empty),
+        "ChatImageUnrecognized" => ImageNotice(ChatImageVerdict.Unrecognized),
+        "ChatImageTooLarge" => ImageNotice(ChatImageVerdict.TooLarge),
+        "ChatImageTooMany" => ImageNotice(ChatImageVerdict.TooMany),
+        _ => HubStrings.Get(refusalKey ?? "ChatFailed"),
+    };
+
+    private async Task AddLocalPictureAsync()
+    {
+        var owner = TopLevel.GetTopLevel(this);
+        if (owner is null) return;
+        var result = await Pickers.PickFileAsync(owner, HubStrings.Get("ChatPickImageTitle"), PictureFileTypes);
+        if (result.Outcome == PickOutcome.NotLocal)
+        {
+            AppendNotice(HubStrings.Get("ChatImageNotLocal"), danger: true);
+            return;
+        }
+
+        if (result.Outcome != PickOutcome.Picked || result.Path is not { } path) return;
+        AddPictureFromPath(path);
+    }
+
+    /// <summary>The picker's filter is a courtesy, not a rule: what a picture *is* stays a decision about the
+    /// bytes' header, because a pasted capture has no file name to match.</summary>
+    private static IReadOnlyList<FilePickerFileType> PictureFileTypes { get; } =
+    [
+        new("PNG") { Patterns = ["*.png"] },
+        new("JPEG") { Patterns = ["*.jpg", "*.jpeg"] },
+        new("GIF") { Patterns = ["*.gif"] },
+        new("WebP") { Patterns = ["*.webp"] },
+    ];
+
+    /// <summary>Ctrl+V in the composer: a picture on the clipboard becomes a chip, and everything else keeps
+    /// being the text paste the box already does. Claiming the keystroke only once there is a picture to take is
+    /// what keeps an ordinary paste working — a paste handler that eats text is a worse bug than no paste.</summary>
+    private async Task<bool> TryPastePictureAsync()
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return false;
+        IAsyncDataTransfer? transfer;
+        try
+        {
+            transfer = await clipboard.TryGetDataAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+
+        return await TakeClipboardAsync(transfer);
+    }
+
+    /// <summary>The paste's one decision: did a picture get taken, or should the box paste text as it always
+    /// has? Split out because it is the half a check can be handed a payload for.</summary>
+    private async Task<bool> TakeClipboardAsync(IAsyncDataTransfer? transfer)
+        => transfer is not null && await TakePicturesAsync(transfer) > 0;
+
+    /// <summary>
+    /// The paste's actual decision, separated from the clipboard so it can be handed a transfer of a known shape.
+    /// A screenshot arrives as a bitmap with no file name, a copied file arrives as a storage item, and a copy
+    /// from some applications arrives as both — the loop takes what is a picture and leaves the rest alone.
+    /// </summary>
+    private async Task<int> TakePicturesAsync(IAsyncDataTransfer transfer)
+    {
+        var taken = 0;
+        foreach (var item in transfer.Items)
+        {
+            if (item.Formats.Contains(DataFormat.Bitmap)
+                && await item.TryGetRawAsync(DataFormat.Bitmap) is Bitmap bitmap)
+            {
+                AddPendingPicture(EncodePng(bitmap), HubStrings.Get("ChatPastedImageName"));
+                taken++;
+            }
+            else if (item.Formats.Contains(DataFormat.File)
+                     && await item.TryGetRawAsync(DataFormat.File) is { } raw)
+            {
+                foreach (var path in LocalPathsOf(raw)) AddPictureFromPath(path);
+                taken++;
+            }
+        }
+
+        return taken;
+    }
+
+    /// <summary>A clipboard or drop payload hands back one item, a list of them, or an array — the shape is the
+    /// platform's business, so the view accepts all three rather than betting on one.</summary>
+    private static IEnumerable<string> LocalPathsOf(object raw)
+    {
+        IReadOnlyList<IStorageItem> items = raw switch
+        {
+            IStorageItem one => [one],
+            IEnumerable<IStorageItem> many => many.ToArray(),
+            _ => [],
+        };
+        foreach (var item in items)
+        {
+            var path = item.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path)) yield return path;
+        }
+    }
+
+    /// <summary>A bitmap has to become the bytes Hub keeps, and PNG is the only honest answer: a capture loses
+    /// nothing to it, and the header is what says so on the wire.</summary>
+    private static byte[] EncodePng(Bitmap bitmap)
+    {
+        using var stream = new System.IO.MemoryStream();
+        bitmap.Save(stream, PngBitmapEncoderOptions.Default);
+        return stream.ToArray();
+    }
+
+    private static bool DragCarriesFiles(DragEventArgs e)
+        => e.DataTransfer.Items.Any(item => item.Formats.Contains(DataFormat.File));
+
+    private void OnComposerDrop(object? sender, DragEventArgs e)
+    {
+        if (!DragCarriesFiles(e)) return;
+        e.Handled = true;
+        foreach (var item in e.DataTransfer.Items)
+            if (item.TryGetRaw(DataFormat.File) is { } raw)
+                foreach (var path in LocalPathsOf(raw)) AddPictureFromPath(path);
+    }
+
+    /// <summary>The bytes of every picture waiting in the composer, in chip order, or null when there are none —
+    /// the shape the send and steer paths take so an empty draft stays exactly the request it was before.</summary>
+    private IReadOnlyList<byte[]>? PendingPictureBytes()
+        => _pendingPictures.Count == 0 ? null : _pendingPictures.Select(picture => picture.Bytes).ToArray();
+
+    /// <summary>
+    /// The pictures one sent message carries, painted from the file Hub kept. Bounded so a 5K capture cannot push
+    /// the chat column open, and a file that is no longer there says so rather than drawing nothing at all — the
+    /// transcript claims a picture was sent, and that claim has to stay checkable.
+    /// </summary>
+    private Control BuildTurnPictures(string conversationId, IReadOnlyList<ChatImage> images)
+    {
+        var row = new WrapPanel { Orientation = Orientation.Horizontal };
+        row.Classes.Add("turn-pictures");
+        foreach (var image in images)
+        {
+            var path = _chat.StoredImagePath(conversationId, image.File);
+            var bitmap = path is null ? null : TryOpenBitmap(path);
+            Control cell = bitmap is not null
+                ? new Image
+                {
+                    Source = bitmap,
+                    Stretch = Stretch.Uniform,
+                    MaxWidth = 260,
+                    MaxHeight = 200,
+                }
+                : new TextBlock
+                {
+                    Classes = { "muted" },
+                    Text = HubStrings.Get("ChatImageGone"),
+                };
+            ToolTip.SetTip(cell, $"{image.File} · {image.MediaType} · {image.Bytes} bytes");
+            var frame = new Border { Child = cell, Classes = { "turn-picture" } };
+            row.Children.Add(frame);
+        }
+
+        return row;
+    }
+
+    private static Bitmap? TryOpenBitmap(string path)
+    {
+        try
+        {
+            return new Bitmap(path);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException
+                                   or System.Security.SecurityException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The same preview from bytes, because a draft has not reached the disk. A picture whose header
+    /// Hub recognizes but whose pixels it cannot decode stays in the queue under its file name rather than
+    /// vanishing — what the model is going to receive is the bytes, not this preview.</summary>
+    private static Bitmap? TryOpenBitmap(byte[] bytes)
+    {
+        try
+        {
+            return new Bitmap(new System.IO.MemoryStream(bytes));
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException
+                                   or System.Security.SecurityException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     private static string ToolActivityText(string name, bool completed)
@@ -994,6 +1318,12 @@ public partial class ChatPanel : UserControl
         }
 
         body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
+
+        // What the person attached is shown from the file Hub kept, not from anything this view remembers: the
+        // transcript is the only copy of "this message had a picture in it", and a row rebuilt after a restart
+        // has to look the same as the one that was sent. A frame the assistant captured itself stays out of the
+        // flow — its approval card already says which window was grabbed, and this row is about what the user said.
+        if (fromUser && turn.Images.Count > 0) body.Children.Add(BuildTurnPictures(conversationId, turn.Images));
 
         // A call that needed permission carries its own record: the question with its buttons while it waits,
         // one quiet line once it does not. A call that never needed asking gets nothing drawn here, which is why
@@ -1370,11 +1700,15 @@ public partial class ChatPanel : UserControl
         SendStateUpdates++;
         var streaming = IsViewedStreaming;
         var hasText = (InputBox.Text ?? "").Trim().Length > 0;
+        var hasPicture = _pendingPictures.Count > 0;
+        // A picture in the chip row is as much "there is something to send" as text is, and it says so in the
+        // tooltip too: while a reply is streaming, sending this means steering it rather than stopping it.
+        var saysSomething = hasText || hasPicture;
         // A steer already waiting is spent: the button must not offer a second one before the first is taken.
-        SendButton.IsEnabled = ViewedRun?.HasQueuedSteer != true && (streaming || hasText);
-        SendButton.Content = BuildSendIcon(streaming && !hasText);
+        SendButton.IsEnabled = ViewedRun?.HasQueuedSteer != true && (streaming || saysSomething);
+        SendButton.Content = BuildSendIcon(streaming && !saysSomething);
         ToolTip.SetTip(SendButton, HubStrings.Get(streaming
-            ? hasText ? "ChatSteer" : "Stop"
+            ? saysSomething ? "ChatSteer" : "Stop"
             : "Send"));
         UpdateContextRing();
     }
@@ -1419,7 +1753,8 @@ public partial class ChatPanel : UserControl
         {
             if (run.HasQueuedSteer) return;
             var steerText = (InputBox.Text ?? "").Trim();
-            if (steerText.Length > 0)
+            var steerPictures = PendingPictureBytes();
+            if (steerText.Length > 0 || steerPictures is { Count: > 0 })
             {
                 string? steerContext;
                 try
@@ -1432,14 +1767,22 @@ public partial class ChatPanel : UserControl
                     return;
                 }
 
+                // The run does the rest: the current segment is cancelled, written as far as it got, and the
+                // next one answers this text — none of which is this view's business any more. The composer is
+                // only emptied once the steer is actually on the run; a reply that finished in the meantime
+                // would otherwise eat the message the person just typed.
+                if (!_chat.TrySteer(run.ConversationId, steerText, steerContext, steerPictures))
+                {
+                    UpdateSendState();
+                    return;
+                }
+
                 InputBox.Text = "";
                 _contextAttachments.Clear();
+                _pendingPictures.Clear();
                 RenderContextAttachments();
                 if (_live is { } live) live.Status.Text = HubStrings.Get("ChatSteering");
                 UpdateSendState();
-                // The run does the rest: the current segment is cancelled, written as far as it got, and the
-                // next one answers this text — none of which is this view's business any more.
-                _chat.TrySteer(run.ConversationId, steerText, steerContext);
                 return;
             }
 
@@ -1448,7 +1791,10 @@ public partial class ChatPanel : UserControl
         }
 
         var text = (InputBox.Text ?? "").Trim();
-        if (text.Length == 0) return;
+        var pictures = PendingPictureBytes();
+        // A picture with no question under it is a message: "look at this" is what people actually send, and a
+        // send button that stays grey because the box is empty would say otherwise.
+        if (text.Length == 0 && pictures is null) return;
         if (_chat.SelectedChatModel is null)
         {
             AppendNotice(HubStrings.Get("NoAvailableChatModels"), danger: true);
@@ -1467,22 +1813,23 @@ public partial class ChatPanel : UserControl
         }
 
         _contextAttachments.Clear();
+        _pendingPictures.Clear();
         RenderContextAttachments();
         InputBox.Text = "";
-        SendTextAsync(text, context);
+        SendTextAsync(text, context, pictures);
     }
 
     /// <summary>Hands the message to the workspace and starts a run for it. The user's own turn is painted from
     /// the transcript like any other row, so there is no second copy of it here to keep in step.</summary>
-    private void SendTextAsync(string text, string? attachedContext = null)
+    private void SendTextAsync(string text, string? attachedContext = null, IReadOnlyList<byte[]>? pictures = null)
     {
-        if (text.Length == 0) return;
+        if (text.Length == 0 && pictures is not { Count: > 0 }) return;
         if (_chat.ActiveConversation is null) _chat.StartConversation();
         if (_chat.ActiveConversation is not { } conversation) return;
 
-        if (!_chat.TryEnqueueSend(conversation.Id, text, attachedContext, out var refusalKey))
+        if (!_chat.TryEnqueueSend(conversation.Id, text, attachedContext, pictures, out var refusalKey))
         {
-            AppendNotice(HubStrings.Get(refusalKey ?? "ChatFailed"), danger: true);
+            AppendNotice(NoticeFor(refusalKey), danger: true);
             return;
         }
 
@@ -1995,7 +2342,69 @@ public partial class ChatPanel : UserControl
     internal void ClickContextCompressForCheck()
         => CompressContextButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     internal int ContextAttachmentCountForCheck => _contextAttachments.Count;
+
+    /// <summary>Pictures the composer is holding, in the order they would be sent.</summary>
+    internal int PendingPictureCountForCheck => _pendingPictures.Count;
+
+    /// <summary>Drives the same entrance the file picker hands back, so a check can prove the chip, the send and
+    /// the stored file without a dialog nobody can automate (the picker's own decision is asserted in
+    /// <c>Pickers.Resolve</c>).</summary>
+    internal void AddImageForCheck(string path) => AddPictureFromPath(path);
+
+    /// <summary>Feeds the composer a picture that never was a file — which is what a clipboard capture becomes
+    /// once it is encoded. Every entrance ends in the same admission, so this is the one that proves the shared
+    /// path and the one that a pasted screenshot goes through.</summary>
+    internal void AddImageBytesForCheck(byte[] bytes, string name) => AddPendingPicture(bytes, name);
+
+    /// <summary>The composer's drop target: what "you can drop a screenshot here" is decided by.</summary>
+    internal bool ComposerAcceptsDropForCheck => DragDrop.GetAllowDrop(ComposerFrame);
+
+    /// <summary>Pictures painted into the message flow, counted by the frame each one sits in.</summary>
+    internal int RenderedPictureCountForCheck
+        => MessageFlow.GetVisualDescendants().OfType<Border>().Count(border => border.Classes.Contains("turn-picture"));
+
+    /// <summary>Chips in the composer that carry a thumbnail rather than only a name.</summary>
+    internal int PictureChipsForCheck
+        => ContextAttachmentPanel.Children.OfType<Border>()
+            .Count(border => border.Child is StackPanel panel && panel.Children.OfType<Image>().Any());
+
+    /// <summary>Presses one chip's own × rather than removing the entry here: what a check has to prove is that
+    /// the button takes the picture out of the message, not that the list can be edited.</summary>
+    internal void RemovePictureChipForCheck(int index)
+    {
+        var buttons = ContextAttachmentPanel.GetVisualDescendants().OfType<Button>()
+            .Where(button => button.Tag is PendingPicture)
+            .ToList();
+        if (index < buttons.Count) buttons[index].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>
+    /// Hands the paste path a clipboard payload of a known shape. The real Ctrl+V reads the system clipboard,
+    /// which a self-check cannot fill without overwriting what the person had copied — and the part worth
+    /// asserting is what the composer decides once it has the payload, not whether Windows answered.
+    /// </summary>
+    internal Task<bool> PasteTransferForCheck(IAsyncDataTransfer transfer) => TakeClipboardAsync(transfer);
+
+    /// <summary>Raises the composer's own drop event, so the drop target and the file extraction run exactly as
+    /// they do when a screenshot is dragged in from Explorer.</summary>
+    internal void DropForCheck(IDataTransfer transfer)
+        => ComposerFrame.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, transfer, ComposerFrame,
+            default, KeyModifiers.None));
+
+    /// <summary>Sends exactly what the composer holds, which is how a picture with no text under it is sent.</summary>
+    internal Task SendComposerForCheck() => SendAsync();
+
+    /// <summary>The session's attachment directory, as the store sees it. A check that claims a deleted session
+    /// took its pictures with it has to look at the disk, not at a list this view keeps.</summary>
+    internal string SessionImageDirectoryForCheck(string conversationId)
+        => _chat.SessionImageDirectory(conversationId);
     internal bool HasComposerAddMenuForCheck => AddContextButton is not null;
+
+    /// <summary>What the <c>+</c> menu offers right now, read from the menu that is actually built on click. A
+    /// menu item that exists only in a screenshot is not a feature.</summary>
+    internal string[] ComposerMenuHeadersForCheck
+        => BuildComposerMenu().Items.OfType<MenuItem>()
+            .Select(item => item.Header?.ToString() ?? "").ToArray();
     internal bool ModeIndicatorVisibleForCheck => ModeIndicatorButton.IsVisible;
     internal bool ComposerPlusCenteredForCheck
         => AddContextButton.HorizontalContentAlignment == HorizontalAlignment.Center
@@ -2289,6 +2698,13 @@ public partial class ChatPanel : UserControl
     }
 
     private sealed record ContextAttachment(string Kind, string Name, string Path, string? Details = null);
+
+    /// <summary>
+    /// One picture the composer is holding. Bytes rather than a path because two of the three entrances have no
+    /// file to point at — a pasted capture arrives as a bitmap, and what all three have in common is the bytes
+    /// Hub would store.
+    /// </summary>
+    private sealed record PendingPicture(byte[] Bytes, string Name);
 
     internal bool BubbleHasAction(int visibleIndex, string textKey)
     {

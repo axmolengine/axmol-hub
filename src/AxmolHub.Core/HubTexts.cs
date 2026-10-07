@@ -420,6 +420,22 @@ public static class HubTexts
         ["ChatContextCompressing"] = ("上下文压缩完成前，暂时不能发送或重试消息。", "Sending or retrying is unavailable until context compression finishes."),
         ["ChatAddContext"] = ("添加上下文", "Add context"),
         ["ChatAddLocalFolder"] = ("添加本地文件夹…", "Add local folder…"),
+        // Pictures are a second channel next to the text attachments: a folder becomes bytes of text in the
+        // prompt, a picture stays a picture. Same composer, same chips, never the same reader.
+        ["ChatAddImage"] = ("添加图片…", "Add image…"),
+        ["ChatPickImageTitle"] = ("选择要发给助手的图片", "Choose an image to send to the assistant"),
+        ["ChatImageEmpty"] = ("没有可附上的图片内容。", "There are no image bytes to attach."),
+        ["ChatImageUnrecognized"] = ("这不是 PNG / JPEG / GIF / WebP 图片，Hub 不知道它是什么格式，也就发不出去。",
+            "That is not a PNG, JPEG, GIF or WebP image, so Hub has no media type to send."),
+        ["ChatImageTooLarge"] = ("这张图片太大，Hub 单张最多发送 {0} MiB。", "That image is too large; Hub sends at most {0} MiB per picture."),
+        ["ChatImageTooMany"] = ("一条消息最多带 {0} 张图片，其余的请在下一条发送。",
+            "A message carries at most {0} images. Send the rest in the next one."),
+        ["ChatImageGone"] = ("这张附图已不在会话目录里。", "This attached image is no longer in the session directory."),
+        // A pasted capture has no file name, and the chip still needs words under the thumbnail when the picture
+        // cannot be decoded — naming the gesture is the only thing that identifies which attachment it was.
+        ["ChatPastedImageName"] = ("剪贴板图片", "Pasted image"),
+        ["ChatImageNotLocal"] = ("那个位置读不到本地文件，请从磁盘上选一张图片。",
+            "That location could not be read as a local file. Pick a picture from disk."),
         ["ChatAddHubProject"] = ("添加 Axmol Hub 工程", "Add Axmol Hub project"),
         ["ChatNoHubProjects"] = ("Hub 中尚未登记工程", "No projects registered in Hub"),
         ["ChatPickFolderTitle"] = ("选择要作为上下文的文件夹", "Choose a folder to use as context"),

@@ -1919,7 +1919,32 @@ public sealed class ChatWorkspace : IDisposable
 
     /// <summary>What the session file says right now, cache aside. For the self-check only.</summary>
     internal Conversation? StoredCopyForCheck(string conversationId) => _sessions.LoadFromDisk(conversationId);
+
+    /// <summary>Where one stored attachment sits, or <c>null</c> when the name is not a plain file name or the
+    /// bytes are gone. The view paints thumbnails from a path rather than from the bytes so a long transcript
+    /// does not read every attachment while it is being laid out.</summary>
+    internal string? StoredImagePath(string conversationId, string file)
+        => _sessions.Store.ImagePath(conversationId, file);
+
+    /// <summary>Where one session's attachments live, sent or not. A check that says "deleting the session took
+    /// the pictures with it" has to look at that directory rather than at anything in memory.</summary>
+    internal string SessionImageDirectory(string conversationId)
+        => _sessions.Store.SessionImageDirectory(conversationId);
+
     internal int PreparedHistoryCountForCheck(string conversationId) => PrepareRequest(conversationId)?.History.Count ?? -1;
+
+    /// <summary>How many of the attachment names this session's transcript carries resolve back to bytes in the
+    /// request about to be built. The name is what survives a restart, and a name that no longer matches a file is
+    /// the failure that would otherwise reach the model as a picture it was told about and never shown.</summary>
+    internal int PreparedImagePartsForCheck(string conversationId)
+    {
+        if (PrepareRequest(conversationId) is not { } request) return -1;
+        var parts = 0;
+        foreach (var turn in request.History)
+            foreach (var image in turn.Images)
+                if (request.Images?.Invoke(image) is not null) parts++;
+        return parts;
+    }
 
     internal string PreparedSystemPromptForCheck(string conversationId)
         => PrepareRequest(conversationId)?.SystemPrompt ?? "";
@@ -1954,6 +1979,17 @@ public sealed class ChatWorkspace : IDisposable
     /// three streams later; only an actor that cannot retry for itself (a peer session, later) earns a queue.
     /// </summary>
     public bool TryEnqueueSend(string conversationId, string text, string? attachedContext, out string? refusalKey)
+        => TryEnqueueSend(conversationId, text, attachedContext, null, out refusalKey);
+
+    /// <summary>
+    /// Starts a run for one message. <paramref name="pictures"/> are the bytes the composer is holding: they reach
+    /// the disk only here, in the session's own attachment directory, because a draft that was never sent must not
+    /// leave files behind — and a conversation may not even exist yet while the person is still picking things.
+    /// Every picture is admitted before any of them is written, so a message refused for its third picture does not
+    /// leave the first two on disk belonging to a turn nobody appended.
+    /// </summary>
+    public bool TryEnqueueSend(string conversationId, string text, string? attachedContext,
+        IReadOnlyList<byte[]>? pictures, out string? refusalKey)
     {
         refusalKey = null;
         if (_compressingConversations.Contains(conversationId))
@@ -1981,11 +2017,19 @@ public sealed class ChatWorkspace : IDisposable
             return false;
         }
 
+        for (var index = 0; index < pictures?.Count; index++)
+        {
+            var verdict = ChatImageFormat.Admit(pictures[index], index);
+            if (verdict == ChatImageVerdict.Accepted) continue;
+            refusalKey = ImageRefusalKey(verdict);
+            return false;
+        }
+
         if (!_sessions.TryUpdate(conversationId, opened =>
             {
                 opened.ProviderId = choice.Provider.Id;
                 opened.ModelName = choice.ModelName;
-                opened.Append(ChatTurn.User(text, attachedContext));
+                opened.Append(ChatTurn.User(text, attachedContext, StorePictures(conversationId, pictures)));
             }))
         {
             refusalKey = "ChatSessionMissing";
@@ -1996,6 +2040,29 @@ public sealed class ChatWorkspace : IDisposable
         StartRun(conversationId);
         return true;
     }
+
+    /// <summary>Writes the pictures one message carries and returns what its turn has to remember. Only reached
+    /// from inside a session update, so the directory it writes into belongs to a conversation that exists.</summary>
+    private List<ChatImage>? StorePictures(string conversationId, IReadOnlyList<byte[]>? pictures)
+    {
+        if (pictures is not { Count: > 0 }) return null;
+        var stored = new List<ChatImage>(pictures.Count);
+        foreach (var bytes in pictures)
+            if (_sessions.Store.AttachImage(conversationId, bytes, stored.Count) is { Image: { } image })
+                stored.Add(image);
+        return stored;
+    }
+
+    /// <summary>The four refusals <see cref="ChatImageFormat"/> can hand back, as the notice keys the composer
+    /// shows. A fifth key would mean a picture passed the rules above and still failed on disk, which is an I/O
+    /// problem rather than a rule about the message.</summary>
+    private static string ImageRefusalKey(ChatImageVerdict verdict) => verdict switch
+    {
+        ChatImageVerdict.Empty => "ChatImageEmpty",
+        ChatImageVerdict.Unrecognized => "ChatImageUnrecognized",
+        ChatImageVerdict.TooLarge => "ChatImageTooLarge",
+        _ => "ChatImageTooMany",
+    };
 
     /// <summary>Streams a reply against a session whose history is already final — edit-and-resend,
     /// regenerate, or a turn resumed from an approved tool call.</summary>
@@ -2040,9 +2107,22 @@ public sealed class ChatWorkspace : IDisposable
     /// and written as far as it got, and the next segment answers. The state lives on the run because the
     /// reply that is being steered may not be on screen.</summary>
     public bool TrySteer(string conversationId, string text, string? attachedContext)
+        => TrySteer(conversationId, text, attachedContext, null);
+
+    /// <summary>Steers with pictures too: reaching into a reply that is already going is exactly when a person
+    /// adds "and look at this", and a steer that quietly dropped the picture would be worse than one that
+    /// refused.</summary>
+    public bool TrySteer(string conversationId, string text, string? attachedContext,
+        IReadOnlyList<byte[]>? pictures)
     {
         if (RunFor(conversationId) is not { IsStreaming: true } run) return false;
-        run.QueueSteer(text, attachedContext);
+        for (var index = 0; index < pictures?.Count; index++)
+        {
+            var verdict = ChatImageFormat.Admit(pictures[index], index);
+            if (verdict != ChatImageVerdict.Accepted) return false;
+        }
+
+        run.QueueSteer(text, attachedContext, pictures);
         run.RequestStop();
         return true;
     }
@@ -2656,8 +2736,8 @@ public sealed class ChatWorkspace : IDisposable
                 // Between segments is the only point in a run with no stream open, so it is where a transcript
                 // that has outgrown the window gets compacted before the next request is built from it.
                 compacted |= await CompactIfNeededAsync(run).ConfigureAwait(false);
-                if (!run.TryTakeSteer(out var steerText, out var steerContext)) break;
-                if (!await AppendSteerTurnAsync(run, steerText, steerContext).ConfigureAwait(false))
+                if (!run.TryTakeSteer(out var steerText, out var steerContext, out var steerPictures)) break;
+                if (!await AppendSteerTurnAsync(run, steerText, steerContext, steerPictures).ConfigureAwait(false))
                 {
                     result = RunResult.Cancelled;
                     break;
@@ -2906,12 +2986,14 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>Appends a steered message, or reports that the session went away while it was being typed.</summary>
-    private async Task<bool> AppendSteerTurnAsync(ConversationRun run, string text, string? attachedContext)
+    private async Task<bool> AppendSteerTurnAsync(ConversationRun run, string text, string? attachedContext,
+        IReadOnlyList<byte[]>? pictures)
     {
         var written = false;
         await ApplyOnUiAsync(() =>
         {
-            written = _sessions.TryUpdate(run.ConversationId, opened => opened.Append(ChatTurn.User(text, attachedContext)));
+            written = _sessions.TryUpdate(run.ConversationId, opened => opened.Append(
+                ChatTurn.User(text, attachedContext, StorePictures(run.ConversationId, pictures))));
             if (written) Changed?.Invoke();
         }).ConfigureAwait(false);
         return written;

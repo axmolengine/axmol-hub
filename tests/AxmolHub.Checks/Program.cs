@@ -2810,6 +2810,88 @@ if (args.Contains("--check-ai-images"))
         throw new Exception("A tool result with no attachment gained a message of its own.");
     Console.WriteLine("PASS: a captured frame reaches the model as a user message beside the result that names it.");
 
+    // ── 入料口：一个人递进来的文件，先按规则读，再按规则存 ──
+    // The composer's three entrances all end in the same two calls, so the rules they share are asserted here
+    // rather than through a UI that cannot be automated: a file is measured before it is read, a picture is
+    // stored only once it can be sent, and a refusal writes nothing at all.
+    // Its own data root rather than the one above: that store's index is counted by the block before this one, and
+    // a session left behind here by a crash would read as "the attachment directory became a row".
+    var composerRoot = Path.Combine(root, "images-composer");
+    var composerStore = new ConversationStore(composerRoot);
+    var composer = Conversation.Create("orcarouter");
+    composerStore.Save(composer);
+    // Read back through the store's own accessor: the directory is named after a *sanitized* id, and a check that
+    // builds the path by hand would be counting a folder nothing ever used.
+    var candidateDirectory = composerStore.SessionImageDirectory(composer.Id);
+    var realPng = Path.Combine(root, "images", "capture.png");
+    File.WriteAllBytes(realPng, png);
+    var fakePng = Path.Combine(root, "images", "notes.png");
+    File.WriteAllBytes(fakePng, prose);
+    var emptyFile = Path.Combine(root, "images", "empty.png");
+    File.WriteAllBytes(emptyFile, []);
+    // Text that is over the ceiling is the case that tells size-first from read-first: reading it would answer
+    // "not an image", while measuring it answers "too large" — and the second one is the fixable complaint.
+    var hugeText = Path.Combine(root, "images", "huge.txt");
+    using (var huge = File.Create(hugeText)) huge.SetLength(ChatImageFormat.MaxImageBytes + 1);
+
+    if (ConversationStore.ReadCandidateFile(realPng, out var pickedVerdict) is not { } pickedBytes
+        || pickedVerdict != ChatImageVerdict.Accepted || !pickedBytes.SequenceEqual(png))
+        throw new Exception($"A picked picture did not come through as its own bytes ({pickedVerdict}).");
+    if (ConversationStore.ReadCandidateFile(fakePng, out var fakeVerdict) is not null
+        || fakeVerdict != ChatImageVerdict.Unrecognized)
+        throw new Exception($"A text file renamed .png was taken for a picture ({fakeVerdict}).");
+    if (ConversationStore.ReadCandidateFile(emptyFile, out var emptyVerdict) is not null
+        || emptyVerdict != ChatImageVerdict.Empty)
+        throw new Exception($"An empty file was not refused as empty ({emptyVerdict}).");
+    if (ConversationStore.ReadCandidateFile(hugeText, out var hugeVerdict) is not null
+        || hugeVerdict != ChatImageVerdict.TooLarge)
+        throw new Exception($"An oversized file was admitted by its header rather than refused by its size ({hugeVerdict}).");
+    if (Directory.Exists(candidateDirectory))
+        throw new Exception("Holding a picture in the composer wrote it to the session directory already.");
+
+    var admitted = composerStore.AttachImage(composer.Id, png, 0);
+    if (!admitted.Accepted || admitted.Image is not { File: "1.png", MediaType: "image/png" }
+        || composerStore.ImagePath(composer.Id, "1.png") is not { } imagePath || !File.Exists(imagePath))
+        throw new Exception($"An admitted picture did not land where the turn can name it ({admitted}).");
+    var rejected = composerStore.AttachImage(composer.Id, prose, 1);
+    if (rejected.Verdict != ChatImageVerdict.Unrecognized || rejected.Image is not null
+        || composerStore.ImagePath(composer.Id, "2.png") is not null
+        || Directory.EnumerateFiles(candidateDirectory).Count() != 1)
+        throw new Exception($"A refused picture was stored anyway: {string.Join(", ", Directory.EnumerateFiles(candidateDirectory))}");
+    if (composerStore.AttachImage(composer.Id, jpeg, ChatImageFormat.MaxImagesPerMessage) is
+            { Verdict: ChatImageVerdict.TooMany, Image: null })
+    {
+        if (Directory.EnumerateFiles(candidateDirectory).Count() != 1)
+            throw new Exception("The over-count picture reached the disk before the message was refused.");
+    }
+    else throw new Exception("A message at the image limit accepted another picture.");
+
+    // The name comes from a session file, which is user-editable: the path resolver refuses anything that is not
+    // one plain name, so a hand-written transcript cannot become an arbitrary file read of the data root.
+    if (composerStore.ImagePath(composer.Id, "../state.json") is not null
+        || composerStore.ImagePath(composer.Id, "") is not null
+        || composerStore.ImagePath(composer.Id, "gone.png") is not null)
+        throw new Exception("An attachment name outside the session's directory was resolved anyway.");
+    composerStore.Delete(composer.Id);
+    if (Directory.Exists(candidateDirectory))
+        throw new Exception("The composer's session was deleted and its picture stayed on disk.");
+    Console.WriteLine("PASS: the composer's entrances measure before they read, store only what can be sent, and "
+                      + "write nothing for a refusal.");
+
+    // A picture with no question under it is what people actually send, and the turn's text is empty — so the
+    // boundary must not put an empty text part in front of it. Asserted as the absence of the part rather than
+    // as "an empty string is harmless", because a gateway that 400s on it fails the whole message.
+    var onlyPicture = ChatPipeline.ToChatMessage(ChatTurn.User("", images: [first]),
+        image => BinaryData.FromBytes(png));
+    if (onlyPicture.Contents.OfType<TextContent>().Any() || onlyPicture.Contents.OfType<DataContent>().Count() != 1)
+        throw new Exception($"A picture-only message still carries text: {string.Join(" · ", onlyPicture.Contents.Select(content => content.GetType().Name))}");
+    // …and when its bytes are gone, the sentence that says so is the only content left, which is the case that
+    // used to be an empty message.
+    var lostOnlyPicture = ChatPipeline.ToChatMessage(ChatTurn.User("", images: [first]), _ => null);
+    if (lostOnlyPicture.Contents.OfType<TextContent>().SingleOrDefault()?.Text.Contains("were not sent", StringComparison.Ordinal) != true)
+        throw new Exception("A picture-only message whose bytes are gone says nothing about it.");
+    Console.WriteLine("PASS: a picture sent without a question carries the pictures and no empty text part.");
+
     // ── 预算：图片要计费，抹除时丢图留话 ──
     // A turn whose text is one character is the cheap turn only if nobody priced the picture riding on it, and
     // both estimators count characters — so an unpriced attachment reads as free to the window and as free to the

@@ -4,10 +4,12 @@ using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -890,6 +892,7 @@ public partial class ShellCheckWindow : Window
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
         await CheckSpawnAsync(shell, panel);
+        await CheckPictureAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1260,8 +1263,213 @@ public partial class ShellCheckWindow : Window
         }
     }
 
-        private static TaskCompletionSource<bool> PeerGate() =>
+    private static TaskCompletionSource<bool> PeerGate() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// 图片入料：一个人递进来的三条路，和一条消息最多能带几张。
+    ///
+    /// The three entrances (menu, paste, drop) all end in the same admission, so the group drives it through the
+    /// hook a picker would hand back and asserts the parts that are silently wrong when they break: a chip that
+    /// never appears, a refusal that says only "no", a picture that reaches the transcript but not the request,
+    /// and a session directory that outlives the session it belonged to.
+    /// </summary>
+    private async Task CheckPictureAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var scratch = ScratchDirectory.Resolve("picture-check");
+        var png = System.IO.Path.Combine(scratch, "capture.png");
+        System.IO.File.WriteAllBytes(png, PictureFixture());
+        var fake = System.IO.Path.Combine(scratch, "notes.png");
+        System.IO.File.WriteAllText(fake, "这其实是一段文本，只是名字叫 png");
+        var huge = System.IO.Path.Combine(scratch, "huge.txt");
+        using (var stream = System.IO.File.Create(huge)) stream.SetLength(ChatImageFormat.MaxImageBytes + 1);
+
+        var session = chat.StartConversation();
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        chat.ClientOverride = (_, _) => new ScriptedChatClient(["看懂了这张截图"]);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            Check(panel.ComposerMenuHeadersForCheck.Contains(HubStrings.Get("ChatAddImage"))
+                  && panel.ComposerAcceptsDropForCheck,
+                "「+」菜单里有「添加图片…」，输入框也接得住拖进来的文件");
+
+            panel.AddImageForCheck(png);
+            Check(panel.PendingPictureCountForCheck == 1 && panel.PictureChipsForCheck == 1,
+                "选中一张图片后 composer 上出现带缩略图的附件条（实际 "
+                + panel.PendingPictureCountForCheck + " 张，其中缩略图 " + panel.PictureChipsForCheck + " 个）");
+
+            panel.AddImageForCheck(fake);
+            Check(panel.PendingPictureCountForCheck == 1
+                  && panel.LastNoticeTextForCheck.Contains("PNG", StringComparison.Ordinal),
+                "把文本改名成 .png 递进来按文件头拒掉，并说清能收哪几种（提示：" + panel.LastNoticeTextForCheck + "）");
+
+            // Oversized is refused from the file's length, so this also proves the order: reading first would have
+            // answered "not an image" to a text file of the same size.
+            panel.AddImageForCheck(huge);
+            Check(panel.PendingPictureCountForCheck == 1
+                  && panel.LastNoticeTextForCheck.Contains("MiB", StringComparison.Ordinal),
+                "超过单张上限的文件先按大小被拒，而不是读进内存以后才发现（提示：" + panel.LastNoticeTextForCheck + "）");
+
+            for (var extra = 0; extra < 3; extra++) panel.AddImageForCheck(png);
+            panel.AddImageForCheck(png);
+            Check(panel.PendingPictureCountForCheck == ChatImageFormat.MaxImagesPerMessage
+                  && panel.LastNoticeTextForCheck.Contains(ChatImageFormat.MaxImagesPerMessage.ToString(),
+                      StringComparison.Ordinal),
+                "一条消息最多带 " + ChatImageFormat.MaxImagesPerMessage + " 张，第六张被上限挡住并说了原因（提示："
+                + panel.LastNoticeTextForCheck + "）");
+
+            panel.RemovePictureChipForCheck(0);
+            Check(panel.PendingPictureCountForCheck == ChatImageFormat.MaxImagesPerMessage - 1,
+                "点缩略图上的 × 真的把那张从这条消息里拿掉（实际 " + panel.PendingPictureCountForCheck + " 张）");
+
+            var waiting = panel.PendingPictureCountForCheck;
+            panel.SetInputForCheck("这三张截图报的是什么");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            var sentFile = chat.StoredCopyForCheck(session.Id);
+            var lastUser = sentFile?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User);
+            Check(lastUser is not null && lastUser.Images.Count == waiting
+                  && StoredPictureCount(panel, session.Id) == waiting,
+                "带着图发送后，图片落进会话目录、转录里带上了同名的附件（实际 "
+                + (lastUser?.Images.Count ?? -1) + " 张，目录里 " + StoredPictureCount(panel, session.Id) + " 个文件）");
+            Check(chat.PreparedImagePartsForCheck(session.Id) == waiting,
+                "下一个请求仍能把转录里的每个附件名读回字节（实际 " + chat.PreparedImagePartsForCheck(session.Id)
+                + "/" + waiting + "）");
+            Check(panel.RenderedPictureCountForCheck == waiting,
+                "用户气泡里画出了这一发的缩略图，而不只是一句话（实际 " + panel.RenderedPictureCountForCheck + " 张）");
+
+            panel.AddImageForCheck(png);
+            panel.SetInputForCheck("");
+            Check(panel.PendingPictureCountForCheck == 1 && panel.SendButtonEnabledForCheck,
+                "只有一张图、没有打字时发送按钮也是可发的：「看这个」本身就是一条消息");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            var pictureOnly = chat.StoredCopyForCheck(session.Id)?.Messages
+                .LastOrDefault(turn => turn.Role == ChatRoles.User);
+            Check(pictureOnly is not null && pictureOnly.Text.Length == 0 && pictureOnly.Images.Count == 1,
+                "只发图的那条在转录里就是空文本加一张附件，没有被塞进任何代打的句子（实际文本长度 "
+                + (pictureOnly?.Text.Length ?? -1) + "）");
+
+            var directory = panel.SessionImageDirectoryForCheck(session.Id);
+            chat.DeleteConversation(session.Id);
+            Check(!System.IO.Directory.Exists(directory),
+                "删掉会话时它的图片目录一起没了，不会留下谁也找不回的截图");
+
+            // ── 粘进来、拖进来：两条入口都真的走一遍 ──
+            // The system clipboard is the one thing a self-check must not overwrite, so the payload is handed to the
+            // paste path directly, and the drop is raised as its real routed event on the real composer with a
+            // storage item the platform itself produced. What is asserted is the decision made once the payload is
+            // in hand — take a picture, ignore text — which is the part that would silently eat an ordinary
+            // Ctrl+V or quietly drop a screenshot onto the floor.
+            var entrance = chat.StartConversation();
+            chat.SetApprovalMode(entrance.Id, ToolApprovalModes.Full);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+
+            var pastedBitmap = new Bitmap(new System.IO.MemoryStream(PictureFixture()));
+            var pasted = new DataTransfer();
+            pasted.Add(DataTransferItem.Create(DataFormat.Bitmap, pastedBitmap));
+            Check(await panel.PasteTransferForCheck(pasted) && panel.PendingPictureCountForCheck == 1
+                  && panel.PictureChipsForCheck == 1,
+                "剪贴板里是一张图时，粘贴把它变成带缩略图的附件并claim这次按键（实际 "
+                + panel.PendingPictureCountForCheck + " 张）");
+
+            var words = new DataTransfer();
+            words.Add(DataTransferItem.CreateText("一段普通的文字"));
+            Check(!await panel.PasteTransferForCheck(words) && panel.PendingPictureCountForCheck == 1,
+                "剪贴板里只有文字时粘贴不收图、也不声称收过：Ctrl+V 仍然是大家预期的粘贴文本");
+
+            var droppedFile = await shell.StorageProvider.TryGetFileFromPathAsync(png);
+            var dropped = new DataTransfer();
+            if (droppedFile is not null) dropped.Add(DataTransferItem.CreateFile(droppedFile));
+            panel.DropForCheck(dropped);
+            Check(droppedFile is not null && panel.PendingPictureCountForCheck == 2,
+                "把图片文件拖到输入框上，落下的那张真的进了这条消息（实际 "
+                + panel.PendingPictureCountForCheck + " 张）");
+
+            panel.SetInputForCheck("这两张一起看");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            var entered = chat.StoredCopyForCheck(entrance.Id)?.Messages
+                .LastOrDefault(turn => turn.Role == ChatRoles.User);
+            Check(entered is { Images.Count: 2 } && entered.Images[0].MediaType == "image/png"
+                  && entered.Images[1].MediaType == "image/png"
+                  && StoredPictureCount(panel, entrance.Id) == 2,
+                "粘来的与拖来的两张按到达顺序落进同一条消息，两边都存成 PNG（实际 "
+                + (entered?.Images.Count ?? -1) + " 张，目录里 " + StoredPictureCount(panel, entrance.Id) + " 个文件）");
+
+            // A reply already on screen is exactly when a picture gets added, and the steer is a second append:
+            // a composer that empties its chips while the run refused the message would drop the picture the
+            // person is looking at.
+            var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["这条是引导之后答的"], gate: hold.Task);
+            panel.SetInputForCheck("先把这条回答停住");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            var dragged = new DataTransfer();
+            if (droppedFile is not null) dragged.Add(DataTransferItem.CreateFile(droppedFile));
+            panel.DropForCheck(dragged);
+            panel.SetInputForCheck("再看这张图");
+            await panel.SendComposerForCheck();
+            hold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+            var steered = chat.StoredCopyForCheck(entrance.Id)?.Messages
+                .LastOrDefault(turn => turn.Role == ChatRoles.User && turn.Text == "再看这张图");
+            Check(steered?.Images.Count == 1 && panel.PendingPictureCountForCheck == 0
+                  && chat.RunningCount == 0,
+                "回答进行到一半时拖进来的图，跟着那条引导一起进会话，composer 随后清空（实际 "
+                + (steered?.Images.Count ?? -1) + " 张）");
+            chat.DeleteConversation(entrance.Id);
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            while (panel.PendingPictureCountForCheck > 0) panel.RemovePictureChipForCheck(0);
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>How many files one session's attachment directory holds, or -1 when the directory is not there.
+    /// Read without throwing, because "the pictures were never stored" has to come back as a failed assertion
+    /// rather than as an exception that stops the whole self-check — which is exactly what a missing directory did
+    /// the first time this group ran against a broken send path.</summary>
+    private static int StoredPictureCount(ChatPanel panel, string conversationId)
+    {
+        var directory = panel.SessionImageDirectoryForCheck(conversationId);
+        return System.IO.Directory.Exists(directory) ? System.IO.Directory.GetFiles(directory).Length : -1;
+    }
+
+    /// <summary>A PNG this build can decode: two colours so it is neither a blank frame nor only a header. The
+    /// entrances recognize a picture by its bytes and the chip draws from them, so a fixture that is a header and
+    /// nothing else would test the rule but not the picture.</summary>
+    private static byte[] PictureFixture(int width = 8, int height = 8)
+    {
+        var pixels = new byte[width * height * 4];
+        for (var offset = 0; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = 0x30;
+            pixels[offset + 1] = 0x60;
+            pixels[offset + 2] = (offset / 4) % 2 == 0 ? (byte)0xC0 : (byte)0x18;
+            pixels[offset + 3] = 0xFF;
+        }
+
+        using var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
+            PixelFormat.Bgra8888, AlphaFormat.Premul);
+        using (var frame = bitmap.Lock())
+        {
+            System.Runtime.InteropServices.Marshal.Copy(pixels, 0, frame.Address, pixels.Length);
+        }
+
+        using var stream = new System.IO.MemoryStream();
+        bitmap.Save(stream, PngBitmapEncoderOptions.Default);
+        return stream.ToArray();
+    }
 
     private static Dictionary<string, object?> PeerSend(string target, string text, bool wake) => new()
     {

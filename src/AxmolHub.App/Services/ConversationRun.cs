@@ -52,6 +52,7 @@ internal sealed class ConversationRun : IDisposable
     private CancellationTokenSource _linked;
     private string? _steerText;
     private string? _steerContext;
+    private IReadOnlyList<byte[]>? _steerPictures;
     private readonly List<string> _toolOutcomes = [];
     private int _paintQueued;
     private int _compactionRequested;
@@ -148,12 +149,13 @@ internal sealed class ConversationRun : IDisposable
         staleIdle.Dispose();
     }
 
-    internal void QueueSteer(string text, string? context)
+    internal void QueueSteer(string text, string? context, IReadOnlyList<byte[]>? pictures = null)
     {
         lock (_gate)
         {
             _steerText = text;
             _steerContext = context;
+            _steerPictures = pictures;
             SteerCount++;
         }
     }
@@ -164,7 +166,7 @@ internal sealed class ConversationRun : IDisposable
     /// turn looks exactly like an ordinary one.</summary>
     internal int SteerCount { get; private set; }
 
-    internal bool TryTakeSteer(out string text, out string? context)
+    internal bool TryTakeSteer(out string text, out string? context, out IReadOnlyList<byte[]>? pictures)
     {
         lock (_gate)
         {
@@ -172,13 +174,16 @@ internal sealed class ConversationRun : IDisposable
             {
                 text = "";
                 context = null;
+                pictures = null;
                 return false;
             }
 
             text = _steerText;
             context = _steerContext;
+            pictures = _steerPictures;
             _steerText = null;
             _steerContext = null;
+            _steerPictures = null;
             return true;
         }
     }

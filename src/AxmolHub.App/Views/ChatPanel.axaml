@@ -486,6 +486,18 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="12" />
     </Style>
+    <!-- A message's own pictures, beside its text rather than under it: the frame is part of what the person
+         said, not an attachment list. Clipped and rounded so a 5K capture stays a thumbnail inside the column. -->
+    <Style Selector="WrapPanel.turn-pictures">
+      <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+    <Style Selector="Border.turn-picture">
+      <Setter Property="Margin" Value="0,0,6,6" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="ClipToBounds" Value="True" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
     <Style Selector="local|ContextUsageRing">
       <Setter Property="Width" Value="18" />
       <Setter Property="Height" Value="18" />
