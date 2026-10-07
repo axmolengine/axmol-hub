@@ -714,8 +714,10 @@ public partial class ShellCheckWindow : Window
               && opsConversation.Messages.Count == 2 && !panel.IsStreamingForCheck,
             "确认图标提交后同样改写并重新生成（实际 " + opsConversation.Messages.Count + " 条）");
         Check(HubTexts.Get("RegenerateMessage", HubTexts.ChineseLanguage) == "重新生成"
-              && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate",
-            "消息操作文案支持中英文");
+              && HubTexts.Get("RegenerateMessage", HubTexts.EnglishLanguage) == "Regenerate"
+              && HubTexts.Get("RetryMessage", HubTexts.ChineseLanguage) == "重试这条提问"
+              && HubTexts.Get("RetryMessage", HubTexts.EnglishLanguage) == "Retry this question",
+            "消息操作文案支持中英文（重新生成与重试都在内）");
 
         // A glyph whose bounding box is not square sits off-centre in its square slot, because
         // Stretch="Uniform" puts the leftover axis' slack on one side — the failure Hub.Icon.Send's
@@ -774,6 +776,35 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.EditAndResend(opsConversation.Id, 0, "改写后的提问")
               && opsConversation.Messages.Count == 1 && opsConversation.Messages[0].Text == "改写后的提问",
             "编辑重发替换该消息并截断其后全部内容");
+
+        // ── a question that never got an answer carries its own retry ──
+        // The failure the user actually hits: a send superseded by the next one, or one that died on the
+        // network. The notice that explained it is never written to the transcript, and re-submitting the same
+        // text is refused as an unchanged edit — so without this row action the question is stranded.
+        var retrySession = shell.Chat.StartConversation();
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(["重试之后的回复"]);
+        var retrySeeded = shell.Chat.SeedTurnForCheck(retrySession.Id, "这条没有回复");
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var stranded = panel.BubbleCount - 1;
+        Check(retrySeeded && panel.BubbleHasIconAction(stranded, "RetryMessage")
+              && !panel.BubbleHasIconAction(stranded, "RegenerateMessage"),
+            "最后一条没有回复的提问带「重试」图标，而不是重新生成（实际 "
+            + panel.BubbleIconActionCount(stranded) + " 个图标）");
+        Check(panel.ClickBubbleAction(stranded, "RetryMessage"), "点重试走的是这条消息自己的图标");
+        await WaitForStreamAsync();
+        Check(retrySession.Messages.Count == 2
+              && retrySession.Messages[^1].Role == ChatRoles.Assistant
+              && retrySession.Messages[^1].Text == "重试之后的回复",
+            "重试把缺的回复补上了（实际 " + retrySession.Messages.Count + " 条）");
+        panel.Reload();
+        Check(!panel.BubbleHasIconAction(panel.BubbleCount - 1, "RetryMessage")
+              && panel.BubbleHasIconAction(panel.BubbleCount - 1, "RegenerateMessage"),
+            "有了回复，重试图标就从那条提问上消失， ↻ 回到最后一条助手消息上");
+        shell.Chat.DeleteConversation(retrySession.Id);
+        shell.Chat.OpenConversation(opsConversation.Id);
+        panel.Reload();
 
         // Branching forks the transcript at one message into a new session and switches to it. The source is
         // only mutated in memory here: BranchFrom reads the live object, so nothing has to be re-saved first.

@@ -1657,6 +1657,13 @@ public partial class ChatPanel : UserControl
         {
             bar.Children.Add(IconActionButton("CopyMessage", "Hub.Icon.Copy", () => CopyToClipboard(text)));
             bar.Children.Add(IconActionButton("EditMessage", "Hub.Icon.Edit", () => BeginInlineEdit(index, body, bar)));
+            // A question that never got an answer is otherwise stuck: the notice that explained the failure is
+            // not written to the transcript, and resubmitting the same text is refused as an unchanged edit. The
+            // same ↻ that re-answers a reply re-asks this one, because Regenerate drops nothing when the
+            // trailing turn is the question. It stops being the trailing turn the moment an answer lands, so
+            // the button leaves on its own.
+            if (isLast && ViewedRun is null)
+                bar.Children.Add(IconActionButton("RetryMessage", "Hub.Icon.Refresh", RegenerateAsync));
         }
         else
         {
@@ -1908,7 +1915,15 @@ public partial class ChatPanel : UserControl
 
     private void RegenerateAsync()
     {
-        if (_chat.ActiveConversation is not { } conversation || IsViewedStreaming) return;
+        if (_chat.ActiveConversation is not { } conversation) return;
+        if (IsViewedStreaming)
+        {
+            // The button is only built while nothing is answering, so reaching here means a run started
+            // between the click and this line. A refusal the user can read beats a button that appears dead.
+            AppendNotice(HubStrings.Get("ChatSessionBusy"), danger: true);
+            return;
+        }
+
         if (!_chat.Regenerate(conversation.Id)) return;
 
         ForceRebuildMessages();

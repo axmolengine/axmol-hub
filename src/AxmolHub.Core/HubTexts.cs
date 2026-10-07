@@ -576,6 +576,9 @@ public static class HubTexts
         // The two exits of the inline editor, shown in the row's own action slot so they need not be guessed.
         ["ConfirmEdit"] = ("保存并重发", "Save and resend"),
         ["RegenerateMessage"] = ("重新生成", "Regenerate"),
+        // The same ↻ on a question that never got an answer: the failure notice scrolls away and is never
+        // written to the transcript, so this is the one thing that keeps a failed reply recoverable.
+        ["RetryMessage"] = ("重试这条提问", "Retry this question"),
         ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
         // Shown above a forked transcript; the line itself is the link back to the source session.
         ["ForkedFrom"] = ("分支自 {0}", "Forked from {0}"),
