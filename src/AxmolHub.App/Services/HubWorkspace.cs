@@ -45,6 +45,11 @@ public sealed class HubWorkspace : IDisposable
     /// <summary>Compiles the engine into a prebuilt library (<c>axmol-sdk</c>).</summary>
     private readonly EngineBuildService _engineBuild;
     private readonly PackageInstaller _installer;
+    /// <summary>Shared download path for every package Hub fetches (engine zips and the host shell alike).</summary>
+    private readonly DownloadManager _downloads;
+    /// <summary>Installs the host's own PowerShell 7 — the one thing Hub puts outside the engine tree, and only
+    /// because <c>setup.ps1</c> cannot run without it. Detection lives in <see cref="HostPowerShell"/>.</summary>
+    private readonly HostPowerShellInstaller _hostShellInstaller;
 
     private CancellationTokenSource? _operation;
     private BuildProgressWindow? _buildProgress;
@@ -96,7 +101,12 @@ public sealed class HubWorkspace : IDisposable
         _projects = new ProjectService(_runner, _commandLine, _prebuiltState);
         _platformBuilds = new PlatformBuildService(_runner);
         _engineToolchain = new EngineToolchain(_runner);
-        _installer = new PackageInstaller(new DownloadManager(_http, Log.Write), Store.Root, Log.Write);
+        _downloads = new DownloadManager(_http, Log.Write);
+        _installer = new PackageInstaller(_downloads, Store.Root, Log.Write);
+        _hostShellInstaller = new HostPowerShellInstaller(_http, _runner, _downloads, Path.Combine(Store.Root, "cache"), Path.Combine(Store.Root, "logs"));
+        // The host shell is a fact about this machine, not about any engine, so it is probed once here next to
+        // the engine index. It is a filesystem walk: no process, no network, nothing to await.
+        HostShell = HostPowerShell.Probe();
 
         _releases = new EngineReleases(Store.Root, Manifests);
         RefreshEngineIndexAsync();
@@ -207,6 +217,9 @@ public sealed class HubWorkspace : IDisposable
     /// <summary>Toolchain detection results updated.</summary>
     public event Action? ComponentsChanged;
 
+    /// <summary>The host PowerShell probe produced a new verdict (page card repaints).</summary>
+    public event Action? HostShellChanged;
+
     /// <summary>Android device list updated.</summary>
     public event Action? DevicesChanged;
 
@@ -239,6 +252,28 @@ public sealed class HubWorkspace : IDisposable
     }
 
     public List<ToolchainComponent> Components { get; private set; } = [];
+
+    /// <summary>
+    /// The host's PowerShell 7, as last probed. <b>Deliberately never persisted</b>: <c>hub-state.json</c> is the
+    /// engine and project registry, while pwsh can be installed or removed outside Hub between two frames, so a
+    /// stored verdict would be a lie the next run. The same reasoning makes
+    /// <see cref="EngineSetupService.IsPrepared"/> re-read the disk every time.
+    /// </summary>
+    public HostShellStatus HostShell { get; private set; } = new(HostShellState.Unknown);
+
+    /// <summary>True between "Hub handed the bootstrap to a terminal window" and "the user pressed Re-check".
+    /// The button becomes a re-check for exactly this stretch: the install is out of Hub's hands, and the only
+    /// thing that can end the wait is a probe the user decides to run.</summary>
+    public bool HostShellAwaitingTerminal { get; private set; }
+
+    /// <summary>The installer, exposed only so the page can state which road it is about to take <b>before</b>
+    /// asking for confirmation — the three roads cost different things (UAC, a sudo password, nothing Hub can do).</summary>
+    public HostShellMethod HostShellPlan => _hostShellInstaller.Plan();
+
+    public string HostShellConfirmationKey => _hostShellInstaller.ConfirmationKey();
+
+    public string HostShellMethodKey(HostShellMethod method) => _hostShellInstaller.MethodKey(method);
+
     public IReadOnlyList<AndroidDevice> Devices { get; private set; } = [];
     public string LastError { get; private set; } = "";
     public bool IsBusy => _operation is not null;
@@ -333,10 +368,27 @@ public sealed class HubWorkspace : IDisposable
                 + HubStrings.Get("PrebuiltUnavailableAction"),
             ProjectDestinationExistsException exists =>
                 HubStrings.Get("ProjectAlreadyExists") + "\n\n" + exists.Destination + "\n\n" + HubStrings.Get("ProjectAlreadyExistsAction"),
+            HostShellInstallException shell => HostShellErrorText(shell),
             _ => HubStrings.Get(error.Message) + "\n\n" + HubStrings.Get("ErrorHint"),
         };
 
         await HubDialog.ShowAsync(Owner, HubStrings.Get("OperationFailed"), message);
+    }
+
+    /// <summary>
+    /// The host-shell failure text, assembled from the verdict instead of a message string. Two of its branches
+    /// are the reason it needs a type of its own: a declined elevation is retried by pressing the same button,
+    /// while "no terminal on this host" has exactly one answer — the engine's command, printed so it can be
+    /// copied. Neither is expressible through the generic <c>HubStrings.Get(ex.Message)</c> path, and showing the
+    /// command is the difference between Hub admitting a limit and pretending an install failed.
+    /// </summary>
+    private static string HostShellErrorText(HostShellInstallException error)
+    {
+        var sentence = string.Format(HubStrings.Get(error.TextKey), HostPowerShellInstaller.BootstrapCommand);
+        var technical = error.Result.Outcome == HostShellInstallOutcome.NoTerminal ? "" : error.Result.Detail;
+        return sentence + "\n\n" + error.Status.Describe()
+               + (technical.Length > 0 ? "\n" + technical : "")
+               + "\n\n" + HubStrings.Get("ErrorHint");
     }
 
     private void CloseBuildProgress()
@@ -1134,9 +1186,89 @@ public sealed class HubWorkspace : IDisposable
             var effective = platform ?? AxmolCommandMap.Target(target).Platform;
             var result = await _setup.RunAsync(engine, new SetupOptions(effective), token);
             Log.Write($"{effective}: {result.Describe()}");
+            if (result.Outcome == SetupOutcome.NeedsPowerShell)
+            {
+                // The host-shell card directly above this button is the fix, so it must be showing the reason the
+                // dialog just gave. Re-probing is a filesystem walk: cheap at the one moment it matters, and it
+                // needs no chained confirmation dialog (the error dialog already named the cause).
+                HostShell = HostPowerShell.Probe();
+                HostShellChanged?.Invoke();
+            }
+
             // When developer mode is off, setup.ps1 exits 0 but installs nothing — that fake success must be reported as failure.
             if (!result.Succeeded) throw new InvalidOperationException(result.Describe());
             UpdateTools(await DetectAsync(token));
+        });
+    }
+
+    /// <summary>
+    /// Re-probes the host PowerShell and resolves the version. This is the only path that spawns
+    /// (<c>pwsh --version</c>, once), so it stays behind the explicit button and around an install — the page
+    /// constructor and <c>Refresh()</c> use the process-free <see cref="HostPowerShell.Probe"/>.
+    /// </summary>
+    public async Task RefreshHostShellAsync()
+    {
+        await ExecuteAsync("Check PowerShell 7", async token =>
+        {
+            var probed = HostPowerShell.Probe();
+            Log.Write(probed.Describe());
+            HostShell = await HostPowerShell.ProbeVersionAsync(_runner, probed, token);
+            HostShellAwaitingTerminal = false;
+            HostShellChanged?.Invoke();
+            Log.Write(HostShell.Describe());
+        });
+    }
+
+    /// <summary>
+    /// Verification seam: puts a verdict on the card without touching the machine. On a host that already has
+    /// pwsh — which is most development machines — the "missing" and "waiting on a terminal" layouts would
+    /// otherwise never be reachable, and an unasserted layout is an unasserted UI (AGENTS.md). Installing for
+    /// real is deliberately not offered here: it changes the whole machine, so its verdicts are covered by
+    /// <c>Checks --check-host-shell</c> instead, which is host-independent and offline.
+    /// </summary>
+    internal void HostShellForCheck(HostShellStatus status, bool awaitingTerminal = false)
+    {
+        HostShell = status;
+        HostShellAwaitingTerminal = awaitingTerminal;
+    }
+
+    /// <summary>
+    /// Installs PowerShell 7 on this machine. The one operation in Hub that writes outside the engine tree and
+    /// the only one whose confirmation has to name the road it will take (UAC prompt, sudo password in a
+    /// terminal window, or "Hub cannot do this here").
+    ///
+    /// Success is decided by the probe afterwards, never by an installer's exit code — the same distrust
+    /// <see cref="EngineSetupService"/> applies to <c>setup.ps1</c> exiting 0 having installed nothing.
+    /// </summary>
+    public async Task InstallHostShellAsync()
+    {
+        // Re-probe first: the card may be showing the state as of app start, and the user might have installed
+        // pwsh in a terminal since then. This is the filesystem walk, not a spawn.
+        HostShell = HostPowerShell.Probe();
+        HostShellChanged?.Invoke();
+        await ExecuteAsync("Install PowerShell 7", async token =>
+        {
+            Log.Write($"Installing the host PowerShell; planned road: {HostShellPlan}.");
+            var result = await _hostShellInstaller.InstallAsync(DownloadProgress(), token);
+            Log.Write($"{result.Method}: {result.Detail}");
+            HostShell = await HostPowerShell.ProbeVersionAsync(_runner, HostPowerShell.Probe(), token);
+            HostShellChanged?.Invoke();
+            Log.Write(HostShell.Describe());
+            if (result.Outcome == HostShellInstallOutcome.LaunchedInTerminal)
+            {
+                // Hub handed the script to a terminal it cannot read. Reporting that as a completed install
+                // would be a false success, and reporting it as a failure would be a false alarm: the status
+                // line says where it went and what to press afterwards.
+                SetStatus(HubStrings.Get("HostShellInTerminal"));
+                HostShellAwaitingTerminal = true;
+                HostShellChanged?.Invoke();
+                return;
+            }
+
+            if (result.Outcome != HostShellInstallOutcome.Ready)
+            {
+                throw new HostShellInstallException(result, HostShell);
+            }
         });
     }
 

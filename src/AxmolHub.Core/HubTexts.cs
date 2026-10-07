@@ -169,6 +169,28 @@ public static class HubTexts
         ["InstallTools"] = ("安装基础工具", "Install tools"),
         ["RunEngineSetup"] = ("运行引擎 setup.ps1", "Run engine setup.ps1"),
         ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。这一步会写入用户级 PATH 与 AX_ROOT，并可能请求提权（UAC）——与引擎官方流程一致。", "The engine installs its own toolchain into <engine>/tools/external. This writes the user PATH and AX_ROOT and may request elevation (UAC) — the same as the engine's official flow."),
+        // Host PowerShell 7. This is the one thing Hub installs outside the engine tree, and only because the
+        // engine's own setup.ps1 refuses to run without pwsh. The state sentences are formatted with the version
+        // (and the floor) by ToolchainsPage, then the executable path is appended in code — a path is not copy.
+        // No title label is added on purpose: every sentence already begins with PowerShell or pwsh, and the
+        // button names it too ("say a thing once").
+        ["HostShellStateReady"] = ("PowerShell {0} 已就绪", "PowerShell {0} is ready"),
+        ["HostShellStateTooOld"] = ("PowerShell {0} 低于引擎要求的 {1}", "PowerShell {0} is older than the {1} the engine requires"),
+        ["HostShellStateMissing"] = ("这台机器还没有 pwsh —— 引擎的 setup.ps1 跑不起来", "This host has no pwsh, so the engine's setup.ps1 cannot run"),
+        ["HostShellStateUnknown"] = ("找到了 pwsh，但版本还没确认", "pwsh was found, but its version is unconfirmed"),
+        ["InstallPowerShell7"] = ("安装 PowerShell 7", "Install PowerShell 7"),
+        ["HostShellMethodWinget"] = ("用 winget 安装 Microsoft.PowerShell，提权由 winget 自己发起。", "Installs Microsoft.PowerShell through winget, which raises its own elevation prompt."),
+        ["HostShellMethodMsi"] = ("winget 不在 PATH：改从 PowerShell 官方 GitHub 取最新 MSI，按该 release 自带的 SHA-256 校验后提权安装。", "winget is not on PATH, so the latest official MSI is taken from PowerShell's GitHub, verified against the SHA-256 that release ships, and installed elevated."),
+        ["HostShellMethodTerminal"] = ("在系统终端里执行引擎自带的 1k/pwshi.sh —— 它会要求输入 sudo 密码。", "Runs the engine's own 1k/pwshi.sh in a terminal window, which will ask for your sudo password."),
+        ["HostShellConfirmWindows"] = ("这一步只改这台机器上的 PowerShell，不碰引擎目录里的任何东西。装完点重新检测：Hub 用自己的探测确认，不看安装器的退出码。", "This changes only the PowerShell on this machine and touches nothing in the engine tree. Press Re-check afterwards: Hub confirms with its own probe rather than trusting an installer's exit code."),
+        ["HostShellConfirmUnix"] = ("那条脚本内部用 sudo，而 Hub 的子进程没有终端、读不到密码，所以它会开一个系统终端窗口。请在那个窗口里完成，再回 Hub 点重新检测。", "The script calls sudo, and Hub's child process has no terminal to read a password, so this opens a system terminal window. Finish it there, then press Re-check."),
+        ["HostShellReady"] = ("PowerShell 7 已就位", "PowerShell 7 is in place"),
+        ["HostShellInTerminal"] = ("安装已在终端窗口里开始，Hub 读不到它的输出；完成后点重新检测。", "The install started in a terminal window that Hub cannot read; press Re-check when it finishes."),
+        ["HostShellUacDeclined"] = ("授权被取消，pwsh 没有安装。", "Elevation was declined, so pwsh was not installed."),
+        ["HostShellNoTerminal"] = ("没有找到可用的终端程序。请在自己的终端里执行这一条：{0}", "No usable terminal was found. Run this in a terminal yourself: {0}"),
+        ["HostShellFailed"] = ("安装没有完成，详情在日志里。", "The install did not complete; the log has the details."),
+        ["Install PowerShell 7"] = ("安装 PowerShell 7", "Installing PowerShell 7"),
+        ["Check PowerShell 7"] = ("重新检测 PowerShell 7", "Checking PowerShell 7"),
         ["BuildEngine"] = ("构建引擎库", "Build engine"),
         ["Build engine"] = ("构建引擎", "Build engine"),
         ["BuildEngineConfirm"] = ("开始构建引擎", "Build engine"),

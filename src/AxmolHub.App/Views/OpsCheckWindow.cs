@@ -315,6 +315,8 @@ public sealed class OpsCheckWindow : Window
         Skip("构建引擎预编译库（编译整棵引擎，数 GB、数十分钟）—— 由维护者在引擎页手动执行；"
              + "判定逻辑本身另有主机无关的验收：Checks --check-prebuilt");
         Skip("Android 打包（构建交给引擎的 axmol build -p android；需要 Android SDK/NDK 与签名材料）");
+        Skip("安装主机 PowerShell 7（winget / 提权装 MSI / 终端里跑 pwshi.sh —— 三条路都会改整机，且需要 UAC 或 sudo）"
+             + "；它的判定另有主机无关的离线验收：Checks --check-host-shell，只读预演见 --pwsh-release-report");
     }
 
     /// <summary>Which marker files an engine directory lacks. The list's only source is <see cref="StateStore.MissingEngineMarkers"/>, not written again here.</summary>

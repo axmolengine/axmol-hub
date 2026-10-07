@@ -7,9 +7,13 @@
   <!--
     Toolchains page. Title row → engine version bar → component details (toolchain table).
     Platform/architecture buildability is expressed by BuildTargets; there is no longer a separate "module" concept.
+
+    Two cards sit below the scroll, in the fixed area: the host's PowerShell and the engine setup button. They are
+    neighbours because they are one causal chain — setup.ps1 is the action that needs pwsh — and they are outside
+    the ScrollViewer because a prerequisite you cannot see is a prerequisite you will trip over.
   -->
 
-  <Grid RowDefinitions="Auto,Auto,*,Auto">
+  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
 
     <DockPanel Grid.Row="0" Margin="0,0,0,22">
       <StackPanel>
@@ -51,7 +55,19 @@
       </StackPanel>
     </ScrollViewer>
 
-    <Border Grid.Row="3" Background="{DynamicResource Hub.Surface}" CornerRadius="6" Padding="18,14" Margin="0,12,0,6">
+    <!-- The host shell card. One line of status plus one action button whose label changes with the state
+         (install → re-check after a terminal hand-off → hidden once the probe agrees pwsh is ready), so the page
+         never grows a second control for the same job. The text is written in code because it is a formatted,
+         pre-localized sentence — the same convention the tools table follows. -->
+    <Border x:Name="HostShellCard" Grid.Row="3" Background="{DynamicResource Hub.Surface}" CornerRadius="6" Padding="18,14" Margin="0,12,0,0">
+      <DockPanel>
+        <Button x:Name="InstallPwshButton" Content="{DynamicResource InstallPowerShell7}" Classes="quiet more"
+                DockPanel.Dock="Right" Margin="18,0,0,0" />
+        <TextBlock x:Name="HostShellStatus" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Row="4" Background="{DynamicResource Hub.Surface}" CornerRadius="6" Padding="18,14" Margin="0,12,0,6">
       <DockPanel>
         <Button x:Name="RunEngineSetupButton" Content="{DynamicResource RunEngineSetup}" Classes="primary more" DockPanel.Dock="Right" Margin="18,0,0,0" />
         <TextBlock Text="{DynamicResource EngineSetupHint}" Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" />

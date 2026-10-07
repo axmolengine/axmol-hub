@@ -144,6 +144,7 @@ public partial class ShellCheckWindow : Window
         var shell = CheckShell(scratchRoot);
         await CheckInstallsPageAsync(scratchRoot, shell);
         await CheckSettingsPageAsync(scratchRoot, shell);
+        CheckHostShellCard(shell);
         await CheckAssistantAsync(scratchRoot, shell);
         CheckDataRootSwitch(scratchRoot, shell);
         CheckRealRender(shell);
@@ -3532,6 +3533,101 @@ public partial class ShellCheckWindow : Window
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public void Dispose() { }
+    }
+
+    /// <summary>
+    /// The host PowerShell card. Three silent failures are what this group exists for:
+    /// ① a state branch that was never mapped to copy (a blank line exactly where a prerequisite should be);
+    /// ② a button whose label disagrees with the verdict (so "install" keeps offering an install that is done,
+    ///    or the re-check after a terminal hand-off is missing and the card freezes);
+    /// ③ the card landing inside the ScrollViewer after a RowDefinitions edit — a prerequisite you cannot see
+    ///    is a prerequisite you will trip over again, and the pixel check would not notice since the page still
+    ///    renders something.
+    ///
+    /// Every verdict here is **injected** through the page's own hook: no network, no child process, and the
+    /// install button is never clicked (installing rewrites the machine, which a check must not do). The
+    /// falsifiable part of the install logic — digest parsing, road selection, argument shapes — is covered by
+    /// <c>Checks --check-host-shell</c>, which is host-independent and runs offline.
+    /// </summary>
+    private void CheckHostShellCard(MainWindow shell)
+    {
+        var page = (ToolchainsPage)shell.NavigateTo("Toolchains");
+        page.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        var card = NamedDescendant<Border>(page, "HostShellCard");
+        var line = NamedDescendant<TextBlock>(page, "HostShellStatus");
+        var button = NamedDescendant<Button>(page, "InstallPwshButton");
+        Check(card is not null && line is not null && button is not null,
+            "工具链页底部有主机 PowerShell 卡（状态行 + 一个动作按钮），不是「尚未支持」的说明文字");
+        // 上一条已经把"控件不见了"记成 FAIL；这里停手只是为了不再拿 null 往下崩，把后面的断言留成没跑而不是误报。
+        if (card is null || line is null || button is null)
+        {
+            return;
+        }
+
+        // 这张卡必须在滚动区之外 —— 这是它存在的理由，也是最容易被一次布局改动悄悄毁掉的性质。
+        Check(!card.GetVisualAncestors().Any(a => a is ScrollViewer),
+            "PowerShell 卡不在 ScrollViewer 里（滚动区里的前置条件会被滚得看不见）");
+
+        // 加一行卡就意味着改 RowDefinitions。老卡片被挤掉或被裁掉，是这次改动最现实的回归。
+        Check(card.Parent is Grid { RowDefinitions.Count: 5 },
+            "工具链页的根网格现在是 5 行（实际 " + (card.Parent as Grid)?.RowDefinitions.Count + "）");
+        Check(Grid.GetRow(card) == 3, "PowerShell 卡占第 3 行（实际 " + Grid.GetRow(card) + "）");
+        var setup = NamedDescendant<Button>(page, "RunEngineSetupButton");
+        var setupCard = setup?.GetVisualAncestors().OfType<Border>().FirstOrDefault();
+        Check(setup is not null && setupCard is not null && Grid.GetRow(setupCard) == 4,
+            "「运行引擎 setup.ps1」那条卡被挤到第 4 行，仍然在页面上（没被新卡顶掉）");
+
+        // 四种状态逐个注入：文案、按钮可见性必须与 HostShellStatus 的判定一致。
+        // 少写一个分支的 enum 只会在这里暴露 —— 真机上通常只有一种状态是可到达的。
+        foreach (var (state, executable, version) in new (HostShellState State, string? Path, string? Version)[]
+                 {
+                     (HostShellState.Ready, "/usr/local/bin/pwsh", "7.6.6"),
+                     (HostShellState.TooOld, "/usr/local/bin/pwsh", "7.3.9"),
+                     (HostShellState.Missing, null, null),
+                     (HostShellState.Unknown, "/usr/local/bin/pwsh", null),
+                 })
+        {
+            page.SetHostShellForCheck(new HostShellStatus(state, executable, version));
+            Dispatcher.UIThread.RunJobs();
+
+            var sentence = state switch
+            {
+                HostShellState.Ready => string.Format(HubTexts.Get("HostShellStateReady", HubStrings.Language), version),
+                HostShellState.TooOld => string.Format(HubTexts.Get("HostShellStateTooOld", HubStrings.Language), version, HostPowerShell.MinimumVersion),
+                HostShellState.Missing => HubTexts.Get("HostShellStateMissing", HubStrings.Language),
+                _ => HubTexts.Get("HostShellStateUnknown", HubStrings.Language),
+            };
+            Check(line!.Text == sentence + (executable is null ? "" : "\n" + executable),
+                $"「{state}」的状态行由 HubTexts 拼出，路径另起一行（期望「{sentence}」，实际「{line.Text}」）");
+            Check(button!.IsVisible == (state != HostShellState.Ready),
+                $"「{state}」时按钮{(state == HostShellState.Ready ? "隐藏（已就绪不该再推销安装）" : "可见")}（实际 IsVisible={button.IsVisible}）");
+        }
+
+        // 交给终端之后，同一个按钮换身份：此刻 Hub 手上没有可取消的东西，能做的只有重新探测。
+        page.SetHostShellForCheck(new HostShellStatus(HostShellState.Missing), awaitingTerminal: true);
+        Dispatcher.UIThread.RunJobs();
+        Check(Equals(button!.Content, HubTexts.Get("Verify", HubStrings.Language)),
+            "终端转交期间按钮变成「重新检测」，复用已有文案键而不是再造一个（实际「" + button.Content + "」）");
+        // `more` 在这个壳里是一句承诺：点了会先弹确认框。重新检测不弹，所以承诺必须收回去 ——
+        // 这类"图标还在但行为变了"的错位，只有把类和文案放在一起断言才拦得住。
+        Check(!button!.Classes.Contains("more"),
+            "变成「重新检测」时摘掉 more 类（它还弹确认框的话就是在撒谎）");
+
+        page.SetHostShellForCheck(new HostShellStatus(HostShellState.Missing));
+        Dispatcher.UIThread.RunJobs();
+        Check(Equals(button!.Content, HubTexts.Get("InstallPowerShell7", HubStrings.Language)),
+            "缺失时按钮文案来自 HubTexts 的 InstallPowerShell7（实际「" + button.Content + "」）");
+        Check(button!.Classes.Contains("more"),
+            "安装按钮带 more 类（点击先弹确认，说明走哪条路与什么代价）");
+
+        // Restore the real verdict for the groups that run after this one (and for the rendered-page capture),
+        // so an injected "missing" cannot leak into a later assertion. This is the filesystem walk: no spawn.
+        page.SetHostShellForCheck(HostPowerShell.Probe());
+        Dispatcher.UIThread.RunJobs();
+        Check(!string.IsNullOrWhiteSpace(line.Text),
+            "本机真实探测重新画上去了（后面几组断言看到的不是注入值，实际「" + line.Text + "」）");
     }
 
     /// <summary>

@@ -2235,6 +2235,196 @@ if (args.Contains("--check-download"))
 }
 
 // ---------------------------------------------------------------------------
+// 主机 PowerShell 7：探测的判定规则 + 三条安装路径的决策。自带 return、不联网（FixtureHandler 注入）、
+// 不起子进程、不改宿主机 —— 因此 CI 能跑。"真装一次"会改整机，属于 OpsCheck 里被跳过的那一类，
+// 这里的断言只保证**判定**是对的：往宿主机上装东西的那只手，必须先能被离线证明不猜。
+// ---------------------------------------------------------------------------
+if (args.Contains("--check-host-shell"))
+{
+    // 官方 hashes.sha256 实测是 UTF-16LE（BOM FF FE）、行格式 `<64hex> *<文件名>`，
+    // 并且 Windows 资产名首字母大写、osx/linux 的小写。按 UTF-8 读会得到每字符夹一个 NUL 的串，
+    // 正则一行都匹配不上，表现是"永远说校验文件里没有这一条"。所以下面两种编码都要过。
+    var msiDigest = "958838ff55091e1c8705d89efed0cc7e8245a3a6ef6c0ccfae20015227108ad8";
+    var zipDigest = "02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860";
+    var osxDigest = "64950d0f9a11f890c57199ec5e0f340f8f5fe2bbc9df43c35aed66e3d16d76bb";
+    var version = HostPowerShellInstaller.FallbackVersion;
+    var msiAsset = $"PowerShell-{version}-win-x64.msi";
+    var hashesText = string.Join("\r\n",
+        $"{msiDigest} *{msiAsset}",
+        $"{zipDigest} *PowerShell-{version}-win-x64.zip",
+        $"{osxDigest} *powershell-{version}-osx-arm64.pkg",
+        $"deadbeef *powershell-{version}-linux-x64.tar.gz",
+        $"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff *PowerShell-{version}-win-arm64.msi");
+    var utf16 = new byte[] { 0xFF, 0xFE }.Concat(Encoding.Unicode.GetBytes(hashesText)).ToArray();
+
+    Check(HostPowerShellInstaller.ParseHashes(utf16, msiAsset) == msiDigest,
+        "The release's UTF-16 digest file yields the Windows MSI digest");
+    Check(HostPowerShellInstaller.ParseHashes(Encoding.UTF8.GetBytes(hashesText), msiAsset) == msiDigest,
+        "The same body encoded as UTF-8 also parses (BOM detection covers both)");
+    Check(HostPowerShellInstaller.ParseHashes(utf16, $"PowerShell-{version}-win-arm64.msi") is null,
+        "A line whose digest is shorter than 64 hex digits is discarded, never used");
+    Check(HostPowerShellInstaller.ParseHashes(utf16, $"powershell-{version}-osx-arm64.pkg") == osxDigest,
+        "The lowercase osx asset name in the same file still resolves (mixed case is the official fact)");
+    Check(HostPowerShellInstaller.ParseHashes(utf16, $"PowerShell-{version}-win-x86.msi") is null,
+        "An asset the digest file does not list returns no digest");
+    Check(HostPowerShellInstaller.ParseHashes(utf16, $"PowerShell-{version}-WIN-X64.MSI") == msiDigest,
+        "Asset matching ignores case, so Hub's spelling cannot fail on capitalization alone");
+
+    // 用户交代的 macOS/Linux 入口就是那一条命令，Hub 只负责在有 TTY 的地方执行它。
+    // 任何"顺手改写"（换 curl 参数、去掉外层 bash -c、加 -y）都算换了一条命令。
+    Check(HostPowerShellInstaller.BootstrapCommand ==
+          "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/axmolengine/axmol/dev/1k/pwshi.sh)\"",
+        "The bootstrap command is the engine's own, character for character");
+    Check(HostPowerShellInstaller.BootstrapScript.Contains(HostPowerShellInstaller.BootstrapCommand, StringComparison.Ordinal)
+          && HostPowerShellInstaller.BootstrapScript.StartsWith("#!/bin/bash", StringComparison.Ordinal),
+        "The script written to disk contains exactly that command, not a rewritten lookalike");
+    Check(!HostPowerShellInstaller.BootstrapScript.Any(c => c >= '一' && c <= '鿿'),
+        "The bootstrap script carries no CJK: its terminal window may open on a host without Chinese fonts");
+
+    Check(HostPowerShellInstaller.WingetArguments.SequenceEqual(
+              ["install", "--id", "Microsoft.PowerShell", "--source", "winget", "--accept-source-agreements",
+               "--accept-package-agreements", "--silent", "--disable-interactivity"]),
+        "The winget argument list is unchanged; --disable-interactivity is required because Hub's child has no console");
+
+    // 探测：不 spawn、不出网，且每条状态的含义自洽。200ms 的预算是给将来的守卫 ——
+    // 谁把 `pwsh --version` 塞进这条路径，页面每次刷新就要多起一个进程。
+    var probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+    var hostShell = HostPowerShell.Probe();
+    var probeElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart);
+    Check(probeElapsed < TimeSpan.FromMilliseconds(200),
+        $"Probe() answers instantly with no process and no network ({probeElapsed.TotalMilliseconds:F1} ms on this host)");
+    Check(hostShell.State is not HostShellState.Missing || hostShell.Executable is null,
+        "A Missing verdict carries no path");
+    Check(hostShell.Executable is null || File.Exists(hostShell.Executable),
+        $"The pwsh path Probe reports really exists ({hostShell.Executable ?? "no pwsh on this host"})");
+    Check(hostShell.State is not (HostShellState.Ready or HostShellState.TooOld) || hostShell.Version is not null,
+        "Ready and TooOld both require a version; without one the verdict is Unknown, never a guess");
+    Check(hostShell.State is not HostShellState.Unknown || hostShell.Executable is not null && hostShell.Version is null,
+        "Unknown means found-but-unversioned, kept strictly apart from Missing");
+    Check(hostShell.Installable == (hostShell.State != HostShellState.Ready),
+        "Installable is exactly the opposite of Ready, so Unknown still offers a re-check");
+    if (CommandShells.Resolve("pwsh") is not null)
+        Check(hostShell.State is not HostShellState.Missing,
+            "Probe cannot report Missing while pwsh is on PATH: Hub keeps one answer to 'is pwsh there'");
+
+    Check(HostPowerShell.Evaluate(HostPowerShell.MinimumVersion) == HostShellState.Ready
+          && HostPowerShell.Evaluate("7.6.6") == HostShellState.Ready
+          && HostPowerShell.Evaluate("7.3.9") == HostShellState.TooOld
+          && HostPowerShell.Evaluate(null) == HostShellState.Unknown,
+        $"The version floor is {HostPowerShell.MinimumVersion}, taken from pwshi.sh's pwsh_min_ver so Hub and the engine agree");
+    Check(HostPowerShell.Normalize("7.6.6.500") == "7.6.6" && HostPowerShell.Normalize("7.4.0") == "7.4.0",
+        "The fourth FileVersion segment (7.6.6 measures 7.6.6.500) is trimmed so the UI matches `pwsh --version`");
+
+    // 终端选择：注入一个假的 PATH，所以这一条在任何宿主上都能跑。
+    Check(HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh", _ => null) is null,
+        "With no terminal at all this returns null so the UI can hand the command back, instead of throwing a fake install failure");
+    if (OperatingSystem.IsMacOS())
+    {
+        var mac = HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh", name => name == "osascript" ? "/usr/bin/osascript" : null);
+        Check(mac is not null && mac.Value.Executable == "/usr/bin/osascript"
+              && mac.Value.Arguments.Any(argument => argument.Contains("do script") && argument.Contains("/tmp/install-pwsh.sh")),
+            "macOS drives Terminal through osascript: `open -a Terminal` depends on what .sh is associated with and may only load it into an editor");
+    }
+    else
+    {
+        foreach (var (name, expectation) in new (string, Func<string[], bool>)[]
+                 {
+                     ("gnome-terminal", arguments => arguments[0] == "--" && arguments[^1] == "/tmp/install-pwsh.sh"),
+                     ("xterm", arguments => arguments[0] == "-e" && arguments[^1] == "/tmp/install-pwsh.sh"),
+                     ("xfce4-terminal", arguments => arguments.Length == 2 && arguments[0] == "--command" && arguments[1].Contains("/tmp/install-pwsh.sh")),
+                 })
+        {
+            var launch = HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh", candidate => candidate == name ? "/usr/bin/" + name : null);
+            Check(launch is not null && expectation(launch.Value.Arguments),
+                ($"{name} receives the script in its own argument form (-- / -e / --command all differ)"));
+        }
+
+        var order = HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh",
+            name => name is "x-terminal-emulator" or "konsole" ? "/usr/bin/" + name : null);
+        Check(order?.Executable == "/usr/bin/x-terminal-emulator",
+            "When several exist the table order wins, and x-terminal-emulator is the Debian alternatives entry, closest to the user's own choice");
+    }
+
+    if (OperatingSystem.IsWindows())
+    {
+        var planned = HostPowerShellInstaller.WingetOnPath();
+        using var planClient = new HttpClient(new FixtureHandler(utf16));
+        var planInstaller = new HostPowerShellInstaller(planClient, new ProcessRunner(_ => { }),
+            new DownloadManager(planClient, _ => { }), root, root);
+        Check(planInstaller.Plan() == (planned ? HostShellMethod.Winget : HostShellMethod.GitHubMsi),
+            "Windows plans winget when it is on PATH and the official MSI when it is not (this host: " + (planned ? "winget present" : "no winget") + ")");
+    }
+
+    // 官方包解析：一切失败进 Problems，不抛异常（离线/限流/被墙是常态），并且**没有摘要就不给 URL** ——
+    // DownloadManager 硬要求 HTTPS+SHA-256，这里绝不能为它开一个"无摘要下载"的口子。
+    using (var hashesOnly = new HttpClient(new FixtureHandler(utf16)))
+    {
+        // 单一夹具：API 请求拿到的也是这份 UTF-16 文本 → JSON 解析失败 → 落回内置版本，
+        // 而 hashes 请求拿到的还是它 → 摘要能解出来。正好把"API 不可用也要能装"这条路径跑通。
+        var package = await HostPowerShellInstaller.ResolveWindowsPackageAsync(hashesOnly, "x64");
+        Check(package.Version == version, "Falls back to the built-in version " + version + " when the GitHub API cannot be reached (same pin as pwshi.sh)");
+        Check(package.Usable && package.MsiUrl!.EndsWith(msiAsset, StringComparison.Ordinal),
+            "The fallback version still arrives with a digest and a URL: " + package.MsiUrl);
+        Check(package.Problems.Count > 0, "Falling back is itself reported, so nobody thinks an outdated pin was the latest release");
+    }
+
+    using (var noDigest = new HttpClient(new FixtureHandler(Encoding.UTF8.GetBytes($$"""{"tag_name":"v9.9.9","assets":[]}"""))))
+    {
+        var package = await HostPowerShellInstaller.ResolveWindowsPackageAsync(noDigest, "x64");
+        Check(package.Version == "9.9.9", "When the API answers, tag_name becomes the version (leading v stripped)");
+        Check(!package.Usable && package.MsiUrl is null && package.Sha256 is null,
+            "No digest means no URL: Hub never installs a package it cannot verify");
+        Check(package.Problems.Count > 0, "The reason lands in Problems, where the UI turns it into one sentence");
+    }
+
+    using (var rateLimited = new HttpClient(new StatusCodeHandler(HttpStatusCode.Forbidden)))
+    {
+        var package = await HostPowerShellInstaller.ResolveWindowsPackageAsync(rateLimited, "x64");
+        Check(!package.Usable && package.Problems.Count > 0,
+            "A 403 from api.github.com (no User-Agent, or rate-limited) goes to Problems instead of throwing");
+    }
+
+    Console.WriteLine($"{count} checks passed. Every host-shell verdict is provable offline; a real install is read-only previewed by --pwsh-release-report.");
+    return;
+}
+
+// ---------------------------------------------------------------------------
+// 只读地把"这台机器上要怎么装"算出来打印一遍：不下载、不提权、不写任何东西。
+// 它需要联网，所以和 --install-tools 一样只在开发机上跑，CI 不跑。
+// ---------------------------------------------------------------------------
+if (args.Contains("--pwsh-release-report"))
+{
+    using var reportClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    var reportRunner = new ProcessRunner(Console.WriteLine);
+    var reportInstaller = new HostPowerShellInstaller(reportClient, reportRunner,
+        new DownloadManager(reportClient, Console.WriteLine), root, root);
+    var reported = HostPowerShell.Probe();
+    Console.WriteLine($"host       : {BuildTargets.Host}/{BuildTargets.HostArch}");
+    Console.WriteLine($"probe      : {reported.State} / {reported.Executable ?? "-"} / {reported.Version ?? "version unconfirmed"}");
+    Console.WriteLine($"plan       : {reportInstaller.Plan()}");
+    Console.WriteLine($"winget     : {(HostPowerShellInstaller.WingetOnPath() ? CommandShells.Resolve("winget") : "not on PATH")}");
+    Console.WriteLine($"arguments  : {string.Join(' ', HostPowerShellInstaller.WingetArguments)}");
+    Console.WriteLine($"bootstrap  : {HostPowerShellInstaller.BootstrapCommand}");
+    if (!OperatingSystem.IsWindows())
+    {
+        var terminal = HostPowerShellInstaller.TerminalLaunch(reportInstaller.ScriptPath);
+        Console.WriteLine($"terminal   : {(terminal is null ? "none found: the UI hands the command above back to you" : string.Join(' ', [terminal.Value.Executable, .. terminal.Value.Arguments]))}");
+        Console.WriteLine("needs sudo   : pwshi.sh calls sudo, which Hub's TTY-less child process cannot answer (see HostPowerShellInstaller)");
+        Console.WriteLine($"{count} checks passed.");
+        return;
+    }
+
+    var resolved = await HostPowerShellInstaller.ResolveWindowsPackageAsync(reportClient, BuildTargets.HostArch, CancellationToken.None);
+    Console.WriteLine($"latest     : {resolved.Version}");
+    Console.WriteLine($"msi        : {resolved.MsiUrl ?? "(none: a package without a digest is never downloaded)"}");
+    Console.WriteLine($"sha256     : {resolved.Sha256 ?? "not resolved"}");
+    foreach (var problem in resolved.Problems) Console.WriteLine($"problem    : {problem}");
+    Console.WriteLine($"elevated   : msiexec /i <msi> /quiet /norestart /log <logs>/pwsh-msi-<utc>.log(one UAC prompt; /log is required because an elevated process has no stdout)");
+    Console.WriteLine($"{count} checks passed. This was read-only: nothing was installed.");
+    return;
+}
+
+// ---------------------------------------------------------------------------
 // 工具版本真源 + 引擎树工具链探测。自带 return、主机无关、不联网、不安装 ——
 // 因此可以在 CI 上对一棵真实引擎树跑。真源是引擎自带 1k/build.profiles，
 // 落点是官方 setup.ps1 的 tools/external。
@@ -2972,6 +3162,14 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
         "Android build maps to axmol -p android and takes its JDK/SDK from the engine tree");
 }
 Console.WriteLine($"{count} checks passed. Real platform builds, device deployment and clean-host acceptance require separate evidence.");
+
+/// <summary>Replies a fixed status to every request: the way to prove a client treats 403/404 as
+/// "no answer, fall back" rather than "throw".</summary>
+sealed class StatusCodeHandler(HttpStatusCode status) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => Task.FromResult(new HttpResponseMessage(status) { RequestMessage = request });
+}
 
 sealed class FixtureHandler(byte[] bytes) : HttpMessageHandler
 {

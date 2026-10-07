@@ -168,6 +168,23 @@ public sealed class ProcessRunner(Action<string> log)
     }
 
     /// <summary>
+    /// Fire-and-forget exec: start something with arguments and never wait for it.
+    /// This is deliberately <b>not</b> <see cref="Open"/>: shell execute is for opening a file or folder with
+    /// its associated application, and on Unix the arguments would go to <c>xdg-open</c>/<c>open</c> rather than
+    /// to the program being launched. A terminal emulator has to be <i>executed</i> with its own argument
+    /// convention (<c>-e</c> / <c>--</c> / <c>--command</c>), which only a direct <c>execve</c> honours.
+    /// Nothing is redirected, so the child keeps a window of its own and the user can answer its prompts
+    /// (a sudo password prompt is exactly the case this exists for).
+    /// </summary>
+    public void Launch(string executable, IEnumerable<string>? arguments = null)
+    {
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
+        if (arguments != null) foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        log($"Launch: {executable} {string.Join(" ", start.ArgumentList.Select(a => System.Text.Json.JsonSerializer.Serialize(a)))}");
+        Process.Start(start)?.Dispose();
+    }
+
+    /// <summary>
     /// Detached launch: equivalent to the user double-clicking the exe in Explorer. Uses <c>UseShellExecute</c>,
     /// no redirection, no hidden window; the child process gets a real console (<c>AllocConsole</c> + VT mode),
     /// so axmol's log colors match a direct double-click. The cost is that stdout/stderr cannot be captured —

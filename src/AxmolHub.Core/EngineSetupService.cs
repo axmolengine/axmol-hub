@@ -45,10 +45,14 @@ public sealed record SetupResult(SetupOutcome Outcome, int ExitCode, string Outp
 /// <summary>
 /// Environment preparation — the only implementation is **running the engine's own <c>setup.ps1</c>**.
 ///
-/// The Hub no longer downloads or installs any toolchain: installation is the responsibility of
+/// The Hub does not download or install any toolchain: installation is the responsibility of
 /// <c>1k/1kiss.ps1</c>, landing in <c>&lt;engine&gt;/tools/external</c>, with version source of truth
 /// <see cref="BuildProfile"/>. All this does is three things: run the command, **classify the outcome
 /// correctly**, and leave the original text for the user.
+///
+/// The one exception sits outside the engine tree and is a precondition of this class rather than part of it:
+/// the host's own PowerShell (<see cref="HostPowerShellInstaller"/>). <c>setup.ps1</c> needs pwsh to exist
+/// before it can do anything, and on Hub's invocation path nothing installs it — see <see cref="RunAsync"/>.
 /// </summary>
 public sealed class EngineSetupService(EngineCommandLine commandLine)
 {
@@ -73,7 +77,23 @@ public sealed class EngineSetupService(EngineCommandLine commandLine)
             return new(SetupOutcome.Failed, 0, "", $"Engine tree has no setup.ps1: {engine.Path}");
         }
 
-        var result = await commandLine.RunSetupAsync(engine, options, cancellation);
+        ProcessResult result;
+        try
+        {
+            result = await commandLine.RunSetupAsync(engine, options, cancellation);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (!OperatingSystem.IsWindows())
+        {
+            // setup.ps1 is a bash/PowerShell polyglot whose header reads
+            // `if ! command -v pwsh; then $scriptdir/1k/pwshi.sh; fi; pwsh setup.ps1` — but Hub starts it as
+            // `pwsh -File Invoke-AxmolSetup.ps1` (EngineCommandLine), so that header never runs here and the
+            // script cannot self-heal. On a Unix host without pwsh the process simply cannot be created, and no
+            // engine text containing "pwshi.sh" is ever printed: the marker-based Classify() below would have
+            // nothing to see. Naming the cause at the only point where it is still observable is what turns
+            // "Failed to start process" into an actionable verdict — the host-shell card installs the fix.
+            return new(SetupOutcome.NeedsPowerShell, ex.NativeErrorCode, "", $"pwsh could not be started for setup.ps1: {ex.Message}");
+        }
+
         var text = result.Output + "\n" + result.Error;
         return new(Classify(result.ExitCode, text), result.ExitCode, result.Output, result.Error);
     }
