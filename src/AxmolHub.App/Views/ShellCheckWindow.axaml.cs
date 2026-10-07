@@ -1394,11 +1394,23 @@ public partial class ShellCheckWindow : Window
             // least able to vouch for itself, so it lands on the tier that has to ask.
             Check(ChatTools.RiskOf("get_projects", null) == ToolRisk.ReadOnly
                   && ChatTools.RiskOf("read_file", null) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("search_text", null) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("list_directory", null) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("find_files", null) == ToolRisk.ReadOnly
                   && ChatTools.RiskOf("file_write", null) == ToolRisk.WorkspaceWrite
                   && ChatTools.RiskOf("run_command", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("set_workspace", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("没登记过的工具", null) == ToolRisk.SystemCommand,
                 "只读查询登记为只读，写文件是工作区写，没听过的工具名按系统命令兜底而不是放行");
+
+            // The tier only matters through the decision table, so the pair is asserted as one chain: a look-around
+            // tool that has to ask in every mode is the bug this catches, and it is invisible at compile time
+            // because registering it in ReadOnlyTools and mis-tiering it in RiskOf both build fine.
+            var looksAsk = false;
+            foreach (var look in new[] { "search_text", "list_directory", "find_files" })
+            foreach (var mode in new[] { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full })
+                looksAsk |= ToolApprovalPolicy.RequiresApproval(mode, ChatTools.RiskOf(look, null));
+            Check(!looksAsk, "检索三件套在三个审批档位上都不弹卡，探索陌生仓库不再一路点卡片");
             Check(ChatTools.RiskOf("memory_write", """{"scope":"project"}""") == ToolRisk.AssistantNote
                   && ChatTools.RiskOf("memory_write", """{"scope":"global"}""") == ToolRisk.WorkspaceWrite
                   && ChatTools.RiskOf("memory_write", null) == ToolRisk.WorkspaceWrite,
@@ -1412,13 +1424,14 @@ public partial class ShellCheckWindow : Window
                 new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
             var schema = string.Join("\n", agentTools.OfType<Microsoft.Extensions.AI.AIFunction>()
                 .Select(tool => tool.JsonSchema.GetRawText()));
-            Check(agentTools.Count == 12
+            Check(agentTools.Count == 15
                   && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Select(tool => tool.Name)
                       .All(name => name.Contains('_', StringComparison.Ordinal))
                   && schema.Contains("old_string") && schema.Contains("new_string")
                   && schema.Contains("replace_all") && schema.Contains("timeout_seconds")
-                  && !schema.Contains("oldString"),
-                "Agent 档注册十二个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
+                  && schema.Contains("ignore_case") && schema.Contains("max_matches")
+                  && !schema.Contains("oldString") && !schema.Contains("ignoreCase"),
+                "Agent 档注册十五个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
                 + agentTools.Count + " 个）");
             Check(ChatTools.CreateFor(ChatModes.Ask, ChatToolScope.Empty).Count == 0
                   && ChatTools.CreateFor(ChatModes.Plan, new ChatToolScope(

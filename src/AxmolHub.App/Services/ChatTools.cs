@@ -38,6 +38,7 @@ internal static class ChatTools
     {
         "get_projects" or "get_engines" or "get_toolchain_status" or "read_file" or "memory_read"
             or "list_sessions" or "read_session"
+            or "search_text" or "list_directory" or "find_files"
             => ToolRisk.ReadOnly,
         "file_write" or "send_to_session" => ToolRisk.WorkspaceWrite,
         "memory_write" => ScopeOf(argumentsJson) == MemoryScope.Global
@@ -103,6 +104,9 @@ internal static class ChatTools
                 Options("get_toolchain_status",
                     "Read the latest already-known toolchain detection status; does not run probes or change anything.")),
             AIFunctionFactory.Create(tools.ReadFile, Options("read_file")),
+            AIFunctionFactory.Create(tools.SearchText, Options("search_text")),
+            AIFunctionFactory.Create(tools.ListDirectory, Options("list_directory")),
+            AIFunctionFactory.Create(tools.FindFiles, Options("find_files")),
             AIFunctionFactory.Create(tools.MemoryRead, Options("memory_read")),
             AIFunctionFactory.Create(tools.ListSessions, Options("list_sessions")),
             AIFunctionFactory.Create(tools.ReadSession, Options("read_session")),

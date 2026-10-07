@@ -27,6 +27,11 @@ public static class ToolPreviews
             "memory_write" => MemoryPreview(arguments),
             "memory_read" => $"memory_read · {Text(arguments, "scope")} · {Text(arguments, "name")}",
             "read_file" => $"read_file · {Text(arguments, "path")}",
+            "search_text" => $"search_text · {Text(arguments, "pattern")} · "
+                             + $"{(Text(arguments, "glob") is { Length: > 0 } glob ? glob : "any text file")} · in "
+                             + $"{DirectoryOf(arguments)}",
+            "list_directory" => $"list_directory · {DirectoryOf(arguments)} · depth {Number(arguments, "depth")}",
+            "find_files" => $"find_files · {Text(arguments, "glob")} · in {DirectoryOf(arguments)}",
             _ => name,
         };
     }
@@ -127,4 +132,14 @@ public static class ToolPreviews
         => arguments.TryGetValue(name, out var value)
            && (value.ValueKind == JsonValueKind.True
                || (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed) && parsed));
+
+    /// <summary>The directory a read-only tool was pointed at. An empty path means the whole workspace, and
+    /// naming that fact is what keeps the line from reading as a blank.</summary>
+    private static string DirectoryOf(IReadOnlyDictionary<string, JsonElement> arguments)
+        => Text(arguments, "path") is { Length: > 0 } path ? path : "(the whole workspace)";
+
+    private static string Number(IReadOnlyDictionary<string, JsonElement> arguments, string name)
+        => arguments.TryGetValue(name, out var value) && value.TryGetInt32(out var number)
+            ? number.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "(default)";
 }

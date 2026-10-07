@@ -1069,13 +1069,39 @@ if (args.Contains("--check-ai-workspace"))
             throw new Exception($"'{escaping}' was answered with {verdict} instead of EscapesWorkspace.");
     }
 
-    // Protected roots are refused identically by both verbs: the one rule no approval mode relaxes.
+    // Protected roots are refused identically by every verb that reads: the one rule no approval mode relaxes.
     foreach (var path in new[] { ".git/config", "hubdata/state.json", "engine-2.11.5/core/axmol.h" })
     {
         if (WorkspacePaths.ResolveWrite(workspace, path, guards).Verdict != WorkspacePathVerdict.ProtectedRoot
             || WorkspacePaths.ResolveRead(workspace, path, guards).Verdict != WorkspacePathVerdict.ProtectedRoot)
             throw new Exception($"'{path}' was not refused as a protected root by both verbs.");
     }
+
+    // A directory verb exists for the read-only look-around tools, and it carries the same rule: listing is
+    // reading. The workspace root itself being protected is refused too, because a search started there would
+    // walk out of the sandbox one file at a time.
+    if (WorkspacePaths.ResolveDirectory(workspace, "hubdata", guards).Verdict != WorkspacePathVerdict.ProtectedRoot
+        || WorkspacePaths.ResolveDirectory(Path.Combine(workspace, "hubdata"), "sub", guards)
+            .Verdict != WorkspacePathVerdict.ProtectedRoot
+        || WorkspacePaths.ResolveDirectory(Path.Combine(workspace, "engine-2.11.5"), "", guards)
+            .Verdict != WorkspacePathVerdict.ProtectedRoot)
+        throw new Exception("A protected directory was walkable by the read-only tools.");
+    foreach (var escaping in new[] { "../outside", "src/../../outside", "/etc", "C:\\Windows" })
+        if (WorkspacePaths.ResolveDirectory(workspace, escaping, guards).Verdict != WorkspacePathVerdict.EscapesWorkspace)
+            throw new Exception($"'{escaping}' was not refused as escaping the workspace by the directory verb.");
+    // An empty path is not a traversal bug, it is the question "what is in my project" — and both spellings of
+    // the root have to answer it the same way, or the model learns to probe.
+    if (!WorkspacePaths.ResolveDirectory(workspace, "", guards).IsAllowed
+        || !WorkspacePaths.ResolveDirectory(workspace, ".", guards).IsAllowed
+        || !WorkspacePaths.ResolveDirectory(workspace, "./", guards).IsAllowed)
+        throw new Exception("The workspace root itself was refused as a directory to list.");
+    if (WorkspacePaths.ResolveDirectory(workspace, "src/hello.cpp", guards).Verdict != WorkspacePathVerdict.NotADirectory
+        || WorkspacePaths.ResolveDirectory(workspace, "nowhere", guards).Verdict != WorkspacePathVerdict.NotADirectory)
+        throw new Exception("A file, or nothing at all, was accepted as a directory to search.");
+    if (WorkspacePaths.ResolveDirectory(null, "src", guards).Verdict != WorkspacePathVerdict.NoWorkspace
+        || WorkspacePaths.ResolveDirectory(Path.Combine(guardRoot, "nope"), "src", guards)
+            .Verdict != WorkspacePathVerdict.MissingWorkspace)
+        throw new Exception("The directory verb did not answer a missing workspace in words.");
 
     // The allowlist is a WRITE rule: reading a build log is legitimate, writing one is not.
     File.WriteAllText(Path.Combine(workspace, "src", "build.log"), "error: nope\n");
@@ -1110,7 +1136,7 @@ if (args.Contains("--check-ai-workspace"))
              {
                  WorkspacePathVerdict.NoWorkspace, WorkspacePathVerdict.EscapesWorkspace,
                  WorkspacePathVerdict.ProtectedRoot, WorkspacePathVerdict.ReparsePoint,
-                 WorkspacePathVerdict.ExtensionNotAllowed,
+                 WorkspacePathVerdict.ExtensionNotAllowed, WorkspacePathVerdict.NotADirectory,
              })
     {
         var sentence = WorkspacePaths.ResultFor(verdict, "x");
@@ -1435,6 +1461,78 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception("The memory tools accepted a bad scope, a traversing name or a missing workspace.");
     Console.WriteLine("PASS: the memory tools write both scopes, append, and refuse a bad name or scope.");
 
+    // ── 只读的四处查看：同一套沙箱，但不经 shell、不要审批 ──
+    // search_text / list_directory / find_files exist so that looking around costs the model nothing. Without
+    // them every `ls` and every grep is a run_command — and run_command asks for a person's approval in the
+    // ask and auto tiers, which turns exploration into a stack of cards.
+    var probe = Path.Combine(workspace, "probe");
+    Directory.CreateDirectory(Path.Combine(probe, "deep", "deeper"));
+    Directory.CreateDirectory(Path.Combine(probe, "build"));
+    File.WriteAllText(Path.Combine(probe, "app.cpp"), "int main()\n{\n    return App::go();\n}\n");
+    File.WriteAllText(Path.Combine(probe, "deep", "note.md"), "see App::go in app.cpp\n");
+    File.WriteAllText(Path.Combine(probe, "deep", "deeper", "other.md"), "two directories down\n");
+    File.WriteAllText(Path.Combine(probe, "build", "app.cpp"), "App::go in a build directory\n");
+    File.WriteAllText(Path.Combine(probe, "raw.bin"), "App::go is not text\n");
+
+    var search = tools.SearchText("App::go", path: "probe");
+    if (!search.Contains("probe/app.cpp:3:") || !search.Contains("probe/deep/note.md:1:"))
+        throw new Exception($"search_text missed a line or numbered it wrong:{Environment.NewLine}{search}");
+    if (search.Contains("build/app.cpp", StringComparison.Ordinal))
+        throw new Exception("search_text walked into a build directory.");
+    if (search.Contains("raw.bin", StringComparison.Ordinal))
+        throw new Exception("search_text opened a file the reader would refuse as binary.");
+    if (!search.Contains("under 'probe/'") || !search.Contains("2 match(es) in 2 file(s)"))
+        throw new Exception($"search_text did not report its scope or its counts:{Environment.NewLine}{search}");
+    if (!tools.SearchText("app::GO", path: "probe").Contains("No match", StringComparison.Ordinal)
+        || !tools.SearchText("app::GO", path: "probe", ignore_case: true).Contains("probe/app.cpp:3:"))
+        throw new Exception("ignore_case did not do what its name says.");
+    var cppOnly = tools.SearchText("App::go", glob: "*.cpp", path: "probe");
+    if (!cppOnly.Contains("probe/app.cpp:3:") || cppOnly.Contains("note.md:", StringComparison.Ordinal))
+        throw new Exception($"A name glob did not filter by name:{Environment.NewLine}{cppOnly}");
+    var deepOnly = tools.SearchText("App::go", glob: "deep/*.md", path: "probe");
+    if (!deepOnly.Contains("probe/deep/note.md:1:") || deepOnly.Contains("probe/app.cpp:", StringComparison.Ordinal))
+        throw new Exception($"A path glob did not anchor to that directory:{Environment.NewLine}{deepOnly}");
+    var crossed = tools.SearchText("App::go", glob: "**/*.md", path: "probe");
+    if (!crossed.Contains("probe/deep/note.md:1:"))
+        throw new Exception($"** did not cross a directory:{Environment.NewLine}{crossed}");
+    var capped = tools.SearchText("App::go", path: "probe", max_matches: 1);
+    if (!capped.Contains("cut at 1 matches"))
+        throw new Exception($"A capped search did not say it was cut:{Environment.NewLine}{capped}");
+    if (!tools.SearchText("(", path: "probe").Contains("does not compile", StringComparison.Ordinal)
+        || !tools.SearchText("", path: "probe").Contains("needs a pattern", StringComparison.Ordinal))
+        throw new Exception("search_text took a pattern it cannot compile, or none at all, without refusing.");
+    foreach (var refusal in new[]
+             {
+                 homeless.SearchText("x"), tools.SearchText("x", path: "../outside"),
+                 homeless.ListDirectory(), tools.ListDirectory(path: "probe/app.cpp"),
+                 homeless.FindFiles("*.cpp"), tools.FindFiles("*.cpp", path: "../outside"),
+             })
+        if (!refusal.Contains("Refused", StringComparison.Ordinal)
+            && !refusal.Contains("no workspace directory", StringComparison.Ordinal))
+            throw new Exception($"A read-only lookup did not refuse in words the model can act on:{Environment.NewLine}{refusal}");
+
+    var listed = tools.ListDirectory("probe");
+    if (!listed.Contains("probe/deep/") || !listed.Contains("probe/app.cpp")
+        || listed.Contains("note.md", StringComparison.Ordinal))
+        throw new Exception($"list_directory at depth 1 leaked a deeper file, missed a directory, or printed a path "
+                            + $"read_file cannot take:{Environment.NewLine}{listed}");
+    if (!listed.Contains("1 build/vendored dir(s) not entered"))
+        throw new Exception("list_directory entered a build directory silently.");
+    if (!tools.ListDirectory("probe", 2).Contains("probe/deep/note.md", StringComparison.Ordinal))
+        throw new Exception("list_directory at depth 2 did not go one level down with a usable path.");
+
+    var names = tools.FindFiles("*.cpp", "probe");
+    if (!names.Contains("probe/app.cpp", StringComparison.Ordinal)
+        || names.Contains("build/app.cpp", StringComparison.Ordinal))
+        throw new Exception($"find_files listed a build copy or missed the real file:{Environment.NewLine}{names}");
+    var markdown = tools.FindFiles("**/*.md", "probe");
+    if (!markdown.Contains("probe/deep/note.md", StringComparison.Ordinal)
+        || !markdown.Contains("probe/deep/deeper/other.md", StringComparison.Ordinal))
+        throw new Exception($"** did not cross more than one directory:{Environment.NewLine}{markdown}");
+    if (!tools.FindFiles("nothing-here-*.xyz", "probe").Contains("No file matched", StringComparison.Ordinal))
+        throw new Exception("find_files found nothing and said something else.");
+    Console.WriteLine("PASS: search_text, list_directory and find_files look around without a shell and refuse in sentences.");
+
     // ── the frozen card text for every tool ──
     string Preview(string name, string json)
         => ToolPreviews.PreviewFor(name, json, scope, [workspace]);
@@ -1462,6 +1560,15 @@ if (args.Contains("--check-ai-tools"))
         || Preview("memory_read", """{"scope":"global","name":"MEMORY.md"}""") != "memory_read · global · MEMORY.md"
         || Preview("没登记过的工具", "{}") != "没登记过的工具")
         throw new Exception("A read-only or unknown call did not preview as itself.");
+    if (!Preview("search_text", """{"pattern":"App","glob":"*.cpp","path":"src"}""")
+            .Contains("search_text · App · *.cpp · in src", StringComparison.Ordinal)
+        || !Preview("search_text", """{"pattern":"App"}""")
+            .Contains("any text file · in (the whole workspace)", StringComparison.Ordinal)
+        || !Preview("list_directory", """{"path":"src","depth":2}""")
+            .Contains("list_directory · src · depth 2", StringComparison.Ordinal)
+        || !Preview("find_files", """{"glob":"*.h"}""")
+            .Contains("find_files · *.h · in (the whole workspace)", StringComparison.Ordinal))
+        throw new Exception("A read-only lookup did not say what it looks for and where.");
     if (ToolPreviews.PreviewFor("file_write", "{ not json", scope) is not { Length: > 0 })
         throw new Exception("Arguments that do not parse produced no card text at all.");
     Console.WriteLine("PASS: every tool previews what approving it would actually do.");
@@ -1476,14 +1583,18 @@ if (args.Contains("--check-ai-tools"))
                  ("read_file", (Delegate)tools.ReadFile), ("file_write", tools.FileWrite),
                  ("run_command", tools.RunCommand), ("set_workspace", tools.SetWorkspace),
                  ("memory_read", tools.MemoryRead), ("memory_write", tools.MemoryWrite),
+                 ("search_text", tools.SearchText), ("list_directory", tools.ListDirectory),
+                 ("find_files", tools.FindFiles),
              })
         bound[wireName] = AIFunctionFactory.Create(body, new AIFunctionFactoryOptions { Name = wireName });
 
     var schema = string.Join("\n", bound.Values.Select(function => function.JsonSchema.GetRawText()));
-    foreach (var expected in new[] { "old_string", "new_string", "replace_all", "timeout_seconds" })
+    foreach (var expected in new[]
+             { "old_string", "new_string", "replace_all", "timeout_seconds", "ignore_case", "max_matches" })
         if (!schema.Contains(expected, StringComparison.Ordinal))
             throw new Exception($"The wire schema does not advertise '{expected}'.");
-    foreach (var leaked in new[] { "oldString", "newString", "replaceAll", "timeoutSeconds" })
+    foreach (var leaked in new[]
+             { "oldString", "newString", "replaceAll", "timeoutSeconds", "ignoreCase", "maxMatches" })
         if (schema.Contains(leaked, StringComparison.Ordinal))
             throw new Exception($"The wire schema advertises the C# spelling '{leaked}' instead of snake_case.");
 
@@ -1495,7 +1606,13 @@ if (args.Contains("--check-ai-tools"))
     }));
     if (!Convert.ToString(boundEdit)!.Contains("Edited") || File.ReadAllText(Path.Combine(workspace, "src", "twice.txt")) != "single\nsingle\n")
         throw new Exception($"A call using the schema's own parameter names did not bind ({boundEdit}).");
-    Console.WriteLine("PASS: all six tools bind, and the schema names are the names a call is accepted by.");
+    var boundSearch = await bound["search_text"].InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+    {
+        ["pattern"] = "App::go", ["path"] = "probe", ["ignore_case"] = true, ["max_matches"] = 5,
+    }));
+    if (!Convert.ToString(boundSearch)!.Contains("probe/app.cpp:3:", StringComparison.Ordinal))
+        throw new Exception($"search_text did not bind the parameter names its schema advertises ({boundSearch}).");
+    Console.WriteLine("PASS: all nine tools bind, and the schema names are the names a call is accepted by.");
 
     log.Write("self-check finished");
     Directory.Delete(toolRoot, recursive: true);

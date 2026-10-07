@@ -13,6 +13,7 @@ public enum WorkspacePathVerdict
     ReparsePoint,
     ExtensionNotAllowed,
     NotAFile,
+    NotADirectory,
     AlreadyExists,
 }
 
@@ -85,6 +86,28 @@ public static class WorkspacePaths
         if (Directory.Exists(resolved.Full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotAFile, resolved.Relative);
         if (!IsWritableText(Path.GetFileName(resolved.Full)))
             return WorkspacePath.Refuse(WorkspacePathVerdict.ExtensionNotAllowed, resolved.Relative);
+        return resolved;
+    }
+
+    /// <summary>A directory inside the sandbox, for the read-only listing, search and glob tools. An empty path or
+    /// <c>"."</c> means the workspace itself: those tools start where the user pointed the session, and making the
+    /// model name the root again would only produce a refusal it cannot act on.</summary>
+    public static WorkspacePath ResolveDirectory(string? root, string? relative, WorkspaceGuards guards)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return WorkspacePath.Refuse(WorkspacePathVerdict.NoWorkspace, relative ?? "");
+        if (!Directory.Exists(root)) return WorkspacePath.Refuse(WorkspacePathVerdict.MissingWorkspace, relative ?? "");
+
+        var workspaceRoot = Path.GetFullPath(root);
+        if (IsProtected(workspaceRoot, guards)) return WorkspacePath.Refuse(WorkspacePathVerdict.ProtectedRoot, workspaceRoot);
+
+        if (string.IsNullOrWhiteSpace(relative) || relative is "." or "./")
+            return ContainsReparsePoint(workspaceRoot, workspaceRoot)
+                ? WorkspacePath.Refuse(WorkspacePathVerdict.ReparsePoint, workspaceRoot)
+                : new WorkspacePath(WorkspacePathVerdict.Allowed, workspaceRoot, "");
+
+        var resolved = Resolve(root, relative, guards);
+        if (!resolved.IsAllowed) return resolved;
+        if (!Directory.Exists(resolved.Full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotADirectory, resolved.Relative);
         return resolved;
     }
 
@@ -186,6 +209,9 @@ public static class WorkspacePaths
         WorkspacePathVerdict.NotAFile =>
             $"Refused: '{detail}' is not a readable file (it is missing or a directory). List the directory or "
             + "ask the user for the correct path; do not guess another spelling.",
+        WorkspacePathVerdict.NotADirectory =>
+            $"Refused: '{detail}' is not a directory inside the session workspace (it is missing, or it is a "
+            + "file). Call list_directory on its parent to see what is there; do not retry another spelling of it.",
         WorkspacePathVerdict.AlreadyExists =>
             $"Refused: '{detail}' already exists, so it cannot be created with an empty old_string. Call "
             + "read_file first and edit it with the exact text to replace. Do not retry an empty old_string.",

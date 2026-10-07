@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace AxmolHub.Core;
 
@@ -74,6 +75,23 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
     /// and the middle is dropped. The full output is in Hub's log either way, and the result says so.</summary>
     public const int CommandHeadCharacters = 2048;
     public const int CommandTailCharacters = 6144;
+
+    /// <summary>How many files a search opens before it stops and says so. A walk bounded by files found would
+    /// still read all of a tree to report nothing; this is the bound that actually costs anything.</summary>
+    public const int MaxScannedFiles = 4000;
+    public const int DefaultSearchMatches = 200;
+    public const int MaxSearchMatches = 500;
+
+    /// <summary>One minified bundle line can be a megabyte. Kept short so a single hit cannot eat the result.</summary>
+    public const int MaxSearchLineCharacters = 200;
+
+    /// <summary>Bigger than this is generated or vendored, not where a source question lives.</summary>
+    public const long MaxSearchFileBytes = 1024 * 1024;
+
+    public const int DefaultListDepth = 1;
+    public const int MaxListDepth = 4;
+    public const int MaxListedEntries = 300;
+    public const int MaxFoundFiles = 500;
 
     [Description("Read a text file from the session workspace. Lines come back without numbering so they can be "
                  + "copied verbatim into file_write.")]
@@ -437,6 +455,344 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
         return byTitle.Count == 1
             ? (byTitle[0].Id, byTitle[0].Title, byTitle[0].PendingApprovals > 0)
             : null;
+    }
+
+    [Description("Find text inside the session workspace with a regular expression and get back "
+                 + "path:line: content, ready to open with read_file at that offset. This is how to look around a "
+                 + "project without running a shell command.")]
+    public string SearchText(
+        [Description("Regular expression matched per line. Characters that are not operators must be escaped.")]
+        string pattern,
+        [Description("Only search files this glob names: \"*.cpp\" matches that name at any depth, \"include/*.h\" "
+                     + "matches one directory deep. Patterns are matched inside 'path', not from the workspace root. "
+                     + "Empty searches every text file.")]
+        string glob = "",
+        [Description("Directory to search, relative to the workspace. Empty or \".\" means the whole workspace.")]
+        string path = "",
+        [Description("Match letters of either case.")] bool ignore_case = false,
+        [Description("Stop after this many matches, up to 500.")] int max_matches = DefaultSearchMatches)
+    {
+        var directory = WorkspacePaths.ResolveDirectory(context.WorkspaceRoot, path, context.Guards);
+        if (!directory.IsAllowed) return Refusal(directory.Verdict, directory.Relative, path);
+        if (string.IsNullOrWhiteSpace(pattern))
+            return "Refused: search_text needs a pattern. Say what to look for, or call list_directory to see the "
+                   + "shape of the project. Do not retry it empty.";
+        if (GlobMatcher(glob) is not { } wants)
+            return $"Refused: '{glob}' is not a usable glob. Use a name pattern like \"*.cpp\", a path one like "
+                   + "\"src/*.h\", or leave it empty to search every text file. Do not retry another spelling.";
+
+        Regex regex;
+        try
+        {
+            regex = new Regex(pattern, RegexOptions.CultureInvariant
+                                       | (ignore_case ? RegexOptions.IgnoreCase : RegexOptions.None));
+        }
+        catch (ArgumentException ex)
+        {
+            return $"Refused: '{pattern}' does not compile as a regular expression ({ex.Message}). Search for a "
+                   + "literal word instead, or simplify it. Do not retry another spelling of the same pattern.";
+        }
+
+        var cap = Math.Clamp(max_matches, 1, MaxSearchMatches);
+        var hits = new List<string>();
+        var matched = new HashSet<string>(StringComparer.Ordinal);
+        var searched = 0;
+        var walked = 0;
+        var unreadable = 0;
+
+        foreach (var file in WalkFiles(directory.Full, MaxScannedFiles))
+        {
+            walked++;
+            // The glob filters inside the directory that was asked for; the path printed is the one read_file
+            // takes, which is the workspace-relative one. Those differ as soon as path is not the root.
+            var within = RelativeOf(directory.Full, file);
+            if (!wants(within) || !WorkspacePaths.IsTextFile(Path.GetFileName(file))) continue;
+            searched++;
+            if (new FileInfo(file).Length > MaxSearchFileBytes || ReadAll(file) is not { } text)
+            {
+                unreadable++;
+                continue;
+            }
+
+            var shown = WorkspaceRelativeOf(directory, file);
+            var lines = SplitLines(text);
+            for (var line = 0; line < lines.Count; line++)
+            {
+                if (!regex.IsMatch(lines[line])) continue;
+                hits.Add($"{shown}:{line + 1}: {Clipped(lines[line])}");
+                matched.Add(shown);
+                if (hits.Count >= cap) break;
+            }
+
+            if (hits.Count >= cap) break;
+        }
+
+        var scope = $"{(string.IsNullOrWhiteSpace(glob) ? "any text file" : $"files matching {glob}")}"
+                    + $" under {LabelOf(directory)}";
+        if (hits.Count == 0)
+            return $"search_text · {pattern} · {scope}\nNo match in the {searched} file(s) searched."
+                   + (unreadable > 0 ? $" {unreadable} file(s) were too large or not UTF-8 text." : "")
+                   + (walked >= MaxScannedFiles ? $" The walk stopped at {MaxScannedFiles} files." : "")
+                   + " Try a shorter pattern, or widen path. Do not retry this one unchanged.";
+
+        var builder = new StringBuilder($"search_text · {pattern} · {scope}\n")
+            .AppendJoin('\n', hits)
+            .Append($"\n{hits.Count} match(es) in {matched.Count} file(s) of the {searched} searched.");
+        if (unreadable > 0) builder.Append($" {unreadable} file(s) were skipped as too large or not UTF-8 text.");
+        if (hits.Count >= cap)
+            builder.Append($" The answer was cut at {cap} matches — narrow with glob or path, do not ask again the same way.");
+        else if (walked >= MaxScannedFiles)
+            builder.Append($" The walk hit its {MaxScannedFiles}-file limit, so a deeper directory may hold more.");
+        return builder.ToString();
+    }
+
+    [Description("List a directory in the session workspace — subdirectories first, then files with their size — "
+                 + "so the shape of a project is visible without running a shell command.")]
+    public string ListDirectory(
+        [Description("Directory to list, relative to the workspace. Empty or \".\" means the workspace root.")]
+        string path = "",
+        [Description("How many levels to include, 1 to 4. Depth costs output, so ask for one and repeat.")]
+        int depth = DefaultListDepth)
+    {
+        var directory = WorkspacePaths.ResolveDirectory(context.WorkspaceRoot, path, context.Guards);
+        if (!directory.IsAllowed) return Refusal(directory.Verdict, directory.Relative, path);
+
+        var levels = Math.Clamp(depth, 1, MaxListDepth);
+        var builder = new StringBuilder();
+        var shown = 0;
+        var dirs = 0;
+        var files = 0;
+        var skipped = 0;
+        var truncated = false;
+        // Flat workspace-relative paths, not an indented tree: the point of listing is to name something the next
+        // call can open, and "  note.md" under a header is a path no tool takes.
+        var fromRoot = directory.Relative.Length == 0
+            ? ""
+            : directory.Relative.Replace(Path.DirectorySeparatorChar, '/') + "/";
+
+        void Walk(string folder, string prefix, int level)
+        {
+            foreach (var child in DirectoriesOf(folder))
+            {
+                if (IsExcluded(child)) { skipped++; continue; }
+                if (shown >= MaxListedEntries) { truncated = true; return; }
+                var name = prefix + Path.GetFileName(child);
+                dirs++;
+                shown++;
+                builder.Append('\n').Append(name).Append('/');
+                if (level < levels) Walk(child, name + "/", level + 1);
+                if (truncated) return;
+            }
+
+            foreach (var child in FilesOf(folder))
+            {
+                if (shown >= MaxListedEntries) { truncated = true; return; }
+                files++;
+                shown++;
+                builder.Append('\n').Append(prefix).Append(Path.GetFileName(child))
+                    .Append("  ").Append(SizeOf(child));
+            }
+        }
+
+        Walk(directory.Full, fromRoot, 1);
+        var head = $"list_directory · {LabelOf(directory)} · depth {levels} · {dirs} dir(s), {files} file(s)";
+        if (truncated) head += $" (cut at {MaxListedEntries} entries)";
+        if (skipped > 0) head += $" · {skipped} build/vendored dir(s) not entered";
+        return builder.Length == 0 ? head + "\n(that directory is empty)" : head + builder;
+    }
+
+    [Description("Find files by glob and return their paths without reading them. Use this when the name is known "
+                 + "but the directory is not.")]
+    public string FindFiles(
+        [Description("Glob to match: \"*.cpp\", \"CMakeLists.txt\", \"settings*.json\". A glob with no '/' matches "
+                     + "the file name at any depth; one with '/' matches inside 'path'.")] string glob,
+        [Description("Directory to search from, relative to the workspace. Empty or \".\" means the whole workspace.")]
+        string path = "")
+    {
+        var directory = WorkspacePaths.ResolveDirectory(context.WorkspaceRoot, path, context.Guards);
+        if (!directory.IsAllowed) return Refusal(directory.Verdict, directory.Relative, path);
+        if (GlobMatcher(glob) is not { } wants)
+            return $"Refused: '{glob}' is not a usable glob. Use a name pattern like \"*.cpp\", or a path one like "
+                   + "\"src/*.h\". Do not retry another spelling.";
+
+        var found = new List<string>();
+        var walked = 0;
+        foreach (var file in WalkFiles(directory.Full, MaxScannedFiles))
+        {
+            walked++;
+            var within = RelativeOf(directory.Full, file);
+            if (wants(within)) found.Add(WorkspaceRelativeOf(directory, file));
+            if (found.Count >= MaxFoundFiles) break;
+        }
+
+        if (found.Count == 0)
+            return $"find_files · {glob} · under {LabelOf(directory)}\nNo file matched in the {walked} file(s) "
+                   + "walked. Try the name without its extension, or call list_directory to see what is there.";
+
+        var builder = new StringBuilder($"find_files · {glob} · under {LabelOf(directory)}\n")
+            .AppendJoin('\n', found)
+            .Append($"\n{found.Count} file(s).");
+        if (found.Count >= MaxFoundFiles) builder.Append(" Cut at the limit — narrow with path.");
+        return builder.ToString();
+    }
+
+    /// <summary>Builds a matcher for one glob, or null when the glob is empty (no filter) or cannot be used.
+    /// A glob with no '/' matches the file name at any depth, because that is what a model means by
+    /// <c>"*.cpp"</c>; one containing '/' matches the workspace-relative path, where <c>**</c> crosses directories
+    /// and <c>*</c> does not. Translated to one regex rather than handed to a framework matcher so the rule fits
+    /// in this method and is assertable from the command line.</summary>
+    private static Func<string, bool>? GlobMatcher(string? glob)
+    {
+        if (string.IsNullOrWhiteSpace(glob)) return _ => true;
+        var wanted = glob.Replace('\\', '/');
+        var byName = !wanted.Contains('/', StringComparison.Ordinal);
+        var builder = new StringBuilder("^");
+        for (var index = 0; index < wanted.Length; index++)
+        {
+            var c = wanted[index];
+            if (c == '*')
+            {
+                var deep = index + 1 < wanted.Length && wanted[index + 1] == '*';
+                if (!deep) { builder.Append("[^/]*"); continue; }
+                index++;
+                // "**/" must also match nothing, or "**/*.h" would never find a file at the top of the tree.
+                if (index + 1 < wanted.Length && wanted[index + 1] == '/')
+                {
+                    builder.Append("(?:.*/)?");
+                    index++;
+                }
+                else builder.Append(".*");
+                continue;
+            }
+
+            if (c == '?') { builder.Append("[^/]"); continue; }
+            if (".+^$()[]{}|=&#~@".Contains(c, StringComparison.Ordinal)) builder.Append('\\');
+            builder.Append(c);
+        }
+
+        builder.Append('$');
+        try
+        {
+            var regex = new Regex(builder.ToString(), RegexOptions.CultureInvariant);
+            return byName
+                ? relative => regex.IsMatch(Path.GetFileName(relative))
+                : relative => regex.IsMatch(relative);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Every file under a directory, up to <paramref name="limit"/>, sorted so one query always returns
+    /// the same order, shallowest first — a question about a project is usually about its own files, not about
+    /// whatever it pulled in. Build and vendored directories are not entered and a link is not followed: an engine
+    /// tree is full of both, and walking them would spend the limit on other people's code.</summary>
+    private static IEnumerable<string> WalkFiles(string root, int limit)
+    {
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
+        var yielded = 0;
+        while (pending.Count > 0 && yielded < limit)
+        {
+            var folder = pending.Dequeue();
+            foreach (var child in DirectoriesOf(folder))
+            {
+                if (IsExcluded(child)) continue;
+                pending.Enqueue(child);
+            }
+
+            foreach (var file in FilesOf(folder))
+            {
+                if (++yielded > limit) yield break;
+                yield return file;
+            }
+        }
+    }
+
+    private static List<string> DirectoriesOf(string folder)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(folder)
+                .Where(child => !IsLink(child))
+                .OrderBy(child => child, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static List<string> FilesOf(string folder)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(folder)
+                .Where(child => !IsLink(child))
+                .OrderBy(child => child, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A link is not followed and not listed: the read guard resolves ancestors, so a contained walk
+    /// that stepped through one would be reporting files outside the sandbox the user chose. One unreadable
+    /// attribute is that entry's problem, not a reason to drop the whole directory.</summary>
+    private static bool IsLink(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsExcluded(string folder)
+        => WorkspacePaths.IsExcludedDirectory(Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar)));
+
+    private static string SizeOf(string file)
+    {
+        try
+        {
+            var bytes = new FileInfo(file).Length;
+            return bytes < 1024 ? $"{bytes} B" : $"{bytes / 1024.0:0.#} KiB";
+        }
+        catch (IOException)
+        {
+            return "?";
+        }
+    }
+
+    private static string RelativeOf(string root, string full)
+        => Path.GetRelativePath(root, full).Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>A found file as the next call needs it. read_file resolves against the workspace root, so a scoped
+    /// search still has to print <c>probe/app.cpp</c>: the bare <c>app.cpp</c> is true inside the directory that
+    /// was searched and a dead end everywhere else.</summary>
+    private static string WorkspaceRelativeOf(WorkspacePath directory, string file)
+    {
+        var inside = RelativeOf(directory.Full, file);
+        return directory.Relative.Length == 0
+            ? inside
+            : directory.Relative.Replace(Path.DirectorySeparatorChar, '/') + "/" + inside;
+    }
+
+    private static string LabelOf(WorkspacePath directory)
+        => directory.Relative.Length > 0 ? $"'{directory.Relative}/'" : "the workspace root";
+
+    private static string Clipped(string line)
+    {
+        var text = line.Trim();
+        return text.Length <= MaxSearchLineCharacters ? text
+            : text[..MaxSearchLineCharacters] + "…";
     }
 
     private static bool TryParseScope(string? value, out MemoryScope scope)
