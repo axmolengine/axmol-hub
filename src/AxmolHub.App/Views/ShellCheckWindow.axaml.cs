@@ -1897,23 +1897,25 @@ public partial class ShellCheckWindow : Window
 
             panel.AddImageForCheck(fake);
             Check(panel.PendingPictureCountForCheck == 1
-                  && panel.LastNoticeTextForCheck.Contains("PNG", StringComparison.Ordinal),
-                "把文本改名成 .png 递进来按文件头拒掉，并说清能收哪几种（提示：" + panel.LastNoticeTextForCheck + "）");
+                  && panel.LastNoticeTextForCheck?.Contains("PNG", StringComparison.Ordinal) == true,
+                "把文本改名成 .png 递进来按文件头拒掉，并说清能收哪几种（提示："
+                + (panel.LastNoticeTextForCheck ?? "无") + "）");
 
             // Oversized is refused from the file's length, so this also proves the order: reading first would have
             // answered "not an image" to a text file of the same size.
             panel.AddImageForCheck(huge);
             Check(panel.PendingPictureCountForCheck == 1
-                  && panel.LastNoticeTextForCheck.Contains("MiB", StringComparison.Ordinal),
-                "超过单张上限的文件先按大小被拒，而不是读进内存以后才发现（提示：" + panel.LastNoticeTextForCheck + "）");
+                  && panel.LastNoticeTextForCheck?.Contains("MiB", StringComparison.Ordinal) == true,
+                "超过单张上限的文件先按大小被拒，而不是读进内存以后才发现（提示："
+                + (panel.LastNoticeTextForCheck ?? "无") + "）");
 
             for (var extra = 0; extra < 3; extra++) panel.AddImageForCheck(png);
             panel.AddImageForCheck(png);
             Check(panel.PendingPictureCountForCheck == ChatImageFormat.MaxImagesPerMessage
-                  && panel.LastNoticeTextForCheck.Contains(ChatImageFormat.MaxImagesPerMessage.ToString(),
-                      StringComparison.Ordinal),
+                  && panel.LastNoticeTextForCheck?.Contains(ChatImageFormat.MaxImagesPerMessage.ToString(),
+                      StringComparison.Ordinal) == true,
                 "一条消息最多带 " + ChatImageFormat.MaxImagesPerMessage + " 张，第六张被上限挡住并说了原因（提示："
-                + panel.LastNoticeTextForCheck + "）");
+                + (panel.LastNoticeTextForCheck ?? "无") + "）");
 
             panel.RemovePictureChipForCheck(0);
             Check(panel.PendingPictureCountForCheck == ChatImageFormat.MaxImagesPerMessage - 1,

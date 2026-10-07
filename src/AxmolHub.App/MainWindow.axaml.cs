@@ -783,7 +783,7 @@ public partial class MainWindow : Window
 
     /// <summary>The strip's background-reply counter, read as the user sees it.</summary>
     internal bool ChatRunsVisibleForCheck => ChatRuns.IsVisible;
-    internal string ChatRunsTextForCheck => ChatRuns.Text;
+    internal string ChatRunsTextForCheck => ChatRuns.Text ?? "";
 
     /// <summary>Whether the assistant page is the one on screen.</summary>
     internal bool AssistantVisible => _currentKey == "Assistant";
