@@ -33,6 +33,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 - 安装包：`Build.ps1` 把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `axmol-hub-<version>-<runtime>.exe`。原生名里既没有版本也没有架构，在 release 页上每次发布都重名，只能靠标题分辨。
 - 更新载荷：`vpk` 产出 `{packId}-<version>{-channel}-{full|delta}.nupkg`，`Publish-All.ps1` 上传时把它改名为与安装包同源的小写连字符 `axmol-hub-<version>-<runtime>-{full|delta}.nupkg`，**并同步改写 feed 里的 `FileName`** —— 否则客户端按 feed 找不到包。安装包改名与更新链路无关，两者互不影响。
+- Windows 包内主程序固定为 `current\\axmol-hub.exe`（内部程序集名仍为 `AxmolHub.App`）；Velopack 稳定启动器保持 `Axmol Hub.exe`，协议与快捷方式始终指向稳定启动器。
 
 其中 `{-channel}` 段：`vpk` **只在 Windows 且 channel 恰为平台默认值 `win` 时省略**，其余一律带 `-<channel>`（macOS 出 `-osx-…`、Linux 出 `-linux-…`）。本项目 channel = **完整 RID**（`win-x64` / `osx-arm64` / `osx-x64` / `linux-x64`，见 `Build.ps1`），因 `win-x64 ≠ win`，**四个平台（含 Windows）的 nupkg 都带 `-<rid>-` 段**。feed 名同理 = `releases.<rid>.json`。
 

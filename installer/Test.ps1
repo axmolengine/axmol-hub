@@ -77,13 +77,20 @@ try {
 
     # 2. 安装载荷完整：Velopack 把应用放在 current\ 下，外层是稳定路径的启动 stub。
     $taskCurrent = Join-Path $taskInstall 'current'
-    foreach ($taskFile in @('AxmolHub.App.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
+    foreach ($taskFile in @('axmol-hub.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/recipe-manifest.json', 'manifests/android-gradle-verification.xml')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }
     }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
     if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }
+    $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent 'axmol-hub.exe'))
+    if ($taskMainVersion.FileDescription -ne 'Axmol Hub') {
+        throw "Main executable FileDescription mismatch: $($taskMainVersion.FileDescription)"
+    }
+    if ($taskMainVersion.ProductName -ne 'Axmol Hub') {
+        throw "Main executable ProductName mismatch: $($taskMainVersion.ProductName)"
+    }
 
     # 3. 自包含版能启动：用 stub 启动，且数据根与设置都指向验收工作区。
     $taskImage = Join-Path $taskWork 'installed-hub.png'

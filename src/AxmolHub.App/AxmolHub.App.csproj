@@ -12,6 +12,10 @@
          AssemblyName 不再显式声明：项目名已是 AxmolHub.App，它就是默认值，
          多写一份只会在将来改名时变成第二处要同步的地方。 -->
     <RootNamespace>AxmolHub.App</RootNamespace>
+    <AssemblyTitle>Axmol Hub</AssemblyTitle>
+    <Product>Axmol Hub</Product>
+    <FileDescription>Axmol Hub</FileDescription>
+    <Description>Axmol Hub</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Version 见仓库根的 Directory.Build.props：四个项目共用一个产品版本。 -->
