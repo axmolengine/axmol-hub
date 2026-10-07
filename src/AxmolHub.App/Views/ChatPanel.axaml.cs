@@ -1480,6 +1480,7 @@ public partial class ChatPanel : UserControl
             _renderedCount = 0;
             EmptyState.IsVisible = run is not { IsStreaming: true };
             if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
+            RenderNotice();
             UpdateScrollAffordance();
             return;
         }
@@ -1489,6 +1490,9 @@ public partial class ChatPanel : UserControl
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation.Id;
             _renderedCount = 0;
+            // A session opens on its newest message. The scroll offset belongs to the viewer rather than to the
+            // conversation, so without this a switch inherits wherever the previous one had been read up to.
+            _stickToBottom = true;
         }
 
         var lastIndex = conversation.Messages.Count - 1;
@@ -1501,6 +1505,10 @@ public partial class ChatPanel : UserControl
 
         EmptyState.IsVisible = false;
         if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
+        RenderNotice();
+        // The rows that just went in have not been measured yet, so this is posted: a view that was following
+        // the reply keeps following it, and one the person had scrolled away from is left where they put it.
+        ScrollToEndIfSticky();
         UpdateScrollAffordance();
     }
 
@@ -1573,8 +1581,7 @@ public partial class ChatPanel : UserControl
         _renderedCount++;
 
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
-        if (!fromUser && markdown && turn.Text.Length > 0)
-            MarkdownMessageRenderer.RenderInto(body, turn.Text);
+        if (!fromUser && markdown && turn.Text.Length > 0) MarkdownMessageRenderer.RenderInto(body, turn.Text);
         if (approvalSurface is not null) body.Children.Add(approvalSurface);
     }
 
@@ -1940,7 +1947,49 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>Appends a one-line notice: neutral (model changed, cancellation) or danger (errors).</summary>
+    /// <summary>
+    /// The last thing the app had to say about a run, and how many of the person's own messages had been sent
+    /// when it was said. A notice is the tail of the transcript until the person speaks again — which is the rule
+    /// that keeps it surviving a rebuild of that transcript without outliving the news it carried.
+    /// </summary>
+    private (string ConversationId, string Text, bool Danger, int OwnTurns)? _notice;
+
     private void AppendNotice(string text, bool danger)
+    {
+        var viewed = _chat.ActiveConversation;
+        _notice = (viewed?.Id ?? "", text, danger,
+            viewed?.Messages.Count(turn => turn.Role == ChatRoles.User) ?? 0);
+        RenderNotice();
+        ScrollToEnd();
+    }
+
+    /// <summary>Paints the stored notice, if it still is news: same conversation, nothing of the person's said
+    /// since. Called from the render path, so a rebuild cannot erase it and a new message cannot be answered by
+    /// an old warning. With no conversation at all — the model list just emptied, say — there is nothing that can
+    /// age it out, so the line stands until the next one replaces it.</summary>
+    private void RenderNotice()
+    {
+        NoticeHost.Children.Clear();
+        if (_notice is not { } notice) return;
+
+        var viewed = _chat.ActiveConversation;
+        var conversationId = viewed?.Id ?? "";
+        var ownTurns = viewed?.Messages.Count(turn => turn.Role == ChatRoles.User) ?? 0;
+        if (conversationId != notice.ConversationId || ownTurns != notice.OwnTurns)
+        {
+            _notice = null;
+            return;
+        }
+
+        NoticeHost.Children.Add(BuildNoticeRow(notice.Text, notice.Danger));
+    }
+
+    /// <summary>The notice row on screen, whichever check needs it. It lives below the flow rather than at the end
+    /// of it, so it is never mistaken for a turn and never shifts an index.</summary>
+    private Grid? CurrentNoticeRow
+        => NoticeHost.Children.LastOrDefault() is Grid row && row.Classes.Contains("notice") ? row : null;
+
+    private static Grid BuildNoticeRow(string text, bool danger)
     {
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         row.Classes.Add("notice");
@@ -1965,8 +2014,7 @@ public partial class ChatPanel : UserControl
         var label = new TextBlock { Text = text };
         Grid.SetColumn(label, 1);
         row.Children.Add(label);
-        MessageFlow.Children.Add(row);
-        ScrollToEnd();
+        return row;
     }
 
     // ───────────────────────── Actions ─────────────────────────
@@ -2652,16 +2700,13 @@ public partial class ChatPanel : UserControl
     internal void AppendNoticeForCheck(string text, bool danger = false) => AppendNotice(text, danger);
 
     /// <summary>The last notice row's column layout — (icon column, text column, declared column count) —
-    /// or null when the flow does not end with a notice row. Notice rows are not message rows, so this
+    /// or null when no notice is on screen. Notice rows live below the message flow, so this
     /// never disturbs the bubble assertions.</summary>
     internal (int IconColumn, int TextColumn, int Columns)? LastNoticeLayoutForCheck
     {
         get
         {
-            if (MessageFlow.Children.Count == 0
-                || MessageFlow.Children[^1] is not Grid row
-                || !row.Classes.Contains("notice")
-                || row.Children.Count < 2)
+            if (CurrentNoticeRow is not { } row || row.Children.Count < 2)
             {
                 return null;
             }
@@ -2680,11 +2725,34 @@ public partial class ChatPanel : UserControl
     internal string ChatActivityTextForCheck => _live?.Status.Text ?? "";
     internal string ChatActivityElapsedForCheck => _live?.Elapsed.Text ?? "";
     internal string? LastNoticeTextForCheck
-        => MessageFlow.Children.LastOrDefault() is Grid row
-           && row.Classes.Contains("notice")
-           && row.Children.OfType<TextBlock>().FirstOrDefault() is { } label
-            ? label.Text
-            : null;
+        => CurrentNoticeRow?.Children.OfType<TextBlock>().FirstOrDefault()?.Text;
+
+    /// <summary>Whether the notice strip is on screen at all — the rebuild-survival question, which the text alone
+    /// cannot answer because the stored string and the painted row are two different facts.</summary>
+    internal bool NoticeVisibleForCheck => CurrentNoticeRow is not null;
+
+    /// <summary>Identity of the painted notice row. A repaint makes a new one, so two different tokens across a
+    /// rebuild say the strip was cleared and filled again — which is the only way to tell "it survived" apart
+    /// from "nothing ever erased it".</summary>
+    internal int NoticeInstanceTokenForCheck
+        => CurrentNoticeRow is { } row
+            ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(row)
+            : 0;
+
+    /// <summary>Whether the transcript is looking at its newest line. The plate below is derived from the same
+    /// three numbers, so this is the fact and the plate is the symptom.</summary>
+    internal bool ViewAtBottomForCheck
+        => MessageScroller.Offset.Y + MessageScroller.Viewport.Height
+           >= MessageScroller.Extent.Height - StickEpsilon;
+
+    /// <summary>Moves the transcript's reading position the way a wheel or a drag on the bar would. A check that
+    /// asks where a session reopens has to be able to leave it somewhere first.</summary>
+    internal void ScrollTranscriptForCheck(double offset)
+    {
+        MessageScroller.Offset = new Point(0, offset);
+        UpdateScrollAffordance();
+    }
+
     internal string InputTextForCheck => InputBox.Text ?? "";
 
     /// <summary>How many times the send button's state has been recomputed. A check asserts it grows when the

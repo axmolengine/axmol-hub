@@ -929,6 +929,7 @@ public partial class ShellCheckWindow : Window
         await CheckPictureFeedbackAsync(shell, panel);
         await CheckComposerKeysAsync(shell, panel);
         await CheckTypographyAsync(shell, panel);
+        await CheckScrollAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1732,6 +1733,122 @@ public partial class ShellCheckWindow : Window
             Check(codeFont.Contains("Cascadia Mono", StringComparison.Ordinal)
                   && codeFont.Contains("Noto Sans Mono CJK SC", StringComparison.Ordinal),
                 "代码块用的是应用那一份等宽字体栈，而不是主题里另写的一份（实际 " + codeFont + "）");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
+    /// 滚动：跟着回复走，停在人放下的地方，切回去落在最新一条。
+    ///
+    /// Three things a person feels and no cell used to measure: a long answer that stops scrolling partway
+    /// through, a warning that vanishes when the transcript repaints, and a session that reopens wherever the
+    /// last one had been read up to. The scroll offset belongs to the viewer, not to the conversation, so every
+    /// one of those is a decision this panel has to make on purpose.
+    /// </summary>
+    private async Task CheckScrollAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var scratch = ScratchDirectory.Resolve("scroll-check");
+        var png = System.IO.Path.Combine(scratch, "shot.png");
+        System.IO.File.WriteAllBytes(png, PictureFixture());
+        var longAnswer = string.Join("\n\n", Enumerable.Range(1, 40)
+            .Select(line => $"第 {line} 段：这一段的长度足够把消息列撑出一屏之外，剩下的要看才能读完。"));
+        var session = chat.StartConversation();
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        chat.ClientOverride = (_, _) => new ScriptedChatClient([longAnswer]);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            // ── 一条长回答要跟着写完 ──
+            panel.SetInputForCheck("给我一屏以上");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ViewAtBottomForCheck && !panel.ScrollToBottomVisible,
+                "长回复写完之后视图停在最后一条，也不需要那个回底板的按钮");
+
+            // ── 提示行活过一次重建 ──
+            panel.AppendNoticeForCheck("这条提示要在重建之后还在");
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var paintedNotice = panel.NoticeInstanceTokenForCheck;
+            Check(panel.NoticeVisibleForCheck && paintedNotice != 0
+                  && panel.LastNoticeTextForCheck == "这条提示要在重建之后还在",
+                "夹具：提示行已经落在会话末尾");
+            Check(panel.ClickBubbleAction(1, "RegenerateMessage"), "重新生成按钮在最后一次回复上");
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.NoticeVisibleForCheck
+                  && panel.NoticeInstanceTokenForCheck != paintedNotice
+                  && panel.NoticeInstanceTokenForCheck != 0
+                  && panel.LastNoticeTextForCheck == "这条提示要在重建之后还在",
+                "整段重画之后提示行被重新贴回原处：它不是重建的顺带牺牲品");
+
+            // …and it is gone as soon as the person says something new, which is the other half of the rule.
+            panel.SetInputForCheck("再说一句新的");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.NoticeVisibleForCheck,
+                "人开口之后上一条提示就退场：旧警告回答不了新问题");
+
+            // ── 切走再切回来 ──
+            // The notice belongs to the session that produced it, and a session reopens on its newest line: the
+            // reading position is the viewer's rather than the conversation's, so both have to be decided here
+            // rather than inherited from wherever the last one happened to be left.
+            panel.AppendNoticeForCheck("这条属于这个会话");
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var other = chat.StartConversation();
+            chat.OpenConversation(other.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.NoticeVisibleForCheck,
+                "换到另一个会话，上一条提示不跟过去：它说的是另一个会话的事");
+
+            panel.SetInputForCheck("那边也要一屏以上");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            chat.OpenConversation(session.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            panel.ScrollTranscriptForCheck(40);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.ViewAtBottomForCheck && panel.ScrollToBottomVisible,
+                "夹具：这个会话被读到中间，回底板的按钮升起来了");
+            chat.OpenConversation(other.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ViewAtBottomForCheck,
+                "切到一个长会话时落在最新一条，而不是继承上一处的读数");
+            chat.DeleteConversation(other.Id);
+
+            // ── 附件行把窗口压矮，不算人离开了底部 ──
+            chat.OpenConversation(session.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            panel.AddImageForCheck(png);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingPictureCountForCheck == 1 && panel.ViewAtBottomForCheck
+                  && !panel.ScrollToBottomVisible,
+                "贴上图片让输入框长高一截，视图仍然跟着底部，不冒出回底板的按钮");
         }
         finally
         {
