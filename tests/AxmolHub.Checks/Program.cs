@@ -185,6 +185,28 @@ if (args.Contains("--check-ai-providers"))
     if (ChatClientFactory.Create(new ModelProvider { IsCustom = true, Name = "Local", BaseUrl = "http://localhost:11434/v1", Model = "llama3" }) is null)
         throw new Exception("Keyless local provider should produce a client.");
     Console.WriteLine("PASS: factory gates a preset on any credential and never gates a self-supplied endpoint.");
+    // Readiness is one rule, stated here in Core so the composer and the factory cannot each invent their own. The
+    // state that pulled them apart is a credential record whose secret is not there — a blank submit, or a stored
+    // entry the OS secret store no longer hands back. Judging readiness by the *record* offered the provider in
+    // chat, and the first send answered "authenticate first" under a settings row that said 已鉴权.
+    var recordOnly = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    recordOnly.Model = "orcarouter/auto";
+    recordOnly.Credential = new ProviderCredential { Id = "cred-zombie", ProviderId = "orcarouter" };
+    if (!recordOnly.RequiresCredential || recordOnly.IsCallReady || recordOnly.ApiKey is { Length: > 0 })
+        throw new Exception("A credential record without its secret still counts as ready.");
+    AssertRejects(() => ChatClientFactory.Create(recordOnly),
+        "a credential whose secret is missing is refused by the factory, not sent keyless");
+
+    var pastedKey = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    pastedKey.Credential = new ProviderCredential { Id = "cred-key", ProviderId = "orcarouter", Secret = "sk-live" };
+    var keylessReady = new ModelProvider
+    {
+        IsCustom = true, BaseUrl = "http://localhost:11434/v1", Model = "llama3",
+    };
+    if (!pastedKey.IsCallReady || !signedIn.IsCallReady || !keylessReady.IsCallReady)
+        throw new Exception("A provider that can really be called was reported as not ready.");
+    Console.WriteLine("PASS: one readiness rule — a gated provider is ready only once its secret is actually there.");
+
 
     // ProviderStore keeps keys out of JSON; CredentialStore owns the key and rehydrates it from the
     // secret store. The split is the whole point: a provider is a declaration, an account is a secret.

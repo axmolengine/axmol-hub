@@ -155,6 +155,23 @@ public sealed class ModelProvider
     public string? ApiKey => Credential?.Secret;
 
     /// <summary>
+    /// Whether this provider can be called right now: it either needs no credential, or it holds one whose secret
+    /// resolved. <see cref="ChatClientFactory"/> in the Agent project refuses to build a client for anything else,
+    /// and this is the same rule stated once so the rest of the app can ask it instead of inventing its own.
+    ///
+    /// <para>The distinction between <see cref="Credential"/> and this is the whole point. A credential is a
+    /// <i>record</i>; the secret lives in the OS store and is rehydrated at load — and it can be absent: a submit
+    /// with the key field left blank, or a stored entry that no longer decrypts. Judging readiness by the record
+    /// alone produced a provider that settings called 已鉴权, that the composer was happy to offer, and that then
+    /// failed every send with "not authenticated yet" — three screens disagreeing about one state.</para>
+    ///
+    /// <para>A keyless endpoint is ready without a credential, and stays ready: that is what makes a local Ollama
+    /// reachable on a machine where nothing was ever pasted.</para>
+    /// </summary>
+    [JsonIgnore]
+    public bool IsCallReady => !RequiresCredential || Credential?.HasSecret == true;
+
+    /// <summary>
     /// The provider's default model name, projected from the model that is marked in use rather than stored
     /// separately. A chat conversation may choose another configured model without changing this default.
     ///

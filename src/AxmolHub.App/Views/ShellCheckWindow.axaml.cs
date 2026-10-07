@@ -2891,6 +2891,34 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.DisconnectProvider("deepseek") == false,
             "对未鉴权的 provider 再次断开是空操作，返回 false 而不是假装成功");
 
+        // ── 「有凭据记录、没有密钥」不能让设置页说已鉴权而会话发不出去 ──
+        // The composer offers a provider when it holds a credential; the client factory refuses to build a client
+        // unless that credential holds a secret. Two rules with a state between them: a record whose secret is not
+        // there — a blank submit in the dialog, or a stored entry that no longer resolves — leaves the row saying
+        // 「已鉴权」 while every send in the session answers 「请先在设置中鉴权」. The invariant is one sentence:
+        // nothing the picker offers may be something the factory would reject.
+        var zombie = shell.Chat.AddCredential("deepseek", "空密钥", "", CredentialSources.ApiKey);
+        settings.RefreshProviderGroupsForCheck();
+        var zombieProvider = shell.Chat.Providers.First(provider => provider.Id == "deepseek");
+        var zombieOffered = shell.Chat.AvailableChatModels.Any(choice => choice.Provider.Id == "deepseek");
+        string? zombieRefusal = null;
+        try
+        {
+            AxmolHub.Agent.ChatClientFactory.Create(zombieProvider, zombieProvider.Model);
+        }
+        catch (Exception exception)
+        {
+            zombieRefusal = exception.Message;
+        }
+
+        Check(zombie is null, "需要凭据的 provider 拒绝一份没有密钥的「鉴权」，而不是记下一条看起来已配好的记录");
+        Check(!zombieOffered || zombieRefusal is null,
+            "选择器给出的 provider，工厂必须建得出客户端（实际：" + (zombieRefusal ?? "可以建出") + "）");
+        Check(zombieOffered == false && settings.ProviderGroupForId("deepseek") is { IsLinked: false },
+            "记录在、密钥不在时，provider 行不再宣称已鉴权（实际「"
+            + settings.ProviderGroupForId("deepseek")?.LinkedStatusText + "」）");
+        shell.Chat.RemoveCredential(zombie?.Id ?? "");
+
         // Cleanup: the removal rule is "the default provider is protected, everything else is not" — not
         // "built-ins are protected". OrcaRouter is the pinned default, so it is the one that must refuse.
         Check(shell.Chat.RemoveProvider("orcarouter") == false, "默认 provider 不能被移除，它的分组也随之保留");

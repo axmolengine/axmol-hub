@@ -90,12 +90,14 @@ public sealed class ChatWorkspace : IDisposable
 
     public IReadOnlyList<ModelProvider> Providers => _providerList;
 
-    /// <summary>The provider/model choices available in chat: enabled providers that are ready to be called
-    /// (authenticated, or needing no credential at all) and have at least one enabled, configured model.</summary>
+    /// <summary>The provider/model choices available in chat: enabled providers that can actually be called
+    /// (<see cref="ModelProvider.IsCallReady"/> — authenticated, or needing no credential at all) and that have at
+    /// least one enabled, configured model. The picker and the client factory must agree: a provider offered here
+    /// and refused there produces a session that answers "authenticate first" under a settings row that says the
+    /// provider is authenticated.</summary>
     public IReadOnlyList<ChatModelOption> AvailableChatModels
         => _providerList
-            .Where(provider => provider.Enabled
-                               && (!provider.RequiresCredential || provider.Credential is not null))
+            .Where(provider => provider.Enabled && provider.IsCallReady)
             .SelectMany(provider => provider.Models
                 .Where(model => model.Enabled)
                 .OrderByDescending(model => model.InUse)
@@ -723,12 +725,16 @@ public sealed class ChatWorkspace : IDisposable
     /// none is a legitimate keyless add (an on-prem endpoint).</para>
     ///
     /// <para>On a platform with no secret store a credential that <b>has</b> a secret is refused rather than
-    /// stored without one — a configured-looking entry that cannot authenticate is worse than an error.</para>
+    /// stored without one — a configured-looking entry that cannot authenticate is worse than an error. The same
+    /// reasoning closes the other half: a provider that <b>needs</b> a credential cannot be authenticated with an
+    /// empty one, so a blank secret here creates nothing. A keyless endpoint is the opposite case — a blank there
+    /// is deliberate, and the provider is usable without any record.</para>
     /// </summary>
     public ProviderCredential? AddCredential(string providerId, string label, string? secret, string source)
     {
-        if (_providerList.All(provider => provider.Id != providerId)) return null;
+        if (_providerList.FirstOrDefault(candidate => candidate.Id == providerId) is not { } provider) return null;
         if (!string.IsNullOrEmpty(secret) && !CanStoreSecrets) return null;
+        if (provider.RequiresCredential && string.IsNullOrEmpty(secret)) return null;
 
         var existing = CredentialFor(providerId);
         if (existing is not null)
@@ -754,11 +760,7 @@ public sealed class ChatWorkspace : IDisposable
 
         _credentialList.Add(credential);
         SaveCredentials();
-        if (_providerList.FirstOrDefault(provider => provider.Id == providerId) is { } provider)
-        {
-            provider.Credential = credential;
-        }
-
+        provider.Credential = credential;
         Changed?.Invoke();
         return credential;
     }
@@ -776,6 +778,10 @@ public sealed class ChatWorkspace : IDisposable
     public ProviderCredential? AddOAuthCredential(string providerId, string? accountId, string? scope, string secret)
     {
         if (!CanStoreSecrets) return null;
+        // A sign-in that came back without a key did not authenticate anything. Storing the record anyway would
+        // overwrite a working secret on re-auth and mark the provider as ready while the client factory still
+        // refuses it — the state this guard exists to keep out.
+        if (string.IsNullOrEmpty(secret)) return null;
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider is null) return null;
 

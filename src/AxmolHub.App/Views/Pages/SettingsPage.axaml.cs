@@ -1239,14 +1239,19 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Whether a provider counts as linked: it has at least one saved credential.
+    /// Whether a provider counts as linked: it has a saved credential <b>whose secret is really there</b>.
     ///
     /// <para>Source-agnostic by design. The account model made a pasted key and a browser sign-in the same
     /// shape, so asking "how did this credential arrive?" here would undo that — and would show "not
     /// connected" for a provider that plainly works.</para>
+    ///
+    /// <para>The secret rather than the record is what the mark claims. A credential is a row in
+    /// <c>credentials.json</c>; the key itself lives in the OS store and is read back at load, and when that read
+    /// comes up empty the provider cannot be called. Showing 已鉴权 for that state made the settings page and the
+    /// conversation disagree — the row said connected, the send answered "authenticate first".</para>
     /// </summary>
     private bool IsLinked(ModelProvider provider)
-        => _chat?.CredentialFor(provider.Id) is not null;
+        => _chat?.CredentialFor(provider.Id)?.HasSecret == true;
 
 
     /// <summary>
