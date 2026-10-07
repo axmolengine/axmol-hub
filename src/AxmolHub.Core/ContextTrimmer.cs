@@ -23,18 +23,27 @@ public static class ContextTrimmer
     /// (real English averages nearer 4) so the estimate over-counts rather than overflows the window.</summary>
     public const int CharactersPerToken = 3;
 
+    /// <summary>Per-message cost of the role and delimiters every chat format adds.</summary>
+    public const int MessageOverheadTokens = 4;
+
+    /// <summary>What one picture costs, in tokens. A floor rather than a measurement: vision encoders price
+    /// tiles differently per model and gateway, and Hub does not keep a capability table for them (that is the
+    /// table the repository deliberately deleted). An estimate that is high spends the window sooner, which is
+    /// a dropped turn; an estimate that is low sends an oversized request, which is a failed turn.</summary>
+    public const int ImageTokenCost = 1024;
+
     /// <summary>Estimates the token cost of a turn: its text plus a small per-message overhead for the role
     /// and delimiters every chat format adds. A tool call's arguments are counted too — an anchored edit
-    /// carries the old and new text there, which is regularly the largest part of the turn.</summary>
+    /// carries the old and new text there, which is regularly the largest part of the turn. Attachments are
+    /// counted by the fixed <see cref="ImageTokenCost"/> because their bytes are on the wire as a data URL,
+    /// and a turn whose only text is "这是什么错" is not the cheap turn the character count suggests.</summary>
     public static int EstimateTokens(ChatTurn turn)
         => EstimateTokens(turn.Text)
            + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext))
-           + (string.IsNullOrEmpty(turn.ToolArguments) ? 0 : EstimateTokens(turn.ToolArguments));
+           + (string.IsNullOrEmpty(turn.ToolArguments) ? 0 : EstimateTokens(turn.ToolArguments))
+           + turn.Images.Count * ImageTokenCost;
 
     public static int EstimateTokens(string text) => text.Length / CharactersPerToken + MessageOverheadTokens;
-
-    /// <summary>Per-message cost of the role and delimiters every chat format adds.</summary>
-    public const int MessageOverheadTokens = 4;
 
     /// <summary>
     /// Returns the turns that fit in <paramref name="budget"/> tokens, newest-first selection with the

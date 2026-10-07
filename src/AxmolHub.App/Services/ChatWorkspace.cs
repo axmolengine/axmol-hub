@@ -2635,8 +2635,13 @@ public sealed class ChatWorkspace : IDisposable
         var tools = ChatTools.CreateFor(mode, ScopeFor(conversationId));
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
+        // The attachment resolver is bound to this conversation because the turn names the file, and which
+        // session's directory holds it is a fact only this class has.
         return new ChatRequest(choice.Provider, choice.ModelName, reasoning, tools, EffectiveSystemPrompt(conversation),
-            conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList());
+            conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList(),
+            image => _sessions.Store.ReadImage(conversationId, image.File) is { } bytes
+                ? BinaryData.FromBytes(bytes)
+                : null);
     }
 
     private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)
@@ -2650,6 +2655,7 @@ public sealed class ChatWorkspace : IDisposable
             request.SystemPrompt,
             request.Reasoning,
             request.Tools,
+            images: request.Images,
             gate: (info, _) => GateToolCallAsync(run, info),
             onToolStarted: async info =>
             {
@@ -2755,14 +2761,18 @@ public sealed class ChatWorkspace : IDisposable
         else Dispatcher.UIThread.Post(effect);
     }
 
-    /// <summary>Everything one model request needs, decided on the UI thread and sent from anywhere.</summary>
+    /// <summary>Everything one model request needs, decided on the UI thread and sent from anywhere.
+    /// <c>Images</c> is a per-request resolver rather than the bytes themselves: the transcript carries file names,
+    /// only this class knows which session's attachment directory they belong to, and reading a few megabytes has
+    /// to happen on the request's own thread rather than inside the UI pass that assembles it.</summary>
     private readonly record struct ChatRequest(
         ModelProvider Provider,
         string ModelName,
         string? Reasoning,
         IReadOnlyList<AITool> Tools,
         string SystemPrompt,
-        IReadOnlyList<ChatTurn> History);
+        IReadOnlyList<ChatTurn> History,
+        Func<ChatImage, BinaryData?>? Images);
 
     private readonly record struct ContextCompressionRequest(
         ModelProvider Provider,

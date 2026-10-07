@@ -9,9 +9,10 @@ namespace AxmolHub.Agent;
 ///
 /// <see cref="ContextTrimmer"/> runs once per request, before the first iteration; a loop that reads six files
 /// grows the message list afterwards and nothing else is watching. Elision rewrites the *text* of older tool
-/// results and never removes a message, which is the whole point: a provider rejects an assistant message
-/// whose call has no result, so shrinking the window by dropping messages would trade a slow request for a
-/// failed one. A result that says "elided, call the tool again if you need it" is truthful and cheap.
+/// results and drops the bytes of older pictures, but never removes a message, which is the whole point: a
+/// provider rejects an assistant message whose call has no result, so shrinking the window by dropping messages
+/// would trade a slow request for a failed one. A result that says "elided, call the tool again if you need it"
+/// is truthful and cheap.
 /// </summary>
 public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetTokens) : DelegatingChatClient(innerClient)
 {
@@ -33,7 +34,9 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
         var list = messages.ToList();
         var resultIndices = new List<int>();
         for (var index = 0; index < list.Count; index++)
-            if (list[index].Contents.Any(content => content is FunctionResultContent)) resultIndices.Add(index);
+            // A turn carrying a picture is a candidate too: the bytes are the most expensive part of the
+            // request, and the newest image is the one the model is looking at.
+            if (list[index].Contents.Any(content => content is FunctionResultContent or DataContent)) resultIndices.Add(index);
 
         var oldest = 0;
         while (EstimateTokens(list) > budgetTokens && oldest < resultIndices.Count - KeepRecentResults)
@@ -56,6 +59,16 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
                 // Microsoft.Extensions.AI, so the placeholder describes the size rather than the tool.
                 contents.Add(new FunctionResultContent(result.CallId,
                     $"[elided: {text.Length} characters of tool output — call the tool again if you need this]"));
+                changed = true;
+            }
+            else if (content is DataContent picture)
+            {
+                // The picture goes and the message stays. Dropping the turn would orphan an assistant call from
+                // its result, which is the failure this guard exists to avoid, and it would also erase the
+                // question the picture belonged to — a turn that was about a screenshot keeps its text and loses
+                // the screenshot, and the placeholder says so in the same message rather than silently.
+                contents.Add(new TextContent($"[elided: the {picture.MediaType ?? "binary"} attachment is no longer in this "
+                                             + "request — ask the user to attach it again, or capture it again, if you still need it]"));
                 changed = true;
             }
             else
@@ -87,6 +100,11 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
                     TextContent text => text.Text?.Length ?? 0,
                     FunctionResultContent result => TextOf(result)?.Length ?? 0,
                     FunctionCallContent call => call.Arguments is null ? 0 : JsonSerializer.Serialize(call.Arguments).Length,
+                    // A picture contributes no characters to a character count, and this guard counts only
+                    // characters — left unpriced it would bill an 8 MiB screenshot as free and let the loop grow
+                    // the request past the window on exactly the turn where ContextTrimmer had already charged
+                    // for it. The fixed floor is converted to characters so it survives the division below.
+                    DataContent => ContextTrimmer.CharactersPerToken * ContextTrimmer.ImageTokenCost,
                     _ => 0,
                 };
         }

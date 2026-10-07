@@ -2404,7 +2404,7 @@ if (args.Contains("--check-ai-images"))
     if (first is not { File: "1.png", MediaType: "image/png" } || first.Bytes != png.Length
         || second is not { File: "2.jpg", MediaType: "image/jpeg" })
         throw new Exception($"The stored name, type or size is wrong: {first} / {second}");
-    if (!jpeg.SequenceEqual(store.ReadImage(album.Id, "2.jpg")))
+    if (store.ReadImage(album.Id, "2.jpg") is not { } storedBytes || !jpeg.SequenceEqual(storedBytes))
         throw new Exception("A stored image did not read back byte for byte.");
 
     album.Append(ChatTurn.User("这两张图是什么报错？", images: [first, second]));
@@ -2487,6 +2487,108 @@ if (args.Contains("--check-ai-images"))
             throw new Exception($"Admit({bytes.Length} bytes, {already} already attached) answered "
                                 + $"{ChatImageFormat.Admit(bytes, already)} instead of {expected}.");
     Console.WriteLine("PASS: an image is admitted by its header, its size, and how many the message already carries.");
+
+    // ── 接线形状：图片是问题所在那条用户消息上的 DataContent ──
+    // chat/completions carries an image on a user message and not on a tool result, and Microsoft.Extensions.AI
+    // 10.10 has no ImageContent type at all: an image is a DataContent whose media type says image/*. The scripted
+    // client is the only zero-network way to see the contents list the bridge is handed, so the shape is asserted
+    // there rather than discovered by a gateway returning 400.
+    var wire = new FakeChatClient(["ok"]);
+    var wireProvider = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    wireProvider.Model = "orcarouter/auto";
+    var withPictures = Conversation.Create("orcarouter");
+    withPictures.Append(ChatTurn.User("这两张图是什么报错？", images: [first, second]));
+    await foreach (var _ in new ChatPipeline(wire).SendAsync(
+                       wireProvider,
+                       withPictures.Messages,
+                       images: image => image.File switch
+                       {
+                           "1.png" => BinaryData.FromBytes(png),
+                           "2.jpg" => BinaryData.FromBytes(jpeg),
+                           _ => null,
+                       })) { }
+
+    var sent = wire.LastMessages?.FirstOrDefault(message => message.Role == ChatRole.User)
+               ?? throw new Exception("The scripted client never saw the user message.");
+    var pictures = sent.Contents.OfType<DataContent>().ToList();
+    if (sent.Contents[0] is not TextContent || pictures.Count != 2
+        || pictures[0].MediaType != "image/png" || pictures[1].MediaType != "image/jpeg"
+        || !png.AsSpan().SequenceEqual(pictures[0].Data.Span)
+        || !jpeg.AsSpan().SequenceEqual(pictures[1].Data.Span)
+        || !sent.Contents.OfType<TextContent>().Single().Text.Contains("这两张图是什么报错？", StringComparison.Ordinal))
+        throw new Exception("The request is not [text, image, image] with the bytes that were stored: "
+                            + string.Join(" · ", sent.Contents.Select(content => content.GetType().Name)));
+    if (!pictures[0].Uri.ToString()!.StartsWith("data:image/png;base64,", StringComparison.Ordinal))
+        throw new Exception($"An attachment did not reach the wire as a data URL ({pictures[0].Uri}).");
+
+    // A file the store cannot hand back is the case that must not pass silently: an empty contents list would let
+    // the model describe a screenshot it was never given, which reads to the user as a working image channel.
+    var lostClient = new FakeChatClient(["ok"]);
+    var lostPictures = Conversation.Create("orcarouter");
+    lostPictures.Append(ChatTurn.User("这张图呢？", images: [new ChatImage("gone.png", "image/png", 12)]));
+    await foreach (var _ in new ChatPipeline(lostClient).SendAsync(
+                       wireProvider, lostPictures.Messages, images: _ => null)) { }
+    var lostMessage = lostClient.LastMessages?.Single(message => message.Role == ChatRole.User)
+                      ?? throw new Exception("The scripted client never saw the message with the lost attachment.");
+    if (lostMessage.Contents.OfType<DataContent>().Any()
+        || !lostMessage.Contents.OfType<TextContent>().Single().Text.Contains("were not sent", StringComparison.Ordinal))
+        throw new Exception("A missing attachment was sent as nothing, and the model was not told it was missing.");
+
+    // A turn with no attachments must still produce exactly one plain text message: everything in the sessions and
+    // context groups is built on that, and it is the one thing this change had no licence to alter.
+    var plain = ChatPipeline.ToChatMessage(ChatTurn.User("没有附件"));
+    if (plain.Contents.Count != 1 || plain.Contents[0] is not TextContent)
+        throw new Exception("A text-only turn stopped arriving as one text part.");
+    Console.WriteLine("PASS: an attachment rides its own question as a data URL, and a lost one says so in the text.");
+
+    // ── 预算：图片要计费，抹除时丢图留话 ──
+    // A turn whose text is one character is the cheap turn only if nobody priced the picture riding on it, and
+    // both estimators count characters — so an unpriced attachment reads as free to the window and as free to the
+    // loop guard, which is how a request the trimmer was supposed to keep legal goes over the limit anyway. The
+    // price is asserted as a difference against the same turn without the attachment, never against the constant:
+    // comparing to the constant would still pass if the constant were 0.
+    if (ContextTrimmer.EstimateTokens(ChatTurn.User("看图", images: [first]))
+        <= ContextTrimmer.EstimateTokens(ChatTurn.User("看图")))
+        throw new Exception("An attachment cost nothing in the turn estimate.");
+
+    // Four turns of one character each, two of them carrying a picture. The budget is a literal rather than a
+    // formula over the price: two picture turns at the 1 024 floor plus two one-character answers is 2 064, so
+    // 2 050 clears the newest three and no more. If the attachment stops being charged, all four fit and this is
+    // the assertion that says so.
+    var crowded = new List<ChatTurn>
+    {
+        ChatTurn.User("一", images: [first]),
+        ChatTurn.Assistant("答"),
+        ChatTurn.User("二", images: [second]),
+        ChatTurn.Assistant("答"),
+    };
+    var crowdedWindow = ContextTrimmer.Trim(crowded, 2050);
+    if (crowdedWindow.Count != 3 || crowdedWindow.Any(turn => turn.Text == "一"))
+        throw new Exception($"Pictures were not charged against the window: {crowdedWindow.Count} of 4 turns survived.");
+
+    // Inside the loop the same bytes are billed again by a different estimator, and the older picture is dropped
+    // rather than the message: dropping the turn would orphan an assistant call from its result. The results here
+    // are deliberately short (under the elision floor), so the picture is the only thing over budget — which is
+    // what makes this the negative control for the price above.
+    var pictureLoop = new List<ChatMessage>
+    {
+        new(ChatRole.System, "system rules"),
+        new(ChatRole.User, [new TextContent("这张图是什么报错？"), new DataContent(png, "image/png")]),
+    };
+    for (var index = 0; index <= ToolLoopContextGuard.KeepRecentResults; index++)
+        pictureLoop.Add(new ChatMessage(ChatRole.Tool, [new FunctionResultContent($"c{index}", "短结果")]));
+    var elidedPictures = ToolLoopContextGuard.Elide(pictureLoop, 300);
+    var pictureTurn = elidedPictures.SingleOrDefault(message => message.Role == ChatRole.User)
+                      ?? throw new Exception("Elision deleted the message that carried the picture instead of the picture.");
+    if (elidedPictures.Count != pictureLoop.Count || pictureTurn.Contents.OfType<DataContent>().Any()
+        || !pictureTurn.Text.Contains("这张图是什么报错？", StringComparison.Ordinal)
+        || !pictureTurn.Text.Contains("elided", StringComparison.Ordinal))
+        throw new Exception("The older picture survived the budget, or its message went with it: "
+                            + string.Join(" · ", pictureTurn.Contents.Select(content => content.GetType().Name)));
+    if (elidedPictures.SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+             .Any(result => (result.Result?.ToString() ?? "").Contains("elided", StringComparison.Ordinal)))
+        throw new Exception("The picture was priced by shrinking a tool result that was already short.");
+    Console.WriteLine("PASS: a picture is charged for the window, and an old one is elided without losing its turn.");
 
     // A refusal the model reads as "try again" spends the whole turn budget on the same bytes, so the retry ban is
     // part of the contract here exactly as it is for a path the sandbox rejected.
