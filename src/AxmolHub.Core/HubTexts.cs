@@ -539,6 +539,8 @@ public static class HubTexts
         ["ChatRunNotificationBody"] = ("会话「{0}」中的助手任务已结束。", "The assistant task in 「{0}」 has finished."),
         ["ChatToolApprovalNotificationTitle"] = ("操作等待批准", "Action awaiting approval"),
         ["ChatToolApprovalNotificationBody"] = ("会话「{0}」需要你批准一项操作。", "A conversation 「{0}」 needs you to approve an action."),
+        ["AttentionDiagnosticTitle"] = ("Axmol Hub 通知测试", "Axmol Hub notification test"),
+        ["AttentionDiagnosticBody"] = ("这是系统通知测试；任务栏标记将在 30 秒后恢复。", "This is a system notification test; the taskbar badge will reset after 30 seconds."),
         // After the decision the card collapses to one of these lines — the record stays in the transcript, the
         // buttons do not.
         ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),

@@ -2305,9 +2305,9 @@ public partial class ShellCheckWindow : Window
             chat.ClientOverride = (_, _) => new ScriptedChatClient([plan]);
 
             await RunPlanInBackgroundAsync(approvedSession);
-            Check(chat.UnseenApprovalConversationCount == 1
+            Check(chat.PendingBackgroundApprovalCount(observer.Id) == 1
                   && approvedSession.Messages.Last().ApprovalSeen == false,
-                "后台会话中的计划确认计入未读审批，且本会话未被错误标为已查看");
+                "后台会话中的待确认计划计入任务栏审批标记");
             Check(attentionCounts.GetValueOrDefault(approvedSession.Id) == 1,
                 "一次计划确认只发出一次待处理关注事件（实际 "
                 + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
@@ -2316,19 +2316,32 @@ public partial class ShellCheckWindow : Window
                   && activatedId == approvedSession.Id
                   && !SystemAttentionService.TryGetConversationId("axmolhub://conversation/not-a-guid", out _),
                 "系统通知激活链接只解析有效的会话深链（实际 " + activatedId + "）");
-            Check(SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, observer.Id)
-                  && !SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, approvedSession.Id)
+            Check(SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, observer.Id, assistantPageVisible: true)
+                  && !SystemAttentionService.ShouldNotifyApproval(
+                      approvedSession.Id, approvedSession.Id, assistantPageVisible: true)
+                  && SystemAttentionService.ShouldNotifyApproval(
+                      approvedSession.Id, approvedSession.Id, assistantPageVisible: false)
                   && Enum.GetValues<RunResult>()
                       .Where(result => result is RunResult.Completed or RunResult.Failed or RunResult.TimedOut)
                       .All(result => SystemAttentionService.ShouldNotifyRun(
-                          approvedSession.Id, observer.Id, hasPendingPlan: false, result))
+                          approvedSession.Id, observer.Id, assistantPageVisible: true,
+                          hasPendingPlan: false, result))
+                  && SystemAttentionService.ShouldNotifyRun(
+                      approvedSession.Id, approvedSession.Id, assistantPageVisible: false,
+                      hasPendingPlan: false, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, hasPendingPlan: true, RunResult.Completed)
+                      approvedSession.Id, approvedSession.Id, assistantPageVisible: true,
+                      hasPendingPlan: false, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, hasPendingPlan: false, RunResult.Cancelled)
+                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      hasPendingPlan: true, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, hasPendingPlan: false, RunResult.Parked),
-                "只在其他会话提醒审批，成功/失败/超时结束均提醒，但取消、暂停和待审计划不报完成");
+                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      hasPendingPlan: false, RunResult.Cancelled)
+                  && !SystemAttentionService.ShouldNotifyRun(
+                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      hasPendingPlan: false, RunResult.Parked),
+                "助手页只提醒非当前会话；离开助手页时同一会话也提醒，完成/失败/超时提醒而取消、暂停不报完成");
 
             await shell.HandleInstallLinkAsync(deepLink);
             panel.Reload();
@@ -2337,19 +2350,25 @@ public partial class ShellCheckWindow : Window
             var planRowText = panel.PlanApprovalMessageTextForCheck;
             var planCardVisible = panel.PlanApprovalCardOnScreenForCheck;
             var planMarkdownVisible = panel.PlanApprovalMarkdownOnScreenForCheck;
-            Check(chat.UnseenApprovalConversationCount == 0
+            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 0
                   && approvedSession.Messages.Last().ApprovalSeen
                   && chat.ViewedConversationId == approvedSession.Id
                   && panel.PendingPlanApprovalCardsForCheck == 1
                   && planCardVisible
                   && planMarkdownVisible
                   && planRowText.Contains("Reviewed plan", StringComparison.Ordinal),
-                "打开会话清除系统角标资格，Markdown 计划文本与待确认卡同时真实显示（未读 "
-                + chat.UnseenApprovalConversationCount + "，已读 "
+                "打开会话后审批位于前台，不再显示任务栏角标；Markdown 计划文本与待确认卡同时真实显示（待后台 "
+                + chat.PendingBackgroundApprovalCount(approvedSession.Id) + "，已读 "
                 + approvedSession.Messages.Last().ApprovalSeen + "，卡片 "
                 + panel.PendingPlanApprovalCardsForCheck + " / " + planCardVisible + "，Markdown "
                 + planMarkdownVisible + "，文本「"
                 + planRowText + "」）");
+            shell.NavigateTo("Settings");
+            Check(chat.PendingBackgroundApprovalCount(null) == 1,
+                "离开助手页后仍未解决的计划审批重新计入后台待处理标记");
+            shell.NavigateTo("Assistant");
+            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 0,
+                "返回该会话后后台审批标记隐藏，但待确认卡仍可操作");
             Check(panel.PlanApprovalActionsForCheck.SequenceEqual(
                       ["ChatPlanApprove", "ChatPlanRevise", "ChatPlanReject"], StringComparer.Ordinal),
                 "计划卡提供批准执行、要求修改、拒绝三个明确动作（实际 "
@@ -5142,6 +5161,10 @@ public partial class ShellCheckWindow : Window
         Check(App.Options.IsAutomation && !HubHostOptions.Parse([]).IsAutomation,
             "自动化模式（本次就是）关掉缺字体提示，裸启动不受影响（实际 "
             + App.Options.IsAutomation + " / " + HubHostOptions.Parse([]).IsAutomation + "）");
+        var attentionTestOptions = HubHostOptions.Parse(["--test-system-attention"]);
+        Check(attentionTestOptions.TestSystemAttention && !attentionTestOptions.IsAutomation
+              && !HubHostOptions.Parse(["--verify-shell"]).TestSystemAttention,
+            "系统通知手动诊断开关可单独启用真实桌面提示，且不会污染自动化自检");
 
         // ⑨ Really call the entry point once and confirm it **indeed doesn't pop** under automation. This isn't a repeat of ⑧: ⑧ reads the flag,
         //    ⑨ reads "did an extra window appear after the call" — when the gate is placed elsewhere (e.g. forgot the check, or the check is after an await),

@@ -21,7 +21,8 @@ internal sealed record HubHostOptions(
     string? VerifyShellReport,
     string? VerifyOpsReport,
     string[] VerifyOpsEngines,
-    bool Gallery)
+    bool Gallery,
+    bool TestSystemAttention)
 {
     /// <summary>
     /// Verification / screenshot modes. They run the **product window** (<c>--smoke</c>,
@@ -103,7 +104,8 @@ internal sealed record HubHostOptions(
             Value(args, "--verify-shell"),
             Value(args, "--verify-ops"),
             Trailing(args, "--verify-ops"),
-            args.Any(a => string.Equals(a, "--gallery", StringComparison.OrdinalIgnoreCase)));
+            args.Any(a => string.Equals(a, "--gallery", StringComparison.OrdinalIgnoreCase)),
+            args.Any(a => string.Equals(a, "--test-system-attention", StringComparison.OrdinalIgnoreCase)));
     }
 
     /// <summary>

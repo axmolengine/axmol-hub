@@ -2010,14 +2010,11 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>Raised when a conversation first needs an approval decision.</summary>
     internal event Action<string, ChatAttentionKind>? AttentionRequired;
 
-    /// <summary>The number of other conversations with an approval the user has not opened yet.</summary>
-    internal int UnseenApprovalConversationCount
+    /// <summary>The number of conversations with an unresolved approval that is not currently visible in the
+    /// assistant page. Completion-only sessions never contribute to the taskbar badge.</summary>
+    internal int PendingBackgroundApprovalCount(string? visibleConversationId)
         => _sessions.List()
-            .Where(summary => summary.PendingApprovals > 0 && summary.Id != _active?.Id)
-            .Count(summary => (_sessions.Peek(summary.Id) ?? _sessions.Load(summary.Id))?.Messages
-                .Any(turn => !turn.ApprovalSeen
-                             && (turn.ApprovalState == ChatApprovalStates.Pending
-                                 || turn.PlanApprovalState == PlanApprovalStates.Pending)) == true);
+            .Count(summary => summary.PendingApprovals > 0 && summary.Id != visibleConversationId);
 
     internal ConversationRun? RunFor(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) ? run : null;

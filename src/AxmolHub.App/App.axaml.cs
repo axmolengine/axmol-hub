@@ -271,7 +271,7 @@ public partial class App : Application
         {
             try
             {
-                DeepLinkProtocolRegistration.Register();
+                DeepLinkProtocolRegistration.Register(window.WriteLog);
             }
             catch (Exception ex)
             {
@@ -282,6 +282,9 @@ public partial class App : Application
                 Dispatcher.UIThread.Post(() => _ = window.HandleInstallLinkAsync(uri)),
                 () => Dispatcher.UIThread.Post(window.ActivateFromRequest));
         }
+
+        if (Options.TestSystemAttention)
+            window.Opened += (_, _) => window.RunSystemAttentionDiagnostic();
 
         // Silent startup update check. Fire-and-forget: it must never block the window from coming
         // up, and its only visible effect is the dot the shell raises on the Settings nav item (fed

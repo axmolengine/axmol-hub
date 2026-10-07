@@ -116,7 +116,21 @@ dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-ops ./tmp/o
 
 `--verify-shell` 有三条值得单独说的断言：
 
-AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、后台审批未读状态、通知过滤与会话深链激活。自检会禁用真实系统通知和任务栏/Dock 标记；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
+AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、后台待审批标记、通知过滤与会话深链激活。只有需要用户处理的审批显示任务栏/Dock 标记；任务完成不显示标记。当前 Assistant 页面正在显示的会话不弹系统通知，切到其他页面后该会话的完成或审批也会通知。自检会禁用真实系统通知和任务栏/Dock 标记；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
+
+**Windows 通知与任务栏标记手动诊断**：使用单独的数据目录启动应用，可立即请求一个示例 Toast 和 30 秒任务栏标记，不会创建或修改真实会话。开发版：
+
+```powershell
+dotnet run --project src\AxmolHub.App -- --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
+```
+
+安装版可用同一参数启动安装目录中的稳定启动器（将路径替换为本机实际位置）：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Axmol Hub\Axmol Hub.exe" --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
+```
+
+应用日志位于 `.\tmp\attention-test-data\logs\`，筛选 `[System attention]` 可检查开始菜单快捷方式的 AppUserModelID、Toast 子进程错误及任务栏 overlay 的 HRESULT。Windows 设置中还需允许 Axmol Hub 通知，并关闭勿扰/专注助手后重测。Toast 需要开始菜单中的 `Axmol Hub.lnk` 带有匹配的 AppUserModelID；诊断会报告快捷方式缺失或写入失败。开发版只有在已有匹配快捷方式（通常由安装版创建）时才能完成 Toast 展示验证；任务栏标记诊断不依赖安装版。自检模式不会弹真实通知，`--test-system-attention` 才是桌面手测入口。
 
 - **真切一次语言再切回来**，然后去读**早于切换就已建好**的控件上的文字（外壳导航项、设置页说明、引擎页表头）。它同时证明"已存在的控件跟着换文字"和"切回中文也生效"，并把设置文件落在临时目录里 —— 自检**不会**碰到你 `%LocalAppData%\AxmolHub\` 下的真实设置。去掉 `HubStrings.Apply` 那一行，构建照样 0 error，自检报 6 条 FAIL、退出 1。
 - **切换一次数据根再切回来**：换根、落盘、旧页面被丢弃、引擎列表跟着变空、拒绝盘符根、重复切换是无操作。漏掉"丢弃旧页面"的后果是"界面看着正常，一点按钮就在读一个已经不属于当前会话的工作区"——去掉 `_pages.Clear()` 一行，构建照样 0 error，自检报 3 条 FAIL、退出 1。

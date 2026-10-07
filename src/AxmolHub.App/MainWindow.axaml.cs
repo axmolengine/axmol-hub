@@ -33,6 +33,9 @@ public partial class MainWindow : Window
     private readonly HubPreferences _preferences;
     private readonly SystemAttentionService _attention = new();
     private readonly Dictionary<string, Control> _pages = [];
+    private bool? _attentionDiagnosticBadge;
+    private string? _attentionDiagnosticConversationId;
+    private bool _windowIsOpen;
 
     /// <summary>
     /// The AI assistant page's state. **One instance for the window's whole life**, created before the page
@@ -96,6 +99,8 @@ public partial class MainWindow : Window
         _chat = new ChatWorkspace(dataRoot);
         _attention.Initialize(id => NotificationActivated(id));
         _attention.NotificationActivated += NotificationActivated;
+        _attention.Diagnostic += message => Dispatcher.UIThread.Post(
+            () => WriteLog("[System attention] " + message));
         WireChatSeams();
         WireChatRuns();
 
@@ -125,7 +130,11 @@ public partial class MainWindow : Window
         // Font conclusions must be handled only after the window is on screen: a modal's owner
         // must be shown first.
         Opened += (_, _) => ReportFonts();
-        Opened += (_, _) => SyncApprovalBadge();
+        Opened += (_, _) =>
+        {
+            _windowIsOpen = true;
+            SyncApprovalBadge();
+        };
     }
 
     internal void ActivateFromRequest()
@@ -233,6 +242,7 @@ public partial class MainWindow : Window
         _currentKey = name;
         PageHost.Content = page;
         SyncNavigation(name);
+        SyncApprovalBadge();
 
         // The conversation list is a child of the assistant nav item: hidden on every other page.
         ChatSidebarHost.IsVisible = name == "Assistant";
@@ -329,7 +339,8 @@ public partial class MainWindow : Window
     private void OnChatAttentionRequired(string conversationId, ChatAttentionKind kind)
     {
         if (App.Options.IsAutomation) return;
-        if (!SystemAttentionService.ShouldNotifyApproval(conversationId, _chat.ViewedConversationId)) return;
+        if (!SystemAttentionService.ShouldNotifyApproval(
+                conversationId, _chat.ViewedConversationId, AssistantVisible)) return;
         var title = _chat.SessionTitleFor(conversationId);
         if (string.IsNullOrWhiteSpace(title)) title = HubStrings.Get("Conversation");
         var titleKey = kind == ChatAttentionKind.PlanApproval
@@ -348,7 +359,7 @@ public partial class MainWindow : Window
     {
         if (App.Options.IsAutomation) return;
         if (!SystemAttentionService.ShouldNotifyRun(
-                conversationId, _chat.ViewedConversationId,
+                conversationId, _chat.ViewedConversationId, AssistantVisible,
                 _chat.HasPendingPlanApproval(conversationId), outcome.Result))
             return;
 
@@ -368,8 +379,9 @@ public partial class MainWindow : Window
 
     private void SyncApprovalBadge()
     {
-        if (!App.Options.IsAutomation)
-            _attention.SetApprovalBadge(this, _chat.UnseenApprovalConversationCount > 0);
+        if (_windowIsOpen && !App.Options.IsAutomation)
+            _attention.SetApprovalBadge(this, _attentionDiagnosticBadge
+                ?? _chat.PendingBackgroundApprovalCount(AssistantVisible ? _chat.ViewedConversationId : null) > 0);
     }
 
     private void NotificationActivated(string conversationId)
@@ -377,10 +389,44 @@ public partial class MainWindow : Window
 
     private void OpenConversationFromAttention(string conversationId)
     {
+        if (string.Equals(conversationId, _attentionDiagnosticConversationId, StringComparison.Ordinal))
+        {
+            NavigateTo("Assistant");
+            WindowState = WindowState.Normal;
+            Activate();
+            WriteLog("The test notification was activated; the app returned to the Assistant page.");
+            return;
+        }
+
         if (_chat.OpenConversation(conversationId) is null) return;
         NavigateTo("Assistant");
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    internal void RunSystemAttentionDiagnostic()
+    {
+        if (!App.Options.TestSystemAttention || App.Options.IsAutomation) return;
+
+        _attentionDiagnosticConversationId = Guid.NewGuid().ToString("N");
+        _attentionDiagnosticBadge = true;
+        var badgeApplied = _attention.SetApprovalBadge(this, visible: true);
+        _attention.Report(badgeApplied
+            ? "The diagnostic taskbar badge was requested successfully."
+            : "The diagnostic taskbar badge request failed or is unsupported; see the preceding diagnostic.");
+        _attention.Show(
+            HubStrings.Get("AttentionDiagnosticTitle"),
+            HubStrings.Get("AttentionDiagnosticBody"),
+            _attentionDiagnosticConversationId);
+        _attention.Report("A test notification was requested. Windows notification settings may still suppress its display.");
+
+        DispatcherTimer.RunOnce(() =>
+        {
+            _attentionDiagnosticBadge = null;
+            _attentionDiagnosticConversationId = null;
+            SyncApprovalBadge();
+            WriteLog("System attention diagnostic ended; the badge returned to the real approval state.");
+        }, TimeSpan.FromSeconds(30));
     }
 
     private void UpdateChatRunsStatus()

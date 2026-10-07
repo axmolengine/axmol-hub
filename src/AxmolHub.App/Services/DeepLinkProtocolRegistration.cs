@@ -10,11 +10,11 @@ internal static class DeepLinkProtocolRegistration
 {
     private const string Scheme = "axmolhub";
 
-    public static void Register()
+    public static void Register(Action<string>? diagnostic = null)
     {
         if (OperatingSystem.IsWindows())
         {
-            RegisterWindows();
+            RegisterWindows(diagnostic);
         }
         else if (OperatingSystem.IsLinux())
         {
@@ -31,11 +31,11 @@ internal static class DeepLinkProtocolRegistration
     public static void RegisterWindowsAfterInstall()
     {
         if (!OperatingSystem.IsWindows()) return;
-        RegisterWindows();
+        RegisterWindows(null);
     }
 
     [SupportedOSPlatform("windows")]
-    private static void RegisterWindows()
+    private static void RegisterWindows(Action<string>? diagnostic)
     {
         var executable = WindowsLaunchPath();
         var command = $"\"{executable}\" \"%1\"";
@@ -46,7 +46,7 @@ internal static class DeepLinkProtocolRegistration
         using var commandKey = protocol.CreateSubKey(@"shell\open\command")
             ?? throw new IOException("Could not create the URI protocol launch command.");
         commandKey.SetValue("", command, RegistryValueKind.String);
-        TryStampStartMenuShortcut();
+        TryStampStartMenuShortcut(diagnostic);
     }
 
     [SupportedOSPlatform("windows")]
@@ -76,13 +76,21 @@ internal static class DeepLinkProtocolRegistration
     }
 
     [SupportedOSPlatform("windows")]
-    private static void TryStampStartMenuShortcut()
+    private static void TryStampStartMenuShortcut(Action<string>? diagnostic)
     {
         var startMenu = Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-        if (!Directory.Exists(startMenu)) return;
+        if (!Directory.Exists(startMenu))
+        {
+            diagnostic?.Invoke("Windows Start Menu directory was not found; toast AppUserModelID shortcut stamping was skipped.");
+            return;
+        }
         var shortcut = Directory.EnumerateFiles(startMenu, "Axmol Hub.lnk", SearchOption.AllDirectories)
             .FirstOrDefault();
-        if (shortcut is null) return;
+        if (shortcut is null)
+        {
+            diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu; Windows toasts may not be delivered for this build.");
+            return;
+        }
 
         object? shellLink = null;
         try
@@ -106,6 +114,7 @@ internal static class DeepLinkProtocolRegistration
                 Marshal.ThrowExceptionForHR(store.SetValue(ref key, ref value));
                 Marshal.ThrowExceptionForHR(store.Commit());
                 persistence.Save(shortcut, true);
+                diagnostic?.Invoke($"Stamped Windows toast AppUserModelID {SystemAttentionService.WindowsAppUserModelId} on {shortcut}.");
             }
             finally
             {
@@ -114,7 +123,9 @@ internal static class DeepLinkProtocolRegistration
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.TraceWarning("Could not register the Windows toast AppUserModelID: " + ex);
+            var message = "Could not register the Windows toast AppUserModelID: " + ex;
+            System.Diagnostics.Trace.TraceWarning(message);
+            diagnostic?.Invoke(message);
         }
         finally
         {

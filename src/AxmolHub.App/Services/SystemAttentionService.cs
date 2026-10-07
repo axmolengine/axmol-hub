@@ -14,13 +14,17 @@ internal sealed class SystemAttentionService : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
 
     internal event Action<string>? NotificationActivated;
+    internal event Action<string>? Diagnostic;
 
-    internal static bool ShouldNotifyApproval(string conversationId, string? viewedConversationId)
-        => !string.Equals(conversationId, viewedConversationId, StringComparison.Ordinal);
+    internal static bool ShouldNotifyApproval(
+        string conversationId, string? viewedConversationId, bool assistantPageVisible)
+        => !assistantPageVisible
+           || !string.Equals(conversationId, viewedConversationId, StringComparison.Ordinal);
 
     internal static bool ShouldNotifyRun(
-        string conversationId, string? viewedConversationId, bool hasPendingPlan, RunResult result)
-        => ShouldNotifyApproval(conversationId, viewedConversationId)
+        string conversationId, string? viewedConversationId, bool assistantPageVisible,
+        bool hasPendingPlan, RunResult result)
+        => ShouldNotifyApproval(conversationId, viewedConversationId, assistantPageVisible)
            && !hasPendingPlan
            && result is not (RunResult.Cancelled or RunResult.Parked);
 
@@ -51,22 +55,47 @@ internal sealed class SystemAttentionService : IDisposable
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.TraceError("Could not show system notification: " + ex);
+            Report("Could not show system notification: " + ex);
         }
     }
 
-    internal void SetApprovalBadge(Window window, bool visible)
+    internal bool SetApprovalBadge(Window window, bool visible)
     {
         try
         {
             if (OperatingSystem.IsWindows())
-                WindowsTaskbarBadge.Set(window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero, visible);
+            {
+                var handle = window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                if (handle == IntPtr.Zero)
+                {
+                    Report("Could not update the taskbar badge: the window has no platform handle yet.");
+                    return false;
+                }
+                WindowsTaskbarBadge.Set(handle, visible);
+            }
             else if (OperatingSystem.IsMacOS())
                 MacNotifications.SetBadge(visible);
+            else return false;
+            return true;
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.TraceWarning("Could not update the application approval badge: " + ex);
+            Report("Could not update the application approval badge: " + ex);
+            return false;
+        }
+    }
+
+    internal void Report(string message)
+    {
+        System.Diagnostics.Trace.TraceInformation(message);
+        if (Diagnostic is not { } handlers) return;
+        foreach (Action<string> handler in handlers.GetInvocationList())
+        {
+            try { handler(message); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("System-attention diagnostic listener failed: " + ex);
+            }
         }
     }
 
@@ -112,19 +141,24 @@ internal sealed class SystemAttentionService : IDisposable
 
         var xmlBytes = Encoding.UTF8.GetBytes(xml.OuterXml);
         var encodedXml = Convert.ToBase64String(xmlBytes);
-        var script = "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; "
+        var script = "$ErrorActionPreference = 'Stop'; try { "
+                     + "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; "
                      + "$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]; "
                      + "$bytes = [Convert]::FromBase64String('" + encodedXml + "'); "
                      + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument; "
                      + "$doc.LoadXml([Text.Encoding]::UTF8.GetString($bytes)); "
                      + "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc); "
                      + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('"
-                     + WindowsAppUserModelId + "').Show($toast)";
+                     + WindowsAppUserModelId + "').Show($toast); "
+                     + "Write-Output 'Toast.Show completed.' "
+                     + "} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }";
         var start = new ProcessStartInfo("powershell.exe")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
         start.ArgumentList.Add("-NoLogo");
         start.ArgumentList.Add("-NoProfile");
@@ -134,16 +168,28 @@ internal sealed class SystemAttentionService : IDisposable
         start.ArgumentList.Add("-EncodedCommand");
         start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
         var process = Process.Start(start) ?? throw new IOException("Could not start PowerShell for the Windows toast.");
-        _ = ObserveWindowsToastAsync(process);
+        Report($"Started Windows toast helper for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
+        _ = ObserveWindowsToastAsync(process, conversationId);
     }
 
-    private static async Task ObserveWindowsToastAsync(Process process)
+    private async Task ObserveWindowsToastAsync(Process process, string conversationId)
     {
         using (process)
         {
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync().ConfigureAwait(false);
             if (process.ExitCode != 0)
-                System.Diagnostics.Trace.TraceWarning($"Windows toast helper exited with code {process.ExitCode}.");
+            {
+                var diagnostic = (await error.ConfigureAwait(false)).Trim();
+                Report($"Windows toast helper failed for conversation {conversationId} "
+                       + $"(exit {process.ExitCode}): {diagnostic}");
+                return;
+            }
+
+            var details = (await output.ConfigureAwait(false)).Trim();
+            Report($"Windows toast helper completed for conversation {conversationId}."
+                   + (details.Length == 0 ? "" : " " + details));
         }
     }
 
@@ -315,17 +361,20 @@ internal sealed class SystemAttentionService : IDisposable
             var classId = TaskbarClass;
             var interfaceId = TaskbarInterface;
             var result = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref interfaceId, out var taskbar);
-            if (result != 0) Marshal.ThrowExceptionForHR(result);
+            Marshal.ThrowExceptionForHR(result);
             try
             {
                 var vtable = Marshal.ReadIntPtr(taskbar);
+                var initialize = Marshal.GetDelegateForFunctionPointer<HrInitDelegate>(
+                    Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
+                Marshal.ThrowExceptionForHR(initialize(taskbar));
                 var method = Marshal.ReadIntPtr(vtable, 18 * IntPtr.Size);
                 var setOverlay = Marshal.GetDelegateForFunctionPointer<SetOverlayIconDelegate>(method);
                 var icon = visible ? CreateDotIcon() : IntPtr.Zero;
                 try
                 {
-                    result = setOverlay(taskbar, window, icon, visible ? "Approval needed" : "");
-                    if (result != 0) Marshal.ThrowExceptionForHR(result);
+                    Marshal.ThrowExceptionForHR(
+                        setOverlay(taskbar, window, icon, visible ? "Approval needed" : ""));
                 }
                 finally
                 {
@@ -392,6 +441,9 @@ internal sealed class SystemAttentionService : IDisposable
                 DeleteObject(color);
             }
         }
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int HrInitDelegate(IntPtr self);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int SetOverlayIconDelegate(IntPtr self, IntPtr window, IntPtr icon, [MarshalAs(UnmanagedType.LPWStr)] string description);
