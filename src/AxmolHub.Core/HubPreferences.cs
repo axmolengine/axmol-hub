@@ -45,6 +45,14 @@ public sealed class HubPreferences
 
     /// <summary>侧栏是否处于收起状态；由 ☰ 按钮或拖拽到阈值以下切换。</summary>
     public bool SidebarCollapsed { get; set; }
+
+    /// <summary>
+    /// The strongest reasoning tier Hub's per-request routing (<see cref="ChatRouting.Auto"/>) may pick, whatever
+    /// the task looks like. It is a ceiling and not a target: the point of the setting is that the expensive
+    /// tiers are a decision a person made once on purpose, not something a classifier reaches for on its own.
+    /// Unknown values fall back to <see cref="ChatReasoningEfforts.XHigh"/> — see <see cref="ModelRouting.Ceiling"/>.
+    /// </summary>
+    public string MaxAutoEffort { get; set; } = ChatReasoningEfforts.XHigh;
 }
 
 public sealed class PreferencesStore(string path)
@@ -66,6 +74,10 @@ public sealed class PreferencesStore(string path)
         // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
         // has to come back as "ask", never as "let it through".
         preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);
+        // The routing ceiling is a cost guard: a value this build cannot read falls back to the shipped ceiling
+        // rather than to "no ceiling", which is the one way a hand-edited settings file could spend past the
+        // strongest tier anyone agreed to.
+        preferences.MaxAutoEffort = ModelRouting.Ceiling(preferences.MaxAutoEffort);
         return preferences;
     }
     public void Save(HubPreferences preferences) => StateStore.WriteJson(path, preferences);

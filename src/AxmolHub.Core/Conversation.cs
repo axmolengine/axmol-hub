@@ -45,6 +45,28 @@ public static class ChatReasoningEfforts
 }
 
 /// <summary>
+/// Who picks the model and the reasoning tier for one session: the person, or Hub per request.
+///
+/// Two values and a manual default, because "auto" spending money nobody agreed to spend is the failure mode of
+/// every assistant that routed silently. The word is also unambiguous now that the neutral reasoning tier is
+/// called <see cref="ChatReasoningEfforts.Default"/>: in this app 「自动」 means this and nothing else — the
+/// gateway's model id <c>orcarouter/auto</c> is a model name, not a setting.
+/// </summary>
+public static class ChatRouting
+{
+    /// <summary>The session keeps the model and tier the user chose. Also the fallback for anything unreadable.</summary>
+    public const string Manual = "manual";
+
+    /// <summary>Hub decides per request, inside the ceiling in <see cref="HubPreferences"/>. A manual choice made
+    /// afterwards switches the session back, because an override that routing silently ignores is not an override.</summary>
+    public const string Auto = "auto";
+
+    /// <summary>Unknown means manual, so a session file written by a newer Hub — or hand-edited — cannot turn
+    /// routing on by being misread.</summary>
+    public static string Normalize(string? routing) => routing == Auto ? Auto : Manual;
+}
+
+/// <summary>
 /// One image attached to a turn. The bytes live in a directory beside the session's JSON, not inside it: a
 /// session file is rewritten on every message and replayed into every later request, and a megabyte of PNG
 /// encoded through <c>System.Text.Json</c>'s default escaper would be re-escaped each time. What the turn keeps
@@ -147,6 +169,13 @@ public sealed class Conversation
     public int ContextSummaryThroughMessageCount { get; set; }
     public string Mode { get; set; } = ChatModes.Agent;
     public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Default;
+
+    /// <summary>Whether the person or Hub picks the model and tier for this session — see
+    /// <see cref="ChatRouting"/>. A string on disk rather than a bool for the same reason <see cref="Mode"/> is:
+    /// a value written by a newer Hub has to survive a round-trip through this one. A session file written before
+    /// routing existed has no such property and lands on <see cref="ChatRouting.Manual"/>, which is the answer Hub
+    /// would have given then.</summary>
+    public string Routing { get; set; } = ChatRouting.Manual;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

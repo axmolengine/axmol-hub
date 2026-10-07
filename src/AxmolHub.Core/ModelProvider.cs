@@ -79,6 +79,14 @@ public sealed class ModelProvider
     public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The two models Hub may switch between when a session is routed automatically, both of them named by the
+    /// user. unset (or only half set) means auto routing changes the reasoning tier and never the model: which
+    /// of a provider's tiers is "the cheap one" is a decision about someone's bill and their taste, and Hub
+    /// guessing it is exactly the kind of hard-coded model-name knowledge this project deleted once already.
+    /// </summary>
+    public AutoRoutingModels? AutoRouting { get; set; }
+
+    /// <summary>
     /// The auth methods this provider actually offers: the declared list with unknown values dropped, or
     /// <c>["apiKey"]</c> when nothing usable was declared.
     ///
