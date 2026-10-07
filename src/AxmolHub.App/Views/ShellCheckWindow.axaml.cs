@@ -195,6 +195,16 @@ public partial class ShellCheckWindow : Window
         Check(panel.SelectModelForCheck(checkProvider.Id, checkModel)
               && panel.ReasoningPickerEnabledForCheck,
             "存在明确推理元数据的模型显示推理档位选项");
+        // 「自动」 now means Hub routing a request by task complexity, and the gateway has its own model id of
+        // that name; a session that never picked a tier reads "default". The chip is the resource text after its
+        // 「推理：」 prefix, so the assertion reads the same resource the label does.
+        var defaultLabel = HubStrings.Get("ChatReasoningDefault");
+        var labelSplit = defaultLabel.IndexOfAny(['：', ':']);
+        var expectedChip = (labelSplit >= 0 ? defaultLabel[(labelSplit + 1)..] : defaultLabel).Trim();
+        Check(panel.ReasoningChipTextForCheck == expectedChip
+              && !expectedChip.Contains("自动", StringComparison.Ordinal)
+              && !expectedChip.Contains("Auto", StringComparison.Ordinal),
+            "没手选过档位时芯片读「默认」而不是「自动」（实际「" + panel.ReasoningChipTextForCheck + "」）");
         Check(panel.ActiveModelText.Contains(checkProvider.Name, StringComparison.Ordinal)
               && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");

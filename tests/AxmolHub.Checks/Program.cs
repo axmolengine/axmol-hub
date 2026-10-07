@@ -460,6 +460,23 @@ if (args.Contains("--check-ai-sessions"))
         throw new Exception("Composer settings or attached context did not round-trip.");
     Console.WriteLine("PASS: Conversation mode, reasoning effort, and attached context persist.");
 
+    // "auto" is what this tier used to be called. Session files are hand-editable and are written by every older
+    // build, so the old spelling has to load and read as the neutral tier rather than strand the session or pick
+    // a strength nobody chose.
+    File.WriteAllText(Path.Combine(root, "ai", "sessions", "legacy-effort.json"),
+        """{"Id":"legacy-effort","Title":"legacy","ProviderId":"orcarouter","Messages":[],"ReasoningEffort":"auto"}""");
+    var legacyEffort = store.Load("legacy-effort")
+                       ?? throw new Exception("A session written before the reasoning tier was renamed no longer loads.");
+    if (legacyEffort.ReasoningEffort != "auto"
+        || ChatReasoningEfforts.Normalize(legacyEffort.ReasoningEffort) != ChatReasoningEfforts.Default
+        || ChatReasoningEfforts.Normalize("a tier this build has never heard of") != ChatReasoningEfforts.Default
+        || ChatReasoningEfforts.Normalize(null) != ChatReasoningEfforts.Default
+        || ChatReasoningEfforts.Normalize(ChatReasoningEfforts.XHigh) != ChatReasoningEfforts.XHigh)
+        throw new Exception("The renamed reasoning tier did not fall back to Default for the old and unknown spellings.");
+    if (Conversation.Create("orcarouter").ReasoningEffort != ChatReasoningEfforts.Default)
+        throw new Exception("A new session does not start on the neutral reasoning tier.");
+    Console.WriteLine("PASS: a reasoning effort stored as \"auto\" reads as the neutral Default tier.");
+
     // Branch provenance is optional on purpose: a branch records where it was cut, and a session written
     // before the field existed must still load (the store ignores absent properties).
     var branch = Conversation.Create("orcarouter");
@@ -613,8 +630,8 @@ if (args.Contains("--check-ai-sessions"))
                        [ChatTurn.User("test")],
                        modelName: "deepseek-flash")) { }
     if (defaultDeepSeekClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.High)
-        throw new Exception("DeepSeek Auto did not honor the /models default effort.");
-    Console.WriteLine("PASS: DeepSeek Auto uses the default effort declared by /models.");
+        throw new Exception("DeepSeek on the default tier did not honor the /models default effort.");
+    Console.WriteLine("PASS: DeepSeek's default tier uses the effort declared by /models.");
 
     var defaultOpenAiClient = new FakeChatClient(["ok"]);
     await foreach (var _ in new ChatPipeline(defaultOpenAiClient).SendAsync(
@@ -622,8 +639,22 @@ if (args.Contains("--check-ai-sessions"))
                        [ChatTurn.User("test")],
                        modelName: "gpt-6.1-sol")) { }
     if (defaultOpenAiClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.Low)
-        throw new Exception("GPT-6.1-Sol Auto did not use the declared low default.");
-    Console.WriteLine("PASS: GPT-6.1-Sol Auto uses its manifest default effort.");
+        throw new Exception("GPT-6.1-Sol on the default tier did not use the declared low default.");
+    Console.WriteLine("PASS: GPT-6.1-Sol's default tier uses its manifest default effort.");
+
+    // The other half of what "default" means: a model that lists effort levels but declares none of them as its
+    // default gets *no* reasoning field at all. "Default" is not a strength, and mapping it to one — Minimal, say
+    // — would send a bytes-level instruction the user never chose and this assertion would catch.
+    openAiProvider.ReasoningModels["gpt-plain"] = new AiModelReasoning { Efforts = ["low", "high"] };
+    var undeclaredDefaultClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(undeclaredDefaultClient).SendAsync(
+                       openAiProvider,
+                       [ChatTurn.User("test")],
+                       reasoningEffort: ChatReasoningEfforts.Default,
+                       modelName: "gpt-plain")) { }
+    if (undeclaredDefaultClient.LastOptions?.Reasoning is not null)
+        throw new Exception("The default tier invented a reasoning effort for a model that declares none.");
+    Console.WriteLine("PASS: the default tier sends no reasoning field when the model has no declared default.");
 
     var extraHighClient = new FakeChatClient(["ok"]);
     await foreach (var _ in new ChatPipeline(extraHighClient).SendAsync(

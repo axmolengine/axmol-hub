@@ -696,9 +696,9 @@ public partial class ChatPanel : UserControl
 
             if (ModelCatalog.ReasoningFor(choice.Provider, choice.ModelName) is { Efforts.Count: > 0 } reasoning)
             {
-                var currentEffort = isSelected ? _chat.ActiveReasoningEffort : ChatReasoningEfforts.Auto;
+                var currentEffort = isSelected ? _chat.ActiveReasoningEffort : ChatReasoningEfforts.Default;
                 foreach (var (effort, labelKey) in ReasoningChoices.Where(choice =>
-                             choice.Value == ChatReasoningEfforts.Auto
+                             choice.Value == ChatReasoningEfforts.Default
                              || reasoning.Efforts.Contains(choice.Value, StringComparer.OrdinalIgnoreCase)))
                 {
                     var effortItem = new MenuItem
@@ -725,7 +725,7 @@ public partial class ChatPanel : UserControl
 
     private static readonly (string Value, string LabelKey)[] ReasoningChoices =
     [
-        (ChatReasoningEfforts.Auto, "ChatReasoningAuto"),
+        (ChatReasoningEfforts.Default, "ChatReasoningDefault"),
         (ChatReasoningEfforts.Low, "ChatReasoningLow"),
         (ChatReasoningEfforts.Medium, "ChatReasoningMedium"),
         (ChatReasoningEfforts.High, "ChatReasoningHigh"),
@@ -1938,6 +1938,7 @@ public partial class ChatPanel : UserControl
     internal bool ModelPickerUsesContentWidthForCheck => double.IsNaN(ModelPicker.Width);
     internal string SelectedModeForCheck => _chat.ActiveMode;
     internal string SelectedReasoningForCheck => _chat.ActiveReasoningEffort;
+    internal string ReasoningChipTextForCheck => SelectedReasoningLabel.Text ?? "";
     internal bool ReasoningPickerEnabledForCheck => SelectedReasoningLabel.IsVisible;
     internal double ContextUsageForCheck => ContextRing.Usage;
     internal string ContextTooltipForCheck => ToolTip.GetTip(ContextButton)?.ToString() ?? "";

@@ -387,7 +387,7 @@ public static class HubTexts
         ["ChatModeAgent"] = ("代理", "Agent"),
         ["ChatModeGoal"] = ("目标", "Goal"),
         ["ChatModeResetHint"] = ("点击恢复默认目标模式", "Click to return to the default Goal mode"),
-        ["ChatReasoningAuto"] = ("推理：自动", "Reasoning: Auto"),
+        ["ChatReasoningDefault"] = ("推理：默认", "Reasoning: Default"),
         ["ChatReasoningLow"] = ("推理：低", "Reasoning: Low"),
         ["ChatReasoningMedium"] = ("推理：中", "Reasoning: Medium"),
         ["ChatReasoningHigh"] = ("推理：高", "Reasoning: High"),

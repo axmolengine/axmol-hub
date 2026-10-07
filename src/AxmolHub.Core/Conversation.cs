@@ -23,13 +23,25 @@ public static class ChatModes
 
 public static class ChatReasoningEfforts
 {
-    public const string Auto = "auto";
+    /// <summary>
+    /// Not a strength tier — "send what this model's own catalogue says, or nothing at all". It was called
+    /// <c>auto</c>, which is a word with three meanings in this app: this setting, Hub routing a request by task
+    /// complexity, and the gateway's model id <c>orcarouter/auto</c>. Renaming it is wire-neutral: no gateway
+    /// accepts an effort literally named "auto" either, so nothing this value ever sent changed.
+    /// </summary>
+    public const string Default = "default";
+
     public const string Low = "low";
     public const string Medium = "medium";
     public const string High = "high";
     public const string XHigh = "xhigh";
     public const string Max = "max";
     public const string Ultra = "ultra";
+
+    /// <summary>Unknown means <see cref="Default"/>: a session file hand-edited, or written by a newer Hub, must
+    /// not end up reasoning at a strength nobody picked. <c>"auto"</c> is the name this value used to have, and it
+    /// still loads — the rename may not strand a session.</summary>
+    public static string Normalize(string? effort) => effort is Low or Medium or High or XHigh or Max or Ultra ? effort : Default;
 }
 
 /// <summary>
@@ -110,7 +122,7 @@ public sealed class Conversation
     public string ContextSummary { get; set; } = "";
     public int ContextSummaryThroughMessageCount { get; set; }
     public string Mode { get; set; } = ChatModes.Agent;
-    public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Auto;
+    public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Default;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

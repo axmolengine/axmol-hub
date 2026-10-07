@@ -40,7 +40,7 @@ public sealed class ChatWorkspace : IDisposable
     private string? _selectedProviderId;
     private string? _selectedModelName;
     private string _selectedMode = ChatModes.Agent;
-    private string _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+    private string _selectedReasoningEffort = ChatReasoningEfforts.Default;
     private string? _selectedApprovalMode;
     private string? _selectedWorkspaceRoot;
 
@@ -131,7 +131,8 @@ public sealed class ChatWorkspace : IDisposable
     public Conversation? ActiveConversation => _active;
 
     public string ActiveMode => _active is null ? _selectedMode : NormalizeMode(_active.Mode);
-    public string ActiveReasoningEffort => _active?.ReasoningEffort ?? _selectedReasoningEffort;
+    public string ActiveReasoningEffort
+        => ChatReasoningEfforts.Normalize(_active?.ReasoningEffort ?? _selectedReasoningEffort);
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
@@ -153,10 +154,10 @@ public sealed class ChatWorkspace : IDisposable
 
     public bool SelectReasoningEffort(string effort)
     {
-        if (effort is not (ChatReasoningEfforts.Auto or ChatReasoningEfforts.Low
+        if (effort is not (ChatReasoningEfforts.Default or ChatReasoningEfforts.Low
             or ChatReasoningEfforts.Medium or ChatReasoningEfforts.High or ChatReasoningEfforts.XHigh
             or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra)) return false;
-        if (effort != ChatReasoningEfforts.Auto
+        if (effort != ChatReasoningEfforts.Default
             && (SelectedChatModel is not { } choice
                 || !ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, effort))) return false;
         _selectedReasoningEffort = effort;
@@ -1615,7 +1616,7 @@ public sealed class ChatWorkspace : IDisposable
         if (_active is not null)
         {
             _selectedMode = ChatModes.Agent;
-            _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+            _selectedReasoningEffort = ChatReasoningEfforts.Default;
         }
         var choice = SelectedChatModel;
         var selectedProvider = providerId is null
@@ -1654,7 +1655,7 @@ public sealed class ChatWorkspace : IDisposable
             ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
         _active = conversation;
         _selectedMode = NormalizeMode(conversation.Mode);
-        _selectedReasoningEffort = conversation.ReasoningEffort;
+        _selectedReasoningEffort = ChatReasoningEfforts.Normalize(conversation.ReasoningEffort);
         Changed?.Invoke();
         return conversation;
     }
@@ -1665,7 +1666,7 @@ public sealed class ChatWorkspace : IDisposable
         // copy that a later write would silently replace.
         _active = _sessions.Load(id);
         _selectedMode = _active is null ? ChatModes.Agent : NormalizeMode(_active.Mode);
-        _selectedReasoningEffort = _active?.ReasoningEffort ?? ChatReasoningEfforts.Auto;
+        _selectedReasoningEffort = ChatReasoningEfforts.Normalize(_active?.ReasoningEffort);
         Changed?.Invoke();
         return _active;
     }
@@ -1692,7 +1693,7 @@ public sealed class ChatWorkspace : IDisposable
         {
             _active = null;
             _selectedMode = ChatModes.Agent;
-            _selectedReasoningEffort = ChatReasoningEfforts.Auto;
+            _selectedReasoningEffort = ChatReasoningEfforts.Default;
         }
         Changed?.Invoke();
     }
@@ -1761,7 +1762,7 @@ public sealed class ChatWorkspace : IDisposable
         _sessions.Adopt(branch);
         _active = branch;
         _selectedMode = NormalizeMode(branch.Mode);
-        _selectedReasoningEffort = branch.ReasoningEffort;
+        _selectedReasoningEffort = ChatReasoningEfforts.Normalize(branch.ReasoningEffort);
         Changed?.Invoke();
         return branch;
     }
