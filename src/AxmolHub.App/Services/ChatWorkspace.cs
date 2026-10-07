@@ -164,10 +164,34 @@ public sealed class ChatWorkspace : IDisposable
             && (SelectedChatModel is not { } choice
                 || !ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, effort))) return false;
         _selectedReasoningEffort = effort;
-        if (_active is not null) _sessions.TryUpdate(_active.Id, conversation => conversation.ReasoningEffort = effort);
+        if (_active is not null) _sessions.TryUpdate(_active.Id, conversation =>
+        {
+            conversation.ReasoningEffort = effort;
+            // Same rule as picking a model by hand: the moment someone names a tier, that session is theirs again.
+            conversation.Routing = ChatRouting.Manual;
+        });
         Changed?.Invoke();
         return true;
     }
+
+    /// <summary>Whether the session's tier is picked by hand or by Hub, per session and never globally: routing
+    /// decides how much to spend on <i>this</i> work, so the session that is going somewhere careful is exactly
+    /// the one a person has to be able to opt out of.</summary>
+    public bool SetRouting(string conversationId, string routing)
+    {
+        var normalized = ChatRouting.Normalize(routing);
+        if (!_sessions.TryUpdate(conversationId, conversation => conversation.Routing = normalized)) return false;
+        // Turning routing off retires the route it last took. Leaving it would let a surface read a tier this
+        // session no longer uses as if it were the current one.
+        if (normalized == ChatRouting.Manual) _routes.Remove(conversationId);
+        Changed?.Invoke();
+        return true;
+    }
+
+    public string RoutingFor(string conversationId)
+        => ChatRouting.Normalize((_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.Routing);
+
+    public string ActiveRouting => ChatRouting.Normalize(_active?.Routing);
 
     internal (int Used, int Budget) EstimateContextUsage(string draft)
     {
@@ -604,6 +628,9 @@ public sealed class ChatWorkspace : IDisposable
             {
                 conversation.ProviderId = choice.Provider.Id;
                 conversation.ModelName = choice.ModelName;
+                // A hand pick is the end of routing for this session, not an input to it: a router that quietly
+                // overrode the model someone just chose would make the picker a decoration.
+                conversation.Routing = ChatRouting.Manual;
             });
         }
 
@@ -2599,7 +2626,7 @@ public sealed class ChatWorkspace : IDisposable
         ConversationRun run)
     {
         run.BeginSegment();
-        var request = await ReadOnUiAsync(() => PrepareRequest(run.ConversationId)).ConfigureAwait(false);
+        var request = await ReadOnUiAsync(() => PrepareRequest(run.ConversationId, run.SteerCount)).ConfigureAwait(false);
         if (request is null) return (RunResult.Failed, "NoAvailableChatModels", true, null);
 
         try
@@ -2654,27 +2681,107 @@ public sealed class ChatWorkspace : IDisposable
 
     /// <summary>Builds one request against the transcript as it stands, on the UI thread: the history copy and
     /// the Hub snapshot the read-only tools are drawn from are both things the panel is reading concurrently.
-    /// Returns null when the session or a usable model is gone.</summary>
-    private ChatRequest? PrepareRequest(string conversationId)
+    /// Returns null when the session or a usable model is gone.
+    /// <paramref name="steers"/> is how many times this reply was steered — a fact only the live run holds.</summary>
+    private ChatRequest? PrepareRequest(string conversationId, int steers = 0)
     {
         var conversation = _sessions.Peek(conversationId);
         var choice = ModelFor(conversationId);
         if (conversation is null || choice is null) return null;
 
         var mode = NormalizeMode(conversation.Mode);
-        var reasoning = ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, conversation.ReasoningEffort)
-            ? conversation.ReasoningEffort
+        var history = conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList();
+        var modelName = choice.ModelName;
+        var reasoning = ModelCatalog.SupportsReasoningEffort(choice.Provider, modelName, conversation.ReasoningEffort)
+            ? ChatReasoningEfforts.Normalize(conversation.ReasoningEffort)
             : null;
+
+        if (ChatRouting.Normalize(conversation.Routing) == ChatRouting.Auto)
+        {
+            var decision = ModelRouting.Decide(new ModelRoutingSignal(
+                mode,
+                TailFailures(history),
+                HasWrittenFile(history),
+                UsageRatio(choice.Provider, history),
+                steers > 0,
+                history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Images.Count ?? 0,
+                history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Text.Length ?? 0,
+                PreferencesProvider?.Invoke().MaxAutoEffort,
+                choice.Provider.AutoRouting?.FastModel,
+                choice.Provider.AutoRouting?.StrongModel));
+            modelName = decision.ModelName ?? modelName;
+            reasoning = ReachableTier(choice.Provider, modelName, decision.ReasoningEffort);
+            // One line per decision, in the audit the user can open. A tier nobody can read back is a bill with
+            // no itemisation, and this is the half of routing that makes it reviewable.
+            Audit(conversationId, $"Auto route: {modelName} · {reasoning ?? "the model's own default"} — {decision.Reason}");
+            _routes[conversationId] = (modelName, reasoning ?? ChatReasoningEfforts.Default, decision.Reason);
+        }
+        else
+        {
+            // A session that went back to manual stops reporting a route it no longer takes. Written and read on
+            // the UI thread only — this is request assembly, not a tool loop — so it needs no concurrent bag.
+            _routes.Remove(conversationId);
+        }
+
         var tools = ChatTools.CreateFor(mode, ScopeFor(conversationId));
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
         // The attachment resolver is bound to this conversation because the turn names the file, and which
         // session's directory holds it is a fact only this class has.
-        return new ChatRequest(choice.Provider, choice.ModelName, reasoning, tools, EffectiveSystemPrompt(conversation),
-            conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList(),
+        return new ChatRequest(choice.Provider, modelName, reasoning, tools, EffectiveSystemPrompt(conversation),
+            history,
             image => _sessions.Store.ReadImage(conversationId, image.File) is { } bytes
                 ? BinaryData.FromBytes(bytes)
                 : null);
+    }
+
+    /// <summary>The last route this session's requests were sent on, for the surface that has to say what actually
+    /// ran rather than what was picked. Absent for a session that is not routed.</summary>
+    private readonly Dictionary<string, (string Model, string Effort, string Reason)> _routes = new();
+
+    internal (string Model, string Effort, string Reason)? LastRouteFor(string conversationId)
+        => _routes.TryGetValue(conversationId, out var route) ? route : null;
+
+    /// <summary>Failures at the tail, not in total: the third failed call of a session that then recovered four
+    /// times is history, and a router that reads it as escalation would stay at the top tier for the rest of the
+    /// conversation.</summary>
+    private static int TailFailures(IReadOnlyList<ChatTurn> history)
+    {
+        var count = 0;
+        for (var index = history.Count - 1; index >= 0; index--)
+        {
+            var turn = history[index];
+            if (turn.Role != ChatRoles.Tool || turn.ToolCallId is not { Length: > 0 }) continue;
+            if (!turn.ToolFailed) return count;
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>Whether a write in this session landed. A result turn carries no tool name, so the calls are
+    /// paired by id — and a refused or failed write does not count, because nothing has gone wrong yet.</summary>
+    private static bool HasWrittenFile(IReadOnlyList<ChatTurn> history)
+    {
+        var writes = history.Where(turn => turn.ToolName == "file_write" && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId!)
+            .ToHashSet(StringComparer.Ordinal);
+        return history.Any(turn => turn.Role == ChatRoles.Tool && turn.ToolCallId is { } id && !turn.ToolFailed
+                                   && writes.Contains(id));
+    }
+
+    private static double UsageRatio(ModelProvider provider, IReadOnlyList<ChatTurn> history)
+    {
+        var budget = provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
+        return budget <= 0 ? 0 : (double)history.Sum(ContextTrimmer.EstimateTokens) / budget;
+    }
+
+    /// <summary>The tier as this model can receive it, walking down its own ladder rather than up. Nothing is
+    /// better than the request failing with "unknown effort" because Hub asked a small model to think hard.</summary>
+    private static string? ReachableTier(ModelProvider provider, string model, string effort)
+    {
+        for (var candidate = effort; candidate is { Length: > 0 }; candidate = ModelRouting.StepDown(candidate))
+            if (ModelCatalog.SupportsReasoningEffort(provider, model, candidate)) return candidate;
+        return null;
     }
 
     private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)

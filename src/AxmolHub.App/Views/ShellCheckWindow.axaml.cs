@@ -205,6 +205,30 @@ public partial class ShellCheckWindow : Window
               && !expectedChip.Contains("自动", StringComparison.Ordinal)
               && !expectedChip.Contains("Auto", StringComparison.Ordinal),
             "没手选过档位时芯片读「默认」而不是「自动」（实际「" + panel.ReasoningChipTextForCheck + "」）");
+
+        // ── 自动路由：会话级开关、芯片文案、手动选择要能夺回来 ──
+        // Routing spends the user's money per request, so the switch is asserted where it is read (the chip),
+        // where it lands (the session file), and where it must lose (a hand pick).
+        var routeSession = shell.Chat.ActiveConversation ?? shell.Chat.StartConversation();
+        Check(shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
+            "新会话默认是手动选择，不会被静默自动路由");
+        Check(shell.Chat.SetRouting(routeSession.Id, ChatRouting.Auto)
+              && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Auto
+              && shell.Chat.ActiveRouting == ChatRouting.Auto,
+            "会话可以打开自动路由（Routing 落在会话上而不是全局）");
+        panel.Reload();
+        Check(panel.ReasoningChipTextForCheck == HubStrings.Get("ChatRoutingAutoChip"),
+            "开路由后芯片读「自动路由」而不是某个档位（实际「" + panel.ReasoningChipTextForCheck + "」）");
+        Check(shell.Chat.SelectReasoningEffort(ChatReasoningEfforts.Low)
+              && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
+            "手选一档，本会话立刻退出自动路由——被悄悄覆盖的手选不算手选");
+        panel.Reload();
+        Check(panel.ReasoningChipTextForCheck != HubStrings.Get("ChatRoutingAutoChip"),
+            "退出路由后芯片回到档位本身（实际「" + panel.ReasoningChipTextForCheck + "」）");
+        shell.Chat.SetRouting(routeSession.Id, ChatRouting.Auto);
+        Check(shell.Chat.SetRouting(routeSession.Id, "不认识的值")
+              && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
+            "读不懂的 Routing 值回到手动，而不是替谁决定花多少钱");
         Check(panel.ActiveModelText.Contains(checkProvider.Name, StringComparison.Ordinal)
               && panel.ActiveModelText.Contains(checkModel, StringComparison.Ordinal),
             "会话顶部显示当前选择的 provider/model（实际「" + panel.ActiveModelText + "」）");
@@ -888,6 +912,48 @@ public partial class ShellCheckWindow : Window
                 ? $"图标第 {n.IconColumn} 列、文字第 {n.TextColumn} 列、共 {n.Columns} 列"
                 : "没有找到提示行") + "）");
         panel.Reload();
+
+        // ── 开着路由真发一次 ──
+        // This model declares only low/high, so whatever the table computes has to be walked down to a tier the
+        // gateway can actually receive — sending "xhigh" to a two-tier model fails the request rather than
+        // strengthening it. The same send proves the route is readable afterwards (the chip's tooltip and the
+        // audit line), because routing that nobody can read back is a black box that spends someone's money.
+        // Set up its own session on a fresh keyless model that declares two tiers, because the checks above
+        // removed the provider this group started with — and a route taken against a model that no longer
+        // resolves is no route at all.
+        var routeProvider = shell.Chat.AddProvider("Routing check local", "http://localhost:11436/v1", checkModel, null);
+        routeProvider!.ReasoningModels[checkModel] = new AiModelReasoning
+        {
+            Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.High],
+        };
+        var routedSession = shell.Chat.StartConversation(routeProvider.Id);
+        shell.Chat.SelectChatModel(routeProvider.Id, checkModel);
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(["路由回答"]);
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var routeAudits = new List<string>();
+        var savedAudit = shell.Chat.AuditWrite;
+        shell.Chat.AuditWrite = line => routeAudits.Add(line);
+        var routingOn = shell.Chat.SetRouting(routedSession.Id, ChatRouting.Auto);
+        await panel.SendForCheckAsync("路由后再问一次");
+        shell.Chat.AuditWrite = savedAudit;
+        shell.Chat.ClientOverride = null;
+        var tookRoute = shell.Chat.LastRouteFor(routedSession.Id);
+        Check(routingOn && tookRoute is not null
+              && tookRoute.Value.Effort is ChatReasoningEfforts.Low or ChatReasoningEfforts.High
+              && tookRoute.Value.Reason.Length > 0,
+            "自动路由把档位降到这个模型收得下的那一档，并留下可读的原因（实际「" + tookRoute?.Effort
+            + "」，开关 " + routingOn + "，可用模型 " + shell.Chat.AvailableChatModels.Count
+            + "，活动会话 " + (shell.Chat.ActiveConversation?.Id == routedSession.Id) + "）");
+        Check(routeAudits.Count(line => line.Contains("Auto route:", StringComparison.Ordinal)) == 1
+              && routeAudits.Any(line => line.Contains(tookRoute?.Effort ?? "\n", StringComparison.Ordinal)),
+            "按路由发出的那次请求恰好留一行审计，写的就是实际生效的档位（实际 " + routeAudits.Count(line =>
+                line.Contains("Auto route:", StringComparison.Ordinal)) + " 行）");
+        shell.Chat.SetRouting(routedSession.Id, ChatRouting.Manual);
+        Check(shell.Chat.LastRouteFor(routedSession.Id) is null,
+            "切回手动后那次路由的读数不再冒充现状");
+        shell.Chat.RemoveProvider(routeProvider.Id);
 
         // ── Provider management lives in Settings now (it moved off the assistant page) ──
         await CheckProvidersInSettingsAsync(scratchRoot, shell);

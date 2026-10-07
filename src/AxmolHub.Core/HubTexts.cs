@@ -394,6 +394,12 @@ public static class HubTexts
         ["ChatReasoningXHigh"] = ("推理：超高", "Reasoning: Extra high"),
         ["ChatReasoningMax"] = ("推理：最大", "Reasoning: Max"),
         ["ChatReasoningUltra"] = ("推理：极致", "Reasoning: Ultra"),
+        // 谁在替这次请求选档位。措辞刻意避开单写「自动」：那个词在本应用里还可能是网关的模型 id
+        // orcarouter/auto，而芯片上的「自动路由」必须是唯一一个意思。
+        ["ChatRoutingMenu"] = ("档位由谁决定", "Who picks the tier"),
+        ["ChatRoutingManual"] = ("我手动选", "I pick manually"),
+        ["ChatRoutingAuto"] = ("自动（按任务强度）", "Auto (by task strength)"),
+        ["ChatRoutingAutoChip"] = ("自动路由", "Auto routing"),
         ["ChatContextEstimateFormat"] = ("预计上下文：{0} / {1} tokens（{2}%），仅为本地估算", "Estimated context: {0} / {1} tokens ({2}%), local estimate only"),
         ["ChatContextEstimateHint"] = ("按字符数估算，实际 token 用量可能不同。", "Estimated from text length; actual token usage may differ."),
         ["ChatContextWindow"] = ("上下文窗口", "Context window"),

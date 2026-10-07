@@ -221,9 +221,17 @@ public partial class ChatPanel : UserControl
         var supportsReasoning = selected is not null
             && ModelCatalog.SupportsReasoningEffort(selected.Provider, selected.ModelName);
         SelectedReasoningLabel.IsVisible = supportsReasoning;
+        // With routing on there is no single tier to name — Hub picks one per request — so the chip says who is
+        // picking, and the tooltip carries the route this session last actually went out on. A setting that
+        // spends money has to be readable without opening a log file.
+        var routed = supportsReasoning && _chat.ActiveRouting == ChatRouting.Auto;
         SelectedReasoningLabel.Text = supportsReasoning
-            ? ReasoningChoiceLabel(_chat.ActiveReasoningEffort)
+            ? routed ? HubStrings.Get("ChatRoutingAutoChip") : ReasoningChoiceLabel(_chat.ActiveReasoningEffort)
             : "";
+        ToolTip.SetTip(SelectedReasoningLabel, routed && _chat.ActiveConversation is { } session
+            && _chat.LastRouteFor(session.Id) is { } route
+            ? $"{route.Model} · {route.Effort} — {route.Reason}"
+            : null);
         ModelPicker.IsEnabled = choices.Length > 0;
         ToolTip.SetTip(ModelPicker, selected is null
             ? HubStrings.Get("NoAvailableChatModels")
@@ -720,7 +728,40 @@ public partial class ChatPanel : UserControl
             menu.Items.Add(item);
         }
 
+        menu.Items.Add(BuildRoutingMenuItem());
         return menu;
+    }
+
+    /// <summary>
+    /// Who picks the model and the tier for this session. It is a switch under the model list rather than another
+    /// row in it, because "自动" as a menu entry would read exactly like the gateway's model id
+    /// <c>orcarouter/auto</c> — the same word, three meanings, and this is the one that changes what gets spent.
+    /// </summary>
+    private MenuItem BuildRoutingMenuItem()
+    {
+        var conversationId = _chat.ActiveConversation?.Id ?? "";
+        var auto = conversationId.Length > 0 && _chat.RoutingFor(conversationId) == ChatRouting.Auto;
+        var item = new MenuItem { Header = HubStrings.Get("ChatRoutingMenu") };
+        foreach (var (value, labelKey, isAuto) in new (string, string, bool)[]
+                 {
+                     (ChatRouting.Manual, "ChatRoutingManual", false),
+                     (ChatRouting.Auto, "ChatRoutingAuto", true),
+                 })
+        {
+            var choice = new MenuItem
+            {
+                Header = HubStrings.Get(labelKey),
+                ToggleType = MenuItemToggleType.Radio,
+                IsChecked = auto == isAuto,
+            };
+            choice.Click += (_, _) =>
+            {
+                if (conversationId.Length > 0) _chat.SetRouting(conversationId, value);
+                RefreshComposerChoices();
+            };
+            item.Items.Add(choice);
+        }
+        return item;
     }
 
     private static readonly (string Value, string LabelKey)[] ReasoningChoices =

@@ -104,6 +104,19 @@ public static class ModelRouting
     public static string Clamp(string effort, string ceiling)
         => Rank(effort) > Rank(ceiling) ? ChatReasoningEfforts.Normalize(ceiling) : effort;
 
+    /// <summary>One step down the ladder, and <c>null</c> below the bottom. A router's tier has to be one the
+    /// picked model can actually receive: gateways that stop at <c>medium</c> are not a bug in the decision, and
+    /// sending a tier the model rejects would fail the request rather than strengthen it.</summary>
+    public static string? StepDown(string? effort) => Rank(effort) switch
+    {
+        <= 1 => null,
+        2 => ChatReasoningEfforts.Low,
+        3 => ChatReasoningEfforts.Medium,
+        4 => ChatReasoningEfforts.High,
+        5 => ChatReasoningEfforts.XHigh,
+        _ => ChatReasoningEfforts.Max,
+    };
+
     public static ModelRoutingDecision Decide(ModelRoutingSignal signal)
     {
         var (effort, reason) = Tier(signal);

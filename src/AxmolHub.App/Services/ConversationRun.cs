@@ -153,8 +153,15 @@ internal sealed class ConversationRun : IDisposable
         {
             _steerText = text;
             _steerContext = context;
+            SteerCount++;
         }
     }
+
+    /// <summary>How many times the person reached into this reply to steer it. Nothing says "the answer was going
+    /// wrong" more directly, which is why the router treats one steer as the strongest signal in its table — and
+    /// why it is a count kept on the run rather than something re-derived from the transcript, where a steered
+    /// turn looks exactly like an ordinary one.</summary>
+    internal int SteerCount { get; private set; }
 
     internal bool TryTakeSteer(out string text, out string? context)
     {
