@@ -186,6 +186,18 @@ dotnet publish src/AxmolHub.App/AxmolHub.App.csproj -c Release -r win-x64 --self
 > 汉字字形，不是"装没装某个包"），探测不到就提示 `sudo apt install fonts-noto-cjk`。
 > 任何 CJK 字体都行（思源黑体、文泉驿……），装完重启 Hub 即可。
 
+**Linux 上的密钥存储用本机加密文件**（AES-256-GCM，数据密钥在 `~/.config/AxmolHub/ai-secret.key`，权限 600，故意放在 data root 之外）；设置页的提供商卡片会如实显示当前后端，不会含糊地说"系统凭据存储"。freedesktop 密钥环档尚未实现，见 [ADR-0003 §6](adr/0003-linux-secret-store.md)。浏览器登录按 `$BROWSER → xdg-open → gio open` 的顺序启动；都启动不了时，除了显示链接还会**让你粘贴回调地址**（WSL2 / 容器里浏览器在宿主机，回调打不到 Hub 的回环端口，这是唯一的出路）。macOS 仍无后端，会直接说明。
+
+不用打开 GUI 也能验证这台机器到底存得了存不了：
+
+```bash
+dotnet src/AxmolHub.App/bin/Release/net8.0/AxmolHub.App.dll --check-secrets
+```
+
+无头（在 Avalonia 启动之前就返回），只写临时目录，末行打印 `backend=` 与档名。三平台 CI 矩阵都跑这一条。密钥存储的契约断言另有 `dotnet run --project tests/AxmolHub.Checks -- artifacts/checks --check-secret-store`（2026-10-07 实测 52 条 PASS，只能在 Windows 上跑，原因见 `docs/ci.md` §2.7）。
+
+同一台机器上的 Linux 真跑已经做过：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；上面那条 `dotnet publish` 的**自包含**产物与 AppImage 仍未实测。
+
 构建 Windows 安装包并进行隔离安装检查：
 
 ```powershell

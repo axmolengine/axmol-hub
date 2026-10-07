@@ -46,7 +46,7 @@ Windows 额外做两件事：
 
 ### 2.1 行为断言：宿主检测 + CLI JSON 契约
 
-Core 里唯一按操作系统分叉的逻辑就是 `BuildTargets.Host`，而它直接决定 GUI 会告诉用户"哪些目标能在本机构建"。断言方式是跑 `AxmolHub.Cli targets`，然后检查每个目标的 `current=` 值：
+`Core` 里最早按操作系统分叉的逻辑是 `BuildTargets.Host`（密钥存储后端现在也按 OS 分叉，见 §2.7），而它直接决定 GUI 会告诉用户"哪些目标能在本机构建"。断言方式是跑 `AxmolHub.Cli targets`，然后检查每个目标的 `current=` 值：
 
 | 宿主 | 必须为 `current=True` | 必须为 `current=False` |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ Core 里唯一按操作系统分叉的逻辑就是 `BuildTargets.Host`，而它�
 | macOS | `macos-arm64`、`macos-x64`、`ios-*`、`tvos-*`、`android-*`、`wasm32` | `windows-x64`、`uwp-x64`、`linux-x64` |
 | Linux | `linux-x64`、`android-*`、`wasm32` | `windows-x64`、`uwp-x64`、`macos-*`、`ios-*` |
 
-这套断言不依赖工具链、不依赖引擎源码、不依赖网络，是当前唯一能**在三平台都**跑起来的行为检查，因此放在必跑路径上。（第二件行为断言是 §2.6 的 CLI JSON 契约，它同样不依赖引擎，但受 `AxmolHub.Checks` 的 TFM 限制只能跑在 Windows。）
+这套断言不依赖工具链、不依赖引擎源码、不依赖网络，是最早能**在三平台都**跑起来的行为检查，因此放在必跑路径上。（另两件行为断言：§2.6 的 CLI JSON 契约同样不依赖引擎，但受 `AxmolHub.Checks` 的 TFM 限制只能跑在 Windows；§2.7 的密钥存储则反过来拆成两件——契约断言进 Windows 的 Checks，三平台真机跑 App 的无头自检。）
 
 > **实现细节**：CLI 在 Windows 上输出 CRLF，`grep -E '...current=True$'` 会因行尾残留的 `\r` 匹配失败。管道里统一加了 `tr -d '\r'`。这一条已在本机用 Git Bash 正反两向实测（错误宿主断言返回 1、正确宿主返回 0）。
 
@@ -71,6 +71,21 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 `AxmolHub.App` 是 `net8.0`、不带 `-windows`，三平台同构。注意它是**纯编译**：Avalonia 的三个平台后端（`Avalonia.Win32` / `Avalonia.X11` / `Avalonia.Native`）都是被 `Avalonia.Desktop` 无条件拉进来的托管包，所以一次 `dotnet build` 就已覆盖三平台的编译面。**"能显示窗口"仍未被 CI 验证** —— 那需要 `xvfb-run`（Linux）之类的显示环境；在 CI 从未真实跑过之前不引入这类易红步骤。
 
 仍带 `if: matrix.host == 'windows'` 的只有 **`AxmolHub.Checks`**（`net8.0-windows`，含 Core 里 Windows 特有的断言）与 `--check-cli-json`，两者都不涉及 GUI。
+
+### 2.7 密钥存储：一件三平台真跑，一件只在 Windows 断
+
+鉴权是按平台分叉的产品行为（`SecretStoreFactory` 决定 DPAPI / 密钥环 / 本机加密文件 / macOS 无档），而两处既有设施都覆盖不全：`AxmolHub.Checks` 是 `net8.0-windows`（Linux 分支跑不到），`--verify-shell` 要显示器（§2.2 已明确否决 xvfb）。所以拆成两件互补：
+
+| 步骤 | 宿主 | 断什么 |
+| --- | --- | --- |
+| `Verify secret store on this host`<br>（`AxmolHub.App --check-secrets`） | 三平台 | **生产入口** `SecretStoreFactory.Create()`：写入 → 读回 → 篡改一字节必须读不出 → `credentials.json` 不含密钥 →（文件档）数据密钥 0600 且位置由 `HUB_SECRET_KEY_FILE` 决定 → Linux 上 `$BROWSER` 以 exec 方式被调用。末行输出 `backend=` 加档名（dpapi / encryptedfile / secret-service / none 四值之一），Linux job 额外钉住 `encryptedfile`；macOS 把"本平台暂无后端"当 PASS 分支，矩阵不为一个有意延后的项变红 |
+| `Verify secret store contract`<br>（`--check-secret-store`） | Windows | 纯函数与注入式假传输：blob 的 AAD 绑定（provider id 改名即失效）、版本字节、**外来 DPAPI blob 的识别**、路径净化（`../../evil`、`/etc/passwd` 出不了 `ai/secrets`）、`ResolvePath` 优先级、后端选择表（含 macOS 无档）、OAuth `ReadCallback` 的 state 先于 code、`$BROWSER` 参数表 |
+
+`--check-secrets` 在 `Program.Main` 里**早于 Avalonia 启动**就返回（与 Velopack 回调同一条规矩），所以它既不需要 X11 也不开任何窗口——这正是它能进 Linux 矩阵而 `--verify-shell` 不能的原因。它只写临时目录，并把 `HUB_SECRET_KEY_FILE` 指进那个临时目录，因此不会碰用户的 data root 与 `~/.config`。
+
+本机实测（2026-10-07）：Windows `backend=dpapi` 8 条 PASS；WSL2 Ubuntu-24.04 用框架依赖的 `linux-x64` 产物跑 `backend=encryptedfile` 12 条 PASS（含 0600 与浏览器启动两条只能在真 Unix 上断的）。GUI 侧另有 5 条中文断言，并已做过反向对照（让 DPAPI 也显示后端行 → 相关断言立刻 FAIL）。
+
+> **仍未被覆盖的部分**：freedesktop 密钥环档需要一台真能提供 `org.freedesktop.secrets` 的桌面。GitHub runner 与本机 WSL2 都没有（`NameHasOwner` 实测 False），所以 A 档落地时只能靠假传输断言加一次 GNOME 手测；判定条件与手测清单见 [ADR-0003 §6](adr/0003-linux-secret-store.md)。
 
 #### 无头 GUI 截图步骤已移除（2026-10-02）
 
