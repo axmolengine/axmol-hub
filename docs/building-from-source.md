@@ -88,9 +88,9 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（649 条断言）
+# 外壳、本地化与数据根切换的自检（706 条断言）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-shell ./tmp/shell-check.txt
-# 主题层（43 条）/ 基础件（26 条）
+# 主题层（46 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-theme ./tmp/theme.txt
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-foundation ./tmp/foundation.txt
 # 无头截图：主窗口一张
@@ -171,9 +171,11 @@ foreach ($g in 'providers','sessions','context','workspace','tool-policy','memor
 }
 ```
 
-每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-07 实测：33 / 26 / 4 / 6 / 5 / 2 / 9 / 40 / 7 / 1 = **133 条**。
+每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-07 实测：33 / 27 / 4 / 6 / 5 / 2 / 9 / 40 / 7 / 1 = **134 条**。
 
 **图片有四条入口，收到同一套准入里**：composer 的「+ → 添加图片…」、Ctrl+V 粘贴截图、把文件拖到输入框上，以及模型自己调 `capture_screen`。准入只看**文件头**（PNG / JPEG / GIF / WebP），扩展名不算数；单张上限 8 MiB、一条消息最多 4 张，**按大小先拒再读字节**，所以一次拖进一整文件夹的原图也不会先把窗口卡住。四条入口的图都落 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），并在消息边界以 user 角色发出去 —— `tool` 结果在 OpenAI 协议里带不了图。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，`capture_screen` 会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
+
+**助手页的交互也有断言**，因为这一类 bug 在编译期完全静默：空状态的四条建议 chip 存在、点一条只把话填进输入框（**不替人按下发送**）；拖文件到输入框上会亮起 accent 环、拖开或落下都收回，非文件的拖拽不亮；消息与草稿里的缩略图点得开，预览是**面板内的覆盖层而不是 Popup**（Popup 有自己的顶层，`--smoke-pages` 与像素判据都看不见它），打开与关闭都用帧里该图独有的两个恒定通道计数来证明真的画上了；Esc 先收预览、再停正在写的回复，空闲时按 Esc 什么都不做；↑ 在本轮窗口已发送的话里往回走（被引导吞掉的草稿也算），框里有字时让位给光标；发送后键盘回到输入框。滚动一侧：长回复写完停在最后一条、提示行活过一次整段重画（比对行实例，"还在"与"从没被清掉"是两件事）、切会话落在最新一条而不是继承上一处的读数。视觉一侧：纯文本与 markdown 正文同字号（只有最近 40 条走 markdown，否则消息会随滚动换字号），关闭叉号与代码块都用 `Hub.Font.Ui` / `Hub.Font.Mono` 那一份栈，浅色变体下第一次比较"实际会贴在一起"的表面配对（气泡 vs 页面、输入框 vs 页面、胶囊 vs 框底）。
 
 发布自包含图形版（RID 换成 `osx-arm64` / `osx-x64` / `linux-x64` 即可交叉发布，但只有 Windows 那一条实测过）：
 
