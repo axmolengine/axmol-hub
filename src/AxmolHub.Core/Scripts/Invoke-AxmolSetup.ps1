@@ -2,13 +2,24 @@ param([string]$EngineRoot)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $env:AX_ROOT = $EngineRoot
+$setupScript = Join-Path $EngineRoot 'setup.ps1'
+$tokens = $null
+$parseErrors = $null
+$setupAst = [System.Management.Automation.Language.Parser]::ParseFile($setupScript, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) {
+    [Console]::Error.WriteLine("Cannot inspect engine setup.ps1 parameters: $($parseErrors[0].Message)")
+    exit 1
+}
+if ($null -eq $setupAst.ParamBlock -or 'hub' -notin @($setupAst.ParamBlock.Parameters.Name.VariablePath.UserPath)) {
+    [Console]::Error.WriteLine("This engine setup.ps1 does not support -hub. Update it before running setup from Hub; refusing to risk persisting AX_ROOT.")
+    exit 2
+}
 
-# Official environment setup entry point. **It changes global state**: writes a User-level AX_ROOT,
-# inserts <engine>/tools/cmdline into the User PATH, and when necessary sets the execution policy to
-# Bypass (popping a UAC prompt) — this matches the engine's official flow exactly, and is deliberate.
+# Hub environment setup entry point. The caller passes -hub so AX_ROOT is process-local; setup still
+# inserts <engine>/tools/cmdline into the User PATH and may set the execution policy to Bypass (UAC).
 # It does not itself raise another interactive pause (that only happens when double-clicked from Explorer).
 try {
-    & (Join-Path $EngineRoot 'setup.ps1') @args
+    & $setupScript @args
     exit $LASTEXITCODE
 } catch {
     [Console]::Error.WriteLine($_.Exception.ToString())

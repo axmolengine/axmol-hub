@@ -97,8 +97,8 @@ public partial class ToolchainsPage : UserControl
     }
 
     /// <summary>
-    /// Running the engine setup **requires confirmation first**: it writes user-level PATH / AX_ROOT and may request elevation.
-    /// These side effects are part of the engine's official flow, not something Hub sneaks in, but the user has a right to know first.
+    /// Running the engine setup **requires confirmation first**: it writes user-level PATH and may request elevation.
+    /// Hub passes -hub to keep AX_ROOT process-local; the remaining side effects must still be disclosed.
     /// </summary>
     private async Task RunEngineSetupAsync()
     {

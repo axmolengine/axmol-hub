@@ -13,8 +13,8 @@ namespace AxmolHub.App;
 /// <see cref="EngineVersionDialog"/>.
 ///
 /// Why a confirmation is required first: this step compiles the **whole engine** (minutes to tens
-/// of minutes, gigabytes of output), and when the toolchain is missing the engine triggers its own
-/// setup on the way — which changes user-level PATH / AX_ROOT and may pop UAC. If these costs
+/// of minutes, gigabytes of output), and when the toolchain is missing the engine may download
+/// gigabytes of tools into its own tree. If these costs
 /// aren't spelled out, the user just sees a button that does nothing when clicked.
 ///
 /// It also lets the user pick a configuration: prebuilt libraries are **split into directories by

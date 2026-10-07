@@ -168,7 +168,7 @@ public static class HubTexts
         ["Verify"] = ("重新检测", "Verify"),
         ["InstallTools"] = ("安装基础工具", "Install tools"),
         ["RunEngineSetup"] = ("运行引擎 setup.ps1", "Run engine setup.ps1"),
-        ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。这一步会写入用户级 PATH 与 AX_ROOT，并可能请求提权（UAC）——与引擎官方流程一致。", "The engine installs its own toolchain into <engine>/tools/external. This writes the user PATH and AX_ROOT and may request elevation (UAC) — the same as the engine's official flow."),
+        ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。Hub 会用 -hub 调用 setup.ps1，只在当前进程设置 AX_ROOT；仍会写入用户级 PATH，并可能请求提权（UAC）。不支持 -hub 的旧引擎脚本会被拒绝执行，请先更新引擎。", "The engine installs its own toolchain into <engine>/tools/external. Hub calls setup.ps1 with -hub, keeping AX_ROOT process-local; setup still writes the user PATH and may request elevation (UAC). Older engine scripts without -hub support are refused; update the engine first."),
         // Host PowerShell 7. This is the one thing Hub installs outside the engine tree, and only because the
         // engine's own setup.ps1 refuses to run without pwsh. The state sentences are formatted with the version
         // (and the floor) by ToolchainsPage, then the executable path is appended in code — a path is not copy.
@@ -440,7 +440,6 @@ public static class HubTexts
         ["ApiKey"] = ("API 密钥", "API key"),
         ["ApiKeyHint"] = ("密钥保存在操作系统的凭据存储中，不会写入配置文件或日志。", "The key is kept in the OS credential store, never written to config files or logs."),
         ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI；macOS/Linux 待补）。", "Secure key storage is not available on this platform yet (Windows uses DPAPI; macOS/Linux are pending)."),
-        ["ApiKeyRequired"] = ("该提供商需要 API 密钥。", "This provider requires an API key."),
         ["SaveApiKey"] = ("保存密钥", "Save key"),
         // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，Simdsoft 可获得分成，所得收入全部用于 Axmol 引擎及相关工具的研发（见规划 D5）。
         ["AffiliateDisclosure"] = ("通过本项目的推荐链接注册 {0}，Simdsoft 可获得分成，所得收入将全部用于 Axmol 引擎及相关工具的研发。", "Signing up for {0} through this project's referral link earns Simdsoft a commission, all of which goes toward developing the Axmol engine and its tooling."),

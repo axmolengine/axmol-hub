@@ -309,7 +309,7 @@ public sealed class OpsCheckWindow : Window
     private void ReportSkipped()
     {
         Skip("装官方引擎（--verify-ops 不联网下载；那条链是 DownloadManager + PackageInstaller + sha256 校验）");
-        Skip("环境准备 / 装工具链（跑引擎自己的 setup.ps1：GB 级下载，且会改用户级 PATH 与 AX_ROOT、可能弹 UAC）"
+        Skip("环境准备 / 装工具链（跑引擎自己的 setup.ps1：GB 级下载，且会改用户级 PATH、可能弹 UAC）"
              + " —— 全局副作用不适合放进自动化，由用户在工具链页手动确认执行");
         Skip("构建与运行（需要先跑 setup.ps1 备好引擎树；成本是分钟到小时级，不属于「便宜的真跑」）");
         Skip("构建引擎预编译库（编译整棵引擎，数 GB、数十分钟）—— 由维护者在引擎页手动执行；"

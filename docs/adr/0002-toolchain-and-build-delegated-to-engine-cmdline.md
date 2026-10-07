@@ -45,8 +45,11 @@ ADR-0001 把 Hub 定位成「环境与构建服务」，其中一条是**工具�
    调用规则是 `axmol <subcmd> args`。Hub 不再拼 CMake 参数、不再调 cmake/ninja/gradle。
 2. **工具链安装委派给官方 `setup.ps1`**，落点是引擎树内的 `<engine>/tools/external`
    （即 `setup.ps1` 的 `-prefix`）。每个引擎版本各一套。
-3. **接受 `setup.ps1` 的全局副作用**：它写用户级 `AX_ROOT`、把 `<engine>/tools/cmdline`
-   插进用户 `PATH`、必要时把执行策略设为 `Bypass`（弹 UAC）。这与引擎官方流程完全一致。
+3. **明确 setup 的全局副作用**：Hub 调用 `setup.ps1 -hub`，只在 setup 进程中设置 `AX_ROOT`，
+   不将它写入用户环境、shell profile 或 `launchctl`；仍把 `<engine>/tools/cmdline` 插进用户
+   `PATH`，必要时把执行策略设为 `Bypass`（弹 UAC）。直接运行 `setup.ps1`（不带 `-hub`）仍沿用
+   引擎官方行为，持久化 `AX_ROOT`。Hub 遇到不支持 `-hub` 的旧引擎脚本会失败关闭，不会悄悄回退到
+   会持久化 `AX_ROOT` 的调用方式。
 4. **Hub 不再自持工具链**：`WindowsToolchainInstaller`、四份工具链包清单、`ToolchainDetector`
    整体退役。
 5. **`1k/build.profiles` 是工具版本唯一的真源**。Hub 只读它，用于**显示期望版本**。
@@ -180,7 +183,7 @@ axmol run -p win32 -a arm64 -t unit-tests -O3
 | # | 风险 / 缺口 | 现状 |
 |---|---|---|
 | R1 | 每个引擎树各一份 GB 级工具 | 只对实际要构建的平台跑 `setup -p`；引擎导入**不自动** setup；UI 明示体积 |
-| R2 | `setup.ps1` 改全局环境 | 执行前显式确认（工具链页）；文档不再声称工具链隔离 |
+| R2 | `setup.ps1` 改全局环境 | Hub 的 `-hub` 模式不持久化 `AX_ROOT`，但仍改用户 PATH，且可能请求提权；执行前显式确认 |
 | R3 | 开发者模式未开时 `setup.ps1` **`exit 0`** 却什么都没装 | `EngineSetupService` 解析引擎原文判 `DeveloperModeBlocked`，按失败处理 |
 | R4 | 无网络 / 受限环境 | 失败关闭；`build.profiles` 与探测本身不联网 |
 | R5 | `axmol build` 的构建目录与 Hub 旧 `build-hub*` 不同 | 改为**发现**（`EngineBuildLayout`）；`build-hub*` 只剩 Hub 自己的 Android 暂存在用 |

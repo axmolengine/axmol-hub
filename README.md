@@ -48,7 +48,7 @@ Use a published Windows installer and pick a writable install directory. The ins
 3. On the **Projects** page, create a project ("C++" or "C++ + Lua"), then click **Build** and pick a platform and configuration.
 4. Open the output directory after a successful build; click **Run** to launch. Android needs a connected device with an explicit serial.
 
-MSVC uses the Microsoft official installer, which requests UAC and registers a new system-level Build Tools instance. Hub does not modify the global `PATH`, `AX_ROOT`, or Git config, and does not auto-select an existing Visual Studio instance to modify.
+MSVC uses the Microsoft official installer, which requests UAC and registers a new system-level Build Tools instance. Hub itself does not modify global environment variables or Git config. When you explicitly run engine setup, Hub passes `-hub`: `AX_ROOT` stays process-local, while setup still adds the engine cmdline to the user `PATH` and may request elevation. Hub does not auto-select an existing Visual Studio instance to modify.
 
 ## Building from source
 

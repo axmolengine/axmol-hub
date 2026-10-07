@@ -52,6 +52,7 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     /// **Deliberately does not throw**: the caller must classify by the engine's output — with Developer
     /// Mode off, setup.ps1 does <c>exit 0</c> yet installs nothing; relying on exceptions alone cannot catch
     /// this false success.
+    /// Passes <c>-hub</c> so engine setup keeps <c>AX_ROOT</c> process-local while retaining its other setup behavior.
     /// Timeout semantics = 10 minutes of no output counts as a stall (the <see cref="ProcessRunner"/> default);
     /// while setup downloads a GB-scale toolchain it never times out as long as it keeps printing progress,
     /// so no total time cap is set.
@@ -61,11 +62,18 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
-        arguments.AddRange(["-File", SetupWrapper, "-EngineRoot", engine.Path]);
-        if (options.Platform is { Length: > 0 } platform) arguments.AddRange(["-p", platform]);
-        if (options.UpdateAdt) arguments.Add("-updateAdt");
+        arguments.AddRange(SetupScriptArguments(SetupWrapper, engine.Path, options));
 
         runner.Write($"axmol setup: {string.Join(' ', arguments)}");
         return runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation);
+    }
+
+    /// <summary>Builds the engine setup-wrapper arguments, including the Hub-specific no-persistent-AX_ROOT switch.</summary>
+    public static IReadOnlyList<string> SetupScriptArguments(string setupWrapper, string engineRoot, SetupOptions options)
+    {
+        var arguments = new List<string> { "-File", setupWrapper, "-EngineRoot", engineRoot, "-hub" };
+        if (options.Platform is { Length: > 0 } platform) arguments.AddRange(["-p", platform]);
+        if (options.UpdateAdt) arguments.Add("-updateAdt");
+        return arguments;
     }
 }
