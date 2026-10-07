@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（614 条断言）
+# 外壳、本地化与数据根切换的自检（631 条断言）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（43 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-theme ./tmp/theme.txt
@@ -169,9 +169,9 @@ foreach ($g in 'providers','sessions','context','workspace','tool-policy','memor
 }
 ```
 
-每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-07 实测：33 / 26 / 4 / 6 / 5 / 2 / 9 / 40 / 5 / 1 = **131 条**。
+每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-07 实测：33 / 26 / 4 / 6 / 5 / 2 / 9 / 40 / 7 / 1 = **133 条**。
 
-**图片的入口目前只有一个：模型自己调 `capture_screen`**。抓回的一帧存进 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），同一轮请求在消息边界以 user 角色把画面交回模型 —— `tool` 结果在 OpenAI 协议里带不了图。用户侧的「贴图 / 拖文件进输入框」还没做。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，工具会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
+**图片有四条入口，收到同一套准入里**：composer 的「+ → 添加图片…」、Ctrl+V 粘贴截图、把文件拖到输入框上，以及模型自己调 `capture_screen`。准入只看**文件头**（PNG / JPEG / GIF / WebP），扩展名不算数；单张上限 8 MiB、一条消息最多 4 张，**按大小先拒再读字节**，所以一次拖进一整文件夹的原图也不会先把窗口卡住。四条入口的图都落 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），并在消息边界以 user 角色发出去 —— `tool` 结果在 OpenAI 协议里带不了图。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，`capture_screen` 会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
 
 发布自包含图形版（RID 换成 `osx-arm64` / `osx-x64` / `linux-x64` 即可交叉发布，但只有 Windows 那一条实测过）：
 
