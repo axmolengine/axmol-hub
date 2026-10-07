@@ -15,7 +15,7 @@ namespace AxmolHub.App;
 ///    capturing too early yields a solid-color image.
 /// 2. **An added "screenshot is non-blank" assertion**. The original only asserted "the process can
 ///    start and exit 0", and a blank window fully satisfies that — a fake green that passes lying
-///    down. The criterion is SmokeCapture.FrameStats.IsBlank.
+///    down. The criterion is FrameStats.IsBlank (Core).
 /// </summary>
 internal static class SmokeRunner
 {

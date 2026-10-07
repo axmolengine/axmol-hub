@@ -22,7 +22,7 @@ namespace AxmolHub.App;
 /// a stable frame unattended and isn't replicated.</item>
 /// </list>
 ///
-/// Shares one criterion with <see cref="SmokeRunner"/> (<see cref="SmokeCapture.FrameStats.IsBlank"/>):
+/// Shares one criterion with <see cref="SmokeRunner"/> (<see cref="FrameStats.IsBlank"/>):
 /// asserting only "process exits 0" is a fake green that passes lying down — eight solid-color
 /// images satisfy it too.
 /// </summary>

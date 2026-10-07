@@ -1319,6 +1319,72 @@ if (args.Contains("--check-ai-workspace"))
         throw new Exception("A shell's own arguments swallowed the command it was given.");
     Console.WriteLine("PASS: one shell per host, with the encoding preamble only where the shell speaks it.");
 
+    // The blank rule exists because a solid-colour frame still passes "the file was written". These buffers are
+    // the three answers it must give, and they are made of bytes rather than of a rendered window: the criterion
+    // is arithmetic, so asserting it does not need the renderer that produced the picture.
+    const int side = 64;
+    var rowBytes = side * 4;
+    var solid = new byte[rowBytes * side];
+    for (var index = 0; index < solid.Length; index += 4)
+    {
+        solid[index] = 30;
+        solid[index + 1] = 30;
+        solid[index + 2] = 30;
+        solid[index + 3] = 255;
+    }
+
+    var solidFrame = FrameAnalysis.Analyze(solid, side, side, rowBytes);
+    if (!solidFrame.IsBlank() || solidFrame.DistinctColors != 1)
+        throw new Exception($"A solid-colour frame was not judged blank ({solidFrame}).");
+
+    // Black background, white bars: exactly the two-colour UI that an earlier lower bound of "eight distinct
+    // colours" called blank. The variance is the primary criterion; the colour count is only the weak fallback.
+    var striped = new byte[rowBytes * side];
+    for (var y = 0; y < side; y++)
+    for (var x = 0; x < side; x++)
+    {
+        var offset = (y * rowBytes) + (x * 4);
+        var level = (byte)((x + y) % 8 < 4 ? 240 : 12);
+        striped[offset] = level;
+        striped[offset + 1] = level;
+        striped[offset + 2] = level;
+        striped[offset + 3] = 255;
+    }
+
+    var stripedFrame = FrameAnalysis.Analyze(striped, side, side, rowBytes);
+    if (stripedFrame.IsBlank() || stripedFrame.DistinctColors != 2)
+        throw new Exception($"A two-colour UI frame was misjudged as blank ({stripedFrame}).");
+
+    if (!FrameAnalysis.Analyze([], 0, 0, 0).IsBlank() || !FrameAnalysis.Analyze(solid, 0, side, rowBytes).IsBlank())
+        throw new Exception("A frame with no size was not reported as blank.");
+    Console.WriteLine("PASS: a frame is blank by luminance variance, and a two-colour UI is not.");
+
+    // Capture backends dispatch the same pure way the shells do, so the platform answer is assertable here even
+    // though only one of these hosts is the machine running the check.
+    var windowsCapture = CaptureBackends.For("windows", grimAvailable: false);
+    var macCapture = CaptureBackends.For("macos", grimAvailable: false);
+    var linuxGrim = CaptureBackends.For("linux", grimAvailable: true);
+    var linuxBare = CaptureBackends.For("linux", grimAvailable: false);
+    var unknownCapture = CaptureBackends.For("qnx", grimAvailable: false);
+    if (windowsCapture.Id != CaptureBackends.GdiPrintWindow || !windowsCapture.Available
+        || macCapture.Id != CaptureBackends.MacOsScreenshot || !macCapture.Available
+        || linuxGrim.Id != CaptureBackends.LinuxGrim || !linuxGrim.Available)
+        throw new Exception($"A host was not dispatched to its capture backend: {windowsCapture} · {macCapture} · {linuxGrim}");
+
+    // A Linux session without grim, or an unknown host, answers with a sentence about the missing tool rather
+    // than spawning a process that cannot start: the model has to be told what the user can actually install.
+    if (linuxBare.Available || unknownCapture.Available)
+        throw new Exception("A host with no capture tool offered a backend it cannot use.");
+    foreach (var unusable in new[] { linuxBare, unknownCapture })
+        if (string.IsNullOrEmpty(unusable.Refusal)
+            || !unusable.Refusal.Contains("retry", StringComparison.OrdinalIgnoreCase))
+            throw new Exception($"A capture refusal does not tell the model to stop retrying: {unusable.Refusal}");
+    var currentCapture = CaptureBackends.ForCurrent();
+    var expectedCapture = CaptureBackends.For(BuildTargets.Host, CommandShells.Resolve("grim") is not null);
+    if (currentCapture.Id != expectedCapture.Id || currentCapture.Label != expectedCapture.Label)
+        throw new Exception($"ForCurrent disagreed with the host it is running on: {currentCapture.Id}.");
+    Console.WriteLine("PASS: each host picks one capture backend, and an unusable one says so in a refusal.");
+
     Directory.Delete(guardRoot, recursive: true);
     return;
 }
