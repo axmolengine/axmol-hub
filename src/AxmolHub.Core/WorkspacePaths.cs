@@ -42,13 +42,18 @@ public static class WorkspacePaths
     /// Composed rather than a literal so it carries the host's separator.</summary>
     public static string MemoryDirectory => Path.Combine(".agents", "memory");
 
+    /// <summary>Plain-text source and project files, by extension rather than by sniffing bytes: the same set
+    /// gates reading and writing, so anything not listed here is a file the assistant has to ask a person to
+    /// change. The platform project formats are all text (.pbxproj, .xcconfig, .storyboard, .entitlements,
+    /// .aidl, .pro), and an assistant that cannot edit them cannot help with that platform.</summary>
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".axproj", ".bat", ".c", ".cc", ".cmake", ".cpp", ".cs", ".css", ".cxx", ".def", ".editorconfig",
-        ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl", ".go", ".gradle", ".h", ".hlsl",
-        ".hpp", ".html", ".in", ".ini", ".ipp", ".java", ".js", ".json", ".kt", ".lua", ".m", ".md",
-        ".metal", ".mm", ".patch", ".plist", ".props", ".properties", ".ps1", ".py", ".rc", ".rs", ".sh",
-        ".sln", ".csproj", ".swift", ".targets", ".toml", ".ts", ".tsx", ".txt", ".vcxproj", ".vert",
+        ".aidl", ".axaml", ".axproj", ".bat", ".c", ".cc", ".cfg", ".cmake", ".cpp", ".cs", ".css", ".cxx",
+        ".def", ".editorconfig", ".entitlements", ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl",
+        ".go", ".gradle", ".h", ".hlsl", ".hpp", ".html", ".in", ".ini", ".ipp", ".java", ".js", ".json", ".kt",
+        ".lua", ".m", ".md", ".metal", ".mm", ".patch", ".pbxproj", ".plist", ".pro", ".props", ".properties",
+        ".ps1", ".py", ".rc", ".rs", ".sh", ".sln", ".csproj", ".storyboard", ".strings", ".stringsdict", ".swift",
+        ".targets", ".tmpl", ".toml", ".ts", ".tsx", ".txt", ".vcxproj", ".vert", ".xaml", ".xcconfig", ".xib",
         ".xml", ".yaml", ".yml",
     };
 
@@ -159,13 +164,17 @@ public static class WorkspacePaths
     }
 
     /// <summary>Walks the existing ancestors of <paramref name="path"/> up to <paramref name="stopAt"/>, refusing
-    /// any directory link. A junction inside the workspace would otherwise point a "contained" write outside it.</summary>
+    /// any directory link. A junction inside the workspace would otherwise point a "contained" write outside it.
+    /// Ancestors that do not exist are stepped over: asking a directory that is not there for its attributes
+    /// answers with an error value whose bits include the reparse flag, and "create this new file in a folder the
+    /// project has not grown yet" is the ordinary case for a write, not a link.</summary>
     private static bool ContainsReparsePoint(string path, string stopAt)
     {
         var stop = Path.GetFullPath(stopAt).TrimEnd(Path.DirectorySeparatorChar);
         var directory = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path).Directory;
         for (; directory != null; directory = directory.Parent)
         {
+            if (!directory.Exists) continue;
             if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) return true;
             if (directory.FullName.TrimEnd(Path.DirectorySeparatorChar).Equals(stop, StringComparison.Ordinal)) break;
         }

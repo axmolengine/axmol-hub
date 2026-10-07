@@ -1123,6 +1123,32 @@ if (args.Contains("--check-ai-workspace"))
         if (WorkspacePaths.ResolveWrite(workspace, name, guards).Verdict != WorkspacePathVerdict.Allowed)
             throw new Exception($"{name} was refused as a write target.");
 
+    // Every platform's project format is text, and the extension is what says so. An assistant that cannot write
+    // a .pbxproj cannot help with the iOS build it is being shown, and a .axaml is Hub's own UI language.
+    foreach (var text in new[]
+             {
+                 "src/ui.axaml", "src/Main.xaml", "ios/App.xcconfig", "ios/project.pbxproj",
+                 "ios/App.entitlements", "ios/LaunchScreen.storyboard", "ios/Icon.xib", "ios/en.strings",
+                 "ios/plural.stringsdict", "android/callback.aidl", "qt/app.pro", "server/app.cfg",
+                 "email/welcome.tmpl",
+             })
+        if (WorkspacePaths.ResolveWrite(workspace, text, guards).Verdict != WorkspacePathVerdict.Allowed)
+            throw new Exception($"{text} was refused as a write target even though it is a text project file "
+                                + $"({WorkspacePaths.ResolveWrite(workspace, text, guards).Verdict}).");
+
+    // Exact match, not a prefix: a made-up extension that merely starts like a known one is still unknown, and a
+    // prefix rule would let a binary masquerade as a project file.
+    foreach (var invented in new[] { "src/bad.axamlx", "ios/bad.pbxproxx", "app.cfgg" })
+        if (WorkspacePaths.ResolveWrite(workspace, invented, guards).Verdict != WorkspacePathVerdict.ExtensionNotAllowed)
+            throw new Exception($"{invented} was writable on a prefix match rather than on its extension.");
+
+    // A directory the project has not grown yet is not a link. Asking a missing ancestor for its attributes answers
+    // with an error value whose bits include the reparse flag, which refused every new file in a new folder — the
+    // junction assertion below is the same rule with a link that really is there.
+    if (WorkspacePaths.ResolveWrite(workspace, "platform/ios/App.entitlements", guards).Verdict != WorkspacePathVerdict.Allowed
+        || WorkspacePaths.ResolveWrite(workspace, "android/new/api.aidl", guards).Verdict != WorkspacePathVerdict.Allowed)
+        throw new Exception("A new file under a directory that does not exist yet was refused as a write target.");
+
     if (WorkspacePaths.ResolveRead(null, "src/hello.cpp", guards).Verdict != WorkspacePathVerdict.NoWorkspace
         || WorkspacePaths.ResolveRead(Path.Combine(guardRoot, "nope"), "a.cpp", guards).Verdict != WorkspacePathVerdict.MissingWorkspace)
         throw new Exception("A missing workspace was not reported as such.");
@@ -1161,6 +1187,11 @@ if (args.Contains("--check-ai-workspace"))
             if (WorkspacePaths.ResolveWrite(workspace, "link/evil.cpp", guards).Verdict != WorkspacePathVerdict.ReparsePoint
                 || WorkspacePaths.ResolveRead(workspace, "link/evil.cpp", guards).Verdict != WorkspacePathVerdict.ReparsePoint)
                 throw new Exception("A write through a directory junction was not refused.");
+            // The same rule with a missing directory under the link: skipping the attributes of ancestors that are
+            // not there must not skip the ones above them, or a new file would escape through the junction.
+            if (WorkspacePaths.ResolveWrite(workspace, "link/deeper/still-deeper/evil.cpp", guards).Verdict
+                != WorkspacePathVerdict.ReparsePoint)
+                throw new Exception("A new file under a junction was not refused as a write through a link.");
         }
         finally
         {
@@ -1311,6 +1342,11 @@ if (args.Contains("--check-ai-tools"))
     var created = tools.FileWrite("src/notes.md", "", "# 记录\n");
     if (!created.Contains("Created"))
         throw new Exception("An empty anchor did not create the file.");
+    // The guard used to read a missing ancestor as a link, so every new file in a new folder was refused; the tool
+    // is where that shows up, because the verdict alone said "ReparsePoint" about a directory that is not there.
+    var nested = tools.FileWrite("platform/ios/App.entitlements", "", "<plist/>");
+    if (!nested.Contains("Created") || !File.Exists(Path.Combine(workspace, "platform", "ios", "App.entitlements")))
+        throw new Exception($"A new file in a directory the project has not grown was refused:{Environment.NewLine}{nested}");
     if (!tools.FileWrite("src/main.cpp", "不存在的锚点", "x").Contains("was not found"))
         throw new Exception("A missing anchor was not reported as NotFound.");
     File.WriteAllText(Path.Combine(workspace, "src", "twice.txt"), "dup\ndup\n");
