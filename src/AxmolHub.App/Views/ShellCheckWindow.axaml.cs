@@ -2443,10 +2443,12 @@ public partial class ShellCheckWindow : Window
         => Math.Clamp(conversation.ContextSummaryThroughMessageCount, 0, conversation.Messages.Count);
 
     /// <summary>
-    /// The composer's sandbox chip: it reads out the directory the file and command tools are confined to, the
-    /// menu changes it, and the memory index of a bound workspace reaches the system prompt. The folder dialog is
-    /// a modal and cannot be driven here, so the pick goes through <see cref="ChatWorkspace.SelectWorkspaceRoot"/>
-    /// — the same call the dialog ends in.
+    /// The workspace picker: it reads out the directory the file and command tools are confined to, the menu
+    /// changes it, and the memory index of a bound workspace reaches the system prompt. It sits under the
+    /// composer and only while the chat can still be aimed somewhere, so the whole group runs against an empty
+    /// session and the last two assertions are what prove it goes away afterwards. The folder dialog is a modal
+    /// and cannot be driven here, so the pick goes through <see cref="ChatWorkspace.SelectWorkspaceRoot"/> —
+    /// the same call the dialog ends in.
     /// </summary>
     private async Task CheckWorkspaceChipAsync(MainWindow shell, ChatPanel panel)
     {
@@ -2516,6 +2518,40 @@ public partial class ShellCheckWindow : Window
                   && !chat.PreparedSystemPromptForCheck(session.Id)
                       .Contains("构建约定", StringComparison.Ordinal),
                 "清除之后胶囊回到「未设工作目录」，记忆索引也随之离开系统提示");
+
+            // Outside the chat box, at its lower-left — the placement is the change, so it is measured rather
+            // than looked at: x=0 lines the picker up with the frame's left edge, y past the frame's height
+            // puts it below the input box, and neither holds if the button creeps back into the composer row.
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var plate = panel.WorkspaceChipPlateForCheck;
+            Check(!plate.InsideFrame && panel.WorkspaceChipVisibleForCheck
+                  && Math.Abs(plate.X) <= 1.5
+                  && plate.Y > plate.FrameHeight && plate.Y < plate.FrameHeight + 40,
+                "工作区选择器在输入框外的左下方（相对输入框 x="
+                + plate.X.ToString("0.#", CultureInfo.CurrentCulture) + "，y="
+                + plate.Y.ToString("0.#", CultureInfo.CurrentCulture) + "，框高 "
+                + plate.FrameHeight.ToString("0.#", CultureInfo.CurrentCulture) + "）");
+
+            // The choice is open only until the first message. Bound, seeded, hidden — but hidden, not cleared:
+            // the session keeps answering from the same directory it was born into.
+            chat.SelectWorkspaceRoot(workspace);
+            var seeded = chat.SeedTurnForCheck(session.Id, "第一问");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(seeded && !panel.WorkspaceChipVisibleForCheck
+                  && chat.WorkspaceRootFor(session.Id) == Path.GetFullPath(workspace),
+                "发起聊天后选择器消失，会话的目录绑定原封不动");
+
+            // A fork already holds messages, so under that rule it could never pick a directory of its own —
+            // which is exactly why it inherits the source's instead.
+            var fork = chat.BranchFrom(session.Id, 0);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(fork is not null && chat.WorkspaceRootFor(fork.Id) == Path.GetFullPath(workspace)
+                  && !panel.WorkspaceChipVisibleForCheck,
+                "分叉继承来源会话的工作目录，且它带着消息所以同样不再可选");
+            if (fork is not null) chat.DeleteConversation(fork.Id);
         }
         finally
         {

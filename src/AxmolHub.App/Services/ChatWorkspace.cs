@@ -1814,6 +1814,10 @@ public sealed class ChatWorkspace : IDisposable
             ModelName = source.ModelName,
             Mode = source.Mode,
             ReasoningEffort = source.ReasoningEffort,
+            // A fork continues the same task, so it continues in the same directory. It has to be copied: a
+            // session that already holds messages can no longer be given a workspace (the picker is gone once
+            // the chat starts), so a fork that dropped it would be stranded without a sandbox.
+            WorkspaceRoot = source.WorkspaceRoot,
             Messages = prefix,
             ContextSummary = prefix.Count >= SummaryMessageCount(source) ? source.ContextSummary : "",
             ContextSummaryThroughMessageCount = prefix.Count >= SummaryMessageCount(source)

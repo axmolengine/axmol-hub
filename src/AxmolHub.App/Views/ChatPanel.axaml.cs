@@ -290,15 +290,20 @@ public partial class ChatPanel : UserControl
         PermissionChipLabel.Text = HubStrings.Get(ToolApprovalModeKey(permission));
         PermissionChip.Classes.Set("danger", permission == ToolApprovalModes.Full);
         ToolTip.SetTip(PermissionChip, HubStrings.Get(ToolApprovalModeHintKey(permission)));
-        // The chip reads out the directory itself rather than a label for it: "which folder may this assistant
-        // write to" has one answer and the folder name is it. With nothing bound it says so, because a chip that
-        // hid would leave the tools refusing with no visible reason.
+        // The picker reads out the directory itself rather than a label for it: "which folder may this assistant
+        // write to" has one answer and the folder name is it. When nothing is bound it says so, because that is
+        // the state where every file tool refuses and the reason is still one click away.
         var root = _chat.ActiveWorkspaceRoot;
         WorkspaceChipLabel.Text = root is { Length: > 0 } ? FolderNameOf(root) : HubStrings.Get("ChatWorkspaceNone");
         ToolTip.SetTip(WorkspaceChip, root is { Length: > 0 }
             ? string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ChatWorkspaceChipHintFormat"), root)
             : HubStrings.Get("ChatWorkspaceChipHint"));
+        // And it is on screen only while the choice is still open: no session, or one that has never received a
+        // message. The directory is what a session is born into, so after the first turn it is history —
+        // swapping it mid-conversation would leave every earlier reply about a different tree — and a control
+        // that can no longer act is a claim that it still can.
+        WorkspaceChip.IsVisible = _chat.ActiveConversation is not { Messages.Count: > 0 };
     }
 
     private static string FolderNameOf(string path)
@@ -2523,6 +2528,20 @@ public partial class ChatPanel : UserControl
     internal string WorkspaceChipLabelForCheck => WorkspaceChipLabel.Text ?? "";
     internal bool WorkspaceChipVisibleForCheck => WorkspaceChip.IsVisible;
     internal string WorkspaceChipHintForCheck => ToolTip.GetTip(WorkspaceChip)?.ToString() ?? "";
+
+    /// <summary>Where the picker sits, in the composer frame's own coordinates, and whether it is still inside
+    /// that frame. The move is the change, so the placement is what gets pinned: (0, just under the frame) is
+    /// "outside the chat box, bottom-left", and anything inside the frame is the old affordance back again.
+    /// </summary>
+    internal (double X, double Y, double FrameHeight, bool InsideFrame) WorkspaceChipPlateForCheck
+    {
+        get
+        {
+            var at = WorkspaceChip.TranslatePoint(new Point(0, 0), ComposerFrame) ?? default;
+            return (at.X, at.Y, ComposerFrame.Bounds.Height, WorkspaceChip.GetLogicalAncestors()
+                .Any(ancestor => ReferenceEquals(ancestor, ComposerFrame)));
+        }
+    }
 
     internal string[] WorkspaceMenuTitlesForCheck
         => BuildWorkspaceMenu().Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray();

@@ -345,6 +345,30 @@
       <Setter Property="StrokeJoin" Value="Round" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <!-- The workspace picker sits under the composer instead of in its row: the directory is the sandbox the
+         session is born into, not a setting to fiddle with between requests, and it goes away once the chat
+         has started. Quiet text with a hover plate — a second pill down here would compete with the ones
+         inside the frame. Declared after Path.chip-caret so its own hover colour reaches the caret too. -->
+    <Style Selector="Button.workspace-chip">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="4,2" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.workspace-chip Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Button.workspace-chip:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.workspace-chip:pointerover Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
     <Style Selector="ComboBox.composer-choice">
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="9,4" />
@@ -555,12 +579,13 @@
       </Button>
     </Grid>
 
-    <!-- Composer: centered to the same column. -->
-    <Grid Grid.Row="1">
-      <Border x:Name="ComposerFrame" Classes="composer"
+    <!-- Composer: centered to the same column. The second row is the workspace picker's slot — outside the
+         frame on purpose, and collapsed to nothing once the chat has started. -->
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto">
+      <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="0"
               Background="{DynamicResource Hub.SurfaceAlt}" CornerRadius="14"
               HorizontalAlignment="Stretch" MaxWidth="820"
-              Margin="0,6,0,4" Padding="14,12,12,10">
+              Margin="0,6,0,0" Padding="14,12,12,10">
         <Grid RowDefinitions="Auto,Auto,Auto">
           <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" MinHeight="48" MaxHeight="160"
                    TextWrapping="Wrap" PlaceholderText="{DynamicResource InputPlaceholder}"
@@ -609,19 +634,6 @@
                              Grid.Column="1" VerticalAlignment="Center" />
                 </Grid>
               </Button>
-              <!-- The sandbox the file and command tools are confined to. Shown even when nothing is bound:
-                   an invisible chip is a directory nobody knew was unset, and the tools refuse either way. -->
-              <Button x:Name="WorkspaceChip" Classes="chip workspace-chip" VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                  <Path x:Name="WorkspaceChipIcon" Width="13" Height="13" Stretch="Uniform"
-                        Data="{StaticResource Hub.Icon.Folder}"
-                        Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
-                        StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round"
-                        VerticalAlignment="Center" />
-                  <TextBlock x:Name="WorkspaceChipLabel" VerticalAlignment="Center" />
-                  <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
-                </StackPanel>
-              </Button>
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="9"
                         VerticalAlignment="Center" Margin="8,0,0,0">
@@ -644,6 +656,21 @@
           </Grid>
         </Grid>
       </Border>
+
+      <!-- The sandbox the file and command tools are confined to, named by the folder itself. It sits outside
+           the frame because it is not a per-request setting: the directory is what the session is born into,
+           and the row collapses to nothing once the first message has been sent (see RefreshComposerChoices). -->
+      <StackPanel Grid.Row="1" MaxWidth="820" HorizontalAlignment="Stretch" Margin="0,2,0,4">
+        <Button x:Name="WorkspaceChip" Classes="workspace-chip">
+          <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+            <Path Width="12" Height="12" Stretch="Uniform" Data="{StaticResource Hub.Icon.Folder}"
+                  Fill="Transparent" StrokeThickness="1.7" StrokeLineCap="Round" StrokeJoin="Round"
+                  VerticalAlignment="Center" />
+            <TextBlock x:Name="WorkspaceChipLabel" VerticalAlignment="Center" />
+            <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
+          </StackPanel>
+        </Button>
+      </StackPanel>
     </Grid>
     <Popup x:Name="ContextPopup" IsLightDismissEnabled="True">
     <Border Classes="context-popover">
