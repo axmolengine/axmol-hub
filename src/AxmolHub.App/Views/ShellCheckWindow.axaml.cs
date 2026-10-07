@@ -1550,6 +1550,87 @@ public partial class ShellCheckWindow : Window
                 "同名工具第二次调用不再询问（实际工具结果 "
                 + (afterAllow?.Messages.Count(turn => turn.Role == ChatRoles.Tool) ?? -1) + " 条）");
 
+            // ── the undo: one click puts one write back ──
+            // Two writes have landed on the same file by now: the one a person approved, and the one the standing
+            // grant let through without asking. Both left a pre-image, so both rows carry the same exit — while
+            // the line above it still says whether anybody was asked.
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            // A write's copy is recorded in the same dispatcher step that ends its run, so the row offering the
+            // undo can arrive one job later than "idle" — wait for it instead of reading the flow once.
+            await WaitUntilAsync(() => panel.UndoButtonsForCheck == 2);
+            var wroteLine = string.Format(CultureInfo.CurrentCulture, HubStrings.Get("ChatWriteRecordFormat"), "note.txt");
+            // Which write recorded which copy, read at the moment each assertion speaks: a missing button can
+            // only mean one of two things, and the report should say which.
+            string CallState() => string.Join(" / ", parkSession.Messages
+                .Where(turn => turn.ToolName == "file_write")
+                .Select(turn => $"{turn.ToolCallId}→{(turn.UndoName ?? "无副本")}"
+                    + (parkSession.Messages.Any(result => result.Role == ChatRoles.Tool
+                       && result.ToolCallId == turn.ToolCallId
+                       && result.Text!.Contains("Undo copy:", StringComparison.Ordinal)) ? "(结果带副本路径)" : "(结果没带)")));
+            Check(panel.UndoButtonsForCheck == 2
+                  && panel.ApprovalRecordsForCheck.Any(line =>
+                      line.Contains(HubStrings.Get("ChatApprovalResolvedApproved"), StringComparison.Ordinal))
+                  && panel.ApprovalRecordsForCheck.Any(line => line.Contains(wroteLine, StringComparison.Ordinal)),
+                "两次写入各带一个撤销入口：批准过的那行照旧记决定，免批的那行改口说文件（记录 "
+                + string.Join(" / ", panel.ApprovalRecordsForCheck) + "；调用 " + CallState() + "）");
+            Check(panel.UndoButtonTipsForCheck.Length == 2
+                  && panel.UndoButtonTipsForCheck.All(tip => tip.Contains("note.txt", StringComparison.Ordinal))
+                  && System.IO.File.ReadAllText(target).Contains("（已改）（已改）", StringComparison.Ordinal),
+                "撤销的提示说清动的是哪个文件，两次写入确实都叠在文件上");
+
+            // The newest copy belongs to the newest write, so undoing it is that write's undo — not a reset to
+            // wherever the session started.
+            panel.ClickUndoForCheck(1);
+            await WaitUntilAsync(() => panel.UndoButtonsForCheck == 1);
+            var afterNewest = chat.StoredCopyForCheck(parkSession.Id);
+            var stillUndoable = afterNewest?.Messages.Count(turn => turn.UndoName is { Length: > 0 }) ?? -1;
+            Check(System.IO.File.ReadAllText(target) == "第一行\n第二行（已改）\n"
+                  && panel.UndoButtonsForCheck == 1 && stillUndoable == 1,
+                "撤销最新那次写入：文件退回它写入前的内容，用完的副本一起删掉，更早那次仍可撤销（现在「"
+                + System.IO.File.ReadAllText(target).Replace('\n', '·') + "」）");
+            Check(afterNewest!.Messages.Any(turn => turn.Role == ChatRoles.User
+                      && turn.Text.Contains(string.Format(CultureInfo.CurrentCulture,
+                          HubStrings.Get("ChatUndoNotifiedFormat"), "note.txt"), StringComparison.Ordinal))
+                  && chat.RunningCount == 0,
+                "撤销以用户口吻记一行、助手下次读得到，但不为它另起一次回答（实际 " + chat.RunningCount + " 路在跑）");
+
+            panel.ClickUndoForCheck(0);
+            await WaitUntilAsync(() => panel.UndoButtonsForCheck == 0);
+            Check(System.IO.File.ReadAllText(target) == "第一行\n第二行\n"
+                  && panel.UndoButtonsForCheck == 0
+                  && (chat.StoredCopyForCheck(parkSession.Id)?.Messages.Count(turn => turn.UndoName is { Length: > 0 }) ?? -1) == 0,
+                "再撤一次退回更早那次写入，两个按钮随各自的副本一起消失（现在「"
+                + System.IO.File.ReadAllText(target).Replace('\n', '·') + "」）");
+
+            // The guard is the reason this is a command rather than a file copy: once a person has edited the
+            // file, the older copy would overwrite their work, so the button refuses, keeps its copy, and says
+            // why in the notice row instead of in a dialog.
+            parkClient.CallsRemaining = 1;
+            chat.TryEnqueueSend(parkSession.Id, "再写一次，然后我手改", null, out _);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            await WaitUntilAsync(() => panel.UndoButtonsForCheck == 1);
+            System.IO.File.AppendAllText(target, "手工加的一行\n");
+            var toldBefore = parkSession.Messages.Count(turn => turn.Role == ChatRoles.User);
+            panel.ClickUndoForCheck(0);
+            var refused = HubStrings.Get("ChatUndoChangedSince");
+            await WaitUntilAsync(() => panel.LastNoticeTextForCheck?.Contains(refused, StringComparison.Ordinal) == true);
+            Check(panel.LastNoticeTextForCheck?.Contains(refused, StringComparison.Ordinal) == true
+                  && System.IO.File.ReadAllText(target).Contains("手工加的一行", StringComparison.Ordinal)
+                  && panel.UndoButtonsForCheck == 1
+                  && parkSession.Messages.Count(turn => turn.Role == ChatRoles.User) == toldBefore,
+                "文件被事后改过时拒绝恢复：话说清了原因、手工改动保住了、副本没被消耗、也没假称已经恢复（提示「"
+                + panel.LastNoticeTextForCheck + "」；按钮 " + panel.UndoButtonsForCheck
+                + "；调用 " + CallState() + "）");
+            var keptName = parkSession.Messages.LastOrDefault(turn => turn.UndoName is { Length: > 0 })?.UndoName ?? "";
+            var undoRoot = chat.UndoDirectoryForCheck(parkSession.Id) ?? "";
+            Check(keptName.Length > 0 && undoRoot.Length > 0
+                  && System.IO.File.Exists(System.IO.Path.Combine(undoRoot, keptName)),
+                "没被消耗的副本仍躺在磁盘上，等那次手工改动被撤掉（记的是文件名「" + keptName + "」）");
+
             // Refusing is an ending: the model is told it was refused, and it is not asked to talk about it.
             chat.IdleTimeout = savedIdleTimeout;
             chat.SetApprovalMode(denySession.Id, ToolApprovalModes.Ask);
@@ -2084,6 +2165,17 @@ public partial class ShellCheckWindow : Window
     private static async Task WaitForIdleAsync(ChatWorkspace chat)
     {
         for (var wait = 0; wait < 200 && chat.RunningCount > 0; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    /// <summary>Waits on a state change rather than on a clock. A button click that starts work on the dispatcher
+    /// returns before that work lands, and a fixed delay would be a flake waiting to happen.</summary>
+    private static async Task WaitUntilAsync(Func<bool> settled)
+    {
+        for (var wait = 0; wait < 400 && !settled(); wait++)
         {
             Dispatcher.UIThread.RunJobs();
             await Task.Delay(5);

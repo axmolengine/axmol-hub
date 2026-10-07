@@ -2191,6 +2191,21 @@ public sealed class ChatWorkspace : IDisposable
         };
     }
 
+    /// <summary>The one tool that leaves a pre-image behind. Named because a file whose own contents happen to
+    /// carry the marker must not get a revert button: what decides is which tool ran.</summary>
+    private const string FileWriteTool = "file_write";
+
+    /// <summary>Records on the <i>call</i> turn which copy would undo it. The call turn is the one the card is
+    /// built from and the one that outlives a restart, so the undo rides on it rather than on the result — and it
+    /// rides next to the approval state, which is what decides whether the row shows a question or a record.</summary>
+    private static void RecordUndoCopy(Conversation conversation, string callId, string toolName, string result)
+    {
+        if (toolName != FileWriteTool || ChatUndoStore.NameFromResult(result) is not { } name) return;
+        var index = conversation.IndexOfToolCall(callId);
+        if (index < 0) return;
+        conversation.Messages[index] = conversation.Messages[index] with { UndoName = name };
+    }
+
     /// <summary>Where an approval decision is recorded. Set by the shell to Hub's activity log: a decision that
     /// outlives the window (a parked call answered after a restart) has to leave a trace behind, or the audit
     /// trail for "who let this run" is whatever the transcript happens to say.</summary>
@@ -2341,7 +2356,13 @@ public sealed class ChatWorkspace : IDisposable
         run.RecordToolOutcome($"{call.Value.Name}（{(failed ? "失败" : "批准")}）");
         await ApplyOnUiAsync(() =>
         {
-            _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
+            _sessions.TryUpdate(run.ConversationId, opened =>
+            {
+                opened.Append(turn);
+                // The same tail the model loop gets: an approved write is still the write that has to be
+                // undoable, and this path is the one a strict mode takes most often.
+                RecordUndoCopy(opened, callId, call.Value.Name, result);
+            });
             ToolActivityChanged?.Invoke(run.ConversationId, call.Value.Name, true);
             Changed?.Invoke();
         }).ConfigureAwait(false);
@@ -2350,6 +2371,76 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     private readonly record struct ApprovedCall(string Name, string ArgumentsJson, string Mode);
+
+    /// <summary>What a revert made of the copy, or why it did not try. <see cref="RefusalKey"/> is set instead of
+    /// a verdict when the session itself could not be touched — a transcript must not be rewritten while a reply
+    /// is still being written into it.</summary>
+    public readonly record struct UndoOutcome(UndoVerdict? Verdict, string Relative, string? RefusalKey)
+    {
+        public bool Succeeded => Verdict == UndoVerdict.Reverted;
+    }
+
+    private readonly record struct UndoRecord(string Name, string ArgumentsJson, string? DataRoot,
+        string ConversationId, string? WorkspaceRoot, WorkspaceGuards Guards);
+
+    /// <summary>
+    /// Puts one file back the way the assistant found it. The copy belongs to that one write and is only put back
+    /// over it: work edited afterwards stays on disk, and the row says why nothing moved. A copy that worked is
+    /// deleted, which is what takes the button away — the second click would be a different, worse undo.
+    /// </summary>
+    public async Task<UndoOutcome> RevertWriteAsync(string conversationId, string callId)
+    {
+        if (await ReadOnUiAsync(() => RunFor(conversationId) is not null).ConfigureAwait(false))
+            return new UndoOutcome(null, "", "ChatSessionBusy");
+
+        var record = await ReadOnUiAsync<UndoRecord?>(() =>
+        {
+            var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+            var index = conversation?.IndexOfToolCall(callId) ?? -1;
+            if (conversation is null || index < 0 || conversation.Messages[index].UndoName is not { Length: > 0 } name)
+                return null;
+            var scope = ScopeFor(conversationId).Workspace;
+            return new UndoRecord(name, conversation.Messages[index].ToolArguments ?? "{}",
+                scope.DataRoot, scope.ConversationId, scope.WorkspaceRoot, scope.Guards);
+        }).ConfigureAwait(false);
+
+        if (record is null) return new UndoOutcome(UndoVerdict.CopyMissing, "", null);
+
+        // Off the UI thread: a pre-image is read and written like any other file a tool touches.
+        var value = record.Value;
+        var attempt = await Task.Run(() =>
+        {
+            var verdict = ChatUndoStore.Restore(value.DataRoot, value.ConversationId, value.Name,
+                value.WorkspaceRoot, value.Guards, value.ArgumentsJson, out var relative);
+            return (verdict, relative);
+        }).ConfigureAwait(false);
+
+        if (attempt.verdict != UndoVerdict.Reverted)
+        {
+            Audit(conversationId, $"Undo refused ({attempt.verdict}) for {attempt.relative}");
+            return new UndoOutcome(attempt.verdict, attempt.relative, null);
+        }
+
+        await ApplyOnUiAsync(() =>
+        {
+            _sessions.TryUpdate(conversationId, opened =>
+            {
+                var at = opened.IndexOfToolCall(callId);
+                if (at >= 0) opened.Messages[at] = opened.Messages[at] with { UndoName = null };
+                // In the user's voice, because it is their own act: the assistant has to read that the file moved
+                // back before it anchors another edit on the content it wrote.
+                opened.Append(ChatTurn.User(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("ChatUndoNotifiedFormat"), attempt.relative)));
+            });
+            Audit(conversationId, $"Undo: {attempt.relative} restored from the pre-image");
+            Changed?.Invoke();
+        }).ConfigureAwait(false);
+        return new UndoOutcome(attempt.verdict, attempt.relative, null);
+    }
+
+    /// <summary>Where this session's pre-images live. A check reads it to prove that a revert which refused kept
+    /// the copy it did not use — the transcript says what the button offers, the disk says whether it is real.</summary>
+    internal string? UndoDirectoryForCheck(string conversationId) => ChatUndoStore.DirectoryFor(_dataRoot, conversationId);
 
     /// <summary>
     /// Replaces the user turn at <paramref name="index"/> with <paramref name="text"/>. Everything after the
@@ -2572,7 +2663,11 @@ public sealed class ChatWorkspace : IDisposable
                 run.RecordToolOutcome($"{info.Name}（{OutcomeWord(failed, result)}）");
                 await ApplyOnUiAsync(() =>
                 {
-                    _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
+                    _sessions.TryUpdate(run.ConversationId, opened =>
+                    {
+                        opened.Append(turn);
+                        RecordUndoCopy(opened, info.CallId, info.Name, result);
+                    });
                     ToolActivityChanged?.Invoke(run.ConversationId, info.Name, true);
                     Changed?.Invoke();
                 }).ConfigureAwait(false);

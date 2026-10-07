@@ -142,6 +142,10 @@ public static class ChatUndoStore
         return UndoVerdict.Reverted;
     }
 
+    /// <summary>The path one write named, read back out of the arguments the model chose. The record line shows
+    /// it, so a view does not have to parse a tool's arguments for itself and get the shape wrong.</summary>
+    public static string WritePathOf(string? argumentsJson) => Arguments(argumentsJson)?.Path ?? "";
+
     /// <summary>The recorded arguments of the write being undone: path, anchor, replacement, and whether it was a
     /// replace-all — the four inputs the edit was made of.</summary>
     private static (string Path, string Old, string New, bool All)? Arguments(string? argumentsJson)

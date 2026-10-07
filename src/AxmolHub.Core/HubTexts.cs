@@ -455,6 +455,29 @@ public static class HubTexts
         ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),
         ["ChatApprovalResolvedDenied"] = ("已拒绝", "Refused"),
         ["ChatApprovalResolvedSuperseded"] = ("未执行（换了话题）", "Not run (the conversation moved on)"),
+        // The write's own record and its one exit. A call that never had to ask still changed the file, so the
+        // line names the file; the button only rides along while there is a copy to go back to — and it stays
+        // visible instead of waiting for a hover, because an undo nobody can find is a mistake that cannot be fixed.
+        ["ChatWriteRecordFormat"] = ("写入 {0}", "wrote {0}"),
+        ["ChatUndoButton"] = ("撤销", "Undo"),
+        ["ChatUndoTip"] = ("把 {0} 恢复到这次写入之前的内容", "Put {0} back to what it held before this write"),
+        // Recorded as the user's own turn, in their voice: it is the thing they just did by clicking, and the
+        // assistant has to read it before it touches the same file again.
+        ["ChatUndoNotifiedFormat"] = ("我已撤销那次写入：{0} 已恢复到写入之前的内容。",
+            "I reverted that write: {0} is back to what it held before it."),
+        // One sentence per way a revert can refuse. Each says what became of the file, because the person reading
+        // it is deciding whether to fix something first.
+        ["ChatUndoCopyMissing"] = ("已经没有那次写入前的副本（可能被清理了）。",
+            "There is no copy left of what was there before that write — it may have been cleaned up."),
+        ["ChatUndoChangedSince"] = ("这个文件在那次写入之后又被改过，直接恢复会覆盖后来的改动。",
+            "This file has changed since that write, so restoring it would overwrite the later edits."),
+        ["ChatUndoTargetMissing"] = ("文件已经不在了，Hub 不会替你重新创建。",
+            "The file is gone, and Hub will not recreate it for you."),
+        ["ChatUndoNotText"] = ("文件已经不是 UTF-8 文本，无法按文本恢复。",
+            "The file is no longer UTF-8 text, so it cannot be restored as text."),
+        ["ChatUndoRefusedPath"] = ("那次写入记录的路径已经不在本会话的工作区里，或落在受保护目录，拒绝恢复。",
+            "That write's recorded path is no longer inside this session's workspace, or sits in a protected directory."),
+        ["ChatUndoWriteFailed"] = ("副本是完好的，但写回失败了。", "The copy is intact, but writing it back failed."),
         // The permission tiers, spelled out where the choice is made: each hint says what that tier lets through
         // unasked, which is the only thing the three names cannot carry themselves.
         ["ChatToolPermissionFollowFormat"] = ("跟随默认（{0}）", "Follow the default ({0})"),

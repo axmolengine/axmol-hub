@@ -74,8 +74,9 @@ public partial class ChatPanel : UserControl
     private string? _renderedConversationId;
     private int _renderedCount;
 
-    /// <summary>The approval states as they were when the flow was laid down. An approval decision rewrites the
-    /// state on a turn that is already on screen, so the turn count alone cannot notice it.</summary>
+    /// <summary>The per-turn states as they were when the flow was laid down. An approval decision — and a spent
+    /// undo copy — rewrite what a turn that is already on screen looks like without changing how many turns there
+    /// are, which is precisely what counting cannot see.</summary>
     private string _renderedApprovalStamp = "";
 
     private static string ApprovalStamp(Conversation? conversation)
@@ -84,8 +85,9 @@ public partial class ChatPanel : UserControl
         var stamp = new StringBuilder();
         foreach (var turn in conversation.Messages)
         {
-            if (turn.ApprovalState is not { Length: > 0 } state) continue;
-            stamp.Append(turn.ToolCallId).Append(':').Append(state).Append(';');
+            if (turn.ApprovalState is null && turn.UndoName is null) continue;
+            stamp.Append(turn.ToolCallId).Append(':').Append(turn.ApprovalState ?? "")
+                .Append('/').Append(turn.UndoName ?? "").Append(';');
         }
 
         return stamp.ToString();
@@ -954,13 +956,14 @@ public partial class ChatPanel : UserControl
 
         // A call that needed permission carries its own record: the question with its buttons while it waits,
         // one quiet line once it does not. A call that never needed asking gets nothing drawn here, which is why
-        // the approval state — not the presence of a tool call — is what decides.
+        // the approval state — not the presence of a tool call — is what decides. A write is the exception: it
+        // changed a file whether or not anybody was asked, and the line is where its undo lives.
         if (turn.ToolCallId is { Length: > 0 } callId)
         {
             if (turn.ApprovalState == ChatApprovalStates.Pending)
                 body.Children.Add(BuildApprovalCard(conversationId, callId, turn));
-            else if (turn.ApprovalState is { Length: > 0 })
-                body.Children.Add(BuildApprovalRecord(turn));
+            else if (turn.ApprovalState is { Length: > 0 } || turn.UndoName is { Length: > 0 })
+                body.Children.Add(BuildCallRecord(conversationId, callId, turn));
         }
 
         // A function-call or tool-result turn gets no action bar: it is not a readable message, and acting on
@@ -1049,24 +1052,76 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>The decided call, still in the record and no longer actionable: what became of it is the only
-    /// thing worth the space.</summary>
-    private Control BuildApprovalRecord(ChatTurn turn)
+    /// thing worth the space — and, for a write, the one exit it has while a copy is left behind it.</summary>
+    private Control BuildCallRecord(string conversationId, string callId, ChatTurn turn)
     {
-        var outcome = turn.ApprovalState switch
+        // A write that never had to ask still changed the file, so it gets a line of its own naming the file
+        // rather than the tool: who was asked is a permission detail, what moved is the record.
+        var line = turn.ApprovalState is { Length: > 0 } state
+            ? $"{HubStrings.Get(state switch
+                {
+                    ChatApprovalStates.Approved => "ChatApprovalResolvedApproved",
+                    ChatApprovalStates.Denied => "ChatApprovalResolvedDenied",
+                    _ => "ChatApprovalResolvedSuperseded",
+                })} · {turn.ToolName ?? ""}"
+            : string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatWriteRecordFormat"), ChatUndoStore.WritePathOf(turn.ToolArguments));
+
+        var row = new StackPanel
         {
-            ChatApprovalStates.Approved => "ChatApprovalResolvedApproved",
-            ChatApprovalStates.Denied => "ChatApprovalResolvedDenied",
-            _ => "ChatApprovalResolvedSuperseded",
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
         };
-        return new Border
+        row.Children.Add(new TextBlock
         {
-            Classes = { "approval-record" },
-            Child = new TextBlock
-            {
-                Classes = { "approval-record-text" },
-                Text = $"{HubStrings.Get(outcome)} · {turn.ToolName ?? ""}",
-            },
+            Classes = { "approval-record-text" },
+            Text = line,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (turn.UndoName is { Length: > 0 })
+        {
+            row.Children.Add(BuildUndoButton(conversationId, callId,
+                ChatUndoStore.WritePathOf(turn.ToolArguments)));
+        }
+
+        return new Border { Classes = { "approval-record" }, Child = row };
+    }
+
+    private Button BuildUndoButton(string conversationId, string callId, string path)
+    {
+        var button = new Button
+        {
+            Classes = { "undo-action" },
+            Content = HubStrings.Get("ChatUndoButton"),
+            Tag = "ChatUndoButton",
         };
+        ToolTip.SetTip(button, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatUndoTip"), path));
+        button.Click += (_, _) => RevertWrite(conversationId, callId, button);
+        return button;
+    }
+
+    /// <summary>One click, one file back. A refusal is a line in the notice row rather than a dialog: the reason
+    /// nothing moved has to be readable while the transcript stays exactly where it was.</summary>
+    private async void RevertWrite(string conversationId, string callId, Button source)
+    {
+        source.IsEnabled = false;
+        var outcome = await _chat.RevertWriteAsync(conversationId, callId);
+        // A revert that worked raises Changed on its way out, and the rebuild that drops the spent button comes
+        // with it — so only a refusal has anything left to re-enable.
+        if (outcome.Succeeded) return;
+        source.IsEnabled = true;
+        var key = outcome.RefusalKey ?? outcome.Verdict switch
+        {
+            UndoVerdict.CopyMissing => "ChatUndoCopyMissing",
+            UndoVerdict.ChangedSince => "ChatUndoChangedSince",
+            UndoVerdict.TargetMissing => "ChatUndoTargetMissing",
+            UndoVerdict.NotText => "ChatUndoNotText",
+            UndoVerdict.RefusedPath => "ChatUndoRefusedPath",
+            _ => "ChatUndoWriteFailed",
+        };
+        AppendNotice(HubStrings.Get(key), danger: key is "ChatUndoWriteFailed" or "ChatUndoRefusedPath");
     }
 
     /// <summary>Hands one decision to the workspace. A refusal is spoken out loud rather than swallowed: the card
@@ -1813,6 +1868,27 @@ public partial class ChatPanel : UserControl
             .Select(record => record.GetLogicalDescendants().OfType<TextBlock>()
                 .FirstOrDefault()?.Text ?? "")
             .ToArray();
+
+    // ── the undo on a write's record line ──
+    private IEnumerable<Button> UndoButtons
+        => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Button>())
+            .Where(button => button.Classes.Contains("undo-action"));
+
+    /// <summary>How many writes still have a copy behind them. One per spent revert is the whole design: the
+    /// button is the record that the pre-image exists.</summary>
+    internal int UndoButtonsForCheck => UndoButtons.Count();
+
+    internal string[] UndoButtonTipsForCheck
+        => UndoButtons.Select(button => ToolTip.GetTip(button)?.ToString() ?? "").ToArray();
+
+    /// <summary>Presses the <paramref name="index"/>th undo the way a person presses it. A missing button raises
+    /// nothing rather than throwing, so the assertion that follows reports a failed expectation instead of a
+    /// crashed suite.</summary>
+    internal void ClickUndoForCheck(int index)
+    {
+        var button = UndoButtons.ElementAtOrDefault(index);
+        if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
 
     /// <summary>Appends a notice row through the real path, so the row's layout can be read back off the
     /// controls instead of inferred from code.</summary>
