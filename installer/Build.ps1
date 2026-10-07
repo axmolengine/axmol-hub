@@ -62,7 +62,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
 if ($Runtime -like 'win-*') {
     $taskPublishedMainExe = Join-Path $taskPublish 'AxmolHub.App.exe'
-    $taskPackMainExe = Join-Path $taskPublish 'axmol-hub.exe'
+    $taskPackMainExe = Join-Path $taskPublish 'Axmol Hub.exe'
     if (-not (Test-Path -LiteralPath $taskPublishedMainExe)) { throw "Missing published Windows main executable: $taskPublishedMainExe" }
     Move-Item -LiteralPath $taskPublishedMainExe -Destination $taskPackMainExe -Force
 }
@@ -76,7 +76,7 @@ if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/
 # 参数名三平台统一用 --mainExe（官方 vpk 1.2.x 的跨平台参数；master 源码里出现的 --exeName
 # 是尚未发布的新名，1.2.161 里不存在）。macOS 的 entry point 其实来自 .app 的 Info.plist、
 # Linux 来自生成的 .desktop，--mainExe 在三平台都被接受。
-$taskMainExe = 'axmol-hub.exe'
+$taskMainExe = 'Axmol Hub.exe'
 if ($Runtime -like 'osx-*' -or $Runtime -like 'linux-*') { $taskMainExe = 'AxmolHub.App' }
 
 $taskArguments = @(
