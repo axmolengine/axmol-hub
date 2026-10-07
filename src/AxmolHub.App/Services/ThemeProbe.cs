@@ -46,6 +46,16 @@ internal static class ThemeProbe
         => TokenColor(token) is { } expected && ColorOf(brush) == expected;
 
     /// <summary>
+    /// Whether two surfaces are far enough apart to read as two. Below about six levels on the widest channel a
+    /// difference exists in the token table and nowhere on the screen — which is exactly how a light-theme chip on
+    /// a light composer looks: present, and invisible.
+    /// </summary>
+    public static bool Separates(Color? left, Color? right)
+        => left is not null && right is not null
+           && Math.Max(Math.Abs(left.Value.R - right.Value.R),
+               Math.Max(Math.Abs(left.Value.G - right.Value.G), Math.Abs(left.Value.B - right.Value.B))) >= 6;
+
+    /// <summary>
     /// Whether the resource dictionary has this key. Broader than <see cref="TokenColor"/>: it
     /// applies beyond color tokens — copy is a string, icons are geometries, and they too would
     /// **silently show blank** when a key is missing.

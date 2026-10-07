@@ -70,7 +70,7 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
   </Style>
   <Style Selector=".Markdown_Avalonia_MarkdownViewer TextBlock.CodeBlock">
-    <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+    <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />
     <Setter Property="FontSize" Value="13" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
   </Style>

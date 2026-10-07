@@ -1536,7 +1536,7 @@ public partial class ChatPanel : UserControl
             body.Children.Add(origin);
         }
 
-        body.Children.Add(new TextBlock { Text = turn.Text, TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = turn.Text });
 
         // What the person attached is shown from the file Hub kept, not from anything this view remembers: the
         // transcript is the only copy of "this message had a picture in it", and a row rebuilt after a restart
@@ -1670,13 +1670,15 @@ public partial class ChatPanel : UserControl
         var glyph = new TextBlock
         {
             Text = "×",
-            FontFamily = new FontFamily("Segoe UI"),
             FontSize = 15,
             Width = 15,
             Height = 18,
             TextAlignment = TextAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        // The app's own UI stack rather than a bare "Segoe UI": this glyph has to come from a font that is there
+        // on every host, and the stack is the one place that decision is written down.
+        glyph.Bind(TextBlock.FontFamilyProperty, new DynamicResourceExtension("Hub.Font.Ui"));
         glyph.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
         var button = new Button { Content = glyph, Tag = "Cancel" };
         button.Classes.Add("message-action");
@@ -1790,7 +1792,7 @@ public partial class ChatPanel : UserControl
     {
         EmptyState.IsVisible = false;
         var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = text });
         MessageFlow.Children.Add(BuildMessageRow(fromUser, body, null,
             fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false,
             fromUser ? DateTimeOffset.Now : null));
@@ -3317,6 +3319,35 @@ public partial class ChatPanel : UserControl
             .FirstOrDefault(block => block.Classes.Contains("message-timestamp")) is { } label
             ? ToolTip.GetTip(label)?.ToString()
             : null;
+
+    /// <summary>The size a peer label is drawn at. <c>peer-origin</c> is the handle a check finds the line by; the
+    /// quiet 12 it renders at is <c>muted</c>'s, so the two classes stay one decision rather than two.</summary>
+    internal double PeerOriginFontSizeForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("peer-origin"))?.FontSize ?? 0;
+
+    /// <summary>The size a turn's plain words are drawn at, and the size a Markdown body is drawn at. Only the
+    /// last forty turns go through the Markdown layer, so the two have to agree or a message changes font as it
+    /// scrolls away.</summary>
+    internal double PlainTurnFontSizeForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("turn-text"))?.FontSize ?? 0;
+
+    internal double MarkdownBodyFontSizeForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>().FirstOrDefault() is { } viewer
+           && viewer.GetVisualDescendants().OfType<ColorTextBlock.Avalonia.CTextBlock>()
+               .FirstOrDefault(text => !text.Classes.Any(name =>
+                   name.StartsWith("Heading", StringComparison.Ordinal))) is { } body
+            ? body.FontSize
+            : 0;
+
+    /// <summary>The font a rendered code block actually draws with — empty when the reply had no code to look at.
+    /// The fenced block becomes a text editor rather than a text block, so this is the element that answers the
+    /// question a person can see the answer to.</summary>
+    internal string MarkdownCodeFontFamilyForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<TextEditor>().FirstOrDefault()
+            ?.FontFamily?.ToString() ?? "";
 
     /// <summary>Who a bubble says wrote it — the peer label when the message came from another session, null when
     /// the user typed it. Asserted as text because an absent label is exactly the misreading it exists to stop.</summary>

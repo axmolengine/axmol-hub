@@ -88,7 +88,11 @@
       <SolidColorBrush x:Key="Hub.Background" Color="#F4F5F7" />
       <SolidColorBrush x:Key="Hub.Surface" Color="#FFFFFF" />
       <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#EDEEF2" />
-      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#E9E9EE" />
+      <!-- A light theme has nowhere above white to lift a surface, so "raised" here means "one step above the well
+           it sits in": the chips and attachment pills live on SurfaceAlt (the composer), and the value below was
+           within five levels of it — a chip that was there and could not be seen. The border each of them draws is
+           what carries the edge in this variant. -->
+      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#F8F9FB" />
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#FFFFFF" />
       <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#EEF0F4" />
       <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#E4E4EA" />

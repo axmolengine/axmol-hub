@@ -322,6 +322,19 @@ public partial class ControlGalleryWindow : Window
                   && lightProviderSurface != darkProviderSurface,
                 "浅色主题 provider 卡片底色与模型项底色区分且适配主题切换");
 
+            // The chat column's three surfaces, in the variant nothing else photographs: the pill and the composer
+            // both sit on the page, and the chips on the composer sit on the composer. Each pair that actually
+            // touches has to be more than a rounding error apart, or a message reads as floating on nothing.
+            var lightSurface = TokenColor("Hub.Surface");
+            var lightComposer = TokenColor("Hub.SurfaceAlt");
+            var lightChip = TokenColor("Hub.SurfaceRaised");
+            check(Separates(lightBackground, lightSurface),
+                "浅色下用户气泡与页面底色分得开（" + lightBackground + " vs " + lightSurface + "）");
+            check(Separates(lightBackground, lightComposer),
+                "浅色下输入框与页面底色分得开（" + lightBackground + " vs " + lightComposer + "）");
+            check(Separates(lightComposer, lightChip),
+                "浅色下 composer 上的胶囊与框底分得开（" + lightComposer + " vs " + lightChip + "）");
+
             Application.Current.RequestedThemeVariant = ThemeVariant.Dark;
             UpdateLayout();
         }

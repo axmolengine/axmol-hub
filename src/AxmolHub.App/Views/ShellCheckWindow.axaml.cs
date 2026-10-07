@@ -288,8 +288,8 @@ public partial class ShellCheckWindow : Window
         Check(panel.ModeIndicatorCloseIsLeftAndCenteredForCheck,
             "模式按钮删除图标位于文字左侧并垂直居中");
         var closeGlyph = panel.ModeIndicatorCloseGlyphForCheck;
-        Check(closeGlyph is { Glyph: "×", FontSize: >= 14 and <= 16, FontFamily: "Segoe UI" },
-            "模式取消图标使用轻量的文字叉号，而不是生硬的交叉描边");
+        Check(closeGlyph is { Glyph: "×", FontSize: >= 14 and <= 16 } && IsUiFontStack(closeGlyph.FontFamily),
+            "模式取消图标使用轻量的文字叉号，字体走应用的 UI 字族栈（实际 " + closeGlyph.FontFamily + "）");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
               && panel.SelectedComposerModeForCheck == ChatModes.Plan
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
@@ -694,8 +694,8 @@ public partial class ShellCheckWindow : Window
         // and let the rest of the run continue, not as an exception that truncates the whole report.
         Check(panel.ClickBubbleAction(0, "EditMessage"), "可以再次进入就地编辑");
         var cancelGlyph = panel.BubbleCancelGlyphForCheck(0);
-        Check(cancelGlyph is { Glyph: "×", FontSize: >= 14 and <= 16, FontFamily: "Segoe UI" },
-            "就地编辑的取消叉号与模式胶囊统一使用轻量字形");
+        Check(cancelGlyph is { Glyph: "×", FontSize: >= 14 and <= 16 } && IsUiFontStack(cancelGlyph.FontFamily),
+            "就地编辑的取消叉号与模式胶囊统一使用轻量字形与 UI 字族栈（实际 " + cancelGlyph.FontFamily + "）");
         if (panel.BubbleEditorForCheck(0) is { } editor) editor.Text = "就地改写的提问";
         Check(panel.SendKeyToBubbleEditor(0, Avalonia.Input.Key.Enter)
               && panel.BubbleEditorForCheck(0) is null,
@@ -928,6 +928,7 @@ public partial class ShellCheckWindow : Window
         await CheckEmptyStateAsync(shell, panel);
         await CheckPictureFeedbackAsync(shell, panel);
         await CheckComposerKeysAsync(shell, panel);
+        await CheckTypographyAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1526,6 +1527,15 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
+    /// Whether a glyph draws from the app's UI font stack rather than a single hard-coded family or the platform
+    /// default. The stack is what carries CJK and the × on every host; a bare "Segoe UI" reads fine on Windows and
+    /// falls back to something else everywhere else, which is the bug the token exists to prevent.
+    /// </summary>
+    private static bool IsUiFontStack(string family)
+        => family.Contains("Segoe UI", StringComparison.Ordinal)
+           && family.Contains("Microsoft YaHei UI", StringComparison.Ordinal);
+
+    /// <summary>
     /// Counts the pixels of a rendered frame carrying the fixture's two constant channels. Blue and green are the
     /// same in every pixel of the fixture and only in the fixture, so they survive the upscale untouched — an
     /// 8×8 blown up to 590×590 is resampled, and a test that pinned the alternating red channel would find a
@@ -1672,6 +1682,56 @@ public partial class ShellCheckWindow : Window
             panel.PressComposerKeyForCheck(Key.Up);
             Check(panel.InputTextForCheck == "半路改的主意",
                 "被引导吞掉的那句同样能 Up 回来（实际「" + panel.InputTextForCheck + "」）");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
+    /// 字号：同一条消息不能因为滚得远了就换一个字号。
+    ///
+    /// Only the last forty turns are rendered as Markdown, and the plain path used to fall back to the theme's
+    /// default 14 while the Markdown layer says 13 — so a message visibly changed font as it scrolled away. The
+    /// pair is read off the two controls that actually paint the words, and pinned to 13 so the pair cannot both
+    /// be wrong in the same direction.
+    /// </summary>
+    private async Task CheckTypographyAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var session = chat.StartConversation();
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        chat.ClientOverride = (_, _) => new ScriptedChatClient(
+            ["# 标题\n\n正文一段，带 `行内代码`。\n\n```csharp\nint answer = 42;\n```"]);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            panel.SetInputForCheck("给我一段带 markdown 的回答");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            await WaitUntilAsync(() => panel.MarkdownBodyFontSizeForCheck > 0);
+            var plain = panel.PlainTurnFontSizeForCheck;
+            var markdown = panel.MarkdownBodyFontSizeForCheck;
+            Check(plain > 0 && plain == markdown,
+                "纯文本与 markdown 正文同一个字号，消息滚过渲染边界不换个字（"
+                + plain.ToString(CultureInfo.InvariantCulture) + " vs "
+                + markdown.ToString(CultureInfo.InvariantCulture) + "）");
+            Check(Math.Abs(markdown - 13) < 0.001,
+                "markdown 正文仍是主题里那档 13，而不是被拉回控件默认的 14（实际 "
+                + markdown.ToString(CultureInfo.InvariantCulture) + "）");
+
+            // The code face: the markdown theme used to name "Consolas, Menlo" itself, which is a second answer to
+            // a question HubStyles has already answered, and the two answers drift.
+            var codeFont = panel.MarkdownCodeFontFamilyForCheck;
+            Check(codeFont.Contains("Cascadia Mono", StringComparison.Ordinal)
+                  && codeFont.Contains("Noto Sans Mono CJK SC", StringComparison.Ordinal),
+                "代码块用的是应用那一份等宽字体栈，而不是主题里另写的一份（实际 " + codeFont + "）");
         }
         finally
         {
@@ -1952,6 +2012,12 @@ public partial class ShellCheckWindow : Window
               && panel.PeerOriginCountForCheck == 1 && panel.PeerOriginTextForCheck(1) is null,
             "对方写来的那条在气泡上标出了来源会话，且只标那一条（实际「" + origin + "」，共 "
             + panel.PeerOriginCountForCheck + " 个标签）");
+        // The label is a quiet line, not part of the message it sits over. Measured as the rendered size rather
+        // than as "does a style exist for the class": `peer-origin` is the handle a check finds the line by, and
+        // the 12 it draws at comes from `muted`, which is the one place that size is written down.
+        Check(Math.Abs(panel.PeerOriginFontSizeForCheck(0) - 12) < 0.001,
+            "来源标签用 12 号的次要字号（实际 "
+            + panel.PeerOriginFontSizeForCheck(0).ToString(CultureInfo.InvariantCulture) + "）");
 
         // ── scene 2: a note left without a wake is read on the next answer ──
         chat.ClientOverride = (_, id) => id == writer.Id

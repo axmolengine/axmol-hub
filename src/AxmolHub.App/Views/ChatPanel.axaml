@@ -15,7 +15,7 @@
     <Style Selector="ae|TextEditor.markdown-code-editor">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />
       <Setter Property="FontSize" Value="13" />
     </Style>
     <Style Selector="Button.markdown-code-copy">
@@ -556,6 +556,13 @@
       <Setter Property="MinHeight" Value="0" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
+    <!-- A turn's own words, whether or not they are Markdown. The rendered-Markdown layer is 13 (declared in
+         HubMarkdownStyles, which is the winning style set for that subtree), and only the last 40 turns go
+         through it — so a plain 14 here would make the same message change size as it scrolled away. -->
+    <Style Selector="TextBlock.turn-text">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
     <!-- The empty state's suggestion chips: the greeting's promise stated as things the assistant can actually
          do. Quiet by default — secondary text on a hairline pill — so the centred column still reads as a greeting
          first and a starting point second, and wraps inside a bounded row instead of widening the column. -->
@@ -688,7 +695,7 @@
                         Stretch="Uniform" Fill="Transparent"
                         Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
                         StrokeLineCap="Round" StrokeJoin="Round" />
-                  <TextBlock Classes="mode-indicator-close" Text="×" FontFamily="Segoe UI"
+                  <TextBlock Classes="mode-indicator-close" Text="×" FontFamily="{DynamicResource Hub.Font.Ui}"
                              FontSize="15" TextAlignment="Center" Width="14" Height="18"
                              HorizontalAlignment="Center" VerticalAlignment="Center"
                              Foreground="{DynamicResource Hub.DangerText}" />
