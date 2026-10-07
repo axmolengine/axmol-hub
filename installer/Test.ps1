@@ -46,11 +46,22 @@ if (-not $Isolated) {
 }
 
 $taskInstalled = $false
+$taskProtocolRegistryPath = 'HKCU:\Software\Classes\axmolhub'
+$taskProtocolBackup = Join-Path $taskWork 'axmolhub-protocol.reg'
+$taskProtocolBackupTaken = $false
+$taskProtocolStateCaptured = $false
 try {
+    if (Test-Path -LiteralPath $taskProtocolRegistryPath) {
+        & reg.exe export 'HKCU\Software\Classes\axmolhub' $taskProtocolBackup /y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not preserve the existing axmolhub protocol registration.' }
+        $taskProtocolBackupTaken = $true
+    }
+    $taskProtocolStateCaptured = $true
+
     $taskReleases = @{}
     foreach ($taskVersion in @($Version, $taskUpgraded)) {
         $taskOutput = Join-Path $taskWork ("releases/" + $taskVersion)
-        & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $taskVersion -PackId $taskPackId -PackTitle $taskTitle -OutputDir $taskOutput
+        & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $taskVersion -PackId $taskPackId -PackTitle $taskTitle -OutputDir $taskOutput -PublishDir (Join-Path $taskWork ("publish/" + $taskVersion))
         if ($LASTEXITCODE -ne 0) { throw "Packaging $taskVersion failed." }
         # Build.ps1 renames the installer to axmol-hub-<version>-<runtime>.exe, so the
         # vpk-native *-Setup.exe name no longer exists by the time we look for it.
@@ -71,6 +82,8 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }
     }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
+    $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
+    if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }
 
     # 3. 自包含版能启动：用 stub 启动，且数据根与设置都指向验收工作区。
     $taskImage = Join-Path $taskWork 'installed-hub.png'
@@ -101,6 +114,7 @@ try {
     $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) ($taskTitle + '.lnk')
     if (Test-Path -LiteralPath $taskShortcut) { throw 'Uninstall left the Start menu shortcut in place.' }
     if (Get-HubUninstallEntry $taskPackId) { throw 'Uninstall left the uninstall registry entry in place.' }
+    if (Test-Path -LiteralPath $taskProtocolRegistryPath) { throw 'Uninstall left the axmolhub URI registration in place.' }
     $taskResidual = Test-Path -LiteralPath $taskInstall
 
     # 6. 卸载必须保留用户数据与设置（引擎与工具链是 GB 级的，不能随卸载丢掉）。
@@ -118,5 +132,14 @@ try {
     if ($taskInstalled -and (Test-Path -LiteralPath (Join-Path $taskInstall 'Update.exe'))) {
         $taskCleanup = Start-Process -FilePath (Join-Path $taskInstall 'Update.exe') -ArgumentList @('uninstall', '-s') -WindowStyle Hidden -Wait -PassThru
         Write-Output "Test installation cleanup exit: $($taskCleanup.ExitCode)"
+    }
+    if ($taskProtocolStateCaptured) {
+        if (Test-Path -LiteralPath $taskProtocolRegistryPath) {
+            Remove-Item -LiteralPath $taskProtocolRegistryPath -Recurse -Force
+        }
+        if ($taskProtocolBackupTaken) {
+            & reg.exe import $taskProtocolBackup | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not restore the previous axmolhub protocol registration after the installer test.' }
+        }
     }
 }

@@ -124,6 +124,35 @@ public partial class MainWindow : Window
         Opened += (_, _) => ReportFonts();
     }
 
+    internal async Task HandleInstallLinkAsync(string value)
+    {
+        EngineInstallLink request;
+        try
+        {
+            request = EngineInstallLink.Parse(value);
+        }
+        catch (FormatException ex)
+        {
+            _workspace.Log.Write("Rejected deeplink: " + ex.Message);
+            await HubDialog.ShowAsync(this, HubStrings.Get("DeepLinkTitle"), HubStrings.Get("DeepLinkInvalid"));
+            return;
+        }
+
+        if (_workspace.CanCancel)
+        {
+            _workspace.Log.Write($"Rejected deeplink for Axmol {request.Version}: another operation is running.");
+            await HubDialog.ShowAsync(this, HubStrings.Get("DeepLinkTitle"), HubStrings.Get("DeepLinkBusy"));
+            return;
+        }
+
+        WindowState = WindowState.Normal;
+        Activate();
+        NavigateTo("Installs");
+        await _workspace.InstallEngineAsync(request.Version, request.Source);
+    }
+
+    internal void WriteLog(string message) => _workspace.Log.Write(message);
+
     /// <summary>
     /// Startup font self-check. Two things are done separately because they have different
     /// audiences:

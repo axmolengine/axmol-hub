@@ -12,6 +12,7 @@ public partial class App : Application
 {
     /// <summary>Command line and host directory. Filled in by <see cref="Program.Main"/> before AppBuilder.</summary>
     internal static HubHostOptions Options { get; set; } = HubHostOptions.Parse([]);
+    internal static DeepLinkActivationBroker? Activations { get; set; }
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -265,6 +266,21 @@ public partial class App : Application
         // otherwise the preferences cached in the shell would diverge from disk.
         var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences);
         desktop.MainWindow = window;
+
+        if (!Options.IsAutomation)
+        {
+            try
+            {
+                DeepLinkProtocolRegistration.Register();
+            }
+            catch (Exception ex)
+            {
+                window.WriteLog("Deeplink protocol registration failed: " + ex);
+            }
+
+            window.Opened += (_, _) => Activations?.SetHandler(uri =>
+                Dispatcher.UIThread.Post(() => _ = window.HandleInstallLinkAsync(uri)));
+        }
 
         // Silent startup update check. Fire-and-forget: it must never block the window from coming
         // up, and its only visible effect is the dot the shell raises on the Settings nav item (fed

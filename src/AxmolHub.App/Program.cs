@@ -16,7 +16,13 @@ internal static class Program
         // hook callbacks; we must handle and exit before any UI initialization, otherwise the
         // main window pops up during installation.
         // Put it first (even before the encoding setup): this path must have no side effects.
-        VelopackApp.Build().Run();
+        var velopack = VelopackApp.Build();
+        if (OperatingSystem.IsWindows())
+        {
+            velopack.OnAfterInstallFastCallback(_ => DeepLinkProtocolRegistration.RegisterWindowsAfterInstall());
+            velopack.OnBeforeUninstallFastCallback(_ => DeepLinkProtocolRegistration.UnregisterWindowsOnUninstall());
+        }
+        velopack.Run();
 
         // Verification-mode reports go to stdout and contain Chinese. Without UTF-8 they are
         // garbled on Windows (hit on the very first P5 self-check run: the assertion results
@@ -34,7 +40,24 @@ internal static class Program
 
         // Argument parsing must happen before AppBuilder: it decides which window to show.
         App.Options = HubHostOptions.Parse(args);
-        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        if (!App.Options.IsAutomation)
+        {
+            App.Activations = DeepLinkActivationBroker.Start(HubHostOptions.DeepLinkArgument(args));
+            if (App.Activations.ForwardedToExistingInstance)
+            {
+                App.Activations.Dispose();
+                return;
+            }
+        }
+
+        try
+        {
+            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        }
+        finally
+        {
+            App.Activations?.Dispose();
+        }
     }
 
     // The visual designer also calls this method; do not delete.

@@ -5,6 +5,7 @@ param(
     [string]$PackId,
     [string]$PackTitle,
     [string]$OutputDir,
+    [string]$PublishDir,
     [switch]$PrereleaseBuild,
     # delta 包的前提是打包时输出目录里已经有上一版的 .nupkg。Publish.ps1 先用
     # `vpk download github` 把上一版取回来，再以 -NoClean 调本脚本；默认仍然清空，
@@ -43,7 +44,7 @@ if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CL
 # Linux 出 .AppImage。Velopack 的 osx/linux 打包 runner 依赖平台工具（pkgbuild/codesign、
 # mksquashfs），不能在 Windows 上交叉出包，因此这里不再设平台守卫。
 
-$taskPublish = Join-Path $taskRoot "artifacts/app/$Runtime"
+$taskPublish = if ($PublishDir) { $PublishDir } else { Join-Path $taskRoot "artifacts/app/$Runtime" }
 $taskOutput = if ($OutputDir) { $OutputDir } else { Join-Path $taskRoot "artifacts/releases/$Runtime" }
 if ($NoClean) {
     # 目录里已有的上一版 .nupkg 必须留下：vpk 靠它生成 delta，并把上一版并进 feed。
@@ -107,6 +108,9 @@ $taskSetup = switch -Wildcard ($Runtime) {
     default   { @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.AppImage') }
 }
 if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput for $Runtime, found $($taskSetup.Count)." }
+if ($Runtime -like 'osx-*') {
+    & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
+}
 $taskSetupName = 'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
 Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 

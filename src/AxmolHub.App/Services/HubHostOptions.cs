@@ -55,6 +55,9 @@ internal sealed record HubHostOptions(
 
     public static string DefaultDataRoot => System.IO.Path.Combine(UserDirectory, "data");
 
+    public static string? DeepLinkArgument(string[] args)
+        => args.FirstOrDefault(argument => argument.StartsWith(EngineInstallLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// Three-tier data-root priority: command line &gt; settings file &gt; default directory (same as
     /// the WPF version). Therefore this does **not** fall back here — once the default is filled in

@@ -53,6 +53,7 @@ public sealed class HubWorkspace : IDisposable
 
     private CancellationTokenSource? _operation;
     private BuildProgressWindow? _buildProgress;
+    private readonly TaskCompletionSource _engineIndexReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// The engine version catalog. **Must be the same instance**: after the remote index is pulled
@@ -163,6 +164,8 @@ public sealed class HubWorkspace : IDisposable
             // fail startup.
             Log.Write("Engine index failed: " + ex.Message);
         }
+
+        _engineIndexReady.TrySetResult();
 
         // Background thread → UI thread. Touching controls cross-thread throws, so go back via
         // Dispatcher.
@@ -528,10 +531,22 @@ public sealed class HubWorkspace : IDisposable
     /// picks the latest LTS in the manifest — the CLI and verification programs follow this default
     /// path, while the interactive UI lets the user pick first.
     /// </summary>
-    public async Task InstallEngineAsync(string? version = null)
+    public async Task InstallEngineAsync(string? version = null, string? downloadSourceOverride = null)
     {
+        if (downloadSourceOverride is not null && !DownloadSources.IsKnown(downloadSourceOverride))
+        {
+            throw new InvalidOperationException("The requested engine download source is not supported.");
+        }
+
         await ExecuteAsync("Install official engine", async token =>
         {
+            // A website link names a version from the current online catalog. Wait until the
+            // startup refresh has either adopted it or definitively fallen back to the built-in list.
+            if (downloadSourceOverride is not null)
+            {
+                await _engineIndexReady.Task;
+            }
+
             var catalog = Releases();
             // A mistyped version must stop here: the manifest has id/url/sha256, and picking an
             // arbitrary "closest" one means downloading an engine the user didn't ask for — which
@@ -542,7 +557,7 @@ public sealed class HubWorkspace : IDisposable
                         ? $"清单里没有 Axmol {version} 这个可安装版本。"
                         : $"Axmol {version} is not an installable release in the manifest.");
 
-            var package = WithDownloadSource(release.Package);
+            var package = WithDownloadSource(release.Package, downloadSourceOverride);
             var path = await _installer.InstallAsync(package, DownloadProgress(), token);
             AddEngine(StateStore.ValidateEngine(path, package.Channel));
         });
@@ -555,10 +570,11 @@ public sealed class HubWorkspace : IDisposable
     /// description of *what* an engine is, while "where it comes from" is a user choice applied at
     /// download time. The digest is untouched — a mirror that serves different bytes must fail.
     /// </summary>
-    private PackageEntry WithDownloadSource(PackageEntry package)
+    private PackageEntry WithDownloadSource(PackageEntry package, string? sourceOverride = null)
     {
-        var source = Preferences.DownloadSource;
+        var source = sourceOverride ?? Preferences.DownloadSource;
         var custom = Preferences.CustomDownloadSource;
+        if (!DownloadSources.IsKnown(source)) throw new InvalidOperationException("The configured engine download source is not supported.");
         // Invalid custom input is rejected before a single byte is downloaded: silently falling back
         // to GitHub would look exactly like "the mirror worked".
         if (DownloadSources.Validate(source, custom) is { } problem) throw new InvalidOperationException(problem);

@@ -40,13 +40,25 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 `Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台，**没有平台守卫**：四个平台都在各自原生 runner 上出包（Windows `Setup.exe` / macOS `.pkg` / Linux `.AppImage`）。P6 之后 App 是跨平台实现（Avalonia / `net8.0`），Core、Cli 与 App 都能为每个宿主构建；**签名 / 公证尚未接入**，因此产物目前都是未签名状态。
 
+## 官网安装链接
+
+Hub 注册 `axmolhub:` 自定义 URI Scheme。官网可用以下链接请求安装清单中**精确匹配**的 Axmol 版本：
+
+```text
+axmolhub://install?version=2.11.5&source=atomgit
+```
+
+`version` 必须是 Hub 当前引擎目录中可安装的版本；`source` 必须是 `github`、`atomgit` 或 `custom`。`custom` 使用用户已在 Hub 设置中配置的 HTTPS 下载源，官网链接不能传入下载 URL。来源仅对此次安装生效，不会覆盖 Hub 的默认下载源。安装仍使用引擎清单里的文件摘要校验；未配置的自定义源、无效链接或不可用版本会明确报错，不会静默改装其他版本。
+
+Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时移除；Linux 在 Hub 首次启动时写入当前用户的 desktop handler；macOS 安装包将 `axmolhub` 写入 Hub app bundle 的 `CFBundleURLTypes`。官网应同时保留各平台 Hub 安装包的回退链接：用户尚未安装 Hub、浏览器拒绝唤起或唤起超时时，提示其安装/打开 Hub 后重试。网站需把版本和来源作为 URL 参数编码，且不要在链接中加入自定义镜像地址。
+
 `Test.ps1 -Isolated` 用一次性 `packId`、程序名与安装目录打包两个相邻版本（`x` 与 `x+1`），验证：
 
 1. 静默安装到含中文与空格的路径
 2. 安装载荷完整（自包含 Hub、清单、许可文件都在 `current\` 下）
 3. 装好的自包含版能无头启动
 4. **跨版本升级后用户设置与数据仍在**
-5. 卸载移除应用载荷、开始菜单快捷方式与卸载注册项，**但保留用户数据**
+5. 卸载移除应用载荷、开始菜单快捷方式、卸载注册项与 `axmolhub:` 协议注册，**但保留用户数据**
 
 结果写在 `artifacts/install-checks/<本次>/result.json`。不带 `-Isolated` 时要求机器上没有既有的 Hub 安装。
 
