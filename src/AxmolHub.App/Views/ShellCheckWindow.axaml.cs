@@ -925,6 +925,7 @@ public partial class ShellCheckWindow : Window
         await CheckCrossSessionAsync(shell, panel, sidebar);
         await CheckSpawnAsync(shell, panel);
         await CheckPictureAsync(shell, panel);
+        await CheckEmptyStateAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1297,6 +1298,101 @@ public partial class ShellCheckWindow : Window
 
     private static TaskCompletionSource<bool> PeerGate() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// 空状态的建议 chip：欢迎语承诺的「可以做什么」必须真的能点。
+    ///
+    /// The charter promises a centred greeting *with suggestion chips*, and the text table has carried the
+    /// "建议问题" keys since the Copilot-style redesign — so the thing at risk here was an empty state that only
+    /// ever looked finished. The group asserts the four chips exist as tappable objects, that a tap lands in the
+    /// composer without starting a run (a chip is an offer, and pressing it must not spend the user's quota), and
+    /// that the whole row goes away with the empty state it belongs to rather than floating over a transcript.
+    /// </summary>
+    private async Task CheckEmptyStateAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var session = chat.StartConversation();
+        try
+        {
+            chat.OpenConversation(session.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var chips = panel.SuggestionChipCountForCheck;
+            var first = panel.SuggestionChipTextForCheck(0);
+            var tapped = panel.SuggestionChipTextForCheck(1);
+            Check(chips == 4 && panel.EmptyStateVisibleForCheck && panel.SuggestionRowVisibleForCheck,
+                "空会话的空状态给出四条建议（实际 " + chips + " 条）");
+
+            // The chips must be four different offers, and each one has to be the language table's own words —
+            // a duplicated chip, or a pill reading "AssistantSuggestFixBug" because a key went missing, is a
+            // broken empty state that still renders and still gets clicked. The message quotes at most the four
+            // real ones: a rebuild that forgot to clear leaves a thousand, and a FAIL line nobody can read is
+            // worth as little as the cell it came from.
+            var texts = Enumerable.Range(0, chips).Select(panel.SuggestionChipTextForCheck).ToArray();
+            var table = panel.SuggestionKeysForCheck.Select(HubStrings.Get).ToArray();
+            Check(chips == table.Length
+                  && texts.All(text => text.Length > 0)
+                  && texts.Distinct(StringComparer.Ordinal).Count() == chips
+                  && texts.SequenceEqual(table, StringComparer.Ordinal),
+                "四条建议各不相同，且逐字取自当前语言的文案表（实际 " + chips + " 条："
+                + string.Join(" / ", texts.Take(4)) + "）");
+
+            // Tap one. The promise is "fills the composer", so what is asserted is the composer's text, the
+            // caret, and that nothing was sent — the last of these because a chip that sends on tap would pass
+            // every other cell in this group. The chips are read through the safe accessor on purpose: with
+            // none at all this has to be a FAIL, not an exception that ends every cell after it.
+            panel.ClickSuggestionChipForCheck(1);
+            Check(chips > 1 && panel.InputTextForCheck == tapped && panel.ComposerHasKeyboardFocusForCheck,
+                "点建议只是把话填进输入框并聚焦，人还能改（实际「" + panel.InputTextForCheck + "」）");
+            Check(!panel.IsStreamingForCheck && !panel.ChatActivityVisibleForCheck
+                  && chat.StoredCopyForCheck(session.Id)?.Messages.Count == 0,
+                "点建议不会替人按下发送：会话里还没有任何一条消息");
+
+            // A message ends the empty state's business. The row has to go with it — a chip left under the first
+            // reply would be a button that fills the composer with something the person has already moved past.
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["第一条回复"]);
+            panel.SetInputForCheck("先不聊建议，问点别的");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            // The scripted gateway answers before the panel has had a chance to repaint, so the empty state is
+            // still standing on the frame right after the run. Waiting for the repaint is what makes this the
+            // same cell in CI and on a machine, and the wait is bounded — it cannot turn a hung view into a pass.
+            await WaitUntilAsync(() => !panel.EmptyStateVisibleForCheck);
+            Check(!panel.EmptyStateVisibleForCheck && !panel.SuggestionRowVisibleForCheck
+                  && panel.InputTextForCheck.Length == 0,
+                "发出第一条后空状态连同建议一起收起，输入框也清空（实际空状态"
+                + (panel.EmptyStateVisibleForCheck ? "仍在" : "已收") + "，输入框「" + panel.InputTextForCheck + "」）");
+
+            // And back to an untouched session it comes back, because it is rebuilt from the table on every
+            // Reload rather than remembered by one conversation.
+            var another = chat.StartConversation();
+            try
+            {
+                chat.OpenConversation(another.Id);
+                panel.Reload();
+                shell.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                Check(panel.EmptyStateVisibleForCheck
+                      && panel.SuggestionChipCountForCheck == chips
+                      && panel.SuggestionChipTextForCheck(0) == first,
+                    "换到另一个空会话，建议 chip 原样回来（实际 " + panel.SuggestionChipCountForCheck + " 条）");
+            }
+            finally
+            {
+                chat.DeleteConversation(another.Id);
+            }
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
 
     /// <summary>
     /// 图片入料：一个人递进来的三条路，和一条消息最多能带几张。

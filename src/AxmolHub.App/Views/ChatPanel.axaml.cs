@@ -214,6 +214,7 @@ public partial class ChatPanel : UserControl
         InputBox.PlaceholderText = HubStrings.Get("InputPlaceholder");
         GreetingLabel.Text = HubStrings.Get("AssistantGreeting");
         GreetingSubtitle.Text = HubStrings.Get("AssistantGreetingSubtitle");
+        RenderSuggestions();
         UpdateSendState();
 
         RefreshModelPicker();
@@ -221,6 +222,43 @@ public partial class ChatPanel : UserControl
         UpdateForkNotice();
         RenderMessages();
         UpdateContextRing();
+    }
+
+    /// <summary>The four starting points the empty state offers, in the order they read best.</summary>
+    private static readonly string[] SuggestionKeys =
+    [
+        "AssistantSuggestReadCodebase",
+        "AssistantSuggestFixBug",
+        "AssistantSuggestWriteScript",
+        "AssistantSuggestRefactor",
+    ];
+
+    /// <summary>
+    /// Rebuilds the suggestion chips from the language table. Rebuilt rather than declared in the markup because
+    /// a language switch must not leave English prompts under a Chinese greeting, and because a chip whose key
+    /// vanished from the table disappears with it — the alternative is a pill reading "AssistantSuggestFixBug".
+    /// </summary>
+    private void RenderSuggestions()
+    {
+        SuggestionPanel.Children.Clear();
+        foreach (var key in SuggestionKeys)
+        {
+            var prompt = HubStrings.Get(key);
+            if (string.IsNullOrWhiteSpace(prompt) || string.Equals(prompt, key, StringComparison.Ordinal)) continue;
+
+            var chip = new Button { Classes = { "suggestion-chip" }, Content = prompt, Tag = key };
+            // Fill, do not send. A chip is an offer the person may want to narrow ("…this function"), and sending
+            // it would start a run that spends their quota on a tap that looked like focusing a text box.
+            chip.Click += (_, _) =>
+            {
+                InputBox.Text = prompt;
+                InputBox.CaretIndex = prompt.Length;
+                InputBox.Focus();
+                UpdateSendState();
+            };
+            SuggestionPanel.Children.Add(chip);
+        }
+        SuggestionPanel.IsVisible = SuggestionPanel.Children.Count > 0;
     }
 
     /// <summary>
@@ -2910,6 +2948,32 @@ public partial class ChatPanel : UserControl
 
     /// <summary>Moves focus out of an open inline editor, the way clicking anywhere else in the window would.</summary>
     internal void FocusComposerForCheck() => InputBox.Focus();
+
+    // ── Empty state ──
+    // The chips are asserted through the object graph and through a real ClickEvent, never by reading the text
+    // table: what a person can act on is the button and the composer it fills, not the key behind it.
+    internal bool EmptyStateVisibleForCheck => EmptyState.IsVisible;
+
+    /// <summary>Effective, not local: the row keeps its own <c>IsVisible</c> when the empty state it lives in is
+    /// hidden, and what a person needs to know is that the chips are neither drawn nor reachable.</summary>
+    internal bool SuggestionRowVisibleForCheck => SuggestionPanel.IsEffectivelyVisible;
+    internal int SuggestionChipCountForCheck => SuggestionPanel.Children.OfType<Button>().Count();
+
+    internal string SuggestionChipTextForCheck(int index)
+        => SuggestionPanel.Children.OfType<Button>().ElementAtOrDefault(index)?.Content as string ?? "";
+
+    /// <summary>Clicks a chip the way a pointer would, so the fill-without-sending behaviour is what runs.</summary>
+    internal void ClickSuggestionChipForCheck(int index)
+    {
+        if (SuggestionPanel.Children.OfType<Button>().ElementAtOrDefault(index) is { } chip)
+            chip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    internal bool ComposerHasKeyboardFocusForCheck => InputBox.IsKeyboardFocusWithin;
+
+    /// <summary>The keys the row is built from, so a check can compare the rendered chips against the text table
+    /// instead of against a copy of the expected sentences — which would pass even if the table lost a key.</summary>
+    internal string[] SuggestionKeysForCheck => SuggestionKeys;
 
     /// <summary>Sends one key to the in-place editor, so the Enter/Escape bindings themselves are what a check
     /// exercises rather than the method they call.</summary>

@@ -752,7 +752,16 @@ public static class HubTexts
         ["SearchConversationsTip"] = ("搜索对话", "Search conversations"),
         ["NewConversationTip"] = ("新建对话", "New conversation"),
         ["AssistantGreeting"] = ("你好，我是 Axmol 助手", "Hi, I'm your Axmol assistant"),
-        ["AssistantGreetingSubtitle"] = ("引擎、项目与工具链的问题，都可以问我", "Ask me anything about engines, projects and toolchains"),
+        // The subtitle is the scope of the whole assistant, so it must not name only engines: an Axmol-unrelated
+        // question is in scope. The four chips below are the same promise stated as things to do.
+        ["AssistantGreetingSubtitle"] = ("读代码、改代码、跑命令，都可以直接说", "Reading code, changing code, running commands — just ask"),
+        // Each one is something the shipped tool set can actually finish: read_file / search_text to look,
+        // file_write to change, run_command to prove it worked. No engine-only phrasing — these are the general
+        // entry points, and a chip that the assistant cannot honour teaches the user not to trust the empty state.
+        ["AssistantSuggestReadCodebase"] = ("梳理这个项目的结构和入口", "Walk me through this project's structure and entry points"),
+        ["AssistantSuggestFixBug"] = ("定位一个报错并修好它", "Find a bug and fix it"),
+        ["AssistantSuggestWriteScript"] = ("写一个脚本并运行验证", "Write a script and run it to verify"),
+        ["AssistantSuggestRefactor"] = ("把一段代码重构得更易读", "Refactor some code to be easier to read"),
         ["ModelChangedFormat"] = ("已切换模型：{0}", "Model changed to {0}"),
     };
 }
