@@ -19,6 +19,11 @@ namespace AxmolHub.Core;
 /// session store to read — those tools then say so instead of inventing a peer.</param>
 /// <param name="CrossSession">Live run state and the write path for another session, both of which belong to the
 /// app. Null when nothing can answer for a peer.</param>
+/// <param name="Screen">The host's capture mechanics. Null on a host this build has not taught to draw a frame,
+/// which the tool says out loud rather than returning a black picture.</param>
+/// <param name="RecordFrames">Where a captured frame is handed to the app so the result turn can carry it. The
+/// turn is written by the app, not by this class, and the call id never reaches a tool body — so the frame goes
+/// out through the request's own scope, which is one request and one conversation by construction.</param>
 public sealed record WorkspaceToolScope(
     string? WorkspaceRoot,
     WorkspaceGuards Guards,
@@ -28,7 +33,9 @@ public sealed record WorkspaceToolScope(
     HubLog? Log,
     Func<string, Task<string>>? ApplyWorkspaceRoot,
     ConversationStore? Sessions = null,
-    CrossSessionBridge? CrossSession = null)
+    CrossSessionBridge? CrossSession = null,
+    ScreenCaptureBridge? Screen = null,
+    Action<IReadOnlyList<ChatImage>>? RecordFrames = null)
 {
     /// <summary>A scope with nothing in it. Every file and command tool answers
     /// <see cref="WorkspacePathVerdict.NoWorkspace"/> rather than guessing a directory.</summary>
@@ -271,6 +278,86 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
             ? await apply(full).ConfigureAwait(false)
             : $"Workspace set to {full}.";
     }
+
+    [Description("Capture one window, or the whole display, as an image and put it in this conversation so you can "
+                 + "see what is on the screen: an error in another app, the state of a running game window, what "
+                 + "the user is looking at. The picture arrives attached to this result — read it from there. "
+                 + "Nothing is written to the workspace.")]
+    public string CaptureScreen(
+        [Description("Part of the window's title, matched case-insensitively. Leave it empty only when fullscreen "
+                     + "is true; a target matching several windows is refused rather than guessed.")]
+        string target = "",
+        [Description("Capture the entire display instead of one window.")] bool fullscreen = false)
+    {
+        // No path guard runs here, deliberately: this call reads the screen and stores into Hub's own session
+        // directory, so the sandbox has nothing to say about it. What does have something to say is the approval
+        // gate — capture_screen sits on the SystemCommand tier and asks in every mode but full.
+        var backend = CaptureBackends.ForCurrent();
+        if (!backend.Available) return backend.Refusal!;
+        if (context.Screen is not { } host)
+            return $"Refused: this build has no capture host for {backend.Label}. Ask the user for a screenshot "
+                   + "instead; do not retry the capture.";
+
+        // The whole display is the one call with no target; anything else has to name exactly one window first.
+        var wanted = (target ?? "").Trim();
+        CapturableWindow? window = null;
+        if (!fullscreen || wanted.Length > 0)
+        {
+            var match = ScreenCapture.Find(TryWindows(host), wanted);
+            if (!match.Ok) return match.Refusal!;
+            window = match.Window;
+        }
+
+        // A grabber swallows its own failure and answers null, so what the model reads is a sentence about the
+        // screen rather than a stack trace from the host.
+        if (host.Grab(window) is not { } frame)
+            return $"Refused: the {backend.Label} capture of {Described(window, fullscreen)} returned no frame. The "
+                   + "window may have closed, or the display may be locked; ask the user before capturing anything "
+                   + "else.";
+
+        // The blank check has to come before the store: a black frame is a valid PNG with a plausible byte count,
+        // so every later step — admission, the file on disk, the wire — reads it as a capture that worked, and the
+        // model then describes a screenshot that showed nothing. This is the one place that knows.
+        var what = Described(window, fullscreen);
+        if (frame.Stats.IsBlank())
+            return $"Refused: the {backend.Label} capture of {what} came back a blank frame — {frame.Width}×"
+                   + $"{frame.Height}, {frame.Stats.DistinctColors} distinct colour(s), variance "
+                   + $"{frame.Stats.LuminanceVariance.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}. "
+                   + "Nothing was stored and no picture is attached. That window paints through a path this capture "
+                   + "cannot read (a hardware-accelerated surface, or a protected desktop); ask the user for a "
+                   + "screenshot instead, and do not retry this target.";
+
+        var verdict = ChatImageFormat.Admit(frame.Png, 0);
+        if (verdict != ChatImageVerdict.Accepted) return ChatImageFormat.ResultFor(verdict, frame.Png.LongLength);
+        if (context.Sessions is not { } store)
+            return "Refused: this session has no attachment storage to write the frame into. Ask the user for a "
+                   + "screenshot; do not retry the capture.";
+
+        var image = store.SaveImage(context.ConversationId, frame.Png);
+        context.RecordFrames?.Invoke([image]);
+        return $"Captured {what} with {backend.Label} — {frame.Width}×{frame.Height}, {image.Bytes} bytes, stored as "
+               + $"{image.File}. The picture is attached to this result as an image: say what is on it, and do not "
+               + "infer it from the title.";
+    }
+
+    /// <summary>The window list, or an empty one. A host that cannot enumerate windows has not captured anything,
+    /// and "no visible window matches" with nothing listed is the truthful answer rather than a throw.</summary>
+    private static IReadOnlyList<CapturableWindow> TryWindows(ScreenCaptureBridge host)
+    {
+        try
+        {
+            return host.Windows();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static string Described(CapturableWindow? window, bool fullscreen)
+        => window is null
+            ? (fullscreen ? "the whole display" : "no target")
+            : $"window \"{window.Title}\" (pid {window.ProcessId}, {window.Width}×{window.Height})";
 
     [Description("Read one assistant memory file: a topic, or the index that lists the topics.")]
     public string MemoryRead(

@@ -23,6 +23,7 @@ public static class ToolPreviews
             "file_write" => WritePreview(arguments, scope),
             "run_command" => CommandPreview(arguments, scope),
             "set_workspace" => WorkspacePreview(Text(arguments, "path"), scope, projectPaths),
+            "capture_screen" => CapturePreview(arguments, scope),
             "send_to_session" => SendPreview(arguments),
             "memory_write" => MemoryPreview(arguments),
             "memory_read" => $"memory_read · {Text(arguments, "scope")} · {Text(arguments, "name")}",
@@ -99,6 +100,37 @@ public static class ToolPreviews
         var text = Text(arguments, "text");
         var head = text.Length <= 400 ? text : text[..400] + "…";
         return $"send_to_session → {Text(arguments, "target")} · wake: {(Flag(arguments, "wake") ? "yes" : "no")}\n{head}";
+    }
+
+    /// <summary>Which window is about to be drawn, or the whole display. A person approving this is approving
+    /// "this is what the model gets to see", so the card names the window the target resolves to — and when the
+    /// target is ambiguous the card says so, because the tool will refuse it the same way.</summary>
+    private static string CapturePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var backend = CaptureBackends.ForCurrent();
+        if (!backend.Available) return $"capture_screen · {backend.Refusal}";
+        var target = Text(arguments, "target");
+        if (string.IsNullOrWhiteSpace(target) && Flag(arguments, "fullscreen"))
+            return $"capture_screen · fullscreen · {backend.Label}";
+        if (scope.Screen is not { } host)
+            return $"capture_screen · \"{target}\" · this build has no capture host for {backend.Label}, so the "
+                   + "call will be refused";
+
+        IReadOnlyList<CapturableWindow> windows = [];
+        try
+        {
+            windows = host.Windows();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            // A card still has to render, and it renders the target the model asked for.
+        }
+        var match = ScreenCapture.Find(windows, target);
+        if (!match.Ok) return $"capture_screen · \"{target}\"\n{match.Refusal}";
+        return match.Window is { } found
+            ? $"capture_screen · window \"{found.Title}\" (pid {found.ProcessId}) · {found.Width}×{found.Height} · "
+              + $"{backend.Label}"
+            : $"capture_screen · fullscreen · {backend.Label}";
     }
 
     private static string MemoryPreview(IReadOnlyDictionary<string, JsonElement> arguments)

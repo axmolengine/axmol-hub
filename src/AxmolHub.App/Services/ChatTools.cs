@@ -41,6 +41,11 @@ internal static class ChatTools
             or "search_text" or "list_directory" or "find_files"
             => ToolRisk.ReadOnly,
         "file_write" or "send_to_session" => ToolRisk.WorkspaceWrite,
+        // Reading the screen writes nothing, but it shows the desktop to a model that decided when to look, and
+        // the frame leaves the machine in the next request. That is the SystemCommand tier's job: it asks in
+        // every mode but full. Spelled out rather than left to the fallback arm, because "unknown tool" and "this
+        // tool was thought about" must not read the same in this table.
+        "capture_screen" => ToolRisk.SystemCommand,
         "memory_write" => ScopeOf(argumentsJson) == MemoryScope.Global
             ? ToolRisk.WorkspaceWrite
             : ToolRisk.AssistantNote,
@@ -120,6 +125,7 @@ internal static class ChatTools
         [
             AIFunctionFactory.Create(tools.FileWrite, Options("file_write")),
             AIFunctionFactory.Create(tools.RunCommand, Options("run_command")),
+            AIFunctionFactory.Create(tools.CaptureScreen, Options("capture_screen")),
             AIFunctionFactory.Create(tools.SetWorkspace, Options("set_workspace")),
             AIFunctionFactory.Create(tools.MemoryWrite, Options("memory_write")),
             AIFunctionFactory.Create(tools.SendToSession, Options("send_to_session")),

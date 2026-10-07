@@ -1409,9 +1409,18 @@ public partial class ShellCheckWindow : Window
                   && ChatTools.RiskOf("find_files", null) == ToolRisk.ReadOnly
                   && ChatTools.RiskOf("file_write", null) == ToolRisk.WorkspaceWrite
                   && ChatTools.RiskOf("run_command", null) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("capture_screen", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("set_workspace", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("没登记过的工具", null) == ToolRisk.SystemCommand,
-                "只读查询登记为只读，写文件是工作区写，没听过的工具名按系统命令兜底而不是放行");
+                "只读查询登记为只读，写文件是工作区写，抓屏与命令同级，没听过的工具名按系统命令兜底而不是放行");
+
+            // The tier only matters through the decision table, and for capture_screen the table is the privacy
+            // guarantee: a model that can look at the desktop may only do it once per card in the two modes that
+            // ask, and never silently.
+            Check(ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Ask, ToolRisk.SystemCommand)
+                  && ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Auto, ToolRisk.SystemCommand)
+                  && !ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Full, ToolRisk.SystemCommand),
+                "抓屏在「询问审批」和「自动审批」都必弹卡，只有「完全访问」不问");
 
             // The tier only matters through the decision table, so the pair is asserted as one chain: a look-around
             // tool that has to ask in every mode is the bug this catches, and it is invisible at compile time
@@ -1434,15 +1443,51 @@ public partial class ShellCheckWindow : Window
                 new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
             var schema = string.Join("\n", agentTools.OfType<Microsoft.Extensions.AI.AIFunction>()
                 .Select(tool => tool.JsonSchema.GetRawText()));
-            Check(agentTools.Count == 15
+            Check(agentTools.Count == 16
                   && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Select(tool => tool.Name)
                       .All(name => name.Contains('_', StringComparison.Ordinal))
                   && schema.Contains("old_string") && schema.Contains("new_string")
                   && schema.Contains("replace_all") && schema.Contains("timeout_seconds")
                   && schema.Contains("ignore_case") && schema.Contains("max_matches")
+                  && schema.Contains("fullscreen")
+                  && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Any(tool => tool.Name == "capture_screen")
                   && !schema.Contains("oldString") && !schema.Contains("ignoreCase"),
-                "Agent 档注册十五个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
+                "Agent 档注册十六个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
                 + agentTools.Count + " 个）");
+
+            // The screen is the one capability whose implementation is a system call, so it gets one live test
+            // rather than a promise: Hub lists the windows on this machine, finds itself, and asks Windows to draw
+            // that window. What is gated here is the plumbing — a frame came back, it is the size the window
+            // reports, and the bytes are a PNG. Whether PrintWindow reaches a GPU-composited surface at all is the
+            // question only a person looking at the picture can answer, so its verdict is printed in the line
+            // rather than made a gate.
+            if (OperatingSystem.IsWindows())
+            {
+                var mine = WindowsScreenCapture.List()
+                    .Where(window => window.ProcessId == Environment.ProcessId)
+                    .OrderByDescending(window => window.Width * window.Height)
+                    .FirstOrDefault();
+                var selfFrame = mine is null ? null : WindowsScreenCapture.Grab(mine);
+                Check(mine is not null && selfFrame is not null
+                      && selfFrame.Width == mine.Width && selfFrame.Height == mine.Height
+                      && selfFrame.Png.Length > 8 && selfFrame.Png[1] == (byte)'P' && selfFrame.Png[2] == (byte)'N'
+                      && selfFrame.Stats.Width == mine.Width && selfFrame.Stats.Height == mine.Height,
+                    "Hub 列出可见窗口、认出自己，PrintWindow 抓回尺寸对得上且字节确实是 PNG 的一帧（"
+                    + mine?.Width + "×" + mine?.Height + "，"
+                    + (selfFrame?.Stats.IsBlank() == true ? "空白帧：这条窗口的内容 GDI 读不到" : "有内容") + "，"
+                    + selfFrame?.Png.Length + " 字节）");
+                var card = ToolPreviews.PreviewFor("capture_screen", """{"fullscreen":true}""",
+                    new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "capture-check", [], null, null,
+                        null, null, WindowsScreenCapture.Bridge()));
+                Check(card.Contains("capture_screen · fullscreen", StringComparison.Ordinal)
+                      && card.Contains("PrintWindow", StringComparison.Ordinal),
+                    "抓屏的审批卡先说是整屏，再说是哪个后端（实际「" + card + "」）");
+                var titled = ToolPreviews.PreviewFor("capture_screen", """{"target":"P5 shell"}""",
+                    new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "capture-check", [], null, null,
+                        null, null, WindowsScreenCapture.Bridge()));
+                Check(titled.Contains("window \"P5 shell", StringComparison.Ordinal),
+                    "审批卡点名了目标命中的那条窗口，而不是一句「要截屏」（实际「" + titled + "」）");
+            }
             Check(ChatTools.CreateFor(ChatModes.Ask, ChatToolScope.Empty).Count == 0
                   && ChatTools.CreateFor(ChatModes.Plan, new ChatToolScope(
                       chat.HubSnapshotProvider?.Invoke(),

@@ -1788,7 +1788,7 @@ if (args.Contains("--check-ai-tools"))
                  ("run_command", tools.RunCommand), ("set_workspace", tools.SetWorkspace),
                  ("memory_read", tools.MemoryRead), ("memory_write", tools.MemoryWrite),
                  ("search_text", tools.SearchText), ("list_directory", tools.ListDirectory),
-                 ("find_files", tools.FindFiles),
+                 ("find_files", tools.FindFiles), ("capture_screen", tools.CaptureScreen),
              })
         bound[wireName] = AIFunctionFactory.Create(body, new AIFunctionFactoryOptions { Name = wireName });
 
@@ -1816,7 +1816,106 @@ if (args.Contains("--check-ai-tools"))
     }));
     if (!Convert.ToString(boundSearch)!.Contains("probe/app.cpp:3:", StringComparison.Ordinal))
         throw new Exception($"search_text did not bind the parameter names its schema advertises ({boundSearch}).");
-    Console.WriteLine("PASS: all nine tools bind, and the schema names are the names a call is accepted by.");
+    Console.WriteLine("PASS: all ten tools bind, and the schema names are the names a call is accepted by.");
+
+    // ── capture_screen：目标匹配、黑帧不发、正常帧落到会话目录 ──
+    // The tool's every branch is asserted against a host that draws nothing, because the decision — which window,
+    // is this frame worth sending, where do the bytes go — is Core's, and only the pixels are the host's.
+    if (!bound["capture_screen"].JsonSchema.GetRawText().Contains("fullscreen", StringComparison.Ordinal)
+        || !bound["capture_screen"].JsonSchema.GetRawText().Contains("target", StringComparison.Ordinal))
+        throw new Exception("capture_screen's schema hides the two arguments the model has to send.");
+
+    // A scope with no capture host is the honest case on a host this build has not taught: the model is told the
+    // capture is not wired in, and is told not to retry it. A black frame would read as a working channel.
+    var unwired = tools.CaptureScreen("Axmol Demo");
+    if (!unwired.Contains("no capture host", StringComparison.OrdinalIgnoreCase)
+        || !unwired.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A build without a capture host answered like a capture that worked: {unwired}");
+
+    var shotRoot = Path.Combine(toolRoot, "shots");
+    var shots = new ConversationStore(shotRoot);
+    var session = Conversation.Create("orcarouter");
+    var landed = new List<ChatImage>();
+    var pngBytes = new byte[32];
+    new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }.CopyTo(pngBytes, 0);
+    var asked = new List<CapturableWindow?> { null };
+    var blank = false;
+    var drawing = false;
+    var host = new ScreenCaptureBridge(
+        () => [new CapturableWindow(1, "Axmol Demo", 100, 800, 600),
+               new CapturableWindow(2, "Axmol Hub — 助手", 200, 1200, 800),
+               new CapturableWindow(3, "Outlook", 300, 1000, 700)],
+        window =>
+        {
+            asked.Add(window);
+            return drawing
+                ? null
+                : new CapturedFrame(pngBytes, window?.Width ?? 3840, window?.Height ?? 2160,
+                    blank
+                        ? new FrameStats(window?.Width ?? 3840, window?.Height ?? 2160, 1, 0)
+                        : new FrameStats(window?.Width ?? 3840, window?.Height ?? 2160, 240, 182.4));
+        });
+    var grabbing = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], log,
+        null, shots, null, host, frames => landed.AddRange(frames)));
+
+    // One target, several hits: the refusal lists the candidates and the host is never asked to draw. Guessing
+    // between two windows would send back a frame the model cannot tell apart from the one it asked for.
+    var ambiguous = grabbing.CaptureScreen("Axmol");
+    if (!ambiguous.Contains("matches 2 windows", StringComparison.Ordinal)
+        || !ambiguous.Contains("Axmol Hub", StringComparison.Ordinal)
+        || ambiguous.Contains("Outlook", StringComparison.Ordinal)
+        || asked.Count != 1)
+        throw new Exception($"An ambiguous target was not refused as ambiguous: {ambiguous}");
+    var noTarget = grabbing.CaptureScreen("", false);
+    if (!noTarget.Contains("needs a window title", StringComparison.Ordinal))
+        throw new Exception($"A call with neither target nor fullscreen answered: {noTarget}");
+
+    // The only cell that may draw the display, and it must not be handed a window.
+    asked.Clear();
+    var display = grabbing.CaptureScreen("", fullscreen: true);
+    if (!display.Contains("the whole display", StringComparison.Ordinal) || asked.Single() is not null
+        || landed.Count != 1 || display.Contains("blank", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A fullscreen capture did not land as one stored frame: {display}");
+
+    // The blank rule: nothing is stored and no picture is attached. This is the branch that decides whether the
+    // channel is trustworthy, because a black PNG is a valid file, a valid header and a plausible byte count.
+    var storedWith = landed.Count;
+    blank = true;
+    var black = grabbing.CaptureScreen("Outlook");
+    if (!black.Contains("blank frame", StringComparison.Ordinal) || !black.Contains("Outlook", StringComparison.Ordinal)
+        || landed.Count != storedWith || !black.Contains("do not retry", StringComparison.OrdinalIgnoreCase)
+        || !black.Contains("screenshot", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A blank frame was sent on as a capture: {black}");
+
+    // A host that draws nothing at all — the window closed, the display is locked — gets its own sentence rather
+    // than the blank-frame one, because the fix is different.
+    drawing = true;
+    blank = false;
+    var emptyHand = grabbing.CaptureScreen("Outlook");
+    if (!emptyHand.Contains("no frame", StringComparison.Ordinal))
+        throw new Exception($"A host that drew nothing answered: {emptyHand}");
+    drawing = false;
+
+    // The card says which window is about to leave the machine, in the same words the tool will act on.
+    var card = ToolPreviews.PreviewFor("capture_screen", """{"target":"Outlook"}""",
+        new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], null, null, null, null, host));
+    if (!card.Contains("window \"Outlook\"", StringComparison.Ordinal) || !card.Contains("pid 300", StringComparison.Ordinal)
+        || !card.Contains("1000×700", StringComparison.Ordinal))
+        throw new Exception($"The approval card does not name the window: {card}");
+    var both = ToolPreviews.PreviewFor("capture_screen", """{"target":"Demo","fullscreen":true}""",
+        new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], null, null, null, null, host));
+    if (!both.Contains("window \"Axmol Demo\"", StringComparison.Ordinal))
+        throw new Exception($"Fullscreen did not defer to the named target: {both}");
+
+    // A refusal that lists nothing leaves the model to invent a title, and it does so with confidence.
+    var bare = ScreenCapture.Find([], "Notes");
+    if (bare.Ok || !bare.Refusal!.Contains("no visible window title", StringComparison.Ordinal))
+        throw new Exception("An empty window list was not refused as an empty window list.");
+
+    var where = Path.Combine(shotRoot, "ai", "sessions", session.Id);
+    if (Directory.GetFiles(where).Length != 1 || landed.Single() is not { File: "1.png", MediaType: "image/png" })
+        throw new Exception($"The frame Hub stored is not the one the turn names: {landed.Single()}");
+    Console.WriteLine("PASS: capture_screen refuses an ambiguous target, refuses a blank frame, and stores only a frame worth sending.");
 
     log.Write("self-check finished");
     Directory.Delete(toolRoot, recursive: true);

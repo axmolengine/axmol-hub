@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -370,7 +371,39 @@ public sealed class ChatWorkspace : IDisposable
                 LogProvider?.Invoke(),
                 path => ApplyWorkspaceRootAsync(conversationId, path),
                 _sessions.Store,
-                new CrossSessionBridge(CrossSessionRunStateAsync, CrossSessionDeliverAsync)));
+                new CrossSessionBridge(CrossSessionRunStateAsync, CrossSessionDeliverAsync),
+                // The screen belongs to the host, not to Core: this is the one capability that has to know which
+                // operating system it is standing on, and a build that cannot draw a frame says so instead of
+                // sending the model a black picture.
+                OperatingSystem.IsWindows() ? WindowsScreenCapture.Bridge() : null,
+                frames => RecordFrames(conversationId, frames)));
+    }
+
+    /// <summary>Frames a capture put on the session's storage, waiting for the result turn that has to name them.
+    /// A tool body never learns its own call id — the model's arguments are all it gets — so the frame leaves
+    /// through the request and is collected where the result turn is written. Keyed by conversation rather than
+    /// held on the scope because a parked call is executed by a <i>later</i> <see cref="ScopeFor"/> call, with a
+    /// different scope instance, and the frame it captures still belongs to this run's next result.</summary>
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<ChatImage>> _frames = new();
+
+    private void RecordFrames(string conversationId, IReadOnlyList<ChatImage> frames)
+    {
+        var queue = _frames.GetOrAdd(conversationId, _ => new ConcurrentQueue<ChatImage>());
+        foreach (var frame in frames) queue.Enqueue(frame);
+    }
+
+    /// <summary>Hand over whatever this conversation's last capture produced, and leave nothing behind. Every
+    /// completed call drains, not just the capture tool: a frame that outlives its turn would ride the next one.
+    /// One call per response is already the pipeline's rule, so a drain cannot land on the wrong result.</summary>
+    private IReadOnlyList<ChatImage> TakeFrames(string conversationId)
+    {
+        if (_frames.TryGetValue(conversationId, out var queue) && !queue.IsEmpty)
+        {
+            var frames = queue.ToArray();
+            while (queue.TryDequeue(out _)) { }
+            return frames;
+        }
+        return [];
     }
 
     /// <summary>
@@ -2359,7 +2392,7 @@ public sealed class ChatWorkspace : IDisposable
             }
         }
 
-        var turn = ChatTurn.FunctionResult(callId, result, failed);
+        var turn = ChatTurn.FunctionResult(callId, result, failed, TakeFrames(run.ConversationId));
         // "批准" and not "允许": this call was answered by a person, and the daily log is the only record that
         // keeps the two apart once the card has folded into a line.
         run.RecordToolOutcome($"{call.Value.Name}（{(failed ? "失败" : "批准")}）");
@@ -2674,7 +2707,9 @@ public sealed class ChatWorkspace : IDisposable
             },
             onToolCompleted: async (info, result, failed) =>
             {
-                var turn = ChatTurn.FunctionResult(info.CallId, result, failed);
+                // A captured frame is named by the result it belongs to: the bytes are already on disk, and the
+                // turn is what lets the request boundary hand them to the model as the next user message.
+                var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId));
                 run.RecordToolOutcome($"{info.Name}（{OutcomeWord(failed, result)}）");
                 await ApplyOnUiAsync(() =>
                 {
@@ -2715,6 +2750,11 @@ public sealed class ChatWorkspace : IDisposable
     private void CompleteRun(ConversationRun run, RunResult result, bool receivedText, string? noticeKey,
         bool danger, string? detail)
     {
+        // Nothing may outlive the run that captured it. Every frame is taken by the result turn it belongs to, so
+        // whatever is still queued here was captured and then cancelled — and a frame from a finished run riding
+        // the next run's first result would put a picture in front of the model that nothing in the transcript
+        // asked for.
+        _frames.TryRemove(run.ConversationId, out _);
         // One hop, in this order: the run leaves the registry so nothing can attach to a finished reply, the
         // transcript's owner repaints, the indicator goes out, and only then does the view get told how it ended.
         // The token sources are released last — a stop pressed on the final chunk is still being unwound here.
