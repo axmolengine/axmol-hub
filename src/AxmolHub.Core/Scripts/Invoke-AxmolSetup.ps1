@@ -11,12 +11,12 @@ if ($parseErrors.Count -gt 0) {
     exit 1
 }
 if ($null -eq $setupAst.ParamBlock -or 'hub' -notin @($setupAst.ParamBlock.Parameters.Name.VariablePath.UserPath)) {
-    [Console]::Error.WriteLine("This engine setup.ps1 does not support -hub. Update it before running setup from Hub; refusing to risk persisting AX_ROOT.")
+    [Console]::Error.WriteLine("This engine setup.ps1 does not support -hub. Update it before running setup from Hub; refusing to risk persisting environment changes.")
     exit 2
 }
 
-# Hub environment setup entry point. The caller passes -hub so AX_ROOT is process-local; setup still
-# inserts <engine>/tools/cmdline into the User PATH and may set the execution policy to Bypass (UAC).
+# Hub environment setup entry point. The caller passes -hub so AX_ROOT and PATH remain process-local;
+# setup may still set the current user's execution policy to Bypass (UAC).
 # It does not itself raise another interactive pause (that only happens when double-clicked from Explorer).
 try {
     & $setupScript @args

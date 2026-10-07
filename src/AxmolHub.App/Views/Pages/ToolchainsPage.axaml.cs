@@ -97,8 +97,9 @@ public partial class ToolchainsPage : UserControl
     }
 
     /// <summary>
-    /// Running the engine setup **requires confirmation first**: it writes user-level PATH and may request elevation.
-    /// Hub passes -hub to keep AX_ROOT process-local; the remaining side effects must still be disclosed.
+    /// Running the engine setup **requires confirmation first**: on Windows it may persistently change the
+    /// current user's PowerShell execution policy and request elevation. Hub passes -hub to keep AX_ROOT and
+    /// PATH process-local.
     /// </summary>
     private async Task RunEngineSetupAsync()
     {

@@ -52,7 +52,7 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     /// **Deliberately does not throw**: the caller must classify by the engine's output — with Developer
     /// Mode off, setup.ps1 does <c>exit 0</c> yet installs nothing; relying on exceptions alone cannot catch
     /// this false success.
-    /// Passes <c>-hub</c> so engine setup keeps <c>AX_ROOT</c> process-local while retaining its other setup behavior.
+    /// Passes <c>-hub</c> so engine setup keeps <c>AX_ROOT</c> and <c>PATH</c> process-local.
     /// Timeout semantics = 10 minutes of no output counts as a stall (the <see cref="ProcessRunner"/> default);
     /// while setup downloads a GB-scale toolchain it never times out as long as it keeps printing progress,
     /// so no total time cap is set.

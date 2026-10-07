@@ -1169,8 +1169,8 @@ public sealed class HubWorkspace : IDisposable
     ///
     /// **This is not "Hub installing tools"** — the toolchain is installed by the engine's
     /// <c>1k/1kiss.ps1</c> into <c>&lt;engine&gt;/tools/external</c>. Hub passes <c>-hub</c> so
-    /// <c>AX_ROOT</c> remains process-local; setup still changes the User PATH and may change the
-    /// execution policy, so callers must **confirm with the user first**.
+    /// <c>AX_ROOT</c> and <c>PATH</c> remain process-local; on Windows setup may still change the
+    /// current user's PowerShell execution policy, so callers must **confirm with the user first**.
     /// </summary>
     public async Task RunEngineSetupAsync(string? platform = null)
     {

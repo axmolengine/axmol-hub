@@ -168,7 +168,7 @@ public static class HubTexts
         ["Verify"] = ("重新检测", "Verify"),
         ["InstallTools"] = ("安装基础工具", "Install tools"),
         ["RunEngineSetup"] = ("运行引擎 setup.ps1", "Run engine setup.ps1"),
-        ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。Hub 会用 -hub 调用 setup.ps1，只在当前进程设置 AX_ROOT；仍会写入用户级 PATH，并可能请求提权（UAC）。不支持 -hub 的旧引擎脚本会被拒绝执行，请先更新引擎。", "The engine installs its own toolchain into <engine>/tools/external. Hub calls setup.ps1 with -hub, keeping AX_ROOT process-local; setup still writes the user PATH and may request elevation (UAC). Older engine scripts without -hub support are refused; update the engine first."),
+        ["EngineSetupHint"] = ("工具链由引擎自己安装到引擎目录的 tools/external。Hub 会用 -hub 调用 setup.ps1；AX_ROOT 与 PATH 只在当前 setup 进程中设置，不写入用户环境或 shell profile。Windows 上仍可能持久化修改当前用户的 PowerShell 执行策略，并请求提权（UAC）。不支持 -hub 的旧引擎脚本会被拒绝执行，请先更新引擎。", "The engine installs its own toolchain into <engine>/tools/external. Hub calls setup.ps1 with -hub; AX_ROOT and PATH are set only in the setup process, not persisted to the user environment or shell profiles. On Windows, setup may still persistently change the current user's PowerShell execution policy and request elevation (UAC). Older engine scripts without -hub support are refused; update the engine first."),
         // Host PowerShell 7. This is the one thing Hub installs outside the engine tree, and only because the
         // engine's own setup.ps1 refuses to run without pwsh. The state sentences are formatted with the version
         // (and the floor) by ToolchainsPage, then the executable path is appended in code — a path is not copy.

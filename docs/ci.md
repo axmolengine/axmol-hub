@@ -147,7 +147,7 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 - 引擎树内的工具链（由引擎自己的 `setup.ps1` 装进 `<engine>/tools/external`）；
 - 若干子模式（`--prepare-release-check`、`--check-release-receipt`、`--check-android-verification`、`--prepare-packaging` 等）彼此有先后依赖，要按顺序跑。
 
-直接运行 `setup.ps1` 会写用户级 PATH / AX_ROOT；Hub 则传 `-hub`，只保留进程级 AX_ROOT，但仍会写用户级 PATH，并可能请求提权。工具链下载是 GB 级，因此把它塞进托管 CI，只会得到一条长期红着的必跑项，或者一堆 `continue-on-error` —— 两种都会让 CI 失去意义。
+直接运行 `setup.ps1` 会写用户级 PATH / AX_ROOT；Hub 则传 `-hub`，只在 setup 进程设置 AX_ROOT / PATH，不写入用户环境或 shell profile。Windows 上 setup 仍可能持久化修改当前用户的 PowerShell 执行策略并请求提权。工具链下载是 GB 级，因此把它塞进托管 CI，只会得到一条长期红着的必跑项，或者一堆 `continue-on-error` —— 两种都会让 CI 失去意义。
 
 **结论**：105 项主流程检查继续按 `README` 的方式在维护者机器上跑；CI 承担的是"三平台构建与跨平台行为"这一层，两者互补而非替代。真要把它接进 CI，前置条件是**把主机无关的断言从这套验收工具里分出来**，而不是想办法让 MSVC 装进 runner —— **§2.6 的 `--check-cli-json` 就是这条路走通的第一步**：它不是"让 CI 跑整套"，而是"把不依赖引擎的那一段切出来，做成自带 `return` 的独立模式"。同一个手法可以继续用于其余任何一段主机无关的断言。
 
