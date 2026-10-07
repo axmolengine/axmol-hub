@@ -529,6 +529,21 @@ if (args.Contains("--check-ai-sessions"))
     store.Delete(readable.Id);
     Console.WriteLine("PASS: session files keep CJK, backticks, quotes and angle brackets readable.");
 
+    // A tool call's arguments are stored as a JSON *string* and printed verbatim on the approval card, so the
+    // same readability has to survive there — and the undo reader still has to parse that form back.
+    var callTurn = ChatTurn.FunctionCall("call-cjk", "file_write",
+        "{\"path\":\"笔记/note.txt\",\"old_string\":\"第二行\",\"new_string\":\"第二行（已改）\"}");
+    var callArguments = Conversation.Create("orcarouter");
+    callArguments.Append(callTurn);
+    store.Save(callArguments);
+    var callText = File.ReadAllText(Path.Combine(root, "ai", "sessions", callArguments.Id + ".json"));
+    if (!callText.Contains("第二行", StringComparison.Ordinal) || callText.Contains("\\u00", StringComparison.Ordinal))
+        throw new Exception("A stored tool call's arguments arrived as escaped code units.");
+    if (ChatUndoStore.WritePathOf(callTurn.ToolArguments) != "笔记/note.txt")
+        throw new Exception("The undo reader could not take the unescaped form of a stored call's arguments.");
+    store.Delete(callArguments.Id);
+    Console.WriteLine("PASS: a stored tool call keeps its arguments readable and still parseable.");
+
     conversation.Mode = ChatModes.Plan;
     conversation.ReasoningEffort = ChatReasoningEfforts.High;
     conversation.Messages.Add(ChatTurn.User("Inspect this file", "file content"));

@@ -37,6 +37,16 @@ public sealed class ChatPipeline(IChatClient client)
     /// <summary>A tool that keeps failing is a stuck loop, not a hard problem; three in a row ends the turn.</summary>
     public const int MaximumConsecutiveToolErrors = 3;
 
+    /// <summary>How a call's arguments are recorded. System.Text.Json's default encoder escapes quotes, angle
+    /// brackets and every non-ASCII character, so a stored edit of Chinese source read back as
+    /// <c>\u7B80\u6613</c> in the approval card that prints this string for a human to decide on. The transcript
+    /// only ever parses it again (see <see cref="ToChatMessages"/>), so nothing on the wire depends on the
+    /// escaping — this is the readable form of the same JSON.</summary>
+    private static readonly JsonSerializerOptions ArgumentJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.</summary>
     public readonly record struct ToolCallInfo(string Name, string CallId, string ArgumentsJson);
 
@@ -104,7 +114,7 @@ public sealed class ChatPipeline(IChatClient client)
             functionClient.FunctionInvoker = async (context, token) =>
             {
                 var call = context.CallContent;
-                var arguments = JsonSerializer.Serialize(call.Arguments);
+                var arguments = JsonSerializer.Serialize(call.Arguments, ArgumentJson);
                 var info = new ToolCallInfo(call.Name, call.CallId, arguments);
                 if (onToolStarted is not null) await onToolStarted(info).ConfigureAwait(false);
 

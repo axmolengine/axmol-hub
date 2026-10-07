@@ -2117,6 +2117,16 @@ public partial class ShellCheckWindow : Window
                   && panel.ApprovalCardTextForCheck.Contains("note.txt", StringComparison.Ordinal)
                   && panel.ApprovalCardTextForCheck.Contains("+第二行（已改）", StringComparison.Ordinal),
                 "卡片说出是哪个工具、并给出它冻结下来的真实 diff（实际「" + panel.ApprovalCardTextForCheck + "」）");
+            // The card prints the stored arguments verbatim, which is where System.Text.Json's default encoder
+            // used to show up: 第二行 arriving as \u7B2C\u4E8C\u884C in front of the person being asked to
+            // approve it. Readable here means readable in the transcript too, since both are this string.
+            var parkedArguments = parkSession.Messages
+                .Last(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 })
+                .ToolArguments ?? "";
+            Check(parkedArguments.Contains("第二行", StringComparison.Ordinal)
+                  && !parkedArguments.Contains("\\u", StringComparison.Ordinal)
+                  && !panel.ApprovalCardTextForCheck.Contains("\\u", StringComparison.Ordinal),
+                "工具参数在转录与卡片里都是可读原文，不再出现 \\uXXXX 转义（实际「" + parkedArguments + "」）");
             Check(panel.ApprovalCardActionsForCheck.SequenceEqual(new[]
                       { "ApprovalAllow", "ApprovalAllowAlways", "ApprovalDeny" }, StringComparer.Ordinal),
                 "卡片给出批准 / 总是允许 / 拒绝三个出口（实际 "
