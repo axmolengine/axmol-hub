@@ -2359,19 +2359,28 @@ if (args.Contains("--check-ai-images"))
     var store = new ConversationStore(imageRoot);
     var album = Conversation.Create("orcarouter");
     album.Append(ChatTurn.User("先说一句没有附件的话"));
-    var png = new byte[64];
-    png[0] = 0x89;
-    png[1] = (byte)'P';
-    png[2] = (byte)'N';
-    png[3] = (byte)'G';
-    var jpeg = new byte[44];
-    jpeg[0] = 0xFF;
-    jpeg[1] = 0xD8;
-    jpeg[2] = 0xFF;
-    var first = store.SaveImage(album.Id, png, "image/png");
-    var second = store.SaveImage(album.Id, jpeg, "image/jpeg");
+    static byte[] WithHeader(int length, params byte[] header)
+    {
+        var bytes = new byte[length];
+        header.CopyTo(bytes, 0);
+        return bytes;
+    }
+
+    var png = WithHeader(64, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A);
+    var jpeg = WithHeader(44, 0xFF, 0xD8, 0xFF);
+    var gif = WithHeader(40, (byte)'G', (byte)'I', (byte)'F', (byte)'8', (byte)'9', (byte)'a');
+    var webp = WithHeader(40, (byte)'R', (byte)'I', (byte)'F', (byte)'F', 0, 0, 0, 0,
+        (byte)'W', (byte)'E', (byte)'B', (byte)'P');
+    // RIFF is a container, not a picture: a WAV file shares the first four bytes with a WebP and is refused only
+    // if the reader looks at offset 8, which is the whole reason Identify reads it.
+    var wave = WithHeader(40, (byte)'R', (byte)'I', (byte)'F', (byte)'F', 0, 0, 0, 0,
+        (byte)'W', (byte)'A', (byte)'V', (byte)'E');
+    var prose = WithHeader(32, (byte)'t', (byte)'r', (byte)'o', (byte)'u', (byte)'b', (byte)'l', (byte)'e');
+
+    var first = store.SaveImage(album.Id, png);
+    var second = store.SaveImage(album.Id, jpeg);
     if (first is not { File: "1.png", MediaType: "image/png" } || first.Bytes != png.Length
-        || second.File != "2.jpg")
+        || second is not { File: "2.jpg", MediaType: "image/jpeg" })
         throw new Exception($"The stored name, type or size is wrong: {first} / {second}");
     if (!jpeg.SequenceEqual(store.ReadImage(album.Id, "2.jpg")))
         throw new Exception("A stored image did not read back byte for byte.");
@@ -2389,12 +2398,25 @@ if (args.Contains("--check-ai-images"))
         || store.ReadImage(album.Id, "gone.png") is not null
         || store.ReadImage(album.Id, "") is not null)
         throw new Exception("An attachment name outside the session's directory was resolved anyway.");
+
+    // ── 认头不认扩展名：四种能发的格式，和两个最像它们的非图像 ──
+    if (ChatImageFormat.Identify(gif) != ChatImageFormat.Gif || ChatImageFormat.Identify(webp) != ChatImageFormat.WebP
+        || ChatImageFormat.Identify(wave) is not null || ChatImageFormat.Identify(prose) is not null
+        || ChatImageFormat.Identify([1, 2]) is not null || ChatImageFormat.Identify(null) is not null)
+        throw new Exception($"A header was not recognized, or something that is not a picture was: "
+                            + $"{ChatImageFormat.Identify(gif)} / {ChatImageFormat.Identify(webp)} / "
+                            + $"{ChatImageFormat.Identify(wave)}");
+    // The stored suffix has to agree with the header, because the next reader recognizes the file by its bytes and
+    // a ".png" that holds a GIF is the kind of lie a gateway rejects with an error nobody can trace.
+    if (store.SaveImage(album.Id, gif) is not { File: "3.gif", MediaType: "image/gif" }
+        || store.SaveImage(album.Id, webp) is not { File: "4.webp", MediaType: "image/webp" })
+        throw new Exception("A recognized format was not stored under its own extension.");
     try
     {
-        store.SaveImage(album.Id, png, "image/tiff");
-        throw new Exception("A media type Hub has no file name for was stored.");
+        store.SaveImage(album.Id, prose);
+        throw new Exception("Bytes with no known image header were stored anyway.");
     }
-    catch (ArgumentException) { /* the only answer that lets the caller fix its type instead of guessing a suffix */ }
+    catch (ArgumentException) { /* the store names a file by its header, so it cannot keep one it cannot read back */ }
 
     // A session written before this field existed has no Images property at all, and must still load — the
     // forward-compatibility rule every optional turn field follows.
@@ -2423,6 +2445,40 @@ if (args.Contains("--check-ai-images"))
 
     Console.WriteLine("PASS: attachments live beside the session file, keep their names across a reload, and go "
                       + "with the session.");
+
+    // The admission rule is one pure function over two inputs, so every cell is asserted rather than sampled:
+    // empty bytes, an unknown header, a picture over the ceiling, and a message that already carries the most it
+    // may. The last two rows pin the ordering — something both oversized and one-too-many is reported as
+    // oversized, because "attach four smaller ones" is not the fix anyone would try from the other answer.
+    var oversized = new byte[ChatImageFormat.MaxImageBytes + 1];
+    png.CopyTo(oversized, 0);
+    foreach (var (bytes, already, expected) in new[]
+             {
+                 (new byte[0], 0, ChatImageVerdict.Empty),
+                 (prose, 0, ChatImageVerdict.Unrecognized),
+                 (png, ChatImageFormat.MaxImagesPerMessage - 1, ChatImageVerdict.Accepted),
+                 (png, ChatImageFormat.MaxImagesPerMessage, ChatImageVerdict.TooMany),
+                 (oversized, 0, ChatImageVerdict.TooLarge),
+                 (oversized, ChatImageFormat.MaxImagesPerMessage, ChatImageVerdict.TooLarge),
+             })
+        if (ChatImageFormat.Admit(bytes, already) != expected)
+            throw new Exception($"Admit({bytes.Length} bytes, {already} already attached) answered "
+                                + $"{ChatImageFormat.Admit(bytes, already)} instead of {expected}.");
+    Console.WriteLine("PASS: an image is admitted by its header, its size, and how many the message already carries.");
+
+    // A refusal the model reads as "try again" spends the whole turn budget on the same bytes, so the retry ban is
+    // part of the contract here exactly as it is for a path the sandbox rejected.
+    foreach (var verdict in new[]
+             {
+                 ChatImageVerdict.Empty, ChatImageVerdict.Unrecognized, ChatImageVerdict.TooLarge,
+                 ChatImageVerdict.TooMany,
+             })
+    {
+        var sentence = ChatImageFormat.ResultFor(verdict, ChatImageFormat.MaxImageBytes + 1);
+        if (sentence.Length == 0 || !sentence.Contains("retry", StringComparison.OrdinalIgnoreCase))
+            throw new Exception($"The image refusal for {verdict} does not tell the model to stop retrying.");
+    }
+
     Directory.Delete(imageRoot, recursive: true);
     return;
 }
