@@ -67,6 +67,25 @@ internal sealed record HubHostOptions(
     public string ResolveDataRoot(HubPreferences preferences)
         => System.IO.Path.GetFullPath(DataRootArgument ?? preferences.DataRoot ?? DefaultDataRoot);
 
+    /// <summary>
+    /// <c>--check-secrets [scratch-dir]</c>: the secret store's headless self-check. Handled in
+    /// <c>Program.Main</c> before Avalonia starts rather than as a field on this record, because unlike every
+    /// other verification mode it opens no window — which is what lets the Linux CI job run it with no display.
+    /// </summary>
+    public const string CheckSecretsFlag = "--check-secrets";
+
+    public static bool IsSecretsSelfTest(string[] args)
+        => args.Any(a => string.Equals(a, CheckSecretsFlag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The scratch directory after the flag, or <c>null</c> for the per-process temp default.</summary>
+    public static string? SecretsScratchArgument(string[] args)
+    {
+        var index = Array.FindIndex(args, a => string.Equals(a, CheckSecretsFlag, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal)
+            ? args[index + 1]
+            : null;
+    }
+
     public static HubHostOptions Parse(string[] args)
     {
         return new HubHostOptions(

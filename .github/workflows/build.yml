@@ -121,8 +121,9 @@ jobs:
       - name: Build CLI
         run: dotnet build src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }}
 
-      # 宿主判定（BuildTargets.Host）是 Core 里唯一按操作系统分叉的逻辑，
+      # 宿主判定（BuildTargets.Host）是 Core 里最早按操作系统分叉的逻辑，
       # 目标是否可在本机构建直接决定 GUI 给用户显示什么，因此三个平台都要断言。
+      # （密钥存储后端也按 OS 分叉了，见下面的 --check-secrets；那条断言只覆盖 CLI 这一半。）
       - name: Verify host detection
         shell: bash
         run: |
@@ -171,11 +172,27 @@ jobs:
           grep -q 'install-tools' help.txt
 
       # Avalonia 版 GUI 是 net8.0，不含任何 Windows 专属目标框架，因此三平台都必须构建。
-      # 这是唯一的 GUI 构建步骤：P6 删掉 WPF 版后，App 就只剩 Avalonia 这一个实现了。
+      # 这是唯一的 GUI **构建**步骤：P6 删掉 WPF 版后，App 就只剩 Avalonia 这一个实现了。
       - name: Build App (GUI)
         run: dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
 
-      # Checks 是 net8.0-windows（Core 里 Windows 特有的断言需要它），因此留在 Windows。
+      # 密钥存储是**按平台分叉**的产品行为，而 Windows 侧的 Checks 与需要显示器的 --verify-shell
+      # 都到不了 Linux 这条路径：前者是 net8.0-windows，后者在 CI 里从不真跑 GUI（见 docs/ci.md §2.2）。
+      # 所以用 App 的无头自检补上这格：它在 Avalonia 启动之前就返回，不需要 X11，
+      # 跑的是生产入口 SecretStoreFactory.Create()，不是另写一份测试专用实现。
+      # macOS 会把"本平台暂无后端"当 PASS 分支（Keychain 是有意延后，不该让矩阵为它变红）。
+      - name: Verify secret store on this host
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet src/AxmolHub.App/bin/Release/net8.0/AxmolHub.App.dll --check-secrets | tr -d '\r' | tee secrets.txt
+          grep -q '^backend=' secrets.txt
+          if [ "${{ matrix.host }}" = linux ]; then
+            grep -q '^backend=encryptedfile$' secrets.txt
+          fi
+          ! grep -q '^FAIL' secrets.txt
+
+      # Checks 是 net8.0-windows（Windows 特有的断言需要它），因此留在 Windows。
       # 这里只做编译验证，不跑 GUI：无头截图环节已去掉，理由见 docs/ci.md §2.2。
       - name: Build behavior checks
         if: matrix.host == 'windows'
@@ -207,6 +224,17 @@ jobs:
           set -euo pipefail
           dotnet run --project tests/AxmolHub.Checks -c ${{ env.CONFIGURATION }} -- \
             artifacts/checks --check-download
+
+      # 密钥格式（AAD 绑定、篡改拒绝、外来 DPAPI blob 识别）、后端选择表、密钥路径优先级、
+      # OAuth 回调解析与 Linux 浏览器启动参数表——全部是纯函数或注入式假传输，
+      # 因此在 Windows 上就能把 Linux 分支断言到；能在本机真跑的 Linux 那半是上面的 --check-secrets。
+      - name: Verify secret store contract
+        if: matrix.host == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run --project tests/AxmolHub.Checks -c ${{ env.CONFIGURATION }} -- \
+            artifacts/checks --check-secret-store
 
       - name: Publish self-contained CLI
         run: dotnet publish src/AxmolHub.Cli/AxmolHub.Cli.csproj -c ${{ env.CONFIGURATION }} -r ${{ matrix.rid }} --self-contained true -o artifacts/cli/${{ matrix.rid }}

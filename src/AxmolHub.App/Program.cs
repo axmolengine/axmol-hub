@@ -39,6 +39,15 @@ internal static class Program
         {
         }
 
+        // Same rule as the Velopack hook above: decide and leave before any UI exists. --check-secrets opens no
+        // window on purpose, so a CI runner with no display server can still assert that its platform stores a
+        // provider key — the one claim neither the Windows-only Checks project nor --verify-shell can reach.
+        if (HubHostOptions.IsSecretsSelfTest(args))
+        {
+            Environment.ExitCode = SecretStoreSelfCheck.Run(HubHostOptions.SecretsScratchArgument(args));
+            return;
+        }
+
         // Argument parsing must happen before AppBuilder: it decides which window to show.
         App.Options = HubHostOptions.Parse(args);
         if (!App.Options.IsAutomation)

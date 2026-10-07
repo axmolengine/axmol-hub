@@ -3291,6 +3291,21 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.RemoveProvider(customLocal?.Id ?? ""), "移除这条断言用的自定义 provider");
         settings.RefreshProviderGroupsForCheck();
 
+        // ── 密钥后端的诚实披露 ──
+        // 三档后端各自防住的东西不一样（DPAPI 绑登录用户、文件档靠 0600 的数据密钥、密钥环交给守护进程），
+        // 「已安全保存」这句话必须能落到具体一档。规则与宿主无关，所以这里既断言本机页面此刻的样子，也用同一个
+        // 渲染函数把本机不是的那两档一并断到。
+        Check(shell.Chat.CanStoreSecrets,
+            "本机可以保存密钥，鉴权闸门不再拦（Windows 走 DPAPI，Linux 走本机加密文件）");
+        Check(settings.SecretBackendLineShown == (shell.Chat.SecretBackend.Kind == SecretStoreKind.EncryptedFile),
+            "后端提示行只在用的是本机加密文件时出现（DPAPI 不把已经承诺过的东西再说一遍）");
+        Check(settings.SecretBackendTextForCheck(SecretStoreKind.EncryptedFile, null) is { Length: > 0 },
+            "文件档那一行说清密钥存在本机加密文件里，而不是含糊地讲「系统凭据存储」");
+        Check(settings.SecretBackendTextForCheck(SecretStoreKind.Dpapi, null) is null,
+            "DPAPI 档不显示后端提示行（多说一次就是噪音）");
+        Check(settings.SecretBackendTextForCheck(SecretStoreKind.EncryptedFile, "the data key file is missing") is { Length: > 0 },
+            "已存的密钥读不出来时给一行可操作的说明，而不是静默地当成「还没鉴权」");
+
         // ── The list shows no credential input, ever ──
         // This is the assertion the whole revision exists for. It is checked on every rendered group rather
         // than on one, because a single provider happening to be keyless would satisfy a check aimed at the
