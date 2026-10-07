@@ -7,10 +7,11 @@ using AxmolHub.Core;
 
 namespace AxmolHub.App;
 
-/// <summary>Forwards website activations from a second Hub process to the first process for this user.</summary>
+/// <summary>Routes launches from a second Hub process to the first process for this user.</summary>
 internal sealed class DeepLinkActivationBroker : IDisposable
 {
     private const int MaximumMessageBytes = 4096;
+    private const string ActivateMessage = "\0";
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly string _pipeName;
     private readonly Mutex? _singleInstance;
@@ -20,6 +21,7 @@ internal sealed class DeepLinkActivationBroker : IDisposable
     private readonly object _handlerLock = new();
     private readonly Task? _listener;
     private Action<string>? _handler;
+    private Action? _activationHandler;
 
     private DeepLinkActivationBroker(string? initialUri, string pipeName, Mutex? singleInstance, bool ownsSingleInstance)
     {
@@ -30,7 +32,7 @@ internal sealed class DeepLinkActivationBroker : IDisposable
         if (ownsSingleInstance) _listener = ListenAsync(_shutdown.Token);
     }
 
-    public bool ForwardedToExistingInstance { get; private set; }
+    public bool IsSecondaryInstance { get; private set; }
 
     public static DeepLinkActivationBroker Start(string? initialUri)
     {
@@ -49,14 +51,18 @@ internal sealed class DeepLinkActivationBroker : IDisposable
                 owns = true;
             }
 
-            var forwarded = !owns && initialUri is not null && TryForward(name, initialUri);
+            var forwarded = owns || TryForward(name, initialUri ?? ActivateMessage);
             if (!owns) mutex.Dispose();
 
             var broker = new DeepLinkActivationBroker(initialUri, name, owns ? mutex : null, owns);
-            if (forwarded)
+            if (!owns)
             {
                 broker._pending.Clear();
-                broker.ForwardedToExistingInstance = true;
+                broker.IsSecondaryInstance = true;
+                if (!forwarded)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Axmol Hub could not notify the running instance.");
+                }
             }
 
             return broker;
@@ -69,18 +75,20 @@ internal sealed class DeepLinkActivationBroker : IDisposable
         }
     }
 
-    public void SetHandler(Action<string> handler)
+    public void SetHandler(Action<string> handler, Action activate)
     {
         ArgumentNullException.ThrowIfNull(handler);
+        ArgumentNullException.ThrowIfNull(activate);
         string[] queued;
         lock (_handlerLock)
         {
             _handler = handler;
+            _activationHandler = activate;
             queued = _pending.ToArray();
             _pending.Clear();
         }
 
-        foreach (var uri in queued) handler(uri);
+        foreach (var message in queued) Dispatch(message, handler, activate);
     }
 
     public void Dispose()
@@ -94,17 +102,35 @@ internal sealed class DeepLinkActivationBroker : IDisposable
     private void Deliver(string uri)
     {
         Action<string>? handler;
+        Action? activationHandler;
         lock (_handlerLock)
         {
-            handler = _handler;
-            if (handler is null)
+            if (uri == ActivateMessage)
+            {
+                activationHandler = _activationHandler;
+                handler = null;
+            }
+            else
+            {
+                handler = _handler;
+                activationHandler = null;
+            }
+
+            if (handler is null && activationHandler is null)
             {
                 _pending.Enqueue(uri);
                 return;
             }
         }
 
-        handler(uri);
+        if (activationHandler is not null) activationHandler();
+        else handler!(uri);
+    }
+
+    private static void Dispatch(string message, Action<string> handler, Action activate)
+    {
+        if (message == ActivateMessage) activate();
+        else handler(message);
     }
 
     private async Task ListenAsync(CancellationToken cancellationToken)

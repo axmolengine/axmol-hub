@@ -53,7 +53,7 @@ internal static class Program
         if (!App.Options.IsAutomation)
         {
             App.Activations = DeepLinkActivationBroker.Start(HubHostOptions.DeepLinkArgument(args));
-            if (App.Activations.ForwardedToExistingInstance)
+            if (App.Activations.IsSecondaryInstance)
             {
                 App.Activations.Dispose();
                 return;

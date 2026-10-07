@@ -279,7 +279,8 @@ public partial class App : Application
             }
 
             window.Opened += (_, _) => Activations?.SetHandler(uri =>
-                Dispatcher.UIThread.Post(() => _ = window.HandleInstallLinkAsync(uri)));
+                Dispatcher.UIThread.Post(() => _ = window.HandleInstallLinkAsync(uri)),
+                () => Dispatcher.UIThread.Post(window.ActivateFromRequest));
         }
 
         // Silent startup update check. Fire-and-forget: it must never block the window from coming

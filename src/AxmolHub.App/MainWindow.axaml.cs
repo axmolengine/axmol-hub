@@ -128,6 +128,12 @@ public partial class MainWindow : Window
         Opened += (_, _) => SyncApprovalBadge();
     }
 
+    internal void ActivateFromRequest()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
     internal async Task HandleInstallLinkAsync(string value)
     {
         if (SystemAttentionService.TryGetConversationId(value, out var conversationId))
