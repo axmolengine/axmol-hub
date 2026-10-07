@@ -19,7 +19,11 @@ internal static class Program
         var velopack = VelopackApp.Build();
         if (OperatingSystem.IsWindows())
         {
-            velopack.OnAfterInstallFastCallback(_ => DeepLinkProtocolRegistration.RegisterWindowsAfterInstall());
+            velopack.OnAfterInstallFastCallback(_ =>
+            {
+                DeepLinkProtocolRegistration.RegisterWindowsAfterInstall();
+                WindowsMuiCache.ClearForCurrentInstall();
+            });
             velopack.OnBeforeUninstallFastCallback(_ => DeepLinkProtocolRegistration.UnregisterWindowsOnUninstall());
         }
         velopack.Run();

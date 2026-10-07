@@ -83,6 +83,58 @@ try {
     }
     $taskInstallHook = Start-Process -FilePath (Join-Path $taskCurrent 'AxmolHub.App.exe') -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
     if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
+    $taskMuiCachePath = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
+    $taskMuiCacheInstalledEntry = Join-Path $taskCurrent 'AxmolHub.App.exe.FriendlyAppName'
+    $taskMuiCacheStableEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
+    $taskMuiCacheLegacyEntry = Join-Path $taskCurrent 'Axmol Hub.exe.FriendlyAppName'
+    $taskMuiCacheSameDirectoryOtherAppEntry = Join-Path $taskCurrent 'OtherApp.exe.FriendlyAppName'
+    $taskMuiCacheOtherEntry = Join-Path $taskWork ("UnrelatedMuiCacheProbe-" + $taskRun + '.exe.FriendlyAppName')
+    New-Item -Path $taskMuiCachePath -Force | Out-Null
+    $taskMuiCacheMergedPath = 'Registry::HKEY_CLASSES_ROOT\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
+    $taskMuiCache = $null
+    try {
+        New-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheInstalledEntry -Value 'Old Axmol Hub Name' -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheStableEntry -Value 'Old Axmol Hub Launcher Name' -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheLegacyEntry -Value 'Old Axmol Hub Legacy Name' -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheSameDirectoryOtherAppEntry -Value 'Other App Name' -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheOtherEntry -Value 'Unrelated App Name' -PropertyType String -Force | Out-Null
+        $taskMuiCacheMerged = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('Local Settings\Software\Microsoft\Windows\Shell\MuiCache', $false)
+        if (-not $taskMuiCacheMerged) { throw 'MuiCache is not visible through HKEY_CLASSES_ROOT.' }
+        try {
+            if ($taskMuiCacheMerged.GetValueNames() -notcontains $taskMuiCacheInstalledEntry) {
+                throw 'The test Axmol Hub cache entry is not visible through HKEY_CLASSES_ROOT.'
+            }
+        }
+        finally {
+            $taskMuiCacheMerged.Dispose()
+        }
+
+        $taskCacheHook = Start-Process -FilePath (Join-Path $taskCurrent 'AxmolHub.App.exe') -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
+        if ($taskCacheHook.ExitCode -ne 0) { throw "MuiCache cleanup hook failed: $($taskCacheHook.ExitCode)" }
+        $taskMuiCache = Get-Item -LiteralPath $taskMuiCachePath
+        if ($taskMuiCache.GetValueNames() -contains $taskMuiCacheInstalledEntry) { throw 'Install hook left an Axmol Hub MuiCache entry behind.' }
+        if ($taskMuiCache.GetValueNames() -contains $taskMuiCacheStableEntry) { throw 'Install hook left the stable launcher MuiCache entry behind.' }
+        if ($taskMuiCache.GetValueNames() -contains $taskMuiCacheLegacyEntry) { throw 'Install hook left the legacy Axmol Hub MuiCache entry behind.' }
+        if ($taskMuiCache.GetValueNames() -notcontains $taskMuiCacheSameDirectoryOtherAppEntry) { throw 'Install hook removed an unrelated app from its own install directory.' }
+        if ($taskMuiCache.GetValueNames() -notcontains $taskMuiCacheOtherEntry) { throw 'Install hook removed an unrelated MuiCache entry.' }
+        $taskMuiCacheMerged = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey('Local Settings\Software\Microsoft\Windows\Shell\MuiCache', $false)
+        try {
+            if ($taskMuiCacheMerged -and $taskMuiCacheMerged.GetValueNames() -contains $taskMuiCacheInstalledEntry) {
+                throw 'Install hook left the Axmol Hub entry visible through HKEY_CLASSES_ROOT.'
+            }
+        }
+        finally {
+            if ($taskMuiCacheMerged) { $taskMuiCacheMerged.Dispose() }
+        }
+    }
+    finally {
+        if ($taskMuiCache) { $taskMuiCache.Dispose() }
+        Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheInstalledEntry -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheStableEntry -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheLegacyEntry -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheSameDirectoryOtherAppEntry -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheOtherEntry -ErrorAction SilentlyContinue
+    }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
     if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }

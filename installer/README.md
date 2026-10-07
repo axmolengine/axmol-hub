@@ -51,7 +51,7 @@ axmolhub://install?version=2.11.5&source=atomgit
 
 `version` 必须是 Hub 当前引擎目录中可安装的版本；`source` 必须是 `github`、`atomgit` 或 `custom`。`custom` 使用用户已在 Hub 设置中配置的 HTTPS 下载源，官网链接不能传入下载 URL。来源仅对此次安装生效，不会覆盖 Hub 的默认下载源。安装仍使用引擎清单里的文件摘要校验；未配置的自定义源、无效链接或不可用版本会明确报错，不会静默改装其他版本。
 
-Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时移除；Linux 在 Hub 首次启动时写入当前用户的 desktop handler；macOS 安装包将 `axmolhub` 写入 Hub app bundle 的 `CFBundleURLTypes`。官网应同时保留各平台 Hub 安装包的回退链接：用户尚未安装 Hub、浏览器拒绝唤起或唤起超时时，提示其安装/打开 Hub 后重试。网站需把版本和来源作为 URL 参数编码，且不要在链接中加入自定义镜像地址。
+Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时移除；每次安装或更新后也会尝试从当前用户的 MuiCache 中清理当前 Axmol Hub 安装目录对应的缓存值，不影响其他路径，且不需要管理员权限。Linux 在 Hub 首次启动时写入当前用户的 desktop handler；macOS 安装包将 `axmolhub` 写入 Hub app bundle 的 `CFBundleURLTypes`。官网应同时保留各平台 Hub 安装包的回退链接：用户尚未安装 Hub、浏览器拒绝唤起或唤起超时时，提示其安装/打开 Hub 后重试。网站需把版本和来源作为 URL 参数编码，且不要在链接中加入自定义镜像地址。
 
 `Test.ps1 -Isolated` 用一次性 `packId`、程序名与安装目录打包两个相邻版本（`x` 与 `x+1`），验证：
 
