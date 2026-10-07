@@ -88,18 +88,20 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（68 条断言）
-dotnet run --project src/AxmolHub.App -- --verify-shell ./tmp/shell-check.txt
-# 主题层（37 条）/ 基础件（25 条）
-dotnet run --project src/AxmolHub.App -- --verify-theme ./tmp/theme.txt
-dotnet run --project src/AxmolHub.App -- --verify-foundation ./tmp/foundation.txt
+# 外壳、本地化与数据根切换的自检（614 条断言）
+dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-shell ./tmp/shell-check.txt
+# 主题层（43 条）/ 基础件（26 条）
+dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-theme ./tmp/theme.txt
+dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-foundation ./tmp/foundation.txt
 # 无头截图：主窗口一张
-dotnet run --project src/AxmolHub.App -- --smoke ./tmp/smoke.png
+dotnet run --project src/AxmolHub.App -- --data-root ./data --smoke ./tmp/smoke.png
 # 无头截图：四个页面 × 中英两种语言，共 8 张（README 里的页面图由此生成）
-dotnet run --project src/AxmolHub.App -- --smoke-pages ./tmp/pages
+dotnet run --project src/AxmolHub.App -- --data-root ./data --smoke-pages ./tmp/pages
 # 真操作验收：在真实引擎源码树上跑引擎管理链路（后面跟若干个引擎目录）
-dotnet run --project src/AxmolHub.App -- --verify-ops ./tmp/ops-check.txt <引擎目录> [更多引擎目录...]
+dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-ops ./tmp/ops-check.txt <引擎目录> [更多引擎目录...]
 ```
+
+上面的 `--data-root ./data` **不要省**：省了就用每用户的真实数据根，自检会读到你自己的引擎、项目与凭据（原因见上一节）。括号里的断言数**只是那一刻的实测值**——`--verify-shell` 的总数按场景扇出，改前改后都要自己跑一遍拿数，别拿算术去预测它。
 
 `--verify-ops` 与另外三个的分工：它们验**界面**（跑在夹具上），它验**操作**（用真实引擎树）。它只跑**不下载、不编译**的那部分 —— 工具链探测、引擎导入/校验/设为默认/移除、状态落盘重载、无效输入拒绝；装引擎、装工具链、构建、运行、Android 打包会拉 GB 级数据或依赖完整工具链，因此**显式记为跳过**并附原因（报告里的 `SKIP`）。不传引擎目录时依赖引擎的那组会自动降级为跳过，所以在一台没有引擎的机器上它也能正常退出而不是失败。
 
@@ -156,6 +158,20 @@ dotnet run --project tests/AxmolHub.Checks -c Release -- ./artifacts/checks --ch
 ```
 
 > 注：此前 README 写"112 项"，与 `hub-development-plan.md` §3 与 `ci.md` §3 的 105 对不上，是不同时间点用不同数法留下的。现已统一为上面的分解。
+
+### AI 助手的十组检查
+
+助手层**不需要引擎、不需要网络、不需要 API key**：它经 `ChatWorkspace.ClientOverride` 注入一个脚本化的 `IChatClient`，跑的是真的 Core/Agent 代码。所以这十组在任何机器上都能单独跑，也是不需要工具链的那部分 AI 验收；界面那一半由上面的 `--verify-shell` 负责（同一套代码的活对象）。
+
+```powershell
+foreach ($g in 'providers','sessions','context','workspace','tool-policy','memory','tools','cross-session','images','routing') {
+  dotnet run --project tests/AxmolHub.Checks -- "--check-ai-$g"
+}
+```
+
+每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-07 实测：33 / 26 / 4 / 6 / 5 / 2 / 9 / 40 / 5 / 1 = **131 条**。
+
+**图片的入口目前只有一个：模型自己调 `capture_screen`**。抓回的一帧存进 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），同一轮请求在消息边界以 user 角色把画面交回模型 —— `tool` 结果在 OpenAI 协议里带不了图。用户侧的「贴图 / 拖文件进输入框」还没做。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，工具会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
 
 发布自包含图形版（RID 换成 `osx-arm64` / `osx-x64` / `linux-x64` 即可交叉发布，但只有 Windows 那一条实测过）：
 
