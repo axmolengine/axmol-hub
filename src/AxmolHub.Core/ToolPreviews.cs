@@ -25,6 +25,7 @@ public static class ToolPreviews
             "set_workspace" => WorkspacePreview(Text(arguments, "path"), scope, projectPaths),
             "capture_screen" => CapturePreview(arguments, scope),
             "send_to_session" => SendPreview(arguments),
+            "spawn_session" => SpawnPreview(arguments, scope),
             "memory_write" => MemoryPreview(arguments),
             "memory_read" => $"memory_read · {Text(arguments, "scope")} · {Text(arguments, "name")}",
             "read_file" => $"read_file · {Text(arguments, "path")}",
@@ -131,6 +132,23 @@ public static class ToolPreviews
             ? $"capture_screen · window \"{found.Title}\" (pid {found.ProcessId}) · {found.Width}×{found.Height} · "
               + $"{backend.Label}"
             : $"capture_screen · fullscreen · {backend.Label}";
+    }
+
+    /// <summary>What a new session is going to be pointed at, and which sandbox it inherits. A person approving
+    /// this is approving a model call nobody typed and a second window over their own files, so the card shows the
+    /// task head and says plainly whether the workspace comes with it.</summary>
+    private static string SpawnPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var task = Text(arguments, "task");
+        var head = task.Length <= 400 ? task : task[..400] + "…";
+        var mode = Text(arguments, "mode");
+        var workspace = !Flag(arguments, "inherit_workspace")
+            ? "no workspace"
+            : scope.WorkspaceRoot is { Length: > 0 } root
+                ? $"inherits workspace {root}"
+                : "this session has no workspace to hand over";
+        return $"spawn_session · {(mode.Length > 0 ? mode : "agent")} · {workspace}\n"
+               + (head.Length > 0 ? head : "(no task given)");
     }
 
     private static string MemoryPreview(IReadOnlyDictionary<string, JsonElement> arguments)

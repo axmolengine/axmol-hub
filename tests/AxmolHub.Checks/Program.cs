@@ -2452,6 +2452,144 @@ if (args.Contains("--check-ai-cross-session"))
         throw new Exception($"read_session did not accept its own limit parameter: {wireRead}");
     Console.WriteLine("PASS: the three cross-session tools bind, and the schema names are the names a call is accepted by.");
 
+    // ── spawn_session：派生一个子会话，四条护栏全是纯函数 ──
+    // The point of a child session is context isolation, not parallelism: one reader sent over a huge file and
+    // five lines taken back is cheaper than reading the file into the parent. Every limit here exists because the
+    // other half of that is a model call nobody clicked — so the switch ships off, the depth stops at one, one
+    // answer gets one child, and the whole Hub gets two live children.
+    var free = new SpawnFacts(Allowed: true, SourceIsSpawned: false, SpawnsUsedThisRun: 0,
+        ActiveSpawnedSessions: 0, FleetHasRoom: true, QueueHasRoom: true);
+    AssertSpawn(SpawnVerdict.Started, SpawnRules.Decide(free), "开着设置、有空位的父会话能派生一个子会话");
+    AssertSpawn(SpawnVerdict.RefusedDisabled, SpawnRules.Decide(free with { Allowed = false }),
+        "总开关关着时先拒，不占任何 slot");
+    AssertSpawn(SpawnVerdict.RefusedDepth, SpawnRules.Decide(free with { SourceIsSpawned = true }),
+        "子会话不得再派生（深度 1，树在这里停住）");
+    AssertSpawn(SpawnVerdict.RefusedPerTurn,
+        SpawnRules.Decide(free with { SpawnsUsedThisRun = SpawnRules.MaxSpawnsPerRun }), "一次回答最多派生一个");
+    AssertSpawn(SpawnVerdict.RefusedCap,
+        SpawnRules.Decide(free with { ActiveSpawnedSessions = SpawnRules.MaxActiveSpawnedSessions }),
+        "全局活跃子会话到上限即拒");
+    AssertSpawn(SpawnVerdict.Queued, SpawnRules.Decide(free with { FleetHasRoom = false }),
+        "fleet 满而队列有空位时排队，不是拒绝");
+    AssertSpawn(SpawnVerdict.RefusedFleetFull,
+        SpawnRules.Decide(free with { FleetHasRoom = false, QueueHasRoom = false }),
+        "队列也满时拒，且不创建会话");
+    // The order is the guard: a child that cannot spawn must be refused for being a child even when the switch is
+    // off and the fleet is idle, or the depth rule would only be reachable by luck.
+    AssertSpawn(SpawnVerdict.RefusedDisabled,
+        SpawnRules.Decide(free with { Allowed = false, SourceIsSpawned = true }),
+        "开关排在深度前，两条都不许时说的是用户能改的那条");
+    if (SpawnRules.MaxActiveSpawnedSessions >= 3)
+        throw new Exception("The spawn cap must stay below the run registry's three slots, or a child starves its parent.");
+
+    var spawnWords = new (SpawnVerdict, string[])[]
+    {
+        (SpawnVerdict.Started, ["answering in its own context", "Do not wait", "send its conclusion back"]),
+        (SpawnVerdict.Queued, ["every answer slot is busy", "do not spawn a second one"]),
+        (SpawnVerdict.RefusedDisabled, ["turned off", "do not retry"]),
+        (SpawnVerdict.RefusedDepth, ["helpers do not spawn further helpers", "send_to_session"]),
+        (SpawnVerdict.RefusedPerTurn, ["one allowed child", "Say in your reply"]),
+        (SpawnVerdict.RefusedCap, ["most Hub allows at once", "do not retry"]),
+        (SpawnVerdict.RefusedFleetFull, ["no answer slot is free", "do not retry"]),
+    };
+    foreach (var (verdict, must) in spawnWords)
+    {
+        var said = SpawnRules.ResultFor(new SpawnDecision(verdict, 1), "child-9", "agent");
+        if (!must.All(fragment => said.Contains(fragment, StringComparison.Ordinal)))
+            throw new Exception($"{verdict} reads as: 「{said}」");
+    }
+    if (spawnWords.Select(entry => SpawnRules.ResultFor(new SpawnDecision(entry.Item1, 1), "child-9", "agent"))
+            .Distinct().Count() != spawnWords.Length)
+        throw new Exception("Two spawn outcomes share a wording, so the model cannot tell waiting from refusing.");
+    Console.WriteLine("PASS: every spawn outcome says what happened and what to do instead, in words only it uses.");
+
+    var spawnRequests = new List<SpawnRequest>();
+    var spawnLive = new CrossSessionRunState(false, true, true, 0, SpawningAllowed: true);
+    var spawnBridge = new CrossSessionBridge((_, _) => Task.FromResult(spawnLive), peerBridge.Deliver,
+        request =>
+        {
+            spawnRequests.Add(request);
+            return Task.FromResult("child-9");
+        });
+    var spawnTools = new WorkspaceTools(peerScope with { CrossSession = spawnBridge });
+    var firstChild = await spawnTools.SpawnSession("  把那两个断言文件读完，只回 5 行结论  ", "agent", true);
+    if (spawnRequests.Count != 1 || !firstChild.Contains("child-9", StringComparison.Ordinal)
+        || !firstChild.Contains("Do not wait", StringComparison.Ordinal)
+        || spawnRequests[0].ParentId != talker.Id || spawnRequests[0].Task != "把那两个断言文件读完，只回 5 行结论"
+        || spawnRequests[0].Mode != ChatModes.Agent || !spawnRequests[0].InheritWorkspace)
+        throw new Exception($"A free spawn did not start one child with the parent's own id: {firstChild}");
+
+    await spawnTools.SpawnSession("先看不动手", "plan", false);
+    if (spawnRequests[^1].Mode != ChatModes.Plan || spawnRequests[^1].InheritWorkspace)
+        throw new Exception($"spawn_session ignored its mode or its workspace flag: {spawnRequests[^1]}");
+    await spawnTools.SpawnSession("随便", "不存在的模式", true);
+    if (spawnRequests[^1].Mode != ChatModes.Agent)
+        throw new Exception("An unknown mode did not fall back to agent, which is the only mode that can act.");
+
+    spawnRequests.Clear();
+    var blankTask = await spawnTools.SpawnSession("   ");
+    if (!blankTask.Contains("task is empty", StringComparison.Ordinal) || spawnRequests.Count != 0)
+        throw new Exception($"An empty task was accepted, or refused in words nothing acts on: {blankTask}");
+    var tooLong = await spawnTools.SpawnSession(new string('字', WorkspaceTools.MaxMessageCharacters + 1));
+    if (!tooLong.Contains("over the", StringComparison.Ordinal) || spawnRequests.Count != 0)
+        throw new Exception("An over-long task started a session anyway, or was refused without naming the limit.");
+
+    spawnLive = spawnLive with { SpawningAllowed = false };
+    var off = await spawnTools.SpawnSession("派生一个");
+    if (!off.Contains("turned off", StringComparison.Ordinal) || spawnRequests.Count != 0)
+        throw new Exception($"A spawn with the switch off still reached the host: {off}");
+    // Rebuilt from scratch: the switch is back on, so this cell refuses for being a child and not for anything
+    // the previous cell left set.
+    spawnLive = new CrossSessionRunState(false, true, true, 0, SourceIsSpawned: true, SpawningAllowed: true);
+    var grandchild = await spawnTools.SpawnSession("派生一个");
+    if (!grandchild.Contains("the tree stops here", StringComparison.Ordinal) || spawnRequests.Count != 0)
+        throw new Exception($"A child was allowed to spawn further: {grandchild}");
+    spawnLive = new CrossSessionRunState(false, true, true, 0, SpawningAllowed: true);
+
+    // A host that cannot start a session says so, and does not pretend a slot was the problem.
+    var unwired = await peerTools.SpawnSession("派生一个");
+    if (!unwired.Contains("does not let a tool call start a session", StringComparison.Ordinal)
+        || !unwired.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A host with no spawn path answered like a spawn: {unwired}");
+    var refusedHost = await new WorkspaceTools(peerScope with
+    {
+        CrossSession = new CrossSessionBridge((_, _) => Task.FromResult(spawnLive),
+            peerBridge.Deliver, _ => Task.FromResult<string?>(null))
+    }).SpawnSession("派生一个");
+    if (!refusedHost.Contains("could not be created", StringComparison.Ordinal))
+        throw new Exception($"The host returning nothing read as a success: {refusedHost}");
+
+    var card = ToolPreviews.PreviewFor("spawn_session",
+        """{"task":"读完那两个文件，回 5 行","mode":"plan","inherit_workspace":true}""", peerScope);
+    if (!card.Contains("spawn_session · plan", StringComparison.Ordinal)
+        || !card.Contains("no workspace", StringComparison.Ordinal) || !card.Contains("读完那两个文件", StringComparison.Ordinal))
+        throw new Exception($"The approval card for a spawn hides what it is starting: {card}");
+    var wiredCard = ToolPreviews.PreviewFor("spawn_session",
+        """{"task":"读","mode":"agent","inherit_workspace":true}""",
+        peerScope with { WorkspaceRoot = Path.Combine(bodiesRoot, "ws") });
+    if (!wiredCard.Contains("inherits workspace", StringComparison.Ordinal))
+        throw new Exception("A spawn that hands over the sandbox does not say which one.");
+
+    // The child is a session the person never started, so the list has to say where it came from — and the field
+    // has to survive one save, one reload, and one index rebuild.
+    var child = Conversation.Create("orcarouter");
+    child.Title = "helper";
+    child.SpawnedBy = talker.Id;
+    child.Append(ChatTurn.User("读完那两个文件，回 5 行", injectedFrom: talker.Id));
+    child.UpdatedAt = DateTimeOffset.Now;
+    bodiesStore.Save(child);
+    if (bodiesStore.Load(child.Id) is not { } reloadedChild || reloadedChild.SpawnedBy != talker.Id)
+        throw new Exception("A spawned session lost its parent on the way to disk.");
+    if (bodiesStore.List().First(summary => summary.Id == child.Id).SpawnedBy != talker.Id)
+        throw new Exception("The index header dropped SpawnedBy, so the sidebar cannot say where a session came from.");
+    if (!peerTools.ListSessions().Contains($"spawned from {talker.Id}", StringComparison.Ordinal))
+        throw new Exception("list_sessions hides the origin of a session nobody typed into.");
+    File.WriteAllText(Path.Combine(bodiesRoot, "ai", "sessions", "legacy-no-spawn.json"),
+        """{"Id":"legacy-no-spawn","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"user","Text":"早于派生功能"}]}""");
+    if (bodiesStore.Load("legacy-no-spawn") is not { SpawnedBy: null } legacyChild)
+        throw new Exception("A session file predating spawning lost its parent, or invented one.");
+    Console.WriteLine("PASS: spawn_session obeys the switch, the depth, the per-answer and the fleet limits, and a child session keeps the parent it came from.");
+
     foreach (var summary in bodiesStore.List()) bodiesStore.Delete(summary.Id);
     Directory.Delete(bodiesRoot, recursive: true);
 
@@ -2460,6 +2598,13 @@ if (args.Contains("--check-ai-cross-session"))
     peerStore.Delete("legacy-no-peer");
     Directory.Delete(peerRoot, recursive: true);
     return;
+
+    static void AssertSpawn(SpawnVerdict expected, SpawnDecision actual, string name)
+    {
+        if (actual.Verdict != expected)
+            throw new Exception($"{name}: expected {expected}, got {actual.Verdict}.");
+        Console.WriteLine("PASS: " + name + ".");
+    }
 
     static void AssertDecision(CrossSessionVerdict expected, WakeSuppressed suppressed,
         CrossSessionDecision actual, string name)

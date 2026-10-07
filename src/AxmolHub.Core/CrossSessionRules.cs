@@ -160,11 +160,21 @@ public static class CrossSessionRules
 /// streaming session and a session waiting on a decision both look finished on disk.</summary>
 /// <param name="WakesUsed">Wakes this run has already started, so the budget is spent by the run that woke
 /// others rather than by the pair of sessions.</param>
+/// <param name="SpawnsUsed">Children this run has already started, for <see cref="SpawnRules.MaxSpawnsPerRun"/>.</param>
+/// <param name="ActiveSpawnedSessions">Children running across the whole Hub right now, which is what the cap is
+/// on. Defaulted so every existing caller of this record still reads the three facts it always had.</param>
+/// <param name="SourceIsSpawned">Whether the calling session is itself a child — the depth rule's only input.</param>
+/// <param name="SpawningAllowed">The user's switch (<see cref="HubPreferences.AllowSpawnedSessions"/>), read per
+/// call so turning it off takes effect on the next tool call rather than on the next restart.</param>
 public readonly record struct CrossSessionRunState(
     bool TargetRunning,
     bool FleetHasRoom,
     bool QueueHasRoom,
-    int WakesUsed);
+    int WakesUsed,
+    int SpawnsUsed = 0,
+    int ActiveSpawnedSessions = 0,
+    bool SourceIsSpawned = false,
+    bool SpawningAllowed = false);
 
 /// <summary>What the app gives the cross-session tools: the live run state, and the ability to write into another
 /// session. Kept as two operations rather than one because the rules have to be applied <b>between</b> them —
@@ -173,6 +183,12 @@ public readonly record struct CrossSessionRunState(
 /// <param name="Deliver">Applies a decision: appends the message and, when told to wake, starts or queues the
 /// answer. Returns false when the target vanished between the two calls, which is reported to the model rather
 /// than retried.</param>
+/// <param name="Spawn">Creates the child session a <see cref="SpawnDecision"/> allowed, starts it answering, and
+/// hands back its id. <c>null</c> on a host that cannot start a session — the same shape as every other optional
+/// seam here: the tool says what is missing instead of inventing a peer. Kept separate from <c>Deliver</c>
+/// because delivering writes into a session that already exists, and deciding that is the app's job (the run
+/// registry, the UI thread, the fleet slots), not the rules'.</param>
 public sealed record CrossSessionBridge(
     Func<string, string, Task<CrossSessionRunState>> RunState,
-    Func<string, string, string, CrossSessionDecision, Task<bool>> Deliver);
+    Func<string, string, string, CrossSessionDecision, Task<bool>> Deliver,
+    Func<SpawnRequest, Task<string?>>? Spawn = null);

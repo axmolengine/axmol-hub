@@ -53,6 +53,15 @@ public sealed class HubPreferences
     /// Unknown values fall back to <see cref="ChatReasoningEfforts.XHigh"/> — see <see cref="ModelRouting.Ceiling"/>.
     /// </summary>
     public string MaxAutoEffort { get; set; } = ChatReasoningEfforts.XHigh;
+
+    /// <summary>
+    /// Whether the assistant may start a child session of its own (<c>spawn_session</c>). <b>Off by default</b>,
+    /// because each child is a model call nobody clicked and the run registry only has three slots. The reason to
+    /// turn it on is context isolation — sending one reader out over a huge file and taking back a few lines of
+    /// conclusion costs less than reading that file into the parent — and that reason is worth a switch rather
+    /// than a silent default.
+    /// </summary>
+    public bool AllowSpawnedSessions { get; set; }
 }
 
 public sealed class PreferencesStore(string path)

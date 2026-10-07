@@ -176,6 +176,12 @@ public sealed class Conversation
     /// routing existed has no such property and lands on <see cref="ChatRouting.Manual"/>, which is the answer Hub
     /// would have given then.</summary>
     public string Routing { get; set; } = ChatRouting.Manual;
+
+    /// <summary>The session that started this one, when a session was spawned rather than typed into. Nullable
+    /// for the same reason <see cref="BranchSourceId"/> is: every conversation file written before spawning
+    /// existed has no such property and still has to load, and a session nobody spawned has no parent to name.
+    /// It is also what the depth rule reads — a child does not get children — so it is stored rather than derived.</summary>
+    public string? SpawnedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -283,6 +289,11 @@ public sealed class ConversationSummary
     /// and a file written before the field existed simply reads as zero.</summary>
     public int PendingApprovals { get; set; }
 
+    /// <summary>Set when this session was started by another one. Carried on the header rather than only on the
+    /// transcript because a sidebar and <c>list_sessions</c> both have to say where an unfamiliar session came
+    /// from without reading its messages.</summary>
+    public string? SpawnedBy { get; set; }
+
     public static ConversationSummary From(Conversation conversation) => new()
     {
         Id = conversation.Id,
@@ -291,6 +302,7 @@ public sealed class ConversationSummary
         MessageCount = conversation.Messages.Count,
         UpdatedAt = conversation.UpdatedAt,
         Pinned = conversation.Pinned,
+        SpawnedBy = conversation.SpawnedBy,
         PendingApprovals = conversation.Messages
             .Count(turn => turn.ApprovalState == ChatApprovalStates.Pending),
     };

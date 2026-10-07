@@ -428,6 +428,9 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
             var title = summary.Title.Length > 0 ? summary.Title : "(untitled)";
             var notes = new List<string> { $"{summary.MessageCount} messages" };
             if (summary.PendingApprovals > 0) notes.Add($"{summary.PendingApprovals} awaiting approval");
+            // A session the person did not start has to say so, or the list reads like a pile of conversations
+            // with unknown origins — and one of them is a helper this very model asked for.
+            if (summary.SpawnedBy is { Length: > 0 } parent) notes.Add($"spawned from {parent}");
             if (string.Equals(summary.Id, context.ConversationId, StringComparison.Ordinal)) notes.Add("this session");
             builder.Append($"\n- {summary.Id} · {title} · {string.Join(" · ", notes)} · "
                            + $"updated {summary.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm}");
@@ -513,6 +516,53 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
 
     private static string NoPeers()
         => "Refused: this session cannot reach the other sessions of this Hub. Answer in your own reply instead.";
+
+    [Description("Start a fresh Hub session to do one bounded piece of work in a context of its own, and have it "
+                 + "report back to this session later. Worth it when the job means reading a lot (a big file, a "
+                 + "whole directory, a long build log) but only a short conclusion is wanted here, or when it can "
+                 + "run independently of what this conversation already knows. Not worth it for something you can "
+                 + "answer directly. The child answers in its own session: never wait for it in this turn, and "
+                 + "never spawn the same one twice.")]
+    public async Task<string> SpawnSession(
+        [Description("What the child is to do, written self-contained — it cannot see this conversation. Name the "
+                     + "files or the question, say what conclusion to bring back, and include this session's id "
+                     + "as where to send it.")] string task,
+        [Description("The mode the child runs in: \"agent\" to read and edit, \"plan\" to look and propose without "
+                     + "touching anything.")] string mode = "agent",
+        [Description("Give the child this session's workspace so it can read the same repository. Leave it false "
+                     + "only for a child that needs no files at all.")] bool inherit_workspace = true)
+    {
+        if (context.Sessions is not { } store || context.CrossSession is not { } bridge) return NoPeers();
+        if (bridge.Spawn is not { } start)
+            return "Refused: this Hub does not let a tool call start a session. Do the work here instead; do not "
+                   + "retry the spawn.";
+        if (string.IsNullOrWhiteSpace(task))
+            return "Refused: the task is empty, and a session started with nothing to do answers nothing. Say what "
+                   + "the child should conclude; do not retry it empty.";
+        if (task.Length > MaxMessageCharacters)
+            return $"Refused: the task is {task.Length} characters, over the {MaxMessageCharacters} limit. The "
+                   + "child cannot see this conversation, so write what it needs to do instead of pasting what you "
+                   + "already know; do not resend the same text.";
+
+        var childMode = string.Equals(mode.Trim(), ChatModes.Plan, StringComparison.OrdinalIgnoreCase)
+            ? ChatModes.Plan
+            : ChatModes.Agent;
+
+        // The target half of the live state is nobody's business here: a spawn starts a session that does not
+        // exist yet, so only the source-side counts and the fleet decide anything.
+        var live = await bridge.RunState(context.ConversationId, "").ConfigureAwait(false);
+        var decision = SpawnRules.Decide(new SpawnFacts(live.SpawningAllowed, live.SourceIsSpawned,
+            live.SpawnsUsed, live.ActiveSpawnedSessions, live.FleetHasRoom, live.QueueHasRoom));
+        if (decision.Verdict is not (SpawnVerdict.Started or SpawnVerdict.Queued))
+            return SpawnRules.ResultFor(decision, "", childMode);
+
+        var childId = await start(new SpawnRequest(context.ConversationId, task.Trim(), childMode,
+            inherit_workspace, SpawnRules.MaxActiveSpawnedSessions)).ConfigureAwait(false);
+        return childId is { Length: > 0 } id
+            ? SpawnRules.ResultFor(decision, id, childMode)
+            : "Refused: the child session could not be created — the fleet or the model list turned it down. Do "
+              + "this part yourself; do not retry the spawn.";
+    }
 
     private static string MissingTarget()
         => "Refused: no session was named. Call list_sessions first and use one of the ids it gives.";
