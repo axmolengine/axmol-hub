@@ -392,7 +392,10 @@ public static class HubTexts
         ["Stop"] = ("停止", "Stop"),
         ["ChatSteer"] = ("引导回复", "Steer response"),
         ["ChatSteering"] = ("正在切换方向…", "Steering response…"),
-        ["InputPlaceholder"] = ("输入消息，Enter 发送，Shift+Enter 换行", "Type a message. Enter to send, Shift+Enter for a newline"),
+        // The keyboard used to be the only thing this hint named, and a screenshot arriving from Explorer or
+        // Ctrl+V is the interaction people reach for most. It is one string, so the composer says it once.
+        ["InputPlaceholder"] = ("输入消息，Enter 发送，Shift+Enter 换行；截图可以粘贴或拖进来",
+            "Type a message. Enter to send, Shift+Enter for a newline. Paste or drop a screenshot"),
         ["ChatModeAsk"] = ("提问", "Ask"),
         ["ChatModePlan"] = ("计划", "Plan"),
         ["ChatModeAgent"] = ("代理", "Agent"),
@@ -439,6 +442,11 @@ public static class HubTexts
         ["ChatPastedImageName"] = ("剪贴板图片", "Pasted image"),
         ["ChatImageNotLocal"] = ("那个位置读不到本地文件，请从磁盘上选一张图片。",
             "That location could not be read as a local file. Pick a picture from disk."),
+        // The preview's two buttons and its receipt. The copy is confirmed in words because a clipboard write is
+        // invisible: without a line saying so, "nothing happened" and "it is in there" look identical.
+        ["ChatPictureCopy"] = ("复制这张图", "Copy this picture"),
+        ["ChatPictureClose"] = ("关闭预览", "Close preview"),
+        ["ChatPictureCopied"] = ("图片已复制到剪贴板。", "The picture is on the clipboard."),
         ["ChatAddHubProject"] = ("添加 Axmol Hub 工程", "Add Axmol Hub project"),
         ["ChatNoHubProjects"] = ("Hub 中尚未登记工程", "No projects registered in Hub"),
         ["ChatPickFolderTitle"] = ("选择要作为上下文的文件夹", "Choose a folder to use as context"),

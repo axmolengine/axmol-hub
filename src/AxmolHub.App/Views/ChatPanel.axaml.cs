@@ -48,6 +48,10 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private readonly List<PendingPicture> _pendingPictures = [];
 
+    /// <summary>The bytes behind the open preview, kept only while it is open: the copy button has to hand over
+    /// the same picture that is on screen, and nothing else in this view remembers them.</summary>
+    private byte[]? _previewBytes;
+
     private string? _selectedComposerMode;
     private bool _stickToBottom = true;
     private Task? _contextCompressionTask;
@@ -201,12 +205,42 @@ public partial class ChatPanel : UserControl
         DragDrop.SetAllowDrop(ComposerFrame, true);
         DragDrop.AddDragOverHandler(ComposerFrame, (_, e) =>
         {
-            if (DragCarriesFiles(e)) e.DragEffects = DragDropEffects.Copy;
+            // Both halves matter. `None` is what stops the shell from offering a drop this page cannot use, and
+            // the ring is what tells the person *here* before they let go — a target that looks identical to the
+            // rest of the window is a target nobody finds.
+            var carries = DragCarriesFiles(e);
+            e.DragEffects = carries ? DragDropEffects.Copy : DragDropEffects.None;
+            ComposerFrame.Classes.Set("drag-over", carries);
         });
+        DragDrop.AddDragLeaveHandler(ComposerFrame, (_, _) => ComposerFrame.Classes.Remove("drag-over"));
         DragDrop.AddDropHandler(ComposerFrame, OnComposerDrop);
+
+        // Escape answers the thing on top: a preview that closes only by its × would trap the keyboard behind a
+        // picture. Tunnel, so this runs before the composer's own key handling gets a turn.
+        AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key != Key.Escape || !PicturePreview.IsVisible) return;
+            ClosePicturePreview();
+            e.Handled = true;
+        }, RoutingStrategies.Tunnel);
+
+        WirePicturePreviewScrim();
+        PicturePreviewBar.Children.Add(IconActionButton("ChatPictureCopy", "Hub.Icon.Copy",
+            () => _ = CopyPreviewedPictureAsync()));
+        PicturePreviewBar.Children.Add(IconActionButton("ChatPictureClose", "Hub.Icon.Close",
+            ClosePicturePreview));
 
         Reload();
     }
+
+    /// <summary>The scrim is the close affordance — clicking beside the picture means "away from it" — and it has
+    /// to swallow the press so the composer behind it never sees a click that was never meant for it.</summary>
+    private void WirePicturePreviewScrim()
+        => PicturePreviewScrim.PointerPressed += (_, e) =>
+        {
+            ClosePicturePreview();
+            e.Handled = true;
+        };
 
     public void Reload()
     {
@@ -958,15 +992,28 @@ public partial class ChatPanel : UserControl
             // this draft has reached the disk yet.
             var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             var thumb = TryOpenBitmap(picture.Bytes);
-            chip.Children.Add(thumb is null
+            Control face = thumb is null
                 ? new TextBlock { Classes = { "muted" }, Text = picture.Name, MaxWidth = 120 }
-                : new Image
+                : new Button
                 {
-                    Source = thumb,
-                    Width = 34,
-                    Height = 34,
-                    Stretch = Stretch.Uniform,
-                });
+                    Classes = { "picture-face" },
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                    Content = new Image
+                    {
+                        Source = thumb,
+                        Width = 34,
+                        Height = 34,
+                        Stretch = Stretch.Uniform,
+                    },
+                };
+            if (face is Button opener)
+            {
+                // Thirty-four pixels of a screen capture is enough to recognise it and not enough to read it, and
+                // this is the moment before the message goes out — the only one where "that is the wrong window"
+                // is still cheap to act on.
+                opener.Click += (_, _) => OpenPicturePreview(picture.Bytes, picture.Name);
+            }
+            chip.Children.Add(face);
             chip.Children.Add(remove);
             var frame = new Border { Child = chip };
             frame.Classes.Add("context-attachment");
@@ -1173,6 +1220,9 @@ public partial class ChatPanel : UserControl
 
     private void OnComposerDrop(object? sender, DragEventArgs e)
     {
+        // The ring is cleared whatever the drop carried: a leave does not necessarily follow a drop, so a ring
+        // that only comes off on DragLeave would stay lit for the rest of the session.
+        ComposerFrame.Classes.Remove("drag-over");
         if (!DragCarriesFiles(e)) return;
         e.Handled = true;
         foreach (var item in e.DataTransfer.Items)
@@ -1213,10 +1263,92 @@ public partial class ChatPanel : UserControl
                 };
             ToolTip.SetTip(cell, $"{image.File} · {image.MediaType} · {image.Bytes} bytes");
             var frame = new Border { Child = cell, Classes = { "turn-picture" } };
-            row.Children.Add(frame);
+            Control slot = frame;
+            if (bitmap is not null)
+            {
+                // The spacing moves onto the button so the gap between two thumbnails is not itself a hit target.
+                frame.Margin = new Thickness(0);
+                var opener = new Button
+                {
+                    Classes = { "picture-face" },
+                    Content = frame,
+                    Margin = new Thickness(0, 0, 6, 6),
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                };
+                // Read on the click, not on the build: a transcript with a dozen captures would otherwise hold a
+                // dozen decoded bitmaps for a picture that is never opened.
+                opener.Click += (_, _) => OpenPicturePreview(
+                    ReadPictureBytes(path), $"{image.File} · {image.MediaType} · {image.Bytes} bytes");
+                slot = opener;
+            }
+            row.Children.Add(slot);
         }
 
         return row;
+    }
+
+    /// <summary>
+    /// Puts one picture on screen at a size a person can actually read. The bytes come from wherever the caller
+    /// holds them — the draft's memory, or the file the transcript points at — and a picture that cannot be
+    /// decoded leaves the preview shut rather than opening an empty frame: an empty frame says "the file is gone",
+    /// which is a different claim from the one the transcript makes.
+    /// </summary>
+    private void OpenPicturePreview(byte[]? bytes, string caption)
+    {
+        if (bytes is not { Length: > 0 } payload || TryOpenBitmap(payload) is not { } bitmap) return;
+        _previewBytes = payload;
+        PicturePreviewImage.Source = bitmap;
+        PicturePreviewCaption.Text = caption;
+        PicturePreview.IsVisible = true;
+    }
+
+    private void ClosePicturePreview()
+    {
+        if (!PicturePreview.IsVisible) return;
+        PicturePreview.IsVisible = false;
+        PicturePreviewImage.Source = null;
+        PicturePreviewCaption.Text = "";
+        _previewBytes = null;
+    }
+
+    /// <summary>
+    /// The clipboard payload for a picture, or null when there is nothing to hand over. Split out from the button
+    /// because a self-check must not overwrite what the person had copied — the check asserts this payload, and
+    /// only the real button click runs the clipboard write.
+    /// </summary>
+    private DataTransfer? PictureTransferOf(byte[]? bytes)
+    {
+        if (bytes is not { Length: > 0 } payload || TryOpenBitmap(payload) is not { } bitmap) return null;
+        var item = new DataTransferItem();
+        item.Set(DataFormat.Bitmap, bitmap);
+        var transfer = new DataTransfer();
+        transfer.Add(item);
+        return transfer;
+    }
+
+    private async Task CopyPreviewedPictureAsync()
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
+        if (PictureTransferOf(_previewBytes) is not { } transfer) return;
+        await clipboard.SetDataAsync(transfer);
+        ClosePicturePreview();
+        AppendNotice(HubStrings.Get("ChatPictureCopied"), danger: false);
+    }
+
+    /// <summary>The stored bytes of one attached picture, or null when they are no longer readable — which the
+    /// preview answers by staying shut, because the row already says what it says.</summary>
+    private static byte[]? ReadPictureBytes(string? path)
+    {
+        if (path is not { Length: > 0 }) return null;
+        try
+        {
+            return System.IO.File.ReadAllBytes(path);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException
+                                   or System.Security.SecurityException)
+        {
+            return null;
+        }
     }
 
     private static Bitmap? TryOpenBitmap(string path)
@@ -2522,10 +2654,15 @@ public partial class ChatPanel : UserControl
     internal int RenderedPictureCountForCheck
         => MessageFlow.GetVisualDescendants().OfType<Border>().Count(border => border.Classes.Contains("turn-picture"));
 
-    /// <summary>Chips in the composer that carry a thumbnail rather than only a name.</summary>
+    /// <summary>Chips in the composer that carry a thumbnail rather than only a name. Read off the shape of the
+    /// chip rather than its visual descendants: a chip built a moment ago has not been through a layout pass
+    /// yet, and "does this attachment show the picture" cannot depend on when the check happens to look.</summary>
     internal int PictureChipsForCheck
         => ContextAttachmentPanel.Children.OfType<Border>()
-            .Count(border => border.Child is StackPanel panel && panel.Children.OfType<Image>().Any());
+            .Count(border => border.Child is StackPanel panel && panel.Children.Any(IsThumbnailFace));
+
+    private static bool IsThumbnailFace(Control face)
+        => face is Image or Button { Content: Image };
 
     /// <summary>Presses one chip's own × rather than removing the entry here: what a check has to prove is that
     /// the button takes the picture out of the message, not that the list can be edited.</summary>
@@ -2552,6 +2689,81 @@ public partial class ChatPanel : UserControl
 
     /// <summary>Sends exactly what the composer holds, which is how a picture with no text under it is sent.</summary>
     internal Task SendComposerForCheck() => SendAsync();
+
+    // ── The drag ring and the picture preview ──
+    /// <summary>Whether the composer is answering a drag right now. The ring is the only thing that says so, and
+    /// it is decided by the same handler a real drag runs.</summary>
+    internal bool ComposerDragOverForCheck => ComposerFrame.Classes.Contains("drag-over");
+
+    /// <summary>Raises the composer's own DragOver handler with a payload of the asked-for shape.</summary>
+    internal void RaiseComposerDragOverForCheck(IDataTransfer transfer)
+        => ComposerFrame.RaiseEvent(new DragEventArgs(DragDrop.DragOverEvent, transfer, ComposerFrame,
+            default, KeyModifiers.None));
+
+    internal void RaiseComposerDragLeaveForCheck()
+        => ComposerFrame.RaiseEvent(new DragEventArgs(DragDrop.DragLeaveEvent, new DataTransfer(),
+            ComposerFrame, default, KeyModifiers.None));
+
+    /// <summary>The hint the composer gives before anyone types: pasting and dropping are interactions a person
+    /// has to be told about once, and the placeholder is the only place that names them.</summary>
+    internal string ComposerPlaceholderForCheck => InputBox.PlaceholderText ?? "";
+
+    internal bool PicturePreviewOpenForCheck => PicturePreview.IsVisible;
+    internal string PicturePreviewCaptionForCheck => PicturePreviewCaption.Text ?? "";
+    internal int PicturePreviewButtonCountForCheck => PicturePreviewBar.Children.OfType<Button>().Count();
+
+    /// <summary>Presses one of the preview's own buttons, in the order they are built (copy, then close).</summary>
+    internal void ClickPreviewButtonForCheck(int index)
+    {
+        var buttons = PicturePreviewBar.Children.OfType<Button>().ToList();
+        if (index < buttons.Count) buttons[index].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>The previewed picture's own size, or -1 when the frame is showing nothing. A preview that opened
+    /// on a blank image would pass "it is visible" and still be useless.</summary>
+    internal (int Width, int Height) PicturePreviewSizeForCheck
+        => PicturePreviewImage.Source is Bitmap bitmap
+            ? (bitmap.PixelSize.Width, bitmap.PixelSize.Height)
+            : (-1, -1);
+
+    /// <summary>Clicks the Nth picture in the transcript through the button that opens it.</summary>
+    internal void ClickRenderedPictureForCheck(int index)
+    {
+        var faces = MessageFlow.GetVisualDescendants().OfType<Button>()
+            .Where(button => button.Classes.Contains("picture-face"))
+            .ToList();
+        if (index < faces.Count) faces[index].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>Clicks the Nth chip's thumbnail in the composer — the draft's picture, which never was a file.
+    /// Walked off the chip's shape for the same reason the count is: a chip added a moment ago may not have been
+    /// laid out yet, and a click that depends on that is a click that depends on nothing.</summary>
+    internal void ClickPendingPictureForCheck(int index)
+    {
+        var faces = ContextAttachmentPanel.Children.OfType<Border>()
+            .Select(border => border.Child as StackPanel)
+            .Where(panel => panel is not null)
+            .SelectMany(panel => panel!.Children)
+            .OfType<Button>()
+            .Where(button => button.Classes.Contains("picture-face"))
+            .ToList();
+        if (index < faces.Count) faces[index].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>Sends Escape down the composer's own route, so the preview-first ordering is the real one.</summary>
+    internal void PressEscapeForCheck()
+        => InputBox.RaiseEvent(new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = Key.Escape,
+            Source = InputBox,
+        });
+
+    /// <summary>
+    /// The payload the copy button would hand the clipboard, without touching it: a self-check that ran the real
+    /// write would leave whatever the person had copied gone, which is the one thing a check may not do here.
+    /// </summary>
+    internal DataTransfer? PreviewCopyPayloadForCheck => PictureTransferOf(_previewBytes);
 
     /// <summary>The session's attachment directory, as the store sees it. A check that claims a deleted session
     /// took its pictures with it has to look at the disk, not at a list this view keeps.</summary>

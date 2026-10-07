@@ -926,6 +926,7 @@ public partial class ShellCheckWindow : Window
         await CheckSpawnAsync(shell, panel);
         await CheckPictureAsync(shell, panel);
         await CheckEmptyStateAsync(shell, panel);
+        await CheckPictureFeedbackAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1392,6 +1393,163 @@ public partial class ShellCheckWindow : Window
             panel.Reload();
             Dispatcher.UIThread.RunJobs();
         }
+    }
+
+    /// <summary>
+    /// 拖放的回应与图片的放大：递图这条路要看得见，收到的图要读得清。
+    ///
+    /// The drag ring and the preview are both things that only exist while somebody is looking, which is exactly
+    /// why they go untested and stay broken. The group drives the real DragOver / DragLeave / Drop events and the
+    /// real thumbnail button, and reads the preview back twice — once off the object graph, once off the rendered
+    /// frame, because "the Image has a Source" is not the same claim as "the picture is on the screen".
+    /// </summary>
+    private async Task CheckPictureFeedbackAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var scratch = ScratchDirectory.Resolve("picture-feedback");
+        var png = System.IO.Path.Combine(scratch, "shot.png");
+        System.IO.File.WriteAllBytes(png, PictureFixture());
+        var session = chat.StartConversation();
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        chat.ClientOverride = (_, _) => new ScriptedChatClient(["看过了"]);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            // ── 拖进来时要有人应答 ──
+            // Both directions are the cell: a page that never lights up is a target nobody finds, and one that
+            // lights up for a drag it cannot use is a lie about what will happen on release.
+            var droppedFile = await shell.StorageProvider.TryGetFileFromPathAsync(png);
+            var files = new DataTransfer();
+            if (droppedFile is not null) files.Add(DataTransferItem.CreateFile(droppedFile));
+            var words = new DataTransfer();
+            words.Add(DataTransferItem.CreateText("一段普通的文字"));
+
+            panel.RaiseComposerDragOverForCheck(words);
+            Check(!panel.ComposerDragOverForCheck,
+                "拖进来的不是文件时输入框不亮环：接不住的东西不该先承诺");
+            panel.RaiseComposerDragOverForCheck(files);
+            Check(droppedFile is not null && panel.ComposerDragOverForCheck,
+                "拖进来的是文件时输入框亮起环，松手前就知道该放在哪（实际"
+                + (panel.ComposerDragOverForCheck ? "亮了" : "没亮") + "）");
+            panel.RaiseComposerDragLeaveForCheck();
+            Check(!panel.ComposerDragOverForCheck, "拖开之后环收回：亮着的环说的是一个正在发生的动作");
+            panel.RaiseComposerDragOverForCheck(files);
+            panel.DropForCheck(files);
+            Check(!panel.ComposerDragOverForCheck && panel.PendingPictureCountForCheck == 1,
+                "落下之后环也收回，图进了草稿（实际 " + panel.PendingPictureCountForCheck + " 张）");
+
+            // ── 输入框自己说清图从哪来 ──
+            // Asserted against the text table rather than a literal, and in both languages, because the hint is
+            // worth nothing on the side the person is not reading.
+            var hintChinese = HubTexts.Get("InputPlaceholder", HubTexts.ChineseLanguage);
+            var hintEnglish = HubTexts.Get("InputPlaceholder", HubTexts.EnglishLanguage);
+            Check(panel.ComposerPlaceholderForCheck == HubStrings.Get("InputPlaceholder")
+                  && hintChinese.Contains("粘贴", StringComparison.Ordinal)
+                  && hintChinese.Contains("拖", StringComparison.Ordinal)
+                  && hintEnglish.Contains("Paste", StringComparison.OrdinalIgnoreCase)
+                  && hintEnglish.Contains("drop", StringComparison.OrdinalIgnoreCase),
+                "输入框提示在两种语言里都写明截图可以粘贴或拖进来（实际「"
+                + panel.ComposerPlaceholderForCheck + "」）");
+
+            // ── 发出去的图要能放大看 ──
+            panel.SetInputForCheck("看这张");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            await WaitUntilAsync(() => panel.RenderedPictureCountForCheck > 0);
+            Check(panel.RenderedPictureCountForCheck == 1 && panel.PendingPictureCountForCheck == 0,
+                "夹具：这条消息在气泡下画了一张缩略图（实际 " + panel.RenderedPictureCountForCheck + " 张）");
+
+            panel.ClickRenderedPictureForCheck(0);
+            var shown = panel.PicturePreviewSizeForCheck;
+            Check(panel.PicturePreviewOpenForCheck && shown == (8, 8)
+                  && panel.PicturePreviewCaptionForCheck.Contains("image/png", StringComparison.Ordinal),
+                "点缩略图打开预览，显示的就是那张图本身（实际 " + shown.Width + "×" + shown.Height
+                + "，说明「" + panel.PicturePreviewCaptionForCheck + "」）");
+            Check(panel.PicturePreviewButtonCountForCheck == 2,
+                "预览上有复制与关闭两个动作，都只用图标说话（实际 "
+                + panel.PicturePreviewButtonCountForCheck + " 个）");
+
+            // The payload, not the clipboard: a check that ran the real write would leave whatever the person had
+            // copied gone, which is the one thing this suite may not do to the machine it runs on.
+            Check(panel.PreviewCopyPayloadForCheck?.Items.FirstOrDefault()
+                    ?.TryGetRaw(DataFormat.Bitmap) is Bitmap copied
+                  && copied.PixelSize is { Width: 8, Height: 8 },
+                "复制按钮交出的就是这张图的位图，而不是文件名或一段文字");
+
+            panel.PressEscapeForCheck();
+            Check(!panel.PicturePreviewOpenForCheck, "Esc 关掉预览，键盘不必绕到那个 × 上");
+            panel.ClickRenderedPictureForCheck(0);
+            panel.ClickPreviewButtonForCheck(1);
+            Check(!panel.PicturePreviewOpenForCheck, "预览上的 × 也关得住（与 Esc 是同一条路，不是同一个按钮）");
+
+            // ── 还没发出去的草稿也要能看 ──
+            panel.AddImageForCheck(png);
+            panel.ClickPendingPictureForCheck(0);
+            var draft = panel.PicturePreviewSizeForCheck;
+            Check(panel.PendingPictureCountForCheck == 1 && panel.PicturePreviewOpenForCheck
+                  && draft == (8, 8),
+                "草稿缩略图也点得开：发出去之前是最后能反悔的时刻（实际 " + draft.Width + "×" + draft.Height + "）");
+            panel.PressEscapeForCheck();
+
+            // And the frame proves it painted. Measured as a difference against the same frame with the preview
+            // shut, because the thumbnails in the transcript carry the fixture's colours too — a count compared
+            // against zero would pass on a page of thumbnails and fail on nothing.
+            var shot = System.IO.Path.Combine(scratch, "preview.png");
+            SmokeCapture.Capture(shell, shot);
+            var thumbnails = FixturePixels(shot);
+            panel.ClickRenderedPictureForCheck(0);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            SmokeCapture.Capture(shell, shot);
+            var enlarged = FixturePixels(shot);
+            Check(panel.PicturePreviewOpenForCheck && enlarged > thumbnails + 50_000,
+                "预览把那张图放大画在屏幕上（缩略图 " + thumbnails + " 像素 → 打开后 " + enlarged + "）");
+            panel.ClickPreviewButtonForCheck(1);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            SmokeCapture.Capture(shell, shot);
+            var closed = FixturePixels(shot);
+            Check(!panel.PicturePreviewOpenForCheck && closed * 4 < enlarged,
+                "关掉之后回到缩略图那一帧（放大时 " + enlarged + " → 关掉后 " + closed
+                + "）：覆盖层是收起来的，不是盖在上面的");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
+    /// Counts the pixels of a rendered frame carrying the fixture's two constant channels. Blue and green are the
+    /// same in every pixel of the fixture and only in the fixture, so they survive the upscale untouched — an
+    /// 8×8 blown up to 590×590 is resampled, and a test that pinned the alternating red channel would find a
+    /// handful of pixels in a picture that fills half the screen.
+    /// </summary>
+    private static int FixturePixels(string png)
+    {
+        using var bitmap = new Bitmap(png);
+        var size = bitmap.PixelSize;
+        using var staging = new WriteableBitmap(size, bitmap.Dpi, PixelFormat.Bgra8888, AlphaFormat.Premul);
+        using var framebuffer = staging.Lock();
+        bitmap.CopyPixels(framebuffer);
+
+        var pixels = new byte[framebuffer.RowBytes * size.Height];
+        System.Runtime.InteropServices.Marshal.Copy(framebuffer.Address, pixels, 0, pixels.Length);
+
+        var found = 0;
+        for (var offset = 0; offset + 3 < pixels.Length; offset += 4)
+        {
+            if (pixels[offset + 3] != 0xFF) continue;
+            if (Math.Abs(pixels[offset] - 0x30) > 6 || Math.Abs(pixels[offset + 1] - 0x60) > 6) continue;
+            found++;
+        }
+
+        return found;
     }
 
     /// <summary>

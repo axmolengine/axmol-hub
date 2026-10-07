@@ -303,6 +303,12 @@
     <Style Selector="Border.composer.focused">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
     </Style>
+    <!-- A drag has to be answered before the person lets go, and the frame is the only drop target on the page,
+         so the ring is what says "here". Declared after `.focused` so a drag wins over the caret: the ring is the
+         question being asked right now. Only the brush changes — a thicker border would move the text. -->
+    <Style Selector="Border.composer.drag-over">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+    </Style>
     <Style Selector="Button.chip">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
@@ -522,6 +528,34 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
+    <!-- The picture preview. An overlay of this panel rather than a Popup on purpose: a popup is its own
+         top-level window, so nothing that photographs this one — the page shots, the pixel cells — would ever
+         see it, and a preview nobody can assert on is a preview that quietly stops working. The scrim is the
+         theme's own raised surface at almost full opacity rather than a literal black, so it reads in both. -->
+    <Style Selector="Border.picture-preview-scrim">
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
+      <Setter Property="Opacity" Value="0.94" />
+    </Style>
+    <Style Selector="Border.picture-preview-frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="10" />
+    </Style>
+    <!-- A picture that opens is a picture you clicked, so the clickable thing is a button. The reset is what
+         keeps the thumbnail pixel-for-pixel what it was, and what gives the opening a keyboard path — and a
+         check can raise a click, which it cannot do to a bare pointer press. -->
+    <Style Selector="Button.picture-face">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
     <!-- The empty state's suggestion chips: the greeting's promise stated as things the assistant can actually
          do. Quiet by default — secondary text on a hairline pill — so the centred column still reads as a greeting
          first and a starting point second, and wraps inside a bounded row instead of widening the column. -->
@@ -724,5 +758,23 @@
       </StackPanel>
     </Border>
     </Popup>
+
+    <!-- A picture at the size a person actually has to look at. Its buttons are built in code because they are
+         the same icon buttons the message rows use; the scrim swallows the click that means "close". -->
+    <Grid x:Name="PicturePreview" Grid.RowSpan="2" IsVisible="False">
+      <Border x:Name="PicturePreviewScrim" Classes="picture-preview-scrim" />
+      <Border Classes="picture-preview-frame" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Grid RowDefinitions="*,Auto">
+          <Image x:Name="PicturePreviewImage" Grid.Row="0" Stretch="Uniform"
+                 MaxWidth="880" MaxHeight="560" />
+          <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
+            <TextBlock x:Name="PicturePreviewCaption" Classes="muted" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" />
+            <StackPanel x:Name="PicturePreviewBar" Grid.Column="1" Orientation="Horizontal" Spacing="4"
+                        Margin="10,0,0,0" />
+          </Grid>
+        </Grid>
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>
