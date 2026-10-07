@@ -77,7 +77,7 @@ $taskArguments = @(
     '--packVersion', $Version,
     '--packDir', $taskPublish,
     '--packTitle', $PackTitle,
-    '--packAuthors', 'Simdsoft Limited and other Axmol contributors',
+    '--packAuthors', 'Simdsoft Limited',
     '--icon', $taskIcon,
     '--outputDir', $taskOutput,
     '--channel', $Channel,
