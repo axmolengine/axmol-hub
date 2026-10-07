@@ -32,6 +32,12 @@ internal enum RunResult
     Parked,
 }
 
+internal enum ChatAttentionKind
+{
+    ToolApproval,
+    PlanApproval,
+}
+
 /// <summary>
 /// One in-flight assistant reply. The run is what lets a session keep working while the user looks at another:
 /// it owns the cancellation, the deadline, the text arriving so far, and the steer waiting for it — none of

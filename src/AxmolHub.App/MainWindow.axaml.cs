@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private HubWorkspace _workspace;
     private readonly PreferencesStore _preferencesStore;
     private readonly HubPreferences _preferences;
+    private readonly SystemAttentionService _attention = new();
     private readonly Dictionary<string, Control> _pages = [];
 
     /// <summary>
@@ -93,6 +94,8 @@ public partial class MainWindow : Window
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
         _workspace.Owner = this;
         _chat = new ChatWorkspace(dataRoot);
+        _attention.Initialize(id => NotificationActivated(id));
+        _attention.NotificationActivated += NotificationActivated;
         WireChatSeams();
         WireChatRuns();
 
@@ -122,10 +125,17 @@ public partial class MainWindow : Window
         // Font conclusions must be handled only after the window is on screen: a modal's owner
         // must be shown first.
         Opened += (_, _) => ReportFonts();
+        Opened += (_, _) => SyncApprovalBadge();
     }
 
     internal async Task HandleInstallLinkAsync(string value)
     {
+        if (SystemAttentionService.TryGetConversationId(value, out var conversationId))
+        {
+            OpenConversationFromAttention(conversationId);
+            return;
+        }
+
         EngineInstallLink request;
         try
         {
@@ -301,7 +311,71 @@ public partial class MainWindow : Window
     /// the shell builds, including the one a data-root switch replaces — an unresubscribed strip would quietly
     /// stop reporting replies, which is exactly the kind of failure nobody sees.
     /// </summary>
-    private void WireChatRuns() => _chat.RunsChanged += _ => UpdateChatRunsStatus();
+    private void WireChatRuns()
+    {
+        _chat.RunsChanged += _ => UpdateChatRunsStatus();
+        _chat.Changed += SyncApprovalBadge;
+        _chat.AttentionRequired += OnChatAttentionRequired;
+        _chat.RunCompleted += OnChatRunCompleted;
+        SyncApprovalBadge();
+    }
+
+    private void OnChatAttentionRequired(string conversationId, ChatAttentionKind kind)
+    {
+        if (App.Options.IsAutomation) return;
+        if (!SystemAttentionService.ShouldNotifyApproval(conversationId, _chat.ViewedConversationId)) return;
+        var title = _chat.SessionTitleFor(conversationId);
+        if (string.IsNullOrWhiteSpace(title)) title = HubStrings.Get("Conversation");
+        var titleKey = kind == ChatAttentionKind.PlanApproval
+            ? "ChatPlanNotificationTitle"
+            : "ChatToolApprovalNotificationTitle";
+        var bodyKey = kind == ChatAttentionKind.PlanApproval
+            ? "ChatPlanNotificationBody"
+            : "ChatToolApprovalNotificationBody";
+        _attention.Show(HubStrings.Get(titleKey),
+            string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get(bodyKey), title),
+            conversationId);
+        SyncApprovalBadge();
+    }
+
+    private void OnChatRunCompleted(string conversationId, RunOutcome outcome)
+    {
+        if (App.Options.IsAutomation) return;
+        if (!SystemAttentionService.ShouldNotifyRun(
+                conversationId, _chat.ViewedConversationId,
+                _chat.HasPendingPlanApproval(conversationId), outcome.Result))
+            return;
+
+        var title = _chat.SessionTitleFor(conversationId);
+        if (string.IsNullOrWhiteSpace(title)) title = HubStrings.Get("Conversation");
+        var notificationTitle = outcome.Result switch
+        {
+            RunResult.Failed => "ChatRunFailedNotificationTitle",
+            RunResult.TimedOut => "ChatRunTimedOutNotificationTitle",
+            _ => "ChatRunCompletedNotificationTitle",
+        };
+        _attention.Show(HubStrings.Get(notificationTitle),
+            string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatRunNotificationBody"), title),
+            conversationId);
+    }
+
+    private void SyncApprovalBadge()
+    {
+        if (!App.Options.IsAutomation)
+            _attention.SetApprovalBadge(this, _chat.UnseenApprovalConversationCount > 0);
+    }
+
+    private void NotificationActivated(string conversationId)
+        => Dispatcher.UIThread.Post(() => OpenConversationFromAttention(conversationId));
+
+    private void OpenConversationFromAttention(string conversationId)
+    {
+        if (_chat.OpenConversation(conversationId) is null) return;
+        NavigateTo("Assistant");
+        WindowState = WindowState.Normal;
+        Activate();
+    }
 
     private void UpdateChatRunsStatus()
     {
@@ -721,6 +795,7 @@ public partial class MainWindow : Window
 
         Closed += (_, _) => _workspace.Dispose();
         Closed += (_, _) => _chat.Dispose();
+        Closed += (_, _) => _attention.Dispose();
     }
 
     private void SyncUpdateBadge()

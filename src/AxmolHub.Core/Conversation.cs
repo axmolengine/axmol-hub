@@ -96,6 +96,13 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// Values come from <see cref="ChatApprovalStates"/>.</summary>
     public string? ApprovalState { get; init; }
 
+    /// <summary>Whether the user has opened this pending approval since it was raised. Used only for the app-icon
+    /// attention badge; the request itself remains pending until an explicit decision.</summary>
+    public bool ApprovalSeen { get; init; }
+
+    /// <summary>Approval state for an assistant plan. Non-null only after a Plan-mode answer is ready for review.</summary>
+    public string? PlanApprovalState { get; init; }
+
     /// <summary>What approving this call would do, frozen when it was asked for — a diff for a write, a command
     /// line for a build. Frozen rather than recomputed because the decision can come after a restart, and the
     /// card then has to show exactly what the gate saw.</summary>
@@ -304,7 +311,8 @@ public sealed class ConversationSummary
         Pinned = conversation.Pinned,
         SpawnedBy = conversation.SpawnedBy,
         PendingApprovals = conversation.Messages
-            .Count(turn => turn.ApprovalState == ChatApprovalStates.Pending),
+            .Count(turn => turn.ApprovalState == ChatApprovalStates.Pending
+                           || turn.PlanApprovalState == PlanApprovalStates.Pending),
     };
 
     /// <summary>

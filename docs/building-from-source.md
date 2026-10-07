@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（631 条断言）
+# 外壳、本地化与数据根切换的自检（649 条断言）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（43 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-theme ./tmp/theme.txt
@@ -115,6 +115,8 @@ dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-ops ./tmp/o
 界面文案是**单一定义**的：中英两份都在 `AxmolHub.Core/HubTexts.cs`，界面项目只留一层"把文案灌进 Avalonia 资源字典"的薄适配。设置页因此同时是本地化管线的**活体验收台** —— 切换语言要就地重灌资源字典并让**已经存在的控件**换文字，这件事读代码判断不了，只能实跑（见上面的 `--verify-shell`）。
 
 `--verify-shell` 有三条值得单独说的断言：
+
+AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、后台审批未读状态、通知过滤与会话深链激活。自检会禁用真实系统通知和任务栏/Dock 标记；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
 
 - **真切一次语言再切回来**，然后去读**早于切换就已建好**的控件上的文字（外壳导航项、设置页说明、引擎页表头）。它同时证明"已存在的控件跟着换文字"和"切回中文也生效"，并把设置文件落在临时目录里 —— 自检**不会**碰到你 `%LocalAppData%\AxmolHub\` 下的真实设置。去掉 `HubStrings.Apply` 那一行，构建照样 0 error，自检报 6 条 FAIL、退出 1。
 - **切换一次数据根再切回来**：换根、落盘、旧页面被丢弃、引擎列表跟着变空、拒绝盘符根、重复切换是无操作。漏掉"丢弃旧页面"的后果是"界面看着正常，一点按钮就在读一个已经不属于当前会话的工作区"——去掉 `_pages.Clear()` 一行，构建照样 0 error，自检报 3 条 FAIL、退出 1。

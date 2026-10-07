@@ -888,6 +888,7 @@ public partial class ShellCheckWindow : Window
 
         await CheckParallelRunsAsync(shell, panel, sidebar);
         await CheckToolApprovalAsync(shell, panel, sidebar);
+        await CheckPlanApprovalAsync(shell, panel);
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
@@ -1670,6 +1671,160 @@ public partial class ShellCheckWindow : Window
         Check(chat.RunningCount == 0 && chat.QueuedWakeCount == 0
               && sidebar.RunningDotCountForCheck == 0 && sidebar.QueuedWakeDotCountForCheck == 0,
             "自检清理：互发夹具没有留下运行、队列或指示点");
+    }
+
+    private async Task CheckPlanApprovalAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedIdleTimeout = chat.IdleTimeout;
+        var observer = chat.StartConversation();
+        var approvedSession = chat.StartConversation();
+        var rejectedSession = chat.StartConversation();
+        const string plan = "# Reviewed plan\n\n- First, inspect the implementation.\n- Then, make the change.";
+        var attentionCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        void CountAttention(string conversationId, ChatAttentionKind _)
+            => attentionCounts[conversationId] = attentionCounts.GetValueOrDefault(conversationId) + 1;
+        chat.AttentionRequired += CountAttention;
+        chat.IdleTimeout = TimeSpan.FromSeconds(5);
+
+        async Task RunPlanInBackgroundAsync(Conversation session)
+        {
+            chat.OpenConversation(session.Id);
+            chat.SelectMode(ChatModes.Plan);
+            var sent = chat.TryEnqueueSend(session.Id, "请先给出计划", null, out var refusal);
+            chat.OpenConversation(observer.Id);
+            await WaitForIdleAsync(chat);
+            Check(sent && refusal is null
+                  && session.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)?.Text == plan
+                  && session.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)?.PlanApprovalState
+                      == PlanApprovalStates.Pending,
+                "计划模式结束后将计划持久化为待确认项（会话 " + session.Id + "；拒绝原因 "
+                + (refusal ?? "无") + "）");
+        }
+
+        try
+        {
+            chat.ClientOverride = (_, _) => new ScriptedChatClient([plan]);
+
+            await RunPlanInBackgroundAsync(approvedSession);
+            Check(chat.UnseenApprovalConversationCount == 1
+                  && approvedSession.Messages.Last().ApprovalSeen == false,
+                "后台会话中的计划确认计入未读审批，且本会话未被错误标为已查看");
+            Check(attentionCounts.GetValueOrDefault(approvedSession.Id) == 1,
+                "一次计划确认只发出一次待处理关注事件（实际 "
+                + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
+            var deepLink = $"axmolhub://conversation/{approvedSession.Id}";
+            Check(SystemAttentionService.TryGetConversationId(deepLink, out var activatedId)
+                  && activatedId == approvedSession.Id
+                  && !SystemAttentionService.TryGetConversationId("axmolhub://conversation/not-a-guid", out _),
+                "系统通知激活链接只解析有效的会话深链（实际 " + activatedId + "）");
+            Check(SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, observer.Id)
+                  && !SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, approvedSession.Id)
+                  && Enum.GetValues<RunResult>()
+                      .Where(result => result is RunResult.Completed or RunResult.Failed or RunResult.TimedOut)
+                      .All(result => SystemAttentionService.ShouldNotifyRun(
+                          approvedSession.Id, observer.Id, hasPendingPlan: false, result))
+                  && !SystemAttentionService.ShouldNotifyRun(
+                      approvedSession.Id, observer.Id, hasPendingPlan: true, RunResult.Completed)
+                  && !SystemAttentionService.ShouldNotifyRun(
+                      approvedSession.Id, observer.Id, hasPendingPlan: false, RunResult.Cancelled)
+                  && !SystemAttentionService.ShouldNotifyRun(
+                      approvedSession.Id, observer.Id, hasPendingPlan: false, RunResult.Parked),
+                "只在其他会话提醒审批，成功/失败/超时结束均提醒，但取消、暂停和待审计划不报完成");
+
+            await shell.HandleInstallLinkAsync(deepLink);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var planRowText = panel.PlanApprovalMessageTextForCheck;
+            var planCardVisible = panel.PlanApprovalCardOnScreenForCheck;
+            var planMarkdownVisible = panel.PlanApprovalMarkdownOnScreenForCheck;
+            Check(chat.UnseenApprovalConversationCount == 0
+                  && approvedSession.Messages.Last().ApprovalSeen
+                  && chat.ViewedConversationId == approvedSession.Id
+                  && panel.PendingPlanApprovalCardsForCheck == 1
+                  && planCardVisible
+                  && planMarkdownVisible
+                  && planRowText.Contains("Reviewed plan", StringComparison.Ordinal),
+                "打开会话清除系统角标资格，Markdown 计划文本与待确认卡同时真实显示（未读 "
+                + chat.UnseenApprovalConversationCount + "，已读 "
+                + approvedSession.Messages.Last().ApprovalSeen + "，卡片 "
+                + panel.PendingPlanApprovalCardsForCheck + " / " + planCardVisible + "，Markdown "
+                + planMarkdownVisible + "，文本「"
+                + planRowText + "」）");
+            Check(panel.PlanApprovalActionsForCheck.SequenceEqual(
+                      ["ChatPlanApprove", "ChatPlanRevise", "ChatPlanReject"], StringComparer.Ordinal),
+                "计划卡提供批准执行、要求修改、拒绝三个明确动作（实际 "
+                + string.Join(", ", panel.PlanApprovalActionsForCheck) + "）");
+
+            panel.ClickPlanApprovalActionForCheck("ChatPlanRevise");
+            Check(approvedSession.Messages.Last(turn => turn.Role == ChatRoles.Assistant).PlanApprovalState
+                      == PlanApprovalStates.RevisionRequested
+                  && chat.ActiveMode == ChatModes.Plan
+                  && panel.InputTextForCheck.StartsWith(HubStrings.Get("ChatPlanRevisionPrompt"),
+                      StringComparison.Ordinal),
+                "要求修改会记录决定、保持计划模式，并把修改请求放入输入框");
+            await panel.SendForCheckAsync(panel.InputTextForCheck);
+            Check(approvedSession.Messages.Count(turn =>
+                      turn.Role == ChatRoles.Assistant && turn.PlanApprovalState == PlanApprovalStates.Pending) == 1,
+                "修改请求可以再次发送，新的计划重新进入待确认状态");
+            Check(attentionCounts.GetValueOrDefault(approvedSession.Id) == 2,
+                "修改后再次生成计划只新增一次待审事件（实际 "
+                + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
+
+            panel.ClickPlanApprovalActionForCheck("ChatPlanApprove");
+            await WaitForIdleAsync(chat);
+            var approvedCopy = chat.StoredCopyForCheck(approvedSession.Id);
+            var approvedInstruction = "Implement the following plan, which I have reviewed and approved. "
+                                      + "Follow this plan only; ask before taking actions outside its scope.\n\n" + plan;
+            var approvedState = approvedCopy?.Messages
+                .LastOrDefault(turn => turn.Role == ChatRoles.Assistant)?.PlanApprovalState;
+            var approvedUserText = approvedCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Text;
+            var approvedRun = chat.RunFor(approvedSession.Id);
+            Check(approvedCopy?.Mode == ChatModes.Agent
+                  && approvedCopy.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                      && turn.PlanApprovalState == PlanApprovalStates.Approved)
+                  && approvedUserText == approvedInstruction
+                  && approvedRun is null,
+                "批准后切换 Agent 并以用户指令附带原样审阅计划继续执行，完成后无残留运行（模式 "
+                + approvedCopy?.Mode + "，末条计划状态 " + approvedState + "，用户指令「"
+                + approvedUserText?.Replace('\n', '|') + "」，运行 " + approvedRun?.Phase + "）");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingPlanApprovalCardsForCheck == 0,
+                "计划决定后卡片退出待确认状态（卡片 "
+                + panel.PendingPlanApprovalCardsForCheck + "，会话状态 "
+                + string.Join(",", approvedCopy?.Messages
+                    .Where(turn => turn.PlanApprovalState is not null)
+                    .Select(turn => turn.PlanApprovalState) ?? []) + "）");
+
+            await RunPlanInBackgroundAsync(rejectedSession);
+            chat.OpenConversation(rejectedSession.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            panel.ClickPlanApprovalActionForCheck("ChatPlanReject");
+            var rejectedCopy = chat.StoredCopyForCheck(rejectedSession.Id);
+            Check(rejectedCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)
+                      ?.PlanApprovalState == PlanApprovalStates.Rejected
+                  && chat.ActiveMode == ChatModes.Plan
+                  && chat.RunFor(rejectedSession.Id) is null,
+                "拒绝计划会留下拒绝记录、不启动 Agent，并保持计划模式");
+        }
+        finally
+        {
+            chat.ClientOverride = null;
+            chat.IdleTimeout = savedIdleTimeout;
+            chat.AttentionRequired -= CountAttention;
+            foreach (var session in new[] { observer, approvedSession, rejectedSession })
+                chat.DeleteConversation(session.Id);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            shell.NavigateTo("Assistant");
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.RunningCount == 0,
+                "自检清理：计划审批夹具没有留下运行（实际 " + chat.RunningCount + " 路）");
+        }
     }
 
     /// <summary>

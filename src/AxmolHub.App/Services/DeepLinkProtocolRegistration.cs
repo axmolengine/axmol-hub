@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Win32;
@@ -45,6 +46,7 @@ internal static class DeepLinkProtocolRegistration
         using var commandKey = protocol.CreateSubKey(@"shell\open\command")
             ?? throw new IOException("Could not create the URI protocol launch command.");
         commandKey.SetValue("", command, RegistryValueKind.String);
+        TryStampStartMenuShortcut();
     }
 
     [SupportedOSPlatform("windows")]
@@ -71,6 +73,83 @@ internal static class DeepLinkProtocolRegistration
         }
 
         return Environment.ProcessPath ?? throw new IOException("Could not determine the Hub executable path.");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void TryStampStartMenuShortcut()
+    {
+        var startMenu = Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
+        if (!Directory.Exists(startMenu)) return;
+        var shortcut = Directory.EnumerateFiles(startMenu, "Axmol Hub.lnk", SearchOption.AllDirectories)
+            .FirstOrDefault();
+        if (shortcut is null) return;
+
+        object? shellLink = null;
+        try
+        {
+            var shellLinkType = Type.GetTypeFromCLSID(
+                new Guid("00021401-0000-0000-C000-000000000046"), throwOnError: true)!;
+            shellLink = Activator.CreateInstance(shellLinkType)
+                        ?? throw new InvalidOperationException("Could not create the Windows shortcut object.");
+            var persistence = (System.Runtime.InteropServices.ComTypes.IPersistFile)shellLink;
+            persistence.Load(shortcut, 2);
+            var store = (IShellPropertyStore)shellLink;
+            var key = new ShellPropertyKey(
+                new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
+            var value = new ShellPropertyValue
+            {
+                Type = 31,
+                Pointer = Marshal.StringToCoTaskMemUni(SystemAttentionService.WindowsAppUserModelId),
+            };
+            try
+            {
+                Marshal.ThrowExceptionForHR(store.SetValue(ref key, ref value));
+                Marshal.ThrowExceptionForHR(store.Commit());
+                persistence.Save(shortcut, true);
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(value.Pointer);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not register the Windows toast AppUserModelID: " + ex);
+        }
+        finally
+        {
+            if (shellLink is not null && Marshal.IsComObject(shellLink))
+                Marshal.FinalReleaseComObject(shellLink);
+        }
+    }
+
+    [ComImport]
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellPropertyStore
+    {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out ShellPropertyKey key);
+        [PreserveSig] int GetValue(ref ShellPropertyKey key, out ShellPropertyValue value);
+        [PreserveSig] int SetValue(ref ShellPropertyKey key, ref ShellPropertyValue value);
+        [PreserveSig] int Commit();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ShellPropertyKey(Guid formatId, uint propertyId)
+    {
+        public Guid FormatId = formatId;
+        public uint PropertyId = propertyId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ShellPropertyValue
+    {
+        public ushort Type;
+        public ushort Reserved1;
+        public ushort Reserved2;
+        public ushort Reserved3;
+        public IntPtr Pointer;
     }
 
     private static void RegisterLinux()

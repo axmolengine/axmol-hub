@@ -96,3 +96,12 @@ public static class ChatApprovalStates
     /// assistant turn carrying a call with no result would be rejected by the provider on replay.</summary>
     public const string Superseded = "superseded";
 }
+
+/// <summary>The disposition of a plan awaiting the user's approval.</summary>
+public static class PlanApprovalStates
+{
+    public const string Pending = "pending";
+    public const string Approved = "approved";
+    public const string RevisionRequested = "revision-requested";
+    public const string Rejected = "rejected";
+}

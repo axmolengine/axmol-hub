@@ -95,9 +95,10 @@ public partial class ChatPanel : UserControl
         var stamp = new StringBuilder();
         foreach (var turn in conversation.Messages)
         {
-            if (turn.ApprovalState is null && turn.UndoName is null) continue;
+            if (turn.ApprovalState is null && turn.UndoName is null && turn.PlanApprovalState is null) continue;
             stamp.Append(turn.ToolCallId).Append(':').Append(turn.ApprovalState ?? "")
-                .Append('/').Append(turn.UndoName ?? "").Append(';');
+                .Append('/').Append(turn.UndoName ?? "")
+                .Append('/').Append(turn.PlanApprovalState ?? "").Append(';');
         }
 
         return stamp.ToString();
@@ -1330,6 +1331,8 @@ public partial class ChatPanel : UserControl
         // flow — its approval card already says which window was grabbed, and this row is about what the user said.
         if (fromUser && turn.Images.Count > 0) body.Children.Add(BuildTurnPictures(conversationId, turn.Images));
 
+        Control? approvalSurface = null;
+
         // A call that needed permission carries its own record: the question with its buttons while it waits,
         // one quiet line once it does not. A call that never needed asking gets nothing drawn here, which is why
         // the approval state — not the presence of a tool call — is what decides. A write is the exception: it
@@ -1337,9 +1340,15 @@ public partial class ChatPanel : UserControl
         if (turn.ToolCallId is { Length: > 0 } callId)
         {
             if (turn.ApprovalState == ChatApprovalStates.Pending)
-                body.Children.Add(BuildApprovalCard(conversationId, callId, turn));
+                approvalSurface = BuildApprovalCard(conversationId, callId, turn);
             else if (turn.ApprovalState is { Length: > 0 } || turn.UndoName is { Length: > 0 })
-                body.Children.Add(BuildCallRecord(conversationId, callId, turn));
+                approvalSurface = BuildCallRecord(conversationId, callId, turn);
+        }
+        if (turn.PlanApprovalState is { Length: > 0 })
+        {
+            approvalSurface = turn.PlanApprovalState == PlanApprovalStates.Pending
+                ? BuildPlanApprovalCard(conversationId, index)
+                : BuildPlanApprovalRecord(turn.PlanApprovalState);
         }
 
         // A function-call or tool-result turn gets no action bar: it is not a readable message, and acting on
@@ -1353,6 +1362,7 @@ public partial class ChatPanel : UserControl
         // User text is plain by nature; only assistant turns carry Markdown worth rendering.
         if (!fromUser && markdown && turn.Text.Length > 0)
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
+        if (approvalSurface is not null) body.Children.Add(approvalSurface);
     }
 
     /// <summary>The question stated once: which tool, with what, and the three answers it accepts. The arguments
@@ -1379,6 +1389,42 @@ public partial class ChatPanel : UserControl
         card.Children.Add(actions);
 
         return new Border { Classes = { "approval-card" }, ClipToBounds = true, Child = card };
+    }
+
+    private Control BuildPlanApprovalCard(string conversationId, int turnIndex)
+    {
+        var card = new StackPanel { Spacing = 8 };
+        card.Children.Add(new TextBlock
+        {
+            Classes = { "approval-question" },
+            Text = HubStrings.Get("ChatPlanApprovalQuestion"),
+        });
+
+        var actions = new StackPanel { Classes = { "approval-actions" } };
+        actions.Children.Add(ApprovalButton("ChatPlanApprove",
+            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.Approved)));
+        actions.Children.Add(ApprovalButton("ChatPlanRevise",
+            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.RevisionRequested)));
+        actions.Children.Add(ApprovalButton("ChatPlanReject",
+            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.Rejected)));
+        card.Children.Add(actions);
+        return new Border { Classes = { "approval-card", "plan-approval-card" }, ClipToBounds = true, Child = card };
+    }
+
+    private static Control BuildPlanApprovalRecord(string state)
+    {
+        var key = state switch
+        {
+            PlanApprovalStates.Approved => "ChatPlanApproved",
+            PlanApprovalStates.RevisionRequested => "ChatPlanRevisionRequested",
+            PlanApprovalStates.Rejected => "ChatPlanRejected",
+            _ => "ChatPlanRejected",
+        };
+        return new Border
+        {
+            Classes = { "approval-record", "plan-approval-record" },
+            Child = new TextBlock { Classes = { "approval-record-text" }, Text = HubStrings.Get(key) },
+        };
     }
 
     private static void AddApprovalDetail(StackPanel card, string labelKey, string? value)
@@ -1506,6 +1552,25 @@ public partial class ChatPanel : UserControl
     {
         if (_chat.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out var refusalKey)) return;
         AppendNotice(HubStrings.Get(refusalKey ?? "ChatApprovalGone"), danger: true);
+    }
+
+    private void ResolvePlanApproval(string conversationId, int turnIndex, string decision)
+    {
+        if (!_chat.TryResolvePlanApproval(conversationId, turnIndex, decision, out var refusalKey))
+        {
+            AppendNotice(HubStrings.Get(refusalKey ?? "ChatApprovalGone"), danger: true);
+            return;
+        }
+
+        if (decision == PlanApprovalStates.RevisionRequested)
+        {
+            SetComposerMode(ChatModes.Plan);
+            InputBox.Text = HubStrings.Get("ChatPlanRevisionPrompt") + "\n";
+            InputBox.CaretIndex = InputBox.Text.Length;
+            InputBox.Focus();
+        }
+
+        ConversationStateChanged?.Invoke();
     }
 
     private void AppendPlainBubble(string text, bool fromUser)
@@ -2249,6 +2314,42 @@ public partial class ChatPanel : UserControl
     internal void ClickApprovalActionForCheck(string actionKey)
     {
         var button = ApprovalCards.FirstOrDefault()?
+            .GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Tag as string == actionKey);
+        if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    private IEnumerable<Border> PlanApprovalCards
+        => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Border>())
+            .Where(card => card.Classes.Contains("plan-approval-card"));
+
+    internal int PendingPlanApprovalCardsForCheck => PlanApprovalCards.Count();
+
+    internal bool PlanApprovalCardOnScreenForCheck
+        => PlanApprovalCards.FirstOrDefault() is { IsVisible: true } card
+           && card.Bounds is { Width: > 0, Height: > 0 };
+
+    internal string PlanApprovalMessageTextForCheck
+        => string.Join(" ", MessageFlow.Children
+            .SelectMany(row => row.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
+            .Select(viewer => viewer.Tag as string ?? ""));
+
+    internal bool PlanApprovalMarkdownOnScreenForCheck
+        => MessageFlow.Children
+            .SelectMany(row => row.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
+            .FirstOrDefault(viewer => (viewer.Tag as string)?.Contains("Reviewed plan", StringComparison.Ordinal) == true)
+            is { IsVisible: true, Bounds: { Width: > 0, Height: > 0 } };
+
+    internal string[] PlanApprovalActionsForCheck
+        => PlanApprovalCards.FirstOrDefault() is { } card
+            ? card.GetLogicalDescendants().OfType<Button>()
+                .Where(button => button.Classes.Contains("approval-action"))
+                .Select(button => button.Tag as string ?? "").ToArray()
+            : [];
+
+    internal void ClickPlanApprovalActionForCheck(string actionKey)
+    {
+        var button = PlanApprovalCards.FirstOrDefault()?
             .GetLogicalDescendants().OfType<Button>()
             .FirstOrDefault(candidate => candidate.Tag as string == actionKey);
         if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

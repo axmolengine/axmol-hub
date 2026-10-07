@@ -1733,8 +1733,93 @@ public sealed class ChatWorkspace : IDisposable
         _active = _sessions.Load(id);
         _selectedMode = _active is null ? ChatModes.Agent : NormalizeMode(_active.Mode);
         _selectedReasoningEffort = ChatReasoningEfforts.Normalize(_active?.ReasoningEffort);
+        if (_active is { } opened)
+        {
+            _sessions.TryUpdate(opened.Id, conversation =>
+            {
+                for (var index = 0; index < conversation.Messages.Count; index++)
+                {
+                    var turn = conversation.Messages[index];
+                    if (turn.ApprovalState == ChatApprovalStates.Pending
+                        || turn.PlanApprovalState == PlanApprovalStates.Pending)
+                        conversation.Messages[index] = turn with { ApprovalSeen = true };
+                }
+            });
+        }
         Changed?.Invoke();
         return _active;
+    }
+
+    /// <summary>Resolves a plan review card. Approval feeds the exact reviewed plan back as a user instruction and
+    /// starts it in Agent mode; revision leaves the composer ready for a new Plan-mode request.</summary>
+    internal bool TryResolvePlanApproval(
+        string conversationId, int turnIndex, string decision, out string? refusalKey)
+    {
+        refusalKey = null;
+        if (decision is not (PlanApprovalStates.Approved
+            or PlanApprovalStates.RevisionRequested or PlanApprovalStates.Rejected))
+            throw new ArgumentOutOfRangeException(nameof(decision));
+
+        var conversation = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        if (conversation is null || turnIndex < 0 || turnIndex >= conversation.Messages.Count)
+        {
+            refusalKey = "ChatApprovalGone";
+            return false;
+        }
+
+        var pending = conversation.Messages[turnIndex];
+        if (pending.Role != ChatRoles.Assistant
+            || pending.PlanApprovalState != PlanApprovalStates.Pending)
+        {
+            refusalKey = "ChatApprovalGone";
+            return false;
+        }
+
+        if (decision == PlanApprovalStates.Approved)
+        {
+            if (ModelFor(conversationId) is null)
+            {
+                refusalKey = "NoAvailableChatModels";
+                return false;
+            }
+
+            if (_runs.Count >= MaxConcurrentRuns)
+            {
+                refusalKey = "ChatParallelLimit";
+                return false;
+            }
+        }
+
+        var updated = _sessions.TryUpdate(conversationId, opened =>
+        {
+            if (turnIndex >= opened.Messages.Count
+                || opened.Messages[turnIndex].PlanApprovalState != PlanApprovalStates.Pending) return;
+
+            opened.Messages[turnIndex] = opened.Messages[turnIndex] with { PlanApprovalState = decision };
+            if (decision == PlanApprovalStates.Approved)
+            {
+                opened.Mode = ChatModes.Agent;
+                opened.Append(ChatTurn.User(
+                    "Implement the following plan, which I have reviewed and approved. Follow this plan only; " +
+                    "ask before taking actions outside its scope.\n\n" + pending.Text));
+            }
+            else if (decision == PlanApprovalStates.RevisionRequested)
+            {
+                opened.Mode = ChatModes.Plan;
+            }
+        });
+
+        if (!updated)
+        {
+            refusalKey = "ChatApprovalGone";
+            return false;
+        }
+
+        if (_active?.Id == conversationId)
+            _selectedMode = decision == PlanApprovalStates.Approved ? ChatModes.Agent : ChatModes.Plan;
+        Changed?.Invoke();
+        if (decision == PlanApprovalStates.Approved) StartRun(conversationId);
+        return true;
     }
 
     public void DeleteConversation(string id)
@@ -1918,6 +2003,18 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>Raised once when a run is over, carrying everything needed to say how it went.</summary>
     internal event Action<string, RunOutcome>? RunCompleted;
 
+    /// <summary>Raised when a conversation first needs an approval decision.</summary>
+    internal event Action<string, ChatAttentionKind>? AttentionRequired;
+
+    /// <summary>The number of other conversations with an approval the user has not opened yet.</summary>
+    internal int UnseenApprovalConversationCount
+        => _sessions.List()
+            .Where(summary => summary.PendingApprovals > 0 && summary.Id != _active?.Id)
+            .Count(summary => (_sessions.Peek(summary.Id) ?? _sessions.Load(summary.Id))?.Messages
+                .Any(turn => !turn.ApprovalSeen
+                             && (turn.ApprovalState == ChatApprovalStates.Pending
+                                 || turn.PlanApprovalState == PlanApprovalStates.Pending)) == true);
+
     internal ConversationRun? RunFor(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) ? run : null;
 
@@ -1966,6 +2063,10 @@ public sealed class ChatWorkspace : IDisposable
     public bool IsRunning(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) && run.IsStreaming;
 
+    internal bool HasPendingPlanApproval(string conversationId)
+        => (_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.Messages
+            .Any(turn => turn.PlanApprovalState == PlanApprovalStates.Pending) == true;
+
     public int RunningCount => _runs.Count;
 
     /// <summary>
@@ -2012,6 +2113,13 @@ public sealed class ChatWorkspace : IDisposable
         if (IsRunning(conversationId))
         {
             refusalKey = "ChatSessionBusy";
+            return false;
+        }
+
+        var existing = _sessions.Peek(conversationId) ?? _sessions.Load(conversationId);
+        if (existing?.Messages.Any(turn => turn.PlanApprovalState == PlanApprovalStates.Pending) == true)
+        {
+            refusalKey = "ChatPlanAwaitingApproval";
             return false;
         }
 
@@ -2383,11 +2491,13 @@ public sealed class ChatWorkspace : IDisposable
         {
             // Recorded as waiting *before* the stream is told to end: a call that is cancelled but not recorded
             // would disappear, and the model's request would go with it.
-            _sessions.TryUpdate(run.ConversationId, opened => MarkPending(opened, call.CallId, decision.Preview));
+            _sessions.TryUpdate(run.ConversationId, opened =>
+                MarkPending(opened, call.CallId, decision.Preview, run.ConversationId == _active?.Id));
             run.ParkForApproval();
             run.SuspendForApproval();
             Changed?.Invoke();
             RunsChanged?.Invoke(run.ConversationId);
+            AttentionRequired?.Invoke(run.ConversationId, ChatAttentionKind.ToolApproval);
         }).ConfigureAwait(false);
         return ChatPipeline.ToolGateOutcome.Pending;
     }
@@ -2396,7 +2506,7 @@ public sealed class ChatWorkspace : IDisposable
     /// result: an unanswered call in the transcript is the record that a decision is owed, and
     /// <see cref="Conversation.CloseUnansweredToolCalls"/> is what turns it into a result if nobody ever makes
     /// one.</summary>
-    private static void MarkPending(Conversation conversation, string callId, string? preview)
+    private static void MarkPending(Conversation conversation, string callId, string? preview, bool seen)
     {
         var index = conversation.IndexOfToolCall(callId);
         if (index < 0) return;
@@ -2404,6 +2514,7 @@ public sealed class ChatWorkspace : IDisposable
         {
             ApprovalState = ChatApprovalStates.Pending,
             ApprovalPreview = preview,
+            ApprovalSeen = seen,
         };
     }
 
@@ -3016,16 +3127,42 @@ public sealed class ChatWorkspace : IDisposable
         // The token sources are released last — a stop pressed on the final chunk is still being unwound here.
         RaiseOnUi(() =>
         {
+            var pendingPlan = result == RunResult.Completed && receivedText
+                              && MarkCompletedPlanPending(run.ConversationId);
             run.Finish(result);
             _runs.Remove(run.ConversationId);
             Changed?.Invoke();
             RunsChanged?.Invoke(run.ConversationId);
+            if (pendingPlan) AttentionRequired?.Invoke(run.ConversationId, ChatAttentionKind.PlanApproval);
             RunCompleted?.Invoke(run.ConversationId, new RunOutcome(result, receivedText, noticeKey, danger, detail));
             run.Dispose();
             // Last, after the slot is really gone: a wake waiting for one may only start once this run has left
             // the registry, or the fleet would be one session over its own cap.
             StartNextQueuedWake();
         });
+    }
+
+    private bool MarkCompletedPlanPending(string conversationId)
+    {
+        var pending = false;
+        _sessions.TryUpdate(conversationId, conversation =>
+        {
+            if (NormalizeMode(conversation.Mode) != ChatModes.Plan) return;
+            for (var index = conversation.Messages.Count - 1; index >= 0; index--)
+            {
+                var turn = conversation.Messages[index];
+                if (turn.Role != ChatRoles.Assistant || turn.ToolCallId is not null || turn.Text.Length == 0) continue;
+                if (turn.PlanApprovalState is not null) return;
+                conversation.Messages[index] = turn with
+                {
+                    PlanApprovalState = PlanApprovalStates.Pending,
+                    ApprovalSeen = conversationId == _active?.Id,
+                };
+                pending = true;
+                return;
+            }
+        });
+        return pending;
     }
 
     private void SchedulePaint(ConversationRun run)

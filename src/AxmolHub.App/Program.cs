@@ -23,6 +23,7 @@ internal static class Program
             velopack.OnBeforeUninstallFastCallback(_ => DeepLinkProtocolRegistration.UnregisterWindowsOnUninstall());
         }
         velopack.Run();
+        SystemAttentionService.SetWindowsAppUserModelId();
 
         // Verification-mode reports go to stdout and contain Chinese. Without UTF-8 they are
         // garbled on Windows (hit on the very first P5 self-check run: the assertion results
