@@ -1440,6 +1440,18 @@ public partial class ShellCheckWindow : Window
                       .All(tool => ChatTools.RiskOf(tool.Name, null) == ToolRisk.ReadOnly),
                 "「询问审批」不给任何工具，「计划」只给只读的那些");
 
+            // The agent prompt carries the working discipline the tools cannot enforce: verify with the project's
+            // own command before claiming a result, and re-run into a file when the output was cut short. It also
+            // has to stay the *general* prompt — engine-specific instructions are a layer injected elsewhere, and
+            // a mode prompt that names one product stops being a programming assistant (AGENTS.md, charter).
+            var agentPrompt = ChatWorkspace.ChatModePrompt.For(ChatModes.Agent);
+            Check(agentPrompt.Contains("run the check the project itself uses")
+                  && agentPrompt.Contains("if you did not run it, say so")
+                  && agentPrompt.Contains("output written to a file inside the workspace")
+                  && !agentPrompt.Contains("axmol", StringComparison.OrdinalIgnoreCase)
+                  && !agentPrompt.Contains("1kiss", StringComparison.OrdinalIgnoreCase),
+                "Agent 提示词写明「验证过才报结果、输出被截断就落文件再读」，且不含引擎专属命令名");
+
             // Only this process can prove the encoding case: Hub is a windowed app with no console, and setting
             // a console's output codepage is what PowerShell does when told to — it throws where there is no
             // console to set. A CJK line that comes back whole here is the transcript not turning Chinese into
