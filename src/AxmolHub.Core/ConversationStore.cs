@@ -32,6 +32,11 @@ public sealed class ConversationStore(string root)
     /// a tarball.</summary>
     private string ImageDirectory(string id) => Path.Combine(SessionsDirectory, SanitizeId(id));
 
+    /// <summary>The directory one session's attachments live in, whether or not it has any yet. Exposed because
+    /// "the pictures went away with the session" is a fact about the disk, and a check that reads it has to be
+    /// able to name the place.</summary>
+    public string SessionImageDirectory(string id) => ImageDirectory(id);
+
     /// <summary>Stores one image and returns what the turn has to remember: the file name it landed under, the
     /// media type its own header says it is, and how many bytes are on disk. A name rather than a path, for the
     /// same reason the undo pre-images are kept by name — a session file that spells out the data root stops
@@ -54,12 +59,64 @@ public sealed class ConversationStore(string root)
     /// to throw while rendering a session that still has everything else.</summary>
     public byte[]? ReadImage(string conversationId, string file)
     {
+        var path = ImagePath(conversationId, file);
+        return path is null ? null : File.ReadAllBytes(path);
+    }
+
+    /// <summary>Where a stored image sits, or <c>null</c> when the name is not a plain file name or nothing is on
+    /// disk under it. A view wants the path rather than the bytes: a bitmap given a file name decodes lazily,
+    /// while reading the bytes here would put megabytes on the UI thread that renders a transcript row.</summary>
+    public string? ImagePath(string conversationId, string file)
+    {
         // Only a plain name reaches the disk: the name comes from a session file, which is user-editable data,
         // and "…/../../state.json" is not an image of this conversation.
         var name = Path.GetFileName(file);
         if (name.Length == 0 || !string.Equals(name, file, StringComparison.Ordinal)) return null;
         var path = Path.Combine(ImageDirectory(conversationId), name);
-        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        return File.Exists(path) ? path : null;
+    }
+
+    /// <summary>
+    /// Admits and stores one picture in a single step, so a message can never be built out of bytes the request
+    /// would refuse to send. Ordering matters: the file is written before the turn is appended, because a turn
+    /// that names a missing attachment reads as a lost picture rather than as a refusal that happened first.
+    /// A refusal writes nothing.
+    /// </summary>
+    public ImageAdmission AttachImage(string conversationId, byte[] bytes, int alreadyAttached)
+    {
+        var verdict = ChatImageFormat.Admit(bytes, alreadyAttached);
+        if (verdict != ChatImageVerdict.Accepted) return new ImageAdmission(verdict, null);
+        return new ImageAdmission(ChatImageVerdict.Accepted, SaveImage(conversationId, bytes));
+    }
+
+    /// <summary>
+    /// Reads one picture a person is offering, from a file name, and says whether it could ever be sent — without
+    /// storing anything. The composer holds a picture before it belongs to any conversation, and a draft that is
+    /// never sent must not leave a file on disk; how many pictures one message may carry is a rule about the
+    /// message, so the caller counts its own queue and asks <see cref="ChatImageFormat.Admit"/> about that.
+    /// The size is checked <b>before</b> the file is read, so picking something oversized costs a stat rather than
+    /// a gigabyte of memory.
+    /// </summary>
+    public static byte[]? ReadCandidateFile(string path, out ChatImageVerdict verdict)
+    {
+        var length = new FileInfo(path).Length;
+        verdict = length switch
+        {
+            0 => ChatImageVerdict.Empty,
+            > ChatImageFormat.MaxImageBytes => ChatImageVerdict.TooLarge,
+            _ => ChatImageVerdict.Accepted,
+        };
+        if (verdict != ChatImageVerdict.Accepted) return null;
+
+        var bytes = File.ReadAllBytes(path);
+        if (ChatImageFormat.Identify(bytes) is null)
+        {
+            verdict = ChatImageVerdict.Unrecognized;
+            return null;
+        }
+
+        verdict = ChatImageVerdict.Accepted;
+        return bytes;
     }
 
     /// <summary>Session headers, pinned first then newest first. Rebuilds the index when it is absent or unreadable.</summary>

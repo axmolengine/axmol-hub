@@ -11,6 +11,15 @@ public enum ChatImageVerdict
 }
 
 /// <summary>
+/// What a store decided about one attachment: the verdict, and for an accepted picture the record the turn has to
+/// carry. A refusal writes nothing, so <see cref="Image"/> is null exactly when nothing may be sent.
+/// </summary>
+public readonly record struct ImageAdmission(ChatImageVerdict Verdict, ChatImage? Image)
+{
+    public bool Accepted => Verdict == ChatImageVerdict.Accepted;
+}
+
+/// <summary>
 /// Recognizing, sizing and counting the images a conversation carries.
 ///
 /// Recognition is by <b>file header</b>, never by extension or by what the sender claims: a picture pasted from

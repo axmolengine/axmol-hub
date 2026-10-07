@@ -263,7 +263,9 @@ public sealed class ChatPipeline(IChatClient client)
         var media = new List<AIContent>();
         var unsent = AddPictures(turn, images, media);
         if (unsent > 0) text += MissingPictures(unsent, turn.Images.Count);
-        media.Insert(0, new TextContent(text));
+        // A screenshot with no question under it is a normal thing to send, and an empty text part is not how it
+        // should look on the wire: the pictures are the message, so nothing is inserted before them.
+        if (text.Length > 0) media.Insert(0, new TextContent(text));
         return new ChatMessage(ToRole(turn.Role), media);
     }
 
