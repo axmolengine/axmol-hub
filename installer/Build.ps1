@@ -7,6 +7,7 @@ param(
     [string]$OutputDir,
     [string]$PublishDir,
     [switch]$PrereleaseBuild,
+    [switch]$ReleaseAssetNames,
     # delta 包的前提是打包时输出目录里已经有上一版的 .nupkg。Publish.ps1 先用
     # `vpk download github` 把上一版取回来，再以 -NoClean 调本脚本；默认仍然清空，
     # 因为 releases.<channel>.json 是单一索引，残留的旧版本会一并列进发布内容。
@@ -60,13 +61,6 @@ $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
 dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
-if ($Runtime -like 'win-*') {
-    $taskPublishedMainExe = Join-Path $taskPublish 'AxmolHub.App.exe'
-    $taskPackMainExe = Join-Path $taskPublish 'Axmol Hub.exe'
-    if (-not (Test-Path -LiteralPath $taskPublishedMainExe)) { throw "Missing published Windows main executable: $taskPublishedMainExe" }
-    Move-Item -LiteralPath $taskPublishedMainExe -Destination $taskPackMainExe -Force
-}
-
 # 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。
 $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.png'
 if ($Runtime -like 'win-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.ico' }
@@ -76,7 +70,7 @@ if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/
 # 参数名三平台统一用 --mainExe（官方 vpk 1.2.x 的跨平台参数；master 源码里出现的 --exeName
 # 是尚未发布的新名，1.2.161 里不存在）。macOS 的 entry point 其实来自 .app 的 Info.plist、
 # Linux 来自生成的 .desktop，--mainExe 在三平台都被接受。
-$taskMainExe = 'Axmol Hub.exe'
+$taskMainExe = 'AxmolHub.App.exe'
 if ($Runtime -like 'osx-*' -or $Runtime -like 'linux-*') { $taskMainExe = 'AxmolHub.App' }
 
 $taskArguments = @(
@@ -118,7 +112,11 @@ if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutp
 if ($Runtime -like 'osx-*') {
     & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
 }
-$taskSetupName = 'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
+$taskSetupName = if ($Runtime -like 'win-*' -and -not $ReleaseAssetNames) {
+    'Axmol Hub.exe'
+} else {
+    'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
+}
 Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 
 # 只给用户直接下载的产物写摘要；.nupkg 是更新载荷，由 releases.<channel>.json 引用。

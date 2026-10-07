@@ -84,9 +84,8 @@ internal static class DeepLinkProtocolRegistration
             diagnostic?.Invoke("Windows Start Menu directory was not found; toast AppUserModelID shortcut stamping was skipped.");
             return;
         }
-        var shortcut = Directory.EnumerateFiles(startMenu, "Axmol Hub.lnk", SearchOption.AllDirectories)
-            .FirstOrDefault();
-        if (shortcut is null)
+        var shortcut = Path.Combine(startMenu, "Axmol Hub.lnk");
+        if (!File.Exists(shortcut))
         {
             diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu; Windows toasts may not be delivered for this build.");
             return;

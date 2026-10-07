@@ -61,7 +61,7 @@ if ($Stage -in @('All', 'Build')) {
         Write-Warning "No previous release could be downloaded ($($_.Exception.Message)). This release will be full-only."
     }
 
-    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -OutputDir $taskOutput -NoClean -PrereleaseBuild:$taskIsPrerelease
+    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -OutputDir $taskOutput -NoClean -PrereleaseBuild:$taskIsPrerelease -ReleaseAssetNames
     if ($LASTEXITCODE -ne 0) { throw 'Build.ps1 failed.' }
 }
 
@@ -84,7 +84,7 @@ if ($Stage -in @('All', 'Upload')) {
     # vpk's own uploader enumerates files from assets.<channel>.json, which still carries
     # the original Setup.exe name. The portable zip is deliberately left out for now.
     # The suffix follows what vpk emits per platform: .exe on Windows, .pkg on macOS and
-    # .AppImage on Linux; Build.ps1 renames by extension, so both stay in sync.
+    # .AppImage on Linux. The build stage uses -ReleaseAssetNames for stable release filenames.
     $taskSuffix = switch -Wildcard ($Runtime) {
         'win-*' { '.exe' }
         'osx-*' { '.pkg' }

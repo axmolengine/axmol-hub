@@ -1,6 +1,6 @@
 # 安装包
 
-安装包由 [Velopack](https://velopack.io) 的 `vpk` 打包器生成：Windows 出一键安装器 + `Portable.zip`，macOS 出 `.pkg`（另有便携 zip），Linux 只出 `.AppImage`。一套脚本、三种产物，并且自带自动更新与增量包。Windows 安装器在打包后被改名为 `axmol-hub-<version>-<runtime>.exe`，见下。
+安装包由 [Velopack](https://velopack.io) 的 `vpk` 打包器生成：Windows 出一键安装器 + `Portable.zip`，macOS 出 `.pkg`（另有便携 zip），Linux 只出 `.AppImage`。一套脚本、三种产物，并且自带自动更新与增量包。本地 Windows 打包默认输出 `Axmol Hub.exe`；发布流水线使用带版本和 RID 的文件名，见下。
 
 ## 前置：准备固定版本的打包器
 
@@ -23,7 +23,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 | 文件 | 用途 |
 | --- | --- |
-| `axmol-hub-<version>-<runtime>.exe` | 一键安装器（**自定义名**），含 SHA-256 |
+| `Axmol Hub.exe` | 本地打包的一键安装器（**自定义名**），含 SHA-256；CI 发布时改为 `axmol-hub-<version>-<runtime>.exe` |
 | `Axmol.Hub-<runtime>-Portable.zip` | 免安装版，含 SHA-256。**当前不上传 release 页** |
 | `Axmol.Hub-<version>-<runtime>-full.nupkg` / `-delta.nupkg` | 自更新载荷（打包器产出名；上传时改名为 `axmol-hub-…`，见下） |
 | `releases.<runtime>.json` | 更新索引，自动更新的唯一入口 |
@@ -31,9 +31,9 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 **文件名的两套规则**（都由 `vpk` 派生）：
 
-- 安装包：`Build.ps1` 把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `axmol-hub-<version>-<runtime>.exe`。原生名里既没有版本也没有架构，在 release 页上每次发布都重名，只能靠标题分辨。
+- 安装包：本地 `Build.ps1` 默认把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `Axmol Hub.exe`；发布流水线传入 `-ReleaseAssetNames`，改为 `axmol-hub-<version>-<runtime>.exe`，避免不同版本和架构重名。
 - 更新载荷：`vpk` 产出 `{packId}-<version>{-channel}-{full|delta}.nupkg`，`Publish-All.ps1` 上传时把它改名为与安装包同源的小写连字符 `axmol-hub-<version>-<runtime>-{full|delta}.nupkg`，**并同步改写 feed 里的 `FileName`** —— 否则客户端按 feed 找不到包。安装包改名与更新链路无关，两者互不影响。
-- Windows 包内主程序固定为 `current\\Axmol Hub.exe`（内部程序集名仍为 `AxmolHub.App`）；Velopack 稳定启动器也叫 `Axmol Hub.exe`，但位于安装根目录，协议与快捷方式始终指向稳定启动器。
+- Windows 包内主程序固定为 `current\\AxmolHub.App.exe`（与程序集同名）；Velopack 稳定启动器叫 `Axmol Hub.exe`，位于安装根目录，协议与快捷方式始终指向稳定启动器。
 
 其中 `{-channel}` 段：`vpk` **只在 Windows 且 channel 恰为平台默认值 `win` 时省略**，其余一律带 `-<channel>`（macOS 出 `-osx-…`、Linux 出 `-linux-…`）。本项目 channel = **完整 RID**（`win-x64` / `osx-arm64` / `osx-x64` / `linux-x64`，见 `Build.ps1`），因 `win-x64 ≠ win`，**四个平台（含 Windows）的 nupkg 都带 `-<rid>-` 段**。feed 名同理 = `releases.<rid>.json`。
 

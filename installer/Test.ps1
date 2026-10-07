@@ -63,8 +63,8 @@ try {
         $taskOutput = Join-Path $taskWork ("releases/" + $taskVersion)
         & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $taskVersion -PackId $taskPackId -PackTitle $taskTitle -OutputDir $taskOutput -PublishDir (Join-Path $taskWork ("publish/" + $taskVersion))
         if ($LASTEXITCODE -ne 0) { throw "Packaging $taskVersion failed." }
-        # Build.ps1 renames the installer to axmol-hub-<version>-<runtime>.exe, so the
-        # vpk-native *-Setup.exe name no longer exists by the time we look for it.
+        # Local builds use the friendly installer name; there should still be only one
+        # installer executable in this version's isolated output directory.
         $taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.exe')
         if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput, found $($taskSetup.Count)." }
         $taskReleases[$taskVersion] = $taskSetup[0].FullName
@@ -77,14 +77,16 @@ try {
 
     # 2. 安装载荷完整：Velopack 把应用放在 current\ 下，外层是稳定路径的启动 stub。
     $taskCurrent = Join-Path $taskInstall 'current'
-    foreach ($taskFile in @('Axmol Hub.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
+    foreach ($taskFile in @('AxmolHub.App.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/recipe-manifest.json', 'manifests/android-gradle-verification.xml')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }
     }
+    $taskInstallHook = Start-Process -FilePath (Join-Path $taskCurrent 'AxmolHub.App.exe') -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
+    if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
     if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }
-    $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent 'Axmol Hub.exe'))
+    $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent 'AxmolHub.App.exe'))
     if ($taskMainVersion.FileDescription -ne 'Axmol Hub') {
         throw "Main executable FileDescription mismatch: $($taskMainVersion.FileDescription)"
     }
