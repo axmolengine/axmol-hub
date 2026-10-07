@@ -1099,18 +1099,40 @@ if (args.Contains("--check-ai-workspace"))
     // WindowsShell.PowerShell mixes separators on purpose (Path.Combine over a literal with '/'), so compare
     // normalized rather than asserting a spelling the Hub itself does not use.
     if (!windows.Executable.Replace('/', '\\').EndsWith("\\WindowsPowerShell\\v1.0\\powershell.exe", StringComparison.OrdinalIgnoreCase)
-        || !windows.ArgumentsFor("dir").SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "dir"]))
+        || !windows.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]))
         throw new Exception($"Windows did not get the system PowerShell with Bypass: {windows.Executable} {string.Join(' ', windows.PrefixArguments)}");
     var unixPwsh = CommandShells.For("linux", pwshAvailable: true);
-    if (unixPwsh.Executable != "pwsh" || unixPwsh.ArgumentsFor("ls").Contains("-ExecutionPolicy")
-        || !unixPwsh.ArgumentsFor("ls").SequenceEqual(["-NoProfile", "-NonInteractive", "-Command", "ls"]))
+    if (unixPwsh.Executable != "pwsh" || unixPwsh.PrefixArguments.Contains("-ExecutionPolicy")
+        || !unixPwsh.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-Command"]))
         throw new Exception("Unix pwsh was given Windows-only arguments.");
     var unixSh = CommandShells.For("macos", pwshAvailable: false);
-    if (unixSh.Executable != "/bin/sh" || !unixSh.ArgumentsFor("ls").SequenceEqual(["-c", "ls"]))
+    if (unixSh.Executable != "/bin/sh" || !unixSh.PrefixArguments.SequenceEqual(["-c"]))
         throw new Exception("Unix without pwsh did not fall back to /bin/sh -c.");
-    if (OperatingSystem.IsWindows() != CommandShells.ForCurrent().Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
-        throw new Exception("ForCurrent disagreed with the host it is running on.");
-    Console.WriteLine("PASS: the command tool picks one shell per host and never mixes their arguments.");
+    if (OperatingSystem.IsWindows() != windows.Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("The Windows tier is not the PowerShell that ships with Windows.");
+    // ForCurrent is the same pure rule applied to the machine it runs on, and on Windows it must land on a
+    // PowerShell tier — a host that falls through to /bin/sh would be handed a script it cannot parse.
+    var current = CommandShells.ForCurrent();
+    var expected = CommandShells.For(BuildTargets.Host, CommandShells.PwshAvailable());
+    if (current.Executable != expected.Executable || current.Label != expected.Label)
+        throw new Exception($"ForCurrent disagreed with the host it is running on: {current.Executable}.");
+    if (OperatingSystem.IsWindows() && !current.IsPowerShell)
+        throw new Exception("A Windows run_command got a shell that is not PowerShell.");
+
+    // Both PowerShell tiers get told to write UTF-8, because their own default is the machine's OEM codepage
+    // while the transcript is decoded as UTF-8. The command still runs — it is prefixed, not replaced — and
+    // /bin/sh gets the command untouched, since that preamble is not shell syntax it understands.
+    if (!windows.ArgumentsFor("Get-Location").SequenceEqual(
+            [.. windows.PrefixArguments, CommandShell.Utf8Preamble + ";Get-Location"])
+        || !unixPwsh.ArgumentsFor("ls").SequenceEqual([.. unixPwsh.PrefixArguments, CommandShell.Utf8Preamble + ";ls"])
+        || !unixSh.ArgumentsFor("ls").SequenceEqual(["-c", "ls"]))
+        throw new Exception($"The UTF-8 preamble is not applied exactly where it belongs:{Environment.NewLine}"
+            + string.Join(Environment.NewLine, new[] { windows, unixPwsh, unixSh }
+                .Select(shell => $"{shell.Label}: {string.Join(' ', shell.ArgumentsFor("ls"))}")));
+    if (!windows.ArgumentsFor("dir")[^1].EndsWith("dir", StringComparison.Ordinal)
+        || !unixSh.ArgumentsFor("dir").SequenceEqual(["-c", "dir"]))
+        throw new Exception("A shell's own arguments swallowed the command it was given.");
+    Console.WriteLine("PASS: one shell per host, with the encoding preamble only where the shell speaks it.");
 
     Directory.Delete(guardRoot, recursive: true);
     return;
@@ -1286,9 +1308,14 @@ if (args.Contains("--check-ai-tools"))
     var stalled = await tools.RunCommand(OperatingSystem.IsWindows() ? "Start-Sleep -Seconds 20" : "sleep 20", 1);
     if (!stalled.Contains("killed after 1s", StringComparison.Ordinal))
         throw new Exception($"An idle command was not killed by its timeout:{Environment.NewLine}{stalled}");
+    // CJK is where an encoding mismatch shows up first: PowerShell answers in the machine's OEM codepage while
+    // the pipe is decoded as UTF-8, so a Chinese Windows turns 中文 into replacement characters.
+    var cjk = await tools.RunCommand(OperatingSystem.IsWindows() ? "Write-Output '中文测试'" : "printf '中文测试'");
+    if (!cjk.Contains("中文测试", StringComparison.Ordinal) || cjk.Contains('\uFFFD'))
+        throw new Exception($"A CJK line did not survive the shell:{Environment.NewLine}{cjk}");
     if (!(await homeless.RunCommand("echo hi")).Contains("no workspace directory", StringComparison.Ordinal))
         throw new Exception("run_command without a workspace did not say so.");
-    Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends and dies when idle.");
+    Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends, dies when idle and speaks UTF-8.");
 
     // ── set_workspace: choosing the sandbox is itself guarded ──
     if (!(await tools.SetWorkspace("relative/path")).Contains("not an absolute path", StringComparison.Ordinal)

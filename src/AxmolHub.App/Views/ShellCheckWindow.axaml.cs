@@ -1420,6 +1420,18 @@ public partial class ShellCheckWindow : Window
                       .All(tool => ChatTools.RiskOf(tool.Name, null) == ToolRisk.ReadOnly),
                 "「询问审批」不给任何工具，「计划」只给只读的那些");
 
+            // Only this process can prove the encoding case: Hub is a windowed app with no console, and setting
+            // a console's output codepage is what PowerShell does when told to — it throws where there is no
+            // console to set. A CJK line that comes back whole here is the transcript not turning Chinese into
+            // replacement characters on a machine whose codepage is not UTF-8.
+            var commandShell = CommandShells.ForCurrent();
+            var cjkResult = await new WorkspaceTools(new WorkspaceToolScope(workspace,
+                new WorkspaceGuards(null, []), null, "encoding-check", [], null, null)).RunCommand(
+                commandShell.IsPowerShell ? "Write-Output '中文测试'" : "printf '中文测试'");
+            Check(cjkResult.Contains("中文测试", StringComparison.Ordinal) && !cjkResult.Contains('\uFFFD'),
+                "无控制台的窗口进程里命令输出的中文按 UTF-8 原样回到转录（" + commandShell.Label + "，实际「"
+                + cjkResult.Replace('\n', '·').Replace("\r", "").Trim() + "」）");
+
             // A read is not a decision: under the strictest mode the read-only tools still run, and the record
             // says nothing was ever asked.
             chat.OpenConversation(readSession.Id);

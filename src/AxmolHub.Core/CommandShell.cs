@@ -2,9 +2,18 @@ namespace AxmolHub.Core;
 
 /// <summary>The shell a <c>run_command</c> call is handed to, plus the label shown to the user so an approval
 /// card says which shell in which directory is about to run what.</summary>
-public sealed record CommandShell(string Executable, IReadOnlyList<string> PrefixArguments, string Label)
+public sealed record CommandShell(string Executable, IReadOnlyList<string> PrefixArguments, string Label,
+                                  bool IsPowerShell = false)
 {
-    public IReadOnlyList<string> ArgumentsFor(string command) => [.. PrefixArguments, command];
+    /// <summary>PowerShell writes the machine's OEM codepage unless it is told otherwise, and Hub decodes the
+    /// pipe as UTF-8 (<see cref="ProcessRunner"/>), so on a Chinese Windows every CJK line of a tool result
+    /// arrives as replacement characters. The setter is wrapped because Hub is a windowed process with no
+    /// console, and setting the output encoding of a console that does not exist throws.</summary>
+    public const string Utf8Preamble =
+        "try{[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)}catch{}";
+
+    public IReadOnlyList<string> ArgumentsFor(string command) =>
+        [.. PrefixArguments, IsPowerShell ? Utf8Preamble + ";" + command : command];
 }
 
 /// <summary>
@@ -17,9 +26,11 @@ public static class CommandShells
 {
     public static CommandShell For(string host, bool pwshAvailable)
         => string.Equals(host, "windows", StringComparison.OrdinalIgnoreCase)
-            ? new CommandShell(WindowsShell.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"], "Windows PowerShell")
+            ? new CommandShell(WindowsShell.PowerShell,
+                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                "Windows PowerShell", IsPowerShell: true)
             : pwshAvailable
-                ? new CommandShell("pwsh", ["-NoProfile", "-NonInteractive", "-Command"], "pwsh")
+                ? new CommandShell("pwsh", ["-NoProfile", "-NonInteractive", "-Command"], "pwsh", IsPowerShell: true)
                 : new CommandShell("/bin/sh", ["-c"], "/bin/sh");
 
     public static CommandShell ForCurrent() => For(BuildTargets.Host, PwshAvailable());
