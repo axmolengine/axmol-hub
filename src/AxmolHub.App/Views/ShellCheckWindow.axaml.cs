@@ -927,6 +927,7 @@ public partial class ShellCheckWindow : Window
         await CheckPictureAsync(shell, panel);
         await CheckEmptyStateAsync(shell, panel);
         await CheckPictureFeedbackAsync(shell, panel);
+        await CheckComposerKeysAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1550,6 +1551,135 @@ public partial class ShellCheckWindow : Window
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// 组合框的键盘：Esc 停得下来，Up 找得回来，发完还在原地。
+    ///
+    /// Three keys that a person reaches for without thinking, and each one is a decision about whose key it is:
+    /// Escape belongs to the preview while the preview is on screen and to the running reply after that, Up belongs
+    /// to the caret while there is a sentence being written, and the send button does not get to keep the keyboard.
+    /// Every cell here drives the real routed key event, so what is asserted is the binding rather than the method
+    /// it happens to call.
+    /// </summary>
+    private async Task CheckComposerKeysAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var scratch = ScratchDirectory.Resolve("composer-keys");
+        var png = System.IO.Path.Combine(scratch, "shot.png");
+        System.IO.File.WriteAllBytes(png, PictureFixture());
+        var session = chat.StartConversation();
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            // ── 发出去的话，Up 还能找回来 ──
+            // The queue is the window's, not this conversation's — a draft lost to a steer has to be reachable
+            // even when the conversation it belonged to was created by that very send — so the newest two are
+            // read off the tail rather than counted, because the queue is capped.
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["第一条回答"]);
+            panel.SetInputForCheck("第一句问话");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            panel.SetInputForCheck("第二句问话");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            Check(panel.RecentSentTextsForCheck(2).SequenceEqual(["第一句问话", "第二句问话"], StringComparer.Ordinal),
+                "两句发出去的话都进了召回队列（实际「"
+                + string.Join(" / ", panel.RecentSentTextsForCheck(2)) + "」）");
+
+            panel.PressComposerKeyForCheck(Key.Up);
+            Check(panel.InputTextForCheck == "第二句问话",
+                "Up 先回到最近一句（实际「" + panel.InputTextForCheck + "」）");
+            panel.PressComposerKeyForCheck(Key.Up);
+            Check(panel.InputTextForCheck == "第一句问话",
+                "再按 Up 继续往回走（实际「" + panel.InputTextForCheck + "」）");
+            panel.PressComposerKeyForCheck(Key.Down);
+            Check(panel.InputTextForCheck == "第二句问话", "Down 又回到近处");
+            panel.PressComposerKeyForCheck(Key.Down);
+            Check(panel.InputTextForCheck.Length == 0 && panel.RecallStepForCheck == 0,
+                "走到头回到空框，而不是把最近一句钉在那里");
+
+            // A half-written sentence wins the arrow over history — that is the case where replacing the box would
+            // destroy work. And the walk restarts from the newest once the box is empty again, so typing did not
+            // cost the history.
+            panel.SetInputForCheck("自己写到一半");
+            panel.PressComposerKeyForCheck(Key.Up);
+            Check(panel.InputTextForCheck == "自己写到一半",
+                "框里已经有字时 Up 让给光标，不覆盖正在写的话");
+            panel.SetInputForCheck("");
+            panel.PressComposerKeyForCheck(Key.Up);
+            Check(panel.InputTextForCheck == "第二句问话",
+                "清空之后 Up 重新从最近一句开始（实际「" + panel.InputTextForCheck + "」）");
+
+            // ── 按下发送后，键盘还留在输入框里 ──
+            // Focus is moved away first, and the move is asserted: the box already holds the keyboard, so without
+            // taking it away a handler that never gave it back would pass this cell standing still.
+            panel.SetInputForCheck("发完这句");
+            panel.MoveFocusOffComposerForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.ComposerHasKeyboardFocusForCheck,
+                "夹具：焦点确实被挪走了，否则下一条断言什么都证明不了");
+            panel.ClickSendButtonForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ComposerHasKeyboardFocusForCheck,
+                "按下发送后焦点回到输入框：接下来通常还要接着说");
+            await panel.WaitForRunToFinishForCheck();
+
+            // ── Esc：先关预览，再停回复 ──
+            panel.AddImageForCheck(png);
+            panel.ClickPendingPictureForCheck(0);
+            Check(panel.PicturePreviewOpenForCheck, "夹具：预览开着，图也还在草稿里");
+
+            var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["这条会被停住"], gate: hold.Task);
+            panel.SetInputForCheck("先别答完");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            panel.PressEscapeForCheck();
+            Check(!panel.PicturePreviewOpenForCheck && panel.IsStreamingForCheck,
+                "预览开着时 Esc 只收预览，不停正在写的回复（覆盖层是屏幕上唯一正在被看的东西）");
+            panel.PressEscapeForCheck();
+            await WaitUntilAsync(() => !panel.IsStreamingForCheck);
+            Check(!panel.IsStreamingForCheck, "再按一次 Esc 才停住这条回复");
+            hold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+
+            // ── 空闲时的 Esc 什么都不该做 ──
+            var idleTurns = chat.StoredCopyForCheck(session.Id)?.Messages.Count ?? 0;
+            panel.SetInputForCheck("留着别动");
+            panel.PressEscapeForCheck();
+            Check(panel.InputTextForCheck == "留着别动"
+                  && chat.StoredCopyForCheck(session.Id)?.Messages.Count == idleTurns,
+                "没有回复在跑时按 Esc 不吞字、也不动会话（实际「" + panel.InputTextForCheck + "」）");
+            panel.SetInputForCheck("");
+
+            // ── 半路引导进去的那句也在历史里 ──
+            var steerHold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["引导之后答的"], gate: steerHold.Task);
+            panel.SetInputForCheck("把这条停住");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            panel.SetInputForCheck("半路改的主意");
+            await panel.SendComposerForCheck();
+            steerHold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+            panel.SetInputForCheck("");
+            panel.PressComposerKeyForCheck(Key.Up);
+            Check(panel.InputTextForCheck == "半路改的主意",
+                "被引导吞掉的那句同样能 Up 回来（实际「" + panel.InputTextForCheck + "」）");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
     }
 
     /// <summary>

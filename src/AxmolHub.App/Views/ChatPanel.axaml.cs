@@ -52,6 +52,18 @@ public partial class ChatPanel : UserControl
     /// the same picture that is on screen, and nothing else in this view remembers them.</summary>
     private byte[]? _previewBytes;
 
+    /// <summary>
+    /// What this composer has already sent, oldest first, for the Up arrow to walk back through — along with the
+    /// steer that a running reply swallowed. Panel-wide rather than per conversation on purpose: Hub creates the
+    /// conversation at the moment the first message is sent, so a per-conversation history would lose exactly the
+    /// draft a person reaches Up for.
+    /// </summary>
+    private readonly List<string> _sentTexts = [];
+
+    private int _recallIndex;
+    private bool _recalling;
+    private const int MaxRecalledTexts = 20;
+
     private string? _selectedComposerMode;
     private bool _stickToBottom = true;
     private Task? _contextCompressionTask;
@@ -162,13 +174,22 @@ public partial class ChatPanel : UserControl
         AddContextButton.Click += (_, _) => ShowAddContextMenu();
         PermissionChip.Click += (_, _) => ShowPermissionMenu();
         WorkspaceChip.Click += (_, _) => ShowWorkspaceMenu();
-        SendButton.Click += (_, _) => _ = SendAsync();
+        // The round button is the thing being pressed, and a press moves the keyboard to it. The reply is what
+        // the person is waiting on, and the composer is where the next sentence goes, so focus comes back here.
+        SendButton.Click += (_, _) =>
+        {
+            _ = SendAsync();
+            InputBox.Focus();
+        };
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
         MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
         InputBox.PropertyChanged += (_, e) =>
         {
             if (e.Property == TextBox.TextProperty)
             {
+                // Typing ends the walk: the next Up starts again from the newest thing sent, rather than
+                // continuing to page through history under a sentence the person has begun writing themselves.
+                if (!_recalling) _recallIndex = 0;
                 UpdateSendState();
                 UpdateContextRing();
             }
@@ -198,6 +219,28 @@ public partial class ChatPanel : UserControl
             if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Meta)) return;
             e.Handled = true;
             if (!await TryPastePictureAsync()) InputBox.Paste();
+        }, RoutingStrategies.Tunnel);
+
+        // Escape stops the reply this composer is watching, and Up walks back through what has already been sent.
+        // Both are claimed only while the text box holds the keyboard: the in-place editor on a bubble keeps its
+        // own Escape, and a caret in a multi-line draft keeps its own Up.
+        InputBox.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            switch (e.Key)
+            {
+                case Key.Escape when ViewedRun is { IsStreaming: true } streaming:
+                    e.Handled = true;
+                    _chat.RequestStop(streaming.ConversationId);
+                    break;
+                case Key.Up when e.KeyModifiers == KeyModifiers.None && CanRecall():
+                    e.Handled = true;
+                    RecallText(backwards: true);
+                    break;
+                case Key.Down when _recallIndex > 0:
+                    e.Handled = true;
+                    RecallText(backwards: false);
+                    break;
+            }
         }, RoutingStrategies.Tunnel);
 
         // Dropping a capture onto the composer is how a picture arrives while the answer is still being written.
@@ -1994,6 +2037,37 @@ public partial class ChatPanel : UserControl
     /// thing being typed into.</summary>
     private void SetComposerFocus(bool focused) => ComposerFrame.Classes.Set("focused", focused);
 
+    /// <summary>Whether Up is free to take the key: the box is empty, or the person is already part-way through a
+    /// recall. Anything else is a caret moving inside a draft, which is the text box's business and not this one.</summary>
+    private bool CanRecall() => _recallIndex > 0 || (InputBox.Text ?? "").Length == 0;
+
+    /// <summary>Steps through what has been sent. Down at the newest end lands back on an empty box, which is the
+    /// only way out of the walk that does not throw away the sentence being looked at.</summary>
+    private void RecallText(bool backwards)
+    {
+        _recallIndex = backwards
+            ? Math.Min(_recallIndex + 1, _sentTexts.Count)
+            : Math.Max(_recallIndex - 1, 0);
+        if (_sentTexts.Count == 0) return;
+
+        var picked = _recallIndex == 0 ? "" : _sentTexts[^_recallIndex];
+        _recalling = true;
+        InputBox.Text = picked;
+        _recalling = false;
+        InputBox.CaretIndex = picked.Length;
+        UpdateSendState();
+    }
+
+    /// <summary>Records a message that really left the composer. A send that was refused, and a steer that lost
+    /// the race to a finished run, both keep the draft out of here — history is what was said, not what was typed.</summary>
+    private void RememberSentText(string text)
+    {
+        if (text.Length == 0) return;
+        _sentTexts.Add(text);
+        if (_sentTexts.Count > MaxRecalledTexts) _sentTexts.RemoveAt(0);
+        _recallIndex = 0;
+    }
+
     private async Task SendAsync()
     {
         if (ViewedRun is { IsStreaming: true } run)
@@ -2024,6 +2098,7 @@ public partial class ChatPanel : UserControl
                     return;
                 }
 
+                RememberSentText(steerText);
                 InputBox.Text = "";
                 _contextAttachments.Clear();
                 _pendingPictures.Clear();
@@ -2080,6 +2155,7 @@ public partial class ChatPanel : UserControl
             return;
         }
 
+        RememberSentText(text);
         ConversationStateChanged?.Invoke();
     }
 
@@ -2751,13 +2827,31 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>Sends Escape down the composer's own route, so the preview-first ordering is the real one.</summary>
-    internal void PressEscapeForCheck()
+    internal void PressEscapeForCheck() => PressComposerKeyForCheck(Key.Escape);
+
+    /// <summary>Presses a key on the composer through the routed event, so the bindings themselves are what a
+    /// check exercises — not the private methods they happen to call.</summary>
+    internal void PressComposerKeyForCheck(Key key, KeyModifiers modifiers = KeyModifiers.None)
         => InputBox.RaiseEvent(new KeyEventArgs
         {
             RoutedEvent = InputElement.KeyDownEvent,
-            Key = Key.Escape,
+            Key = key,
+            KeyModifiers = modifiers,
             Source = InputBox,
         });
+
+    /// <summary>How far into the recall walk the composer stands, and the newest sentences it can walk back to.
+    /// The tail is what a check reads: the queue is capped, so a count would say one thing on a fresh window and
+    /// another after an hour of the suite having sent things.</summary>
+    internal int RecallStepForCheck => _recallIndex;
+    internal string[] RecentSentTextsForCheck(int count)
+        => _sentTexts.TakeLast(Math.Max(count, 0)).ToArray();
+
+    /// <summary>
+    /// Moves the keyboard off the text box and onto the <c>+</c> button. Without this the focus-after-send cell
+    /// would prove nothing: the box already has focus, so a handler that never gave it back would still pass.
+    /// </summary>
+    internal void MoveFocusOffComposerForCheck() => AddContextButton.Focus();
 
     /// <summary>
     /// The payload the copy button would hand the clipboard, without touching it: a self-check that ran the real
