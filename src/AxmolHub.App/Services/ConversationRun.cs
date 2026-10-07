@@ -56,6 +56,7 @@ internal sealed class ConversationRun : IDisposable
     private int _paintQueued;
     private int _compactionRequested;
     private int _wakesUsed;
+    private int _spawnsUsed;
     private bool _parked;
 
     public string ConversationId { get; }
@@ -212,6 +213,19 @@ internal sealed class ConversationRun : IDisposable
     internal void SpendWake()
     {
         lock (_gate) _wakesUsed++;
+    }
+
+    /// <summary>Children this answer has already started. Counted on the run like <see cref="WakesUsed"/>, and
+    /// kept separate from it because the two limits answer different questions: a wake reuses a session that
+    /// exists, a spawn creates one, so the spawn budget is one per answer even though wakes are two.</summary>
+    internal int SpawnsUsed
+    {
+        get { lock (_gate) return _spawnsUsed; }
+    }
+
+    internal void SpendSpawn()
+    {
+        lock (_gate) _spawnsUsed++;
     }
 
     internal IReadOnlyList<string> ToolOutcomes

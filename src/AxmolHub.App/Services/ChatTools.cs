@@ -45,7 +45,11 @@ internal static class ChatTools
         // the frame leaves the machine in the next request. That is the SystemCommand tier's job: it asks in
         // every mode but full. Spelled out rather than left to the fallback arm, because "unknown tool" and "this
         // tool was thought about" must not read the same in this table.
+        // "capture_screen" and "spawn_session" are both spelled out even though the fallback arm would land them
+        // here too: one is the user's screen going to a model, the other is a new session that spends money, and
+        // a tier that reads as "nobody decided this one" is a tier nobody reviewed.
         "capture_screen" => ToolRisk.SystemCommand,
+        "spawn_session" => ToolRisk.SystemCommand,
         "memory_write" => ScopeOf(argumentsJson) == MemoryScope.Global
             ? ToolRisk.WorkspaceWrite
             : ToolRisk.AssistantNote,
@@ -129,6 +133,7 @@ internal static class ChatTools
             AIFunctionFactory.Create(tools.SetWorkspace, Options("set_workspace")),
             AIFunctionFactory.Create(tools.MemoryWrite, Options("memory_write")),
             AIFunctionFactory.Create(tools.SendToSession, Options("send_to_session")),
+            AIFunctionFactory.Create(tools.SpawnSession, Options("spawn_session")),
         ];
     }
 }

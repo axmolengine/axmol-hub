@@ -889,6 +889,7 @@ public partial class ShellCheckWindow : Window
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
+        await CheckSpawnAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1189,7 +1190,77 @@ public partial class ShellCheckWindow : Window
         }
     }
 
-    private static TaskCompletionSource<bool> PeerGate() =>
+    /// <summary>
+    /// spawn_session 走一遍真发：开关关着时一条会话都不许创建，开着时一次回答只能创建一个。
+    /// The child answers through its own scripted client, so the parent's slot, the child's slot and the refusal
+    /// of the second call are the app's real machinery rather than a unit test of the table — and everything still
+    /// runs with no key and no network.
+    /// </summary>
+    private async Task CheckSpawnAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var parent = chat.StartConversation();
+        chat.SetApprovalMode(parent.Id, ToolApprovalModes.Full);
+        var savedPreferences = chat.PreferencesProvider;
+        var savedOverride = chat.ClientOverride;
+        var children = new List<string>();
+        try
+        {
+            chat.ClientOverride = (_, id) => id == parent.Id
+                ? new SpawnAskingChatClient()
+                : new ScriptedChatClient(["子会话查完了，结论就两行。"]);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+
+            chat.PreferencesProvider = () => new HubPreferences { AllowSpawnedSessions = false };
+            await panel.SendForCheckAsync("这仓库太大了，帮我找个读得动的办法");
+            var offResults = parent.Messages.Count(turn => turn.Role == ChatRoles.Tool);
+            var offSaid = parent.Messages.Where(turn => turn.Role == ChatRoles.Tool)
+                .Select(turn => turn.Text).ToList();
+            // Counted by origin rather than by total: the parent's own session is only counted once its first
+            // message lands, so "the list grew by one" would be true no matter what the switch said.
+            Check(chat.Conversations.Count(summary => summary.SpawnedBy == parent.Id) == 0 && offResults == 2
+                  && offSaid.All(text => !text.Contains("Spawned session", StringComparison.Ordinal))
+                  && offSaid.Any(text => text.Contains("turned off", StringComparison.Ordinal)),
+                "总开关关着时 spawn_session 一条会话都不创建，并把去哪儿开告诉模型（结果 " + offResults + " 条）");
+
+            var resultsBefore = parent.Messages.Count(turn => turn.Role == ChatRoles.Tool);
+            chat.PreferencesProvider = () => new HubPreferences { AllowSpawnedSessions = true };
+            await panel.SendForCheckAsync("那就派生一个专门读大文件的会话");
+            children = chat.Conversations.Where(summary => summary.SpawnedBy == parent.Id)
+                .Select(summary => summary.Id).ToList();
+            var newResults = parent.Messages.Where(turn => turn.Role == ChatRoles.Tool)
+                .Skip(resultsBefore).Select(turn => turn.Text).ToList();
+            Check(children.Count == 1
+                  && newResults.Count(text => text.Contains("Spawned session", StringComparison.Ordinal)) == 1
+                  && newResults.Any(text => text.Contains("one allowed child", StringComparison.Ordinal)),
+                "开着开关时一次回答只创建一个子会话，第二次派生被每条回答一个的上限挡住（实际 "
+                + children.Count + " 条，结果 " + newResults.Count + " 条）");
+            if (children.Count == 1)
+            {
+                await WaitForRunAsync(chat, children[0]);
+                var child = chat.OpenConversation(children[0]);
+                Check(child is not null
+                      && child.SpawnedBy == parent.Id
+                      && child.Messages.FirstOrDefault(turn => turn.Role == ChatRoles.User) is { } briefing
+                      && briefing.Text.Contains(parent.Id, StringComparison.Ordinal)
+                      && briefing.InjectedFrom == parent.Id,
+                    "子会话的第一条消息带上任务与父会话 id，回答才知道该往回收（实际 " + child?.Messages.Count + " 条）");
+            }
+            chat.OpenConversation(parent.Id);
+        }
+        finally
+        {
+            chat.PreferencesProvider = savedPreferences;
+            chat.ClientOverride = savedOverride;
+            foreach (var id in children) chat.DeleteConversation(id);
+            chat.DeleteConversation(parent.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+        private static TaskCompletionSource<bool> PeerGate() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static Dictionary<string, object?> PeerSend(string target, string text, bool wake) => new()
@@ -1476,9 +1547,10 @@ public partial class ShellCheckWindow : Window
                   && ChatTools.RiskOf("file_write", null) == ToolRisk.WorkspaceWrite
                   && ChatTools.RiskOf("run_command", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("capture_screen", null) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("spawn_session", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("set_workspace", null) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("没登记过的工具", null) == ToolRisk.SystemCommand,
-                "只读查询登记为只读，写文件是工作区写，抓屏与命令同级，没听过的工具名按系统命令兜底而不是放行");
+                "只读查询登记为只读，写文件是工作区写，抓屏与派生子会话都与命令同级，没听过的工具名按系统命令兜底而不是放行");
 
             // The tier only matters through the decision table, and for capture_screen the table is the privacy
             // guarantee: a model that can look at the desktop may only do it once per card in the two modes that
@@ -1509,16 +1581,17 @@ public partial class ShellCheckWindow : Window
                 new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
             var schema = string.Join("\n", agentTools.OfType<Microsoft.Extensions.AI.AIFunction>()
                 .Select(tool => tool.JsonSchema.GetRawText()));
-            Check(agentTools.Count == 16
+            Check(agentTools.Count == 17
                   && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Select(tool => tool.Name)
                       .All(name => name.Contains('_', StringComparison.Ordinal))
                   && schema.Contains("old_string") && schema.Contains("new_string")
                   && schema.Contains("replace_all") && schema.Contains("timeout_seconds")
                   && schema.Contains("ignore_case") && schema.Contains("max_matches")
-                  && schema.Contains("fullscreen")
+                  && schema.Contains("fullscreen") && schema.Contains("inherit_workspace")
                   && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Any(tool => tool.Name == "capture_screen")
+                  && agentTools.OfType<Microsoft.Extensions.AI.AIFunction>().Any(tool => tool.Name == "spawn_session")
                   && !schema.Contains("oldString") && !schema.Contains("ignoreCase"),
-                "Agent 档注册十六个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
+                "Agent 档注册十七个工具、名字都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
                 + agentTools.Count + " 个）");
 
             // The screen is the one capability whose implementation is a system call, so it gets one live test
@@ -2372,6 +2445,47 @@ public partial class ShellCheckWindow : Window
 
     /// <summary>Streams text, asks for a real read-only Hub tool, then finishes the answer — the shape a tool
     /// turn actually has, so the transcript ordering is proven on the path that produces it.</summary>
+    /// <summary>A scripted stream that asks for <c>spawn_session</c> on its first two responses and then answers:
+    /// one run trying to start two children is the only way to show the per-answer limit is enforced by the app
+    /// and not just by the table. The arguments use the schema's own names, because a call that binds by a
+    /// different name proves nothing about what a model would send.</summary>
+    private sealed class SpawnAskingChatClient : Microsoft.Extensions.AI.IChatClient
+    {
+        private int _calls;
+
+        public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
+            System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+            Microsoft.Extensions.AI.ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("The assistant check only uses the streaming path.");
+
+        public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate>
+            GetStreamingResponseAsync(
+                System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+                Microsoft.Extensions.AI.ChatOptions? options = null,
+                [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            _calls++;
+            if (_calls <= 2)
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant,
+                    [new Microsoft.Extensions.AI.FunctionCallContent(
+                        $"spawn-{_calls}", "spawn_session", new Dictionary<string, object?>
+                        {
+                            ["task"] = "把两个断言文件读完，只回 5 行结论，然后发回派生你的那条会话",
+                            ["mode"] = "agent",
+                            ["inherit_workspace"] = false,
+                        })]);
+            else
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, "我已经自己看过一遍了。");
+            await Task.Yield();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
     private sealed class ToolCallingChatClient : Microsoft.Extensions.AI.IChatClient
     {
         private int _calls;

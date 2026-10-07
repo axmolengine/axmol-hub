@@ -557,7 +557,7 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
             return SpawnRules.ResultFor(decision, "", childMode);
 
         var childId = await start(new SpawnRequest(context.ConversationId, task.Trim(), childMode,
-            inherit_workspace, SpawnRules.MaxActiveSpawnedSessions)).ConfigureAwait(false);
+            inherit_workspace, decision.Verdict == SpawnVerdict.Started)).ConfigureAwait(false);
         return childId is { Length: > 0 } id
             ? SpawnRules.ResultFor(decision, id, childMode)
             : "Refused: the child session could not be created — the fleet or the model list turned it down. Do "

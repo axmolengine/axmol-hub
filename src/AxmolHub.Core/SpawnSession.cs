@@ -53,12 +53,15 @@ public readonly record struct SpawnDecision(SpawnVerdict Verdict, int ActiveSpaw
 /// derives one from the task the same way an ordinary first message does.</summary>
 /// <param name="InheritWorkspace">Whether the child gets the parent's sandbox. Passing the workspace is what lets
 /// a helper read the same repository; without it the child can only talk, which is not a subagent.</param>
+/// <param name="Started">Whether a slot was free. The child exists either way, and the app decides from this
+/// whether to start it answering now or to leave it in the wake queue — the same distinction
+/// <see cref="CrossSessionVerdict"/> draws for a wake.</param>
 public sealed record SpawnRequest(
     string ParentId,
     string Task,
     string Mode,
     bool InheritWorkspace,
-    int MaxActiveSpawnedSessions);
+    bool Started);
 
 /// <summary>
 /// Whether one answer may start a child session, as one pure table.

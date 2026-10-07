@@ -348,6 +348,14 @@ public static class HubTexts
         ["UpdateDotTooltip"] = ("有可用更新", "Update available"),
         ["UpdateCheckHint"] = ("点「检查更新」查看是否有新版本。", "Click \"Check for updates\" to see if a newer version exists."),
         ["AutoDownloadUpdates"] = ("自动下载更新", "Auto-download updates"),
+        ["AllowSpawnSessions"] = ("允许助手派生子会话", "Let the assistant spawn helper sessions"),
+        ["AllowSpawnSessionsHint"] = (
+            "子会话在自己的上下文里干活，只把结论送回本会话——读一个大文件只要带回几行，就不必把它塞满当前窗口。"
+            + "每一条都是要花钱的模型调用，并发槽也只有三个，所以默认关闭；一次回答最多派生一个，子会话自己不许再派生。",
+            "A spawned session works in a context of its own and sends only its conclusion back, so reading a "
+            + "large file costs a few lines here instead of the whole file. Each one is a model call, and there "
+            + "are three answer slots in total, so this ships off. One answer spawns at most one helper, and a "
+            + "helper cannot spawn further."),
         ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
         // 下载中 / 已就绪 / 下载失败三态的状态行都要带版本号：一旦开始下载，"发现新版本 x.y.z"
         // 就被进度文案顶掉了，用户再也看不到自己要升到哪一版。{0} 是版本号，拼在状态文案前面。

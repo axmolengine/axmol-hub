@@ -134,6 +134,7 @@ public partial class SettingsPage : UserControl
         CancelUpdateButton.Click += (_, _) => UpdateService.Instance.CancelDownload();
         RestartUpdateButton.Click += (_, _) => UpdateService.Instance.ApplyAndRestart();
         AutoDownloadCheck.IsCheckedChanged += (_, _) => OnAutoDownloadChanged();
+        SpawnCheck.IsCheckedChanged += (_, _) => OnSpawnChanged();
         WireProviders();
 
         // Installed exactly once, on purpose — see SetDownloadTooltip for why re-assigning ToolTip.Tip
@@ -225,6 +226,7 @@ public partial class SettingsPage : UserControl
             // disabled on a dev/portable copy, where there is nothing to auto-update.
             AutoDownloadCheck.IsChecked = _preferences.AutoDownloadUpdates;
             AutoDownloadCheck.IsEnabled = UpdateService.Instance.IsInstalled;
+            SpawnCheck.IsChecked = _preferences.AllowSpawnedSessions;
             // Re-render the update card from the last known check: this re-localizes the status line
             // on a language switch (it is written imperatively) and reflects a check the shell already
             // ran at startup (the update dot and this card share UpdateService.Last).
@@ -717,6 +719,22 @@ public partial class SettingsPage : UserControl
     /// starts the background download right away — otherwise the choice would not take effect until the
     /// next check, which reads as "the checkbox does nothing".
     /// </summary>
+    /// <summary>Spawning is turned off by default and the tool says so when a model asks, so this switch is the
+    /// only entrance it has — which is also why it lives beside the permission mode rather than hidden in a
+    /// provider row: it is a decision about what the assistant may do on this machine, not about which model to use.</summary>
+    private void OnSpawnChanged()
+    {
+        if (!_ready) return;
+        var value = SpawnCheck.IsChecked == true;
+        if (value == _preferences.AllowSpawnedSessions) return;
+        _preferences.AllowSpawnedSessions = value;
+        _preferencesStore.Save(_preferences);
+    }
+
+    /// <summary>Reads the switch the way the assistant does, for a self-check that has to prove the preference is
+    /// the thing the tool consults rather than a checkbox that remembers nothing.</summary>
+    internal bool AllowSpawnedSessionsForCheck => _preferences.AllowSpawnedSessions;
+
     private void OnAutoDownloadChanged()
     {
         if (!_ready)

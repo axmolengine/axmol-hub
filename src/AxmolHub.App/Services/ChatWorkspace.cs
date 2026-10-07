@@ -395,7 +395,7 @@ public sealed class ChatWorkspace : IDisposable
                 LogProvider?.Invoke(),
                 path => ApplyWorkspaceRootAsync(conversationId, path),
                 _sessions.Store,
-                new CrossSessionBridge(CrossSessionRunStateAsync, CrossSessionDeliverAsync),
+                new CrossSessionBridge(CrossSessionRunStateAsync, CrossSessionDeliverAsync, SpawnChildSessionAsync),
                 // The screen belongs to the host, not to Core: this is the one capability that has to know which
                 // operating system it is standing on, and a build that cannot draw a frame says so instead of
                 // sending the model a black picture.
@@ -2077,7 +2077,70 @@ public sealed class ChatWorkspace : IDisposable
             RunFor(targetId) is { IsStreaming: true },
             _runs.Count < MaxConcurrentRuns,
             _wakeQueue.Count < CrossSessionRules.MaxQueuedWakes,
-            RunFor(sourceId)?.WakesUsed ?? 0));
+            RunFor(sourceId)?.WakesUsed ?? 0,
+            // A spawn asks nothing about a target — the session it needs does not exist yet — so the target half
+            // of these facts is simply not consulted, and an empty id reads as "no such run" the way it should.
+            RunFor(sourceId)?.SpawnsUsed ?? 0,
+            LiveSpawnedSessions(),
+            _sessions.Peek(sourceId)?.SpawnedBy is not null,
+            PreferencesProvider?.Invoke().AllowSpawnedSessions == true));
+
+    /// <summary>Children running right now, from any parent. The cap is on the machine rather than per
+    /// conversation because what it protects is the run registry's three slots, which every session shares.</summary>
+    private int LiveSpawnedSessions()
+        => _runs.Keys.Count(id => (_sessions.Peek(id) ?? _sessions.Load(id))?.SpawnedBy is not null);
+
+    /// <summary>
+    /// Creates the child the rules just allowed and puts it to work. Everything decided here is an app fact the
+    /// rules cannot see — which provider and model to inherit, whose approval posture travels with the work,
+    /// whether a slot is free right now — and everything they could see was decided before this ran, so a child
+    /// is never created by a path that has not been through the table.
+    /// </summary>
+    private async Task<string?> SpawnChildSessionAsync(SpawnRequest request)
+    {
+        string? childId = null;
+        var title = "";
+        await ApplyOnUiAsync(() =>
+        {
+            if ((_sessions.Peek(request.ParentId) ?? _sessions.Load(request.ParentId)) is not { } parent) return;
+
+            var child = Conversation.Create(parent.ProviderId);
+            child.ModelName = parent.ModelName;
+            child.Mode = request.Mode;
+            child.ReasoningEffort = parent.ReasoningEffort;
+            // The parent's permission posture comes with it: a helper the assistant invented must not end up with
+            // more access than the session that asked for it, and must not lose the sandbox it needs either.
+            child.ApprovalMode = parent.ApprovalMode;
+            child.WorkspaceRoot = request.InheritWorkspace ? parent.WorkspaceRoot : null;
+            child.SpawnedBy = parent.Id;
+            child.Append(ChatTurn.User(ChildBriefing(request), injectedFrom: parent.Id));
+            _sessions.Adopt(child);
+
+            RunFor(request.ParentId)?.SpendSpawn();
+            if (request.Started) StartRun(child.Id);
+            else if (!_wakeQueue.Contains(child.Id)) _wakeQueue.Add(child.Id);
+
+            childId = child.Id;
+            title = child.Title;
+            Changed?.Invoke();
+            RunsChanged?.Invoke(child.Id);
+        }).ConfigureAwait(false);
+
+        if (childId is not { Length: > 0 } id) return null;
+        Audit(request.ParentId, $"Spawned session 「{(title.Length > 0 ? title : id)}」 ({id}, {request.Mode}): "
+                                + (request.Task.Length <= 80 ? request.Task : request.Task[..80] + "…"));
+        return id;
+    }
+
+    /// <summary>What the child's first message says. It is stored as written rather than decorated at the
+    /// boundary, because unlike a peer note this is not something the parent typed and Hub annotates — it is the
+    /// job description, and the transcript of a helper should show what it was hired for. The parent's id and the
+    /// instruction to report back are both in here: without them the answer lands in a session nobody reads.</summary>
+    private static string ChildBriefing(SpawnRequest request)
+        => $"You were spawned to do one bounded job. The session that started you is {request.ParentId}; it cannot "
+           + "read this conversation, so anything it needs has to be sent back.\n\nTask:\n" + request.Task
+           + $"\n\nWhen you are done, send your conclusion with send_to_session(target=\"{request.ParentId}\", "
+           + "wake=true). Keep it to what was asked: the parent is paying for both of you.";
 
     /// <summary>Writes the message into the peer's transcript and, where the rules allowed it, starts or queues
     /// its answer. Delivery and wake are separate because only the first is what the sender asked for: the message

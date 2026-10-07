@@ -131,6 +131,11 @@
             <ComboBoxItem Tag="auto" />
             <ComboBoxItem Tag="full" />
           </ComboBox>
+
+          <!-- 派生子会话单独一个开关，不并进上面那三个档位：审批模式管的是「一次动作要不要问」，而这个管的是
+               「助手能不能自己再开一条会话花钱」。默认关，且关掉之后工具自己会说明去哪儿开，而不是让模型重试。 -->
+          <CheckBox x:Name="SpawnCheck" Content="{DynamicResource AllowSpawnSessions}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowSpawnSessionsHint}" />
         </StackPanel>
       </Border>
 
