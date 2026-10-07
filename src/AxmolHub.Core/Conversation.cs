@@ -120,11 +120,15 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
             ToolArguments = arguments,
         };
 
-    public static ChatTurn FunctionResult(string callId, string text, bool failed = false) =>
+    /// <summary>A tool's answer. <paramref name="images"/> is for the one tool whose result <i>is</i> a picture:
+    /// the name is recorded on the result so the transcript says what was captured, and the request boundary turns
+    /// it into the user-role message that carries the bytes, because a <c>tool</c> message cannot hold an image.</summary>
+    public static ChatTurn FunctionResult(string callId, string text, bool failed = false, IReadOnlyList<ChatImage>? images = null) =>
         new(ChatRoles.Tool, text, DateTimeOffset.Now)
         {
             ToolCallId = callId,
             ToolFailed = failed,
+            Images = images ?? [],
         };
 }
 

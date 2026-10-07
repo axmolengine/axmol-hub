@@ -2541,6 +2541,31 @@ if (args.Contains("--check-ai-images"))
         throw new Exception("A text-only turn stopped arriving as one text part.");
     Console.WriteLine("PASS: an attachment rides its own question as a data URL, and a lost one says so in the text.");
 
+    // ── 边界回图：tool 角色的结果带不动图片，就让它紧跟一条 user ──
+    // A frame the assistant captured itself is recorded on the result turn, and a `tool` message cannot carry
+    // image content, so the picture leaves as its own user-role message right after the result that names it.
+    // The injection has to be visible in the message list: ToChatMessage's tool branch never reads Images at all,
+    // so dropping this line sends a capture the model was told about and never shown — the silent kind.
+    var boundary = ChatPipeline.ToChatMessages(
+        [
+            ChatTurn.User("看看现在的界面"),
+            ChatTurn.FunctionCall("call-1", "capture_screen", "{}"),
+            ChatTurn.FunctionResult("call-1", "captured · 1.png", images: [first, second]),
+        ],
+        image => image.File == "1.png" ? BinaryData.FromBytes(png) : BinaryData.FromBytes(jpeg));
+    if (boundary.Count != 4
+        || boundary[2].Role != ChatRole.Tool || boundary[2].Contents.OfType<DataContent>().Any()
+        || boundary[3].Role != ChatRole.User || boundary[3].Contents.OfType<DataContent>().Count() != 2
+        || !boundary[3].Text.Contains("1.png", StringComparison.Ordinal))
+        throw new Exception("The captured frame is not a user message beside the result that names it: "
+                            + string.Join(" · ", boundary.Select(message => message.Role)));
+
+    // And the case that must stay untouched: a result with no picture adds no message, or every tool call in every
+    // existing session would grow a second bubble on replay.
+    if (ChatPipeline.ToChatMessages([ChatTurn.User("问题"), ChatTurn.FunctionResult("c0", "ok")]).Count != 2)
+        throw new Exception("A tool result with no attachment gained a message of its own.");
+    Console.WriteLine("PASS: a captured frame reaches the model as a user message beside the result that names it.");
+
     // ── 预算：图片要计费，抹除时丢图留话 ──
     // A turn whose text is one character is the cheap turn only if nobody priced the picture riding on it, and
     // both estimators count characters — so an unpriced attachment reads as free to the window and as free to the

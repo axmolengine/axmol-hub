@@ -177,8 +177,54 @@ public sealed class ChatPipeline(IChatClient client)
     /// caller that owns the data root, because this layer has no business knowing where the pictures live — the
     /// same reason the tool scope is handed in per request rather than reached for.</summary>
     public static List<ChatMessage> ToChatMessages(IReadOnlyList<ChatTurn> turns,
-        Func<ChatImage, BinaryData?>? images = null) =>
-        [.. turns.Select(turn => ToChatMessage(turn, images))];
+        Func<ChatImage, BinaryData?>? images = null)
+    {
+        var messages = new List<ChatMessage>(turns.Count);
+        foreach (var turn in turns)
+        {
+            messages.Add(ToChatMessage(turn, images));
+
+            // A frame the assistant captured itself is recorded on the tool result's turn, and a `tool` message
+            // cannot carry image content in chat/completions — so the picture goes to the model as the user-role
+            // message right after the result that names it. It is built here, at the boundary, and never stored:
+            // the transcript keeps one tool result carrying the image name, and the UI shows no user bubble the
+            // person did not type. This is the same rule InjectedFrom follows.
+            if (turn.Role == ChatRoles.Tool && turn.Images.Count > 0) messages.Add(CapturedFrame(turn, images));
+        }
+        return messages;
+    }
+
+    /// <summary>The message that hands a captured frame over after the tool result that describes it.</summary>
+    private static ChatMessage CapturedFrame(ChatTurn turn, Func<ChatImage, BinaryData?>? images)
+    {
+        var media = new List<AIContent>();
+        var unsent = AddPictures(turn, images, media);
+        var text = "[the frame captured by the call above: "
+                   + string.Join(", ", turn.Images.Select(image => $"{image.File} ({image.Bytes} bytes)")) + "]";
+        if (unsent > 0) text += MissingPictures(unsent, turn.Images.Count);
+        media.Insert(0, new TextContent(text));
+        return new ChatMessage(ChatRole.User, media);
+    }
+
+    /// <summary>Resolves each named attachment and appends the ones the caller could deliver. The count returned is
+    /// the ones it could not, which the caller has to say out loud.</summary>
+    private static int AddPictures(ChatTurn turn, Func<ChatImage, BinaryData?>? images, List<AIContent> media)
+    {
+        var unsent = 0;
+        foreach (var image in turn.Images)
+        {
+            // An image is a DataContent whose media type says image/*: that is the shape the OpenAI bridge turns
+            // into an image_url part, and this version of Microsoft.Extensions.AI has no separate ImageContent
+            // type. Nothing is re-encoded or resized — the bytes Hub kept are the bytes sent.
+            if (images?.Invoke(image) is { } bytes) media.Add(new DataContent(bytes.ToMemory(), image.MediaType));
+            else unsent++;
+        }
+        return unsent;
+    }
+
+    private static string MissingPictures(int unsent, int total)
+        => $"\n\n[{unsent} of the {total} images named in this message were not sent: their bytes are not in this "
+           + "session's attachment storage. Say you did not receive them instead of describing them.]";
 
     public static ChatMessage ToChatMessage(ChatTurn turn, Func<ChatImage, BinaryData?>? images = null)
     {
@@ -212,25 +258,11 @@ public sealed class ChatPipeline(IChatClient client)
             : text;
         if (turn.Images.Count == 0) return new ChatMessage(ToRole(turn.Role), text);
 
-        // A picture rides the same user-role message as its question: chat/completions carries image content on a
-        // user message and not on a tool result, which is why a captured frame is materialized here rather than
-        // stored as the answer to a call. An image is a DataContent whose media type says image/* — that is the
-        // shape the OpenAI bridge turns into an image_url part, and this version of Microsoft.Extensions.AI has no
-        // separate ImageContent type. Nothing is re-encoded or resized: the bytes Hub kept are the bytes sent.
+        // A picture rides the same user-role message as its question, which is why a frame the user pasted is
+        // materialized here rather than stored as the answer to a call.
         var media = new List<AIContent>();
-        var unsent = 0;
-        foreach (var image in turn.Images)
-        {
-            if (images?.Invoke(image) is { } bytes) media.Add(new DataContent(bytes.ToMemory(), image.MediaType));
-            else unsent++;
-        }
-
-        // Named but not delivered is a fact the model has to hear, or it answers about a picture it was never
-        // given — and an answer that describes the screenshot it did not see reads as a working channel.
-        if (unsent > 0)
-            text += $"\n\n[{unsent} of the {turn.Images.Count} images named in this message were not sent: their "
-                    + "bytes are not in this session's attachment storage. Say you did not receive them instead of "
-                    + "describing them.]";
+        var unsent = AddPictures(turn, images, media);
+        if (unsent > 0) text += MissingPictures(unsent, turn.Images.Count);
         media.Insert(0, new TextContent(text));
         return new ChatMessage(ToRole(turn.Role), media);
     }
