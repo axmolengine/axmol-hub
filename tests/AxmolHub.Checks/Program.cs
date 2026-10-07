@@ -1108,6 +1108,21 @@ if (args.Contains("--check-ai-workspace"))
     var unixSh = CommandShells.For("macos", pwshAvailable: false);
     if (unixSh.Executable != "/bin/sh" || !unixSh.PrefixArguments.SequenceEqual(["-c"]))
         throw new Exception("Unix without pwsh did not fall back to /bin/sh -c.");
+    // PowerShell 7 wins on Windows too when it is installed, and it keeps the same guard story as 5.1 —
+    // Bypass included, because a script file is still a script file.
+    var windowsPwsh = CommandShells.For("windows", pwshAvailable: true);
+    if (windowsPwsh.Executable != "pwsh" || windowsPwsh.Label != "PowerShell 7"
+        || !windowsPwsh.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
+        || windowsPwsh.Equals(windows))
+        throw new Exception($"Windows with pwsh installed did not switch to PowerShell 7: {windowsPwsh.Label}.");
+    if (!OperatingSystem.IsWindows() && CommandShells.PwshAvailable() != (CommandShells.Resolve("pwsh") is not null))
+        throw new Exception("The pwsh probe and the selection disagree on this host.");
+    // On Windows the name on PATH is `pwsh.exe`, so a bare-name probe that only matches the exact spelling finds
+    // nothing on a machine that has PowerShell 7 installed — and the tool description then promises a shell the
+    // session never gets. Only assertable where pwsh actually is, which is why it is written as a one-way rule.
+    if (OperatingSystem.IsWindows() && CommandShells.Resolve("pwsh.exe") is not null
+        && CommandShells.Resolve("pwsh") is null)
+        throw new Exception("The pwsh probe did not match the pwsh.exe that is installed on this machine.");
     if (OperatingSystem.IsWindows() != windows.Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
         throw new Exception("The Windows tier is not the PowerShell that ships with Windows.");
     // ForCurrent is the same pure rule applied to the machine it runs on, and on Windows it must land on a
@@ -1124,10 +1139,11 @@ if (args.Contains("--check-ai-workspace"))
     // /bin/sh gets the command untouched, since that preamble is not shell syntax it understands.
     if (!windows.ArgumentsFor("Get-Location").SequenceEqual(
             [.. windows.PrefixArguments, CommandShell.Utf8Preamble + ";Get-Location"])
+        || !windowsPwsh.ArgumentsFor("ls").SequenceEqual([.. windowsPwsh.PrefixArguments, CommandShell.Utf8Preamble + ";ls"])
         || !unixPwsh.ArgumentsFor("ls").SequenceEqual([.. unixPwsh.PrefixArguments, CommandShell.Utf8Preamble + ";ls"])
         || !unixSh.ArgumentsFor("ls").SequenceEqual(["-c", "ls"]))
         throw new Exception($"The UTF-8 preamble is not applied exactly where it belongs:{Environment.NewLine}"
-            + string.Join(Environment.NewLine, new[] { windows, unixPwsh, unixSh }
+            + string.Join(Environment.NewLine, new[] { windows, windowsPwsh, unixPwsh, unixSh }
                 .Select(shell => $"{shell.Label}: {string.Join(' ', shell.ArgumentsFor("ls"))}")));
     if (!windows.ArgumentsFor("dir")[^1].EndsWith("dir", StringComparison.Ordinal)
         || !unixSh.ArgumentsFor("dir").SequenceEqual(["-c", "dir"]))

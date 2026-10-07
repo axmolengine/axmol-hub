@@ -17,28 +17,34 @@ public sealed record CommandShell(string Executable, IReadOnlyList<string> Prefi
 }
 
 /// <summary>
-/// Shell selection for the assistant's command tool. Windows uses the PowerShell that ships with Windows — the
-/// same entry point <see cref="EngineCommandLine"/> uses, so there is one notion of "the shell" in the Hub.
-/// Unix prefers <c>pwsh</c> when it is actually installed: the engine's own <c>pwshi.sh</c> guarantees it only
-/// for engine work, which a general command tool cannot assume.
+/// Shell selection for the assistant's command tool. PowerShell 7 is used on any host where it is actually
+/// installed — it is the one that reads and writes UTF-8 by default, and a session that reads a source file
+/// through the shell should not need to know that. Windows still falls back to the PowerShell that ships with
+/// it, because that is the only one a developer machine is guaranteed to have. Engine scripts are a separate
+/// question: <see cref="EngineCommandLine"/> keeps invoking the shell each script declares for itself.
 /// </summary>
 public static class CommandShells
 {
     public static CommandShell For(string host, bool pwshAvailable)
         => string.Equals(host, "windows", StringComparison.OrdinalIgnoreCase)
-            ? new CommandShell(WindowsShell.PowerShell,
-                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
-                "Windows PowerShell", IsPowerShell: true)
+            ? pwshAvailable
+                ? new CommandShell("pwsh",
+                    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                    "PowerShell 7", IsPowerShell: true)
+                : new CommandShell(WindowsShell.PowerShell,
+                    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                    "Windows PowerShell", IsPowerShell: true)
             : pwshAvailable
                 ? new CommandShell("pwsh", ["-NoProfile", "-NonInteractive", "-Command"], "pwsh", IsPowerShell: true)
                 : new CommandShell("/bin/sh", ["-c"], "/bin/sh");
 
     public static CommandShell ForCurrent() => For(BuildTargets.Host, PwshAvailable());
 
-    public static bool PwshAvailable() => !OperatingSystem.IsWindows() && Resolve("pwsh") is not null;
+    public static bool PwshAvailable() => Resolve("pwsh") is not null;
 
     /// <summary>Finds an executable on PATH without spawning a process: a probe the model can trigger must not
-    /// cost a child process, and this keeps the function testable on any host.</summary>
+    /// cost a child process, and this keeps the function testable on any host. On Windows a bare name also
+    /// matches its <c>.exe</c>, because that is how <c>pwsh</c> is actually installed.</summary>
     public static string? Resolve(string executable)
     {
         var path = Environment.GetEnvironmentVariable("PATH");
@@ -49,6 +55,7 @@ public static class CommandShells
             {
                 var candidate = Path.Combine(directory.Trim(), executable);
                 if (File.Exists(candidate)) return candidate;
+                if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) return candidate + ".exe";
             }
             catch (ArgumentException)
             {

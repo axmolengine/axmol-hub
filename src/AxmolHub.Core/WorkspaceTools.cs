@@ -162,7 +162,8 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
     }
 
     [Description("Run one shell command in the session workspace and return its output. On Windows the shell is "
-                 + "Windows PowerShell; elsewhere pwsh, or /bin/sh when pwsh is not installed.")]
+                 + "PowerShell 7 when it is installed and Windows PowerShell otherwise; elsewhere pwsh, or "
+                 + "/bin/sh when pwsh is not installed.")]
     public async Task<string> RunCommand(
         [Description("A single command line, for example: cmake --build build --config Debug")] string command,
         [Description("Kill the command after this many seconds without any output, up to 900.")]
