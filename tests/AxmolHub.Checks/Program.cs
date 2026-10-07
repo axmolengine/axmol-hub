@@ -1413,8 +1413,10 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception($"The command result did not name its shell, directory and exit code:{Environment.NewLine}{echoed}");
     if (echoed.Contains("SUPERSECRET", StringComparison.Ordinal) || !echoed.Contains("[REDACTED]", StringComparison.Ordinal))
         throw new Exception("A secret reached the transcript instead of being redacted.");
-    if (!echoed.Contains($"full output in {log.FilePath}", StringComparison.Ordinal))
-        throw new Exception("A truncated-by-policy result did not point at the log that has the whole thing.");
+    if (!echoed.Contains("Hub's run log at", StringComparison.Ordinal)
+        || !echoed.Contains(log.FilePath, StringComparison.Ordinal)
+        || !echoed.Contains("the assistant cannot read", StringComparison.Ordinal))
+        throw new Exception($"A truncated result did not name the log and who can open it:{Environment.NewLine}{echoed}");
 
     File.WriteAllText(Path.Combine(workspace, "src", "big.txt"),
         string.Concat(Enumerable.Range(1, 4000).Select(index => $"row-{index:D4} padding padding padding\n")));
@@ -1422,9 +1424,49 @@ if (args.Contains("--check-ai-tools"))
     if (!verbose.Contains("characters of output omitted") || !verbose.Contains("row-0001") || !verbose.Contains("row-4000"))
         throw new Exception($"A long output was not shaped to both ends:{Environment.NewLine}{verbose[..Math.Min(400, verbose.Length)]}");
 
-    var stalled = await tools.RunCommand(OperatingSystem.IsWindows() ? "Start-Sleep -Seconds 20" : "sleep 20", 1);
-    if (!stalled.Contains("killed after 1s", StringComparison.Ordinal))
+    // The whole point of the idle timeout being about *silence*: a command that printed three lines and then hung
+    // has said something, and the answer must carry those lines. "Without producing any output" about a build that
+    // printed the error it stopped on sends the model to retry a command whose diagnosis it never got to read.
+    // Three seconds, not one, so the shell's own startup is never what trips the timer before it can print.
+    var stalled = await tools.RunCommand(
+        OperatingSystem.IsWindows()
+            ? "Write-Output 'failing at step 3'; Write-Output 'error C2065'; Start-Sleep -Seconds 20"
+            : "echo 'failing at step 3'; echo 'error C2065'; sleep 20", 3);
+    if (!stalled.Contains("killed after 3s", StringComparison.Ordinal))
         throw new Exception($"An idle command was not killed by its timeout:{Environment.NewLine}{stalled}");
+    if (!stalled.Contains("error C2065", StringComparison.Ordinal) || !stalled.Contains("before going silent", StringComparison.Ordinal))
+        throw new Exception($"A timeout threw away the output the command had already produced:{Environment.NewLine}{stalled}");
+    if (stalled.Contains("without producing any output", StringComparison.Ordinal))
+        throw new Exception("A stalled command was still reported as having produced nothing.");
+
+    // A process that survives its own kill must not wedge the tool, so every wait after the kill is bounded. No
+    // real process can be made unkillable on purpose, which is what the StopProcess seam is for: it reports "it
+    // did not die" while the fixture sleeps twelve seconds by itself. Eight seconds is the bound that turns a
+    // hang into a red assertion instead of a suite that never comes back — and the idle timeout is three seconds,
+    // so the shell has certainly printed before it goes quiet. The directory is the temp folder rather than the
+    // sandbox because a survivor keeps its working directory locked, and this group ends by deleting that tree;
+    // the sandbox is the tool layer's business, and ProcessRunner has no say in it.
+    var stallShell = CommandShells.ForCurrent();
+    var abandoning = new ProcessRunner(line => log.Write(line)) { StopProcess = _ => false };
+    var gaveUpAt = Environment.TickCount64;
+    IdleTimeoutException? abandoned = null;
+    try
+    {
+        await abandoning.RunAsync(stallShell.Executable, stallShell.ArgumentsFor(
+                OperatingSystem.IsWindows() ? "Write-Output 'last words'; Start-Sleep -Seconds 12" : "echo last words; sleep 12"),
+            Path.GetTempPath(), timeout: TimeSpan.FromSeconds(3));
+    }
+    catch (IdleTimeoutException stalledAgain)
+    {
+        abandoned = stalledAgain;
+    }
+
+    var waited = Environment.TickCount64 - gaveUpAt;
+    if (abandoned is null or { SurvivedKill: false } || !abandoned.Output.Contains("last words", StringComparison.Ordinal))
+        throw new Exception($"A stalled command did not come back as an idle timeout that says it survived, with "
+                            + $"its output ({abandoned?.GetType().Name ?? "none"}).");
+    if (waited > 8_000)
+        throw new Exception($"A process that survived its kill held the tool for {waited} ms.");
     // CJK is where an encoding mismatch shows up first: PowerShell answers in the machine's OEM codepage while
     // the pipe is decoded as UTF-8, so a Chinese Windows turns 中文 into replacement characters.
     var cjk = await tools.RunCommand(OperatingSystem.IsWindows() ? "Write-Output '中文测试'" : "printf '中文测试'");
@@ -1432,7 +1474,8 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception($"A CJK line did not survive the shell:{Environment.NewLine}{cjk}");
     if (!(await homeless.RunCommand("echo hi")).Contains("no workspace directory", StringComparison.Ordinal))
         throw new Exception("run_command without a workspace did not say so.");
-    Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends, dies when idle and speaks UTF-8.");
+    Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends, keeps what a stall "
+                      + "already printed, comes back from a process that survives its kill, and speaks UTF-8.");
 
     // ── set_workspace: choosing the sandbox is itself guarded ──
     if (!(await tools.SetWorkspace("relative/path")).Contains("not an absolute path", StringComparison.Ordinal)

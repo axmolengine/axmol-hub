@@ -184,7 +184,8 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
                  + "/bin/sh when pwsh is not installed.")]
     public async Task<string> RunCommand(
         [Description("A single command line, for example: cmake --build build --config Debug")] string command,
-        [Description("Kill the command after this many seconds without any output, up to 900.")]
+        [Description("How many seconds of silence end the command, up to 900. It is not a total time limit: a "
+                     + "build that keeps printing may run far longer than this.")]
         int timeout_seconds = DefaultCommandTimeoutSeconds,
         CancellationToken cancellationToken = default)
     {
@@ -213,11 +214,22 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
             // The user stopped the run. Surfacing it as a tool result would answer a cancellation with more text.
             throw;
         }
-        catch (TimeoutException)
+        catch (IdleTimeoutException stalled)
         {
-            return $"{header}{Environment.NewLine}The command was killed after {seconds}s without producing any "
-                   + "output. Raise timeout_seconds if it is a long build, or break it into smaller steps. "
-                   + "Do not retry the same command unchanged.";
+            // Going quiet is not the same as having nothing to say. The lines before the silence are the diagnosis
+            // — a build that hangs has already printed the error it stopped on — so they come back with the result,
+            // head-and-tail truncated like any other output.
+            var builder = new StringBuilder($"{header}{Environment.NewLine}The command was killed after {seconds}s "
+                                            + "of no output. What it printed before going silent:")
+                .Append(Environment.NewLine).Append(Shaped(stalled.Output, stalled.Error));
+            if (stalled.SurvivedKill)
+                builder.Append(Environment.NewLine)
+                    .Append("It was still running after Hub gave up on killing it, so it may still hold files in "
+                            + "the workspace.");
+            builder.Append(Environment.NewLine)
+                .Append("timeout_seconds counts silence, not total runtime, so raise it only if the command really "
+                        + "stopped printing. Do not retry the same command unchanged.");
+            return builder.ToString();
         }
         catch (Exception ex)
         {
@@ -876,7 +888,10 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
         }
 
         if (context.Log?.FilePath is { } logPath)
-            text += $"\n(full output in {logPath})";
+            // The log lives in Hub's data directory, which is a protected root: no tool of this one can read it
+            // back. Naming it is still worth the line, because the person reading the transcript can open it.
+            text += $"\n(the whole output is in Hub's run log at {logPath}, which the user can open and the "
+                    + "assistant cannot read)";
         return text;
     }
 }
