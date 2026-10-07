@@ -26,6 +26,13 @@ public static class ProviderAuthMethods
 
     public static bool IsKnown(string method)
         => method is ApiKey or OAuth or None;
+
+    /// <summary>Whether a declared method list says "this endpoint needs no credential". Only an explicit
+    /// <see cref="None"/> alongside nothing that obtains a credential counts: an empty or unreadable list is
+    /// treated as needing one, because the alternative is a provider that looks local when the manifest merely
+    /// failed to say what it is.</summary>
+    public static bool IsKeyless(IReadOnlyList<string> methods)
+        => methods.Contains(None) && !methods.Any(method => method is ApiKey or OAuth);
 }
 
 /// <summary>
@@ -131,7 +138,6 @@ public sealed class AiProviderEntry
     public string? DescriptionZh { get; set; }
 
     public string BaseUrl { get; set; } = "";
-    public bool ApiKeyRequired { get; set; }
     public int? MaxContextTokens { get; set; }
     /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
     public List<string> DefaultEnabledModels { get; set; } = [];
@@ -296,7 +302,6 @@ public static class AiProviderManifest
                 Description = entry.Description,
                 DescriptionZh = entry.DescriptionZh,
                 BaseUrl = entry.BaseUrl,
-                ApiKeyRequired = entry.ApiKeyRequired,
                 DefaultEnabledModels = [.. entry.DefaultEnabledModels],
                 ReasoningModels = entry.ReasoningModels.ToDictionary(
                     pair => pair.Key,

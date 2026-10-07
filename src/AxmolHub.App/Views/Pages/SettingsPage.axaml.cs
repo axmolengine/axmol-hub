@@ -1033,7 +1033,7 @@ public partial class SettingsPage : UserControl
         content.Children.Add(BuildModelSection(provider));
 
         // A keyless provider says so once, in the summary, rather than growing a section of its own.
-        if (!NeedsCredential(provider))
+        if (!provider.CanAuthenticate)
         {
             content.Children.Add(new TextBlock
             {
@@ -1169,15 +1169,16 @@ public partial class SettingsPage : UserControl
         status.Children.Add(statusLabel);
         actions.Children.Add(status);
 
-        // A provider that needs no credential gets no button. Ollama is the case that proves the rule: it is
+        // A provider with no way to authenticate gets no button. Ollama is the case that proves the rule: it is
         // never "unauthenticated", so offering "authenticate" would be offering an action with no outcome.
-        var needsCredential = NeedsCredential(provider);
-
+        // This is a different question from whether it *needs* a credential — a self-supplied endpoint needs
+        // none yet still takes a key, so it must keep the button.
+        //
         // One button, two meanings. "Authenticate" opens the dialog; "Disconnect" clears the credential. It
         // is a single control rather than two because the two are mutually exclusive by construction — there
         // is never a state where both would be the right offer — and a row that showed both at once would
         // ask the user to choose between starting over and undoing, which is not a question this row asks.
-        if (needsCredential)
+        if (provider.CanAuthenticate)
         {
             var auth = new Button
             {
@@ -1221,7 +1222,7 @@ public partial class SettingsPage : UserControl
             remove.Click += async (_, _) => await RemoveProviderAsync(provider);
             actions.Children.Add(remove);
         }
-        else if (needsCredential)
+        else if (provider.CanAuthenticate)
         {
             // Only worth saying when there is a disconnect button next to it to explain; on a keyless
             // provider the hint would be explaining a rule that has nothing to do with it.
@@ -1416,21 +1417,15 @@ public partial class SettingsPage : UserControl
     /// <summary>
     /// Whether the provider's model catalog may be fetched.
     ///
-    /// <para>True for a provider that does not require a key or one that holds a credential. False for a
-    /// provider that requires a key and does not have one — the request would come back 401.</para>
+    /// <para>True for a provider that needs no credential or one that holds a credential. False for a provider
+    /// that needs one and does not have it — the request would come back 401.</para>
     ///
     /// <para>Lives here rather than in <see cref="ChatWorkspace"/> because it is a <b>presentation</b>
     /// decision: the fetch itself is legal without a key (the endpoint decides), and a future caller that
     /// wants to try anyway should not have to fight a UI-layer guard.</para>
     /// </summary>
     private bool CanListModels(ModelProvider provider)
-        => !provider.ApiKeyRequired || IsLinked(provider);
-
-    /// <summary>Whether this provider has any way to authenticate at all — the same test the header uses to
-    /// decide whether to offer the auth button, so the two cannot disagree about what "unready" means.</summary>
-    private static bool NeedsCredential(ModelProvider provider)
-        => provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey)
-           || provider.SupportsOAuth;
+        => !provider.RequiresCredential || IsLinked(provider);
 
     private Control BuildModelRow(ModelProvider provider, ProviderModel model)
     {

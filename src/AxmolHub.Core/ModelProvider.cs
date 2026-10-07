@@ -46,13 +46,10 @@ public sealed class ModelProvider
     /// <summary>OpenAI-compatible base URL. Built-in providers have a default; a custom provider requires the user to fill it.</summary>
     public string BaseUrl { get; set; } = "";
 
-    /// <summary>Whether an API key is mandatory. Built-in providers take this from the manifest; custom providers default to false (a local endpoint needs no key).</summary>
-    public bool ApiKeyRequired { get; set; }
-
     /// <summary>
     /// How this provider can be authenticated (see <see cref="ProviderAuthMethods"/>), in the order the picker
-    /// offers them. A custom provider always supports a pasted key; a built-in one takes the list from its
-    /// manifest entry. Defaulted to key-only so a provider deserialized from an older file still behaves.
+    /// offers them. A built-in provider takes the list from its manifest entry on every load; a custom one keeps
+    /// whatever it was saved with. Defaulted to key-only so a provider deserialized from an older file still behaves.
     /// </summary>
     public List<string> AuthMethods { get; set; } = [ProviderAuthMethods.ApiKey];
 
@@ -109,9 +106,29 @@ public sealed class ModelProvider
         => EffectiveAuthMethods.Contains(ProviderAuthMethods.OAuth)
            && OAuth is { DiscoveryUrl.Length: > 0 };
 
-    /// <summary>Whether this provider needs a credential at all (false for a local endpoint such as Ollama).</summary>
+    /// <summary>Whether this provider has a pasted-key entrance (false for a keyless local endpoint such as Ollama).</summary>
     [JsonIgnore]
     public bool SupportsApiKeyMethod => EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey);
+
+    /// <summary>
+    /// Whether a credential is needed before this provider's models can be used — answered from the declared
+    /// auth methods, never from a separate flag the manifest would have to keep in sync with them.
+    ///
+    /// <para><b>A custom endpoint is never gated.</b> Its <c>["apiKey"]</c> says only that a key <i>can</i> be
+    /// pasted, not that the server demands one, and there is no manifest entry to ask. Refusing to build a
+    /// client until one appears would lock out exactly the local servers (Ollama, llama.cpp, vLLM) that people
+    /// add a custom provider for, so an unknown requirement is treated as "not required".</para>
+    ///
+    /// <para>Any credential satisfies it: a browser sign-in mints the same
+    /// <see cref="ProviderCredential"/> kind as a pasted key, so "logged in" and "has a key" are one state here.</para>
+    /// </summary>
+    [JsonIgnore]
+    public bool RequiresCredential
+        => !IsCustom && !ProviderAuthMethods.IsKeyless(EffectiveAuthMethods);
+
+    /// <summary>Whether the UI should offer a way to authenticate this provider at all.</summary>
+    [JsonIgnore]
+    public bool CanAuthenticate => SupportsApiKeyMethod || SupportsOAuth;
 
     /// <summary>
     /// The credential resolved for this provider in the current session, or <c>null</c> when it has none.

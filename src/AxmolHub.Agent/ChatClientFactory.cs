@@ -23,8 +23,8 @@ public static class ChatClientFactory
         var model = string.IsNullOrWhiteSpace(modelOverride) ? provider.Model : modelOverride;
         if (string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no model.");
-        if (provider.ApiKeyRequired && string.IsNullOrEmpty(provider.ApiKey))
-            throw new InvalidOperationException($"Provider '{provider.Name}' requires an API key.");
+        if (provider.RequiresCredential && string.IsNullOrEmpty(provider.ApiKey))
+            throw new InvalidOperationException($"Provider '{provider.Name}' is not authenticated yet.");
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.
         var credential = new ApiKeyCredential(provider.ApiKey ?? "not-needed");

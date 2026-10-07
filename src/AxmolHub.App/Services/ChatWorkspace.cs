@@ -90,11 +90,12 @@ public sealed class ChatWorkspace : IDisposable
 
     public IReadOnlyList<ModelProvider> Providers => _providerList;
 
-    /// <summary>The provider/model choices available in chat: enabled providers with credentials (or no
-    /// required key) and at least one enabled, configured model.</summary>
+    /// <summary>The provider/model choices available in chat: enabled providers that are ready to be called
+    /// (authenticated, or needing no credential at all) and have at least one enabled, configured model.</summary>
     public IReadOnlyList<ChatModelOption> AvailableChatModels
         => _providerList
-            .Where(provider => provider.Enabled && (!provider.ApiKeyRequired || provider.Credential is not null))
+            .Where(provider => provider.Enabled
+                               && (!provider.RequiresCredential || provider.Credential is not null))
             .SelectMany(provider => provider.Models
                 .Where(model => model.Enabled)
                 .OrderByDescending(model => model.InUse)
@@ -1413,10 +1414,11 @@ public sealed class ChatWorkspace : IDisposable
             IsCustom = true,
             BaseUrl = baseUrl.Trim(),
             Models = [new ProviderModel { Name = model.Trim(), InUse = true }],
-            // A custom endpoint defaults to keyless (a local server usually needs none); the user supplies one
-            // when their endpoint wants it. It is never offered browser sign-in — there is no server to sign in
-            // to, so declaring only the key method keeps the picker from inventing a button that cannot work.
-            ApiKeyRequired = false,
+            // Whether the user's own endpoint demands a key is unknowable, so a custom provider is never
+            // gated on one — declaring the key method says only that a key can be pasted here, which is what
+            // keeps the 「鉴权」 entrance while leaving the provider usable keyless (a local server). Browser
+            // sign-in is deliberately absent: there is no server to sign in to, so the picker would otherwise
+            // invent a button that cannot work.
             AuthMethods = [ProviderAuthMethods.ApiKey],
         };
 

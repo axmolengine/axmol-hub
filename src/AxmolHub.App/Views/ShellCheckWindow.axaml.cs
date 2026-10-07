@@ -2575,6 +2575,22 @@ public partial class ShellCheckWindow : Window
         Check(ollama is { AuthButtonText: "" },
             "无需鉴权的 provider 不显示鉴权按钮（点它不会有任何事可做）");
 
+        // The mirror case, and the reason 「需不需要凭据」 and 「有没有鉴权入口」 are two predicates rather than
+        // one: a self-supplied endpoint is never gated (its requirement is unknowable) yet must still offer the
+        // key entrance — otherwise the user whose local server does want a key has nowhere to give it, and the
+        // row would insist it needs none.
+        var customLocal = shell.Chat.AddProvider("无凭据但有入口", "http://localhost:11434/v1", "llama3", null);
+        Check(customLocal is not null, "为这条断言添加一个自定义 provider");
+        settings.RefreshProviderGroupsForCheck();
+        var customGroup = customLocal is null ? null : settings.ProviderGroupForId(customLocal.Id);
+        Check(customGroup is not null && customGroup.AuthButtonText == HubStrings.Get("Authenticate"),
+            "自定义 provider 即使不要求凭据也仍有「鉴权」入口（实际「" + customGroup?.AuthButtonText + "」）");
+        Check(customGroup is not null && !customGroup.ShowsNoCredentialNote,
+            "自定义 provider 不宣称「无需密钥」，它只是不被拦（实际提示"
+            + (customGroup is { ShowsNoCredentialNote: true } ? "存在" : "不存在") + "）");
+        Check(shell.Chat.RemoveProvider(customLocal?.Id ?? ""), "移除这条断言用的自定义 provider");
+        settings.RefreshProviderGroupsForCheck();
+
         // ── The list shows no credential input, ever ──
         // This is the assertion the whole revision exists for. It is checked on every rendered group rather
         // than on one, because a single provider happening to be keyless would satisfy a check aimed at the
@@ -2769,14 +2785,14 @@ public partial class ShellCheckWindow : Window
         Check(settings.ProviderGroupForId("orcarouter") is { IsLinked: true },
             "换来源之后仍然是已鉴权，不需要用户再点一次");
 
-        // `apiKeyRequired` is a promise about *a credential existing*, not about a key being pasted — otherwise a
+        // 「需要凭据」 is a promise about *a credential existing*, not about a key being pasted — otherwise a
         // provider that offers browser sign-in would still refuse to work after a successful sign-in. Asserted on
         // a model added here rather than one the catalog happens to ship, so it cannot pass by accident, and
         // asserted while the OAuth credential is the only one in the slot.
         var oauthProbeModel = "oauth-only-probe";
         shell.Chat.AddModel("orcarouter", oauthProbeModel);
         var oauthProvider = shell.Chat.Providers.First(candidate => candidate.Id == "orcarouter");
-        Check(oauthProvider.ApiKeyRequired && oauthProvider.Credential?.Source == CredentialSources.OAuth
+        Check(oauthProvider.RequiresCredential && oauthProvider.Credential?.Source == CredentialSources.OAuth
               && shell.Chat.AvailableChatModels.Any(choice =>
                   choice.Provider.Id == "orcarouter" && choice.ModelName == oauthProbeModel),
             "只要鉴权过就能用它的模型，不必是粘贴的密钥（实际来源「"
@@ -2922,7 +2938,7 @@ public partial class ShellCheckWindow : Window
         // section is absent rather than present-and-empty — an empty list here would read as "this provider
         // has no models", which is a different and wrong statement.
         var unauthenticated = shell.Chat.Providers.FirstOrDefault(provider =>
-            NeedsCredentialForCheck(provider) && shell.Chat.CredentialFor(provider.Id) is null);
+            provider.RequiresCredential && shell.Chat.CredentialFor(provider.Id) is null);
         Check(unauthenticated is not null, "存在未鉴权且需要凭据的 provider，用它检查模型列表的隐藏规则");
 
         settings.RefreshProviderGroupsForCheck();
@@ -2935,7 +2951,10 @@ public partial class ShellCheckWindow : Window
 
         // A keyless provider is the exemption, and it is the one that would break if the rule were written as
         // "hide until a credential exists": Ollama never has one, so its models would be unreachable forever.
-        var keyless = shell.Chat.Providers.FirstOrDefault(provider => !NeedsCredentialForCheck(provider));
+        // Restricted to the presets on purpose — a custom endpoint is *never* gated either, but that is the
+        // unknowable-requirement case, not this declaration, and the assertion below names Ollama.
+        var keyless = shell.Chat.Providers.FirstOrDefault(provider =>
+            !provider.IsCustom && !provider.RequiresCredential);
         Check(keyless is not null, "存在无需凭据的 provider（Ollama），用它检查豁免规则");
         settings.RefreshProviderGroupsForCheck();
         var keylessGroup = keyless is null ? null : settings.ProviderGroupForId(keyless.Id);
@@ -3283,15 +3302,6 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// Whether a provider has any way to authenticate — the same test the settings page applies before
-    /// deciding to hide the model section, restated here so the assertion and the rule are visibly the same
-    /// predicate rather than two things that happen to agree today.
-    /// </summary>
-    private static bool NeedsCredentialForCheck(ModelProvider provider)
-        => provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey)
-           || provider.SupportsOAuth;
-
-    /// <summary>
     /// Walks the authentication dialog's two steps without showing it.
     ///
     /// <para><b>The assertion that carries this block is "no blank text".</b> A helper that builds a
@@ -3370,8 +3380,9 @@ public partial class ShellCheckWindow : Window
                     + string.Join(" | ", stepTwo.VisibleTextForCheck) + "]）");
         }
 
-        var keyless = providers.FirstOrDefault(provider => !provider.SupportsOAuth
-            && !provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
+        // The provider that cannot authenticate at all must also never be asked to: this is the negation of the
+        // predicate the header button uses, so the check and the UI are reading one rule.
+        var keyless = providers.FirstOrDefault(provider => !provider.CanAuthenticate);
         Check(keyless is not null, "存在不需要凭据的 provider，用它确认不会被要求鉴权");
     }
 

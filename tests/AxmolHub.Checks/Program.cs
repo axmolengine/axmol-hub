@@ -33,7 +33,7 @@ if (args.Contains("--check-ai-providers"))
     // that quietly reintroduced a default would put a name in front of the user that goes stale the moment
     // the provider retires it, and it would 404 on first use with the user's key blamed for it.
     if (orca.Models.Count != 0) throw new Exception($"Manifest must not seed a model (found {orca.Models.Count}).");
-    if (!orca.ApiKeyRequired) throw new Exception("orcarouter should require an API key.");
+    if (!orca.RequiresCredential) throw new Exception("orcarouter should require a credential.");
     if (!orca.Affiliate) throw new Exception("orcarouter should be flagged affiliate.");
     if (string.IsNullOrEmpty(orca.ReferralUrl)) throw new Exception("orcarouter should carry a referral URL.");
     Console.WriteLine("PASS: orcarouter manifest entry assembles the expected provider.");
@@ -68,6 +68,11 @@ if (args.Contains("--check-ai-providers"))
             throw new Exception($"Preset '{entry.Id}' declares no usable auth method, so no account could ever be added.");
         if (entry.AuthMethods.Any(method => !ProviderAuthMethods.IsKnown(method)))
             throw new Exception($"Preset '{entry.Id}' declares an auth method the app does not implement: {string.Join(",", entry.AuthMethods)}");
+        // Declaring browser sign-in *is* the promise that it can be completed, because the declaration is now
+        // what derives whether the preset is usable without a key. An `oauth` method with no discovery document
+        // would offer a button that dies halfway through, so it must be caught in the manifest, not at sign-in.
+        if (entry.AuthMethods.Contains(ProviderAuthMethods.OAuth) && entry.OAuth is not { DiscoveryUrl.Length: > 0 })
+            throw new Exception($"Preset '{entry.Id}' declares browser sign-in but carries no usable discovery URL.");
     }
     if (!orca.SupportsOAuth) throw new Exception("orcarouter should declare OAuth support.");
     if (orca.OAuth is null) throw new Exception("A preset that supports OAuth must carry its OAuth parameters.");
@@ -101,6 +106,32 @@ if (args.Contains("--check-ai-providers"))
     if (legacy.SupportsOAuth) throw new Exception("A provider with no OAuth block must not claim OAuth support.");
     Console.WriteLine("PASS: an unrecognised authMethods list falls back to apiKey instead of breaking the preset.");
 
+    // The declared methods are now the *only* statement of whether a provider needs a credential, so what each
+    // shape means has to be pinned through the file path (that is where a preset arrives), not just in memory:
+    // an explicit `none` is keyless, an unreadable neighbour does not undo that, and any method that obtains a
+    // credential beats `none` — the alternative is a manifest typo silently turning a cloud endpoint local.
+    //
+    // `entrance` is the second, separate question (whether the settings page offers a way to authenticate), and
+    // it is asserted per shape rather than derived, because the two really do diverge: an `oauth` declaration
+    // with no discovery block needs a credential yet has no working entrance.
+    foreach (var (methods, keyless, entrance) in new[]
+             {
+                 ("""["none"]""", true, false),
+                 ("""["none","carrier-pigeon"]""", true, false),
+                 ("""["none","apiKey"]""", false, true),
+                 ("""["oauth"]""", false, false),
+             })
+    {
+        var declared = System.Text.Json.JsonSerializer.Deserialize<ModelProvider>(
+            $$"""{"id":"decl","name":"Decl","baseUrl":"https://example.test/v1","authMethods":{{methods}}}""",
+            legacyFileJson) ?? throw new Exception($"The {methods} fixture was not deserialized.");
+        if (declared.RequiresCredential == keyless)
+            throw new Exception($"authMethods {methods} should be {(keyless ? "keyless" : "gated on a credential")}.");
+        if (declared.CanAuthenticate != entrance)
+            throw new Exception($"authMethods {methods} should offer {(entrance ? "" : "no ")}way to authenticate.");
+    }
+    Console.WriteLine("PASS: a keyless declaration is read from the auth methods, and the auth entrance stays a separate question.");
+
     // DefaultProviderId must ignore a default that names a provider the catalog does not carry.
     if (AiProviderManifest.DefaultProviderId() is null)
         throw new Exception("DefaultProviderId returned null for the shipped manifest.");
@@ -109,7 +140,13 @@ if (args.Contains("--check-ai-providers"))
     // Localized descriptions fall back to English rather than resolving empty — the picker shows this copy, so
     // an empty string would render a blank card.
     var ollama = AiProviderManifest.CreateBuiltIn("ollama") ?? throw new Exception("ollama is missing from the catalog.");
-    if (ollama.ApiKeyRequired) throw new Exception("A local Ollama endpoint should not require an API key.");
+    // `["none"]` is a declaration, not an absence: the empty-list fallback would otherwise read a keyless preset
+    // as "needs a key" the moment its array failed to parse. And it needs no entrance either — a 「鉴权」 button
+    // on a local endpoint would offer to authenticate a server that has no accounts.
+    if (ollama.RequiresCredential) throw new Exception("A local Ollama endpoint should not require a credential.");
+    if (ollama.CanAuthenticate) throw new Exception("A keyless preset should not offer a way to authenticate.");
+    if (!ProviderAuthMethods.IsKeyless(ollama.EffectiveAuthMethods))
+        throw new Exception($"ollama's declared {string.Join(",", ollama.EffectiveAuthMethods)} should read as keyless.");
     if (ollama.Describe("zh-CN").Length == 0 || ollama.Describe("en-US").Length == 0)
         throw new Exception("A preset description resolved empty for a supported language.");
     if (ollama.Describe("fr-FR") != ollama.Description)
@@ -123,19 +160,37 @@ if (args.Contains("--check-ai-providers"))
         throw new Exception($"The manifest's default provider '{defaultId}' is not in the catalog.");
     Console.WriteLine($"PASS: the manifest names one real default preset to seed ('{defaultId}').");
 
-    // Factory validation: custom needs base URL + model; cloud needs a key; a keyless local endpoint works.
+    // Factory validation: custom needs base URL + model; a built-in that needs a credential is refused while it
+    // has none; a keyless local endpoint works.
     AssertRejects(() => ChatClientFactory.Create(new ModelProvider { IsCustom = true, Model = "m" }), "custom provider without base URL is rejected");
     AssertRejects(() => ChatClientFactory.Create(new ModelProvider { IsCustom = true, BaseUrl = "http://localhost:11434/v1" }), "custom provider without model is rejected");
-    AssertRejects(() => ChatClientFactory.Create(new ModelProvider { BaseUrl = "https://api.orcarouter.ai/v1", Model = "orcarouter/auto", ApiKeyRequired = true }), "required API key missing is rejected");
+    var gated = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    gated.Model = "orcarouter/auto";
+    AssertRejects(() => ChatClientFactory.Create(gated), "an unauthenticated preset is rejected before the request");
+
+    // Which credential satisfies it is not the factory's business. A browser sign-in mints the same kind of
+    // record as a pasted key, and reading only the pasted-key shape is how a signed-in user gets told to go
+    // copy a key they never had to make.
+    var signedIn = AiProviderManifest.CreateBuiltIn("orcarouter")!;
+    signedIn.Model = "orcarouter/auto";
+    var signIn = new ProviderCredential { Id = "orcarouter", ProviderId = "orcarouter", Source = CredentialSources.OAuth, CreatedAt = DateTimeOffset.UnixEpoch };
+    signIn.Secret = "sk-yoex-factory";
+    signedIn.Credential = signIn;
+    if (ChatClientFactory.Create(signedIn) is null)
+        throw new Exception("A credential from browser sign-in should unlock the provider just like a pasted key.");
+
+    // A custom endpoint's requirement is unknowable, so it is never gated. Dropping the `!IsCustom` half of the
+    // predicate is the regression this guards: it would refuse exactly the local servers (Ollama, llama.cpp,
+    // vLLM) that make someone add a custom provider in the first place.
     if (ChatClientFactory.Create(new ModelProvider { IsCustom = true, Name = "Local", BaseUrl = "http://localhost:11434/v1", Model = "llama3" }) is null)
         throw new Exception("Keyless local provider should produce a client.");
-    Console.WriteLine("PASS: factory validates providers and assembles a keyless local client.");
+    Console.WriteLine("PASS: factory gates a preset on any credential and never gates a self-supplied endpoint.");
 
     // ProviderStore keeps keys out of JSON; CredentialStore owns the key and rehydrates it from the
     // secret store. The split is the whole point: a provider is a declaration, an account is a secret.
     var secretStore = new InMemorySecretStore();
     var providerStore = new ProviderStore(root);
-    providerStore.Save([new ModelProvider { Id = "orcarouter", Name = "OrcaRouter", BaseUrl = "https://api.orcarouter.ai/v1", ApiKeyRequired = true, Model = "orcarouter/auto" }]);
+    providerStore.Save([new ModelProvider { Id = "orcarouter", Name = "OrcaRouter", BaseUrl = "https://api.orcarouter.ai/v1", AuthMethods = [ProviderAuthMethods.ApiKey], Model = "orcarouter/auto" }]);
     var credentialStore = new CredentialStore(root, secretStore);
     var credential = new ProviderCredential
     {
@@ -150,6 +205,12 @@ if (args.Contains("--check-ai-providers"))
 
     var providersJson = File.ReadAllText(Path.Combine(root, "ai", "providers.json"));
     if (providersJson.Contains("sk-secret-123")) throw new Exception("API key leaked into providers.json.");
+    // Nor does the file belong to the derived answers: a saved `apiKeyRequired` was a value nothing re-derived,
+    // so it outlived the manifest that wrote it and quietly disagreed with the declared auth methods. Forgetting
+    // `[JsonIgnore]` on a getter puts exactly that kind of stale answer on disk — STJ serializes getters too.
+    foreach (var derived in new[] { "apiKeyRequired", "requiresCredential", "canAuthenticate" })
+        if (providersJson.Contains(derived, StringComparison.OrdinalIgnoreCase))
+            throw new Exception($"providers.json persists the derived value '{derived}'.");
     var credentialsJson = File.ReadAllText(Path.Combine(root, "ai", "credentials.json"));
     if (credentialsJson.Contains("sk-secret-123")) throw new Exception("API key leaked into credentials.json.");
 
@@ -163,6 +224,20 @@ if (args.Contains("--check-ai-providers"))
     liveProvider.Credential = roundTrip;
     if (liveProvider.ApiKey != "sk-secret-123") throw new Exception("ModelProvider.ApiKey did not project from its credential.");
     Console.WriteLine("PASS: ModelProvider.ApiKey projects from the provider's credential.");
+
+    // An older providers.json still carries "apiKeyRequired", and nothing migrates it, because the field it used
+    // to feed no longer exists. Ignoring it is the rule — and ignoring has to mean *the declaration wins*: a file
+    // saying `false` must not unlock a preset whose endpoint demands a credential, or the leftover key would
+    // become a way to switch the gate off from disk.
+    var staleRoot = Path.Combine(root, "stale-flag");
+    Directory.CreateDirectory(Path.Combine(staleRoot, "ai"));
+    var staleStore = new ProviderStore(staleRoot);
+    File.WriteAllText(Path.Combine(staleRoot, "ai", "providers.json"),
+        """[{"id":"orcarouter","name":"OrcaRouter","baseUrl":"https://api.orcarouter.ai/v1","model":"orcarouter/auto","apiKeyRequired":false}]""");
+    var stale = staleStore.Load().Single(item => item.Id == "orcarouter");
+    if (!stale.RequiresCredential)
+        throw new Exception("A leftover apiKeyRequired still decided whether the provider is usable.");
+    Console.WriteLine("PASS: a leftover apiKeyRequired in an older providers.json is ignored, not obeyed.");
 
     // Credential shape: the secret is what makes a credential usable, and it must survive the JSON/OS-store
     // split whichever provenance produced it. Provenance itself is metadata the UI never has to branch on —
