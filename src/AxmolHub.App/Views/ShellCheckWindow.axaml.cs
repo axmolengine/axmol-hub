@@ -1003,7 +1003,7 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 侧栏的会话分组：工作目录在前、没有目录的对话排在最后的「最近聊天」、归档的沉到底部；分组可折叠；
+    /// 侧栏的会话分组：工作目录在前、没有目录的对话排在最后的「对话」、归档的沉到底部；分组可折叠；
     /// 目录被搬走时整组改路径。
     ///
     /// 夹具用两个真实存在的目录加一个<b>从不创建</b>的目录。第三个夹具是这条特性存在的原因，也是最容易被
@@ -1069,8 +1069,17 @@ public partial class ShellCheckWindow : Window
         Check(tags.Length == 5 && tags[0] == SessionGroupKey.Workspaces
               && nested.Length == 3 && nested.Contains(keyA) && nested.Contains(keyB) && nested.Contains(keyMoved)
               && tags[4] == SessionGroupKey.Recent,
-            "所有工作区分组都挂在「工作区」根节点下，没有目录的对话作为同级的「最近聊天」排在后面（实际顺序："
+            "所有工作区分组都挂在「工作区」根节点下，没有目录的对话作为同级的「对话」排在后面（实际顺序："
             + string.Join(" / ", tags) + "）");
+        // 文案与键是两回事：这一组的标题改叫「对话」，但它在折叠偏好里仍然登记为 recent，改字符串等于把用户
+        // 记下的那份偏好变成孤儿。中英文各读一次，因为只断中文的话，英文那份写错也没人知道。
+        Check(sidebar.GroupHeaderText.Contains(HubTexts.Get("GroupChats", HubStrings.Language), StringComparison.Ordinal)
+              && !sidebar.GroupHeaderText.Contains("最近聊天", StringComparison.Ordinal)
+              && HubTexts.Get("GroupChats", HubTexts.ChineseLanguage) == "对话"
+              && HubTexts.Get("GroupChats", HubTexts.EnglishLanguage) == "Chats"
+              && tags.Contains(SessionGroupKey.Recent),
+            "没有目录的那一组标题读作「对话 / Chats」，不再叫「最近聊天」，分组键仍是 recent（实际标题："
+            + string.Join(" / ", sidebar.GroupHeaderText.Split('\n')) + "）");
         Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Workspaces).Length == 0
               && sidebar.GroupRowIdsForCheck(SessionGroupKey.Workspaces).Length == 0,
             "「工作区」只是段标题：它没有可编辑的路径，也不直接收会话行");
@@ -1084,7 +1093,7 @@ public partial class ShellCheckWindow : Window
             "目录已不存在的分组照样显示，并提供编辑路径（实际菜单："
             + string.Join(" / ", sidebar.GroupMenuTitlesForCheck(keyMoved)) + "）");
         Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length == 0,
-            "「最近聊天」不是一条目录，因此没有可编辑的路径（实际 " 
+            "「对话」不是一条目录，因此没有可编辑的路径（实际 " 
             + sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length + " 项）");
 
         // ── 折叠根节点：整段工作区一起收，同级不受影响 ──
@@ -1095,7 +1104,7 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.ToggleGroupForCheck(SessionGroupKey.Workspaces)
               && sidebar.SessionRowCountForCheck == plainRows
               && sidebar.GroupHeaderTagsForCheck().SequenceEqual([SessionGroupKey.Workspaces, SessionGroupKey.Recent]),
-            "折起「工作区」把整段工作区分组连同它们的会话一起收掉，同级的「最近聊天」不受影响（实际 "
+            "折起「工作区」把整段工作区分组连同它们的会话一起收掉，同级的「对话」不受影响（实际 "
             + sidebar.SessionRowCountForCheck + "/" + allRows + " 行）");
         Check(new PreferencesStore(PreferencesPathFor(scratchRoot)).Load()
                   .SidebarGroupExpanded.TryGetValue(SessionGroupKey.Workspaces, out var rootExpanded) && !rootExpanded,

@@ -608,10 +608,10 @@ public static class HubTexts
         ["RenameConversationTitle"] = ("重命名对话", "Rename conversation"),
         ["PinConversation"] = ("置顶", "Pin"),
         ["UnpinConversation"] = ("取消置顶", "Unpin"),
-        // 会话分组：工作区在前，没有工作目录的对话统一归到「最近聊天」，归档的沉在最后。时间分桶让位于
+        // 会话分组：工作区在前，没有工作目录的对话统一归到末尾的「对话」，归档的沉在最后。时间分桶让位于
         // 目录分组——同一个项目的对话散在「今天」「更早」里，就不是一个项目了。
         ["GroupWorkspaces"] = ("工作区", "Workspace"),
-        ["GroupRecentChats"] = ("最近聊天", "Recent chats"),
+        ["GroupChats"] = ("对话", "Chats"),
         ["GroupArchived"] = ("已归档", "Archived"),
         ["ToggleGroup"] = ("展开或折叠这一组", "Expand or collapse this group"),
         // 分组标题右侧的 ＋：归属由会话的工作目录派生，所以「在这个项目里新建」不需要任何额外状态。

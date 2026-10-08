@@ -47,9 +47,10 @@ public sealed class HubPreferences
     public bool SidebarCollapsed { get; set; }
 
     /// <summary>
-    /// 会话侧栏各分组展开还是折起，键取自 <see cref="SessionGroupKey"/>（<c>ws:&lt;目录&gt;</c> / <c>recent</c> /
-    /// <c>archived</c>），值为<b>用户的明确选择</b>。字典而不是布尔列表，是因为默认并不统一：工作区和最近聊天默认展开，
-    /// 已归档默认折起，而「折起的那条我打开了」和「这条我根本没动过」必须是两回事。分组是会话派生出来的，今天有
+    /// 会话侧栏各分组展开还是折起，键取自 <see cref="SessionGroupKey"/>（<c>ws:&lt;目录&gt;</c> / <c>workspaces</c> /
+    /// <c>recent</c> / <c>archived</c>），值为<b>用户的明确选择</b>。字典而不是布尔列表，是因为默认并不统一：工作区
+    /// 和「对话」默认展开，已归档默认折起，而「折起的那条我打开了」和「这条我根本没动过」必须是两回事。文案改了
+    /// 键不改——<c>recent</c> 同时是用户记下的折叠偏好，换字符串就是把那份偏好变成孤儿。分组是会话派生出来的，今天有
     /// 明天可能就没了，所以认不出的键只是渲染不到，不必清理——留着也不会挡路。
     /// </summary>
     public Dictionary<string, bool> SidebarGroupExpanded { get; set; } = [];

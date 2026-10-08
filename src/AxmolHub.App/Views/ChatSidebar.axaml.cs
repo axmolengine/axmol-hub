@@ -177,7 +177,7 @@ public partial class ChatSidebar : UserControl
             }
         }
 
-        AddGroup(new SessionBucket(SessionGroupKey.Recent, HubStrings.Get("GroupRecentChats"), null,
+        AddGroup(new SessionBucket(SessionGroupKey.Recent, HubStrings.Get("GroupChats"), null,
             [.. live.Where(summary => string.IsNullOrWhiteSpace(summary.WorkspaceRoot))]), activeId);
 
         if (archived.Length > 0)
