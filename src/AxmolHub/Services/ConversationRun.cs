@@ -12,8 +12,9 @@ internal enum RunPhase
 {
     Streaming,
 
-    /// <summary>A tool call is waiting for permission. The run keeps its slot, but no stream is open, so no
-    /// inactivity deadline applies. A new message does not wait for the decision — it supersedes it.</summary>
+    /// <summary>A tool call is waiting for permission. The run keeps its slot, but no stream is open, so nothing
+    /// re-arms the inactivity deadline — and if the one already armed fires while a person decides, the pending
+    /// call and the decision both survive it. A new message does not wait for the decision — it supersedes it.</summary>
     AwaitingApproval,
 
     Completed,
@@ -65,7 +66,8 @@ internal sealed class ConversationRun : IDisposable
     private int _compactionRequested;
     private int _wakesUsed;
     private int _spawnsUsed;
-    private bool _parked;
+    private volatile bool _parked;
+    private int _toolRunning;
 
     public string ConversationId { get; }
     public RunPhase Phase { get; private set; } = RunPhase.Streaming;
@@ -126,15 +128,34 @@ internal sealed class ConversationRun : IDisposable
         }
     }
 
-    /// <summary>Re-arms the inactivity deadline: for every chunk, and for every tool event, because a tool that
-    /// runs for two minutes while streaming nothing is working rather than stalled. A parked run has no stream,
-    /// so nothing re-arms — waiting for a human is not the same as stalling.</summary>
+    /// <summary>Re-arms the inactivity deadline for the next chunk. A parked run has no stream, so nothing
+    /// re-arms it — waiting for a human is not the same as stalling — and neither does a tool that owns the run,
+    /// which is silent by nature; <see cref="EndTool"/> restarts the count once the tool comes back.</summary>
     internal void Touch()
     {
-        if (_parked) return;
+        if (_parked || Volatile.Read(ref _toolRunning) != 0) return;
         // CancelAfter is a no-op once the source fired and throws once it is disposed; disposal happens only
         // after the pump is finished with this run.
         if (!_idle.IsCancellationRequested) _idle.CancelAfter(_idleTimeout);
+    }
+
+    /// <summary>Hands the run to a tool for the duration. No model output is owed while it runs, so the
+    /// inactivity deadline stands down rather than mistaking a long build for a dead stream; the tool judges
+    /// that stretch by its own silence bound, and answers with output the model can read instead of a network
+    /// error. Reached only for a call the gate let run, so the deadline is never stopped while a person decides.
+    /// The user's stop still cancels the tool, because it travels on the same token.</summary>
+    internal void BeginTool()
+    {
+        Interlocked.Exchange(ref _toolRunning, 1);
+        _idle.CancelAfter(Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>The tool came back, or was refused: the deadline counts again from now. A refused call never
+    /// entered the bracket, so ending it for one simply re-arms.</summary>
+    internal void EndTool()
+    {
+        Interlocked.Exchange(ref _toolRunning, 0);
+        Touch();
     }
 
     internal void RequestStop() => _stop.Cancel();

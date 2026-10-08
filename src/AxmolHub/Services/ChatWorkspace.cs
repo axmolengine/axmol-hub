@@ -2132,8 +2132,9 @@ public sealed class ChatWorkspace : IDisposable
 
     /// <summary>How long a run may go without producing anything. It is an inactivity deadline rather than a
     /// total one: a reply that keeps arriving is not overdue however long it takes, and a stream that stopped
-    /// arriving is dead at any elapsed time. A run parked on a tool keeps its deadline re-armed by the tool
-    /// events, so a slow build is not mistaken for a stall.</summary>
+    /// arriving is dead at any elapsed time. It measures the stream alone — the deadline stands down while a tool
+    /// owns the run, where the tool's own silence bound judges that stretch and answers with output the model
+    /// reads instead of a notice — and nothing re-arms it while a call waits for a person.</summary>
     internal TimeSpan IdleTimeout = TimeSpan.FromSeconds(120);
 
     /// <summary>
@@ -2800,6 +2801,9 @@ public sealed class ChatWorkspace : IDisposable
         var scope = await ReadOnUiAsync(() => ScopeFor(run.ConversationId)).ConfigureAwait(false);
         if (ChatTools.Find(call.Value.Name, call.Value.Mode, scope) is { } tool)
         {
+            // The same bracket the loop puts around a call it lets run: an approved build is exactly as long as
+            // an unapproved one, and the deadline restarted above has nothing to measure until this comes back.
+            run.BeginTool();
             try
             {
                 var arguments = System.Text.Json.JsonSerializer
@@ -2822,6 +2826,10 @@ public sealed class ChatWorkspace : IDisposable
             catch (Exception ex)
             {
                 result = "Tool failed: " + ex.Message;
+            }
+            finally
+            {
+                run.EndTool();
             }
         }
 
@@ -3242,9 +3250,20 @@ public sealed class ChatWorkspace : IDisposable
             request.Reasoning,
             request.Tools,
             images: request.Images,
-            gate: (info, _) => GateToolCallAsync(run, info),
+            gate: async (info, _) =>
+            {
+                // The bracket opens on the verdict rather than in onToolStarted: that event fires before the gate,
+                // and a call that parks for approval never runs at all — a deadline stopped for a person who is
+                // still deciding would be stopped with nobody left to restart it.
+                var verdict = await GateToolCallAsync(run, info).ConfigureAwait(false);
+                if (verdict == ChatPipeline.ToolGateOutcome.Allow) run.BeginTool();
+                return verdict;
+            },
             onToolStarted: async info =>
             {
+                // Ahead of the UI hop, not after it: the deadline measures the stream, so a message pump that
+                // stalls must not stall the re-arm with it.
+                run.Touch();
                 // Whatever the model said before asking for this call belongs to the call's own turn, so it is
                 // taken out of the live buffer here rather than written after the result. The thinking does not
                 // come from that buffer: the pipeline hands over the block the <i>response</i> produced, because
@@ -3261,7 +3280,6 @@ public sealed class ChatWorkspace : IDisposable
                     ToolActivityChanged?.Invoke(run.ConversationId, info.Name, false);
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
-                run.Touch();
             },
             onToolCompleted: async (info, result, failed) =>
             {
@@ -3269,6 +3287,9 @@ public sealed class ChatWorkspace : IDisposable
                 // turn is what lets the request boundary hand them to the model as the next user message.
                 var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId));
                 run.RecordToolOutcome($"{info.Name}（{OutcomeWord(failed, result)}）");
+                // The tool is off the run: the deadline counts again from now, and from before the UI hop for the
+                // same reason the start gives it.
+                run.EndTool();
                 await ApplyOnUiAsync(() =>
                 {
                     _sessions.TryUpdate(run.ConversationId, opened =>
@@ -3287,7 +3308,6 @@ public sealed class ChatWorkspace : IDisposable
                 // Asked for here, acted on by the pump: this callback runs inside the model's tool loop, where
                 // awaiting a compression request would deadlock the loop that is waiting for the result.
                 run.RequestCompaction();
-                run.Touch();
             },
             modelName: request.ModelName,
             onReasoning: thought => run.AppendReasoning(thought),
