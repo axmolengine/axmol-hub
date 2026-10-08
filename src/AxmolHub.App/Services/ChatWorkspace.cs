@@ -3258,13 +3258,14 @@ public sealed class ChatWorkspace : IDisposable
             onToolStarted: async info =>
             {
                 // Whatever the model said before asking for this call belongs to the call's own turn, so it is
-                // taken out of the live buffer here rather than written after the result. The thinking goes with
-                // it for the same reason: it belongs to that one assistant message, and a gateway that wants it
-                // back wants it on the message that earned it.
+                // taken out of the live buffer here rather than written after the result. The thinking does not
+                // come from that buffer: the pipeline hands over the block the <i>response</i> produced, because
+                // one response can ask for several tools and every assistant message replayed for it has to carry
+                // the same reasoning — a gateway that wants the thinking back wants it on each of them, not on
+                // whichever call happened to be streamed first.
                 var said = run.LiveText;
-                var thought = run.LiveReasoning;
                 var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson,
-                    said.Length > 0 ? said : null, thought.Length > 0 ? thought : null);
+                    said.Length > 0 ? said : null, info.Reasoning);
                 await ApplyOnUiAsync(() =>
                 {
                     run.BeginSegment();

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.ClientModel.Primitives;
 using AxmolHub.Core;
@@ -47,8 +48,13 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.</summary>
-    public readonly record struct ToolCallInfo(string Name, string CallId, string ArgumentsJson);
+    /// <summary>One function call as the pipeline saw it, handed to the callbacks that record and report it.
+    /// <paramref name="reasoning"/> is the chain of thought that produced <i>this</i> response — the whole block,
+    /// not the slice that happened to be buffered when the call was filed, because a thinking model reasons once
+    /// per response and may ask for several tools in it. Every assistant message replayed for that response has
+    /// to carry it, or the provider rejects the request for a thinking turn whose thinking went missing.</summary>
+    public readonly record struct ToolCallInfo(
+        string Name, string CallId, string ArgumentsJson, string? Reasoning = null);
 
     /// <summary>The answer to "may this call run now".</summary>
     public enum ToolGateOutcome
@@ -100,6 +106,12 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var messages = ToChatMessages(trimmed, images);
         var options = BuildOptions(provider, modelName, reasoningEffort, tools);
         var parked = new GateState();
+        // The chain of thought behind the response now streaming, and whether a call has already been filed from
+        // it. The invoker runs after a response has finished streaming and before the next request goes out, so
+        // every call of one response reads the same block, and the first reasoning chunk that arrives afterwards
+        // is the start of the next one.
+        var thinking = new StringBuilder();
+        var thinkingSpent = false;
         IChatClient effectiveClient = client;
         if (tools is { Count: > 0 })
         {
@@ -121,7 +133,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             {
                 var call = context.CallContent;
                 var arguments = JsonSerializer.Serialize(call.Arguments, ArgumentJson);
-                var info = new ToolCallInfo(call.Name, call.CallId, arguments);
+                var info = new ToolCallInfo(call.Name, call.CallId, arguments,
+                    thinking.Length > 0 ? thinking.ToString() : null);
+                thinkingSpent = true;
                 if (onToolStarted is not null) await onToolStarted(info).ConfigureAwait(false);
 
                 var outcome = gate is null
@@ -183,6 +197,14 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     // Not assistant text, so it never reaches the bubble. It is still part of the conversation as
                     // far as a thinking model is concerned, and quietly dropping it is what makes the <i>next</i>
                     // request that carries tools come back rejected.
+                    if (thinkingSpent)
+                    {
+                        // A call has already been filed from what is buffered, so this chunk is the next
+                        // response's thinking, not more of the one that produced it.
+                        thinking.Clear();
+                        thinkingSpent = false;
+                    }
+                    thinking.Append(said);
                     onReasoning?.Invoke(said);
                 }
             }

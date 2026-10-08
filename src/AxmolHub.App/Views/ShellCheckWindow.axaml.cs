@@ -2856,6 +2856,8 @@ public partial class ShellCheckWindow : Window
                 ("read_file", new Dictionary<string, object?> { ["path"] = "note.txt" }),
             ];
             batchClient.CallsRemaining = 0;
+            const string batchThinking = "先改文件，再读回来确认改动。";
+            batchClient.Thinking = [batchThinking];
             foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession, batchSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
@@ -3368,6 +3370,18 @@ public partial class ShellCheckWindow : Window
             Check(afterBatch is not null && afterBatch.Messages[^1].Text == ApprovalChatClient.Answer
                   && chat.RunFor(batchSession.Id) is null,
                 "配对修好后回复照样接上、运行位让出（而不是停在一次注定被拒的请求上）");
+
+            // ── one response's thinking belongs to every call it asked for ──
+            // 思考型网关会把「本轮想过什么」当成那条 assistant 消息的一部分：重放时缺了它，整段请求就被拒收
+            // （reasoning_content must be passed back）。一次响应可以带好几个调用，而它们共用同一块思考 —— 早先
+            // 每条调用各取「此刻缓冲区里剩的东西」，第二条起就都是空的。这里要的是两条都拿到同一块。
+            var batchThoughts = afterBatch!.Messages
+                .Where(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 })
+                .Select(turn => turn.Reasoning).ToArray();
+            Check(batchThoughts.Length == 2 && batchThoughts.All(said => said == batchThinking),
+                "一次响应的思考跟着它的每一条调用落库（实际 "
+                + string.Join(" / ", batchThoughts.Select(said => said is { Length: > 0 } thought
+                    ? thought.Length + " 字" : "无")) + "）");
             // 上面几条证明不了答案是自己走到调用旁边的 —— 发送前的重排会在注定被拒的请求之前把转录救回来，
             // 所以两处修复任一处生效都能过。审计行把「没写坏」和「写坏了又被救」分开：这一条要的是前者。
             var batchAudit = System.IO.File.ReadAllLines(shell.Workspace.Log.FilePath);
@@ -3776,6 +3790,11 @@ public partial class ShellCheckWindow : Window
         /// one-call-per-response fixtures can reach it.</summary>
         public List<(string Name, Dictionary<string, object?> Arguments)> Batch { get; set; } = [];
 
+        /// <summary>What the response thinks before it asks, emitted as reasoning content ahead of the calls. A
+        /// thinking model produces <b>one</b> block per response and can ask for several tools inside it — the
+        /// shape that used to leave calls 2..N filed with no thinking to replay, and the request rejected.</summary>
+        public List<string> Thinking { get; set; } = [];
+
         /// <summary>How many times the fixture actually answered. A parked turn attempts a follow-up request and
         /// dies in it, so counting requests would say nothing about whether a reply was produced.</summary>
         public int Answers { get; private set; }
@@ -3792,6 +3811,15 @@ public partial class ShellCheckWindow : Window
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             Requests++;
+            if (Thinking.Count > 0)
+            {
+                // One block, once: it belongs to the response this call is about to answer.
+                foreach (var said in Thinking)
+                    yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                        Microsoft.Extensions.AI.ChatRole.Assistant,
+                        [new Microsoft.Extensions.AI.TextReasoningContent(said)]);
+                Thinking.Clear();
+            }
             if (Batch.Count > 0)
             {
                 var batch = new List<Microsoft.Extensions.AI.AIContent>();

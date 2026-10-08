@@ -1551,6 +1551,38 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A turn whose only weight is its thinking counted as free.");
     Console.WriteLine("PASS: a thinking model's reasoning goes back out on the message that produced it, and only there.");
 
+    // ── 一次响应里的多个调用：那份思考要跟着每一条 ──
+    // 模型一次响应里可以要好几个工具，却只思考一次；那一次响应在转录里被拆成几条 assistant 消息，每条都是那次
+    // 思考的产物。网关重放时要的就是每一条都带上它，早先只有最先流到的那条拿到，其余是空的，请求于是又被拒回去。
+    var batchBody = """
+        {"messages":[{"role":"user","content":"问题"},
+        {"role":"assistant","tool_calls":[{"id":"call_00_x","type":"function","function":{"name":"run_command","arguments":"{}"}}]},
+        {"role":"tool","tool_call_id":"call_00_x","content":"ok"},
+        {"role":"assistant","tool_calls":[{"id":"call_01_y","type":"function","function":{"name":"read_file","arguments":"{}"}}]},
+        {"role":"tool","tool_call_id":"call_01_y","content":"file"},{"role":"user","content":"继续"}],"model":"m"}
+        """;
+    var batchThought = "一次思考，两个调用。";
+    var batchTable = new ReasoningTable();
+    batchTable.Observe(ChatPipeline.ToChatMessages(
+    [
+        ChatTurn.User("问题"),
+        ChatTurn.FunctionCall("call_00_x", "run_command", "{}", null, batchThought),
+        ChatTurn.FunctionResult("call_00_x", "ok"),
+        ChatTurn.FunctionCall("call_01_y", "read_file", "{}", null, batchThought),
+        ChatTurn.FunctionResult("call_01_y", "file"),
+        ChatTurn.User("继续"),
+    ]));
+    if (!ReasoningReplayPolicy.TryInject(batchBody, batchTable, out var batchReplayed))
+        throw new Exception("A second call of one response had nothing to replay, so the body went out unchanged.");
+    var batchMessages = JsonDocument.Parse(batchReplayed).RootElement.GetProperty("messages")
+        .EnumerateArray().ToList();
+    if (batchMessages.Count != 6)
+        throw new Exception($"Replaying a batch rewrote the conversation, not just one field ({batchMessages.Count} messages).");
+    if (batchMessages[1].GetProperty("reasoning_content").GetString() != batchThought
+        || batchMessages[3].GetProperty("reasoning_content").GetString() != batchThought)
+        throw new Exception("Only the first call of one response carried its thinking back to the gateway.");
+    Console.WriteLine("PASS: every call of one thinking response replays with that response's thinking, not just the first.");
+
     // ── Inside the loop, results shrink but messages never disappear ──
     var loopMessages = new List<ChatMessage>
     {
