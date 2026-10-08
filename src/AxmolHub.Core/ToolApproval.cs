@@ -12,8 +12,15 @@ public enum ToolRisk
     /// <summary>Changes something inside the session's workspace, or inside Hub's own records.</summary>
     WorkspaceWrite,
 
-    /// <summary>Runs something on the machine. A tool this build has never heard of lands here rather than
-    /// nowhere: an unknown name is the one least able to vouch for itself.</summary>
+    /// <summary>Starts a process in the session's sandbox. Its consequences are meant to stay in that directory,
+    /// which is why <see cref="ToolApprovalModes.Auto"/> lets it through and <see cref="ToolApprovalModes.Ask"/>
+    /// does not: the workspace is the thing the user pointed Hub at, and a build or a test run inside it is the
+    /// ordinary shape of the request. It is still execution, so a card still shows in the strict tier.</summary>
+    WorkspaceCommand,
+
+    /// <summary>Reaches past the sandbox — the user's screen, another session, a directory nobody chose — or is a
+    /// tool this build has never heard of. A new name lands here rather than nowhere: an unknown tool is the one
+    /// least able to vouch for itself, and no "always allow" grant opens this tier.</summary>
     SystemCommand,
 
     /// <summary>The assistant's own notes, written inside a directory Hub owns. Never asks — a note that costs
@@ -31,7 +38,9 @@ public static class ToolApprovalModes
     /// <summary>询问审批 — the default, and the fallback for anything unrecognized.</summary>
     public const string Ask = "ask";
 
-    /// <summary>自动审批 — a write inside the workspace goes through; anything that executes still asks.</summary>
+    /// <summary>自动审批 — the session's sandbox is trusted: a write inside it and a command run inside it both go
+    /// through. Anything that reaches past it still asks — the screen, another session, a directory nobody chose,
+    /// a tool name this build does not know.</summary>
     public const string Auto = "auto";
 
     /// <summary>完全访问 — nothing asks. The workspace guard still runs inside each tool, because approving
@@ -47,7 +56,10 @@ public static class ToolApprovalModes
 public static class ToolApprovalPolicy
 {
     /// <summary>Whether <paramref name="risk"/> has to be approved before it runs under <paramref name="mode"/>.
-    /// The assistant's own notes are exempt in every mode; everything else follows the table.</summary>
+    /// The assistant's own notes are exempt in every mode; everything else follows the table. The auto arm names
+    /// only the top tier rather than listing what it allows, which is what lets a new tier that stays inside the
+    /// sandbox (<see cref="ToolRisk.WorkspaceCommand"/>) go through without a second edit here: adding a tier in
+    /// the middle means "trusted by default", and only an added tier <i>above</i> this one should ever ask.</summary>
     public static bool RequiresApproval(string? mode, ToolRisk risk) => risk switch
     {
         ToolRisk.AssistantNote => false,

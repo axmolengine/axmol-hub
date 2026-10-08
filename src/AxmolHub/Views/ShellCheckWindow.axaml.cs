@@ -3121,6 +3121,15 @@ public partial class ShellCheckWindow : Window
         var restartSession = chat.StartConversation();
         var badgeSession = chat.StartConversation();
         var batchSession = chat.StartConversation();
+        // The two sessions that decide whether this build's whole change is real: one command, one sandbox, run
+        // under the two modes that disagree about it.
+        var autoRunSession = chat.StartConversation();
+        var askRunSession = chat.StartConversation();
+        // One response, two calls: move the sandbox into a folder it already has, then run a command. The move is
+        // free, the command is not, and the only honest card is the one that names the directory the command will
+        // really start in — which is the root this request was built with, not the one the session file moved to
+        // while the response was being worked through.
+        var movedSession = chat.StartConversation();
         var readClient = new ApprovalChatClient();
         var parkClient = new ApprovalChatClient();
         var denyClient = new ApprovalChatClient();
@@ -3128,6 +3137,9 @@ public partial class ShellCheckWindow : Window
         var restartClient = new ApprovalChatClient();
         var badgeClient = new ApprovalChatClient();
         var batchClient = new ApprovalChatClient();
+        var autoRunClient = new ApprovalChatClient { ToolName = "run_command" };
+        var askRunClient = new ApprovalChatClient { ToolName = "run_command" };
+        var movedClient = new ApprovalChatClient();
         ChatWorkspace? reopened = null;
         try
         {
@@ -3140,6 +3152,9 @@ public partial class ShellCheckWindow : Window
                 var id when id == restartSession.Id => restartClient,
                 var id when id == badgeSession.Id => badgeClient,
                 var id when id == batchSession.Id => batchClient,
+                var id when id == autoRunSession.Id => autoRunClient,
+                var id when id == askRunSession.Id => askRunClient,
+                var id when id == movedSession.Id => movedClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
             // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
@@ -3158,6 +3173,11 @@ public partial class ShellCheckWindow : Window
                 client.Arguments = editArguments;
             readClient.ToolName = "read_file";
             readClient.Arguments = new Dictionary<string, object?> { ["path"] = "note.txt" };
+            // A command that says where it ran and does nothing else: the tier under test is "a process started in
+            // the session's own sandbox", so the fixture has to start one for real and read its cwd back.
+            var whereIAm = CommandShells.ForCurrent().IsPowerShell ? "Get-Location" : "pwd";
+            autoRunClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
+            askRunClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
             // The reported shape: one response asking for a write that needs permission and a read that does not.
             // The write parks, the loop goes on running the read, and the approved answer has to land beside the
             // write rather than at the end of everything the loop appended while the question was open.
@@ -3169,7 +3189,8 @@ public partial class ShellCheckWindow : Window
             batchClient.CallsRemaining = 0;
             const string batchThinking = "先改文件，再读回来确认改动。";
             batchClient.Thinking = [batchThinking];
-            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession, batchSession })
+            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession,
+                    badgeSession, batchSession, autoRunSession, askRunSession, movedSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -3192,19 +3213,60 @@ public partial class ShellCheckWindow : Window
             appPreferences.ToolApprovalMode = ToolApprovalModes.Ask;
 
             // The tier map itself, asserted next to the calls above: a name this build has never heard is the one
-            // least able to vouch for itself, so it lands on the tier that has to ask.
-            Check(ChatTools.RiskOf("get_projects", null) == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("read_file", null) == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("search_text", null) == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("list_directory", null) == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("find_files", null) == ToolRisk.ReadOnly
-                  && ChatTools.RiskOf("file_write", null) == ToolRisk.WorkspaceWrite
-                  && ChatTools.RiskOf("run_command", null) == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("capture_screen", null) == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("spawn_session", null) == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("set_workspace", null) == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("没登记过的工具", null) == ToolRisk.SystemCommand,
-                "只读查询登记为只读，写文件是工作区写，抓屏与派生子会话都与命令同级，没听过的工具名按系统命令兜底而不是放行");
+            // least able to vouch for itself, so it lands on the tier that has to ask. It is asserted against a
+            // real sandbox and an empty one, because the whole point of the workspace-command tier is that it
+            // depends on the directory the call will run in — a table checked with no scope would pass while
+            // every command in the app was still being classed as a machine-level act.
+            var sandbox = new WorkspaceToolScope(workspace, new WorkspaceGuards(null, []), null, "tier-map", [], null, null);
+            Check(ChatTools.RiskOf("get_projects", null, sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("read_file", null, sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("search_text", null, sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("list_directory", null, sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("find_files", null, sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("file_write", null, sandbox) == ToolRisk.WorkspaceWrite
+                  && ChatTools.RiskOf("run_command", null, sandbox) == ToolRisk.WorkspaceCommand
+                  // The negative control for the line above: a command with no sandbox to start in is not a
+                  // workspace command, and a tier that only ever reads one way is a tier nobody tested.
+                  && ChatTools.RiskOf("run_command", null, WorkspaceToolScope.Empty) == ToolRisk.SystemCommand
+                  // A root that is protected is not a sandbox either, whatever the session's chip says. The guard
+                  // here is the same directory: `IsProtected` answers for a root equal to its own data root, which
+                  // is how a session pointed at Hub's own files ends up asking.
+                  && ChatTools.RiskOf("run_command", null, new WorkspaceToolScope(workspace,
+                      new WorkspaceGuards(workspace, []), workspace, "tier-map", [], null, null)) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("capture_screen", null, sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("spawn_session", null, sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("没登记过的工具", null, sandbox) == ToolRisk.SystemCommand,
+                "只读查询登记为只读，写文件是工作区写，沙箱里的命令自成一档、没有沙箱或落在受保护目录时退回系统命令，抓屏与派生子会话仍在最高档，没听过的工具名按系统命令兜底而不是放行");
+
+            // `set_workspace` is the one call whose tier is the directory rather than the verb: narrowing the
+            // sandbox to a folder it already contains reaches nothing the session could not already reach, a
+            // registered project is a directory the user handed Hub on purpose, and anything else is the assistant
+            // picking a place nobody agreed to — the click that decides it is the click that picks the guard.
+            var nested = System.IO.Path.Combine(workspace, "sandbox-nested");
+            var knownProject = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(workspace)!, "tier-map-project");
+            var elsewhere = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(workspace)!, "tier-map-outside");
+            string Target(string path) => System.Text.Json.JsonSerializer.Serialize(new { path });
+            Check(ChatTools.RiskOf("set_workspace", Target(workspace), sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("set_workspace", Target(nested), sandbox) == ToolRisk.ReadOnly
+                  && ChatTools.RiskOf("set_workspace", Target(knownProject), sandbox, [knownProject]) == ToolRisk.WorkspaceWrite
+                  && ChatTools.RiskOf("set_workspace", Target(elsewhere), sandbox, [knownProject]) == ToolRisk.SystemCommand
+                  // Nothing readable in the arguments, and a root the sandbox would refuse anyway: both fall to the
+                  // tier that asks rather than to a guess about which directory the model meant.
+                  && ChatTools.RiskOf("set_workspace", null, sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("set_workspace", """{"path":"relative/only"}""", sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("set_workspace", "not json at all", sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("set_workspace", Target(workspace), new WorkspaceToolScope(workspace,
+                      new WorkspaceGuards(workspace, []), workspace, "tier-map", [], null, null)) == ToolRisk.SystemCommand,
+                "换工作目录按它指向哪里分档：收到自己沙箱内免批、指向已登记工程算工作区写、指向别处或读不出路径或落在受保护根都要问");
+
+            // The tier only matters through the decision table, so each tier is asserted as one mode chain. The
+            // workspace-command chain is the one this build's whole complaint was about: the strict tier still
+            // asks for a command, the auto tier does not, and a regression that put run_command back on the top
+            // tier would have to break this line to go unnoticed.
+            Check(ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Ask, ToolRisk.WorkspaceCommand)
+                  && !ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Auto, ToolRisk.WorkspaceCommand)
+                  && !ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Full, ToolRisk.WorkspaceCommand),
+                "沙箱里的命令只在「询问审批」弹卡，「自动审批」直接放行——构建与测试的主循环不再一条命令一张卡");
 
             // The tier only matters through the decision table, and for capture_screen the table is the privacy
             // guarantee: a model that can look at the desktop may only do it once per card in the two modes that
@@ -3220,11 +3282,11 @@ public partial class ShellCheckWindow : Window
             var looksAsk = false;
             foreach (var look in new[] { "search_text", "list_directory", "find_files" })
             foreach (var mode in new[] { ToolApprovalModes.Ask, ToolApprovalModes.Auto, ToolApprovalModes.Full })
-                looksAsk |= ToolApprovalPolicy.RequiresApproval(mode, ChatTools.RiskOf(look, null));
+                looksAsk |= ToolApprovalPolicy.RequiresApproval(mode, ChatTools.RiskOf(look, null, sandbox));
             Check(!looksAsk, "检索三件套在三个审批档位上都不弹卡，探索陌生仓库不再一路点卡片");
-            Check(ChatTools.RiskOf("memory_write", """{"scope":"project"}""") == ToolRisk.AssistantNote
-                  && ChatTools.RiskOf("memory_write", """{"scope":"global"}""") == ToolRisk.WorkspaceWrite
-                  && ChatTools.RiskOf("memory_write", null) == ToolRisk.WorkspaceWrite,
+            Check(ChatTools.RiskOf("memory_write", """{"scope":"project"}""", sandbox) == ToolRisk.AssistantNote
+                  && ChatTools.RiskOf("memory_write", """{"scope":"global"}""", sandbox) == ToolRisk.WorkspaceWrite
+                  && ChatTools.RiskOf("memory_write", null, sandbox) == ToolRisk.WorkspaceWrite,
                 "记忆笔记按参数分档：项目内免批，写到全局（沙箱之外）要批，参数读不出来时按要批兜底");
 
             // The wire schema is snake_case because that is what a model emits. A tool registered without the
@@ -3285,8 +3347,8 @@ public partial class ShellCheckWindow : Window
                   && ChatTools.CreateFor(ChatModes.Plan, new ChatToolScope(
                       chat.HubSnapshotProvider?.Invoke(),
                       new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)))
-                      .All(tool => ChatTools.RiskOf(tool.Name, null) == ToolRisk.ReadOnly),
-                "「询问审批」不给任何工具，「计划」只给只读的那些");
+                      .All(tool => ChatTools.RiskOf(tool.Name, null, WorkspaceToolScope.Empty) == ToolRisk.ReadOnly),
+                "「询问审批」不给任何工具，「计划」只给只读的那些（空沙箱下判读，说明它们免批与目录无关）");
 
             // The agent prompt carries the working discipline the tools cannot enforce: verify with the project's
             // own command before claiming a result, and re-run into a file when the output was cut short. It also
@@ -3331,6 +3393,82 @@ public partial class ShellCheckWindow : Window
             Dispatcher.UIThread.RunJobs();
             Check(panel.PendingApprovalCardsForCheck == 0,
                 "只读调用不在消息流里插审批卡片（没有要问的事就不该出现提问）");
+
+            // The account this build exists to settle. A command inside the session's own directory used to cost a
+            // click every time, which made 自动审批 indistinguishable from 询问审批 for any task that builds or
+            // tests — the complaint was "a simple task still pops a card", and the transcripts say it was nine
+            // cards for one calculator. Asserted as a <b>pair</b> with the strict tier below: a tier that moved the
+            // wrong way, or a gate that quietly stopped gating, breaks one of the two rather than reading as fine.
+            chat.SetApprovalMode(autoRunSession.Id, ToolApprovalModes.Auto);
+            chat.OpenConversation(autoRunSession.Id);
+            chat.TryEnqueueSend(autoRunSession.Id, "构建一下", null, out var autoRefusal);
+            await WaitForIdleAsync(chat);
+            var autoStored = chat.StoredCopyForCheck(autoRunSession.Id);
+            var autoRan = autoStored?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Tool);
+            Check(autoRefusal is null
+                  && autoStored?.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 1
+                  && autoStored.Messages.All(turn => turn.ApprovalState is null)
+                  && autoRan?.Text.Contains("cwd:", StringComparison.Ordinal) == true
+                  && !autoRan.Text.Contains("awaiting user approval", StringComparison.Ordinal)
+                  && chat.RunFor(autoRunSession.Id) is null,
+                "「自动审批」下沙箱里的命令直接跑到底：结果真回了转录、没有留下任何审批状态、运行也收干净了（工具结果 "
+                + autoStored?.Messages.Count(turn => turn.Role == ChatRoles.Tool) + " 条，末条「"
+                + (autoRan?.Text ?? "").Replace('\n', '·').Trim() + "」）");
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 0,
+                "「自动审批」下的工作区命令不再盖住输入区弹卡——一条命令一张卡就是用户说的那个「总弹」");
+
+            // The same call, the same sandbox, the strict tier: it still parks. Without this line the cell above
+            // could be reporting a gate that stopped working rather than a tier that moved.
+            chat.SetApprovalMode(askRunSession.Id, ToolApprovalModes.Ask);
+            chat.OpenConversation(askRunSession.Id);
+            chat.TryEnqueueSend(askRunSession.Id, "构建一下", null, out _);
+            var askedCallId = await WaitForPendingCallAsync(askRunSession);
+            Check(askedCallId is not null
+                  && askRunSession.Messages.Any(turn => turn.ToolCallId == askedCallId
+                      && turn.ApprovalState == ChatApprovalStates.Pending)
+                  && askRunSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 0,
+                "同一条沙箱内命令在「询问审批」下仍然挂起等决定——免批的是档位，不是闸门（停在 "
+                + askRunSession.Messages.Count + " 条）");
+            // Refused rather than left parked: the run has to be off the registry before the next fixture starts,
+            // and a refusal is the answer that does not run a second command on the way out.
+            chat.TryResolveApproval(askRunSession.Id, askedCallId ?? "", approved: false, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PendingApprovalCardsForCheck == 0 && chat.RunFor(askRunSession.Id) is null,
+                "拒绝那条命令后卡片退出，运行也不再挂在注册表里");
+
+            // One response, two calls, and the sandbox moving between them. Narrowing it to a folder it already
+            // holds runs free; the command that follows still parks — and the card has to name the directory that
+            // command will really start in. Read off the session rather than off the request, the preview would
+            // promise the nested folder while the shell opened in the outer one, which is exactly the drift the
+            // gate's scope exists to prevent.
+            System.IO.Directory.CreateDirectory(nested);
+            movedClient.Batch =
+            [
+                ("set_workspace", new Dictionary<string, object?> { ["path"] = nested }),
+                ("run_command", new Dictionary<string, object?> { ["command"] = whereIAm }),
+            ];
+            movedClient.CallsRemaining = 0;
+            chat.OpenConversation(movedSession.Id);
+            chat.TryEnqueueSend(movedSession.Id, "换个子目录再跑一次", null, out _);
+            var movedCallId = await WaitForPendingCallAsync(movedSession);
+            var movedTurn = movedSession.Messages.LastOrDefault(turn => turn.ToolCallId == movedCallId);
+            Check(movedCallId is not null
+                  && movedSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 1
+                  && movedSession.Messages.All(turn => turn.ToolName != "set_workspace" || turn.ApprovalState is null)
+                  && movedTurn?.ApprovalState == ChatApprovalStates.Pending
+                  && movedTurn.ApprovalPreview?.Contains(workspace, StringComparison.Ordinal) == true
+                  && movedTurn.ApprovalPreview?.Contains(nested, StringComparison.Ordinal) != true
+                  // The session did move underneath the request: without this half of the pair the cell would be
+                  // reading a fixture where nothing drifts, and the gate could pass it while re-reading the root.
+                  && WorkspacePaths.CanonicalRoot(movedSession.WorkspaceRoot) == WorkspacePaths.CanonicalRoot(nested),
+                "同一段里先收窄沙箱再跑命令：收窄免批、命令仍挂起，卡片点名的是这条命令真正会起在的旧目录（预览「"
+                + (movedTurn?.ApprovalPreview ?? "").Replace('\n', '·') + "」，会话现根 " + movedSession.WorkspaceRoot + "）");
+            chat.TryResolveApproval(movedSession.Id, movedCallId ?? "", approved: false, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
 
             // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
             // because a decision made after a restart is made against the file, not against memory.
@@ -3820,7 +3958,9 @@ public partial class ShellCheckWindow : Window
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
-            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id, badgeSession.Id, batchSession.Id })
+            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id,
+                    restartSession.Id, badgeSession.Id, batchSession.Id, autoRunSession.Id, askRunSession.Id,
+                    movedSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);
             Check(chat.RunningCount == 0

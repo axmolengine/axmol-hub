@@ -638,11 +638,15 @@ public static class HubTexts
         // unasked, which is the only thing the three names cannot carry themselves.
         ["ChatToolPermissionFollowFormat"] = ("跟随默认（{0}）", "Follow the default ({0})"),
         ["ToolApprovalAsk"] = ("询问审批", "Ask for approval"),
-        ["ToolApprovalAskHint"] = ("除只读查询外，每个操作都先问一次", "Everything except a read asks first"),
+        ["ToolApprovalAskHint"] = ("除只读查询外，每个操作都先问一次，包括跑命令",
+            "Everything except a read asks first, commands included"),
         ["ToolApprovalAuto"] = ("自动审批", "Auto-approve"),
-        ["ToolApprovalAutoHint"] = ("工程内的写入直接执行，运行命令仍要问", "Workspace writes run on their own; running a command still asks"),
+        ["ToolApprovalAutoHint"] = ("工程内的写入和工程目录里的命令直接执行；抓屏、派生子会话、换工作目录仍要问",
+            "Writes and commands inside the workspace run on their own; the screen, a child session and a new "
+            + "working directory still ask"),
         ["ToolApprovalFull"] = ("完全访问", "Full access"),
-        ["ToolApprovalFullHint"] = ("什么都不再问，包括运行命令", "Nothing asks any more, including running commands"),
+        ["ToolApprovalFullHint"] = ("什么都不再问，包括抓屏和这个版本没登记过的工具",
+            "Nothing asks any more, including the screen and any tool this build does not know"),
         ["ToolPermission"] = ("工具权限", "Tool permission"),
         ["ToolPermissionHint"] = ("助手动手之前的默认严格程度。单个会话可以在聊天里改，不影响这里。", "How strict the assistant is by default before it acts. A single session can override this in the chat without changing it here."),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),

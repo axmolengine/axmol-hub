@@ -27,27 +27,49 @@ internal static class ChatTools
     };
 
     /// <summary>
-    /// Risk by name and arguments. The arguments matter for one tool: a memory note inside the workspace is the
-    /// assistant's own and never asks, while the same write to global memory lands in Hub's data directory,
-    /// outside every sandbox, and does.
+    /// Risk by name, arguments and the sandbox the call runs in. The arguments decide two of them: a memory note
+    /// inside the workspace is the assistant's own and never asks, while the same write to global memory lands in
+    /// Hub's data directory, outside every sandbox, and does; and moving the session's sandbox is judged by the
+    /// directory it names rather than by the verb. A command's tier comes from the root the request was built
+    /// with — see <see cref="ChatWorkspace"/>'s gate, which passes that same scope to the tool body.
     ///
-    /// An unknown name lands on the worst tier, and so does a <c>memory_write</c> whose arguments cannot be
-    /// parsed: a call this build cannot classify is exactly the one that should not run unasked.
+    /// An unknown name lands on the worst tier, and so does a call whose arguments cannot be parsed: a call this
+    /// build cannot classify is exactly the one that should not run unasked. The scope is a required argument
+    /// rather than an optional one because an omitted scope is a silent second table — the card and the gate would
+    /// have to agree by habit instead of by construction.
     /// </summary>
-    public static ToolRisk RiskOf(string name, string? argumentsJson) => name switch
+    public static ToolRisk RiskOf(string name, string? argumentsJson, WorkspaceToolScope scope,
+        IReadOnlyList<string>? projectPaths = null) => name switch
     {
         "get_projects" or "get_engines" or "get_toolchain_status" or "read_file" or "memory_read"
             or "list_sessions" or "read_session"
             or "search_text" or "list_directory" or "find_files"
             => ToolRisk.ReadOnly,
         "file_write" or "send_to_session" => ToolRisk.WorkspaceWrite,
+        // Decided by the same check the tool body runs before it spawns the shell
+        // (<see cref="WorkspacePaths.VerifyCommandRoot"/>, which <c>WorkspaceTools.RunCommand</c> calls first), so
+        // "this call is exempt" and "this call stays in the sandbox" are one expression rather than two that can
+        // drift apart. A missing, protected or link-ridden root is not a workspace command, and a command with no
+        // sandbox asks in every tier but full.
+        "run_command" => WorkspacePaths.VerifyCommandRoot(scope.WorkspaceRoot, scope.Guards) == WorkspacePathVerdict.Allowed
+            ? ToolRisk.WorkspaceCommand
+            : ToolRisk.SystemCommand,
+        // Moving the sandbox is the one call whose risk is the *directory*, not the verb: narrowing it to a
+        // subfolder of where the session already works reaches nothing new (and writes inside it are already the
+        // auto tier's business), a registered project is a directory the user handed Hub on purpose, and anything
+        // else is the assistant choosing a place nobody agreed to — which is exactly what still costs a card.
+        "set_workspace" => WorkspacePaths.ClassifyWorkspaceTarget(
+            PathOf(argumentsJson), scope.WorkspaceRoot, projectPaths, scope.Guards) switch
+        {
+            WorkspaceTarget.SameAsSandbox or WorkspaceTarget.InsideSandbox => ToolRisk.ReadOnly,
+            WorkspaceTarget.RegisteredProject => ToolRisk.WorkspaceWrite,
+            _ => ToolRisk.SystemCommand,
+        },
         // Reading the screen writes nothing, but it shows the desktop to a model that decided when to look, and
         // the frame leaves the machine in the next request. That is the SystemCommand tier's job: it asks in
         // every mode but full. Spelled out rather than left to the fallback arm, because "unknown tool" and "this
         // tool was thought about" must not read the same in this table.
-        // "capture_screen" and "spawn_session" are both spelled out even though the fallback arm would land them
-        // here too: one is the user's screen going to a model, the other is a new session that spends money, and
-        // a tier that reads as "nobody decided this one" is a tier nobody reviewed.
+        // "spawn_session" is spelled out for the same reason: a new session spends money on nobody's click.
         "capture_screen" => ToolRisk.SystemCommand,
         "spawn_session" => ToolRisk.SystemCommand,
         "memory_write" => ScopeOf(argumentsJson) == MemoryScope.Global
@@ -61,6 +83,26 @@ internal static class ChatTools
     public static AIFunction? Find(string name, string mode, ChatToolScope scope)
         => CreateFor(mode, scope).OfType<AIFunction>()
             .FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.Ordinal));
+
+    /// <summary>The directory a <c>set_workspace</c> names. Nothing here decides whether it is a safe place — that
+    /// is <see cref="WorkspacePaths.ClassifyWorkspaceTarget"/>, in Core, where the same rule can be read back
+    /// without a window. An argument that will not parse answers <c>null</c>, which classifies as the tier that
+    /// asks.</summary>
+    private static string? PathOf(string? argumentsJson)
+    {
+        if (string.IsNullOrWhiteSpace(argumentsJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(argumentsJson);
+            return document.RootElement.TryGetProperty("path", out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static MemoryScope ScopeOf(string? argumentsJson)
     {

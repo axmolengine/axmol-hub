@@ -2229,6 +2229,39 @@ if (args.Contains("--check-ai-tools"))
     if (!(await tools.SetWorkspace(workspace)).Contains("Workspace set to") || appliedRoot != Path.GetFullPath(workspace))
         throw new Exception("A valid directory was not handed to the caller to persist.");
 
+    // ── set_workspace 的档位：谁挑的这个目录，决定它要不要问 ──
+    // The table that turns this into a ToolRisk lives in the app, but the rule it reads is Core's, so it is
+    // asserted here where no window is involved. The three answers are three answers to one question — has a
+    // person already agreed to this directory? — and a path this build cannot read falls to the strictest of them
+    // rather than to a guess.
+    var nestedTarget = Path.Combine(workspace, "deeper");
+    var knownProject = Path.Combine(toolRoot, "registered-project");
+    var elsewhere = Path.Combine(toolRoot, "somewhere-else");
+    if (WorkspacePaths.ClassifyWorkspaceTarget(workspace, workspace, null, guards) != WorkspaceTarget.SameAsSandbox
+        || WorkspacePaths.ClassifyWorkspaceTarget(nestedTarget, workspace, null, guards) != WorkspaceTarget.InsideSandbox
+        || WorkspacePaths.ClassifyWorkspaceTarget(knownProject, workspace, [knownProject], guards) != WorkspaceTarget.RegisteredProject
+        || WorkspacePaths.ClassifyWorkspaceTarget(elsewhere, workspace, [knownProject], guards) != WorkspaceTarget.Other
+        // Spelling must not change the answer: a trailing separator and a `.`/`..` detour name the same directory
+        // the session is already working in. Windows folds case for the same reason the grouping keys do.
+        || WorkspacePaths.ClassifyWorkspaceTarget(workspace + Path.DirectorySeparatorChar, workspace, null, guards) != WorkspaceTarget.SameAsSandbox
+        || WorkspacePaths.ClassifyWorkspaceTarget(Path.Combine(workspace, ".", "deeper", ".."), workspace, null, guards) != WorkspaceTarget.SameAsSandbox
+        || WorkspacePaths.ClassifyWorkspaceTarget(workspace + "/deeper", workspace, null, guards) != WorkspaceTarget.InsideSandbox
+        // The fold that decides "same directory" is the one the filesystem already makes on Windows, and a path
+        // that spells its drive the other way is the case where a byte-for-byte compare reads two sandboxes where
+        // the user sees one.
+        || WorkspacePaths.ClassifyWorkspaceTarget(OperatingSystem.IsWindows() ? nestedTarget.ToUpperInvariant() : nestedTarget,
+            workspace, null, guards) != WorkspaceTarget.InsideSandbox
+        // A session with no sandbox yet has nothing to be inside of, so even a directory it will move to next is
+        // judged only by whether somebody pointed Hub at it beforehand.
+        || WorkspacePaths.ClassifyWorkspaceTarget(nestedTarget, null, [nestedTarget], guards) != WorkspaceTarget.RegisteredProject
+        || WorkspacePaths.ClassifyWorkspaceTarget(nestedTarget, null, null, guards) != WorkspaceTarget.Other
+        || WorkspacePaths.ClassifyWorkspaceTarget(toolEngineRoot, workspace, null, guards) != WorkspaceTarget.Unreadable
+        || WorkspacePaths.ClassifyWorkspaceTarget(null, workspace, null, guards) != WorkspaceTarget.Unreadable
+        || WorkspacePaths.ClassifyWorkspaceTarget("relative/path", workspace, null, guards) != WorkspaceTarget.Unreadable
+        || WorkspacePaths.ClassifyWorkspaceTarget("   ", workspace, null, guards) != WorkspaceTarget.Unreadable)
+        throw new Exception("set_workspace's tier was decided by something other than who chose that directory.");
+    Console.WriteLine("PASS: set_workspace is classified by the directory it names, and fails closed on one it cannot read.");
+
     // ── memory through the same tool surface ──
     if (!tools.MemoryWrite("project", "build-rules.md", "构建走 1kiss.ps1。", "构建约定", "改构建前先看", "project")
             .Contains("Saved topics/build-rules.md"))
@@ -2506,19 +2539,25 @@ if (args.Contains("--check-ai-tools"))
 }
 if (args.Contains("--check-ai-tool-policy"))
 {
-    // The permission model is one pure function over two small enums, so all twelve cells are asserted rather
+    // The permission model is one pure function over two small enums, so all fifteen cells are asserted rather
     // than sampled: a transposed table is the difference between "auto lets a build run" and "auto stops at a
     // build", and neither reads as an error at compile time.
     var table = new (string Mode, ToolRisk Risk, bool Expected)[]
     {
         (ToolApprovalModes.Ask, ToolRisk.ReadOnly, false),
         (ToolApprovalModes.Ask, ToolRisk.WorkspaceWrite, true),
+        (ToolApprovalModes.Ask, ToolRisk.WorkspaceCommand, true),
         (ToolApprovalModes.Ask, ToolRisk.SystemCommand, true),
         (ToolApprovalModes.Auto, ToolRisk.ReadOnly, false),
         (ToolApprovalModes.Auto, ToolRisk.WorkspaceWrite, false),
+        // The line the whole complaint was about: a command inside the session's own sandbox is what "自动审批"
+        // promises to run without a click, while the tier above it — the screen, another session, a directory
+        // nobody chose — still asks.
+        (ToolApprovalModes.Auto, ToolRisk.WorkspaceCommand, false),
         (ToolApprovalModes.Auto, ToolRisk.SystemCommand, true),
         (ToolApprovalModes.Full, ToolRisk.ReadOnly, false),
         (ToolApprovalModes.Full, ToolRisk.WorkspaceWrite, false),
+        (ToolApprovalModes.Full, ToolRisk.WorkspaceCommand, false),
         (ToolApprovalModes.Full, ToolRisk.SystemCommand, false),
         // The assistant's own notes never ask, in any mode: a note that costs a card is a note never written.
         (ToolApprovalModes.Ask, ToolRisk.AssistantNote, false),
@@ -2591,6 +2630,25 @@ if (args.Contains("--check-ai-tool-policy"))
     policyStore.Save(resolved);
     if (policyStore.List().First(summary => summary.Id == policyConversation.Id).PendingApprovals != 0)
         throw new Exception("An approved call was still counted as pending in the index.");
+
+    // Which tier a call belonged to is not on disk anywhere, and `run_command` is exactly the tool whose tier moved
+    // in this build: a command someone approved under the old table has to read back as approved. A build that
+    // re-derived a decision from a tool name would silently re-open every one of those the day a tier changed,
+    // and ask a person to answer a question they already answered.
+    resolved.Messages.Add(ChatTurn.FunctionCall("c9", "run_command", """{"command":"cmake --build build"}""") with
+    {
+        ApprovalState = ChatApprovalStates.Approved,
+    });
+    resolved.Messages.Add(ChatTurn.FunctionResult("c9", "exit: 0"));
+    policyStore.Save(resolved);
+    var retiered = policyStore.Load(policyConversation.Id)
+                   ?? throw new Exception("A session with an approved command did not reload.");
+    if (retiered.Messages[^2].ToolName != "run_command"
+        || retiered.Messages[^2].ApprovalState != ChatApprovalStates.Approved)
+        throw new Exception("An approved run_command lost its recorded decision when its tier moved.");
+    if (policyStore.List().First(summary => summary.Id == policyConversation.Id).PendingApprovals != 0)
+        throw new Exception("A re-tiered call came back as a decision still owed.");
+    Console.WriteLine("PASS: a call's recorded decision outlives the tier that decided it, because the tier is not stored.");
 
     policyStore.Delete("legacy-no-approval");
     policyStore.Delete(policyConversation.Id);

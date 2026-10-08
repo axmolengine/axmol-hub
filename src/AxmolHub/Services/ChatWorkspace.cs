@@ -2626,27 +2626,48 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>
+    /// The tier a recorded call would be given right now, asked by the card that draws it. It runs through the same
+    /// <see cref="ChatTools.RiskOf"/> as the gate with this session's own scope, so a card cannot paint a reason
+    /// for asking that the gate did not use. What it can change is the glyph and nothing else: the decision is the
+    /// <see cref="ChatTurn.ApprovalState"/> on the turn, which this never touches.
+    /// </summary>
+    public ToolRisk RiskFor(string conversationId, string name, string? argumentsJson)
+    {
+        var scope = ScopeFor(conversationId);
+        return ChatTools.RiskOf(name, argumentsJson, scope.Workspace, ProjectPaths(scope));
+    }
+
+    /// <summary>The directories a <c>set_workspace</c> can point at that somebody already agreed to: Hub's own
+    /// project list, read from the same snapshot the preview names. Empty when this build has no snapshot, which
+    /// sends every move to the tier that asks rather than guessing a project from a path.</summary>
+    private static IReadOnlyList<string> ProjectPaths(ChatToolScope scope)
+        => scope.Snapshot?.Projects.Select(project => project.Path).ToArray() ?? [];
+
+    /// <summary>
     /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask
     /// the call is recorded as waiting and the stream ends. The run keeps its slot and the decision can be made
     /// later — after a restart, even — because the pending call is in the transcript rather than in memory.
     /// </summary>
     private async Task<ChatPipeline.ToolGateOutcome> GateToolCallAsync(
-        ConversationRun run, ChatPipeline.ToolCallInfo call)
+        ConversationRun run, ChatPipeline.ToolCallInfo call, ChatToolScope scope)
     {
         var decision = await ReadOnUiAsync(() =>
         {
             var conversation = _sessions.Peek(run.ConversationId);
-            var risk = ChatTools.RiskOf(call.Name, call.ArgumentsJson);
+            var projects = ProjectPaths(scope);
+            var risk = ChatTools.RiskOf(call.Name, call.ArgumentsJson, scope.Workspace, projects);
             if (conversation?.AutoApprovedTools.Contains(call.Name) == true
                 || !ToolApprovalPolicy.RequiresApproval(ApprovalModeFor(run.ConversationId), risk))
                 return (Parks: false, Preview: (string?)null);
 
             // Computed only for a call that is about to park, and frozen here: a read-only call costs no file
-            // access, and a write's card has to keep showing the diff the gate saw even after a restart.
-            var preview = ScopeFor(run.ConversationId);
+            // access, and a write's card has to keep showing the diff the gate saw even after a restart. The scope
+            // is the request's own rather than a fresh read of the session, because a `set_workspace` earlier in
+            // this same segment has already moved the persisted root while these tools still run in the one this
+            // request was built with — deciding the tier from one and the execution from the other is how a
+            // workspace command gets promised a directory it will not be run in.
             return (Parks: true,
-                Preview: (string?)ToolPreviews.PreviewFor(call.Name, call.ArgumentsJson, preview.Workspace,
-                    preview.Snapshot?.Projects.Select(project => project.Path).ToArray()));
+                Preview: (string?)ToolPreviews.PreviewFor(call.Name, call.ArgumentsJson, scope.Workspace, projects));
         }).ConfigureAwait(false);
 
         if (!decision.Parks) return ChatPipeline.ToolGateOutcome.Allow;
@@ -3190,12 +3211,17 @@ public sealed class ChatWorkspace : IDisposable
             _routes.Remove(conversationId);
         }
 
-        var tools = ChatTools.CreateFor(mode, ScopeFor(conversationId));
+        // One scope per request: it is what the tools close over, and now also what the approval gate reads, so a
+        // call's tier and a call's working directory are decided from the same value rather than two reads of a
+        // session that a `set_workspace` in this very segment may already have moved.
+        var scope = ScopeFor(conversationId);
+        var tools = ChatTools.CreateFor(mode, scope);
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
         // The attachment resolver is bound to this conversation because the turn names the file, and which
         // session's directory holds it is a fact only this class has.
-        return new ChatRequest(choice.Provider, modelName, reasoning, tools, EffectiveSystemPrompt(conversation),
+        return new ChatRequest(choice.Provider, modelName, reasoning, tools, scope,
+            EffectiveSystemPrompt(conversation),
             history,
             image => _sessions.Store.ReadImage(conversationId, image.File) is { } bytes
                 ? BinaryData.FromBytes(bytes)
@@ -3272,7 +3298,7 @@ public sealed class ChatWorkspace : IDisposable
                 // The bracket opens on the verdict rather than in onToolStarted: that event fires before the gate,
                 // and a call that parks for approval never runs at all — a deadline stopped for a person who is
                 // still deciding would be stopped with nobody left to restart it.
-                var verdict = await GateToolCallAsync(run, info).ConfigureAwait(false);
+                var verdict = await GateToolCallAsync(run, info, request.Scope).ConfigureAwait(false);
                 if (verdict == ChatPipeline.ToolGateOutcome.Allow) run.BeginTool();
                 return verdict;
             },
@@ -3319,8 +3345,9 @@ public sealed class ChatWorkspace : IDisposable
                 }).ConfigureAwait(false);
                 // A call that never asks still leaves a line. "Exempt from approval" is a decision about cards,
                 // not about the record — this is the one tool tier that writes into the user's repository with
-                // nothing clicked, so the trail is the only thing showing it happened.
-                if (!failed && ChatTools.RiskOf(info.Name, info.ArgumentsJson) == ToolRisk.AssistantNote)
+                // nothing clicked, so the trail is the only thing showing it happened. Read off the request's own
+                // scope rather than a fresh one: this callback is inside the model's loop, off the UI thread.
+                if (!failed && ChatTools.RiskOf(info.Name, info.ArgumentsJson, request.Scope.Workspace) == ToolRisk.AssistantNote)
                     Audit(run.ConversationId, $"Tool note: {info.Name} ran without approval");
                 // Asked for here, acted on by the pump: this callback runs inside the model's tool loop, where
                 // awaiting a compression request would deadlock the loop that is waiting for the result.
@@ -3434,6 +3461,11 @@ public sealed class ChatWorkspace : IDisposable
         string ModelName,
         string? Reasoning,
         IReadOnlyList<AITool> Tools,
+        // The scope those tools were built from, riding along so the approval gate can classify a call against
+        // the same directory the call will actually run in. Re-reading `ScopeFor` at gate time would use whatever
+        // root the session has *now*, and inside one segment a `set_workspace` changes that underneath the tools:
+        // the tier would be decided by the new root while the command ran in the old one.
+        ChatToolScope Scope,
         string SystemPrompt,
         IReadOnlyList<ChatTurn> History,
         Func<ChatImage, BinaryData?>? Images);

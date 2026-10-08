@@ -172,14 +172,21 @@ public partial class ChatPanel
     {
         var card = new StackPanel { Spacing = 8 };
 
-        var risk = ChatTools.RiskOf(turn.ToolName ?? "", turn.ToolArguments);
+        var risk = _chat.RiskFor(conversationId, turn.ToolName ?? "", turn.ToolArguments);
         var title = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         var glyph = new Path
         {
             Classes = { "approval-risk" },
-            Data = ThemeGeometry(risk == ToolRisk.SystemCommand
-                ? "Hub.Icon.PermissionFull"
-                : risk == ToolRisk.WorkspaceWrite ? "Hub.Icon.PermissionAsk" : "Hub.Icon.PermissionAuto"),
+            // The tier picks the glyph, and the two extremes are the ones a person has to tell apart at a glance:
+            // full-access geometry for something that reaches past the sandbox, the ask geometry for a write.
+            // Everything below that — a command inside the session's own directory, a note, a peer session's
+            // history — takes the auto glyph, which until this tier existed had nothing to draw.
+            Data = ThemeGeometry(risk switch
+            {
+                ToolRisk.SystemCommand => "Hub.Icon.PermissionFull",
+                ToolRisk.WorkspaceWrite => "Hub.Icon.PermissionAsk",
+                _ => "Hub.Icon.PermissionAuto",
+            }),
         };
         if (risk == ToolRisk.SystemCommand) glyph.Classes.Add("system-command");
         title.Children.Add(glyph);

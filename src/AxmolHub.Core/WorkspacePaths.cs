@@ -30,6 +30,21 @@ public readonly record struct WorkspacePath(WorkspacePathVerdict Verdict, string
 /// </summary>
 public sealed record WorkspaceGuards(string? DataRoot, IReadOnlyList<string> EngineRoots);
 
+/// <summary>What a <c>set_workspace</c> argument is pointing at, decided by
+/// <see cref="WorkspacePaths.ClassifyWorkspaceTarget"/>. The names answer one question: has a person already
+/// agreed to this directory? <see cref="SameAsSandbox"/> and <see cref="InsideSandbox"/> have (the session is
+/// already working in or under it), <see cref="RegisteredProject"/> has (the user added it to Hub), and
+/// <see cref="Other"/> has not.</summary>
+public enum WorkspaceTarget
+{
+    SameAsSandbox,
+    InsideSandbox,
+    RegisteredProject,
+    Other,
+    /// <summary>No usable directory in the argument, or one the sandbox guard would refuse in every mode.</summary>
+    Unreadable,
+}
+
 /// <summary>
 /// Confines the assistant's file tools to one workspace directory. Deliberately separate from the approval gate:
 /// the gate decides whether a call may run now, this decides whether the path is inside the sandbox at all.
@@ -157,6 +172,48 @@ public static class WorkspacePaths
         if (IsProtected(full, guards)) return WorkspacePathVerdict.ProtectedRoot;
         if (ContainsReparsePoint(full, full)) return WorkspacePathVerdict.ReparsePoint;
         return WorkspacePathVerdict.Allowed;
+    }
+
+    /// <summary>Where a <c>set_workspace</c> call is pointing, read against the sandbox the session already has and
+    /// the projects Hub already knows. Parsing the arguments is the app's job; judging the path is Core's, so the
+    /// rule that decides whether the call costs a card is the same one a self-check can assert without a window.
+    /// The tiers are deliberately not three names for "how far away" the directory is — they are three names for
+    /// <b>who chose it</b>: the session's own subdirectory (the user's choice, narrowed), a registered project
+    /// (a directory the user already pointed Hub at), or nobody's.</summary>
+    public static WorkspaceTarget ClassifyWorkspaceTarget(string? path, string? currentRoot,
+        IReadOnlyList<string>? projectPaths, WorkspaceGuards guards)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+            return WorkspaceTarget.Unreadable;
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path.Trim());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            return WorkspaceTarget.Unreadable;
+        }
+
+        // A protected root is refused by the tool itself in every mode, so the gate never gets to be lenient about
+        // it; classifying it as anything but unreadable would let a card promise a sandbox the write will refuse.
+        if (IsProtected(full, guards)) return WorkspaceTarget.Unreadable;
+
+        var wanted = CanonicalRoot(full);
+        var current = CanonicalRoot(currentRoot);
+        if (wanted is null) return WorkspaceTarget.Unreadable;
+        if (current is not null)
+        {
+            if (string.Equals(wanted, current, StringComparison.Ordinal)) return WorkspaceTarget.SameAsSandbox;
+            // Both sides in the canonical spelling: `IsInside` compares byte-for-byte, and the fold that makes
+            // `D:\DEV\WS` and `d:\dev\ws` one directory has to happen before it, not inside it.
+            if (IsInside(wanted, current, StringComparison.Ordinal)) return WorkspaceTarget.InsideSandbox;
+        }
+
+        if (projectPaths is { Count: > 0 } known
+            && known.Any(project => string.Equals(CanonicalRoot(project), wanted, StringComparison.Ordinal)))
+            return WorkspaceTarget.RegisteredProject;
+        return WorkspaceTarget.Other;
     }
 
     public static bool IsProtected(string fullPath, WorkspaceGuards guards)
