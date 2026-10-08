@@ -51,6 +51,7 @@ internal sealed class ConversationRun : IDisposable
 {
     private readonly object _gate = new();
     private readonly StringBuilder _text = new();
+    private readonly StringBuilder _reasoning = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly TimeSpan _idleTimeout;
     private CancellationTokenSource _idle = new();
@@ -90,6 +91,14 @@ internal sealed class ConversationRun : IDisposable
         get { lock (_gate) return _text.ToString(); }
     }
 
+    /// <summary>What the model thought on the way to <see cref="LiveText"/>, for the same segment. Buffered
+    /// rather than shown: it is not the answer anybody asked for, and it is the part a thinking gateway insists
+    /// on reading back out of the transcript on the next request that carries tools.</summary>
+    public string LiveReasoning
+    {
+        get { lock (_gate) return _reasoning.ToString(); }
+    }
+
     public bool HasQueuedSteer
     {
         get { lock (_gate) return _steerText is not null; }
@@ -100,11 +109,21 @@ internal sealed class ConversationRun : IDisposable
         lock (_gate) _text.Append(chunk);
     }
 
+    internal void AppendReasoning(string chunk)
+    {
+        lock (_gate) _reasoning.Append(chunk);
+    }
+
     /// <summary>Starts the next segment. The previous one was written to the transcript, so the buffer must not
-    /// carry it into the bubble again.</summary>
+    /// carry it into the bubble again — and the thinking must not be carried either, or the second assistant
+    /// message of a tool loop would be charged with the first one's reasoning.</summary>
     internal void BeginSegment()
     {
-        lock (_gate) _text.Clear();
+        lock (_gate)
+        {
+            _text.Clear();
+            _reasoning.Clear();
+        }
     }
 
     /// <summary>Re-arms the inactivity deadline: for every chunk, and for every tool event, because a tool that

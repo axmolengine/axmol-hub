@@ -92,6 +92,15 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public bool ToolFailed { get; init; }
     public string? AttachedContext { get; init; }
 
+    /// <summary>What the model thought before it said <see cref="Text"/>, kept because some gateways make it
+    /// part of the conversation rather than a display nicety: DeepSeek answers 400 on any request whose history
+    /// came from a thinking model that was also offered tools, unless each assistant message carries its own
+    /// <c>reasoning_content</c> back. Nullable for the usual reason — a session written before this existed has
+    /// no such property and still has to load — and it is deliberately <b>not</b> rendered in the transcript:
+    /// the answer is what the person asked for, and a wall of chain-of-thought under every reply is a different
+    /// product decision than a wire field that a gateway requires.</summary>
+    public string? Reasoning { get; init; }
+
     /// <summary>Permission state of a tool call that needed one; <c>null</c> means there was nothing to decide.
     /// Values come from <see cref="ChatApprovalStates"/>.</summary>
     public string? ApprovalState { get; init; }
@@ -135,18 +144,23 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
             Images = images ?? [],
             InjectedFrom = injectedFrom,
         };
-    public static ChatTurn Assistant(string text) => new(ChatRoles.Assistant, text, DateTimeOffset.Now);
+    public static ChatTurn Assistant(string text, string? reasoning = null) =>
+        new(ChatRoles.Assistant, text, DateTimeOffset.Now) { Reasoning = reasoning };
     public static ChatTurn System(string text) => new(ChatRoles.System, text, DateTimeOffset.Now);
 
     /// <summary>The text the model streamed <b>before</b> asking for this call rides on the call turn instead of
     /// forming a turn of its own: two assistant messages in a row is what the model actually sent as one, and
-    /// replaying it as two breaks bridges that require alternating roles.</summary>
-    public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null) =>
+    /// replaying it as two breaks bridges that require alternating roles. The thinking behind it rides the same
+    /// turn for the same reason — it belongs to that one assistant message, and a gateway that wants it back
+    /// wants it on the message that earned it.</summary>
+    public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null,
+        string? reasoning = null) =>
         new(ChatRoles.Assistant, text ?? "", DateTimeOffset.Now)
         {
             ToolCallId = callId,
             ToolName = name,
             ToolArguments = arguments,
+            Reasoning = reasoning,
         };
 
     /// <summary>A tool's answer. <paramref name="images"/> is for the one tool whose result <i>is</i> a picture:

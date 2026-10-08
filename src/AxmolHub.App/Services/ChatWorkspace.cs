@@ -3108,10 +3108,14 @@ public sealed class ChatWorkspace : IDisposable
         finally
         {
             var reply = run.LiveText;
-            if (reply.Length > 0)
+            var thought = run.LiveReasoning;
+            if (reply.Length > 0 || thought.Length > 0)
             {
+                // A reply with thinking but no text is a real thing a reasoning model produces, and the thinking
+                // still has to be on the record: the next request that carries tools is rejected without it.
                 await ApplyOnUiAsync(() => _sessions.TryUpdate(run.ConversationId, opened =>
-                    opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)))).ConfigureAwait(false);
+                    opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
+                        { Reasoning = thought.Length > 0 ? thought : null }))).ConfigureAwait(false);
             }
         }
     }
@@ -3236,9 +3240,13 @@ public sealed class ChatWorkspace : IDisposable
 
     private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)
     {
+        // One table per segment. It is rebuilt from the message list before every HTTP request the loop makes,
+        // so it never has to outlive this call — and a second segment gets a fresh one because the persisted
+        // turns are the source of truth by then.
+        var reasoning = new ReasoningTable();
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
-                     ?? ChatClientFactory.Create(request.Provider, request.ModelName);
-        var pipeline = new ChatPipeline(client);
+                     ?? ChatClientFactory.Create(request.Provider, request.ModelName, reasoning);
+        var pipeline = new ChatPipeline(client, reasoning);
         return pipeline.SendAsync(
             request.Provider,
             request.History,
@@ -3250,9 +3258,13 @@ public sealed class ChatWorkspace : IDisposable
             onToolStarted: async info =>
             {
                 // Whatever the model said before asking for this call belongs to the call's own turn, so it is
-                // taken out of the live buffer here rather than written after the result.
+                // taken out of the live buffer here rather than written after the result. The thinking goes with
+                // it for the same reason: it belongs to that one assistant message, and a gateway that wants it
+                // back wants it on the message that earned it.
                 var said = run.LiveText;
-                var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson, said.Length > 0 ? said : null);
+                var thought = run.LiveReasoning;
+                var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson,
+                    said.Length > 0 ? said : null, thought.Length > 0 ? thought : null);
                 await ApplyOnUiAsync(() =>
                 {
                     run.BeginSegment();
@@ -3289,6 +3301,7 @@ public sealed class ChatWorkspace : IDisposable
                 run.Touch();
             },
             modelName: request.ModelName,
+            onReasoning: thought => run.AppendReasoning(thought),
             cancellationToken: run.Token);
     }
 

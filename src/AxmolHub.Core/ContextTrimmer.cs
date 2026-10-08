@@ -36,11 +36,15 @@ public static class ContextTrimmer
     /// and delimiters every chat format adds. A tool call's arguments are counted too — an anchored edit
     /// carries the old and new text there, which is regularly the largest part of the turn. Attachments are
     /// counted by the fixed <see cref="ImageTokenCost"/> because their bytes are on the wire as a data URL,
-    /// and a turn whose only text is "这是什么错" is not the cheap turn the character count suggests.</summary>
+    /// and a turn whose only text is "这是什么错" is not the cheap turn the character count suggests. A thinking
+    /// model's reasoning is charged as well, and it is the largest field on the turn by far: a gateway that
+    /// makes the client send it back puts it on the wire of every later request, so a window that ignored it
+    /// would keep "fitting" a conversation it can no longer afford to send.</summary>
     public static int EstimateTokens(ChatTurn turn)
         => EstimateTokens(turn.Text)
            + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext))
            + (string.IsNullOrEmpty(turn.ToolArguments) ? 0 : EstimateTokens(turn.ToolArguments))
+           + (string.IsNullOrEmpty(turn.Reasoning) ? 0 : EstimateTokens(turn.Reasoning))
            + turn.Images.Count * ImageTokenCost;
 
     public static int EstimateTokens(string text) => text.Length / CharactersPerToken + MessageOverheadTokens;

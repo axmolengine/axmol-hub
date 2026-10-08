@@ -1462,6 +1462,95 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("Repair touched a result whose call is gone.");
     Console.WriteLine("PASS: a tool result is read beside the call it answers, and a misplaced one is repaired before sending.");
 
+    // ── 思考模型 + 工具调用：reasoning_content 要原样带回去 ──
+    // DeepSeek 的规矩是：普通多轮里 reasoning_content 可以不回传（它忽略），但一旦给了工具，后续每个请求都必须
+    // 把每条 assistant 当初的思考带回去，缺了就整段 400。连接器在 chat/completions 的写路径上根本没有这个字段
+    // （实测：TextReasoningContent 被静默丢弃，不抛），所以 Hub 自己带 —— 这里验的就是那条带回去的路。
+    var thoughtBody = """
+        {"messages":[{"role":"user","content":"问题"},{"role":"assistant","content":"我先看下。",
+        "tool_calls":[{"id":"call_00_a","type":"function","function":{"name":"run_command","arguments":"{}"}}]},
+        {"role":"tool","tool_call_id":"call_00_a","content":"ok"},{"role":"assistant","content":"看过了"},
+        {"role":"assistant","tool_calls":[{"id":"call_01_b","type":"function","function":{"name":"read_file","arguments":"{}"}}]},
+        {"role":"tool","tool_call_id":"call_01_b","content":"file"},{"role":"user","content":"继续"}],"model":"m"}
+        """;
+    var thoughts = new ReasoningTable();
+    thoughts.Observe(ChatPipeline.ToChatMessages(
+    [
+        ChatTurn.User("问题"),
+        ChatTurn.FunctionCall("call_00_a", "run_command", "{}", "我先看下。", "需要先确认工具链在不在。"),
+        ChatTurn.FunctionResult("call_00_a", "ok"),
+        ChatTurn.Assistant("看过了", "这一轮不用再查了。"),
+        // A thinking model answers with no chain of thought plenty of often. This is the turn a client is tempted
+        // to pad, and the one that must come back exactly as it went in.
+        ChatTurn.FunctionCall("call_01_b", "read_file", "{}"),
+        ChatTurn.FunctionResult("call_01_b", "file"),
+        ChatTurn.User("继续"),
+    ]));
+    if (thoughts.IsEmpty) throw new Exception("The harvest saw no reasoning, so nothing would go back out.");
+    if (!ReasoningReplayPolicy.TryInject(thoughtBody, thoughts, out var replayed))
+        throw new Exception("Nothing was replayed — the gateway would reject the request again.");
+
+    var replayedMessages = JsonDocument.Parse(replayed).RootElement.GetProperty("messages").EnumerateArray().ToList();
+    if (replayedMessages.Count != 7)
+        throw new Exception($"Replaying rewrote the conversation, not just one field ({replayedMessages.Count} messages).");
+    if (replayedMessages[1].TryGetProperty("reasoning_content", out var onCall) is false
+        || onCall.GetString() != "需要先确认工具链在不在。")
+        throw new Exception("The call's own turn did not carry its thinking back.");
+    if (replayedMessages[3].GetProperty("reasoning_content").GetString() != "这一轮不用再查了。")
+        throw new Exception("A plain answer lost its thinking on the way back out.");
+    if (replayedMessages[4].TryGetProperty("reasoning_content", out _))
+        throw new Exception("A turn the model never thought on was handed an invented chain of thought.");
+    if (replayedMessages[0].TryGetProperty("reasoning_content", out _)
+        || replayedMessages[2].TryGetProperty("reasoning_content", out _)
+        || replayedMessages[5].TryGetProperty("reasoning_content", out _)
+        || replayedMessages[6].TryGetProperty("reasoning_content", out _))
+        throw new Exception("A user or tool message was given a chain of thought it never had.");
+    // 中文思考被 \uXXXX 转义的话，每一轮都要为同一句话多付几倍字节，而它本来只是被要求原样带回去。
+    if (replayed.Contains("\\u"))
+        throw new Exception("The replayed thinking was escaped, inflating every later request that carries it.");
+    if (!replayed.Contains("tool_calls") || !replayed.Contains("call_00_a"))
+        throw new Exception("The rewrite dropped the tool call it was only supposed to annotate.");
+
+    // 没思考过的对话一个字也不该添：不是每家兼容网关都允许未知字段，而给一轮没想过的话编一条思考更是假话。
+    var silent = new ReasoningTable();
+    silent.Observe(ChatPipeline.ToChatMessages([ChatTurn.User("问题"), ChatTurn.Assistant("答")]));
+    if (!silent.IsEmpty || ReasoningReplayPolicy.TryInject(thoughtBody, silent, out _))
+        throw new Exception("A conversation that never thought still had a chain of thought invented for it.");
+
+    // 同一个会话里两条一模一样的回答，各自拿回自己那条思考 —— 按顺序消耗，不是按文本查一个常驻值。
+    var twice = new ReasoningTable();
+    twice.Observe(ChatPipeline.ToChatMessages(
+        [ChatTurn.Assistant("好的", "第一次的想法"), ChatTurn.Assistant("好的", "第二次的想法")]));
+    if (twice.TakeFor(null, "好的") != "第一次的想法" || twice.TakeFor(null, "好的") != "第二次的想法")
+        throw new Exception("Two identical answers were handed the same thinking.");
+
+    // 载体：思考搭在它所属的那条 assistant 消息上，且不让一条消息变成两条。
+    var carried = ChatPipeline.ToChatMessages(
+    [
+        ChatTurn.FunctionCall("c1", "run_command", "{}", "先看。", "想了"),
+        ChatTurn.FunctionResult("c1", "ok"),
+        ChatTurn.Assistant("答", "又想了"),
+    ]);
+    if (carried.Count != 3) throw new Exception("Carrying reasoning split an assistant message in two.");
+    if (carried[0].Contents.OfType<FunctionCallContent>().Count() != 1
+        || carried[0].Contents.OfType<TextReasoningContent>().Single().Text != "想了")
+        throw new Exception("A call turn lost either its call or its thinking.");
+    if (carried[2].Contents.OfType<TextReasoningContent>().Single().Text != "又想了")
+        throw new Exception("A plain answer's thinking never reached the message list.");
+
+    // 落盘与预算：旧会话文件没有这个属性也要照样加载，而思考的字节要算进窗口 —— 它此后每个请求都要重发。
+    if (JsonSerializer.Deserialize<ChatTurn>(JsonSerializer.Serialize(ChatTurn.Assistant("答", "想了很久")))?.Reasoning
+        != "想了很久")
+        throw new Exception("The thinking did not survive a save.");
+    if (JsonSerializer.Deserialize<ChatTurn>(
+            """{"Role":"assistant","Text":"旧","At":"2026-01-01T00:00:00+08:00"}""")?.Reasoning is not null)
+        throw new Exception("A session file written before reasoning was stored stopped loading.");
+    var plain = ChatTurn.Assistant("短");
+    if (ContextTrimmer.EstimateTokens(plain with { Reasoning = new string('思', 3000) })
+        <= ContextTrimmer.EstimateTokens(plain))
+        throw new Exception("A turn whose only weight is its thinking counted as free.");
+    Console.WriteLine("PASS: a thinking model's reasoning goes back out on the message that produced it, and only there.");
+
     // ── Inside the loop, results shrink but messages never disappear ──
     var loopMessages = new List<ChatMessage>
     {

@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -17,6 +18,15 @@ namespace AxmolHub.Agent;
 public static class ChatClientFactory
 {
     public static IChatClient Create(Core.ModelProvider provider, string? modelOverride = null)
+        => Create(provider, modelOverride, null);
+
+    /// <summary>
+    /// <paramref name="reasoning"/> is what makes a thinking model's chain of thought go back out on the wire.
+    /// It is optional because it is per-request rather than per-provider: the caller that owns the conversation
+    /// owns the table, and a client built without one simply never replays anything — which is the right answer
+    /// for a model that does not think, and for the scripted clients the self-checks drive.
+    /// </summary>
+    public static IChatClient Create(Core.ModelProvider provider, string? modelOverride, ReasoningTable? reasoning)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
@@ -28,7 +38,13 @@ public static class ChatClientFactory
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.
         var credential = new ApiKeyCredential(provider.ApiKey ?? "not-needed");
-        var client = new OpenAIClient(credential, new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) });
+        var options = new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) };
+        if (reasoning is not null)
+            // BeforeTransport: the last thing the pipeline does, so the connector has already built the body and
+            // the transport has not yet sent it — the one moment the serialized messages exist and can still be
+            // edited. (There is no per-apply position in this version of the client model.)
+            options.AddPolicy(new ReasoningReplayPolicy(reasoning), PipelinePosition.BeforeTransport);
+        var client = new OpenAIClient(credential, options);
         return client.GetChatClient(model).AsIChatClient();
     }
 }
