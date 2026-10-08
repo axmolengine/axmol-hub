@@ -108,6 +108,10 @@ public sealed class HubWorkspace : IDisposable
         // The host shell is a fact about this machine, not about any engine, so it is probed once here next to
         // the engine index. It is a filesystem walk: no process, no network, nothing to await.
         HostShell = HostPowerShell.Probe();
+        // …but off Windows a filesystem walk cannot read a version, only find the binary. Complete that one
+        // unknown in the background so a Mac or Linux user does not open the page to "found, unconfirmed" and
+        // have to press a button to learn what is already knowable.
+        CompleteHostShellVersionAsync();
 
         _releases = new EngineReleases(Store.Root, Manifests);
         RefreshEngineIndexAsync();
@@ -1218,9 +1222,46 @@ public sealed class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Re-probes the host PowerShell and resolves the version. This is the only path that spawns
-    /// (<c>pwsh --version</c>, once), so it stays behind the explicit button and around an install — the page
-    /// constructor and <c>Refresh()</c> use the process-free <see cref="HostPowerShell.Probe"/>.
+    /// Fills in the one thing a filesystem walk cannot know off Windows: the version of the pwsh it found.
+    ///
+    /// Never awaited and hard-bounded, for the same reasons as <see cref="RefreshEngineIndexAsync"/>: the window
+    /// must come up without waiting on a child process, and a pwsh that hangs must not hang the shell with it.
+    /// The result is applied only if nothing else changed the verdict meanwhile — a user who pressed Re-check or
+    /// installed in the meantime must not be overwritten by a stale answer, which is why the guard compares both
+    /// the state and the path it asked about.
+    /// </summary>
+    private async void CompleteHostShellVersionAsync()
+    {
+        if (HostShell.State != HostShellState.Unknown || HostShell.Executable is not { } probed)
+        {
+            return;
+        }
+
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var refined = await HostPowerShell.ProbeVersionAsync(_runner, HostShell, deadline.Token);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (HostShell.State != HostShellState.Unknown || HostShell.Executable != probed) return;
+                HostShell = refined;
+                HostShellChanged?.Invoke();
+                Log.Write(refined.Describe());
+            });
+        }
+        catch (Exception ex)
+        {
+            // The card keeps saying "unconfirmed", which is the truth. A version probe that failed is not a
+            // reason to interrupt anyone.
+            Log.Write("Host PowerShell version probe: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Re-probes the host PowerShell and resolves the version. Together with
+    /// <see cref="CompleteHostShellVersionAsync"/> this is the only place a pwsh process is started (once,
+    /// ~190 ms measured); the page constructor and <c>Refresh()</c> use the process-free
+    /// <see cref="HostPowerShell.Probe"/>.
     /// </summary>
     public async Task RefreshHostShellAsync()
     {

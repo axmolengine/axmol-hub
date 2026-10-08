@@ -4016,6 +4016,26 @@ if (args.Contains("--check-host-shell"))
     Check(HostPowerShell.Normalize("7.6.6.500") == "7.6.6" && HostPowerShell.Normalize("7.4.0") == "7.4.0",
         "The fourth FileVersion segment (7.6.6 measures 7.6.6.500) is trimmed so the UI matches `pwsh --version`");
 
+    // ProbeVersionAsync is the only host-shell path that may start a process, so both of its promises need a
+    // witness: it must not re-spawn when a version is already known, and an "found, no version" status must
+    // come back decided — from the version resource on Windows, from `pwsh --version` (~190 ms measured)
+    // elsewhere. Both routes have to agree with Evaluate(), or the card and the floor disagree.
+    var shellRunner = new ProcessRunner(_ => { });
+    if (hostShell.Executable is { } shellPath)
+    {
+        var carried = new HostShellStatus(HostShellState.Ready, shellPath, "7.6.6");
+        var shortStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        Check(await HostPowerShell.ProbeVersionAsync(shellRunner, carried) == carried
+              && System.Diagnostics.Stopwatch.GetElapsedTime(shortStart) < TimeSpan.FromMilliseconds(80),
+            "A status that already carries a version is returned untouched — no second process per re-check");
+        var resolvedVersion = await HostPowerShell.ProbeVersionAsync(shellRunner, new HostShellStatus(HostShellState.Unknown, shellPath));
+        Check(resolvedVersion.Version is not null && HostPowerShell.Evaluate(resolvedVersion.Version) == resolvedVersion.State,
+            $"一个「找到了但没版本」的判定会被补全，且状态跟着版本走（本机 {resolvedVersion.Version} / {resolvedVersion.State}）");
+    }
+
+    Check(await HostPowerShell.ProbeVersionAsync(shellRunner, new HostShellStatus(HostShellState.Missing)) == new HostShellStatus(HostShellState.Missing),
+        "没有可执行文件时这一步直接返回，不去起一个必然失败的进程");
+
     // 终端选择：注入一个假的 PATH，所以这一条在任何宿主上都能跑。
     Check(HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh", _ => null) is null,
         "With no terminal at all this returns null so the UI can hand the command back, instead of throwing a fake install failure");

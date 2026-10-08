@@ -100,11 +100,27 @@ public static class HostPowerShell
         return new(HostShellState.Missing, Detail: "PATH and the official install directories");
     }
 
-    /// <summary>Turns <see cref="HostShellState.Unknown"/> into a verdict by running <c>pwsh --version</c> once.
-    /// Called from an explicit Re-check and around an install — never from <c>Refresh()</c>.</summary>
+    /// <summary>
+    /// Turns <see cref="HostShellState.Unknown"/> into a verdict by asking pwsh itself. Called from an explicit
+    /// Re-check, around an install, and once in the background at startup — never from <c>Refresh()</c>.
+    ///
+    /// <b>Why a process is unavoidable here</b>: off Windows there is no file to read a version out of — pwsh is
+    /// an ELF binary or a wrapper script, and the path only reveals the version line (<c>/7/</c>), not the
+    /// patch level that decides 7.3 against the 7.4 floor. <c>-V</c>, <c>-v</c> and <c>-Version</c> are the same
+    /// parameter matched by prefix (all four print <c>PowerShell 7.6.6</c>, measured), so the spelling buys
+    /// nothing; the cost is the ~190 ms start-up, measured. <c>--version</c> is what the engine's own
+    /// <c>pwshi.sh</c> asks for, so Hub asks the same way.
+    /// </summary>
     public static async Task<HostShellStatus> ProbeVersionAsync(ProcessRunner runner, HostShellStatus current, CancellationToken cancellation = default)
     {
-        if (current.Executable is not { } executable || ReadVersionFromFile(executable) is not null) return current;
+        if (current.Executable is not { } executable) return current;
+        // Nothing to learn: a previous probe already carried a version.
+        if (current.Version is not null) return current;
+        // Off the process path first: on Windows the version resource answers, so a status that arrived
+        // version-less still gets one here. Skipping this line is what would leave a Mac-only code path
+        // pretending to be the general one, and a Windows card stuck at "unconfirmed" for no reason.
+        if (ReadVersionFromFile(executable) is { } fileVersion)
+            return current with { State = Evaluate(fileVersion), Version = fileVersion, Detail = null };
         try
         {
             var result = await runner.RunAsync(executable, ["--version"], AppContext.BaseDirectory,
