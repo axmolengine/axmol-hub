@@ -562,9 +562,12 @@ public static class HubTexts
         ["ChatApprovalMoreWaitingFormat"] = ("还有 {0} 项在等待", "{0} more waiting"),
         ["ChatApprovalExpand"] = ("展开完整内容", "Expand"),
         ["ChatApprovalCollapse"] = ("收起", "Collapse"),
-        // "Always allow" renamed to say its consequence: the bare word promised more than the grant does, which
-        // is per session and per tool.
-        ["ApprovalAllowAlwaysForTool"] = ("本会话不再问 {0}", "Stop asking about {0} in this session"),
+        // "Always allow" renamed to its consequence, twice over: the bare word promised more than the grant did, and
+        // the grant now reaches past this session, so the line has to say where it lands and how to take it back.
+        ["ApprovalAllowAlwaysForTool"] = ("以后都不问 {0}", "Stop asking about {0}"),
+        ["ApprovalAllowAlwaysTip"] = ("记进「设置 → 工具权限」的信任清单，随时可以撤销；对越出工程沙箱的操作无效",
+            "Remembered in Settings → Tool permission, where it can be revoked. Has no effect on anything that "
+            + "reaches past the workspace."),
         ["ChatPlanReviewTitle"] = ("审阅计划", "Review plan"),
         ["ChatPlanReviewOpen"] = ("查看计划", "View plan"),
         ["ChatPlanReviewContinue"] = ("继续", "Continue"),
@@ -637,6 +640,8 @@ public static class HubTexts
         // The permission tiers, spelled out where the choice is made: each hint says what that tier lets through
         // unasked, which is the only thing the three names cannot carry themselves.
         ["ChatToolPermissionFollowFormat"] = ("跟随默认（{0}）", "Follow the default ({0})"),
+        // The tiers are per session; the default is the answer for somebody who is not deciding one project.
+        ["ChatToolPermissionSetDefaultFormat"] = ("把「{0}」设为默认", "Make {0} the default"),
         ["ToolApprovalAsk"] = ("询问审批", "Ask for approval"),
         ["ToolApprovalAskHint"] = ("除只读查询外，每个操作都先问一次，包括跑命令",
             "Everything except a read asks first, commands included"),
@@ -649,6 +654,15 @@ public static class HubTexts
             "Nothing asks any more, including the screen and any tool this build does not know"),
         ["ToolPermission"] = ("工具权限", "Tool permission"),
         ["ToolPermissionHint"] = ("助手动手之前的默认严格程度。单个会话可以在聊天里改，不影响这里。", "How strict the assistant is by default before it acts. A single session can override this in the chat without changing it here."),
+        // The app-wide trust list: what a card's "always allow" writes, seen where it can be taken back. The hint
+        // carries the one caveat a list of verbs cannot — a grant never covers what leaves the workspace.
+        ["TrustedToolsTitle"] = ("以后都不问的工具", "Tools it stops asking about"),
+        ["TrustedToolsHint"] = ("在审批卡上点过「以后都不问」的工具，本机每个会话都不再问；越出工程沙箱的操作不受这条信任影响。",
+            "Tools clicked on an approval card stop asking in every session on this machine. Nothing that reaches "
+            + "past the workspace is covered by a grant."),
+        ["TrustedToolsNone"] = ("还没有信任过任何工具。", "Nothing is trusted yet."),
+        ["RevokeTrustedTool"] = ("撤销", "Revoke"),
+        ["RevokeAllTrustedTools"] = ("全部撤销", "Revoke all"),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),

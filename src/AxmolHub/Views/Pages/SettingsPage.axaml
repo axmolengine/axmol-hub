@@ -132,6 +132,14 @@
             <ComboBoxItem Tag="full" />
           </ComboBox>
 
+          <!-- 卡片上点过的「以后都不问」在这一栏看得见，也在这里收得回去。列表在代码里建：每行都要带着自己的
+               工具名去撤销，跟 ProviderGroupList 是同一个理由。 -->
+          <TextBlock Text="{DynamicResource TrustedToolsTitle}" FontSize="13" FontWeight="SemiBold" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource TrustedToolsHint}" />
+          <StackPanel x:Name="TrustedToolList" Spacing="4" />
+          <Button x:Name="RevokeAllTrustedToolsButton" Classes="quiet" HorizontalAlignment="Left"
+                  Content="{DynamicResource RevokeAllTrustedTools}" />
+
           <!-- 派生子会话单独一个开关，不并进上面那三个档位：审批模式管的是「一次动作要不要问」，而这个管的是
                「助手能不能自己再开一条会话花钱」。默认关，且关掉之后工具自己会说明去哪儿开，而不是让模型重试。 -->
           <CheckBox x:Name="SpawnCheck" Content="{DynamicResource AllowSpawnSessions}" />

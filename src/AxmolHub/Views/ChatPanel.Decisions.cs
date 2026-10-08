@@ -235,6 +235,9 @@ public partial class ChatPanel
         }
 
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 8, 0, 0) };
+        // "Always allow" renamed to its consequence: the grant is app-wide now, and the bare word promised more
+        // than it does. It is not offered on the tier that reaches past the sandbox, because a button that changed
+        // nothing is a button that teaches the ladder is decoration — the gate ignores a grant on that tier.
         var secondary = new StackPanel
         {
             Name = "ApprovalSecondaryActions",
@@ -242,17 +245,19 @@ public partial class ChatPanel
             Spacing = 4,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        // "Always allow" renamed to its consequence: the grant is per session and per tool, and the bare word
-        // promised more than that.
-        var always = new Button
+        if (risk != ToolRisk.SystemCommand)
         {
-            Classes = { "approval-action", "approval-secondary" },
-            Content = string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ApprovalAllowAlwaysForTool"), turn.ToolName ?? ""),
-            Tag = "ApprovalAllowAlways",
-        };
-        always.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true);
-        secondary.Children.Add(always);
+            var always = new Button
+            {
+                Classes = { "approval-action", "approval-secondary" },
+                Content = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("ApprovalAllowAlwaysForTool"), turn.ToolName ?? ""),
+                Tag = "ApprovalAllowAlways",
+            };
+            ToolTip.SetTip(always, HubStrings.Get("ApprovalAllowAlwaysTip"));
+            always.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true);
+            secondary.Children.Add(always);
+        }
         footer.Children.Add(secondary);
 
         var primary = new StackPanel

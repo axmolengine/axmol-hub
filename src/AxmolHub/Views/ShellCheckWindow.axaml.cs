@@ -3130,6 +3130,12 @@ public partial class ShellCheckWindow : Window
         // really start in — which is the root this request was built with, not the one the session file moved to
         // while the response was being worked through.
         var movedSession = chat.StartConversation();
+        // Two more sessions for the other half of a grant: the one that makes it, and a peer that has never been
+        // asked anything, which is the only way to tell an app-wide trust from a session note.
+        var grantSession = chat.StartConversation();
+        var peerSession = chat.StartConversation();
+        // A call on the tier no grant can open, so its card can be shown to have lost the button that would lie.
+        var screenSession = chat.StartConversation();
         var readClient = new ApprovalChatClient();
         var parkClient = new ApprovalChatClient();
         var denyClient = new ApprovalChatClient();
@@ -3140,6 +3146,13 @@ public partial class ShellCheckWindow : Window
         var autoRunClient = new ApprovalChatClient { ToolName = "run_command" };
         var askRunClient = new ApprovalChatClient { ToolName = "run_command" };
         var movedClient = new ApprovalChatClient();
+        var grantClient = new ApprovalChatClient { ToolName = "run_command" };
+        var peerClient = new ApprovalChatClient { ToolName = "run_command" };
+        var screenClient = new ApprovalChatClient
+        {
+            ToolName = "capture_screen",
+            Arguments = new Dictionary<string, object?> { ["target"] = "", ["fullscreen"] = true },
+        };
         ChatWorkspace? reopened = null;
         try
         {
@@ -3155,6 +3168,9 @@ public partial class ShellCheckWindow : Window
                 var id when id == autoRunSession.Id => autoRunClient,
                 var id when id == askRunSession.Id => askRunClient,
                 var id when id == movedSession.Id => movedClient,
+                var id when id == grantSession.Id => grantClient,
+                var id when id == peerSession.Id => peerClient,
+                var id when id == screenSession.Id => screenClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
             // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
@@ -3178,6 +3194,8 @@ public partial class ShellCheckWindow : Window
             var whereIAm = CommandShells.ForCurrent().IsPowerShell ? "Get-Location" : "pwd";
             autoRunClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
             askRunClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
+            grantClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
+            peerClient.Arguments = new Dictionary<string, object?> { ["command"] = whereIAm };
             // The reported shape: one response asking for a write that needs permission and a read that does not.
             // The write parks, the loop goes on running the read, and the approved answer has to land beside the
             // write rather than at the end of everything the loop appended while the question was open.
@@ -3190,7 +3208,7 @@ public partial class ShellCheckWindow : Window
             const string batchThinking = "先改文件，再读回来确认改动。";
             batchClient.Thinking = [batchThinking];
             foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession,
-                    badgeSession, batchSession, autoRunSession, askRunSession, movedSession })
+                    badgeSession, batchSession, autoRunSession, askRunSession, movedSession, grantSession, peerSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -3470,6 +3488,58 @@ public partial class ShellCheckWindow : Window
             chat.TryResolveApproval(movedSession.Id, movedCallId ?? "", approved: false, alwaysAllow: false, out _);
             await WaitForIdleAsync(chat);
 
+            // The other half of 「总是允许」: a grant is supposed to outlive the session that made it, because a new
+            // task used to start asking from zero. Asserted across two sessions — the one that clicks and a peer
+            // that was never asked anything — so the app-wide list cannot be satisfied by the session note the
+            // same click also writes.
+            chat.OpenConversation(grantSession.Id);
+            chat.TryEnqueueSend(grantSession.Id, "跑一条命令", null, out _);
+            var grantCallId = await WaitForPendingCallAsync(grantSession);
+            Check(grantCallId is not null && chat.TrustedTools.Count == 0,
+                "信任清单起初是空的，所以这条命令照旧挂起（实际清单 " + chat.TrustedTools.Count + " 条）");
+            chat.TryResolveApproval(grantSession.Id, grantCallId ?? "", approved: true, alwaysAllow: true, out _);
+            await WaitForIdleAsync(chat);
+            Check(ToolTrust.Contains(chat.TrustedTools, "run_command")
+                  && ToolTrust.Contains(chat.StoredCopyForCheck(grantSession.Id)?.AutoApprovedTools ?? [], "run_command"),
+                "「总是允许」同时写进应用级信任清单与本会话授权（应用清单：" + string.Join(",", chat.TrustedTools) + "）");
+            chat.OpenConversation(peerSession.Id);
+            chat.TryEnqueueSend(peerSession.Id, "也跑一条", null, out _);
+            await WaitForIdleAsync(chat);
+            Check(peerSession.Messages.All(turn => turn.ApprovalState is null)
+                  && peerSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 1,
+                "另一个没被授权过的会话里，同一条命令不再弹卡——应用级信任是跨会话的（实际工具结果 "
+                + peerSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) + " 条）");
+            // Taken straight back: a grant left here would let a later session's expectation pass for the wrong
+            // reason, and "it stopped asking" would stop meaning "the tier allows it".
+            chat.RevokeAllTrustedTools();
+            peerClient.CallsRemaining = 1;
+            chat.OpenConversation(peerSession.Id);
+            chat.TryEnqueueSend(peerSession.Id, "再跑一条", null, out _);
+            var revokedCallId = await WaitForPendingCallAsync(peerSession);
+            Check(revokedCallId is not null && chat.TrustedTools.Count == 0,
+                "撤销之后又开始问，清单不是一段再也回不去的记忆（挂起的调用 " + (revokedCallId ?? "无") + "）");
+            chat.TryResolveApproval(peerSession.Id, revokedCallId ?? "", approved: false, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
+
+            // The tier no grant can open. Its card has two answers rather than three, because a 「总是允许」 the
+            // gate would ignore is a button that teaches the ladder is decoration — so it is not drawn at all, and
+            // the refusal that follows cannot leave a name on the settings page.
+            chat.OpenConversation(screenSession.Id);
+            chat.TryEnqueueSend(screenSession.Id, "看看屏幕上是什么", null, out _);
+            var screenCallId = await WaitForPendingCallAsync(screenSession);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(screenCallId is not null
+                  && panel.ApprovalCardActionsForCheck.SequenceEqual(new[] { "ApprovalDeny", "ApprovalAllow" },
+                      StringComparer.Ordinal),
+                "抓屏那张卡上没有「以后都不问」——越出沙箱的那一档，任何信任都不开门（实际 "
+                + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
+            chat.TryResolveApproval(screenSession.Id, screenCallId ?? "", approved: false, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
+            Check(!ToolTrust.Contains(chat.TrustedTools, "capture_screen"),
+                "拒绝那次抓屏，也不会把它顺手记进信任清单");
+
             // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
             // because a decision made after a restart is made against the file, not against memory.
             chat.OpenConversation(parkSession.Id);
@@ -3574,8 +3644,12 @@ public partial class ShellCheckWindow : Window
                 + string.Join(" / ", panel.ApprovalRecordsForCheck) + "）");
             Check(chat.RunFor(parkSession.Id) is null && chat.RunningCount == 0,
                 "批准后的续答跑完即让出运行位（实际仍有 " + chat.RunningCount + " 路）");
-            Check(afterApprove?.AutoApprovedTools.Contains("file_write") == true,
-                "「总是允许」作为本会话的授权落进会话文件");
+            Check(afterApprove?.AutoApprovedTools.Contains("file_write") == true
+                  && ToolTrust.Contains(chat.TrustedTools, "file_write"),
+                "「总是允许」同时落进会话文件与应用级信任清单（应用清单：" + string.Join(",", chat.TrustedTools) + "）");
+            // Revoked here so the sessions the rest of this check drives still meet a file_write that asks. The
+            // session's own grant is what the next cell reads, and it survives this.
+            chat.RevokeAllTrustedTools();
             Check(System.IO.File.ReadAllText(target).Contains("第二行（已改）", StringComparison.Ordinal),
                 "批准的那一次编辑真的落到了 tmp/ 工作区里的文件上，而不只是写进转录");
 
@@ -3927,6 +4001,49 @@ public partial class ShellCheckWindow : Window
             settings.SelectToolApproval(ToolApprovalModes.Ask);
             Dispatcher.UIThread.RunJobs();
 
+            // The trust list is where a grant made on a card goes once the session that made it is gone, and the
+            // revoke buttons are the only way back: a click three tasks ago cannot be found again on a card.
+            Check(settings.TrustedToolsEmptyShownForCheck && settings.TrustedToolRowsShownForCheck == 0
+                  && settings.TrustedToolsForCheck.Length == 0,
+                "信任清单为空时设置页说明还没有信任过任何工具，而不是画一个空列表");
+            Check(settings.TrustToolForCheck("run_command")
+                  && settings.TrustedToolsForCheck.SequenceEqual(new[] { "run_command" }, StringComparer.Ordinal)
+                  && settings.TrustedToolRowsShownForCheck == 1,
+                "一条授权写进应用级清单，设置页立刻看得见那一行（实际 "
+                + string.Join(",", settings.TrustedToolsForCheck) + "）");
+            Check(settings.RevokeTrustedToolForCheck("run_command")
+                  && settings.TrustedToolsForCheck.Length == 0 && settings.TrustedToolsEmptyShownForCheck,
+                "撤销那一行之后清单回到空状态，那句说明也回来了");
+            settings.TrustToolForCheck("file_write");
+            settings.TrustToolForCheck("run_command");
+            Check(settings.TrustedToolRowsShownForCheck == 2 && settings.RevokeAllTrustedToolsForCheck()
+                  && settings.TrustedToolsForCheck.Length == 0
+                  && new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root)).Load().TrustedTools.Count == 0,
+                "「全部撤销」一次收干净，设置文件里也不留残留");
+
+            // A pick that agrees with the default needs no second row; one that does not is a standing preference
+            // the user should be able to say so about without finding the settings page.
+            Check(!panel.ApprovalSetDefaultRowShownForCheck,
+                "会话档位与应用默认一致时，菜单不显示「设为默认」那行");
+            chat.SetApprovalMode(parkSession.Id, ToolApprovalModes.Auto);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ApprovalSetDefaultRowShownForCheck
+                  && panel.PermissionChipLabelForCheck == HubStrings.Get("ToolApprovalAuto"),
+                "本会话选了「自动审批」而默认还是询问时，菜单给出把这一档设成默认的行");
+            Check(panel.SelectPermissionMenuEntryForCheck(4)
+                  && chat.DefaultApprovalMode == ToolApprovalModes.Auto
+                  && new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root)).Load().ToolApprovalMode
+                      == ToolApprovalModes.Auto,
+                "点那行写的是应用默认本身，并且落盘（实际默认 " + chat.DefaultApprovalMode + "）");
+            Check(!panel.ApprovalSetDefaultRowShownForCheck,
+                "默认已经等于当前档，那一行随之消失——两行说同一件事是多余的界面");
+            // Restored through the workspace rather than the page's picker: the picker still reads 询问审批 (the
+            // cell above left it there), and setting the same index raises no SelectionChanged, so a "restore"
+            // through it would be a no-op that the next cell would blame on the row it just clicked.
+            chat.SetDefaultApprovalMode(ToolApprovalModes.Ask);
+            Dispatcher.UIThread.RunJobs();
+
             // The chip is pickable before any session exists: deciding how much to allow is something a person
             // does on the way into a task, not after the first message has already run under the default.
             chat.DeleteConversation(parkSession.Id);
@@ -3960,7 +4077,7 @@ public partial class ShellCheckWindow : Window
             chat.IdleTimeout = savedIdleTimeout;
             foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id,
                     restartSession.Id, badgeSession.Id, batchSession.Id, autoRunSession.Id, askRunSession.Id,
-                    movedSession.Id })
+                    movedSession.Id, grantSession.Id, peerSession.Id, screenSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);
             Check(chat.RunningCount == 0

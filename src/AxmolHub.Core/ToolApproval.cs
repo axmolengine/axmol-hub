@@ -90,6 +90,55 @@ public static class ToolApprovalResults
 }
 
 /// <summary>
+/// The app-wide list of tools a person has said to stop asking about. Names are opaque here on purpose: Core does
+/// not know which tools exist — that table is the app's — so a grant saved by a newer Hub simply never matches a
+/// call, which is the direction a stale name has to fail in.
+///
+/// One owner for the shape rules, because three places read and write this list: the settings file on the way in,
+/// the card's "always allow", and the settings page's revoke. <see cref="Contains"/> is Ordinal because the names
+/// are the wire spelling a model emits, not words a person types.
+/// </summary>
+public static class ToolTrust
+{
+    /// <summary>How many grants the app keeps. The list is a hand-sized set of verbs, and a runaway writer must
+    /// not be able to grow the settings file without a bound.</summary>
+    public const int Limit = 32;
+
+    public static List<string> Normalize(IEnumerable<string>? names)
+    {
+        var trusted = new List<string>();
+        foreach (var name in names ?? [])
+        {
+            var trimmed = (name ?? "").Trim();
+            if (trimmed.Length == 0) continue;
+            if (trusted.Any(existing => string.Equals(existing, trimmed, StringComparison.OrdinalIgnoreCase))) continue;
+            trusted.Add(trimmed);
+            if (trusted.Count >= Limit) break;
+        }
+        return trusted;
+    }
+
+    public static bool Contains(IEnumerable<string>? names, string tool)
+        => names?.Any(name => string.Equals(name, tool, StringComparison.Ordinal)) == true;
+
+    /// <summary>Records a grant, or says it was already there. Returns whether the list changed, because the
+    /// caller only writes the settings file when something actually moved.</summary>
+    public static bool Add(List<string> names, string tool)
+    {
+        var trimmed = (tool ?? "").Trim();
+        if (trimmed.Length == 0 || Contains(names, trimmed) || names.Count >= Limit) return false;
+        names.Add(trimmed);
+        return true;
+    }
+
+    public static bool Remove(List<string> names, string tool)
+    {
+        var found = names.FirstOrDefault(name => string.Equals(name, tool, StringComparison.Ordinal));
+        return found is not null && names.Remove(found);
+    }
+}
+
+/// <summary>
 /// What became of a tool call that needed permission. The pending call turn <b>is</b> the approval record —
 /// there is no side table to fall out of step with — which is why the state has to survive a restart.
 /// </summary>

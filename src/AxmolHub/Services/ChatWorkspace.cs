@@ -2570,6 +2570,70 @@ public sealed class ChatWorkspace : IDisposable
     /// <see cref="HubSnapshotProvider"/>, which keeps the workspace constructible on its own.</summary>
     internal Func<HubPreferences>? PreferencesProvider { get; set; }
 
+    /// <summary>Set by the shell alongside the reader: how a change to the app-wide trust list reaches the disk.
+    /// Null in a workspace nobody wired to a settings file (a self-check builds one to drive the gate), and the
+    /// grant then lives for the length of that session only — which is the honest fallback, not a silent lie about
+    /// having remembered it.</summary>
+    internal Action<HubPreferences>? PreferencesPersist { get; set; }
+
+    /// <summary>The tools the whole app has been told to stop asking about, in the order they were granted.</summary>
+    public IReadOnlyList<string> TrustedTools => PreferencesProvider?.Invoke()?.TrustedTools ?? [];
+
+    /// <summary>Grants a tool for every session. The card's 「总是允许」 and the settings page both come through
+    /// here, so one rule decides what a grant is written into and whether it was already there.</summary>
+    public bool TrustTool(string tool)
+    {
+        var preferences = PreferencesProvider?.Invoke();
+        if (preferences is null || !ToolTrust.Add(preferences.TrustedTools, tool)) return false;
+        PersistPreferences(preferences);
+        NotifyAppSettingsChanged();
+        return true;
+    }
+
+    /// <summary>Takes one app-wide grant back. Sessions keep their own shorter list — a revoke here says "stop
+    /// trusting this for everything I have not answered yet", not "answer every past session's question again".</summary>
+    public bool RevokeTrustedTool(string tool)
+    {
+        var preferences = PreferencesProvider?.Invoke();
+        if (preferences is null || !ToolTrust.Remove(preferences.TrustedTools, tool)) return false;
+        PersistPreferences(preferences);
+        NotifyAppSettingsChanged();
+        return true;
+    }
+
+    public bool RevokeAllTrustedTools()
+    {
+        var preferences = PreferencesProvider?.Invoke();
+        if (preferences is null || preferences.TrustedTools.Count == 0) return false;
+        preferences.TrustedTools.Clear();
+        PersistPreferences(preferences);
+        NotifyAppSettingsChanged();
+        return true;
+    }
+
+    private void PersistPreferences(HubPreferences preferences)
+    {
+        // Written through the shell's store rather than a copy this class keeps: the settings file has one owner,
+        // and a second writer would be a second version of the truth about what the user agreed to.
+        PreferencesPersist?.Invoke(preferences);
+    }
+
+    /// <summary>
+    /// Writes the app-wide default mode — the row on the composer's own menu, for the person who is not deciding
+    /// this session's strictness but their own. Same store and same repaint the settings page uses, so the two
+    /// surfaces cannot end up describing one setting two ways.
+    /// </summary>
+    public bool SetDefaultApprovalMode(string mode)
+    {
+        var preferences = PreferencesProvider?.Invoke();
+        var normalized = ToolApprovalModes.Normalize(mode);
+        if (preferences is null || preferences.ToolApprovalMode == normalized) return false;
+        preferences.ToolApprovalMode = normalized;
+        PersistPreferences(preferences);
+        NotifyAppSettingsChanged();
+        return true;
+    }
+
     /// <summary>The app-wide default, normalized: what a session with no override of its own answers with. The
     /// composer needs it to say which mode "follow the default" would actually give it.</summary>
     public string DefaultApprovalMode
@@ -2656,8 +2720,14 @@ public sealed class ChatWorkspace : IDisposable
             var conversation = _sessions.Peek(run.ConversationId);
             var projects = ProjectPaths(scope);
             var risk = ChatTools.RiskOf(call.Name, call.ArgumentsJson, scope.Workspace, projects);
-            if (conversation?.AutoApprovedTools.Contains(call.Name) == true
-                || !ToolApprovalPolicy.RequiresApproval(ApprovalModeFor(run.ConversationId), risk))
+            // A grant buys a pass on everything except the tier that reaches past the sandbox. Left unbounded, one
+            // click on 「总是允许」 would end up covering the screen and another session's first model call, and the
+            // three-mode ladder would be a decoration: what decides a call would be whichever verb was clicked
+            // last, rather than what the call can do.
+            var granted = risk != ToolRisk.SystemCommand
+                          && (ToolTrust.Contains(conversation?.AutoApprovedTools, call.Name)
+                              || ToolTrust.Contains(TrustedTools, call.Name));
+            if (granted || !ToolApprovalPolicy.RequiresApproval(ApprovalModeFor(run.ConversationId), risk))
                 return (Parks: false, Preview: (string?)null);
 
             // Computed only for a call that is about to park, and frozen here: a read-only call costs no file
@@ -2796,21 +2866,37 @@ public sealed class ChatWorkspace : IDisposable
             return true;
         }
 
+        var toolName = conversation.Messages[index].ToolName ?? "tool";
+        // The card only offers 「总是允许」 where a grant can land, and the same rule is decided here rather than
+        // trusted from the caller: a tier that reaches past the sandbox ignores every grant, so remembering its
+        // name would put a line on the settings page that buys nothing.
+        var grantable = IsGrantable(conversationId, toolName, conversation.Messages[index].ToolArguments);
         _sessions.TryUpdate(conversationId, opened =>
         {
             var at = opened.IndexOfToolCall(callId);
             var call = opened.Messages[at];
             opened.Messages[at] = call with { ApprovalState = ChatApprovalStates.Approved };
-            // "Always allow" is this session's grant, so it is stored with the session: it has to outlive the
-            // window that made it, exactly like the pending call it is answering.
-            if (alwaysAllow && call.ToolName is { } name && !opened.AutoApprovedTools.Contains(name))
-                opened.AutoApprovedTools.Add(name);
+            // The session's own list stays, and stays written here rather than derived at read time: it is the
+            // record that <i>this</i> conversation is the one where a person said to stop asking, and 16 sessions
+            // already on disk answer from it.
+            if (alwaysAllow && grantable && !ToolTrust.Contains(opened.AutoApprovedTools, call.ToolName ?? ""))
+                opened.AutoApprovedTools.Add(call.ToolName!);
         });
-        AuditApproval(conversationId, conversation.Messages[index].ToolName ?? "tool",
-            alwaysAllow ? "always allowed" : "allowed");
+        // Outside the session gate: the app-wide half is a different file, with a different owner, and the registry
+        // lock must not be held while the settings store is written.
+        if (alwaysAllow && grantable) TrustTool(toolName);
+        AuditApproval(conversationId, toolName, alwaysAllow ? "always allowed" : "allowed");
         Changed?.Invoke();
         _ = PumpApprovedCallAsync(run, callId);
         return true;
+    }
+
+    /// <summary>Whether a grant for this call could ever be honoured — see
+    /// <see cref="GateToolCallAsync"/>, where the same tier test is what makes a grant buy a pass.</summary>
+    private bool IsGrantable(string conversationId, string toolName, string? argumentsJson)
+    {
+        var scope = ScopeFor(conversationId);
+        return ChatTools.RiskOf(toolName, argumentsJson, scope.Workspace, ProjectPaths(scope)) != ToolRisk.SystemCommand;
     }
 
     /// <summary>Runs one approved call and then answers with its result in the history.</summary>

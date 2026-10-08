@@ -2582,6 +2582,42 @@ if (args.Contains("--check-ai-tool-policy"))
         throw new Exception("A null approval mode let a workspace write through.");
     Console.WriteLine("PASS: an unrecognized approval mode falls back to asking.");
 
+    // The app-wide trust list is a field in a file the user can open with a text editor, so it is asserted as one:
+    // what a round trip keeps, what the reader folds away, and what a hand-edited value cannot do. Two different
+    // comparisons live in it and both are deliberate — duplicates fold case-insensitively on the way in, while a
+    // grant matches a call by the wire spelling exactly, because a model emits `file_write` and not `FILE_WRITE`.
+    var trustPath = Path.Combine(root, "hub-settings-trust.json");
+    var trustStore = new PreferencesStore(trustPath);
+    var trusting = new HubPreferences { ToolApprovalMode = ToolApprovalModes.Auto };
+    trusting.TrustedTools.AddRange(["run_command", " run_command ", "", "FILE_WRITE", "run_command"]);
+    trustStore.Save(trusting);
+    var trusted = trustStore.Load();
+    // Five names written, two left: the padded and repeated spellings of `run_command` fold into one, the blank
+    // goes, and `FILE_WRITE` survives as its own entry — because the dedupe is forgiving while the match is not.
+    if (trusted.TrustedTools.Count != 2
+        || !ToolTrust.Contains(trusted.TrustedTools, "run_command")
+        || !ToolTrust.Contains(trusted.TrustedTools, "FILE_WRITE")
+        || ToolTrust.Contains(trusted.TrustedTools, "file_write")
+        || ToolTrust.Contains(trusted.TrustedTools, " "))
+        throw new Exception($"The trust list did not round-trip as written: [{string.Join(",", trusted.TrustedTools)}]");
+    // A name this build has never heard is kept rather than dropped: the app's table decides what matches a call,
+    // and a reader that "cleaned" the list would silently revoke a grant a newer Hub wrote down.
+    if (!ToolTrust.Add(trusted.TrustedTools, "tool_from_a_newer_hub"))
+        throw new Exception("A grant for a name this build does not know was refused.");
+    trustStore.Save(trusted);
+    if (!ToolTrust.Contains(trustStore.Load().TrustedTools, "tool_from_a_newer_hub"))
+        throw new Exception("The unknown grant never reached the file.");
+    var flooded = new HubPreferences();
+    for (var index = 0; index < ToolTrust.Limit * 3; index++) ToolTrust.Add(flooded.TrustedTools, $"tool_{index}");
+    flooded.TrustedTools.Add("");
+    trustStore.Save(flooded);
+    if (trustStore.Load().TrustedTools.Count > ToolTrust.Limit)
+        throw new Exception($"The trust list grew past its bound: {trustStore.Load().TrustedTools.Count}.");
+    if (ToolTrust.Add(new List<string>(["file_write"]), "file_write") || ToolTrust.Add([], ""))
+        throw new Exception("A grant was recorded twice, or an empty name was accepted as one.");
+    File.Delete(trustPath);
+    Console.WriteLine("PASS: the app-wide trust list round-trips, folds blanks and duplicates, and is bounded.");
+
     // The per-session override rides on the session file, and a file written before approval existed must
     // still load — with the pending count reading as zero rather than throwing.
     var policyStore = new ConversationStore(root);

@@ -40,6 +40,16 @@ public sealed class HubPreferences
     /// </summary>
     public string ToolApprovalMode { get; set; } = ToolApprovalModes.Ask;
 
+    /// <summary>
+    /// Tools the user told Hub to stop asking about, for <b>every</b> session: the app-wide half of the grant a
+    /// card's 「总是允许」 writes, kept beside the default mode because both are answers to "how much do I let this
+    /// assistant do without me". A session still has its own shorter list
+    /// (<see cref="Conversation.AutoApprovedTools"/>); the gate reads the union. Names are the wire spelling
+    /// (<c>run_command</c>), and a grant buys nothing on the tier that reaches past the sandbox — see
+    /// <see cref="ToolApprovalPolicy"/>.
+    /// </summary>
+    public List<string> TrustedTools { get; set; } = [];
+
     /// <summary>左侧导航/会话侧栏展开时的宽度（px），范围 240–420；由侧栏拖拽手柄调整。</summary>
     public double SidebarWidth { get; set; } = 300;
 
@@ -100,6 +110,11 @@ public sealed class PreferencesStore(string path)
         // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
         // has to come back as "ask", never as "let it through".
         preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);
+        // The trust list is read with the same care: a hand-edited or newer-Hub file can put anything in it, and
+        // the shape rules belong to ToolTrust so the store, the card and the settings page cannot disagree about
+        // what a stored grant means. Unknown names are kept rather than dropped — they match no call, and a
+        // reader that deleted what it did not recognise would silently eat a grant a newer Hub wrote.
+        preferences.TrustedTools = ToolTrust.Normalize(preferences.TrustedTools);
         // The routing ceiling is a cost guard: a value this build cannot read falls back to the shipped ceiling
         // rather than to "no ceiling", which is the one way a hand-edited settings file could spend past the
         // strongest tier anyone agreed to.

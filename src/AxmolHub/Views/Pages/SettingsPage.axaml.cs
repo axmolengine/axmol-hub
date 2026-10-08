@@ -122,6 +122,9 @@ public partial class SettingsPage : UserControl
         // writes the settings file, and "typed half a URL" is not a state worth persisting.
         DownloadSourcePicker.SelectionChanged += (_, _) => OnDownloadSourceChanged();
         ToolApprovalPicker.SelectionChanged += (_, _) => OnToolApprovalChanged();
+        // The revoke-all button is the one escape from a grant the user cannot find the card for any more — the
+        // session that made it may be long archived, while the trust it wrote is still answering for every session.
+        RevokeAllTrustedToolsButton.Click += (_, _) => RevokeAllTrusted();
         UpdateChannelPicker.SelectionChanged += (_, _) => OnUpdateChannelChanged();
         CustomDownloadSourceBox.LostFocus += (_, _) => OnCustomDownloadSourceChanged();
         ChooseDataDirectoryButton.Click += async (_, _) => await ChooseDataDirectoryAsync();
@@ -198,6 +201,9 @@ public partial class SettingsPage : UserControl
             LocalizeThemeItems();
             LocalizeDownloadSourceItems();
             LocalizeToolApprovalItems();
+            // The trust list is rebuilt rather than re-bound, for the same reason the provider groups are: every
+            // row carries the tool name its revoke button has to write back.
+            RebuildTrustedTools();
             LocalizeUpdateChannelItems();
             SelectLanguage(HubStrings.Language);
             SelectTheme(_preferences.Theme);
@@ -471,6 +477,106 @@ public partial class SettingsPage : UserControl
         // that says so. That page is cached and navigation does not reload it, so this is the only moment the
         // new default can arrive.
         _chat.NotifyAppSettingsChanged();
+    }
+
+    /// <summary>
+    /// The app-wide trust list, as rows. Built in code because each row's revoke button has to carry the tool name
+    /// it belongs to — the same reason <see cref="RebuildProviderGroups"/> is not a bound template.
+    ///
+    /// <para>No per-row tier annotation: which card a grant came from is a fact about a session's sandbox, and this
+    /// page has no session in front of it. What a grant does and does not cover is said once, in the hint above the
+    /// list, where it is true for every row.</para>
+    /// </summary>
+    private void RebuildTrustedTools()
+    {
+        TrustedToolList.Children.Clear();
+        if (_chat is null) return;
+        var trusted = _chat.TrustedTools;
+        if (trusted.Count == 0)
+        {
+            TrustedToolList.Children.Add(new TextBlock
+            {
+                Text = HubStrings.Get("TrustedToolsNone"),
+                Classes = { "muted" },
+                TextWrapping = TextWrapping.Wrap,
+                Tag = TrustedToolRowTag.None,
+            });
+            RevokeAllTrustedToolsButton.IsVisible = false;
+            return;
+        }
+
+        RevokeAllTrustedToolsButton.IsVisible = true;
+        foreach (var tool in trusted)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Tag = TrustedToolRowTag.Row };
+            row.Children.Add(new TextBlock
+            {
+                Text = tool,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            var revoke = new Button
+            {
+                Classes = { "quiet" },
+                Content = HubStrings.Get("RevokeTrustedTool"),
+                Tag = tool,
+            };
+            revoke.Click += (_, _) => RevokeTrusted(tool);
+            row.Children.Add(revoke);
+            Grid.SetColumn(revoke, 1);
+            TrustedToolList.Children.Add(row);
+        }
+    }
+
+    private void RevokeTrusted(string tool)
+    {
+        if (!_chat.RevokeTrustedTool(tool)) return;
+        RebuildTrustedTools();
+    }
+
+    private void RevokeAllTrusted()
+    {
+        if (!_chat.RevokeAllTrustedTools()) return;
+        RebuildTrustedTools();
+    }
+
+    /// <summary>The trust list as stored, for the assertion that a grant written from a card lands here.</summary>
+    internal string[] TrustedToolsForCheck => (_chat?.TrustedTools ?? []).ToArray();
+
+    /// <summary>How many rows the page drew, counting the empty-state line as none.</summary>
+    internal int TrustedToolRowsShownForCheck
+        => TrustedToolList.Children.OfType<Control>().Count(child => TrustedToolRowTag.Row.Equals(child.Tag));
+
+    internal bool TrustedToolsEmptyShownForCheck
+        => TrustedToolList.Children.OfType<Control>().Any(child => TrustedToolRowTag.None.Equals(child.Tag));
+
+    /// <summary>Grants a tool through the same workspace call the card's button makes, so the page is checked
+    /// against the write path rather than against a copy of it.</summary>
+    internal bool TrustToolForCheck(string tool)
+    {
+        var granted = _chat?.TrustTool(tool) == true;
+        if (granted) RebuildTrustedTools();
+        return granted;
+    }
+
+    internal bool RevokeTrustedToolForCheck(string tool)
+    {
+        var revoked = _chat?.RevokeTrustedTool(tool) == true;
+        if (revoked) RebuildTrustedTools();
+        return revoked;
+    }
+
+    internal bool RevokeAllTrustedToolsForCheck()
+    {
+        var revoked = _chat?.RevokeAllTrustedTools() == true;
+        if (revoked) RebuildTrustedTools();
+        return revoked;
+    }
+
+    private static class TrustedToolRowTag
+    {
+        internal const string Row = "trusted-tool-row";
+        internal const string None = "trusted-tools-none";
     }
 
     private bool TrySaveDownloadSource(string source, string custom)

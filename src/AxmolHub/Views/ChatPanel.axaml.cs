@@ -653,8 +653,34 @@ public partial class ChatPanel : UserControl
             menu.Items.Add(follow);
         }
 
+        // A pick that differs from the app default is a per-session answer to what may be a standing preference,
+        // and the setting that would make it stand lives on another page. One row here writes it: the same store,
+        // the same repaint, the same rule the settings page's picker uses.
+        if (effective != _chat.DefaultApprovalMode)
+        {
+            var makeDefault = new MenuItem
+            {
+                Header = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("ChatToolPermissionSetDefaultFormat"),
+                    HubStrings.Get(ToolApprovalModeKey(effective))),
+                FontSize = 12,
+                Tag = "ApprovalSetDefault",
+            };
+            makeDefault.Click += (_, _) =>
+            {
+                _chat.SetDefaultApprovalMode(effective);
+                menu.Hide();
+            };
+            menu.Items.Add(makeDefault);
+        }
+
         return menu;
     }
+
+    /// <summary>Whether the menu would offer to make the current pick the app default. Built from the same menu
+    /// the click builds, so the assertion is about the row a person can actually reach.</summary>
+    internal bool ApprovalSetDefaultRowShownForCheck
+        => BuildPermissionMenu().Items.OfType<MenuItem>().Any(item => "ApprovalSetDefault".Equals(item.Tag));
 
     private static Control BuildPermissionHeader(string mode, bool checkedItem)
     {

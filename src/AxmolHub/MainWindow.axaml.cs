@@ -289,6 +289,9 @@ public partial class MainWindow : Window
     {
         _chat.HubSnapshotProvider = CreateReadOnlyChatSnapshot;
         _chat.PreferencesProvider = () => _preferences;
+        // The tool trust list is the one app-wide setting the assistant itself writes, so it writes through the
+        // same store the settings page uses rather than opening a second one on the same file.
+        _chat.PreferencesPersist = _preferencesStore.Save;
         _chat.AuditWrite = _workspace.Log.Write;
         _chat.LogProvider = () => _workspace.Log;
         _chat.EngineRootsProvider = () => [.. _workspace.State.Engines.Select(engine => engine.Path)];
