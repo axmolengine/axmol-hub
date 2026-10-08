@@ -220,7 +220,7 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 7. `dawidd6/action-download-artifact` 下载三平台产物。
 8. `installer/Publish-All.ps1`：逐平台裁剪 feed 只留本版 → 收集安装包 + sha256 + full/delta nupkg（`vpk` 原名带 `-<channel>-` 段，上传时改名为小写连字符 `axmol-hub-<version>-<rid>-{full|delta}.nupkg`，**并同步改写 feed 的 `FileName`**）+ 按 channel（= 完整 RID）命名的 feed `releases.<rid>.json` → `gh release create --target <本次构建 SHA> --notes-file <发布日志>` / `gh release upload --clobber` → 回读资产清单确认每一件都在。重跑已有 release 时用同一份日志更新正文。需要 `permissions: contents: write` 与 `GH_TOKEN`。
 
-产物平台对照：Windows `win-x64.exe`、macOS `osx-{arm64,x64}.pkg`、Linux `linux-x64.AppImage`；主程序参数三平台统一用 `--mainExe`（`--exeName` 是 1.2.161 之后未发布的新名），取值随 GUI 程序集改名 —— 2026-10-08 起是 `AxmolHub` / `AxmolHub.exe`，此前是 `AxmolHub.App` / `AxmolHub.App.exe`。三个平台装进同一个 tag 的同一个 release。
+产物平台对照：Windows `win-x64.exe`、macOS `osx-{arm64,x64}.pkg` 的资产名带版本段，Linux 是 `axmol-hub-linux-x64.AppImage`（**不带版本段** —— AppImage 是用户留下反复运行的文件，理由与规则见 `installer/README.md`）；主程序参数三平台统一用 `--mainExe`（`--exeName` 是 1.2.161 之后未发布的新名），取值随 GUI 程序集改名 —— 2026-10-08 起是 `AxmolHub` / `AxmolHub.exe`，此前是 `AxmolHub.App` / `AxmolHub.App.exe`。三个平台装进同一个 tag 的同一个 release。
 
 ---
 

@@ -212,7 +212,7 @@ dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --check-secrets
 
 无头（在 Avalonia 启动之前就返回），只写临时目录，末行打印 `backend=` 与档名。三平台 CI 矩阵都跑这一条。密钥存储的契约断言另有 `dotnet run --project tests/AxmolHub.Checks -- artifacts/checks --check-secret-store`（2026-10-07 实测 52 条 PASS，只能在 Windows 上跑，原因见 `docs/ci.md` §2.7）。
 
-**Linux 真跑记录（2026-10-08 更新）**：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；同日在原生 Ubuntu（.NET 10.0.112 + `squashfs-tools`）补上了此前"仍未实测"的那半条 —— `installer/Build.ps1 -Runtime linux-x64` 产出 `axmol-hub-<v>-linux-x64.AppImage`（自包含，约 50 MB）与 full nupkg，`--appimage-extract` 解开后确认 `usr/bin/AxmolHub`、`.DirIcon`（512 PNG）、`usr/bin/Assets/hub-icon-{256,512}.png` 都在位；GUI 在真实 X11 会话里起得来，`xprop` 读到 `WM_CLASS = "…, \"axmol-hub\"` 与一份 `_NET_WM_ICON`。**未实测**的仍是签名/公证之外的东西：跨改名的增量更新（见下）与 macOS 通道。
+**Linux 真跑记录（2026-10-08 更新）**：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；同日在原生 Ubuntu（.NET 10.0.112 + `squashfs-tools`）补上了此前"仍未实测"的那半条 —— `installer/Build.ps1 -Runtime linux-x64` 产出 `linux-x64` 的 AppImage（自包含，约 50 MB；名字规则见 `installer/README.md`）与 full nupkg，`--appimage-extract` 解开后确认 `usr/bin/AxmolHub`、`.DirIcon`（512 PNG）、`usr/bin/Assets/hub-icon-{256,512}.png` 都在位；GUI 在真实 X11 会话里起得来，`xprop` 读到 `WM_CLASS = "…, \"axmol-hub\"` 与一份 `_NET_WM_ICON`。**未实测**的仍是签名/公证之外的东西：跨改名的增量更新（见下）与 macOS 通道。
 
 **改名带来的两个一次性代价**（`AxmolHub.App` → `AxmolHub`）：Windows 会把它当成**新的通知发送者**，用户对该应用已设的通知开关与历史归零一次（after-install 钩子会重新给 `Axmol Hub.lnk` 打 AppUserModelID 戳，投递本身不断）；而包内多数路径同时改名，**首个跨改名的更新包几乎没有 delta**，那一次用户下载的是接近全量的包。用户可见的启动路径不受影响 —— 协议与快捷方式指向的是安装根目录下 packTitle 派生的稳定启动器 `Axmol Hub.exe`（见 `installer/README.md`）。
 

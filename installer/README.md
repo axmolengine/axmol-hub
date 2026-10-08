@@ -31,7 +31,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 **文件名的两套规则**（都由 `vpk` 派生）：
 
-- 安装包：本地 `Build.ps1` 默认把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `Axmol Hub.exe`；发布流水线传入 `-ReleaseAssetNames`，改为 `axmol-hub-<version>-<runtime>.exe`，避免不同版本和架构重名。
+- 安装包：名字规则只写在 `installer/AssetNames.ps1` 一处 —— `Build.ps1` 用它改名，`Publish.ps1` 与 `Publish-All.ps1` 按同一个名字找回文件，规则各拼一遍就是"改了一处、发布 job 在另一处红"。Windows 本地 `Build.ps1` 默认把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `Axmol Hub.exe`，发布时改为 `axmol-hub-<version>-<runtime>.exe`；macOS 一律 `axmol-hub-<version>-<runtime>.pkg`。**Linux 不带版本段**，恒为 `axmol-hub-linux-x64.AppImage`：AppImage 不是装完即弃的安装器，而是用户留下并反复运行的那个文件，名字一变每次发布都得重发链接、书签和脚本。版本仍可从标题栏（`Axmol Hub v0.8.3`）、桌面入口的 `X-AppImage-Version` 与随包 `.sha256` 三处任一确认。
 - 更新载荷：`vpk` 产出 `{packId}-<version>{-channel}-{full|delta}.nupkg`，`Publish-All.ps1` 上传时把它改名为与安装包同源的小写连字符 `axmol-hub-<version>-<runtime>-{full|delta}.nupkg`，**并同步改写 feed 里的 `FileName`** —— 否则客户端按 feed 找不到包。安装包改名与更新链路无关，两者互不影响。
 - Windows 包内主程序固定为 `current\\AxmolHub.exe`（与程序集同名；2026-10-08 之前叫 `AxmolHub.App.exe`，`WindowsMuiCache` 与 `installer/Test.ps1` 都按新名走，旧名只留在 MuiCache 的清理名单里）；Velopack 稳定启动器叫 `Axmol Hub.exe`，位于安装根目录，协议与快捷方式始终指向稳定启动器 —— 所以内部主程序改名对用户可见的启动路径是透明的。
 
@@ -101,7 +101,7 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 | --- | --- | --- | --- |
 | Windows x64 | `windows-latest` | `axmol-hub-<v>-win-x64.exe` | `--mainExe` |
 | macOS arm64 / x64 | `macos-15` | `axmol-hub-<v>-osx-{arm64,x64}.pkg` | `--mainExe` |
-| Linux x64 | `ubuntu-24.04` | `axmol-hub-<v>-linux-x64.AppImage` | `--mainExe` |
+| Linux x64 | `ubuntu-24.04` | `axmol-hub-linux-x64.AppImage`（**不带版本段**，理由见上） | `--mainExe` |
 
 Linux 那一行有两个只有把 AppImage 解开才看得见的细节（`unsquashfs` 在这份文件上找不到 superblock，因为它是 runtime + squashfs 拼接；用 `./xxx.AppImage --appimage-extract`）。其一，`--icon` 给的那张 PNG 被 vpk 一次写成三份：AppDir 根的 `Axmol.Hub.png`、`.DirIcon`、以及 `usr/share/icons/hicolor/scalable/apps/Axmol.Hub.png` —— 所以 `--icon` 的尺寸直接决定这三处的观感，1254 原图在这里毫无收益。其二，生成的 `Axmol.Hub.desktop` 里 `Exec=` 取 `--mainExe`，而 `Icon=` 与 `StartupWMClass=` 都取 **packId**（`Axmol.Hub`），与窗口真实的 WM_CLASS（`axmol-hub`，见 `Services/LinuxDesktopIdentity`）不是一个字符串；Velopack 的运行时库在 Linux 上既不装菜单也不铺图标（`src/lib-csharp` 只有 locator，shell 链接那套是 Windows 专属），所以**桌面匹配不能指望 AppDir 里这份** —— 生效的是 App 每次启动自己写的 `~/.local/share/applications/axmol-hub.desktop`。副作用：若宿主装了 AppImageLauncher 一类集成工具，它会把 AppDir 那份也注册进去，"显示应用"里于是出现两个 Axmol Hub 图块，只有 `StartupWMClass` 对得上的那个会跟着窗口高亮。
 
