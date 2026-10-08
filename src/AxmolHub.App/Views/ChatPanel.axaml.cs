@@ -105,6 +105,17 @@ public partial class ChatPanel : UserControl
     /// are, which is precisely what counting cannot see.</summary>
     private string _renderedApprovalStamp = "";
 
+    /// <summary>Which turn was sitting in the last painted slot. Counting can see a tail append and can see the
+    /// history shrink, but it cannot see a turn <i>inserted</i> before the end — and a tool result is filed beside
+    /// the call it answers, which is an insert whenever other calls from the same response ran first. That shift
+    /// used to paint the shifted tail twice and skip the inserted row entirely. The slot's own identity is enough:
+    /// an insert anywhere before it moves a different turn into it.</summary>
+    private string _renderedTailKey = "";
+
+    private static string SlotKey(ChatTurn turn)
+        => turn.At.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+           + ":" + turn.Role + ":" + (turn.ToolCallId ?? "") + ":" + turn.Text.Length;
+
     private static string ApprovalStamp(Conversation? conversation)
     {
         if (conversation is null) return "";
@@ -1460,12 +1471,19 @@ public partial class ChatPanel : UserControl
             CloseLive();
         if (_live is { } held) MessageFlow.Children.Remove(held.Row);
 
-        var visible = new List<(int Index, ChatTurn Turn)>();
+        var visible = new List<(int Index, ChatTurn Turn, string? ToolName)>();
         if (conversation is not null)
         {
             for (var i = 0; i < conversation.Messages.Count; i++)
             {
-                if (conversation.Messages[i].Role != ChatRoles.System) visible.Add((i, conversation.Messages[i]));
+                var turn = conversation.Messages[i];
+                // A system turn is context the model was given, not something anybody said. A tool result stays
+                // in the flow but not as a bubble — see <see cref="ToolResultLine"/> — and the name it prints is
+                // the one its call carried, because the result turn itself does not keep it.
+                if (turn.Role == ChatRoles.System) continue;
+                visible.Add((i, turn, turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } answered
+                    ? conversation.Messages.ElementAtOrDefault(conversation.IndexOfToolCall(answered))?.ToolName
+                    : null));
             }
         }
 
@@ -1481,6 +1499,7 @@ public partial class ChatPanel : UserControl
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation?.Id;
             _renderedCount = 0;
+            _renderedTailKey = "";
             EmptyState.IsVisible = run is not { IsStreaming: true };
             if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
             RenderNotice();
@@ -1488,7 +1507,8 @@ public partial class ChatPanel : UserControl
             return;
         }
 
-        if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount || approvalChanged)
+        if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount || approvalChanged
+            || (_renderedCount > 0 && SlotKey(visible[_renderedCount - 1].Turn) != _renderedTailKey))
         {
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation.Id;
@@ -1501,10 +1521,15 @@ public partial class ChatPanel : UserControl
         var lastIndex = conversation.Messages.Count - 1;
         for (var i = _renderedCount; i < visible.Count; i++)
         {
-            var (index, turn) = visible[i];
-            AppendRenderedTurn(conversation.Id, index, turn, isLast: index == lastIndex,
+            var (index, turn, toolName) = visible[i];
+            AppendRenderedTurn(conversation.Id, index, turn, toolName, isLast: index == lastIndex,
                 markdown: i >= visible.Count - EagerMarkdownLimit);
         }
+
+        // Where the painted prefix ends, in the conversation's own terms. The next render compares against this
+        // rather than against the count, which is what lets a result filed beside its call — an insert, not an
+        // append — rebuild the flow instead of drawing the shifted tail twice.
+        _renderedTailKey = SlotKey(visible[^1].Turn);
 
         EmptyState.IsVisible = false;
         if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
@@ -1524,7 +1549,8 @@ public partial class ChatPanel : UserControl
         RenderMessages();
     }
 
-    private void AppendRenderedTurn(string conversationId, int index, ChatTurn turn, bool isLast, bool markdown)
+    private void AppendRenderedTurn(
+        string conversationId, int index, ChatTurn turn, string? toolName, bool isLast, bool markdown)
     {
         var fromUser = turn.Role == ChatRoles.User;
         var body = new StackPanel { Spacing = 8 };
@@ -1547,7 +1573,12 @@ public partial class ChatPanel : UserControl
             body.Children.Add(origin);
         }
 
-        body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = turn.Text });
+        // The machine half of a tool exchange is not prose. What came back is a JSON array, a directory listing,
+        // or a compiler's stderr, and painting it in the assistant's own face makes the transcript read as though
+        // the model had recited it — which is exactly what a person cannot un-see. One quiet line says what
+        // arrived; the payload itself stays one hover away.
+        if (turn.Role == ChatRoles.Tool) body.Children.Add(ToolResultLine(toolName, turn));
+        else body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = turn.Text });
 
         // What the person attached is shown from the file Hub kept, not from anything this view remembers: the
         // transcript is the only copy of "this message had a picture in it", and a row rebuilt after a restart
@@ -1583,10 +1614,48 @@ public partial class ChatPanel : UserControl
         MessageFlow.Children.Add(BuildMessageRow(fromUser, body, actionableIndex, turn.Role, turn.Text, isLast, turn.At));
         _renderedCount++;
 
-        // User text is plain by nature; only assistant turns carry Markdown worth rendering.
-        if (!fromUser && markdown && turn.Text.Length > 0) MarkdownMessageRenderer.RenderInto(body, turn.Text);
+        // User text is plain by nature, and a tool payload is now a quiet line rather than a bubble; only the
+        // assistant's own words carry Markdown worth rendering.
+        if (!fromUser && markdown && turn.Role != ChatRoles.Tool && turn.Text.Length > 0)
+            MarkdownMessageRenderer.RenderInto(body, turn.Text);
         if (approvalSurface is not null) body.Children.Add(approvalSurface);
     }
+
+    /// <summary>What came back from one tool call, as a single muted line: the tool that answered, then the first
+    /// line of its payload, with the whole thing on hover. A result that failed is said so, because the line is
+    /// otherwise the only place a refused or crashed call is visible at all.</summary>
+    private static TextBlock ToolResultLine(string? toolName, ChatTurn turn)
+    {
+        var firstLine = turn.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+        var lineBreak = firstLine.IndexOf('\n');
+        if (lineBreak >= 0) firstLine = firstLine[..lineBreak];
+        firstLine = firstLine.Trim();
+        if (firstLine.Length > ResultLineCharacters) firstLine = firstLine[..ResultLineCharacters] + "…";
+
+        var line = new StringBuilder();
+        // Most of Hub's read-only tools already say which tool answered, because their result text is written for
+        // a reader ("list_directory · '.agents/' · depth 2"). Prefixing that with the name again breaks the line
+        // the transcript is read by.
+        if (toolName is { Length: > 0 } named && !firstLine.StartsWith(named + " ", StringComparison.Ordinal))
+            line.Append(toolName).Append(" → ");
+        line.Append(firstLine.Length > 0 ? firstLine : "—");
+
+        // A refused or crashed call has no other trace once the card is gone, and the danger ink is the one the
+        // shell already uses for it — same metrics as muted, so the line never re-wraps.
+        var block = new TextBlock
+        {
+            Classes = { turn.ToolFailed ? "danger" : "muted", "tool-result-line" },
+            Text = line.ToString(),
+        };
+        // The whole payload on hover, including the lines the one-line summary dropped. An empty result has
+        // nothing to show, and an empty tooltip is simply no tooltip at all.
+        if (turn.Text.Length > 0) ToolTip.SetTip(block, turn.Text);
+        return block;
+    }
+
+    /// <summary>How much of a result's first line is worth a glance. Long enough to read a path or a status,
+    /// short enough that the line stays one line at the chat column's width.</summary>
+    private const int ResultLineCharacters = 120;
 
     /// <summary>The question stated once: which tool, with what, and the three answers it accepts. The arguments
     /// stay visible because "run file_write" is not a decision — what it writes is.</summary>
@@ -2504,6 +2573,17 @@ public partial class ChatPanel : UserControl
             return string.Join("\n", blocks.Concat(rawMarkdown));
         }
     }
+
+    /// <summary>One entry per painted row, holding the texts that row shows (a Markdown layer contributes the
+    /// document it rendered, so a row can be named by what it says). The incremental renderer's whole claim is
+    /// that each turn is painted once, in order — and that is only checkable from outside as a list of rows.</summary>
+    internal IReadOnlyList<string> PaintedRowsForCheck => MessageRows
+        .Select(row => string.Join(" ~ ", row.GetLogicalDescendants().OfType<TextBlock>()
+                .Select(block => block.Text ?? "").Where(text => text.Length > 0)
+                .Concat(row.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+                    .Select(viewer => viewer.Tag as string ?? ""))
+                .Where(text => text.Length > 0)))
+        .ToArray();
 
     internal bool HasVisibleMarkdownCodeBlock(string code)
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()

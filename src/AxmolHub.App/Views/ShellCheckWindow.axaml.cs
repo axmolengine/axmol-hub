@@ -1523,6 +1523,52 @@ public partial class ShellCheckWindow : Window
             "工具调用前说的话随调用一起落库，顺序不乱（实际 "
             + (transcript?.Count ?? -1) + " 条：" + string.Join(" / ", transcript?.Select(turn => turn.Role + ":" + turn.Text) ?? []));
 
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+
+        // A tool result is filed beside the call it answers, which is an insert rather than an append whenever a
+        // sibling call from the same response ran first. The incremental renderer could only see the count grow,
+        // so it painted the shifted tail twice and skipped the inserted row: one listing on screen twice, the
+        // shell's answer nowhere. The flow has to rebuild when the slot it ended on no longer holds that turn.
+        var shifted = chat.StartConversation();
+        chat.OpenConversation(shifted.Id);
+        var shiftedTurns = chat.ActiveConversation!.Messages;
+        var decided = ChatTurn.FunctionCall("call_s1", "run_command", "{}")
+            with { ApprovalState = ChatApprovalStates.Approved };
+        shiftedTurns.Add(ChatTurn.User("看看工程状态"));
+        shiftedTurns.Add(decided);
+        shiftedTurns.Add(ChatTurn.FunctionCall("call_s2", "list_directory", "{}"));
+        shiftedTurns.Add(ChatTurn.FunctionResult("call_s2", "list_directory · '.agents/' · depth 2"));
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var rowsBefore = panel.PaintedRowsForCheck.Count;
+        // The decision was already painted, so nothing else about the transcript's shape changes here: this is
+        // purely an insert at index 1's neighbour, which is the case counting cannot see.
+        chat.ActiveConversation!
+            .AppendFunctionResult(ChatTurn.FunctionResult("call_s1", "shell: PowerShell 7 · exit: 0"));
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var rowsAfter = panel.PaintedRowsForCheck;
+        Check(rowsAfter.Count == rowsBefore + 1
+              && rowsAfter.Count(row => row.Contains("shell: PowerShell 7", StringComparison.Ordinal)) == 1
+              && rowsAfter.Count(row => row.Contains("list_directory · '.agents/'", StringComparison.Ordinal)) == 1,
+            "迟到的工具结果插回调用旁边时，转录整段重排：新行出现一次，旧行不重复（实际 "
+            + rowsAfter.Count + " 行，来自 " + rowsBefore + " 行）");
+
+        // What a tool handed back is provider payload, not something the assistant said: a JSON array painted in
+        // the assistant's voice reads as a reply nobody wrote. It gets one quiet line naming the tool and its
+        // first line of output; the rest stays on hover.
+        Check(rowsAfter.Any(row => row == "run_command → shell: PowerShell 7 · exit: 0")
+              && rowsAfter.Count(row => row == "list_directory · '.agents/' · depth 2") == 1,
+            "工具结果以一行摘要呈现而不是原始负载，工具名只说一次（实际 "
+            + string.Join(" / ", rowsAfter.Where(row => row.Length > 0)) + "）");
+
+        chat.DeleteConversation(shifted.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+
         foreach (var id in new[] { gated.Id, other.Id, third.Id, fourth.Id, ordered.Id }) chat.DeleteConversation(id);
         chat.ClientOverride = null;
         panel.Reload();
