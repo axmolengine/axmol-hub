@@ -4607,13 +4607,19 @@ public partial class ShellCheckWindow : Window
                 + CountCredentials(shell.Chat, "orcarouter") + " 份）");
 
         // ── The sign-in flow itself, over an injected transport ──
-        // Endpoint discovery is a real request, so the handler answers it; the exchange then fails, which is
-        // the branch that proves the flow is wired end to end without needing a live account. The button is
-        // taken from the rendered group, so this also proves the *group's* button is the one that is wired.
+        // The handler answers endpoint discovery, which is the request that proves the flow actually started. No
+        // browser can be launched from a harness and no callback will ever arrive, so the run ends when the wait
+        // expires; the handler's blanket refusal is what the exchange would meet if a code did land.
         settings.UseOAuthHandlerForCheck(new OAuthProbeHandler());
         await settings.RunOAuthFlowForCheckAsync();
         Check(settings.StatusLineText.Length > 0 && settings.StatusLineText != HubStrings.Get("AuthOAuthPending"),
             "登录失败时状态行给出了具体原因，而不是停在「正在等待授权…」（实际「"
+                + settings.StatusLineText + "」）");
+        // The harness cannot launch a browser, so the one honest ending is the wait running out. Asserting that
+        // ending by name also pins the shape of the fallback: no browser gets a link in the status line, never an
+        // input box to type a callback into.
+        Check(settings.StatusLineText == HubStrings.Get("AuthOAuthCancelled"),
+            "浏览器打不开时登录按时限收尾，回话只走状态行而不是弹输入框（实际「"
                 + settings.StatusLineText + "」）");
 
         // Clean up so the later checks see the provider list they expect.

@@ -13,7 +13,7 @@ public sealed record OAuthEndpoints(string AuthorizationEndpoint, string TokenEn
 /// <summary>The result of a successful sign-in: the minted key plus the identity the provider reported.</summary>
 public sealed record OAuthSignInResult(string Key, string? AccountId, string? Scope);
 
-/// <summary>How a callback query or a pasted redirect URL read against the request that started it.</summary>
+/// <summary>How the callback request read against the request that started it.</summary>
 public enum CallbackState
 {
     /// <summary>State matched and a code is present: exchange it.</summary>
@@ -48,41 +48,33 @@ public sealed record CallbackOutcome(CallbackState State, string? Code, string? 
 public sealed class OrcaRouterOAuthFlow
 {
     /// <summary>
-    /// Opens a URL in the user's browser and reports whether it actually opened. Injected so the self-check never
-    /// launches anything; the return value matters because a browser that did not open is the case where the user
-    /// has to be offered the paste-the-callback route immediately rather than after a wait.
+    /// How long the wait for the browser callback gets — the one figure the sign-in is budgeted, transport
+    /// request included.
+    ///
+    /// The provider leaves a single-use code valid for 10 minutes, so this is the shorter, deliberately impatient
+    /// choice: past it the sign-in has almost certainly been abandoned at the consent page, and closing the
+    /// listener lets the user start again rather than leave them staring at a spinner.
     /// </summary>
-    public delegate bool BrowserLauncher(string url);
-
-    /// <summary>
-    /// Asks the user for the address the browser ended up on, and returns it (or <c>null</c> if they gave up).
-    /// Needed wherever the loopback listener is unreachable from the browser — WSL2 and containers are the two
-    /// real cases, where the tab opens on the host and a redirect to <c>127.0.0.1</c> never reaches Hub.
-    /// </summary>
-    public delegate Task<string?> ManualCallbackSource(string authorizationUrl, CancellationToken cancellationToken);
-
-    /// <summary>How long to let the loopback callback try before falling back to asking for the pasted URL.</summary>
-    internal const int ManualPromptAfterSeconds = 45;
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(45);
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
     private readonly HttpClient _http;
-    private readonly BrowserLauncher _openBrowser;
-    private readonly ManualCallbackSource? _askManual;
+    private readonly Action<string> _openBrowser;
     private readonly TimeSpan _timeout;
 
+    /// <summary>
+    /// <paramref name="openBrowser"/> is injected so the self-check never launches anything, and because a
+    /// machine with no browser has to be reported to the user as a link to open by hand rather than a hang.
+    /// </summary>
     public OrcaRouterOAuthFlow(
         HttpClient http,
-        BrowserLauncher openBrowser,
-        ManualCallbackSource? askManual = null,
+        Action<string> openBrowser,
         TimeSpan? timeout = null)
     {
         _http = http;
         _openBrowser = openBrowser;
-        _askManual = askManual;
-        // The authorization code is single-use and the provider expires it after 10 minutes; waiting longer
-        // than that only means the user sits in front of a spinner until a guaranteed failure.
-        _timeout = timeout ?? TimeSpan.FromMinutes(5);
+        _timeout = timeout ?? DefaultTimeout;
     }
 
     /// <summary>
@@ -172,108 +164,19 @@ public sealed class OrcaRouterOAuthFlow
         listener.Prefixes.Add($"http://127.0.0.1:{port}/");
         listener.Start();
 
-        using var race = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var loopback = ReceiveCodeAsync(listener, state, race.Token);
-        // Nobody is left to raise the loopback task's exception once the paste route has won, and a listener stopped
-        // on purpose faults its pending GetContextAsync — an unobserved task exception is exactly the kind of
-        // noise that turns into a mystery rethrow later.
-        _ = loopback.ContinueWith(static faulted => _ = faulted.Exception, CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        var loopback = ReceiveCodeAsync(listener, state, cancellationToken);
 
         try
         {
-            var authorizationUrl = BuildAuthorizationUrl(endpoints.AuthorizationEndpoint, oauth, callbackUrl, challenge, state);
-            var opened = _openBrowser(authorizationUrl);
+            _openBrowser(BuildAuthorizationUrl(endpoints.AuthorizationEndpoint, oauth, callbackUrl, challenge, state));
 
-            var manual = _askManual is null
-                ? null
-                : PromptForCallbackAsync(authorizationUrl, state, opened, race.Token, cancellationToken);
-            if (manual is not null)
-            {
-                // Same reason as the loopback task's observer: when the browser redirect wins, the abandoned
-                // dialog task has nobody left to await it.
-                _ = manual.ContinueWith(static faulted => _ = faulted.Exception, CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
-            }
-
-            var code = manual is null
-                ? await loopback.ConfigureAwait(false)
-                : await FirstCodeAsync(loopback, manual).ConfigureAwait(false);
-
-            race.Cancel();
+            var code = await loopback.ConfigureAwait(false);
             return await ExchangeAsync(endpoints.TokenEndpoint, oauth, code, verifier, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
         {
             listener.Stop();
-        }
-    }
-
-    /// <summary>
-    /// Takes whichever code arrives first. A paste dialog that the user simply closed is not a failure — the
-    /// browser may still be on its way back — so only a non-empty answer takes over the sign-in.
-    /// </summary>
-    private static async Task<string> FirstCodeAsync(Task<string> loopback, Task<string?> manual)
-    {
-        // Plain `Task` array on purpose: the two routes differ in whether "no answer" is representable, and
-        // forcing them through one generic `WhenAny` only buys a nullability warning about a distinction that
-        // is made in the branches below anyway.
-        var winner = await Task.WhenAny(new Task[] { loopback, manual }).ConfigureAwait(false);
-        if (winner == loopback) return await loopback.ConfigureAwait(false);
-
-        var pasted = await manual.ConfigureAwait(false);
-        return pasted is { Length: > 0 } ? pasted : await loopback.ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Offers the paste-the-redirect route, and turns whatever was pasted into a code through the same
-    /// <see cref="ReadCallback"/> the browser route goes through — one state check, one set of failure messages,
-    /// so a pasted URL cannot be trusted in a way the listener's URL would not be.
-    /// </summary>
-    private async Task<string?> PromptForCallbackAsync(
-        string authorizationUrl,
-        string expectedState,
-        bool browserOpened,
-        CancellationToken raceToken,
-        CancellationToken cancellationToken)
-    {
-        if (_askManual is null) return null;
-
-        if (browserOpened)
-        {
-            // On a desktop the redirect just works, and asking early means the user pastes a URL while the
-            // callback is already on its way. With no browser there is nothing to wait for, so this is skipped.
-            using var waited = CancellationTokenSource.CreateLinkedTokenSource(raceToken, cancellationToken);
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(ManualPromptAfterSeconds), waited.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return null;
-            }
-        }
-
-        if (raceToken.IsCancellationRequested) return null;
-
-        var pasted = await _askManual(authorizationUrl, raceToken).ConfigureAwait(false);
-        if (pasted is not { Length: > 0 }) return null;
-
-        var outcome = ReadCallback(pasted, expectedState);
-        switch (outcome.State)
-        {
-            case CallbackState.Accepted:
-                return outcome.Code;
-            // The same three messages the browser route produces, so the outcome record in ChatWorkspace cannot
-            // tell which route a refusal came from — and does not need to.
-            case CallbackState.StateMismatch:
-                throw new InvalidOperationException(
-                    "The sign-in callback did not match the request (state mismatch); it was ignored.");
-            case CallbackState.Declined:
-                throw new InvalidOperationException("The sign-in was declined (" + outcome.Error + ").");
-            default:
-                throw new InvalidOperationException("The sign-in callback carried no authorization code.");
         }
     }
 
@@ -327,6 +230,11 @@ public sealed class OrcaRouterOAuthFlow
         var completed = await Task.WhenAny(contextTask, Task.Delay(_timeout, cancellationToken)).ConfigureAwait(false);
         if (completed != contextTask)
         {
+            // The caller stops the listener on the way out, and a stopped listener faults the request still
+            // pending here. Nothing is left to await it, so observe the fault instead of leaving an unobserved
+            // task exception to surface later as a mystery rethrow.
+            _ = contextTask.ContinueWith(static abandoned => _ = abandoned.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
             throw new TimeoutException("The sign-in was not completed in time.");
         }
 
@@ -367,16 +275,15 @@ public sealed class OrcaRouterOAuthFlow
     }
 
     /// <summary>
-    /// Reads an authorization response out of a callback query, or out of a whole URL a person pasted.
+    /// Reads an authorization response out of a callback query.
     ///
-    /// <para><b>One parser for both routes is the point.</b> The pasted address comes from a browser bar, where
-    /// anything could have been copied — a stale tab, an edited URL, somebody else's redirect. If the paste route
-    /// had its own parsing, it would be the weaker of the two, and <b>state is checked before the code is looked
-    /// at</b> exactly as the listener path does it (see <see cref="OAuthPkce.NewState"/> for why).</para>
+    /// <para><b>State is checked before the code is looked at</b> (see <see cref="OAuthPkce.NewState"/> for why),
+    /// so a request that did not come from this sign-in is refused before it can be exchanged. The leading <c>?</c>
+    /// is dropped because that is how <see cref="System.Uri.Query"/> arrives.</para>
     ///
-    /// <para>A missing or mismatched <c>state</c> covers a request with no query at all: a probe of the port, a
-    /// favicon, a paste of the bare callback path. There is no separate "empty" outcome because there is nothing
-    /// to say about it that "did not match the request" does not already say.</para>
+    /// <para>A missing or mismatched <c>state</c> also covers a request carrying no query at all: a probe of the
+    /// port, a favicon. There is no separate "empty" outcome because there is nothing to say about it that "did not
+    /// match the request" does not already say.</para>
     /// </summary>
     public static CallbackOutcome ReadCallback(string? urlOrQuery, string expectedState)
     {
@@ -399,8 +306,8 @@ public sealed class OrcaRouterOAuthFlow
 
     /// <summary>
     /// Percent-decoding query pairs, first param wins on a duplicate name. The <c>'+'</c> is a space: that is how
-    /// an authorization server encodes one, and a code copied out of a browser bar is decoded text already in most
-    /// cases — so both spellings have to land on the same value or a paste fails for no visible reason.
+    /// an authorization server encodes one, so both spellings have to land on the same value or a code carrying one
+    /// is exchanged as something the provider never minted.
     /// </summary>
     private static Dictionary<string, string?> ParseQuery(string query)
     {

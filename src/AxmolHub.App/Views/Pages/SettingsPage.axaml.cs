@@ -1929,6 +1929,10 @@ public partial class SettingsPage : UserControl
     /// status line rather than a dialog: the flow is async and the user is looking at another window, so a
     /// modal box would be waiting in the wrong place.
     ///
+    /// <para><b>There is deliberately no "paste the callback URL" dialog.</b> The redirect targets this machine's
+    /// loopback port, so any browser on it finishes the sign-in without the user typing anything; where no browser
+    /// could be launched the status line hands over the link instead.</para>
+    ///
     /// <para>The button is passed in rather than looked up: with several groups on screen there is no single
     /// "the sign-in button", and disabling the wrong one would leave the clicked button live while a second
     /// flow started underneath.</para>
@@ -1953,12 +1957,7 @@ public partial class SettingsPage : UserControl
                 // is about to be rebuilt anyway), so it goes to the status line, which is already the channel
                 // for every other outcome of this flow.
                 SetProviderStatus(false, HubStrings.Get("AuthOAuthNoBrowser") + "\n" + url);
-            },
-            // The one exception to "status line only": that rule is about *reporting*, and a redirect URL cannot
-            // be read off a status line — it has to be typed. It fires only when the loopback callback could not
-            // land here (WSL2 and containers, where the browser runs on the host) or after the flow's own nudge,
-            // so a working desktop browser never sees it.
-            (authorizationUrl, cancellation) => PromptCallbackUrlAsync(cancellation));
+            });
 
             if (result is null)
             {
@@ -2001,28 +2000,6 @@ public partial class SettingsPage : UserControl
         {
             if (button is not null) button.IsEnabled = true;
         }
-    }
-
-    /// <summary>
-    /// Asks for the address the browser ended up on, so a sign-in can finish where the loopback callback cannot
-    /// reach Hub (WSL2, a container, a browser on another host).
-    ///
-    /// <para>The flow calls this from a worker thread, so the window is created through the dispatcher. Nothing
-    /// here validates the pasted text: <c>ReadCallback</c> does, on the same path the browser's own redirect
-    /// goes through, which is the property that keeps the paste route from becoming the weak one.</para>
-    /// </summary>
-    private async Task<string?> PromptCallbackUrlAsync(System.Threading.CancellationToken cancellationToken)
-    {
-        // One await: the dispatcher unwraps the returned task, so the value here is what the dialog produced.
-        var pasted = await Dispatcher.UIThread.InvokeAsync(() => PromptWindow.ShowAsync(
-            Owner(),
-            HubStrings.Get("AuthOAuthPastePrompt"),
-            "",
-            "http://127.0.0.1:0/callback?code=…&state=…"));
-
-        // A dialog the user walked away from must not outlive the sign-in: if the flow was cancelled while it was
-        // open, whatever comes back is discarded rather than traded for a token.
-        return cancellationToken.IsCancellationRequested ? null : pasted;
     }
 
     /// <summary>
@@ -2544,8 +2521,9 @@ public partial class SettingsPage : UserControl
     internal void UseOAuthHandlerForCheck(System.Net.Http.HttpMessageHandler handler)
     {
         _chat.OAuthHttp = new System.Net.Http.HttpClient(handler);
-        // The real flow waits minutes for a human and launches a browser; the harness must do neither, or the
-        // shell check's own timeout fires first and reports the run as a hang rather than as a result.
+        // The real flow waits 45 seconds for a human and launches a browser; the harness must do neither, or the
+        // shell check's own timeout fires first and reports the run as a hang rather than as a result. Reporting
+        // the browser as unavailable is what drives the sign-in down its no-browser ending.
         _chat.OAuthTimeout = TimeSpan.FromSeconds(1);
         _chat.BrowserOpener = _ => false;
     }

@@ -1143,17 +1143,16 @@ public sealed class ChatWorkspace : IDisposable
     /// string-matching on messages.</para>
     ///
     /// <para><b>The flow is built here, not injected, except for the three things it cannot do on its own</b> —
-    /// the HTTP transport, the browser, and asking a person for the URL their browser ended up on. Those are
+    /// the HTTP transport, the browser, and the link the user gets when no browser could be launched. Those are
     /// exactly what a self-check must not do for real, and exactly what the flow's constructor takes.</para>
     ///
-    /// <para><paramref name="onManualCallback"/> is what makes a sign-in finish on WSL2 and in a container: the
-    /// browser opens on the host, so the redirect to <c>127.0.0.1</c> never reaches the listener here, and the
-    /// only way the code can get to Hub is through the user's clipboard.</para>
+    /// <para><paramref name="onManualUrl"/> is the dead-end guard, not a second sign-in route: the callback lands
+    /// on this machine's <c>127.0.0.1</c>, so once the person has the authorization page open in any browser here
+    /// there is nothing left for them to do by hand.</para>
     /// </summary>
     public async Task<OAuthSignInOutcome?> SignInWithOAuthAsync(
         string providerId,
         Action<string>? onManualUrl = null,
-        Func<string, CancellationToken, Task<string?>>? onManualCallback = null,
         CancellationToken cancellationToken = default)
     {
         if (!CanStoreSecrets) return null;
@@ -1161,26 +1160,14 @@ public sealed class ChatWorkspace : IDisposable
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider?.OAuth is not { DiscoveryUrl.Length: > 0 } oauth) return null;
 
-        // Wrapped rather than passed straight through: the caller's shape is a Func, the flow's is its own
-        // delegate type, and the two are only interchangeable through a lambda the compiler can name.
-        OrcaRouterOAuthFlow.ManualCallbackSource? askManual = null;
-        if (onManualCallback is not null)
-        {
-            askManual = (url, cancellation) => onManualCallback(url, cancellation);
-        }
-
         var flow = new OrcaRouterOAuthFlow(
-            _oauthHttp ?? new HttpClient { Timeout = TimeSpan.FromMinutes(2) },
+            _oauthHttp ?? new HttpClient { Timeout = OAuthTimeout },
             url =>
             {
                 // Try the browser first; when that fails the URL is handed to the caller instead of being
-                // swallowed, because a sign-in with no browser and no link is a dead end. The flow is told
-                // whether it opened, because "no browser" is the case where it must not make the user wait.
-                if (BrowserOpener(url)) return true;
-                onManualUrl?.Invoke(url);
-                return false;
+                // swallowed, because a sign-in with no browser and no link is a dead end.
+                if (!BrowserOpener(url)) onManualUrl?.Invoke(url);
             },
-            askManual,
             OAuthTimeout);
 
         try
@@ -1460,10 +1447,11 @@ public sealed class ChatWorkspace : IDisposable
     private HttpClient? _modelListHttp;
 
     /// <summary>
-    /// How long the sign-in waits for the browser callback. Injectably short for a self-check: the real
-    /// default is minutes, and an assertion harness that waited that long would look like a hang.
+    /// How long every part of a browser sign-in gets: the wait for the callback, and the discovery and exchange
+    /// requests around it. The figure is the flow's own so the two cannot drift. Injectably short for a self-check
+    /// — an assertion harness that waited 45 seconds would look like a hang.
     /// </summary>
-    internal TimeSpan OAuthTimeout { get; set; } = TimeSpan.FromMinutes(5);
+    internal TimeSpan OAuthTimeout { get; set; } = OrcaRouterOAuthFlow.DefaultTimeout;
 
     private HttpClient? _oauthHttp;
 

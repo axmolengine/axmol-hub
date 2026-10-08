@@ -672,9 +672,6 @@ public static class HubTexts
         ["AuthOAuthCancelled"] = ("已取消登录。", "Sign-in cancelled."),
         ["AuthOAuthScopeRejected"] = ("授权返回的权限范围比请求的更宽（{0}），已拒绝该密钥。请在授权页面仅勾选接口访问权限。", "The granted scope ({0}) is wider than the one requested, so the key was refused. On the consent page, grant API access only."),
         ["AuthOAuthNoBrowser"] = ("无法自动打开浏览器，请手动访问下面的地址：", "Could not open a browser automatically; open this address by hand:"),
-        // WSL2 / 容器：浏览器在宿主机上，回调打到宿主机的 127.0.0.1，永远回不到 Hub 的监听端口。
-        // 唯一的出路是人把地址栏粘回来，所以这句话必须在流程还开着的时候出现。
-        ["AuthOAuthPastePrompt"] = ("把浏览器最后打开的地址粘贴到下面（用于取回授权码；地址打不开时尤其需要）", "Paste the address your browser ended up on, so the authorization code can be retrieved (needed when the callback page will not load)"),
         ["AuthOAuthPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥，无法完成登录。", "Secure key storage is not available on this platform yet, so sign-in cannot complete."),
         // 两种登录入口同时出现时，中间的分隔文案。
         ["AuthOrSeparator"] = ("或", "or"),
