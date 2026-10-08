@@ -53,6 +53,15 @@ internal static class Program
             return;
         }
 
+        // Same headless contract as --check-secrets, for the other thing only a real Linux session can prove:
+        // that the desktop entry and the icon theme entries the shell reads to draw our logo are actually
+        // written, and name the same identifier the window advertises.
+        if (HubHostOptions.IsLinuxIntegrationSelfTest(args))
+        {
+            Environment.ExitCode = LinuxIntegrationSelfCheck.Run(HubHostOptions.LinuxIntegrationScratchArgument(args));
+            return;
+        }
+
         // Argument parsing must happen before AppBuilder: it decides which window to show.
         App.Options = HubHostOptions.Parse(args);
         if (!App.Options.IsAutomation)

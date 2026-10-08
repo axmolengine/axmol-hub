@@ -5766,6 +5766,11 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
+        // 断言的是"窗口带上了图标"，不是"图标画对了"：Linux 的任务栏与 alt-Tab 读 _NET_WM_ICON，
+        // 而它只在 Window.Icon 有值时才写（Avalonia 的 X11 实现在没图标时是 XDeleteProperty）。
+        // 像素对不对不在这里证明 —— 桌面入口与图标主题那条链路由 --check-linux-integration 负责。
+        Check(shell.Icon is not null, "外壳窗口带着应用图标（Linux 任务栏与 alt-Tab 依赖 _NET_WM_ICON）");
+
         // Page keys are deliberately separate from **copy keys**: the engines page's page key is Engines, while its navigation copy key is Installs
         // (the WPF version already used the word "Installs", so HubTexts keeps it — the two are not the same string).
         // Settings has left this list for the bottom gear: it is still a full page (see MainWindow.PageKeys) but

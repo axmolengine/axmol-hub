@@ -71,14 +71,16 @@
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets/Cpp.xshd" />
-    <!-- 图标有四份用途，各自走各自的通道：.ico 由上面的 ApplicationIcon 编进 Windows exe；
-         .icns 与 hub-icon-512.png 是打包器要读的**磁盘文件**（vpk 的 icon 参数，不嵌资源）；
-         hub-icon-256.png 与 hub-icon-512.png 还要**运行时可读** —— 窗口图标（X11 的
-         _NET_WM_ICON）取 256，Linux 桌面集成把两档分别铺进 hicolor 的 256x256 与 512x512 桶
-         （桶名必须等于图片真实尺寸，否则主题按桶挑图时会挑错），所以它们进 AvaloniaResource 走 avares://。
-         256 而非 1254 原图：_NET_WM_ICON 传的是原始 ARGB32，原图约 6 MB 的 X property 不可接受。
-         除此之外仍刻意**不**写 Resource / None —— 后者与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
-    <AvaloniaResource Include="Assets/hub-icon-256.png" />
-    <AvaloniaResource Include="Assets/hub-icon-512.png" />
+    <!-- 图标各走各的通道：.ico 由上面的 ApplicationIcon 编进 Windows exe；.icns 是 macOS 的 bundle
+         图标；hub-icon-512.png 是 vpk 的 icon 参数（它成为 .DirIcon 与 AppDir 里的 hicolor 图标）。
+         256 与 512 两档还要被**运行时的自己**读一次：256 做窗口图标（X11 的 _NET_WM_ICON 传原始
+         ARGB32，1254 原图约 6 MB 的 X property 不可接受），两档分别铺进 hicolor 的 256x256 与
+         512x512 桶（桶名必须等于图片真实尺寸，否则主题按桶挑图会挑错）。
+         它们走 Content 而不是 avares://，理由与 manifests/*.json、Core/Scripts/*.ps1 同一条：
+         被代码而非 XAML 读的数据文件随输出目录走。这还让 Linux 桌面集成不依赖 Avalonia 已初始化 ——
+         Linux 集成自检正是靠这点在无显示服务器上断言图标真的铺得下去（见 LinuxIntegrationSelfCheck）。
+         仍未写 Resource / None —— 与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
+    <Content Include="Assets/hub-icon-256.png" Link="Assets/hub-icon-256.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets/hub-icon-512.png" Link="Assets/hub-icon-512.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

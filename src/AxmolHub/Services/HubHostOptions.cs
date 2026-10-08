@@ -87,6 +87,26 @@ internal sealed record HubHostOptions(
             : null;
     }
 
+    /// <summary>
+    /// <c>--check-linux-integration [scratch-dir]</c>: the Linux desktop integration's headless self-check.
+    /// Handled like <see cref="CheckSecretsFlag"/> — before Avalonia, no window — because the claim it proves
+    /// ("the desktop environment can find our icon") is about a Linux session and nothing else in the build
+    /// reaches one.
+    /// </summary>
+    public const string CheckLinuxIntegrationFlag = "--check-linux-integration";
+
+    public static bool IsLinuxIntegrationSelfTest(string[] args)
+        => args.Any(a => string.Equals(a, CheckLinuxIntegrationFlag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The scratch directory after the flag, or <c>null</c> for the per-process temp default.</summary>
+    public static string? LinuxIntegrationScratchArgument(string[] args)
+    {
+        var index = Array.FindIndex(args, a => string.Equals(a, CheckLinuxIntegrationFlag, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal)
+            ? args[index + 1]
+            : null;
+    }
+
     public static HubHostOptions Parse(string[] args)
     {
         return new HubHostOptions(
