@@ -18,7 +18,7 @@ internal static class DeepLinkProtocolRegistration
         }
         else if (OperatingSystem.IsLinux())
         {
-            RegisterLinux();
+            RegisterLinux(diagnostic);
         }
     }
 
@@ -162,7 +162,7 @@ internal static class DeepLinkProtocolRegistration
         public IntPtr Pointer;
     }
 
-    private static void RegisterLinux()
+    private static void RegisterLinux(Action<string>? diagnostic)
     {
         var executable = Environment.GetEnvironmentVariable("APPIMAGE");
         if (string.IsNullOrWhiteSpace(executable) || !Path.IsPathRooted(executable))
@@ -177,28 +177,33 @@ internal static class DeepLinkProtocolRegistration
 
         var applications = Path.Combine(dataHome, "applications");
         Directory.CreateDirectory(applications);
-        var desktopFile = Path.Combine(applications, "axmol-hub.desktop");
+        var desktopFile = Path.Combine(applications, LinuxDesktopIdentity.DesktopFile);
         var quotedExecutable = "\"" + EscapeDesktopArgument(executable) + "\"";
+
+        // 图标先落盘、桌面入口后写：Icon= 指向一个还没铺进主题的名字时，桌面环境会直接回退到通用
+        // 图标，那就又是"看着像没修"。铺不成就这一轮不写 Icon=，深链契约本身不受影响。
+        var hasIcon = LinuxDesktopIntegration.InstallIcons(dataHome, diagnostic);
         var contents = "[Desktop Entry]\n"
                        + "Type=Application\n"
                        + "Name=Axmol Hub\n"
                        + "Comment=Install Axmol engine releases\n"
+                       + (hasIcon ? "Icon=" + LinuxDesktopIdentity.Id + "\n" : string.Empty)
                        + "Exec=" + quotedExecutable + " %u\n"
                        + "Terminal=false\n"
-                       + "Categories=Development;\n"
+                       + "Categories=Development;Utility;\n"
+                       + "Keywords=axmol;engine;game;develop;\n"
+                       // 窗口类与桌面入口文件名同名，是 GNOME/KDE 把运行中的窗口认给这个入口的依据
+                       // （图标就从这条匹配里来）。窗口侧由 Program.BuildAvaloniaApp 的
+                       // X11PlatformOptions.WmClass 钉成同一个值，两边必须一起看。
+                       + "StartupWMClass=" + LinuxDesktopIdentity.Id + "\n"
                        + "MimeType=x-scheme-handler/" + Scheme + ";\n";
-        var temporary = desktopFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            File.WriteAllText(temporary, contents, new UTF8Encoding(false));
-            File.Move(temporary, desktopFile, true);
-        }
-        finally
-        {
-            if (File.Exists(temporary)) File.Delete(temporary);
-        }
+        LinuxDesktopIntegration.WriteIfChanged(desktopFile, new UTF8Encoding(false).GetBytes(contents));
 
-        using var update = Process.Start(new ProcessStartInfo("xdg-mime", $"default axmol-hub.desktop x-scheme-handler/{Scheme}")
+        // 三个刷新工具都是宿主可选依赖（见 LinuxDesktopIntegration），放在 xdg-mime 之前跑：
+        // xdg-mime 失败会抛出，那时缓存已经跟上刚写入的文件了。
+        LinuxDesktopIntegration.RefreshCaches(dataHome, applications, diagnostic);
+
+        using var update = Process.Start(new ProcessStartInfo("xdg-mime", $"default {LinuxDesktopIdentity.DesktopFile} x-scheme-handler/{Scheme}")
         {
             UseShellExecute = false,
             RedirectStandardError = true,

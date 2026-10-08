@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.X11;
 using Velopack;
 
 namespace AxmolHub;
@@ -78,6 +79,10 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
+            // X11 only (ignored on Windows/macOS): Avalonia defaults the window class to the entry
+            // assembly name, and the desktop-entry matching that serves the taskbar icon needs the
+            // kebab identity instead. See LinuxDesktopIdentity.
+            .With(new X11PlatformOptions { WmClass = LinuxDesktopIdentity.Id })
 #if DEBUG
             .WithDeveloperTools()
 #endif

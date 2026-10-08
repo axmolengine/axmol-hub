@@ -92,6 +92,9 @@ public partial class MainWindow : Window
 
     public MainWindow(string dataRoot, PreferencesStore preferencesStore, HubPreferences preferences)
     {
+        // Set in code, not in MainWindow.axaml: Avalonia 12's WindowIcon has no type converter, so
+        // `Icon="avares://…"` would fail at XAML load time.
+        Icon = HubAppIcon.CreateWindowIcon();
         _preferencesStore = preferencesStore;
         _preferences = preferences;
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);

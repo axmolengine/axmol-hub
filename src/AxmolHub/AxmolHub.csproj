@@ -71,7 +71,14 @@
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets/Cpp.xshd" />
-    <!-- 打包器要的是磁盘上的图标文件（vpk 的 icon 参数），不是嵌入资源；ApplicationIcon 已把它编进 exe。
-         这里刻意**不**再写 Resource / None —— 后者与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
+    <!-- 图标有四份用途，各自走各自的通道：.ico 由上面的 ApplicationIcon 编进 Windows exe；
+         .icns 与 hub-icon-512.png 是打包器要读的**磁盘文件**（vpk 的 icon 参数，不嵌资源）；
+         hub-icon-256.png 与 hub-icon-512.png 还要**运行时可读** —— 窗口图标（X11 的
+         _NET_WM_ICON）取 256，Linux 桌面集成把两档分别铺进 hicolor 的 256x256 与 512x512 桶
+         （桶名必须等于图片真实尺寸，否则主题按桶挑图时会挑错），所以它们进 AvaloniaResource 走 avares://。
+         256 而非 1254 原图：_NET_WM_ICON 传的是原始 ARGB32，原图约 6 MB 的 X property 不可接受。
+         除此之外仍刻意**不**写 Resource / None —— 后者与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
+    <AvaloniaResource Include="Assets/hub-icon-256.png" />
+    <AvaloniaResource Include="Assets/hub-icon-512.png" />
   </ItemGroup>
 </Project>
