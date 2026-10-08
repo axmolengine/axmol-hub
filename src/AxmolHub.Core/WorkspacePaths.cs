@@ -76,6 +76,38 @@ public static class WorkspacePaths
 
     public static bool IsExcludedDirectory(string directoryName) => ExcludedDirectories.Contains(directoryName);
 
+    /// <summary>
+    /// The one spelling of a workspace directory, for anything that has to decide whether two stored paths name
+    /// the same place. A surface that groups sessions by the directory they work in cannot compare the strings as
+    /// typed: <c>d:\dev\ws</c>, <c>D:\DEV\WS\</c> and <c>D:/dev/ws</c> are one project, and splitting them would
+    /// show the same work twice. Windows folds case because that is what the filesystem already does — the same
+    /// choice <see cref="IsProtected"/> and the state-file mutex key make — while every other host keeps paths
+    /// byte-for-byte, where case is part of the name.
+    /// </summary>
+    public static string? CanonicalRoot(string? root)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return null;
+        var full = root.Trim();
+        try
+        {
+            full = Path.GetFullPath(full);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            // A path this build cannot resolve is still a place the user named, and the group label has to read
+            // it out. Folding it to nothing would move that session into the workspace-less bucket and hide the
+            // fact that its directory is the problem.
+            return OperatingSystem.IsWindows() ? full.ToUpperInvariant() : full;
+        }
+
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        // Two spellings have no meaning once their separator is gone: "\" is nobody's path and "D:" names the
+        // current directory on D rather than the root. A workspace sitting on a drive root is unusual, and it is
+        // exactly the case where a bogus key would look like a real one.
+        if (trimmed.Length == 0 || trimmed.EndsWith(':')) trimmed += Path.DirectorySeparatorChar;
+        return OperatingSystem.IsWindows() ? trimmed.ToUpperInvariant() : trimmed;
+    }
+
     public static WorkspacePath ResolveRead(string? root, string relative, WorkspaceGuards guards)
     {
         var resolved = Resolve(root, relative, guards);

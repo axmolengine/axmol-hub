@@ -47,6 +47,14 @@ public sealed class HubPreferences
     public bool SidebarCollapsed { get; set; }
 
     /// <summary>
+    /// 会话侧栏各分组展开还是折起，键取自 <see cref="SessionGroupKey"/>（<c>ws:&lt;目录&gt;</c> / <c>recent</c> /
+    /// <c>archived</c>），值为<b>用户的明确选择</b>。字典而不是布尔列表，是因为默认并不统一：工作区和最近聊天默认展开，
+    /// 已归档默认折起，而「折起的那条我打开了」和「这条我根本没动过」必须是两回事。分组是会话派生出来的，今天有
+    /// 明天可能就没了，所以认不出的键只是渲染不到，不必清理——留着也不会挡路。
+    /// </summary>
+    public Dictionary<string, bool> SidebarGroupExpanded { get; set; } = [];
+
+    /// <summary>
     /// The strongest reasoning tier Hub's per-request routing (<see cref="ChatRouting.Auto"/>) may pick, whatever
     /// the task looks like. It is a ceiling and not a target: the point of the setting is that the expensive
     /// tiers are a decision a person made once on purpose, not something a classifier reaches for on its own.

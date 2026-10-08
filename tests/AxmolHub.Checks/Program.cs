@@ -827,6 +827,85 @@ if (args.Contains("--check-ai-sessions"))
     store.Delete(older.Id);
     store.Delete(newer.Id);
 
+    // Workspace grouping. The sidebar groups sessions by the directory they work in, so two spellings of one
+    // directory have to make one group, and the header row has to carry enough to do that without opening a
+    // single transcript.
+    var workspaceFolder = Path.Combine(Path.GetTempPath(), "AxmolHub-Checks-Workspace");
+    var workspaceKey = WorkspacePaths.CanonicalRoot(workspaceFolder);
+    if (workspaceKey != WorkspacePaths.CanonicalRoot(workspaceFolder + Path.DirectorySeparatorChar))
+        throw new Exception("A trailing separator changed the canonical form of one workspace directory.");
+    if (OperatingSystem.IsWindows())
+    {
+        if (WorkspacePaths.CanonicalRoot(@"d:\dev\ws") != WorkspacePaths.CanonicalRoot(@"D:\DEV\WS\"))
+            throw new Exception("Two spellings of one Windows directory produced two workspace keys.");
+    }
+    else
+    {
+        if (WorkspacePaths.CanonicalRoot("/dev/WS") == WorkspacePaths.CanonicalRoot("/dev/ws"))
+            throw new Exception("A case-sensitive host folded two different directories into one workspace key.");
+    }
+
+    // A drive root is the one path whose trailing separator is part of its name: "D:\" trimmed to "D:" is the
+    // current directory on D, so the canonical form of a root has to keep the separator it arrived with.
+    var driveRoot = Path.GetPathRoot(Path.GetTempPath());
+    if (!string.IsNullOrEmpty(driveRoot) && Path.EndsInDirectorySeparator(driveRoot)
+        && WorkspacePaths.CanonicalRoot(driveRoot) != (OperatingSystem.IsWindows() ? driveRoot.ToUpperInvariant() : driveRoot))
+        throw new Exception("Canonicalizing a drive root changed which directory it names.");
+    if (SessionGroupKey.Workspace(null) is not null || SessionGroupKey.Workspace("   ") is not null)
+        throw new Exception("A session with no workspace produced a workspace key instead of the plain-chat bucket.");
+    if (SessionGroupKey.Workspace(workspaceFolder) != "ws:" + workspaceKey)
+        throw new Exception("The workspace group key is not the canonical directory under its own prefix.");
+    if (SessionGroupKey.Workspace(@"D:\other") == SessionGroupKey.Workspace(workspaceFolder))
+        throw new Exception("Two different workspace directories share one group key.");
+    if (SessionGroupKey.LabelFor(workspaceFolder) != "AxmolHub-Checks-Workspace")
+        throw new Exception("A workspace group's label is not the folder it names.");
+    Console.WriteLine("PASS: workspace canonical keys fold casing and separators into one spelling per directory.");
+
+    var workspaceSession = Conversation.Create("orcarouter");
+    workspaceSession.Append(ChatTurn.User("works inside a folder"));
+    workspaceSession.WorkspaceRoot = workspaceFolder;
+    workspaceSession.Archived = true;
+    store.Save(workspaceSession);
+    var header = store.List().Single(summary => summary.Id == workspaceSession.Id);
+    if (!string.Equals(header.WorkspaceRoot, workspaceFolder, StringComparison.Ordinal))
+        throw new Exception("The index row lost the session's workspace directory, so grouping would need every transcript open.");
+    if (!header.Archived)
+        throw new Exception("The index row lost the archive flag, so an archived session would still be listed as live.");
+    Console.WriteLine("PASS: session summaries carry the workspace root and the archive flag.");
+
+    // The shape on disk, read as bytes rather than through the API over it. Every repair below depends on a
+    // legacy bare array failing to bind, which is only true while the store writes an envelope: write the array
+    // again and this is the assertion that says so, on the same file the next reader will open.
+    var indexPath = Path.Combine(root, "ai", "sessions", "index.json");
+    if (!File.ReadAllText(indexPath).TrimStart().StartsWith('{'))
+        throw new Exception("index.json is a bare array again, so an index written before these columns existed would be obeyed rather than rebuilt.");
+
+    // The migration is the shape change. An index written as a bare array — every file on disk before these
+    // columns existed — cannot bind to the envelope, so the store rebuilds it from the session files, which do
+    // carry them. Obeying it instead would file every project's sessions under plain chats, silently.
+    File.WriteAllText(indexPath,
+        "[{\"id\":\"" + workspaceSession.Id + "\",\"title\":\"旧索引\",\"providerId\":\"orcarouter\","
+        + "\"messageCount\":1,\"updatedAt\":\"2026-10-01T00:00:00+08:00\",\"pinned\":false}]");
+    var rebuilt = store.List().Single(summary => summary.Id == workspaceSession.Id);
+    if (!string.Equals(rebuilt.WorkspaceRoot, workspaceFolder, StringComparison.Ordinal) || !rebuilt.Archived)
+        throw new Exception("A legacy array index was obeyed instead of rebuilt.");
+    if (!File.ReadAllText(indexPath).TrimStart().StartsWith('{'))
+        throw new Exception("The rebuild wrote the legacy shape back, so the same file will be misread again next start.");
+    Console.WriteLine("PASS: an index written before workspace grouping existed is rebuilt, not obeyed.");
+
+    // Archived is a listing rule, not a delete: the row stays in the store, with its workspace binding intact,
+    // and comes back to the same group when it is restored.
+    var stillThere = store.Load(workspaceSession.Id)
+                     ?? throw new Exception("Archiving removed the session file rather than the sidebar row.");
+    if (!stillThere.Archived || !string.Equals(stillThere.WorkspaceRoot, workspaceFolder, StringComparison.Ordinal))
+        throw new Exception("An archived session lost its own record of being archived, or of where it works.");
+    workspaceSession.Archived = false;
+    store.Save(workspaceSession);
+    if (!store.List().Any(summary => summary.Id == workspaceSession.Id && !summary.Archived))
+        throw new Exception("Restoring an archived session did not put it back on the live list.");
+    store.Delete(workspaceSession.Id);
+    Console.WriteLine("PASS: archiving keeps the session and its workspace binding, and restoring undoes it.");
+
     // ContextTrimmer: system turns survive, oldest turns are dropped, and order is preserved.
     var history = new List<ChatTurn> { ChatTurn.System("You are Axmol's assistant.") };
     for (var index = 0; index < 20; index++) history.Add(ChatTurn.User($"message number {index} " + new string('x', 300)));
@@ -2645,6 +2724,24 @@ if (args.Contains("--check-ai-cross-session"))
         || !peerDeliveries[^1].Target.Equals(shaderPeer.Id, StringComparison.Ordinal))
         throw new Exception("A wakeless send did not land as a plain delivery, or went to the wrong session.");
     Console.WriteLine("PASS: a wake starts the peer, a note without one still lands.");
+
+    // An archived session is not a peer to write to: a wake would light a dot on a row no list shows, and a note
+    // left there is as unread. Its history stays readable, though — what somebody concluded is a different thing
+    // from talking back to them, and the user put it away rather than deleted it.
+    var archivedPeers = peerDeliveries.Count;
+    shaderPeer.Archived = true;
+    bodiesStore.Save(shaderPeer);
+    if (peerTools.ListSessions().Contains(shaderPeer.Id, StringComparison.Ordinal))
+        throw new Exception("list_sessions offered an archived session as somebody to write to.");
+    var putAway = await peerTools.SendToSession(shaderPeer.Id, "发给收起来的会话", wake: false);
+    if (peerDeliveries.Count != archivedPeers
+        || !putAway.Contains("is archived", StringComparison.Ordinal))
+        throw new Exception($"A send to an archived session reached it anyway: {putAway}");
+    if (peerTools.ReadSession(shaderPeer.Id).Contains("Refused", StringComparison.Ordinal))
+        throw new Exception("read_session refused an archived peer's history; archiving is not deleting.");
+    shaderPeer.Archived = false;
+    bodiesStore.Save(shaderPeer);
+    Console.WriteLine("PASS: an archived session is not a peer to write to, while its history is still readable.");
 
     // The title is accepted as well as the id — but resolved here, so a renamed session cannot be addressed by
     // the title a peer memorised last week without an error the model can act on.

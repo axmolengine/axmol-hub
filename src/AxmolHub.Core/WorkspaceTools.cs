@@ -412,17 +412,22 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
     /// <summary>
     /// The other sessions in this Hub. A list that left the sending session out would be one the model cannot
     /// check itself against — "who else is there" and "which one am I" are the same question.
+    ///
+    /// <para>Archived sessions are left out: the user put them away, and a peer the model can write to but the
+    /// person cannot see is a message that goes nowhere they can notice. Their transcripts are still readable by
+    /// id — <see cref="ReadSession"/> — because reading what somebody concluded is not the same as talking back.</para>
     /// </summary>
     [Description("List this Hub's chat sessions with their ids and titles, for send_to_session and read_session.")]
     public string ListSessions()
     {
         if (context.Sessions is not { } store) return NoPeers();
 
-        var summaries = store.List().Take(MaxListedSessions).ToList();
-        if (summaries.Count == 0) return "There are no chat sessions in this Hub yet, so nobody to write to.";
+        var reachable = store.List().Where(summary => !summary.Archived).ToList();
+        if (reachable.Count == 0) return "There are no chat sessions in this Hub yet, so nobody to write to.";
 
+        var summaries = reachable.Take(MaxListedSessions).ToList();
         var builder = new StringBuilder($"Sessions, newest first ({summaries.Count} shown of "
-                                        + $"{store.List().Count}, ids are what send_to_session takes):");
+                                        + $"{reachable.Count}, ids are what send_to_session takes):");
         foreach (var summary in summaries)
         {
             var title = summary.Title.Length > 0 ? summary.Title : "(untitled)";
@@ -493,6 +498,13 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
 
         var resolved = ResolveTarget(target, store);
         if (resolved is null) return AmbiguousOrMissing(target);
+        // Refused before the cross-session rules run, and for both halves of the tool: a note left in a session
+        // the user put away is as unread as a wake that lights a dot on a row no list shows. What the model has to
+        // hear is that the session is not gone — the user stopped looking at it — and that read_session still works.
+        if (resolved.Value.Archived)
+            return $"Refused: session {resolved.Value.Id} is archived, so the user is not looking at it. Do not "
+                   + "write there; read_session can still show what it concluded, and your own reply is where to "
+                   + "say what you found.";
 
         // R2 needs one fact only the source's own transcript has: is this run answering the session it is about
         // to write back to. Read before deciding, because that is what the rule is about.
@@ -591,18 +603,18 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
     }
 
     /// <summary>Id first, then an exact title match — and only when exactly one session has it.</summary>
-    private static (string Id, string Title, bool AwaitingApproval)? ResolveTarget(string wanted, ConversationStore store)
+    private static (string Id, string Title, bool AwaitingApproval, bool Archived)? ResolveTarget(string wanted, ConversationStore store)
     {
         var name = wanted.Trim();
         var byId = store.List().FirstOrDefault(summary => string.Equals(summary.Id, name, StringComparison.Ordinal));
-        if (byId is not null) return (byId.Id, byId.Title, byId.PendingApprovals > 0);
+        if (byId is not null) return (byId.Id, byId.Title, byId.PendingApprovals > 0, byId.Archived);
 
         var byTitle = store.List()
             .Where(summary => summary.Title.Length > 0
                               && string.Equals(summary.Title, name, StringComparison.OrdinalIgnoreCase))
             .ToList();
         return byTitle.Count == 1
-            ? (byTitle[0].Id, byTitle[0].Title, byTitle[0].PendingApprovals > 0)
+            ? (byTitle[0].Id, byTitle[0].Title, byTitle[0].PendingApprovals > 0, byTitle[0].Archived)
             : null;
     }
 

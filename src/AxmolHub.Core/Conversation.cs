@@ -196,6 +196,13 @@ public sealed class Conversation
     /// itself (not only the index) so a rebuild from the message files restores the pin.</summary>
     public bool Pinned { get; set; }
 
+    /// <summary>Put away rather than deleted: the session leaves the sidebar's live list and appears in the
+    /// archived group, while its transcript, attachments and undo pre-images stay exactly where they were. The
+    /// difference from <see cref="Pinned"/> is only that this one has to survive on disk — a session that comes
+    /// back un-archived after a restart was never really put away. Nothing is renamed or moved for it, so
+    /// un-archiving costs no repair.</summary>
+    public bool Archived { get; set; }
+
     /// <summary>Set when this session was branched out of another one. Nullable, so every file written
     /// before branching existed still deserializes. Recording it here rather than deriving it means a
     /// future "derived from …" affordance costs one property read instead of a scan of all sessions.</summary>
@@ -213,7 +220,9 @@ public sealed class Conversation
     public List<string> AutoApprovedTools { get; set; } = [];
 
     /// <summary>Directory this session's file tools are confined to. Held per session rather than re-derived
-    /// per request, so an approval granted after a restart applies to the same place it was shown for.</summary>
+    /// per request, so an approval granted after a restart applies to the same place it was shown for. It is also
+    /// what the sidebar groups by, which is why a moved directory has to be re-pointed here rather than in a list
+    /// of its own — see <see cref="SessionGroupKey.Workspace"/>.</summary>
     public string? WorkspaceRoot { get; set; }
 
     /// <summary>Longest auto-title before ellipsis; short enough to fit the session list.</summary>
@@ -291,6 +300,16 @@ public sealed class ConversationSummary
     public DateTimeOffset UpdatedAt { get; set; }
     public bool Pinned { get; set; }
 
+    /// <summary>Whether the user put this session away. On the header for the same reason the pin is: the sidebar
+    /// has to know it before opening a single transcript, and a session that still showed up in the live list
+    /// after being archived would be archived in name only.</summary>
+    public bool Archived { get; set; }
+
+    /// <summary>The directory this session works in, spelled the way the session spells it: the group label wants
+    /// the folder name and its tooltip wants the whole path, so this is not canonicalized. Carried on the header
+    /// because grouping the list by workspace would otherwise mean opening every transcript to read one string.</summary>
+    public string? WorkspaceRoot { get; set; }
+
     /// <summary>How many tool calls in this session are waiting for a decision. Derived from the transcript on
     /// every save rather than counted separately, so a session cannot advertise a decision nobody can make —
     /// and a file written before the field existed simply reads as zero.</summary>
@@ -309,6 +328,8 @@ public sealed class ConversationSummary
         MessageCount = conversation.Messages.Count,
         UpdatedAt = conversation.UpdatedAt,
         Pinned = conversation.Pinned,
+        Archived = conversation.Archived,
+        WorkspaceRoot = conversation.WorkspaceRoot,
         SpawnedBy = conversation.SpawnedBy,
         PendingApprovals = conversation.Messages
             .Count(turn => turn.ApprovalState == ChatApprovalStates.Pending
