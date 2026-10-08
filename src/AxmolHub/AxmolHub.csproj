@@ -9,7 +9,7 @@
          去掉 .Avalonia，那次是纯重命名，namespace / x:Class / avares 一律没动）→ AxmolHub
          （2026-10-08）。留 `.App` 的理由在 P6 就没了，而它一直在付出真实代价：程序集名同时决定
          三处彼此牵连的身份 —— Linux 窗口类（Avalonia 取 entry assembly 名做 WM_CLASS 默认值）、
-         avares:// 的资源权威、以及 vpk 的 --mainExe —— 而发行身份是 packId `Axmol.Hub`、
+         avares:// 的资源权威、以及 vpk 打包参数 mainExe 的取值 —— 而发行身份是 packId `Axmol.Hub`、
          桌面入口是 kebab 的 `axmol-hub`，四个名字互不相等，图标匹配就一直是错的。
          这次连同 namespace / x:Class / avares 一起改，是因为程序集名本身变了：
          avares:// 按程序集名寻址，漏一处不是显示问题，是 AvaloniaXamlLoader.Load 启动即抛。
