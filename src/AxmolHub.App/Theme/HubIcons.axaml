@@ -50,6 +50,13 @@
 
   <StreamGeometry x:Key="Hub.Icon.ChevronRight">M9 5L16.5 12L9 19L6.5 16.5L11.5 12L6.5 7.5Z</StreamGeometry>
 
+  <!-- A bookmark = kept on purpose, shown without asking. The pinned marker a session row carries once groups
+       replaced the time buckets: a pin no longer means "in a list of its own above everything", it means "this
+       one stays at the front", and that has to be readable on the row itself. One closed stroke, not a
+       thumbtack: at the 10 DIP this is drawn, a pin's head, body and point are three marks inside a pin's
+       height and they merge into a smudge. -->
+  <StreamGeometry x:Key="Hub.Icon.Pin">M6.5 4.5H17.5V19.5L12 14.8L6.5 19.5Z</StreamGeometry>
+
   <!-- Two offset document outlines = Copy -->
   <StreamGeometry x:Key="Hub.Icon.Copy">M8 7V5.5A1.5 1.5 0 0 1 9.5 4H15A1.5 1.5 0 0 1 16.5 5.5V12A1.5 1.5 0 0 1 15 13.5H14 M6 8H11.5A1.5 1.5 0 0 1 13 9.5V16A1.5 1.5 0 0 1 11.5 17.5H6A1.5 1.5 0 0 1 4.5 16V9.5A1.5 1.5 0 0 1 6 8Z</StreamGeometry>
   <StreamGeometry x:Key="Hub.Icon.Edit">M3.5 16.5L3 21L7.5 20.5L19.2 8.8L15.2 4.8ZM13.8 6.2L17.8 10.2</StreamGeometry>

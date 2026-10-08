@@ -714,9 +714,12 @@ public partial class ChatPanel : UserControl
     private MenuFlyout BuildComposerMenu()
     {
         var menu = new MenuFlyout();
+        // Two modes rather than three. "提问" was the one with nothing behind it that the composer already
+        // says: an assistant with no tools offered is what answering a question without acting on it means, and
+        // a person who wants that simply does not pick 计划 or 目标. The mode itself stays — sessions that
+        // recorded "ask" keep running without tools — it just has no menu item any more.
         foreach (var (mode, key) in new[]
                  {
-                     (ChatModes.Ask, "ChatModeAsk"),
                      (ChatModes.Plan, "ChatModePlan"),
                      (ChatModes.Agent, "ChatModeGoal"),
                  })

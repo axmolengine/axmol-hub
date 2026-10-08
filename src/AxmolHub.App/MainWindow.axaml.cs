@@ -509,7 +509,7 @@ public partial class MainWindow : Window
         _chatPanel = null;
 
         // The conversation sidebar holds the old workspace; rebuild it for the new one.
-        _chatSidebar = new ChatSidebar(_chat);
+        _chatSidebar = BuildChatSidebar();
         ChatSidebarHost.Content = _chatSidebar;
 
         // The log panel holds the previous root's content; leaving it would point people at a
@@ -878,12 +878,21 @@ public partial class MainWindow : Window
     internal void ShowUpdateBadge(bool show) => SettingsUpdateDot.IsVisible = show;
 
     /// <summary>
+    /// The conversation sidebar, built against the current chat workspace. It takes the preference store because
+    /// which groups are folded is state the user left and expects back after a restart, and the status strip
+    /// because re-pointing a workspace can fail on a fact about the disk — a folder that moved again while the
+    /// dialog was open — and that answer belongs in the strip rather than in a card.
+    /// </summary>
+    private ChatSidebar BuildChatSidebar()
+        => new(_chat, _preferencesStore, _preferences) { StatusReporter = SetStatus };
+
+    /// <summary>
     /// Builds the conversation sidebar section, applies persisted sidebar state, and wires the collapse
     /// toggle, the drag grip and the log chevron.
     /// </summary>
     private void InitializeSidebar()
     {
-        _chatSidebar = new ChatSidebar(_chat);
+        _chatSidebar = BuildChatSidebar();
         ChatSidebarHost.Content = _chatSidebar;
 
         SidebarToggle.Click += (_, _) => SetSidebarExpanded(!IsSidebarExpanded);

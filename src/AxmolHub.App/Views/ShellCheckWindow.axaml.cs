@@ -148,6 +148,7 @@ public partial class ShellCheckWindow : Window
         await CheckSettingsPageAsync(scratchRoot, shell);
         CheckHostShellCard(shell);
         await CheckAssistantAsync(scratchRoot, shell);
+        CheckWorkspaceGroups(scratchRoot, shell);
         CheckDataRootSwitch(scratchRoot, shell);
         CheckRealRender(shell);
     }
@@ -262,23 +263,22 @@ public partial class ShellCheckWindow : Window
               && panel.ContextCompressButtonTextForCheck == HubStrings.Get("ChatCompressContext"),
             "没有足够对话历史时，压缩上下文按钮保持禁用");
         panel.CloseContextPopoverForCheck();
-        Check(panel.ComposerMenuModesForCheck.SequenceEqual(
-                  [ChatModes.Ask, ChatModes.Plan, ChatModes.Agent])
+        Check(panel.ComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan, ChatModes.Agent])
               && panel.CheckedComposerMenuModesForCheck.Length == 0
               && panel.ComposerMenuModesAreCheckboxesForCheck
               && panel.ComposerMenuModeItemsCloseOnClickForCheck
               && panel.ComposerMenuModesHaveIconsForCheck
               && !panel.ModeIndicatorVisibleForCheck,
-            "加号菜单提供带图标、可取消的提问、计划、目标复选项，默认全部未勾选且点击后关闭");
+            "加号菜单只提供带图标、可取消的计划与目标两档复选项，默认全部未勾选且点击后关闭（提问不再是菜单项）");
         Check(panel.PermissionChipFollowsPlusForCheck && panel.ModeIndicatorFollowsPermissionForCheck,
             "工具权限按钮紧跟加号，启用的模式按钮按序排在权限按钮右侧");
-        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
-              && panel.SelectedModeForCheck == ChatModes.Ask
-              && panel.SelectedComposerModeForCheck == ChatModes.Ask
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
+              && panel.SelectedModeForCheck == ChatModes.Plan
+              && panel.SelectedComposerModeForCheck == ChatModes.Plan
               && panel.ModeIndicatorVisibleForCheck
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
-              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Ask]),
-            "点击提问后菜单关闭、只勾选提问，并显示模式按钮");
+              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan]),
+            "点击计划后菜单关闭、只勾选计划，并显示模式按钮");
         Check(panel.ModeIndicatorKeepsLabelVisibleForCheck
               && panel.PermissionChipFollowsPlusForCheck
               && panel.ModeIndicatorFollowsPermissionForCheck,
@@ -290,27 +290,22 @@ public partial class ShellCheckWindow : Window
         var closeGlyph = panel.ModeIndicatorCloseGlyphForCheck;
         Check(closeGlyph is { Glyph: "×", FontSize: >= 14 and <= 16 } && IsUiFontStack(closeGlyph.FontFamily),
             "模式取消图标使用轻量的文字叉号，字体走应用的 UI 字族栈（实际 " + closeGlyph.FontFamily + "）");
-        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
-              && panel.SelectedComposerModeForCheck == ChatModes.Plan
-              && panel.ModeIndicatorIconMatchesSelectedModeForCheck
-              && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Plan]),
-            "点击计划会取消提问并仅勾选计划，菜单立即关闭");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)
               && panel.SelectedModeForCheck == ChatModes.Agent
               && panel.SelectedComposerModeForCheck == ChatModes.Agent
               && panel.CheckedComposerMenuModesForCheck.SequenceEqual([ChatModes.Agent])
               && panel.ModeIndicatorIconMatchesSelectedModeForCheck
               && panel.ModeIndicatorVisibleForCheck,
-            "点击目标后仅勾选目标并显示目标按钮，菜单立即关闭");
+            "点击目标会取消计划并仅勾选目标，菜单立即关闭");
         Check(panel.ClickComposerModeMenuForCheck(ChatModes.Agent)
               && panel.SelectedModeForCheck == ChatModes.Agent
               && panel.SelectedComposerModeForCheck is null
               && panel.CheckedComposerMenuModesForCheck.Length == 0
               && !panel.ModeIndicatorVisibleForCheck,
             "再次点击已勾选的目标会取消选择并恢复默认模式");
-        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Ask)
-              && panel.SelectedComposerModeForCheck == ChatModes.Ask,
-            "可重新启用提问模式");
+        Check(panel.ClickComposerModeMenuForCheck(ChatModes.Plan)
+              && panel.SelectedComposerModeForCheck == ChatModes.Plan,
+            "可重新启用计划模式");
         panel.ResetModeForCheck();
         Check(panel.SelectedModeForCheck == ChatModes.Agent
               && panel.SelectedComposerModeForCheck is null
@@ -872,8 +867,12 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.Conversations.First(summary => summary.Id == opsConversation.Id).Pinned,
             "会话置顶标记写入索引");
         panel.Reload();
-        Check(sidebar.GroupHeaderText.Contains(HubStrings.Get("PinConversation"), StringComparison.Ordinal),
-            "置顶会话单独归入置顶分组（实际分组：" + sidebar.GroupHeaderText.Replace("\n", " / ") + "）");
+        Check(sidebar.GroupOfForCheck(opsConversation.Id) == SessionGroupKey.Recent
+              && sidebar.GroupRowIdsForCheck(SessionGroupKey.Recent).FirstOrDefault() == opsConversation.Id
+              && sidebar.HasPinBadgeForCheck(opsConversation.Id)
+              && !sidebar.GroupHeaderText.Contains(HubStrings.Get("PinConversation"), StringComparison.Ordinal),
+            "置顶不再抽成独立分组：它排在自己所属分组的最前，并带上书签标记（实际分组："
+            + string.Join(" / ", sidebar.GroupHeaderTagsForCheck()) + "）");
         Check(sidebar.SessionHasRenameMenu(opsConversation.Id) && sidebar.SessionHasPinMenu(opsConversation.Id),
             "会话操作菜单提供重命名与置顶");
 
@@ -1001,6 +1000,232 @@ public partial class ShellCheckWindow : Window
 
         shell.Chat.ClientOverride = null;
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 侧栏的会话分组：工作目录在前、没有目录的对话排在最后的「最近聊天」、归档的沉到底部；分组可折叠；
+    /// 目录被搬走时整组改路径。
+    ///
+    /// 夹具用两个真实存在的目录加一个<b>从不创建</b>的目录。第三个夹具是这条特性存在的原因，也是最容易被
+    /// 写歪的地方：一个只在目录存在时才成立的分组，恰好会在用户最需要改路径的那一刻什么都不显示。
+    /// </summary>
+    private void CheckWorkspaceGroups(string scratchRoot, MainWindow shell)
+    {
+        var sidebar = shell.ChatSidebarSection;
+        var chat = shell.Chat;
+        // The sidebar only exists on screen while the assistant page is showing — and a control that is not laid
+        // out has no bounds to render, which would make every frame captured below a 1x1 blank.
+        shell.OpenAssistant();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        // 工作区夹具必须落在数据根之外：Hub 自己的数据目录是助手永远不能写进去的地方
+        // （WorkspacePaths.IsProtected），把"某个项目"摆在数据根里，改路径的闸门会把它当成受保护位置拒掉，
+        // 于是这条断言测的就不再是路径，而是另一个规矩。
+        var workspaceBase = ScratchDirectory.Resolve("shell-check-workspaces", Guid.NewGuid().ToString("N"));
+        string Full(string relative) => System.IO.Path.Combine(workspaceBase, relative);
+        Directory.CreateDirectory(workspaceBase);
+
+        // 分组顺序才是这里的断言对象，所以列表必须先腾空：助手那一组留下的会话自己就是一个分组，
+        // 它会替“顺序错了”回答，让第一条断言永远看不出问题。
+        foreach (var leftover in chat.Conversations.Select(summary => summary.Id).ToArray())
+        {
+            chat.DeleteConversation(leftover);
+        }
+        chat.RestoreArchivedSessions();
+        chat.PruneEmptyConversations();
+
+        var workspaceA = Full("ws-a");
+        var workspaceB = Full("ws-b");
+        var movedAway = Full("ws-moved");
+        Directory.CreateDirectory(workspaceA);
+        Directory.CreateDirectory(workspaceB);
+        var keyA = SessionGroupKey.Workspace(workspaceA)!;
+        var keyB = SessionGroupKey.Workspace(workspaceB)!;
+        var keyMoved = SessionGroupKey.Workspace(movedAway)!;
+
+        Conversation Seeded(string? root, string title)
+        {
+            var session = chat.StartConversation();
+            chat.SeedTurnForCheck(session.Id, title);
+            if (root is not null) chat.SetWorkspaceRoot(session.Id, root);
+            return session;
+        }
+
+        var plainOne = Seeded(null, "闲聊甲");
+        var bOne = Seeded(workspaceB, "B 项目一");
+        var movedOne = Seeded(movedAway, "搬走的目录");
+        var aUpper = Seeded(workspaceA.ToUpperInvariant(), "A 项目大写");
+        var aOne = Seeded(workspaceA, "A 项目一");
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        var tags = sidebar.GroupHeaderTagsForCheck();
+        Check(tags.Length == 4 && tags[^1] == SessionGroupKey.Recent
+              && tags.Contains(keyA) && tags.Contains(keyB) && tags.Contains(keyMoved),
+            "会话按工作目录分组，没有目录的对话统一归到末尾的「最近聊天」（实际分组："
+            + string.Join(" / ", tags.Select(tag => tag.StartsWith("ws:", StringComparison.Ordinal) ? tag[3..] : tag)) + "）");
+        Check(sidebar.GroupOfForCheck(aUpper.Id) == keyA
+              && sidebar.GroupOfForCheck(aOne.Id) == keyA
+              && tags.Count(tag => tag == keyA) == 1,
+            "同一目录的大小写不同、结尾分隔符不同也归为同一组（该组 "
+            + sidebar.GroupRowIdsForCheck(keyA).Length + " 行，实际分组数 " + tags.Length + "）");
+        Check(sidebar.GroupOfForCheck(movedOne.Id) == keyMoved
+              && sidebar.GroupMenuTitlesForCheck(keyMoved).Contains(HubStrings.Get("EditWorkspacePath")),
+            "目录已不存在的分组照样显示，并提供编辑路径（实际菜单："
+            + string.Join(" / ", sidebar.GroupMenuTitlesForCheck(keyMoved)) + "）");
+        Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length == 0,
+            "「最近聊天」不是一条目录，因此没有可编辑的路径（实际 " 
+            + sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length + " 项）");
+
+        // ── 折叠 ──
+        var rowsBefore = sidebar.SessionRowCountForCheck;
+        var groupRows = sidebar.GroupRowIdsForCheck(keyA).Length;
+        Check(sidebar.ToggleGroupForCheck(keyA) && sidebar.GroupCollapsedForCheck(keyA),
+            "点击分组标题把它折起（实测折起状态 " + sidebar.GroupCollapsedForCheck(keyA) + "）");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(sidebar.SessionRowCountForCheck == rowsBefore - groupRows
+              && sidebar.GroupHeaderTagsForCheck().Contains(keyA)
+              && sidebar.GroupRowIdsForCheck(keyA).Length == 0,
+            "折叠只收起本组会话行：标题还在，行数正好少掉该组的 " + groupRows + " 行（实际 "
+            + sidebar.SessionRowCountForCheck + "/" + rowsBefore + "）");
+        Check(sidebar.GroupCaretIsDrawnForCheck(keyA) && sidebar.GroupHeaderPlateIsQuietForCheck(keyA),
+            "分组标题带主题模板里的箭头，底板透明（模板没解析出来就没有折叠指示，选中态被画成色块也会红）");
+        var foldedShot = System.IO.Path.Combine(
+            ScratchDirectory.Resolve("group-fold"), "folded.png");
+        var foldedFrame = sidebar.CaptureGroupHeaderForCheck(keyA, foldedShot);
+
+        // 重绘与重启都得保住折叠状态：会话改名会触发整表重建，而设置文件是重启后唯一的凭据。
+        sidebar.RenameConversationForCheck(aOne.Id, "改名后的 A");
+        Check(sidebar.GroupCollapsedForCheck(keyA) && sidebar.SessionRowCountForCheck == rowsBefore - groupRows,
+            "改名触发整表重绘后折叠状态保持（实际行数 " + sidebar.SessionRowCountForCheck + "）");
+        Check(new PreferencesStore(PreferencesPathFor(scratchRoot)).Load()
+                  .SidebarGroupExpanded.TryGetValue(keyA, out var expandedA) && !expandedA,
+            "折叠状态落进设置文件，重启后这一组还是折着的");
+        Check(sidebar.ToggleGroupForCheck(keyA) && !sidebar.GroupCollapsedForCheck(keyA)
+              && sidebar.SessionRowCountForCheck == rowsBefore,
+            "再次点击标题把这一组的会话行全部放回（实际行数 " + sidebar.SessionRowCountForCheck + "）");
+        // The header was rebuilt by that fold, and a template part only exists after layout has run on it.
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var expandedShot = System.IO.Path.Combine(ScratchDirectory.Resolve("group-fold"), "expanded.png");
+        var expandedFrame = sidebar.CaptureGroupHeaderForCheck(keyA, expandedShot);
+        var changed = DifferingPixels(foldedShot, expandedShot);
+        Check(foldedFrame is { Width: > 1, DistinctColors: > 2 } && expandedFrame is { Width: > 1, DistinctColors: > 2 }
+              && changed > 0,
+            "折叠与展开在分组标题上是看得见的差别：箭头随状态转向（实际帧 "
+            + foldedFrame?.Width + "x" + foldedFrame?.Height + " / " + expandedFrame?.Width + "x"
+            + expandedFrame?.Height + "，不同的字节 " + changed + "）");
+
+        // ── 置顶不再单独成组 ──
+        chat.SetPinned(aUpper.Id, true);
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var pinnedTags = sidebar.GroupHeaderTagsForCheck();
+        Check(!pinnedTags.Contains("pin")
+              && pinnedTags[0] == keyA
+              && sidebar.GroupRowIdsForCheck(keyA).SequenceEqual([aUpper.Id, aOne.Id]),
+            "置顶会话不再抽成独立分组，而是把所属工作区带到最前并排在组内最前（实际分组："
+            + string.Join(" / ", pinnedTags) + "）");
+        Check(sidebar.HasPinBadgeForCheck(aUpper.Id) && !sidebar.HasPinBadgeForCheck(aOne.Id),
+            "被置顶的那一行带书签标记，同组其它行没有");
+        chat.SetPinned(aUpper.Id, false);
+        sidebar.Reload();
+
+        // ── 归档：单条 ──
+        Check(sidebar.SessionHasArchiveMenu(bOne.Id),
+            "会话操作菜单提供归档（实际菜单：" + string.Join(" / ", sidebar.SessionMenuTitlesForCheck(bOne.Id)) + "）");
+        var liveBefore = sidebar.ConversationCount;
+        Check(sidebar.ArchiveConversationFromMenuForCheck(bOne.Id)
+              && sidebar.ConversationCount == liveBefore - 1
+              && !sidebar.ConversationListText.Contains("B 项目一", StringComparison.Ordinal),
+            "归档一条对话后它离开实时列表与计数（实际 " + sidebar.ConversationCount + "/" + liveBefore + " 项）");
+        Check(sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived)
+              && sidebar.GroupCollapsedForCheck(SessionGroupKey.Archived)
+              && !sidebar.GroupHeaderTagsForCheck().Contains(keyB),
+            "归档分组排在末尾并默认折起；该目录下的会话都被归档后，工作区分组自己就消失了");
+        Check(sidebar.ToggleGroupForCheck(SessionGroupKey.Archived)
+              && sidebar.GroupOfForCheck(bOne.Id) == SessionGroupKey.Archived,
+            "展开归档分组能看到被归档的那条对话");
+        var archivedMenu = sidebar.SessionMenuTitlesForCheck(bOne.Id);
+        Check(archivedMenu.Contains(HubStrings.Get("RestoreConversation"))
+              && !archivedMenu.Contains(HubStrings.Get("PinConversation"))
+              && !archivedMenu.Contains(HubStrings.Get("ArchiveConversation")),
+            "归档分组里的会话行提供恢复，不再提供置顶或重复归档（实际菜单：" + string.Join(" / ", archivedMenu) + "）");
+        Check(sidebar.RestoreConversationFromMenuForCheck(bOne.Id)
+              && sidebar.GroupHeaderTagsForCheck().Contains(keyB)
+              && !sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived),
+            "恢复归档对话把它带回原来的工作区分组，归档分组随之消失");
+
+        // ── 归档：整个工作区 ──
+        Check(sidebar.ArchiveWorkspaceForCheck(workspaceA, archived: true) == 2
+              && !sidebar.GroupHeaderTagsForCheck().Contains(keyA)
+              && sidebar.ConversationCount == liveBefore - 2,
+            "归档工作区连带归档它的两个对话，该分组随之消失（实际剩余 " + sidebar.ConversationCount + " 项）");
+        Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Archived)
+                  .Contains(HubStrings.Get("RestoreAllArchived")),
+            "归档分组提供一次全部恢复，而不是逐条点击");
+        Check(sidebar.RestoreAllArchivedFromMenuForCheck(SessionGroupKey.Archived)
+              && sidebar.GroupHeaderTagsForCheck().Contains(keyA)
+              && sidebar.ConversationCount == 5,
+            "全部恢复把整组对话带回原来的工作区分组（实际 " + sidebar.ConversationCount + " 项）");
+
+        // ── 编辑路径：整组改指向 ──
+        var refusal = sidebar.RepointWorkspaceForCheck(movedAway, Full("nowhere-at-all"));
+        Check(refusal.Moved == 0 && refusal.Verdict == WorkspacePathVerdict.MissingWorkspace
+              && sidebar.GroupOfForCheck(movedOne.Id) == keyMoved,
+            "改到一个不存在的目录会被拒绝，整组会话仍留在原处（实际判定 " + refusal.Verdict + "）");
+        var repointed = sidebar.RepointWorkspaceForCheck(movedAway, workspaceB);
+        Check(repointed.Moved == 1 && repointed.Verdict is null
+              && sidebar.GroupOfForCheck(movedOne.Id) == keyB
+              && chat.WorkspaceRootFor(movedOne.Id) == System.IO.Path.GetFullPath(workspaceB),
+            "编辑路径带动这个目录下的整组会话，工具用的也是新目录（实际移动 " + repointed.Moved + " 条）");
+        Check(!sidebar.GroupHeaderTagsForCheck().Contains(keyMoved)
+              && sidebar.GroupRowIdsForCheck(keyB).Length == 2,
+            "旧目录的分组消失，新目录的分组收下了两条对话（实际 "
+            + sidebar.GroupRowIdsForCheck(keyB).Length + " 行）");
+        Check(sidebar.GroupOfForCheck(plainOne.Id) == SessionGroupKey.Recent
+              && sidebar.ConversationCount == 5,
+            "改路径不碰没有工作目录的对话（实际 " + sidebar.ConversationCount + " 项）");
+
+        // 分组菜单不能借用会话行的类名：列表靠那个类名数“每行都有操作菜单”，多算一次就是一次假通过。
+        Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
+              && sidebar.SessionRowCountForCheck == 5,
+            "分组菜单不计入会话行的操作菜单数（实际菜单 " + sidebar.SessionMenuCount
+            + " / 行 " + sidebar.SessionRowCountForCheck + "）");
+
+        foreach (var id in chat.Conversations.Select(summary => summary.Id).ToArray())
+        {
+            chat.DeleteConversation(id);
+        }
+        chat.RestoreArchivedSessions();
+        chat.PruneEmptyConversations();
+        sidebar.Reload();
+        Check(sidebar.ConversationCount == 0 && sidebar.GroupHeaderTagsForCheck().Length == 0
+              && sidebar.SessionRowCountForCheck == 0,
+            "自检清理：分组夹具（含归档的）全部删除，分组也一并消失");
+    }
+
+    /// <summary>
+    /// How many bytes two captured frames disagree on, or -1 when they are not even the same size. A fold that
+    /// changes nothing on screen is a fold nobody can find, and this is the only question in the group section
+    /// that is put to the renderer rather than to the object graph.
+    /// </summary>
+    private static int DifferingPixels(string left, string right)
+    {
+        var a = SmokeCapture.ReadBgra(left, out var aw, out var ah, out var aStride);
+        var b = SmokeCapture.ReadBgra(right, out var bw, out var bh, out var bStride);
+        if (aw != bw || ah != bh || aStride != bStride || a.Length != b.Length) return -1;
+        var differing = 0;
+        for (var index = 0; index < a.Length; index++)
+        {
+            if (a[index] != b[index]) differing++;
+        }
+
+        return differing;
     }
 
     /// <summary>

@@ -64,10 +64,38 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
-    <Style Selector="TextBlock.group-header">
+
+    <!-- Group headers. The plate, the arrow and the hover brightening come from the shell's HubExpanderHeader
+         theme (see ChatSidebar.BuildGroupHeader) — the default theme paints a checked ToggleButton with a solid
+         accent block, which would turn a quiet row label into a highlight. What is set here is only how quiet and
+         how small a group label is, and the colour goes on the control rather than on its text block, because a
+         Foreground of the TextBlock's own would outrank the theme's hover brightening and leave the label dead.
+         The group's ⋯ deliberately does NOT reuse the "session-menu" class: the list counts those buttons to prove
+         every row has an actions menu, and a group wearing the class would be counted as a session. -->
+    <Style Selector="ToggleButton.group-toggle">
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
-      <Setter Property="Margin" Value="2,10,0,2" />
+    </Style>
+    <Style Selector="TextBlock.group-header">
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.group-menu">
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="Padding" Value="7,1" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Grid.group-row:pointerover Button.group-menu">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.group-menu:pointerover">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
   </UserControl.Styles>
 

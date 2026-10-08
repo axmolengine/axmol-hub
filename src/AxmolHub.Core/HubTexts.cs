@@ -608,10 +608,23 @@ public static class HubTexts
         ["RenameConversationTitle"] = ("重命名对话", "Rename conversation"),
         ["PinConversation"] = ("置顶", "Pin"),
         ["UnpinConversation"] = ("取消置顶", "Unpin"),
-        ["GroupToday"] = ("今天", "Today"),
-        ["GroupYesterday"] = ("昨天", "Yesterday"),
-        ["GroupPrevious7Days"] = ("近 7 天", "Previous 7 days"),
-        ["GroupOlder"] = ("更早", "Older"),
+        // 会话分组：工作区在前，没有工作目录的对话统一归到「最近聊天」，归档的沉在最后。时间分桶让位于
+        // 目录分组——同一个项目的对话散在「今天」「更早」里，就不是一个项目了。
+        ["GroupRecentChats"] = ("最近聊天", "Recent chats"),
+        ["GroupArchived"] = ("已归档", "Archived"),
+        ["ToggleGroup"] = ("展开或折叠这一组", "Expand or collapse this group"),
+        ["ArchiveConversation"] = ("归档对话", "Archive conversation"),
+        ["RestoreConversation"] = ("恢复对话", "Restore conversation"),
+        ["RestoreAllArchived"] = ("全部恢复", "Restore all archived"),
+        ["ArchiveWorkspace"] = ("归档工作区", "Archive workspace"),
+        ["ArchiveWorkspaceConfirmFormat"] = ("归档「{0}」和它的 {1} 个对话？它们会从列表里收起，记录一条都不删。",
+            "Archive “{0}” and its {1} conversations? They fold out of the list; nothing is deleted."),
+        ["EditWorkspacePath"] = ("编辑路径…", "Edit path…"),
+        ["EditWorkspacePathTitle"] = ("这个工作区的新路径", "New path for this workspace"),
+        ["WorkspaceActions"] = ("工作区操作", "Workspace actions"),
+
+        ["WorkspaceMovedFormat"] = ("「{0}」的 {1} 个对话已改用：{2}",
+            "{1} conversations in “{0}” now work in: {2}"),
         // provider 管理（custom provider = 用户自带 endpoint，接入本地模型的主要途径）。
         ["AddProvider"] = ("添加提供商", "Add provider"),
         ["EditProvider"] = ("编辑提供商", "Edit provider"),
