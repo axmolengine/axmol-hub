@@ -821,6 +821,14 @@ public partial class ChatSidebar : UserControl
         .Select(button => ToolTip.GetTip(button)?.ToString() ?? "")
         .FirstOrDefault() ?? "";
 
+    /// <summary>How see-through the ＋ is when nothing is hovering the row, or -1 when there is no button. Read
+    /// because the style is what makes it quiet, and a style that did not resolve leaves a bright ＋ on every
+    /// group header — which the hover-reveal rule in the shell's charter forbids, and a still frame cannot show
+    /// either way (the button is invisible there, so pixels prove nothing about it).</summary>
+    internal double GroupNewOpacityForCheck(string key) => GroupNewButtons(key)
+        .Select(button => button.Opacity)
+        .FirstOrDefault(-1);
+
     /// <summary>Clicks a group's ＋ and hands back the conversation that ended up on screen, so an assertion can
     /// ask both "did something appear" and "does it belong here". Null is the answer for a bucket with no ＋.</summary>
     internal string? NewSessionFromGroupForCheck(string key)

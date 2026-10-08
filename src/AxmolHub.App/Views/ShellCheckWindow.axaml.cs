@@ -1248,6 +1248,14 @@ public partial class ShellCheckWindow : Window
             + "，提示 " + sidebar.GroupNewTipForCheck(keyA) + "）");
         Check(sidebar.GroupNewIsRightmostForCheck(keyA) && sidebar.GroupNewIsRightmostForCheck(SessionGroupKey.Recent),
             "那个 ＋ 在分组标题的最右一格，⋯ 在它左边（不是靠像素比出来的，读的是列号）");
+        // 静止时它必须是不显形的（hover 才浮出来，见界面章程「次要东西等到指针到来」）。这一条只能读对象图：
+        // 截图里它本来就是隐形的，像素既证明不了显形，也证明不了没显形。
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(sidebar.GroupNewOpacityForCheck(keyA) == 0
+              && sidebar.GroupNewOpacityForCheck(SessionGroupKey.Recent) == 0,
+            "分组上的 ＋ 平时不占视觉：样式没落上去时会一直亮着（实测静止不透明度 "
+            + sidebar.GroupNewOpacityForCheck(keyA) + "）");
         Check(groupAFirst is { Length: > 0 } && sidebar.NewSessionFromGroupForCheck(keyA) == groupAFirst
               && sidebar.ConversationCount == liveAfterFirst,
             "连着点两次 ＋ 还是同一条空会话，列表没有堆草稿（实际 " + sidebar.ConversationCount + " 项）");
