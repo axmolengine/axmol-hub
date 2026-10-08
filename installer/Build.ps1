@@ -14,6 +14,7 @@ param(
     [switch]$NoClean
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/AssetNames.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPack = $taskManifest.packages[0]
@@ -105,11 +106,13 @@ if ($Runtime -like 'linux-*') {
 & $taskVpk @taskArguments
 if ($LASTEXITCODE -ne 0) { throw 'Velopack packaging failed.' }
 
-# 用户直接下载的安装包换成自定义名：axmol-hub-<version>-<runtime>.{exe|pkg|AppImage}。
+# 用户直接下载的产物换成自定义名，规则只写在 installer/AssetNames.ps1 一处 —— Publish.ps1 与
+# Publish-All.ps1 按同一个名字找回这个文件，名字规则各拼一遍就是"改了一处、发布 job 在另一处红"。
 # vpk 的原生名是 {packId}-{channel}-Setup.exe / {packId}-{channel}.pkg / {packId}-{channel}-Portable 等 ——
 # 里面既没有版本也没有架构，在 GitHub Release 页上只能靠 release 标题分辨版本，
 # 而同名文件在每次发布里都会重复出现。只改这一个文件：自动更新读的是 releases.<channel>.json
-# 与它引用的 .nupkg，与安装包叫什么无关。副作用是 assets.<channel>.json 里仍记着 vpk 原生名 ——
+# 与它引用的 .nupkg，与下载的文件叫什么无关（实测 releases.linux-x64.json 里只有 nupkg，AppImage
+# 根本不在更新源里）。副作用是 assets.<channel>.json 里仍记着 vpk 原生名 ——
 # 那是 `vpk upload` 的上传清单，本项目用 gh release upload 自己列文件，因此不消费它。
 # 安装器按平台挑：Windows 是 *-Setup.exe，macOS 是 *.pkg，Linux 是 *.AppImage。
 $taskSetup = switch -Wildcard ($Runtime) {
@@ -121,11 +124,8 @@ if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutp
 if ($Runtime -like 'osx-*') {
     & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
 }
-$taskSetupName = if ($Runtime -like 'win-*' -and -not $ReleaseAssetNames) {
-    'Axmol Hub.exe'
-} else {
-    'axmol-hub-{0}-{1}{2}' -f $Version, $Runtime, $taskSetup[0].Extension
-}
+$taskSetupName = Get-HubAssetName -PackId $PackId -PackTitle $PackTitle -Version $Version -Runtime $Runtime `
+    -Extension $taskSetup[0].Extension -ReleaseAssetNames:$ReleaseAssetNames
 Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 
 # 只给用户直接下载的产物写摘要；.nupkg 是更新载荷，由 releases.<channel>.json 引用。

@@ -16,6 +16,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/GitHubRelease.ps1"
+. "$PSScriptRoot/AssetNames.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
@@ -59,7 +60,7 @@ foreach ($taskPlat in $taskPlatforms) {
     }
 
     # 安装包 + 摘要：一个 tag 下同 channel 的多个架构（osx-arm64/osx-x64）文件名带完整 runtime，不冲突。
-    $taskSetup = "axmol-hub-$Version-$($taskPlat.Dir)$($taskPlat.Suffix)"
+    $taskSetup = Get-HubAssetName -PackId $taskPackId -Version $Version -Runtime $taskPlat.Dir -Extension $taskPlat.Suffix -ReleaseAssetNames
     $taskSetupPath = Join-Path $taskDir $taskSetup
     $taskFeed = Join-Path $taskDir "releases.$($taskPlat.Channel).json"
 

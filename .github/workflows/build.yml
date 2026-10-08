@@ -411,8 +411,8 @@ jobs:
         with:
           name: linux-x64
           path: |
-            artifacts/releases/linux-x64/axmol-hub-*-linux-x64.AppImage
-            artifacts/releases/linux-x64/axmol-hub-*-linux-x64.AppImage.sha256
+            artifacts/releases/linux-x64/axmol-hub-linux-x64.AppImage
+            artifacts/releases/linux-x64/axmol-hub-linux-x64.AppImage.sha256
             artifacts/releases/linux-x64/*.nupkg
             artifacts/releases/linux-x64/releases.*.json
           if-no-files-found: error

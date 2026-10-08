@@ -11,6 +11,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/GitHubRelease.ps1"
+. "$PSScriptRoot/AssetNames.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
@@ -90,7 +91,9 @@ if ($Stage -in @('All', 'Upload')) {
         'osx-*' { '.pkg' }
         default { '.AppImage' }
     }
-    $taskSetup = "axmol-hub-$Version-$Runtime$taskSuffix"
+    # 名字规则与 Build.ps1 同源（AssetNames.ps1）。Upload 阶段面对的是发布名：Build 阶段就是带
+    # -ReleaseAssetNames 打的包，Linux 那份不带版本段。
+    $taskSetup = Get-HubAssetName -PackId $taskPackId -Version $Version -Runtime $Runtime -Extension $taskSuffix -ReleaseAssetNames
     $taskUpload = @(
         (Join-Path $taskOutput $taskSetup),
         (Join-Path $taskOutput ($taskSetup + '.sha256'))
