@@ -634,6 +634,26 @@ if (args.Contains("--check-secret-store"))
             "xdg-open then gio open are the standing fallbacks");
         Assert(UrlLauncher.LinuxCommandOrder(null, "u").Count == 2 && UrlLauncher.FromBrowserEntry("   ", "u") is null,
             "an unset variable leaves the two standards, and a blank entry is never a browser");
+
+        // Order is only half the contract: every candidate has to survive the failure of the ones before it. A stale
+        // $BROWSER entry is the common case on a real desktop, and if its ENOENT ended the search then xdg-open and
+        // gio would never run, and a machine with a perfectly good browser would be told it has none.
+        var launchTried = new List<string>();
+        Assert(!UrlLauncher.TryOpenLinux("https://x/y", argv =>
+        {
+            launchTried.Add(string.Join(' ', argv));
+            throw new InvalidOperationException("no such file");
+        }) && launchTried.Count >= 2,
+            "a candidate that cannot exec does not end the search: all of them get tried before reporting no"
+            + " browser (tried " + launchTried.Count + ": [" + string.Join(" | ", launchTried) + "])");
+
+        var launches = 0;
+        Assert(UrlLauncher.TryOpenLinux("https://x/y", argv =>
+        {
+            if (launches++ == 0) throw new InvalidOperationException("the first $BROWSER entry is stale");
+            return true;
+        }) && launches == 2,
+            "the first failure is skipped and the candidate that does launch is the one counted as opened");
     }
     finally
     {

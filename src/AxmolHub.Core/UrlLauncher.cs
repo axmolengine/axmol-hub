@@ -43,17 +43,7 @@ public static class UrlLauncher
                 return true;
             }
 
-            foreach (var argv in LinuxCommandOrder(Environment.GetEnvironmentVariable("BROWSER"), url))
-            {
-                var start = new ProcessStartInfo(argv[0]) { UseShellExecute = false, CreateNoWindow = true };
-                for (var i = 1; i < argv.Length; i++) start.ArgumentList.Add(argv[i]);
-                using var process = Process.Start(start);
-                // A browser that is on PATH but cannot run throws; one that starts and then fails is nobody's
-                // business here — the tab either opened or it did not, and the user has the link either way.
-                if (process is not null) return true;
-            }
-
-            return false;
+            return TryOpenLinux(url, LaunchLinux);
         }
         catch (Exception)
         {
@@ -62,6 +52,49 @@ public static class UrlLauncher
             // no browser opened, use the fallback.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Runs the Linux attempts in <see cref="LinuxCommandOrder"/> order and returns on the first one that
+    /// launches.
+    ///
+    /// <b>Each candidate is guarded on its own.</b> A stale <c>$BROWSER</c> entry is the common case on a real
+    /// desktop, and if its <c>ENOENT</c> escaped this loop the two standard fallbacks would never be reached and
+    /// the caller would be told there is no browser at all. That is why the variable's entries are kept here even
+    /// when they cannot be found: this loop is where a failed exec is noticed, and it notices one without letting
+    /// it end the search.
+    /// </summary>
+    public static bool TryOpenLinux(string url, Func<string[], bool> launch)
+    {
+        foreach (var argv in LinuxCommandOrder(Environment.GetEnvironmentVariable("BROWSER"), url))
+        {
+            try
+            {
+                if (launch(argv)) return true;
+            }
+            catch (Exception)
+            {
+                // Any launcher failure says only that *this* entry is not a browser; the next one still gets tried.
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Execs one argv with the URL appended, reporting whether a process came out of it.
+    ///
+    /// A browser that is on PATH but cannot run throws, and this does not wait to find out; one that starts and
+    /// then fails is nobody's business here — the tab either opened or it did not, and the caller has already
+    /// handed the user the link either way. <c>xdg-open</c> in particular forks and returns success as soon as it
+    /// has passed the URL on, so an exit code would prove nothing even if we waited.
+    /// </summary>
+    private static bool LaunchLinux(string[] argv)
+    {
+        var start = new ProcessStartInfo(argv[0]) { UseShellExecute = false, CreateNoWindow = true };
+        for (var i = 1; i < argv.Length; i++) start.ArgumentList.Add(argv[i]);
+        using var process = Process.Start(start);
+        return process is not null;
     }
 
     /// <summary>

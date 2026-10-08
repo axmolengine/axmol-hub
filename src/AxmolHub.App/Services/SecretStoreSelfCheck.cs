@@ -127,6 +127,11 @@ internal static class SecretStoreSelfCheck
     /// probed: Windows and macOS branches are one line each and already carry the shipping history, whereas the
     /// Linux one is the new code — <c>$BROWSER</c> precedence, and the rule that a machine with no browser must
     /// hand back <c>false</c> (so the caller shows the link) rather than throw.
+    ///
+    /// <para><b>The fall-through is asserted through the launcher seam, not by really failing a launch.</b> A
+    /// stale <c>$BROWSER</c> that correctly falls through now reaches <c>xdg-open</c>, which would open the
+    /// person's real browser on <c>example.com</c> in the middle of a self-check. Injecting the launcher keeps the
+    /// assertion about the search order honest without that side effect.</para>
     /// </summary>
     private static void CheckBrowserLauncher(Action<bool, string> check)
     {
@@ -139,13 +144,21 @@ internal static class SecretStoreSelfCheck
             Environment.SetEnvironmentVariable("BROWSER", "/bin/true");
             check(UrlLauncher.TryOpen(url), "$BROWSER is exec'd with the url as its argument");
 
-            Environment.SetEnvironmentVariable("BROWSER", "/nonexistent/browser/at/all");
+            // Every candidate has to survive the failure of the ones before it. Ending the search at the first
+            // ENOENT was what cost a native Linux desktop its browser: xdg-open never ran, the sign-in was told
+            // there was no browser at all, and the user got the fallback for a machine that had one.
+            var tried = new List<string>();
             try
             {
-                // Whatever this box can or cannot open, it must not throw: the caller reads a bool and falls back
-                // to showing the link. A throw here would take the sign-in flow down with it.
-                _ = UrlLauncher.TryOpen(url);
-                check(true, "an unusable browser entry degrades instead of throwing");
+                var opened = UrlLauncher.TryOpenLinux(url, argv =>
+                {
+                    tried.Add(string.Join(' ', argv));
+                    throw new InvalidOperationException("no such file");
+                });
+                check(!opened && tried.Count >= 2,
+                    "an unusable browser entry degrades instead of ending the search ("
+                    + tried.Count + " tried, nothing thrown, last was ["
+                    + (tried.Count > 0 ? tried[^1] : "") + "])");
             }
             catch (Exception ex)
             {
