@@ -2,7 +2,7 @@ using System.Linq;
 using Avalonia.Controls;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The engines page (WPF's InstallsPage). The seven buttons map one-to-one to the seven buttons in

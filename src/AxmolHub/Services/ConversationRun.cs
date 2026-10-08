@@ -4,7 +4,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>Where a chat run is. <c>Completed</c> runs leave the workspace's registry, so anything reading a
 /// phase is looking at work that is still happening.</summary>

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Holds the one live <see cref="Conversation"/> instance per session id, and is the shell's only way into

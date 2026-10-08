@@ -2,7 +2,7 @@ using System.Globalization;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// "Can this machine render Chinese" — asked of the **renderer itself**.

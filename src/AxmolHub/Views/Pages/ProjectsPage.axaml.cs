@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The projects page. In the WPF version this page's logic was scattered across several

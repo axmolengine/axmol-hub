@@ -9,7 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>Searches a provider's cached model catalog and enables selected models.</summary>
 public sealed class ModelCatalogWindow : Window

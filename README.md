@@ -55,14 +55,14 @@ MSVC uses the Microsoft official installer, which requests UAC and registers a n
 
 The detailed guide — running the GUI from source, the runtime verification flags (`--verify-shell`, `--verify-theme`, `--verify-foundation`, `--smoke`, `--smoke-pages`, `--verify-ops`), the CLI contract, and packaging — lives in [docs/building-from-source.md](docs/building-from-source.md).
 
-**You need a .NET SDK, and it needs a recent enough compiler.** The projects target `net8.0`, but the Avalonia 12.1.3 analyzers/source-generators are compiled against compiler version 4.14 — an older SDK 8 patch (e.g. the 8.0.1xx that `apt install dotnet-sdk-8.0` gives you on Ubuntu) only carries compiler 4.8, which silently fails to run the source generator and the build errors out with `CS0103: The name 'InitializeComponent' does not exist`. **.NET 10 SDK always works** (it ships a far newer compiler), so it's the safest choice on a dev machine. The SDK version you install and the `net8.0` target in the build output are two different things — that's why a successful build still prints `AxmolHub.App -> .../net8.0/AxmolHub.App.dll`. See [docs/ci.md](docs/ci.md) §2.4 for how CI pins its own SDK (8.0.x) and why that differs from the dev-machine recommendation.
+**You need a .NET SDK, and it needs a recent enough compiler.** The projects target `net8.0`, but the Avalonia 12.1.3 analyzers/source-generators are compiled against compiler version 4.14 — an older SDK 8 patch (e.g. the 8.0.1xx that `apt install dotnet-sdk-8.0` gives you on Ubuntu) only carries compiler 4.8, which silently fails to run the source generator and the build errors out with `CS0103: The name 'InitializeComponent' does not exist`. **.NET 10 SDK always works** (it ships a far newer compiler), so it's the safest choice on a dev machine. The SDK version you install and the `net8.0` target in the build output are two different things — that's why a successful build still prints `AxmolHub -> .../net8.0/AxmolHub.dll`. See [docs/ci.md](docs/ci.md) §2.4 for how CI pins its own SDK (8.0.x) and why that differs from the dev-machine recommendation.
 
 Per-OS installation steps for the required **.NET 10 SDK** live in [docs/building-from-source.md](docs/building-from-source.md#安装-net-10-sdk) (macOS and Ubuntu; Windows via `winget install Microsoft.DotNet.SDK.10`).
 
 Quick start:
 
 ```powershell
-dotnet build src/AxmolHub/AxmolHub.App.csproj -c Release
+dotnet build src/AxmolHub/AxmolHub.csproj -c Release
 dotnet run --project src/AxmolHub -- --data-root ./data
 ```
 
@@ -72,7 +72,7 @@ The CLI exposes a `--json` contract for scripts, CI, MCP, and the Axmol Editor; 
 
 ```text
 src/
-  AxmolHub.App/   Desktop GUI (net8.0, three platforms) and icon
+  AxmolHub/   Desktop GUI (net8.0, three platforms) and icon
   AxmolHub.Core/  Engine, toolchain, download, state, build, and deploy logic
     Scripts/      Runtime PowerShell wrappers, copied into each client's output
   AxmolHub.Cli/   Host CLI entry point
@@ -91,7 +91,7 @@ Engine sources, SDKs, compilers, personal projects, caches, dev notes, and Git h
 
 Welcome. Please include the Hub / engine version, OS, target platform, Debug / Release, reproduction steps, and relevant logs; redact private directories, device serials, and credentials before posting.
 
-Keep changes scoped: UI logic in `AxmolHub.App`, build and state logic in `Core`, and the CLI reuses `Core`. Runtime PowerShell scripts belong to `Core/Scripts/` and are copied into each client's output, not into any single client project. New UI strings must provide both Chinese and English. **Toolchain versions do not live in Hub** — the source of truth is the engine's `1k/build.profiles`, and installation is the engine's `setup.ps1` (see [docs/adr/0002](docs/adr/0002-toolchain-and-build-delegated-to-engine-cmdline.md)). **Third-party NuGet packages may only go into `AxmolHub.App`** (currently `Velopack` + `Avalonia.*`); `Core`, `Cli`, and `Checks` must keep **zero NuGet dependencies** — their offline cold build is a deliberate property.
+Keep changes scoped: UI logic in `AxmolHub`, build and state logic in `Core`, and the CLI reuses `Core`. Runtime PowerShell scripts belong to `Core/Scripts/` and are copied into each client's output, not into any single client project. New UI strings must provide both Chinese and English. **Toolchain versions do not live in Hub** — the source of truth is the engine's `1k/build.profiles`, and installation is the engine's `setup.ps1` (see [docs/adr/0002](docs/adr/0002-toolchain-and-build-delegated-to-engine-cmdline.md)). **Third-party NuGet packages may only go into `AxmolHub`** (currently `Velopack` + `Avalonia.*`); `Core`, `Cli`, and `Checks` must keep **zero NuGet dependencies** — their offline cold build is a deliberate property.
 
 ## Privacy policy
 

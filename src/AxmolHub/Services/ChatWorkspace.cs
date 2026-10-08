@@ -10,7 +10,7 @@ using AxmolHub.Agent;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The chat half of the shell's non-visual state — the counterpart of <see cref="HubWorkspace"/> for the AI

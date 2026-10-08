@@ -1,8 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="using:AxmolHub.App"
+             xmlns:local="using:AxmolHub"
              xmlns:ae="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
-             x:Class="AxmolHub.App.ChatPanel"
+             x:Class="AxmolHub.ChatPanel"
              x:DataType="local:ChatPanel">
 
   <UserControl.Styles>

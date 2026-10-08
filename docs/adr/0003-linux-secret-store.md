@@ -4,6 +4,7 @@
 - **日期**：2026-10-07
 - **决策人**：Axmol 作者（`axmolengine` 组织维护者）
 - **相关**：`src/AxmolHub.Core/ISecretStore.cs`、`src/AxmolHub.Agent/SecretStoreFactory.cs`、`docs/ci.md` §2.1–2.2、`.agents/memory/topics/ai-module.md` §8
+- **命名注记**：正文里的 `AxmolHub.App` 是写作当时的 GUI 项目名；2026-10-08 该项目连目录、程序集与产物一并改名为 `AxmolHub`，记录按原样保留。
 
 ---
 

@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>Routes launches from a second Hub process to the first process for this user.</summary>
 internal sealed class DeepLinkActivationBroker : IDisposable

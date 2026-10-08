@@ -4,7 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// A one-field prompt: a title, a single text box, and OK/Cancel. Built in code like the other dialogs.

@@ -1,4 +1,4 @@
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class HubReleaseInfo
 {

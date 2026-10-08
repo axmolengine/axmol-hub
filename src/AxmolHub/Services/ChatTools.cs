@@ -2,7 +2,7 @@ using System.Text.Json;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The tools the assistant may call, and what each one is allowed to touch.

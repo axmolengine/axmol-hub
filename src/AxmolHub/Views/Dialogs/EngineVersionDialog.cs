@@ -7,7 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "choose engine version" dialog. Pure code-built, same approach as

@@ -5,12 +5,17 @@ using System.Xml;
 using Avalonia.Controls;
 using Avalonia.Platform;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>Delivers actionable chat attention through the host OS and marks unresolved approvals on its app icon.</summary>
 internal sealed class SystemAttentionService : IDisposable
 {
-    internal const string WindowsAppUserModelId = "AxmolHub.App";
+    /// <summary>
+    /// Windows 的通知身份：系统按它归并 toast、并存放用户对本应用的推送授权。它跟着程序集改名
+    /// （AxmolHub.App → AxmolHub）走了一次，代价是 Windows 把 Hub 当新发送者，用户已有的通知
+    /// 开关与历史归零一次；after-install 钩子会重新给 Axmol Hub.lnk 打戳，所以投递本身不断。
+    /// </summary>
+    internal const string WindowsAppUserModelId = "AxmolHub";
     private readonly CancellationTokenSource _shutdown = new();
 
     internal event Action<string>? NotificationActivated;

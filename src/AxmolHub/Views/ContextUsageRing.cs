@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 public sealed class ContextUsageRing : Control
 {

@@ -65,10 +65,10 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 ```yaml
 # 三平台，无条件；这是唯一的 GUI 构建步骤
 - name: Build Avalonia app
-  run: dotnet build src/AxmolHub/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
+  run: dotnet build src/AxmolHub/AxmolHub.csproj -c ${{ env.CONFIGURATION }}
 ```
 
-`AxmolHub.App` 是 `net8.0`、不带 `-windows`，三平台同构。注意它是**纯编译**：Avalonia 的三个平台后端（`Avalonia.Win32` / `Avalonia.X11` / `Avalonia.Native`）都是被 `Avalonia.Desktop` 无条件拉进来的托管包，所以一次 `dotnet build` 就已覆盖三平台的编译面。**"能显示窗口"仍未被 CI 验证** —— 那需要 `xvfb-run`（Linux）之类的显示环境；在 CI 从未真实跑过之前不引入这类易红步骤。
+`AxmolHub` 是 `net8.0`、不带 `-windows`，三平台同构。注意它是**纯编译**：Avalonia 的三个平台后端（`Avalonia.Win32` / `Avalonia.X11` / `Avalonia.Native`）都是被 `Avalonia.Desktop` 无条件拉进来的托管包，所以一次 `dotnet build` 就已覆盖三平台的编译面。**"能显示窗口"仍未被 CI 验证** —— 那需要 `xvfb-run`（Linux）之类的显示环境；在 CI 从未真实跑过之前不引入这类易红步骤。
 
 仍带 `if: matrix.host == 'windows'` 的只有 **`AxmolHub.Checks`**（`net8.0-windows`，含 Core 里 Windows 特有的断言）与 `--check-cli-json`，两者都不涉及 GUI。
 
@@ -78,7 +78,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 
 | 步骤 | 宿主 | 断什么 |
 | --- | --- | --- |
-| `Verify secret store on this host`<br>（`AxmolHub.App --check-secrets`） | 三平台 | **生产入口** `SecretStoreFactory.Create()`：写入 → 读回 → 篡改一字节必须读不出 → `credentials.json` 不含密钥 →（文件档）数据密钥 0600 且位置由 `HUB_SECRET_KEY_FILE` 决定 → Linux 上 `$BROWSER` 以 exec 方式被调用。末行输出 `backend=` 加档名（dpapi / encryptedfile / secret-service / none 四值之一），Linux job 额外钉住 `encryptedfile`；macOS 把"本平台暂无后端"当 PASS 分支，矩阵不为一个有意延后的项变红 |
+| `Verify secret store on this host`<br>（`AxmolHub --check-secrets`） | 三平台 | **生产入口** `SecretStoreFactory.Create()`：写入 → 读回 → 篡改一字节必须读不出 → `credentials.json` 不含密钥 →（文件档）数据密钥 0600 且位置由 `HUB_SECRET_KEY_FILE` 决定 → Linux 上 `$BROWSER` 以 exec 方式被调用。末行输出 `backend=` 加档名（dpapi / encryptedfile / secret-service / none 四值之一），Linux job 额外钉住 `encryptedfile`；macOS 把"本平台暂无后端"当 PASS 分支，矩阵不为一个有意延后的项变红 |
 | `Verify secret store contract`<br>（`--check-secret-store`） | Windows | 纯函数与注入式假传输：blob 的 AAD 绑定（provider id 改名即失效）、版本字节、**外来 DPAPI blob 的识别**、路径净化（`../../evil`、`/etc/passwd` 出不了 `ai/secrets`）、`ResolvePath` 优先级、后端选择表（含 macOS 无档）、OAuth `ReadCallback` 的 state 先于 code、`$BROWSER` 参数表 |
 
 `--check-secrets` 在 `Program.Main` 里**早于 Avalonia 启动**就返回（与 Velopack 回调同一条规矩），所以它既不需要 X11 也不开任何窗口——这正是它能进 Linux 矩阵而 `--verify-shell` 不能的原因。它只写临时目录，并把 `HUB_SECRET_KEY_FILE` 指进那个临时目录，因此不会碰用户的 data root 与 `~/.config`。
@@ -89,7 +89,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 
 #### 无头 GUI 截图步骤已移除（2026-10-02）
 
-原步骤在 Windows 上用 `--smoke` 启动 `AxmolHub.App.exe`，产出 `smoke.png` 并断言"退出码为 0 且 PNG 大于 8KB"，再把截图作为 artifact 上传。现已整段删除，理由三条：
+原步骤在 Windows 上用 `--smoke` 启动 `AxmolHub.App.exe`（当时的产物名，现为 `AxmolHub.exe`），产出 `smoke.png` 并断言"退出码为 0 且 PNG 大于 8KB"，再把截图作为 artifact 上传。现已整段删除，理由三条：
 
 1. **服务对象已消失。** 它验证的是 WPF 版 App，而这个项目已被 Avalonia 版整体取代并删除；macOS/Linux 上又根本跑不了，等于为一个死掉的平台独占项目长期维护一条独占步骤。
 2. **它给出的绿灯容易被误读。** 断言只覆盖"进程能启动并退出 0"，而首帧的触发时机一变就可能截到空白窗口却照样通过（详见 [avalonia-migration-plan.md §3.5](avalonia-migration-plan.md)）。证据强度低于它看起来的样子。
@@ -227,8 +227,8 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 ## 5. 本机验证记录（2026-10-02）
 
 > 下表是 **P6 删除 WPF 版之前**的记录，因此出现 `AxmolHub.App` / `AxmolHub.App.exe`。
-> P6 之后这些路径指向 `AxmolHub.App` / `AxmolHub.App.exe`，
-> 安装链路本身未经重跑 —— **发布前必须重跑 §4 全链路**。保留原记录是因为它是"这条链路真的走通过"的证据。
+> 2026-10-08 GUI 项目与产物再次改名（`AxmolHub.App` → `AxmolHub`），今天这些路径指向 `AxmolHub` / `AxmolHub.exe`，
+> 下表按记录当时的名字保留。安装链路本身未经重跑 —— **发布前必须重跑 §4 全链路**。保留原记录是因为它是"这条链路真的走通过"的证据。
 
 | 验证项 | 结果 |
 | --- | --- |

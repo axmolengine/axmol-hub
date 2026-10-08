@@ -6,7 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "build engine" confirmation window. Pure code-built, same approach as

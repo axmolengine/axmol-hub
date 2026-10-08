@@ -7,7 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// One row of the toolchains table. The WPF version stuffed an anonymous type into ItemsSource; Avalonia's

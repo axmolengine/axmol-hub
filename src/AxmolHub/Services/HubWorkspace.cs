@@ -10,7 +10,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The WPF version put "service wiring + all operations" in <c>MainWindow.xaml.cs</c> (823 lines)

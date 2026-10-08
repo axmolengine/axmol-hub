@@ -14,7 +14,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The shell. Its shape matches the WPF version pixel for pixel (see the comment at the top of

@@ -3,7 +3,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="760" d:DesignHeight="440"
-        x:Class="AxmolHub.App.ShellCheckWindow"
+        x:Class="AxmolHub.ShellCheckWindow"
         Width="760" Height="440"
         Title="P5 shell verification">
   <!-- All assertion results go to stdout and the report file; the window itself only exists so that

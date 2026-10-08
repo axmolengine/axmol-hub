@@ -6,7 +6,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The two-step authentication dialog: pick a method, then do it.

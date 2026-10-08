@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Threading;
 using Avalonia.Threading;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// UI-thread stall recorder.

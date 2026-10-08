@@ -1,7 +1,7 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ctxt="clr-namespace:ColorTextBlock.Avalonia;assembly=ColorTextBlock.Avalonia"
-        x:Class="AxmolHub.App.HubMarkdownStyles">
+        x:Class="AxmolHub.HubMarkdownStyles">
 
   <!--
     Markdown document styling, from the Hub tokens.

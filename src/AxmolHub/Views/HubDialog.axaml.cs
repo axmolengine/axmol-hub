@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 public enum HubDialogButtons
 {

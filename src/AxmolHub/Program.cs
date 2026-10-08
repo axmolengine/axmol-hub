@@ -1,7 +1,7 @@
 using Avalonia;
 using Velopack;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class Program
 {

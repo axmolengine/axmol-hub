@@ -15,7 +15,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The settings page (WPF's <c>SettingsPage</c>).

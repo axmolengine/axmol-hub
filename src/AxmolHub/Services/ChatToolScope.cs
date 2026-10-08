@@ -1,6 +1,6 @@
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Everything one request's tools are drawn from, assembled on the UI thread when the request is built.

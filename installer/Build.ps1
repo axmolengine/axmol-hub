@@ -58,7 +58,7 @@ if ($NoClean) {
 # 已被删名的文件不会被 publish 清掉，需要彻底重来时手工删除 artifacts/app。
 $taskIsPrereleaseBuild = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
-dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
+dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
 # 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。
@@ -70,8 +70,8 @@ if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub/Asse
 # 参数名三平台统一用 --mainExe（官方 vpk 1.2.x 的跨平台参数；master 源码里出现的 --exeName
 # 是尚未发布的新名，1.2.161 里不存在）。macOS 的 entry point 其实来自 .app 的 Info.plist、
 # Linux 来自生成的 .desktop，--mainExe 在三平台都被接受。
-$taskMainExe = 'AxmolHub.App.exe'
-if ($Runtime -like 'osx-*' -or $Runtime -like 'linux-*') { $taskMainExe = 'AxmolHub.App' }
+$taskMainExe = 'AxmolHub.exe'
+if ($Runtime -like 'osx-*' -or $Runtime -like 'linux-*') { $taskMainExe = 'AxmolHub' }
 
 $taskArguments = @(
     '--skip-updates', 'pack',

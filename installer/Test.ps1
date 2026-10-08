@@ -30,6 +30,8 @@ $taskInstall = Join-Path $taskWork 'Hub 中文'
 $taskData = Join-Path $taskWork 'user data/HubData'
 $taskSettings = Join-Path $taskWork 'user data/hub-settings.json'
 $taskStub = Join-Path $taskInstall ($taskTitle + '.exe')
+# Windows 包内主程序名，与 Build.ps1 里 --mainExe 的 win 分支同值；改名时两处一起动。
+$taskMainExe = 'AxmolHub.exe'
 
 function Get-HubUninstallEntry([string]$packId) {
     Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
@@ -77,14 +79,14 @@ try {
 
     # 2. 安装载荷完整：Velopack 把应用放在 current\ 下，外层是稳定路径的启动 stub。
     $taskCurrent = Join-Path $taskInstall 'current'
-    foreach ($taskFile in @('AxmolHub.App.exe', 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
+    foreach ($taskFile in @($taskMainExe, 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/recipe-manifest.json', 'manifests/android-gradle-verification.xml')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }
     }
-    $taskInstallHook = Start-Process -FilePath (Join-Path $taskCurrent 'AxmolHub.App.exe') -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
+    $taskInstallHook = Start-Process -FilePath (Join-Path $taskCurrent $taskMainExe) -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
     if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
     $taskMuiCachePath = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
-    $taskMuiCacheInstalledEntry = Join-Path $taskCurrent 'AxmolHub.App.exe.FriendlyAppName'
+    $taskMuiCacheInstalledEntry = Join-Path $taskCurrent "$taskMainExe.FriendlyAppName"
     $taskMuiCacheStableEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
     $taskMuiCacheLegacyEntry = Join-Path $taskCurrent 'Axmol Hub.exe.FriendlyAppName'
     $taskMuiCacheSameDirectoryOtherAppEntry = Join-Path $taskCurrent 'OtherApp.exe.FriendlyAppName'
@@ -109,7 +111,7 @@ try {
             $taskMuiCacheMerged.Dispose()
         }
 
-        $taskCacheHook = Start-Process -FilePath (Join-Path $taskCurrent 'AxmolHub.App.exe') -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
+        $taskCacheHook = Start-Process -FilePath (Join-Path $taskCurrent $taskMainExe) -ArgumentList @('--veloapp-install', $Version) -WindowStyle Hidden -Wait -PassThru
         if ($taskCacheHook.ExitCode -ne 0) { throw "MuiCache cleanup hook failed: $($taskCacheHook.ExitCode)" }
         $taskMuiCache = Get-Item -LiteralPath $taskMuiCachePath
         if ($taskMuiCache.GetValueNames() -contains $taskMuiCacheInstalledEntry) { throw 'Install hook left an Axmol Hub MuiCache entry behind.' }
@@ -138,7 +140,7 @@ try {
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
     if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }
-    $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent 'AxmolHub.App.exe'))
+    $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent $taskMainExe))
     if ($taskMainVersion.FileDescription -ne 'Axmol Hub') {
         throw "Main executable FileDescription mismatch: $($taskMainVersion.FileDescription)"
     }

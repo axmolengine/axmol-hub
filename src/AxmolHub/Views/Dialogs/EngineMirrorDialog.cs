@@ -6,7 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "switch engine mirror" dialog, built in code like <see cref="EngineVersionDialog"/> and

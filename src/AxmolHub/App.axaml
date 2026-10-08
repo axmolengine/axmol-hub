@@ -1,6 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="AxmolHub.App.App"
+             x:Class="AxmolHub.App"
              RequestedThemeVariant="Default">
 
   <!-- Default follows the system theme. The WPF version only had the dark theme; light was added in P3
@@ -16,9 +16,9 @@
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
         <!-- Order matters: the control theme references icons and colors, so it must come after them. -->
-        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubTokens.axaml" />
-        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubIcons.axaml" />
-        <ResourceInclude Source="avares://AxmolHub.App/Theme/HubControls.axaml" />
+        <ResourceInclude Source="avares://AxmolHub/Theme/HubTokens.axaml" />
+        <ResourceInclude Source="avares://AxmolHub/Theme/HubIcons.axaml" />
+        <ResourceInclude Source="avares://AxmolHub/Theme/HubControls.axaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Application.Resources>
@@ -28,7 +28,7 @@
     <!-- DataGrid's Fluent theme lives in a separate NuGet package and must be included explicitly.
          Placed before HubStyles: the DataGrid styles in HubStyles need to override on top of it. -->
     <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
-    <StyleInclude Source="avares://AxmolHub.App/Theme/HubStyles.axaml" />
+    <StyleInclude Source="avares://AxmolHub/Theme/HubStyles.axaml" />
   </Application.Styles>
 
 </Application>

@@ -10,7 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "add a model provider" picker, built in code like <see cref="ProviderEditWindow"/> and

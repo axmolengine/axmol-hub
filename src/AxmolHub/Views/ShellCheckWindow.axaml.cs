@@ -17,9 +17,9 @@ using AxmolHub.Core;
 using Markdown.Avalonia;
 using MarkdownEngine = Markdown.Avalonia.Markdown;
 using Velopack;
-using static AxmolHub.App.ThemeProbe;
+using static AxmolHub.ThemeProbe;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// P5 shell and localization runtime self-check (<c>verify shell</c>).

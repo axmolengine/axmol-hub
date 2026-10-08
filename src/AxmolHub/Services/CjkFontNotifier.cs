@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Turns <see cref="CjkFontProbe"/>'s conclusion into a single prompt.

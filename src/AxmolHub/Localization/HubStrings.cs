@@ -3,7 +3,7 @@ using Avalonia;
 using Avalonia.Data.Converters;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The Avalonia-side localization adapter. **The copy itself is not here** — it lives in

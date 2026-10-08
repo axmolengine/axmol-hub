@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Where self-check and verification artifacts land.

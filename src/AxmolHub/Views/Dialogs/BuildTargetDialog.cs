@@ -7,7 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "choose build platform" dialog. In the WPF version this window was stacked up inline inside

@@ -5,7 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The "prebuilt library settings" dialog (per project). Pure code-built, following the

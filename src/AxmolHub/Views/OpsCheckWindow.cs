@@ -9,7 +9,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Real-operation verification (<c>--verify-ops</c>): runs Hub's engine-management pipeline on a

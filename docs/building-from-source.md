@@ -59,7 +59,7 @@ sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0 dotnet-runtime-8.
 然后在本仓库根目录执行：
 
 ```powershell
-dotnet build src/AxmolHub/AxmolHub.App.csproj -c Release
+dotnet build src/AxmolHub/AxmolHub.csproj -c Release
 dotnet run --project src/AxmolHub -- --data-root ./data
 ```
 
@@ -194,7 +194,7 @@ foreach ($g in 'providers','sessions','context','workspace','tool-policy','memor
 发布自包含图形版（RID 换成 `osx-arm64` / `osx-x64` / `linux-x64` 即可交叉发布，但只有 Windows 那一条实测过）：
 
 ```powershell
-dotnet publish src/AxmolHub/AxmolHub.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
+dotnet publish src/AxmolHub/AxmolHub.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
 ```
 
 > **Linux 另需一个中文字体。** 最小化安装的 Ubuntu 不带任何 CJK 字体，中文界面会整片显示成方框 ——
@@ -207,7 +207,7 @@ dotnet publish src/AxmolHub/AxmolHub.App.csproj -c Release -r win-x64 --self-con
 不用打开 GUI 也能验证这台机器到底存得了存不了：
 
 ```bash
-dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.App.dll --check-secrets
+dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --check-secrets
 ```
 
 无头（在 Avalonia 启动之前就返回），只写临时目录，末行打印 `backend=` 与档名。三平台 CI 矩阵都跑这一条。密钥存储的契约断言另有 `dotnet run --project tests/AxmolHub.Checks -- artifacts/checks --check-secret-store`（2026-10-07 实测 52 条 PASS，只能在 Windows 上跑，原因见 `docs/ci.md` §2.7）。

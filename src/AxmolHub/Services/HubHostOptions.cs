@@ -1,6 +1,6 @@
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Command line and host directory. Counterpart of the argument parsing in WPF's App.xaml.cs,

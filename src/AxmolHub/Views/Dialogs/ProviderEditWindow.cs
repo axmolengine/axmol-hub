@@ -6,7 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The add/edit form for a model provider, built in code like <see cref="EngineMirrorDialog"/>.

@@ -1,8 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:core="using:AxmolHub.Core"
-             xmlns:local="using:AxmolHub.App"
-             x:Class="AxmolHub.App.InstallsPage"
+             xmlns:local="using:AxmolHub"
+             x:Class="AxmolHub.InstallsPage"
              x:DataType="local:InstallsPage">
 
   <!--

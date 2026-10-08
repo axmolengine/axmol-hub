@@ -8,7 +8,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The Windows capture host: GDI draws a window (or the whole display) into a memory bitmap, the pixels come back

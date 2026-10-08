@@ -1,13 +1,20 @@
 using System.Runtime.Versioning;
 using Microsoft.Win32;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class WindowsMuiCache
 {
     private const string RegistryPath = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
-    private static readonly string[] CurrentMainExecutables =
+
+    /// <summary>
+    /// 主程序在 <c>current\</c> 里用过的**全部**名字。MuiCache 的键是绝对路径，改名前的安装留下的
+    /// 条目只有按旧名才删得掉，所以这里不是"当前名"而是"历史名集合"：改名（AxmolHub.App.exe →
+    /// AxmolHub.exe）时旧名必须留着，删掉就等于让清理静默失效。
+    /// </summary>
+    private static readonly string[] MainExecutableNames =
     [
+        "AxmolHub.exe",
         "AxmolHub.App.exe",
         "Axmol Hub.exe",
         "axmol-hub.exe",
@@ -38,7 +45,7 @@ internal static class WindowsMuiCache
         var installRoot = Directory.GetParent(currentDirectory)
             ?? throw new IOException("Could not determine the Axmol Hub install directory.");
         if (!File.Exists(Path.Combine(installRoot.FullName, "Update.exe"))
-            || !File.Exists(Path.Combine(currentDirectory, "AxmolHub.App.exe")))
+            || !MainExecutableNames.Any(name => File.Exists(Path.Combine(currentDirectory, name))))
         {
             throw new IOException("The Axmol Hub Velopack installation layout is incomplete.");
         }
@@ -52,7 +59,7 @@ internal static class WindowsMuiCache
         using var cache = Registry.CurrentUser.OpenSubKey(RegistryPath, writable: true);
         if (cache is null) return;
 
-        var executables = CurrentMainExecutables
+        var executables = MainExecutableNames
             .Select(name => Path.Combine(currentDirectory, name))
             .Prepend(Path.Combine(installRoot, "Axmol Hub.exe"))
             .Select(path => Path.GetFullPath(path) + ".")

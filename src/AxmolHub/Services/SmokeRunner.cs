@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// <c>--smoke &lt;png&gt;</c>: renders the main window to PNG, then reports pass/fail via exit code.

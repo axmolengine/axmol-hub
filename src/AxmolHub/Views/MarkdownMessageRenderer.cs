@@ -18,7 +18,7 @@ using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using AvaloniaEdit;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class MarkdownMessageRenderer
 {
@@ -184,7 +184,7 @@ internal static class MarkdownMessageRenderer
     private static (SyntaxHighlight Plugin, SyntaxHighlightProvider Provider) CreateSyntax()
     {
         var plugin = new SyntaxHighlight();
-        var xshd = new Uri("avares://AxmolHub.App/Assets/Cpp.xshd");
+        var xshd = new Uri("avares://AxmolHub/Assets/Cpp.xshd");
         foreach (var alias in new[] { "c", "h", "cc", "cpp", "cxx", "hpp" })
         {
             plugin.Aliases.Add(new Alias { Name = alias, XSHD = xshd });

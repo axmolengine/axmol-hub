@@ -6,9 +6,9 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AxmolHub.Core;
-using static AxmolHub.App.ThemeProbe;
+using static AxmolHub.ThemeProbe;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// P4 foundation runtime self-check. What it asserts now: the MessageBox-replacing HubDialog, the

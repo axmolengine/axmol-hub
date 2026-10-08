@@ -8,7 +8,7 @@ using AxmolHub.Core;
 using Velopack;
 using Velopack.Sources;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The Velopack self-update bridge. <c>VelopackApp.Build().Run()</c> (called first in

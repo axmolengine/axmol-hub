@@ -18,7 +18,7 @@ using Avalonia.VisualTree;
 using AxmolHub.Core;
 using Path = Avalonia.Controls.Shapes.Path;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The conversation-history section of the shell sidebar. It used to live inside <see cref="ChatPanel"/>

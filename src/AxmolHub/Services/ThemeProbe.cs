@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.VisualTree;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// A small toolkit for verifying theme and visual tree at runtime.

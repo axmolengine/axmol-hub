@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Styling;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The Avalonia-side counterpart of <see cref="HubStrings"/>: it holds **no theme values of its

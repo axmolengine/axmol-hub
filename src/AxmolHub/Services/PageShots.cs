@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// <c>--smoke-pages &lt;directory&gt;</c>: screenshots each of the four pages in both languages,

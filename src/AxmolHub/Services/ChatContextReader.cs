@@ -1,7 +1,7 @@
 using System.Text;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class ChatContextReader
 {

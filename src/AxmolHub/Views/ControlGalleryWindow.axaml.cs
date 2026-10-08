@@ -18,9 +18,9 @@ using Avalonia.VisualTree;
 using ShapePath = Avalonia.Controls.Shapes.Path;
 // The small assertion helpers (TokenColor / IsToken / Descendant / NamedDescendant …) have been
 // extracted to Services/ThemeProbe.cs and shared with P4's foundation self-check.
-using static AxmolHub.App.ThemeProbe;
+using static AxmolHub.ThemeProbe;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// P3's verification tool window: lays out every style under Theme/ on a single surface for

@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>The result of a file / folder picker.</summary>
 public enum PickOutcome

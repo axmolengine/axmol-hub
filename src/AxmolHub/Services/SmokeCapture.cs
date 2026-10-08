@@ -5,7 +5,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The <c>--smoke</c> implementation: renders the window to PNG and provides the "is this frame

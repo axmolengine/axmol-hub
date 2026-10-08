@@ -4,7 +4,7 @@ using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Win32;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 internal static class DeepLinkProtocolRegistration
 {

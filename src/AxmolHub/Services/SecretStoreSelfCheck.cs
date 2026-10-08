@@ -2,10 +2,10 @@ using System.Text;
 using AxmolHub.Agent;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
-/// <c>AxmolHub.App --check-secrets [scratch-dir]</c> — the secret store exercised on the host that will use it.
+/// <c>AxmolHub --check-secrets [scratch-dir]</c> — the secret store exercised on the host that will use it.
 ///
 /// <para><b>Why it exists.</b> Everything else in this repository that proves a provider can be configured runs
 /// either on Windows (<c>AxmolHub.Checks</c>, <c>net8.0-windows</c>) or inside Avalonia (<c>--verify-shell</c>,

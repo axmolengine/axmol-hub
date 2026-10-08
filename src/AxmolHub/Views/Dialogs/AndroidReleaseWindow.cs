@@ -10,7 +10,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using AxmolHub.Core;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// Android release (signing) settings. A port of WPF's <c>AndroidReleaseWindow.cs</c>.

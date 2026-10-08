@@ -8,7 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 /// <summary>
 /// The build progress window. A port of WPF's <c>BuildProgressWindow.cs</c>: it's entirely

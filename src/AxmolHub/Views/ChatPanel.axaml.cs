@@ -24,7 +24,7 @@ using AvaloniaEdit;
 using Markdown.Avalonia;
 using ColorTextBlock.Avalonia;
 
-namespace AxmolHub.App;
+namespace AxmolHub;
 
 public partial class ChatPanel : UserControl
 {
