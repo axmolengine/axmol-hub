@@ -146,12 +146,19 @@ public sealed class ChatWorkspace : IDisposable
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
-    /// <summary>The history the sidebar lists: every session that holds something. A new chat is the composer's
-    /// blank state rather than a conversation, so it earns its row with its first message — a session that only
-    /// exists because someone clicked ＋ is not history. A streaming reply has its question stored by then, so
-    /// no session is ever hidden while it is working.</summary>
+    /// <summary>The history the sidebar lists: every session that holds something and is still being looked at.
+    /// A new chat is the composer's blank state rather than a conversation, so it earns its row with its first
+    /// message — a session that only exists because someone clicked ＋ is not history. A streaming reply has its
+    /// question stored by then, so no session is ever hidden while it is working. Archived sessions are the other
+    /// half: they leave this list and come back through <see cref="ArchivedConversations"/>.</summary>
     public IReadOnlyList<ConversationSummary> Conversations
-        => [.. _sessions.List().Where(summary => summary.MessageCount > 0)];
+        => [.. _sessions.List().Where(summary => summary.MessageCount > 0 && !summary.Archived)];
+
+    /// <summary>The sessions the user put away, newest first. A separate list rather than a flag on the one above
+    /// because the sidebar shows them in a group of their own, and something with no way back on screen is
+    /// indistinguishable from something deleted — which this is deliberately not.</summary>
+    public IReadOnlyList<ConversationSummary> ArchivedConversations
+        => [.. _sessions.List().Where(summary => summary.MessageCount > 0 && summary.Archived)];
 
     public bool SelectMode(string mode)
     {
@@ -476,22 +483,8 @@ public sealed class ChatWorkspace : IDisposable
             return null;
         }
 
-        // The same guard the tool runs, so the two ways in cannot disagree: a directory the picker accepts and
-        // set_workspace refuses would be a chip reading out a sandbox the tools ignore.
-        string full;
-        try
-        {
-            full = Path.GetFullPath(path);
-        }
-        catch (Exception ex) when (ex is ArgumentException or System.Security.SecurityException or NotSupportedException)
-        {
-            return WorkspacePathVerdict.EscapesWorkspace;
-        }
-
-        if (!Path.IsPathRooted(path)) return WorkspacePathVerdict.EscapesWorkspace;
-        if (!Directory.Exists(full)) return WorkspacePathVerdict.MissingWorkspace;
-        if (WorkspacePaths.IsProtected(full, new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? [])))
-            return WorkspacePathVerdict.ProtectedRoot;
+        var (verdict, full) = ValidateWorkspacePath(path);
+        if (verdict is not null) return verdict;
 
         if (_active is { } session) SetWorkspaceRoot(session.Id, full);
         else
@@ -501,6 +494,32 @@ public sealed class ChatWorkspace : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The one gate a directory passes through before a session is pointed at it. Every way in — the composer's
+    /// chip, <c>set_workspace</c> from the model, re-pointing a whole workspace group — runs these checks, because
+    /// a directory the chip accepts and the tools refuse would be a sandbox the UI promises and the assistant
+    /// ignores. Hands back the full path once it is accepted.
+    /// </summary>
+    private (WorkspacePathVerdict? Verdict, string Full) ValidateWorkspacePath(string path)
+    {
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or System.Security.SecurityException or NotSupportedException)
+        {
+            return (WorkspacePathVerdict.EscapesWorkspace, "");
+        }
+
+        if (!Path.IsPathRooted(path)) return (WorkspacePathVerdict.EscapesWorkspace, "");
+        if (!Directory.Exists(full)) return (WorkspacePathVerdict.MissingWorkspace, "");
+        if (WorkspacePaths.IsProtected(full, new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? [])))
+            return (WorkspacePathVerdict.ProtectedRoot, "");
+
+        return (null, full);
     }
 
     /// <summary>Points this session's file and command tools at a directory. Persisted on the session rather than
@@ -1710,12 +1729,13 @@ public sealed class ChatWorkspace : IDisposable
     /// <summary>
     /// Opens the most recent empty conversation if one already exists, otherwise starts a new one.
     /// The new-conversation (+) button goes through this so repeated clicks cannot stack up empty
-    /// sessions in the history.
+    /// sessions in the history. An archived session is never handed back here, however empty it is: ＋
+    /// starting a chat that lands in a place the user put away would undo that decision without saying so.
     /// </summary>
     public Conversation StartOrOpenEmptyConversation()
     {
         var empty = _sessions.List()
-            .Where(summary => summary.MessageCount == 0)
+            .Where(summary => summary.MessageCount == 0 && !summary.Archived)
             .OrderByDescending(summary => summary.UpdatedAt)
             .FirstOrDefault();
 
@@ -1828,29 +1848,44 @@ public sealed class ChatWorkspace : IDisposable
 
     public void DeleteConversation(string id)
     {
+        StopRunFor(id);
+        _sessions.Delete(id);
+        CloseIfActive(id);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Takes a session off the screen when it stops being listable — deleted, or archived while it was
+    /// the one on screen. "Put away" and "still open in front of you" cannot both be true of one thing, and the
+    /// composer's blank state is where a session goes when nobody is looking at it.</summary>
+    private void CloseIfActive(string id)
+    {
+        if (_active?.Id != id) return;
+        _active = null;
+        _selectedMode = ChatModes.Agent;
+        _selectedReasoningEffort = ChatReasoningEfforts.Default;
+    }
+
+    /// <summary>
+    /// Stops whatever this session was doing and takes it out of the wake queue. Deleting and archiving both need
+    /// it: a run writing into a session the user can no longer reach spends the rest of a reply nobody will read.
+    /// A run parked on an approval has no stream to cancel, so it is dropped here rather than left holding one of
+    /// the three registry slots until the app closes.
+    /// </summary>
+    private void StopRunFor(string id)
+    {
         // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses
         // those writes — but it should not spend the rest of a reply finding that out.
-        if (_runs.TryGetValue(id, out var deleted))
+        if (_runs.TryGetValue(id, out var run))
         {
-            deleted.RequestStop();
-            // A run waiting on a decision has no stream to cancel, so stopping it leaves the slot held until the
-            // app closes. Deleting the session is somebody deciding.
-            if (!deleted.IsStreaming)
+            run.RequestStop();
+            if (!run.IsStreaming)
             {
                 _runs.Remove(id);
-                deleted.Dispose();
+                run.Dispose();
                 RunsChanged?.Invoke(id);
             }
         }
-        _sessions.Delete(id);
         _wakeQueue.Remove(id);
-        if (_active?.Id == id)
-        {
-            _active = null;
-            _selectedMode = ChatModes.Agent;
-            _selectedReasoningEffort = ChatReasoningEfforts.Default;
-        }
-        Changed?.Invoke();
     }
 
     /// <summary>Renames a conversation; an empty title is refused so a session can never lose its label.
@@ -1872,6 +1907,102 @@ public sealed class ChatWorkspace : IDisposable
         if (!_sessions.TryUpdate(conversationId, conversation => conversation.Pinned = pinned)) return false;
         Changed?.Invoke();
         return true;
+    }
+
+    /// <summary>
+    /// Puts one session away, or brings it back. Archiving is not deleting: no file is renamed or moved, the
+    /// transcript and its pictures stay where they were, and a flag is the only thing that changes — which is what
+    /// makes the sidebar's archived group a place to come back from rather than a pile of data the app has lost
+    /// the map to.
+    /// </summary>
+    public bool SetArchived(string conversationId, bool archived)
+    {
+        // Before the write, not after: a run still streaming into a session the user just put away is the same
+        // reply nobody will read, and stopping it is what makes the wake queue and the run registry agree with
+        // the list on screen.
+        if (archived) StopRunFor(conversationId);
+        if (!_sessions.TryUpdate(conversationId, conversation => conversation.Archived = archived)) return false;
+        if (archived) CloseIfActive(conversationId);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Archives or restores every session that works in one directory, and answers how many it actually changed.
+    /// The workspace has no record of its own to mark, so putting one away means putting its sessions away — and
+    /// when the last of them goes, the group is gone with them, because a group is what its sessions make it.
+    /// Restoring works the same way from the archived list: the directory the sessions still name is the group.
+    /// </summary>
+    public int ArchiveWorkspace(string? workspaceRoot, bool archived)
+    {
+        var key = SessionGroupKey.Workspace(workspaceRoot);
+        if (key is null) return 0;
+
+        var changed = 0;
+        foreach (var summary in _sessions.List())
+        {
+            if (summary.MessageCount == 0 || summary.Archived == archived) continue;
+            if (SessionGroupKey.Workspace(summary.WorkspaceRoot) != key) continue;
+            if (archived) StopRunFor(summary.Id);
+            if (!_sessions.TryUpdate(summary.Id, conversation => conversation.Archived = archived)) continue;
+            if (archived) CloseIfActive(summary.Id);
+            changed++;
+        }
+
+        if (changed > 0) Changed?.Invoke();
+        return changed;
+    }
+
+    /// <summary>
+    /// Brings every archived session back at once, and answers how many. The sidebar's archived group has one
+    /// bulk action because that is the case that makes archiving worth having: months of put-away history
+    /// restored by clicking each row would be a chore, not an undo. One notification, for the same reason —
+    /// <see cref="Changed"/> per session would repaint the list once per row on the way back.
+    /// </summary>
+    public int RestoreArchivedSessions()
+    {
+        var restored = 0;
+        foreach (var summary in _sessions.List())
+        {
+            if (!summary.Archived) continue;
+            if (_sessions.TryUpdate(summary.Id, conversation => conversation.Archived = false)) restored++;
+        }
+
+        if (restored > 0) Changed?.Invoke();
+        return restored;
+    }
+
+    /// <summary>
+    /// Moves a whole workspace group: every session working under <paramref name="fromRoot"/> now works in
+    /// <paramref name="toPath"/>. Source trees get copied to another drive, renamed and cloned again, and a
+    /// session still bound to the old place answers every file and command call with a refusal naming a directory
+    /// nobody can find — with nothing in the app that says "it lives over here now".
+    ///
+    /// <para>Rewritten session by session through <see cref="ConversationRegistry"/> rather than over the index
+    /// file, because the live instance of a session that is streaming would write its whole cached copy back
+    /// afterwards and undo the move. One <see cref="Changed"/> at the end: the sidebar repaints once for the
+    /// group, not once per session.</para>
+    /// </summary>
+    public (int Moved, WorkspacePathVerdict? Verdict) RepointWorkspace(string? fromRoot, string toPath)
+    {
+        var key = SessionGroupKey.Workspace(fromRoot);
+        if (key is null) return (0, WorkspacePathVerdict.EscapesWorkspace);
+        var (verdict, full) = ValidateWorkspacePath(toPath);
+        if (verdict is not null) return (0, verdict);
+
+        var moved = 0;
+        foreach (var summary in _sessions.List())
+        {
+            if (SessionGroupKey.Workspace(summary.WorkspaceRoot) != key) continue;
+            if (_sessions.TryUpdate(summary.Id, conversation => conversation.WorkspaceRoot = full)) moved++;
+        }
+
+        // A directory picked while nothing was on screen is the same place under its old spelling. Left alone,
+        // the next session would start somewhere the user has just stopped pointing at.
+        if (SessionGroupKey.Workspace(_selectedWorkspaceRoot) == key) _selectedWorkspaceRoot = full;
+
+        if (moved > 0) Changed?.Invoke();
+        return (moved, null);
     }
 
     /// <summary>
