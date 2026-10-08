@@ -61,8 +61,11 @@ $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
 dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
-# 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。
-$taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.png'
+# 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用单尺寸 PNG。
+# Linux 取 512 而不是 1254 原图：vpk 把这份文件同时写成 .DirIcon、AppDir 根的 {packId}.png 和
+# usr/share/icons/hicolor/scalable/apps/{packId}.png（LinuxPackCommandRunner.PreprocessPackDir），
+# 三处都是给人缩放的图标，原图只会白占包体。两档 PNG 由 installer/Build-Icon.ps1 生成。
+$taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon-512.png'
 if ($Runtime -like 'win-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.ico' }
 if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.icns' }
 
@@ -92,6 +95,12 @@ if ($Runtime -like 'win-*') {
     # 快捷方式位置：Velopack 的合法值只有 Desktop 与 StartMenuRoot 两个（逗号分隔，可多选）。
     # 一键安装没有向导可承载「是否建桌面快捷方式」这个选项，这里固定为桌面 + 开始菜单各建一个。
     $taskArguments += @('--shortcuts', 'Desktop,StartMenuRoot')
+}
+if ($Runtime -like 'linux-*') {
+    # vpk 生成的桌面入口 Categories 默认是 Utility，应用网格会把 Hub 归到系统工具里。
+    # 这份 .desktop 只活在 AppDir 内部（Velopack 的运行时库不做 Linux 菜单集成），
+    # 真正装进 ~/.local/share/applications 的那份由 App 自己写，见 Services/LinuxDesktopIdentity。
+    $taskArguments += @('--categories', 'Development;Utility')
 }
 & $taskVpk @taskArguments
 if ($LASTEXITCODE -ne 0) { throw 'Velopack packaging failed.' }
