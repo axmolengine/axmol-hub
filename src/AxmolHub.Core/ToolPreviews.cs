@@ -80,16 +80,17 @@ public static class ToolPreviews
     }
 
     /// <summary>The facts needed to say yes to a new sandbox: does it exist, is it a repository, and is it
-    /// something Hub already owns. Choosing the workspace is choosing the guard, so it is shown, not assumed.</summary>
+    /// something Hub already owns. Choosing the workspace is choosing the guard, so it is shown, not assumed.
+    /// "Hub already owns it" is read through the same classifier that decides the tier, so a card can never
+    /// describe a directory differently than the gate graded it.</summary>
     private static string WorkspacePreview(string path, WorkspaceToolScope scope, IReadOnlyList<string>? projectPaths)
     {
         if (string.IsNullOrWhiteSpace(path)) return "set_workspace · (no path given)";
 
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var facts = new List<string> { Directory.Exists(path) ? "exists" : "does not exist" };
         if (Directory.Exists(Path.Combine(path, ".git"))) facts.Add("git repository");
-        if (projectPaths?.Any(known => string.Equals(known, path, comparison)) == true)
-            facts.Add("registered Hub project");
+        if (WorkspacePaths.ClassifyWorkspaceTarget(path, scope.WorkspaceRoot, projectPaths, scope.Guards)
+            == WorkspaceTarget.RegisteredProject) facts.Add("registered Hub project");
         if (WorkspacePaths.IsProtected(path, scope.Guards)) facts.Add("protected location — will be refused");
         return $"set_workspace · {path}\n{string.Join(" · ", facts)}";
     }

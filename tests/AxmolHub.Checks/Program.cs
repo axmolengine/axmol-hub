@@ -2369,8 +2369,18 @@ if (args.Contains("--check-ai-tools"))
         || !commandPreview.Contains("idle timeout 60s"))
         throw new Exception($"A command did not preview with its shell, directory and timeout:{Environment.NewLine}{commandPreview}");
     var workspacePreview = Preview("set_workspace", JsonSerializer.Serialize(new { path = workspace }));
-    if (!workspacePreview.Contains("exists") || !workspacePreview.Contains("registered Hub project"))
+    if (!workspacePreview.Contains("exists"))
         throw new Exception($"A workspace preview did not state the facts:{Environment.NewLine}{workspacePreview}");
+    // The card's "registered Hub project" fact is decided by the same classifier that decides the tier, so it is
+    // asserted against a project the session is *not* already inside. Naming the session's own directory a
+    // registered project would be a fact invented for the card: the honest answer there is "you are already
+    // working here", and the tier table reads it the same way.
+    var otherProject = Path.Combine(toolRoot, "registered-elsewhere");
+    Directory.CreateDirectory(otherProject);
+    var projectPreview = ToolPreviews.PreviewFor("set_workspace", JsonSerializer.Serialize(new { path = otherProject }),
+        scope, [workspace, otherProject]);
+    if (!projectPreview.Contains("registered Hub project", StringComparison.Ordinal))
+        throw new Exception($"A registered project did not preview as one:{Environment.NewLine}{projectPreview}");
     if (!Preview("set_workspace", JsonSerializer.Serialize(new { path = toolEngineRoot })).Contains("protected location"))
         throw new Exception("A protected directory did not preview as one.");
     if (!Preview("memory_write", """{"scope":"project","name":"a.md","mode":"append","content":"内容"}""")
