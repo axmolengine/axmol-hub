@@ -2731,7 +2731,9 @@ public sealed class ChatWorkspace : IDisposable
             {
                 var at = opened.IndexOfToolCall(callId);
                 opened.Messages[at] = opened.Messages[at] with { ApprovalState = ChatApprovalStates.Denied };
-                opened.Append(ChatTurn.FunctionResult(callId, ToolApprovalResults.Denied, failed: true));
+                // Inserted beside the call rather than appended: the refusal answers that one question, and a
+                // model response asking for two calls leaves the other pair sitting after this one.
+                opened.AppendFunctionResult(ChatTurn.FunctionResult(callId, ToolApprovalResults.Denied, failed: true));
             });
             AuditApproval(conversationId, conversation.Messages[index].ToolName ?? "tool", "refused");
             Changed?.Invoke();
@@ -2817,14 +2819,33 @@ public sealed class ChatWorkspace : IDisposable
         {
             _sessions.TryUpdate(run.ConversationId, opened =>
             {
-                opened.Append(turn);
-                // The same tail the model loop gets: an approved write is still the write that has to be
+                // Beside its call, not at the tail: while this decision was pending the model's loop went on
+                // running the other calls that shared the response, so the parked call is no longer the last turn
+                // and a tail append leaves it unanswered where the provider will read it.
+                opened.AppendFunctionResult(turn);
+                // The same undo record the model loop leaves: an approved write is still the write that has to be
                 // undoable, and this path is the one a strict mode takes most often.
                 RecordUndoCopy(opened, callId, call.Value.Name, result);
             });
             ToolActivityChanged?.Invoke(run.ConversationId, call.Value.Name, true);
             Changed?.Invoke();
         }).ConfigureAwait(false);
+
+        // A second call from the same response can still be waiting on its own card. Asking the model now would
+        // put that unanswered call in front of it, and the request comes back rejected for a reason that reads
+        // like a gateway fault rather than a question nobody has answered — so the run parks again on the card
+        // that is still owed, exactly as it did on this one.
+        var stillOwed = await ReadOnUiAsync(() =>
+            _sessions.Peek(run.ConversationId)?.HasUnansweredToolCall() ?? false).ConfigureAwait(false);
+        if (stillOwed)
+        {
+            await ApplyOnUiAsync(() =>
+            {
+                run.ParkForApproval();
+                RunsChanged?.Invoke(run.ConversationId);
+            }).ConfigureAwait(false);
+            return;
+        }
 
         await PumpSegmentsAsync(run).ConfigureAwait(false);
     }
@@ -3078,6 +3099,19 @@ public sealed class ChatWorkspace : IDisposable
         var conversation = _sessions.Peek(conversationId);
         var choice = ModelFor(conversationId);
         if (conversation is null || choice is null) return null;
+
+        // A tool result recorded anywhere other than beside the call it answers invalidates the entire request,
+        // and re-sending the stored order fails the same way forever — so a session written before results knew
+        // their own position could never be talked out of again. This is the one place both a fresh reply and an
+        // approved call's continuation assemble their messages from, which is why the repair lives here rather
+        // than at each of the two entries. Only ordering is touched; an unanswered call stays unanswered, because
+        // that is a decision still owed rather than a mistake to overwrite.
+        if (conversation.FirstMispairedToolCallId() is not null)
+        {
+            var moved = 0;
+            _sessions.TryUpdate(conversationId, opened => moved = opened.RepairToolCallOrdering());
+            if (moved > 0) Audit(conversationId, $"Repaired tool pairing: {moved} turn(s) moved beside their call.");
+        }
 
         var mode = NormalizeMode(conversation.Mode);
         var history = conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList();

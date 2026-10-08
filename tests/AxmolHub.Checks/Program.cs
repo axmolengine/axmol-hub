@@ -1380,6 +1380,88 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A tool call's arguments were not charged against the budget.");
     Console.WriteLine("PASS: one tool result cannot push the conversation out of the window.");
 
+    // ── 一次响应里的多个调用，其中一个在等审批 ──
+    // 网关会把同一次响应的多个调用编号成 call_00_ / call_01_，Hub 一条调用存一个 turn。只要其中一个被审批
+    // 挂起，它的结果就不该再紧跟自己 —— provider 会整段拒收，而这个会话此后每一次重发都是同一个 400。
+    // 下面的 fixture 就是那份落盘转录的形状，判定用的是独立重数，不是被测函数自己。
+    static bool EveryCallAnsweredBesideItself(IReadOnlyList<ChatMessage> messages)
+    {
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var calls = messages[i].Contents.OfType<FunctionCallContent>().Select(call => call.CallId).ToList();
+            if (calls.Count == 0) continue;
+            var answered = new List<string?>();
+            for (var j = i + 1; j < messages.Count && messages[j].Role == ChatRole.Tool; j++)
+                answered.AddRange(messages[j].Contents.OfType<FunctionResultContent>().Select(result => result.CallId));
+            if (!calls.All(answered.Contains)) return false;
+        }
+        return true;
+    }
+
+    var waiting = new Conversation { Id = "waiting", ProviderId = "deepseek", ModelName = "test" };
+    waiting.Append(ChatTurn.FunctionCall("call_00_run", "run_command", """{"command":"cmake --build ."}"""));
+    waiting.Append(ChatTurn.FunctionCall("call_01_ls", "list_directory", """{"depth":1}"""));
+    waiting.Append(ChatTurn.FunctionResult("call_01_ls", "1 dir(s), 0 file(s)"));
+    if (!waiting.HasUnansweredToolCall())
+        throw new Exception("A call still waiting on its own card read as answered, so the resumed request went out doomed.");
+
+    // 批准之后结果该落在哪：紧跟它回答的那条调用，而不是转录末尾。
+    var ordered = new Conversation { Id = "ordered", ProviderId = "deepseek", ModelName = "test" };
+    ordered.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
+    ordered.Append(ChatTurn.FunctionCall("call_01_ls", "list_directory", "{}"));
+    ordered.Append(ChatTurn.FunctionResult("call_01_ls", "1 dir(s), 0 file(s)"));
+    ordered.AppendFunctionResult(ChatTurn.FunctionResult("call_00_run", "shell: exit 0"));
+    if (ordered.Messages[1].Role != ChatRoles.Tool || ordered.Messages[1].ToolCallId != "call_00_run")
+        throw new Exception("An approved result was not recorded beside the call it answers.");
+    if (ordered.FirstMispairedToolCallId() is not null
+        || !EveryCallAnsweredBesideItself(ChatPipeline.ToChatMessages(ordered.Messages)))
+        throw new Exception("A transcript built at the right insertion point still went out mispaired.");
+    if (ordered.Messages.Count != 4 || ordered.Messages[0].ToolCallId != "call_00_run"
+        || ordered.Messages[2].ToolCallId != "call_01_ls")
+        throw new Exception("Recording a result beside its call disturbed the turns around it.");
+    // 已经配对的不该动：否则每次请求都重写一遍文件，而什么都没修。
+    if (ordered.RepairToolCallOrdering() != 0)
+        throw new Exception("Repair shifted a transcript that was already paired correctly.");
+
+    // 已经写坏的转录：追加到末尾的那条结果，就是线上被拒收的原因。
+    var parked = new Conversation { Id = "parked", ProviderId = "deepseek", ModelName = "test" };
+    parked.Append(ChatTurn.User("新建一个基于 cmake 的计算器"));
+    parked.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
+    parked.Append(ChatTurn.FunctionCall("call_01_ls", "list_directory", "{}"));
+    parked.Append(ChatTurn.FunctionResult("call_01_ls", "1 dir(s), 0 file(s)"));
+    parked.Append(ChatTurn.FunctionResult("call_00_run", "shell: exit 0"));
+    if (EveryCallAnsweredBesideItself(ChatPipeline.ToChatMessages(parked.Messages)))
+        throw new Exception("The fixture no longer reproduces the rejected order, so it proves nothing.");
+    // 存在性判断看不见顺序问题 —— 正是它没能挡住这个 400 的原因，所以把它钉在这里。
+    if (parked.CloseUnansweredToolCalls("superseded") != 0)
+        throw new Exception("The existence-based repair claimed to fix a transcript it cannot see.");
+    if (parked.FirstMispairedToolCallId() != "call_00_run")
+        throw new Exception($"The adjacency check blamed the wrong call ({parked.FirstMispairedToolCallId()}).");
+    // 一份转录里搬一条结果，报的就是 1 —— 报成"被扰动的位置数"会让审计行读起来像丢了轮次。
+    if (parked.RepairToolCallOrdering() != 1)
+        throw new Exception($"Repairing one misplaced result reported {parked.RepairToolCallOrdering()} moved.");
+    if (parked.FirstMispairedToolCallId() is not null
+        || !EveryCallAnsweredBesideItself(ChatPipeline.ToChatMessages(parked.Messages)))
+        throw new Exception("The send-boundary repair left the transcript rejected.");
+    if (parked.Messages.Count != 5 || parked.RepairToolCallOrdering() != 0)
+        throw new Exception("Repair invented a turn, or is not idempotent.");
+
+    // 只重排，不新增也不删除：没有结果的调用仍然是没有结果，那是一个人还欠着的决定，不是要改写的错误。
+    var owed = new Conversation { Id = "owed", ProviderId = "deepseek", ModelName = "test" };
+    owed.Append(ChatTurn.User("问题"));
+    owed.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
+    owed.Append(ChatTurn.Assistant("模型后面说的话"));
+    owed.RepairToolCallOrdering();
+    if (owed.Messages.Count != 3 || !owed.HasUnansweredToolCall())
+        throw new Exception("Repair closed or dropped a call that is still owed a decision.");
+    // 没有对应调用的结果留在原地：删掉它是改写历史，不在重排的职权里。
+    var orphan = new Conversation { Id = "orphan", ProviderId = "deepseek", ModelName = "test" };
+    orphan.Append(ChatTurn.FunctionResult("call_gone", "答案"));
+    orphan.Append(ChatTurn.User("新问题"));
+    if (orphan.RepairToolCallOrdering() != 0 || orphan.Messages.Count != 2)
+        throw new Exception("Repair touched a result whose call is gone.");
+    Console.WriteLine("PASS: a tool result is read beside the call it answers, and a misplaced one is repaired before sending.");
+
     // ── Inside the loop, results shrink but messages never disappear ──
     var loopMessages = new List<ChatMessage>
     {

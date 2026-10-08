@@ -59,10 +59,23 @@ internal sealed class SystemAttentionService : IDisposable
         }
     }
 
+    /// <summary>The window the overlay was last applied to, and what it was set to. The shell re-syncs the badge
+    /// on every transcript change, so without this a run touching a dozen tools would make a dozen identical COM
+    /// calls for one dot. Keyed on the handle rather than the window because a recreated window is a new taskbar
+    /// button, and the overlay has to be asked for again.</summary>
+    private IntPtr _badgedWindow;
+    private bool? _badgedVisible;
+
+    /// <summary>Set once the host has answered that it does not expose the overlay at all. That answer does not
+    /// change mid-session, and re-asking turned one refusal into forty lines of log.</summary>
+    private bool _badgeUnsupported;
+
     internal bool SetApprovalBadge(Window window, bool visible)
     {
         try
         {
+            if (_badgeUnsupported) return false;
+
             if (OperatingSystem.IsWindows())
             {
                 var handle = window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
@@ -71,7 +84,22 @@ internal sealed class SystemAttentionService : IDisposable
                     Report("Could not update the taskbar badge: the window has no platform handle yet.");
                     return false;
                 }
-                WindowsTaskbarBadge.Set(handle, visible);
+
+                if (_badgedWindow == handle && _badgedVisible == visible) return true;
+
+                if (!WindowsTaskbarBadge.TrySet(handle, visible, out var hr, out var failure))
+                {
+                    // Latched only for the one answer that cannot improve with retrying: the object exists but
+                    // does not speak this interface. Anything else — a taskbar button that has not been created
+                    // yet, a transient shell hiccup — is worth another try, and gets one, because the applied
+                    // state below is recorded only on success and a failed change is therefore never deduplicated.
+                    if (hr == WindowsTaskbarBadge.E_NOINTERFACE) _badgeUnsupported = true;
+                    Report($"Could not update the taskbar badge: {failure}");
+                    return false;
+                }
+
+                _badgedWindow = handle;
+                _badgedVisible = visible;
             }
             else if (OperatingSystem.IsMacOS())
                 MacNotifications.SetBadge(visible);
@@ -80,6 +108,7 @@ internal sealed class SystemAttentionService : IDisposable
         }
         catch (Exception ex)
         {
+            _badgeUnsupported = true;
             Report("Could not update the application approval badge: " + ex);
             return false;
         }
@@ -355,37 +384,73 @@ internal sealed class SystemAttentionService : IDisposable
     {
         private static readonly Guid TaskbarClass = new("56FDF344-FD6D-11D0-958A-006097C9A090");
         private static readonly Guid TaskbarInterface = new("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84");
-        internal static void Set(IntPtr window, bool visible)
+
+        /// <summary>The one failure worth remembering: the shell object was created but does not expose
+        /// <c>ITaskbarList3</c>. Mapping it to an exception loses the number, which is why it is checked here
+        /// rather than by catching <see cref="InvalidCastException"/> upstream.</summary>
+        internal const int E_NOINTERFACE = unchecked((int)0x80004002);
+
+        /// <summary>Applies or clears the overlay, naming the step that refused and the code it answered with.
+        /// Three separate calls can fail here — creating the object, initializing it, and the overlay itself —
+        /// and reporting only the mapped exception left a log full of "Specified cast is not valid" with no way
+        /// to tell which one the host was refusing.</summary>
+        internal static bool TrySet(IntPtr window, bool visible, out int hr, out string? failure)
         {
-            if (window == IntPtr.Zero) return;
+            hr = 0;
+            failure = null;
+            if (window == IntPtr.Zero)
+            {
+                failure = "the window has no platform handle.";
+                return false;
+            }
+
             var classId = TaskbarClass;
             var interfaceId = TaskbarInterface;
-            var result = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref interfaceId, out var taskbar);
-            Marshal.ThrowExceptionForHR(result);
+            hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref interfaceId, out var taskbar);
+            if (hr != 0)
+            {
+                failure = $"CoCreateInstance(CLSID_TaskbarList, ITaskbarList3) returned {Code(hr)}.";
+                return false;
+            }
+
             try
             {
                 var vtable = Marshal.ReadIntPtr(taskbar);
                 var initialize = Marshal.GetDelegateForFunctionPointer<HrInitDelegate>(
                     Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
-                Marshal.ThrowExceptionForHR(initialize(taskbar));
+                hr = initialize(taskbar);
+                if (hr != 0)
+                {
+                    failure = $"ITaskbarList3::HrInit returned {Code(hr)}.";
+                    return false;
+                }
+
                 var method = Marshal.ReadIntPtr(vtable, 18 * IntPtr.Size);
                 var setOverlay = Marshal.GetDelegateForFunctionPointer<SetOverlayIconDelegate>(method);
                 var icon = visible ? CreateDotIcon() : IntPtr.Zero;
                 try
                 {
-                    Marshal.ThrowExceptionForHR(
-                        setOverlay(taskbar, window, icon, visible ? "Approval needed" : ""));
+                    hr = setOverlay(taskbar, window, icon, visible ? "Approval needed" : "");
+                    if (hr != 0)
+                    {
+                        failure = $"ITaskbarList3::SetOverlayIcon returned {Code(hr)}.";
+                        return false;
+                    }
                 }
                 finally
                 {
                     if (icon != IntPtr.Zero) DestroyIcon(icon);
                 }
+
+                return true;
             }
             finally
             {
                 Marshal.Release(taskbar);
             }
         }
+
+        private static string Code(int value) => $"0x{value:x8}";
 
         private static IntPtr CreateDotIcon()
         {

@@ -275,6 +275,121 @@ public sealed class Conversation
         return closed;
     }
 
+    /// <summary>
+    /// Records a tool's answer <b>directly after the call it answers</b>, which is the only place a provider will
+    /// accept it: an assistant message carrying a call has to be followed by that call's result, and a transcript
+    /// that puts anything else between them is rejected whole — <c>insufficient tool messages following tool_calls
+    /// message</c>.
+    ///
+    /// This is not the same as <see cref="Append"/>. A result written by the model's own loop can append, because
+    /// the loop asks for one call at a time and the call it just made is already the tail. A result written when a
+    /// <i>person</i> answers an approval cannot: while the question sat, the loop went on running the other calls
+    /// that shared the model's response, so the parked call is somewhere in the middle and a tail append leaves it
+    /// unanswered at the position that matters. Falling back to <see cref="Append"/> when the call is gone keeps a
+    /// result nobody asked for from being dropped.
+    /// </summary>
+    public void AppendFunctionResult(ChatTurn result)
+    {
+        var at = result.ToolCallId is { Length: > 0 } callId ? IndexOfToolCall(callId) : -1;
+        if (at >= 0) Messages.Insert(at + 1, result);
+        else Messages.Add(result);
+        UpdatedAt = result.At;
+    }
+
+    /// <summary>
+    /// Moves every tool result to sit directly after the call it answers, and changes nothing else: no turn is
+    /// added, removed, or edited, and a result whose call is gone stays where it is.
+    ///
+    /// The point is recovery. A transcript written before results knew their own position is permanently rejected
+    /// otherwise — every retry re-sends the same stored order — and the person's only alternative would be to
+    /// delete the session and lose it. Reordering is safe where closing a call is not: the answer the model got
+    /// and the answer it will get are the same bytes, just next to the question they belong to.
+    /// </summary>
+    /// <returns>How many results had to move. Zero means the transcript was already shaped right, which is the
+    /// common case and why this can run before every request.</returns>
+    public int RepairToolCallOrdering()
+    {
+        var callIds = Messages
+            .Where(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (callIds.Count == 0) return 0;
+
+        // Claim only the results that are not already beside their call, and leave the rest in place: a pair that
+        // was never wrong should not shift one slot, or the count below reports a repair that did not happen.
+        // A second result for the same call — which nothing should produce — stays where it is too.
+        var answers = new Dictionary<string, ChatTurn>(StringComparer.Ordinal);
+        var loose = new List<ChatTurn>(Messages.Count);
+        for (var slot = 0; slot < Messages.Count; slot++)
+        {
+            var turn = Messages[slot];
+            if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } id
+                && callIds.Contains(id) && !answers.ContainsKey(id) && !BesideItsCall(Messages, slot, id))
+            {
+                answers[id] = turn;
+                continue;
+            }
+            loose.Add(turn);
+        }
+
+        if (answers.Count == 0) return 0;
+
+        var rebuilt = new List<ChatTurn>(Messages.Count);
+        var moved = 0;
+        foreach (var turn in loose)
+        {
+            rebuilt.Add(turn);
+            if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 } callId
+                && answers.Remove(callId, out var answer))
+            {
+                rebuilt.Add(answer);
+                moved++;
+            }
+        }
+
+        // Only tool turns are ever claimed, so every one of them has its call turn in `loose` and the dictionary is
+        // empty here. Should that ever stop holding, the transcript is left alone rather than shortened.
+        if (answers.Count > 0 || moved == 0) return 0;
+
+        Messages.Clear();
+        Messages.AddRange(rebuilt);
+        return moved;
+    }
+
+    private static bool BesideItsCall(List<ChatTurn> messages, int resultSlot, string callId)
+        => resultSlot > 0 && messages[resultSlot - 1].Role == ChatRoles.Assistant
+            && messages[resultSlot - 1].ToolCallId == callId;
+
+    /// <summary>The first call that is not immediately followed by its own result, or <c>null</c> when every pair
+    /// is shaped the way a provider requires. This is the adjacency question, which is deliberately not the same
+    /// question <see cref="CloseUnansweredToolCalls"/> asks: a result can exist somewhere in the transcript and
+    /// still be in the wrong place, and a request carrying that is rejected on its face.</summary>
+    public string? FirstMispairedToolCallId()
+    {
+        for (var i = 0; i < Messages.Count; i++)
+        {
+            var turn = Messages[i];
+            if (turn.Role != ChatRoles.Assistant || turn.ToolCallId is not { Length: > 0 } callId) continue;
+            if (i + 1 >= Messages.Count) return callId;
+            var next = Messages[i + 1];
+            if (next.Role != ChatRoles.Tool || next.ToolCallId != callId) return callId;
+        }
+        return null;
+    }
+
+    /// <summary>Whether a call is still owed an answer, wherever that call sits. A parked approval is the normal
+    /// yes here, and it is also the reason not to send: the request would be rejected for the call a person has
+    /// not decided yet, and the rejection would read like a provider bug.</summary>
+    public bool HasUnansweredToolCall()
+    {
+        var answered = Messages
+            .Where(turn => turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId!)
+            .ToHashSet(StringComparer.Ordinal);
+        return Messages.Any(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 } callId
+            && !answered.Contains(callId));
+    }
+
     /// <summary>The turn carrying a given tool call, or -1. The call turn is the approval record, so resolving
     /// a decision starts by finding it rather than by looking one up somewhere else.</summary>
     public int IndexOfToolCall(string callId)

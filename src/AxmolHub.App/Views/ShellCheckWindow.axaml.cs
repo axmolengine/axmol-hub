@@ -2711,12 +2711,14 @@ public partial class ShellCheckWindow : Window
         var supersededSession = chat.StartConversation();
         var restartSession = chat.StartConversation();
         var badgeSession = chat.StartConversation();
+        var batchSession = chat.StartConversation();
         var readClient = new ApprovalChatClient();
         var parkClient = new ApprovalChatClient();
         var denyClient = new ApprovalChatClient();
         var supersededClient = new ApprovalChatClient();
         var restartClient = new ApprovalChatClient();
         var badgeClient = new ApprovalChatClient();
+        var batchClient = new ApprovalChatClient();
         ChatWorkspace? reopened = null;
         try
         {
@@ -2728,6 +2730,7 @@ public partial class ShellCheckWindow : Window
                 var id when id == supersededSession.Id => supersededClient,
                 var id when id == restartSession.Id => restartClient,
                 var id when id == badgeSession.Id => badgeClient,
+                var id when id == batchSession.Id => batchClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
             // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
@@ -2746,7 +2749,16 @@ public partial class ShellCheckWindow : Window
                 client.Arguments = editArguments;
             readClient.ToolName = "read_file";
             readClient.Arguments = new Dictionary<string, object?> { ["path"] = "note.txt" };
-            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession })
+            // The reported shape: one response asking for a write that needs permission and a read that does not.
+            // The write parks, the loop goes on running the read, and the approved answer has to land beside the
+            // write rather than at the end of everything the loop appended while the question was open.
+            batchClient.Batch =
+            [
+                ("file_write", editArguments),
+                ("read_file", new Dictionary<string, object?> { ["path"] = "note.txt" }),
+            ];
+            batchClient.CallsRemaining = 0;
+            foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession, batchSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -3227,6 +3239,44 @@ public partial class ShellCheckWindow : Window
             Check(chat.RunFor(restartSession.Id) is null,
                 "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
 
+            // ── 一次响应里两个调用，其中一个在等批准 ──
+            // 网关不在乎请求里那句「一次只要一个调用」，一次返回两个；其中一个要批准时循环照跑另一个。挂起的那条
+            // 于是被后面的 turn 挤离中心，批准之后再把它的答案接到末尾 —— provider 就为这个把整段拒收，而这个
+            // 会话此后每次重发都是同一个 400。这一段跑的就是那个真实形状。
+            chat.SetApprovalMode(batchSession.Id, ToolApprovalModes.Ask);
+            chat.OpenConversation(batchSession.Id);
+            chat.TryEnqueueSend(batchSession.Id, "改一下再读一遍", null, out _);
+            var batchCallId = await WaitForPendingCallAsync(batchSession);
+            await WaitUntilAsync(() => batchSession.Messages.Any(turn => turn.Role == ChatRoles.Tool));
+            var parkedBatch = chat.StoredCopyForCheck(batchSession.Id);
+            var batchMispaired = parkedBatch?.FirstMispairedToolCallId();
+            Check(batchCallId is not null && parkedBatch is not null
+                  && batchMispaired == batchCallId && parkedBatch.HasUnansweredToolCall()
+                  && parkedBatch.Messages.Any(turn => turn.Role == ChatRoles.Tool),
+                "挂起的那条调用后面摆着别人的结果，正是整段被拒收的形状（判给 " + (batchMispaired ?? "none") + "）");
+
+            var batchAnswers = batchClient.Answers;
+            chat.TryResolveApproval(batchSession.Id, batchCallId ?? "", approved: true,
+                alwaysAllow: false, out _);
+            await WaitUntilAsync(() => batchClient.Answers > batchAnswers);
+            var afterBatch = chat.StoredCopyForCheck(batchSession.Id);
+            var writeSlot = afterBatch is null ? -1 : afterBatch.IndexOfToolCall(batchCallId ?? "");
+            Check(afterBatch is not null && writeSlot >= 0
+                  && afterBatch.Messages[writeSlot + 1].Role == ChatRoles.Tool
+                  && afterBatch.Messages[writeSlot + 1].ToolCallId == batchCallId
+                  && afterBatch.FirstMispairedToolCallId() is null && EveryToolCallAnswered(afterBatch),
+                "批准的答案落在它回答的那条调用旁边，整段转录仍可重放（实际 "
+                + (afterBatch?.Messages.Count ?? -1) + " 条）");
+            Check(afterBatch is not null && afterBatch.Messages[^1].Text == ApprovalChatClient.Answer
+                  && chat.RunFor(batchSession.Id) is null,
+                "配对修好后回复照样接上、运行位让出（而不是停在一次注定被拒的请求上）");
+            // 上面几条证明不了答案是自己走到调用旁边的 —— 发送前的重排会在注定被拒的请求之前把转录救回来，
+            // 所以两处修复任一处生效都能过。审计行把「没写坏」和「写坏了又被救」分开：这一条要的是前者。
+            var batchAudit = System.IO.File.ReadAllLines(shell.Workspace.Log.FilePath);
+            Check(!batchAudit.Any(line => line.Contains("Repaired tool pairing", StringComparison.Ordinal)
+                      && line.Contains(batchSession.Title, StringComparison.Ordinal)),
+                "这份转录没被重排救过：批准的答案本来就落在自己那条调用旁边");
+
             // ── every decision leaves a line ──
             // A durable approval is only defensible if the record says who granted it: the same decision made
             // after a restart, by a workspace that never saw the stream, has to show up too.
@@ -3347,12 +3397,12 @@ public partial class ShellCheckWindow : Window
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
-            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id, badgeSession.Id })
+            foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id, restartSession.Id, badgeSession.Id, batchSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);
             Check(chat.RunningCount == 0
                   && chat.Conversations.All(summary => summary.PendingApprovals == 0)
-                  && new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession }
+                  && new[] { readSession, parkSession, denySession, supersededSession, restartSession, badgeSession, batchSession }
                       .All(session => chat.StoredCopyForCheck(session.Id) is null),
                 "自检清理：审批夹具会话全部删除且没有残留运行（实际 " + chat.RunningCount + " 路）");
         }
@@ -3622,6 +3672,12 @@ public partial class ShellCheckWindow : Window
 
         public Dictionary<string, object?> Arguments { get; set; } = new();
 
+        /// <summary>Calls asked for in <b>one</b> response, used instead of <see cref="ToolName"/> when set. A real
+        /// gateway hands back several calls from a single reply however the request asked it not to — that is the
+        /// shape that stranded an approved result at the wrong end of the transcript, and no number of
+        /// one-call-per-response fixtures can reach it.</summary>
+        public List<(string Name, Dictionary<string, object?> Arguments)> Batch { get; set; } = [];
+
         /// <summary>How many times the fixture actually answered. A parked turn attempts a follow-up request and
         /// dies in it, so counting requests would say nothing about whether a reply was produced.</summary>
         public int Answers { get; private set; }
@@ -3638,7 +3694,17 @@ public partial class ShellCheckWindow : Window
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             Requests++;
-            if (CallsRemaining > 0)
+            if (Batch.Count > 0)
+            {
+                var batch = new List<Microsoft.Extensions.AI.AIContent>();
+                for (var index = 0; index < Batch.Count; index++)
+                    batch.Add(new Microsoft.Extensions.AI.FunctionCallContent(
+                        $"call-{Requests}-{index}", Batch[index].Name, Batch[index].Arguments));
+                Batch.Clear();
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
+                    Microsoft.Extensions.AI.ChatRole.Assistant, batch);
+            }
+            else if (CallsRemaining > 0)
             {
                 CallsRemaining--;
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
