@@ -458,6 +458,23 @@ public sealed class ChatWorkspace : IDisposable
     public string? WorkspaceRootFor(string conversationId)
         => (_sessions.Peek(conversationId) ?? _sessions.Load(conversationId))?.WorkspaceRoot;
 
+    /// <summary>
+    /// The diff for one file the inspector lists, resolved against the session's own sandbox and the undo copies
+    /// under this data root. The workspace context lives here rather than in the view for the same reason the
+    /// tools get theirs here: a diff is a fact about the directory a session was pointed at, and only the
+    /// workspace knows both that directory and the guards that keep a path inside it.
+    /// </summary>
+    /// <returns>The unified diff, or null with <paramref name="state"/> saying which honest way it stopped.</returns>
+    public string? DiffForChange(ChangedFile file, string conversationId, out UndoCopyState state)
+        => ChatChanges.DiffFor(
+            file,
+            conversationId,
+            _dataRoot,
+            WorkspaceRootFor(conversationId),
+            new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? []),
+            ChatChanges.InspectorLimits,
+            out state);
+
     /// <summary>What a session is called, for a surface that has to name a session other than the one on screen —
     /// a peer message says who wrote it. Null when the session is gone, which the view words for itself.</summary>
     public string? SessionTitleFor(string conversationId)

@@ -1,0 +1,27 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- One value, one place — but only for values that are genuinely repeated.
+
+       This dictionary is deliberately tiny. The page has ~30 corner radii and paddings that each appear once,
+       and a token nobody asserts is decoration: it adds a lookup and a name without removing a decision. What
+       lives here is what appears in several files at once, where a change in one place and not the other is a
+       real bug the eye will not catch: the chat column's width is declared in the transcript, the composer and
+       the two decision surfaces; the frame radius is the composer's and the picture viewer's.
+
+       Theme-independent on purpose, so these sit at the dictionary root rather than in a ThemeDictionaries
+       block: a metric that changed with the theme would be two numbers pretending to be one.
+
+       The C# side that builds surfaces in code (the decision host, the plan option rows, the inspector) reads
+       the same numbers from AxmolHub.HubMetrics, and a shell assertion pins the two sides equal; that
+       assertion, not this file, is what keeps them in step. -->
+
+  <x:Double x:Key="Hub.Column.MaxWidth">820</x:Double>
+
+  <CornerRadius x:Key="Hub.Radius.Frame">14</CornerRadius>
+  <CornerRadius x:Key="Hub.Radius.Card">12</CornerRadius>
+  <CornerRadius x:Key="Hub.Radius.Pill">15</CornerRadius>
+
+  <Thickness x:Key="Hub.Space.Row">10</Thickness>
+
+</ResourceDictionary>

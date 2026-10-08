@@ -109,6 +109,8 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         InitializeSidebar();
+        InitializeInspector();
+        InitializePictureViewer();
         InitializeChrome();
         WireWorkspace();
         WireChrome();
@@ -249,6 +251,10 @@ public partial class MainWindow : Window
 
         // The conversation list is a child of the assistant nav item: hidden on every other page.
         ChatSidebarHost.IsVisible = name == "Assistant";
+        // The inspector belongs to the assistant too, and a picture left open over a page you navigated away
+        // from is a picture you can no longer reach the transcript of — so navigating closes it.
+        SyncInspectorForPage();
+        if (PictureViewerHost.IsVisible) ClosePictureViewer();
         UpdatePageTitle();
         return page;
     }
@@ -265,6 +271,12 @@ public partial class MainWindow : Window
             _chatSidebar?.Reload();
             UpdatePageTitle();
         };
+        // The panel owns the transcript; the window owns the surfaces that reach past it. A picture opens in the
+        // window-level viewer (it fills the window, not the chat column), and the plan/diff review opens in the
+        // inspector column beside the page.
+        panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
+        panel.OpenInspector = OpenInspector;
+        panel.CloseInspector = CloseInspector;
         return panel;
     }
 

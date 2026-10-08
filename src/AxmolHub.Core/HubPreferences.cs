@@ -46,6 +46,14 @@ public sealed class HubPreferences
     /// <summary>侧栏是否处于收起状态；由 ☰ 按钮或拖拽到阈值以下切换。</summary>
     public bool SidebarCollapsed { get; set; }
 
+    /// <summary>右侧审阅面板展开时的宽度（px），范围 300–520；由面板左缘的拖拽手柄调整，使用时再夹取，
+    /// 所以设置文件里一个越界的旧值只会读到被夹过的结果。</summary>
+    public double InspectorWidth { get; set; } = 360;
+
+    /// <summary>右侧审阅面板是否处于打开状态。只存"打开与否"，不存看的是哪一页——看哪一页是瞬时决定，
+    /// 存下来反而会在会话没有计划时打开一个空标签。</summary>
+    public bool InspectorOpen { get; set; }
+
     /// <summary>
     /// 会话侧栏各分组展开还是折起，键取自 <see cref="SessionGroupKey"/>（<c>ws:&lt;目录&gt;</c> / <c>workspaces</c> /
     /// <c>recent</c> / <c>archived</c>），值为<b>用户的明确选择</b>。字典而不是布尔列表，是因为默认并不统一：工作区

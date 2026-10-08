@@ -38,6 +38,29 @@ public enum UndoVerdict
     WriteFailed,
 }
 
+/// <summary>What came of <i>reading</i> a pre-image rather than restoring one. Kept apart from
+/// <see cref="UndoVerdict"/> because a read has no target file to compare against: the diff view only needs the
+/// "before" text, and the reasons it cannot have one are a narrower set.</summary>
+public enum UndoCopyState
+{
+    /// <summary>The copy was read.</summary>
+    Read,
+
+    /// <summary>No copy was ever kept because that write created the file — there is no before by construction.</summary>
+    CreatedFile,
+
+    /// <summary>The copy is gone. Absent and evicted are not told apart on purpose: distinguishing them would
+    /// need a manifest, and a store bounded at <see cref="ChatUndoStore.MaxFiles"/> files / <see cref="ChatUndoStore.MaxBytes"/>
+    /// is honest about "gone" without one.</summary>
+    EvictedOrSpent,
+
+    /// <summary>The name is not a bare file name, so it is refused rather than followed.</summary>
+    RefusedPath,
+
+    /// <summary>The copy is there but cannot be read as text.</summary>
+    Unreadable,
+}
+
 /// <summary>
 /// The exact contents of a file before the assistant changed it, under
 /// <c>&lt;data-root&gt;/ai/undo/&lt;conversationId&gt;/</c>.
@@ -82,6 +105,47 @@ public static class ChatUndoStore
         return path.Length == 0 ? null : Path.GetFileName(path);
     }
 
+    /// <summary>
+    /// The pre-image by file name, or null. Exists because the diff view needs to read a copy that
+    /// <see cref="Restore"/> was the only one who ever touched: a write that never had to ask for approval kept
+    /// its pre-image just like one that did, and "what did this session change" cannot be answered from the
+    /// frozen approval preview alone.
+    ///
+    /// A read never throws and never follows a name out of the undo directory — the same refusal
+    /// <see cref="Restore"/> applies, because a session file written by another machine is not a reason to open
+    /// whatever path it names.
+    /// </summary>
+    public static string? ReadCopy(string? dataRoot, string conversationId, string? name, out UndoCopyState state)
+    {
+        state = UndoCopyState.EvictedOrSpent;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            // No name on the turn means no copy was kept, which for a write is the created-file case.
+            state = UndoCopyState.CreatedFile;
+            return null;
+        }
+        if (name != Path.GetFileName(name))
+        {
+            state = UndoCopyState.RefusedPath;
+            return null;
+        }
+        if (DirectoryFor(dataRoot, conversationId) is not { } directory) return null;
+
+        var copy = Path.Combine(directory, name);
+        if (!File.Exists(copy)) return null;
+        try
+        {
+            var text = File.ReadAllText(copy);
+            state = UndoCopyState.Read;
+            return text;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            state = UndoCopyState.Unreadable;
+            return null;
+        }
+    }
+
     /// <summary>Put the copy back over the file, if — and only if — the file still holds what that write left in
     /// it. The expected content is re-derived by replaying the recorded edit on the pre-image rather than stored
     /// a second time: the same anchor and the same replacement make the same file, and nothing else has to be
@@ -98,7 +162,7 @@ public static class ChatUndoStore
 
         var copy = System.IO.Path.Combine(directory, name);
         if (!File.Exists(copy)) return UndoVerdict.CopyMissing;
-        if (Arguments(argumentsJson) is not ({ Length: > 0 } path, var oldString, var newString, var replaceAll))
+        if (ArgumentsOf(argumentsJson) is not ({ Length: > 0 } path, var oldString, var newString, var replaceAll))
             return UndoVerdict.RefusedPath;
         relative = path;
 
@@ -144,11 +208,13 @@ public static class ChatUndoStore
 
     /// <summary>The path one write named, read back out of the arguments the model chose. The record line shows
     /// it, so a view does not have to parse a tool's arguments for itself and get the shape wrong.</summary>
-    public static string WritePathOf(string? argumentsJson) => Arguments(argumentsJson)?.Path ?? "";
+    public static string WritePathOf(string? argumentsJson) => ArgumentsOf(argumentsJson)?.Path ?? "";
 
     /// <summary>The recorded arguments of the write being undone: path, anchor, replacement, and whether it was a
-    /// replace-all — the four inputs the edit was made of.</summary>
-    private static (string Path, string Old, string New, bool All)? Arguments(string? argumentsJson)
+    /// replace-all — the four inputs the edit was made of. Public because the diff view replays the same edit on
+    /// the pre-image to show a write that never parked, and parsing a tool's arguments in two places is how the
+    /// two views end up disagreeing.</summary>
+    public static (string Path, string Old, string New, bool All)? ArgumentsOf(string? argumentsJson)
     {
         if (string.IsNullOrWhiteSpace(argumentsJson)) return null;
         try

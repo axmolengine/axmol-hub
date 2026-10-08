@@ -48,9 +48,10 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private readonly List<PendingPicture> _pendingPictures = [];
 
-    /// <summary>The bytes behind the open preview, kept only while it is open: the copy button has to hand over
-    /// the same picture that is on screen, and nothing else in this view remembers them.</summary>
-    private byte[]? _previewBytes;
+    /// <summary>The shell's window-level picture viewer, handed over as a delegate the same way the inspector
+    /// is: the viewer covers the whole window, so it cannot live in this page, but the sets it pages through
+    /// are this page's business (the transcript's pictures, or this composer's draft).</summary>
+    internal Action<IReadOnlyList<PictureRef>, int>? ShowPictureViewer { get; set; }
 
     /// <summary>
     /// What this composer has already sent, oldest first, for the Up arrow to walk back through — along with the
@@ -84,10 +85,16 @@ public partial class ChatPanel : UserControl
         public required TextBlock Preview { get; init; }
         public required TextBlock Status { get; init; }
         public required TextBlock Elapsed { get; init; }
-        public required Ellipse[] Dots { get; init; }
+        public required ActivityGlyph Glyph { get; init; }
         public DispatcherTimer? Timer { get; set; }
         public Stopwatch Watch { get; } = new();
         public int Frame { get; set; }
+
+        /// <summary>How many tool calls this reply has finished, and whether one is in flight right now. Both
+        /// come off <see cref="ChatWorkspace.ToolActivityChanged"/>, which is the only place the view learns a
+        /// call started or came back — and the glyph's node count is exactly this number.</summary>
+        public int ToolCount { get; set; }
+        public bool ToolRunning { get; set; }
 
         /// <summary>Whether this segment has produced any text yet — the status line says "preparing" until it
         /// has, and a steer starts a new segment, so the flag has to be able to go back.</summary>
@@ -151,8 +158,17 @@ public partial class ChatPanel : UserControl
         // running out of sight must not rewrite the status line of the one on screen.
         _chat.ToolActivityChanged += (conversationId, name, completed) =>
         {
-            if (_live is { } live && live.ConversationId == conversationId)
-                live.Status.Text = ToolActivityText(name, completed);
+            if (_live is not { } live || live.ConversationId != conversationId) return;
+            live.Status.Text = ToolActivityText(name, completed);
+            // The glyph's node count is the number of calls this reply has finished; a call in flight is what
+            // moves the phase off "waiting for a first token".
+            if (completed)
+            {
+                live.ToolCount++;
+                live.ToolRunning = false;
+            }
+            else live.ToolRunning = true;
+            RefreshGlyphPhase(live);
         };
         _chat.RunTextChanged += conversationId =>
         {
@@ -217,7 +233,10 @@ public partial class ChatPanel : UserControl
             // falls through; only a bare Enter sends. Shift+Enter is left alone so it still inserts a newline.
             if (e.Key != Key.Enter || e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
             e.Handled = true;
-            _ = SendAsync();
+            // A steer waiting for its second tap owns Enter: the box is empty by then (the draft moved to the
+            // strip), so without this the key would read as an ordinary send of nothing.
+            if (SteerConfirmHost.IsVisible) CommitSteer();
+            else _ = SendAsync();
         }, RoutingStrategies.Tunnel);
 
         // Ctrl+V is claimed here rather than left to the box, and the text paste is then asked for by name: a
@@ -259,6 +278,13 @@ public partial class ChatPanel : UserControl
         DragDrop.SetAllowDrop(ComposerFrame, true);
         DragDrop.AddDragOverHandler(ComposerFrame, (_, e) =>
         {
+            // A decision covering the composer is not a drop target: the event still bubbles from the host up
+            // to the frame, so without this gate a capture released over the card would land in the draft.
+            if (DecisionHost.IsVisible)
+            {
+                e.DragEffects = DragDropEffects.None;
+                return;
+            }
             // Both halves matter. `None` is what stops the shell from offering a drop this page cannot use, and
             // the ring is what tells the person *here* before they let go — a target that looks identical to the
             // rest of the window is a target nobody finds.
@@ -269,32 +295,30 @@ public partial class ChatPanel : UserControl
         DragDrop.AddDragLeaveHandler(ComposerFrame, (_, _) => ComposerFrame.Classes.Remove("drag-over"));
         DragDrop.AddDropHandler(ComposerFrame, OnComposerDrop);
 
-        // Escape answers the thing on top: a preview that closes only by its × would trap the keyboard behind a
-        // picture. Tunnel, so this runs before the composer's own key handling gets a turn.
+        // Escape answers the thing on top, and the order is written in exactly one place per layer: the window
+        // closes its picture viewer first (that handler lives in MainWindow, above this one), then a decision
+        // covering the composer is answered, then a steer waiting for its second tap goes back to being a
+        // draft, and only then does Escape mean "stop the reply". Tunnel, so this runs before the composer's
+        // own key handling gets a turn.
         AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
-            if (e.Key != Key.Escape || !PicturePreview.IsVisible) return;
-            ClosePicturePreview();
-            e.Handled = true;
+            if (e.Key != Key.Escape) return;
+            if (DecisionHost.IsVisible)
+            {
+                DismissDecisionByEscape();
+                e.Handled = true;
+                return;
+            }
+            if (SteerConfirmHost.IsVisible)
+            {
+                // Escape on a draft is the way back to editing it, never the way to destroy it.
+                EditSteerDraft();
+                e.Handled = true;
+            }
         }, RoutingStrategies.Tunnel);
-
-        WirePicturePreviewScrim();
-        PicturePreviewBar.Children.Add(IconActionButton("ChatPictureCopy", "Hub.Icon.Copy",
-            () => _ = CopyPreviewedPictureAsync()));
-        PicturePreviewBar.Children.Add(IconActionButton("ChatPictureClose", "Hub.Icon.Close",
-            ClosePicturePreview));
 
         Reload();
     }
-
-    /// <summary>The scrim is the close affordance — clicking beside the picture means "away from it" — and it has
-    /// to swallow the press so the composer behind it never sees a click that was never meant for it.</summary>
-    private void WirePicturePreviewScrim()
-        => PicturePreviewScrim.PointerPressed += (_, e) =>
-        {
-            ClosePicturePreview();
-            e.Handled = true;
-        };
 
     public void Reload()
     {
@@ -310,6 +334,10 @@ public partial class ChatPanel : UserControl
         UpdateForkNotice();
         RenderMessages();
         UpdateContextRing();
+        // The two composer-anchored surfaces read the transcript, not the run registry, so a repaint is the one
+        // place both can be brought in step with whatever just changed.
+        RefreshDecisionHost();
+        RefreshSteerConfirm();
     }
 
     /// <summary>The four starting points the empty state offers, in the order they read best.</summary>
@@ -1067,8 +1095,10 @@ public partial class ChatPanel : UserControl
             {
                 // Thirty-four pixels of a screen capture is enough to recognise it and not enough to read it, and
                 // this is the moment before the message goes out — the only one where "that is the wrong window"
-                // is still cheap to act on.
-                opener.Click += (_, _) => OpenPicturePreview(picture.Bytes, picture.Name);
+                // is still cheap to act on. The draft's pictures are their own set: they have not been sent, so
+                // paging from one into the transcript's would page into pictures this message does not have.
+                var index = _pendingPictures.IndexOf(picture);
+                opener.Click += (_, _) => ShowPictureViewer?.Invoke(DraftPictureSet(), index < 0 ? 0 : index);
             }
             chip.Children.Add(face);
             chip.Children.Add(remove);
@@ -1332,10 +1362,16 @@ public partial class ChatPanel : UserControl
                     Margin = new Thickness(0, 0, 6, 6),
                     Cursor = new Cursor(StandardCursorType.Hand),
                 };
-                // Read on the click, not on the build: a transcript with a dozen captures would otherwise hold a
-                // dozen decoded bitmaps for a picture that is never opened.
-                opener.Click += (_, _) => OpenPicturePreview(
-                    ReadPictureBytes(path), $"{image.File} · {image.MediaType} · {image.Bytes} bytes");
+                // The set is the conversation's pictures in transcript order and this one's place in it; the
+                // bytes stay unread until the viewer lands on them (see PictureRef).
+                var key = $"{conversationId}#{image.File}";
+                opener.Click += (_, _) =>
+                {
+                    var set = TranscriptPictureSet(conversationId);
+                    var at = 0;
+                    while (at < set.Count && set[at].Key != key) at++;
+                    ShowPictureViewer?.Invoke(set, at >= set.Count ? 0 : at);
+                };
                 slot = opener;
             }
             row.Children.Add(slot);
@@ -1345,55 +1381,43 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>
-    /// Puts one picture on screen at a size a person can actually read. The bytes come from wherever the caller
-    /// holds them — the draft's memory, or the file the transcript points at — and a picture that cannot be
-    /// decoded leaves the preview shut rather than opening an empty frame: an empty frame says "the file is gone",
-    /// which is a different claim from the one the transcript makes.
+    /// The conversation's pictures in transcript order, which is the set the window-level viewer pages through.
+    /// A picture whose stored file is gone still gets an entry: the transcript claims it was sent, and a viewer
+    /// that says "the picture is gone" keeps that claim checkable, where dropping the entry would silently
+    /// renumber every picture after it.
     /// </summary>
-    private void OpenPicturePreview(byte[]? bytes, string caption)
+    private IReadOnlyList<PictureRef> TranscriptPictureSet(string conversationId)
     {
-        if (bytes is not { Length: > 0 } payload || TryOpenBitmap(payload) is not { } bitmap) return;
-        _previewBytes = payload;
-        PicturePreviewImage.Source = bitmap;
-        PicturePreviewCaption.Text = caption;
-        PicturePreview.IsVisible = true;
+        var list = new List<PictureRef>();
+        if (_chat.ActiveConversation is not { } conversation || conversation.Id != conversationId) return list;
+        for (var index = 0; index < conversation.Messages.Count; index++)
+        {
+            var turn = conversation.Messages[index];
+            if (turn.Role != ChatRoles.User) continue;
+            foreach (var image in turn.Images)
+            {
+                var file = image.File;
+                list.Add(new PictureRef(
+                    Key: $"{conversationId}#{file}",
+                    Caption: $"{image.File} · {image.MediaType} · {image.Bytes} bytes",
+                    Bytes: image.Bytes,
+                    Load: () => ReadPictureBytes(_chat.StoredImagePath(conversationId, file))));
+            }
+        }
+        return list;
     }
 
-    private void ClosePicturePreview()
-    {
-        if (!PicturePreview.IsVisible) return;
-        PicturePreview.IsVisible = false;
-        PicturePreviewImage.Source = null;
-        PicturePreviewCaption.Text = "";
-        _previewBytes = null;
-    }
-
-    /// <summary>
-    /// The clipboard payload for a picture, or null when there is nothing to hand over. Split out from the button
-    /// because a self-check must not overwrite what the person had copied — the check asserts this payload, and
-    /// only the real button click runs the clipboard write.
-    /// </summary>
-    private DataTransfer? PictureTransferOf(byte[]? bytes)
-    {
-        if (bytes is not { Length: > 0 } payload || TryOpenBitmap(payload) is not { } bitmap) return null;
-        var item = new DataTransferItem();
-        item.Set(DataFormat.Bitmap, bitmap);
-        var transfer = new DataTransfer();
-        transfer.Add(item);
-        return transfer;
-    }
-
-    private async Task CopyPreviewedPictureAsync()
-    {
-        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
-        if (PictureTransferOf(_previewBytes) is not { } transfer) return;
-        await clipboard.SetDataAsync(transfer);
-        ClosePicturePreview();
-        AppendNotice(HubStrings.Get("ChatPictureCopied"), danger: false);
-    }
+    /// <summary>The composer's unsent pictures as their own set: they have not reached the disk, and paging
+    /// from a draft into the transcript would page into pictures this message does not carry.</summary>
+    private IReadOnlyList<PictureRef> DraftPictureSet()
+        => _pendingPictures.Select((picture, index) => new PictureRef(
+            Key: $"draft#{index}",
+            Caption: $"{picture.Name} · {picture.Bytes.LongLength} bytes",
+            Bytes: picture.Bytes.LongLength,
+            Load: () => picture.Bytes)).ToList();
 
     /// <summary>The stored bytes of one attached picture, or null when they are no longer readable — which the
-    /// preview answers by staying shut, because the row already says what it says.</summary>
+    /// viewer answers by saying so in the caption row rather than drawing an empty frame.</summary>
     private static byte[]? ReadPictureBytes(string? path)
     {
         if (path is not { Length: > 0 }) return null;
@@ -1507,7 +1531,18 @@ public partial class ChatPanel : UserControl
             return;
         }
 
+        // A tool result lands as an insert beside its call, one render pass after the call was already folded
+        // into a group. Left alone, the incremental tail would start a *second* group for the result ("已思考 0s"
+        // under "执行工具 1 次"), so a run of machine turns would read as several folds instead of one. When the
+        // next turn continues an activity run the last rendered row already belongs to, rebuild instead: the run
+        // re-folds into a single group. Cheap because it only fires while a run is streaming tool calls.
+        var nextContinuesGroup = _renderedCount > 0 && _renderedCount < visible.Count
+            && IsActivityTurn(visible[_renderedCount].Turn)
+            && MessageFlow.Children.Count > 0
+            && MessageFlow.Children[MessageFlow.Children.Count - 1].Classes.Contains("activity-group");
+
         if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount || approvalChanged
+            || nextContinuesGroup
             || (_renderedCount > 0 && SlotKey(visible[_renderedCount - 1].Turn) != _renderedTailKey))
         {
             MessageFlow.Children.Clear();
@@ -1519,11 +1554,24 @@ public partial class ChatPanel : UserControl
         }
 
         var lastIndex = conversation.Messages.Count - 1;
-        for (var i = _renderedCount; i < visible.Count; i++)
+        for (var i = _renderedCount; i < visible.Count;)
         {
+            // A run of consecutive machine turns — calls, their results, a thinking-only answer — folds into one
+            // collapsible group. Prose, user turns and system turns break the run. The fold is a paint-time
+            // shape only: every folded turn still produces its own row inside the group, so the row count the
+            // transcript checks key on is unchanged, and MessageRows expands groups to find them.
+            if (IsActivityTurn(visible[i].Turn))
+            {
+                var start = i;
+                while (i < visible.Count && IsActivityTurn(visible[i].Turn)) i++;
+                AppendActivityGroup(conversation.Id, visible.GetRange(start, i - start), lastIndex);
+                continue;
+            }
+
             var (index, turn, toolName) = visible[i];
             AppendRenderedTurn(conversation.Id, index, turn, toolName, isLast: index == lastIndex,
-                markdown: i >= visible.Count - EagerMarkdownLimit);
+                markdown: i >= visible.Count - EagerMarkdownLimit, target: MessageFlow);
+            i++;
         }
 
         // Where the painted prefix ends, in the conversation's own terms. The next render compares against this
@@ -1550,7 +1598,8 @@ public partial class ChatPanel : UserControl
     }
 
     private void AppendRenderedTurn(
-        string conversationId, int index, ChatTurn turn, string? toolName, bool isLast, bool markdown)
+        string conversationId, int index, ChatTurn turn, string? toolName, bool isLast, bool markdown,
+        Panel target)
     {
         var fromUser = turn.Role == ChatRoles.User;
         var body = new StackPanel { Spacing = 8 };
@@ -1588,21 +1637,24 @@ public partial class ChatPanel : UserControl
 
         Control? approvalSurface = null;
 
-        // A call that needed permission carries its own record: the question with its buttons while it waits,
-        // one quiet line once it does not. A call that never needed asking gets nothing drawn here, which is why
-        // the approval state — not the presence of a tool call — is what decides. A write is the exception: it
-        // changed a file whether or not anybody was asked, and the line is where its undo lives.
+        // A call that needed permission carries its own record in the transcript: one quiet line while the
+        // decision is owed (the buttons live in the composer's decision host, not here), one quiet line once it
+        // is not. A call that never needed asking gets nothing drawn here, which is why the approval state —
+        // not the presence of a tool call — is what decides. A write is the exception: it changed a file
+        // whether or not anybody was asked, and the line is where its undo lives.
+        // The pending line must not disappear altogether: the incremental renderer invalidates on a stamp of
+        // these states, and a scrolled-back reader still needs to see that a decision was owed at this turn.
         if (turn.ToolCallId is { Length: > 0 } callId)
         {
             if (turn.ApprovalState == ChatApprovalStates.Pending)
-                approvalSurface = BuildApprovalCard(conversationId, callId, turn);
+                approvalSurface = BuildApprovalPendingLine(turn);
             else if (turn.ApprovalState is { Length: > 0 } || turn.UndoName is { Length: > 0 })
                 approvalSurface = BuildCallRecord(conversationId, callId, turn);
         }
         if (turn.PlanApprovalState is { Length: > 0 })
         {
             approvalSurface = turn.PlanApprovalState == PlanApprovalStates.Pending
-                ? BuildPlanApprovalCard(conversationId, index)
+                ? BuildPlanPendingLine(turn)
                 : BuildPlanApprovalRecord(turn.PlanApprovalState);
         }
 
@@ -1611,7 +1663,7 @@ public partial class ChatPanel : UserControl
         // exchange). `index` is the only thing that gates the bar, so nulling it here leaves stored indexes
         // untouched for every other turn.
         var actionableIndex = turn.ToolCallId is { Length: > 0 } ? (int?)null : index;
-        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, actionableIndex, turn.Role, turn.Text, isLast, turn.At));
+        target.Children.Add(BuildMessageRow(fromUser, body, actionableIndex, turn.Role, turn.Text, isLast, turn.At));
         _renderedCount++;
 
         // User text is plain by nature, and a tool payload is now a quiet line rather than a bubble; only the
@@ -1620,6 +1672,82 @@ public partial class ChatPanel : UserControl
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
         if (approvalSurface is not null) body.Children.Add(approvalSurface);
     }
+
+    /// <summary>Whether a turn is machine work rather than something said: a tool result, a call, or a
+    /// thinking-only answer. These are the turns a run folds into one group; prose and user turns break it.
+    /// A thinking turn that also carries prose is prose — the answer is what was asked for, and folding it
+    /// away would hide the reply.</summary>
+    private static bool IsActivityTurn(ChatTurn turn) => turn.Role switch
+    {
+        ChatRoles.Tool => true,
+        ChatRoles.Assistant => turn.ToolCallId is { Length: > 0 }
+                               || (turn.Reasoning is { Length: > 0 } && turn.Text.Length == 0),
+        _ => false,
+    };
+
+    /// <summary>
+    /// One collapsible group over a run of machine turns. The head counts calls ("执行工具 3 次") or, when the
+    /// run only thought, says how long it thought — measured off the turns' own timestamps rather than
+    /// guessed. Collapsed by default: the charter hides secondary things, and what a run did is secondary to
+    /// what it said until the person asks.
+    ///
+    /// The rows inside are ordinary rendered turns, so every per-turn surface (the pending signpost, the write
+    /// record with its undo, a failed call's danger line) keeps working unchanged — the group is a container,
+    /// not a re-implementation.
+    /// </summary>
+    private void AppendActivityGroup(string conversationId, List<(int Index, ChatTurn Turn, string? ToolName)> turns,
+        int lastIndex)
+    {
+        var inner = new StackPanel { Spacing = 2 };
+        var callCount = 0;
+        foreach (var (index, turn, toolName) in turns)
+        {
+            if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 }) callCount++;
+            AppendRenderedTurn(conversationId, index, turn, toolName, isLast: index == lastIndex,
+                markdown: false, target: inner);
+        }
+
+        var head = new ToggleButton { Classes = { "activity-group-head" } };
+        var headRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        headRow.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Classes = { "activity-group-chevron" },
+            Data = ThemeGeometry("Hub.Icon.Chevron"),
+        });
+        headRow.Children.Add(new TextBlock { Text = ActivityGroupTitle(turns, callCount) });
+        head.Content = headRow;
+
+        var body = new StackPanel { Name = "ActivityGroupBody", Spacing = 0, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
+        body.Children.Add(inner);
+        // Driven off IsCheckedChanged rather than Click: a real click flips IsChecked (which fires this), and so
+        // does a check that sets IsChecked directly — a raised Click never reaches a ToggleButton's OnClick, so
+        // wiring the fold to Click would leave it untestable and half-broken.
+        head.IsCheckedChanged += (_, _) => body.IsVisible = head.IsChecked == true;
+
+        var group = new Border { Classes = { "activity-group" }, Child = new StackPanel { Spacing = 2, Children = { head, body } } };
+        MessageFlow.Children.Add(group);
+    }
+
+    /// <summary>The head's sentence. A call count when there were calls; a measured thinking duration when
+    /// there were not — "执行工具 0 次" would be a count of nothing, which is not a sentence.</summary>
+    private static string ActivityGroupTitle(List<(int Index, ChatTurn Turn, string? ToolName)> turns, int callCount)
+    {
+        if (callCount > 0)
+            return string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ActivityGroupToolCountFormat"), callCount);
+
+        var first = turns[0].Turn.At;
+        var last = turns[^1].Turn.At;
+        return string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ActivityGroupThoughtFormat"), FormatDuration(last - first));
+    }
+
+    /// <summary>Same shape as the live bubble's elapsed counter, so a folded group and a running one read the
+    /// same clock.</summary>
+    private static string FormatDuration(TimeSpan span)
+        => span.TotalMinutes >= 1
+            ? $"{(int)span.TotalMinutes}m {span.Seconds:D2}s"
+            : $"{Math.Max(0, (int)span.TotalSeconds)}s";
 
     /// <summary>What came back from one tool call, as a single muted line: the tool that answered, then the first
     /// line of its payload, with the whole thing on hover. A result that failed is said so, because the line is
@@ -1657,52 +1785,6 @@ public partial class ChatPanel : UserControl
     /// short enough that the line stays one line at the chat column's width.</summary>
     private const int ResultLineCharacters = 120;
 
-    /// <summary>The question stated once: which tool, with what, and the three answers it accepts. The arguments
-    /// stay visible because "run file_write" is not a decision — what it writes is.</summary>
-    private Control BuildApprovalCard(string conversationId, string callId, ChatTurn turn)
-    {
-        var card = new StackPanel { Spacing = 4 };
-        card.Children.Add(new TextBlock
-        {
-            Classes = { "approval-question" },
-            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ChatApprovalQuestionFormat"), turn.ToolName ?? ""),
-        });
-        AddApprovalDetail(card, "ChatApprovalArguments", turn.ToolArguments);
-        AddApprovalDetail(card, "ChatApprovalChangePreview", turn.ApprovalPreview);
-
-        var actions = new StackPanel { Classes = { "approval-actions" } };
-        actions.Children.Add(ApprovalButton("ApprovalAllow",
-            () => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false)));
-        actions.Children.Add(ApprovalButton("ApprovalAllowAlways",
-            () => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true)));
-        actions.Children.Add(ApprovalButton("ApprovalDeny",
-            () => ResolveApproval(conversationId, callId, approved: false, alwaysAllow: false)));
-        card.Children.Add(actions);
-
-        return new Border { Classes = { "approval-card" }, ClipToBounds = true, Child = card };
-    }
-
-    private Control BuildPlanApprovalCard(string conversationId, int turnIndex)
-    {
-        var card = new StackPanel { Spacing = 8 };
-        card.Children.Add(new TextBlock
-        {
-            Classes = { "approval-question" },
-            Text = HubStrings.Get("ChatPlanApprovalQuestion"),
-        });
-
-        var actions = new StackPanel { Classes = { "approval-actions" } };
-        actions.Children.Add(ApprovalButton("ChatPlanApprove",
-            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.Approved)));
-        actions.Children.Add(ApprovalButton("ChatPlanRevise",
-            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.RevisionRequested)));
-        actions.Children.Add(ApprovalButton("ChatPlanReject",
-            () => ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.Rejected)));
-        card.Children.Add(actions);
-        return new Border { Classes = { "approval-card", "plan-approval-card" }, ClipToBounds = true, Child = card };
-    }
-
     private static Control BuildPlanApprovalRecord(string state)
     {
         var key = state switch
@@ -1730,18 +1812,6 @@ public partial class ChatPanel : UserControl
             MaxHeight = 180,
             TextWrapping = TextWrapping.Wrap,
         });
-    }
-
-    private Button ApprovalButton(string textKey, Action onClick)
-    {
-        var button = new Button
-        {
-            Classes = { "approval-action" },
-            Content = HubStrings.Get(textKey),
-            Tag = textKey,
-        };
-        button.Click += (_, _) => onClick();
-        return button;
     }
 
     private static Button CloseActionButton(Action onClick)
@@ -1856,14 +1926,8 @@ public partial class ChatPanel : UserControl
             return;
         }
 
-        if (decision == PlanApprovalStates.RevisionRequested)
-        {
-            SetComposerMode(ChatModes.Plan);
-            InputBox.Text = HubStrings.Get("ChatPlanRevisionPrompt") + "\n";
-            InputBox.CaretIndex = InputBox.Text.Length;
-            InputBox.Focus();
-        }
-
+        // The revision's own text is sent by the review surface (CommitPlanReview) through the ordinary send
+        // path; prefilling the composer here would put a prompt in front of a sentence the person already wrote.
         ConversationStateChanged?.Invoke();
     }
 
@@ -1880,9 +1944,10 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>
-    /// Builds one message row. User rows: a Grid (full-width for hover) carrying a right-aligned pill.
-    /// Assistant rows: a borderless Border carrying plain text. Both carry the message-row class and,
-    /// when <paramref name="index"/> is non-null, a hover-revealed action row.
+    /// Builds one message row. Both row kinds are a single Border: the user row's child column right-aligns
+    /// its pill, the assistant row's carries borderless plain text. One container type keeps the hover-reveal
+    /// rules in the markup to two instead of four, and both carry the message-row class and, when
+    /// <paramref name="index"/> is non-null, a hover-revealed action row.
     /// A null <paramref name="index"/> (the live streaming bubble / just-sent user pill) carries no
     /// action bar: there is nothing stable to act on until the turn is persisted.
     /// </summary>
@@ -1912,19 +1977,14 @@ public partial class ChatPanel : UserControl
             column.Children.Add(actions);
         }
 
-        if (fromUser)
-        {
-            var grid = new Grid();
-            grid.Classes.Add("message-row");
-            grid.Children.Add(column);
-            return grid;
-        }
-
-        return new Border
-        {
-            Classes = { "assistant-msg", "message-row" },
-            Child = column,
-        };
+        // One container type for both row kinds. The hover-reveal rules in the markup key on
+        // Border.message-row, and having two container types meant writing every reveal twice; a user row is
+        // now a Border whose child column right-aligns the pill, which is all the Grid ever added.
+        // MessageRows selects by the message-row class rather than by type, so nothing downstream notices.
+        var row = new Border { ClipToBounds = true, Child = column };
+        row.Classes.Add("message-row");
+        row.Classes.Add(fromUser ? "user-row" : "assistant-msg");
+        return row;
     }
 
     private Control BuildActionBar(int index, string role, string text, bool isLast, DateTimeOffset? at, StackPanel body)
@@ -2110,6 +2170,14 @@ public partial class ChatPanel : UserControl
     private void UpdateSendState()
     {
         SendStateUpdates++;
+        // A decision covering the composer owns the send button: it is disabled with its parent, and repainting
+        // its glyph or tooltip here would fight the cover for the same 34 pixels. The counter still moves —
+        // an assertion counts these updates, and an early return that skipped it would read as a stuck button.
+        if (DecisionHost.IsVisible)
+        {
+            UpdateContextRing();
+            return;
+        }
         var streaming = IsViewedStreaming;
         var hasText = (InputBox.Text ?? "").Trim().Length > 0;
         var hasPicture = _pendingPictures.Count > 0;
@@ -2210,23 +2278,10 @@ public partial class ChatPanel : UserControl
                     return;
                 }
 
-                // The run does the rest: the current segment is cancelled, written as far as it got, and the
-                // next one answers this text — none of which is this view's business any more. The composer is
-                // only emptied once the steer is actually on the run; a reply that finished in the meantime
-                // would otherwise eat the message the person just typed.
-                if (!_chat.TrySteer(run.ConversationId, steerText, steerContext, steerPictures))
-                {
-                    UpdateSendState();
-                    return;
-                }
-
-                RememberSentText(steerText);
-                InputBox.Text = "";
-                _contextAttachments.Clear();
-                _pendingPictures.Clear();
-                RenderContextAttachments();
-                if (_live is { } live) live.Status.Text = HubStrings.Get("ChatSteering");
-                UpdateSendState();
+                // A steer cancels the segment being generated and is the routing table's strongest signal, yet
+                // until now it looked exactly like an ordinary send. The first Enter therefore only shows what
+                // would be interjected; the second one (or the strip's button) is the steer itself.
+                ShowSteerConfirm(steerText, steerContext, steerPictures);
                 return;
             }
 
@@ -2421,16 +2476,12 @@ public partial class ChatPanel : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         activity.Classes.Add("chat-activity");
-        var dotsPanel = new StackPanel { Orientation = Orientation.Horizontal };
-        dotsPanel.Classes.Add("chat-activity-dots");
-        var dots = Enumerable.Range(0, 3).Select(_ =>
-        {
-            var dot = new Ellipse();
-            dot.Classes.Add("chat-activity-dot");
-            return dot;
-        }).ToArray();
-        foreach (var dot in dots) dotsPanel.Children.Add(dot);
-        activity.Children.Add(dotsPanel);
+        // The glyph replaces the three blinking dots: it draws the phase the run is actually in rather than a
+        // generic wait, and it stops its own clock the moment it is hidden or the phase needs no motion.
+        var glyph = new ActivityGlyph();
+        glyph.Bind(ActivityGlyph.TrackBrushProperty, new DynamicResourceExtension("Hub.Border"));
+        glyph.Bind(ActivityGlyph.DotBrushProperty, new DynamicResourceExtension("Hub.Accent"));
+        activity.Children.Add(glyph);
         var status = new TextBlock { Text = HubStrings.Get("ChatPreparing") };
         status.Classes.Add("chat-activity-label");
         activity.Children.Add(status);
@@ -2454,19 +2505,18 @@ public partial class ChatPanel : UserControl
             Preview = preview,
             Status = status,
             Elapsed = elapsed,
-            Dots = dots,
+            Glyph = glyph,
         };
         bubble.Timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         bubble.Timer.Tick += (_, _) =>
         {
             if (_live is not { } current) return;
             current.Frame++;
-            for (var i = 0; i < current.Dots.Length; i++)
-                current.Dots[i].Opacity = (i + current.Frame) % current.Dots.Length == 0 ? 1 : 0.35;
             var seconds = current.Watch.Elapsed;
             current.Elapsed.Text = seconds.TotalMinutes >= 1
                 ? $"{(int)seconds.TotalMinutes}m {seconds.Seconds:D2}s"
                 : $"{Math.Max(0, (int)seconds.TotalSeconds)}s";
+            RefreshGlyphPhase(current);
         };
         _live = bubble;
         bubble.Watch.Restart();
@@ -2501,7 +2551,26 @@ public partial class ChatPanel : UserControl
             bubble.Status.Text = HubStrings.Get("ChatGenerating");
         }
 
+        RefreshGlyphPhase(bubble);
         ScrollToEndIfSticky();
+    }
+
+    /// <summary>
+    /// Puts the glyph in the phase the run is actually in, and hides it entirely once prose is arriving or the
+    /// run is parked: the prose and the decision host are already saying those two, and a waiting symbol
+    /// beside them would be chrome repeating a fact.
+    /// </summary>
+    private static void RefreshGlyphPhase(LiveBubble bubble)
+    {
+        var phase = bubble.ShowedText
+            ? ActivityPhase.ShowingText
+            : bubble.ToolRunning
+                ? ActivityPhase.RunningTool
+                : ActivityPhase.WaitingFirstToken;
+
+        // One call sets the phase, the count and the visibility and re-arms the clock together, so a refresh that
+        // only confirms "still waiting" cannot leave the glyph visible but frozen (see ActivityGlyph.ApplyPhase).
+        bubble.Glyph.ApplyPhase(phase, Math.Max(1, bubble.ToolCount));
     }
 
     /// <summary>Says how a run ended. The reason is recorded where it happened rather than inferred here from
@@ -2549,10 +2618,12 @@ public partial class ChatPanel : UserControl
 
     // ───────────────────────── Self-check hooks ─────────────────────────
 
-    /// <summary>Message rows are controls carrying the message-row class (user rows are Grids, assistant
-    /// rows are Borders).</summary>
+    /// <summary>Message rows are Borders carrying the message-row class (both row kinds, since the container
+    /// was unified); the class is what the hover-reveal rules and every row-counting check key on.</summary>
     private IEnumerable<Control> MessageRows
-        => MessageFlow.Children.Where(child => child.Classes.Contains("message-row"));
+        => MessageFlow.Children.SelectMany(child => child.Classes.Contains("activity-group")
+            ? child.GetLogicalDescendants().OfType<Control>().Where(row => row.Classes.Contains("message-row"))
+            : Enumerable.Repeat(child, 1).Where(row => row.Classes.Contains("message-row")));
 
     internal string FlowText
     {
@@ -2584,6 +2655,52 @@ public partial class ChatPanel : UserControl
                     .Select(viewer => viewer.Tag as string ?? ""))
                 .Where(text => text.Length > 0)))
         .ToArray();
+
+    // ── the folded activity runs and the live thinking glyph ──
+
+    /// <summary>How many activity runs the transcript folded into a collapsible group. One run of tool calls and
+    /// thinking is one head, so this counts heads, not turns.</summary>
+    internal int ActivityGroupCountForCheck
+        => MessageFlow.Children.Count(child => child.Classes.Contains("activity-group"));
+
+    /// <summary>The Nth group's head sentence: the tool count when there were calls, otherwise the measured
+    /// thinking duration — "执行工具 0 次" is a count of nothing, so a thought-only run says how long it thought.</summary>
+    internal string ActivityGroupTitleForCheck(int index)
+        => ActivityGroupAt(index)?.GetLogicalDescendants().OfType<ToggleButton>()
+            .FirstOrDefault(button => button.Classes.Contains("activity-group-head"))
+            ?.GetLogicalDescendants().OfType<TextBlock>().FirstOrDefault()?.Text ?? "";
+
+    internal bool ActivityGroupExpandedForCheck(int index)
+        => ActivityGroupBodyAt(index) is { IsVisible: true };
+
+    /// <summary>Folds/unfolds a group the way a person does — by setting the head's IsChecked, which is what the
+    /// IsCheckedChanged wiring reads. A raised Click never flips a ToggleButton, so a check must not use one.</summary>
+    internal void SetActivityGroupExpandedForCheck(int index, bool expanded)
+    {
+        var head = ActivityGroupAt(index)?.GetLogicalDescendants().OfType<ToggleButton>()
+            .FirstOrDefault(button => button.Classes.Contains("activity-group-head"));
+        if (head is not null) head.IsChecked = expanded;
+    }
+
+    private Control? ActivityGroupAt(int index)
+        => MessageFlow.Children.Where(child => child.Classes.Contains("activity-group"))
+            .ElementAtOrDefault(index);
+
+    private StackPanel? ActivityGroupBodyAt(int index)
+        => ActivityGroupAt(index)?.GetLogicalDescendants().OfType<StackPanel>()
+            .FirstOrDefault(panel => panel.Name == "ActivityGroupBody");
+
+    /// <summary>The live bubble's glyph: which phase it is morphing through, whether its clock is running, and how
+    /// many tools the run has touched. A glyph stuck in one shape while a tool runs is the bug these read.</summary>
+    internal ActivityPhase LiveGlyphPhaseForCheck => _live?.Glyph.Phase ?? ActivityPhase.ShowingText;
+    internal bool LiveGlyphTickingForCheck => _live?.Glyph.IsTickingForCheck ?? false;
+    internal int LiveGlyphToolCountForCheck => _live?.Glyph.ToolCount ?? 0;
+
+    /// <summary>How many times the live bubble's 350ms tick has run. A check waits on this to prove the tick that
+    /// drives both the elapsed label and the glyph's phase has actually fired, rather than reading the glyph the
+    /// instant it was attached (the elapsed label starts at "0s", so it cannot tell "just attached" from "ticked").</summary>
+    internal int LiveFrameForCheck => _live?.Frame ?? 0;
+    internal bool LiveGlyphVisibleForCheck => _live?.Glyph.IsVisible ?? false;
 
     internal bool HasVisibleMarkdownCodeBlock(string code)
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
@@ -2672,9 +2789,21 @@ public partial class ChatPanel : UserControl
     internal object? FirstBubbleForCheck => MessageRows.FirstOrDefault();
 
     // ── Approval card ──
+    // The pending card lives in the composer's decision host now, not in the transcript: the host is the one
+    // place a decision is answered, so it is the one place a check looks. The transcript keeps a signpost line
+    // (class approval-pending-line) which is deliberately NOT counted here — these accessors mean "actionable
+    // right now", and FlowApprovalCardCountForCheck below is the negative half that proves the move happened.
     private IEnumerable<Border> ApprovalCards
+        => DecisionHost.IsVisible && _decisionCallId is not null ? [DecisionHost] : [];
+
+    private IEnumerable<Border> PlanApprovalCards
+        => DecisionHost.IsVisible && _decisionPlanIndex >= 0 ? [DecisionHost] : [];
+
+    /// <summary>The old walk, kept as the negative half of "the card moved": a transcript that still paints an
+    /// actionable approval card is a regression this number catches.</summary>
+    internal int FlowApprovalCardCountForCheck
         => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Border>())
-            .Where(card => card.Classes.Contains("approval-card"));
+            .Count(card => card.Classes.Contains("approval-card"));
 
     /// <summary>How many calls are asking. A request the user has to answer is never hover-gated — a hidden
     /// actionable request looks exactly like a reply that stopped working — so this reads the flow as painted.</summary>
@@ -2713,10 +2842,6 @@ public partial class ChatPanel : UserControl
         if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
 
-    private IEnumerable<Border> PlanApprovalCards
-        => MessageFlow.Children.SelectMany(row => row.GetLogicalDescendants().OfType<Border>())
-            .Where(card => card.Classes.Contains("plan-approval-card"));
-
     internal int PendingPlanApprovalCardsForCheck => PlanApprovalCards.Count();
 
     internal bool PlanApprovalCardOnScreenForCheck
@@ -2734,19 +2859,61 @@ public partial class ChatPanel : UserControl
             .FirstOrDefault(viewer => (viewer.Tag as string)?.Contains("Reviewed plan", StringComparison.Ordinal) == true)
             is { IsVisible: true, Bounds: { Width: > 0, Height: > 0 } };
 
-    internal string[] PlanApprovalActionsForCheck
+    /// <summary>The plan review's two lettered choices, in the order offered: A approves, B asks for a revision.
+    /// There is deliberately no third "exit plan mode" row — the owner removed it, and the workspace has no such
+    /// decision to record.</summary>
+    internal string[] PlanReviewChoicesForCheck
         => PlanApprovalCards.FirstOrDefault() is { } card
             ? card.GetLogicalDescendants().OfType<Button>()
-                .Where(button => button.Classes.Contains("approval-action"))
+                .Where(button => button.Classes.Contains("plan-review-option"))
                 .Select(button => button.Tag as string ?? "").ToArray()
             : [];
 
-    internal void ClickPlanApprovalActionForCheck(string actionKey)
+    internal bool PlanReviewHasContinueForCheck
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .Any(button => button.Name == "PlanContinueButton") == true;
+
+    internal bool PlanReviewHasCancelForCheck
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .Any(button => button.Tag as string == "ChatPlanCancel") == true;
+
+    internal bool PlanFeedbackVisibleForCheck
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<TextBox>()
+            .FirstOrDefault(box => box.Name == "PlanFeedbackBox") is { IsVisible: true };
+
+    internal bool PlanContinueEnabledForCheck
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Name == "PlanContinueButton")?.IsEnabled == true;
+
+    internal void ClickPlanChoiceForCheck(string tag)
     {
-        var button = PlanApprovalCards.FirstOrDefault()?
-            .GetLogicalDescendants().OfType<Button>()
-            .FirstOrDefault(candidate => candidate.Tag as string == actionKey);
-        if (button is not null) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var button = PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Tag as string == tag
+                                       && candidate.Classes.Contains("plan-review-option"));
+        button?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    /// <summary>Types into the revision box through its own Text setter, so the "keep going is disabled until
+    /// there is something to send" wiring is exercised rather than bypassed.</summary>
+    internal void SetPlanFeedbackForCheck(string text)
+    {
+        var box = PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<TextBox>()
+            .FirstOrDefault(candidate => candidate.Name == "PlanFeedbackBox");
+        if (box is not null) box.Text = text;
+    }
+
+    internal void ClickPlanContinueForCheck()
+    {
+        var button = PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Name == "PlanContinueButton");
+        button?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    }
+
+    internal void ClickPlanCancelForCheck()
+    {
+        var button = PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Tag as string == "ChatPlanCancel");
+        button?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
 
     /// <summary>The one-line records of calls already decided, in the order they appear.</summary>
@@ -2937,25 +3104,9 @@ public partial class ChatPanel : UserControl
     /// has to be told about once, and the placeholder is the only place that names them.</summary>
     internal string ComposerPlaceholderForCheck => InputBox.PlaceholderText ?? "";
 
-    internal bool PicturePreviewOpenForCheck => PicturePreview.IsVisible;
-    internal string PicturePreviewCaptionForCheck => PicturePreviewCaption.Text ?? "";
-    internal int PicturePreviewButtonCountForCheck => PicturePreviewBar.Children.OfType<Button>().Count();
-
-    /// <summary>Presses one of the preview's own buttons, in the order they are built (copy, then close).</summary>
-    internal void ClickPreviewButtonForCheck(int index)
-    {
-        var buttons = PicturePreviewBar.Children.OfType<Button>().ToList();
-        if (index < buttons.Count) buttons[index].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-    }
-
-    /// <summary>The previewed picture's own size, or -1 when the frame is showing nothing. A preview that opened
-    /// on a blank image would pass "it is visible" and still be useless.</summary>
-    internal (int Width, int Height) PicturePreviewSizeForCheck
-        => PicturePreviewImage.Source is Bitmap bitmap
-            ? (bitmap.PixelSize.Width, bitmap.PixelSize.Height)
-            : (-1, -1);
-
-    /// <summary>Clicks the Nth picture in the transcript through the button that opens it.</summary>
+    /// <summary>Clicks the Nth picture in the transcript through the button that opens it. The picture now
+    /// opens in the window-level viewer, so the assertion of what opened lives on <c>MainWindow</c>; this only
+    /// proves the click routes.</summary>
     internal void ClickRenderedPictureForCheck(int index)
     {
         var faces = MessageFlow.GetVisualDescendants().OfType<Button>()
@@ -3005,12 +3156,6 @@ public partial class ChatPanel : UserControl
     /// would prove nothing: the box already has focus, so a handler that never gave it back would still pass.
     /// </summary>
     internal void MoveFocusOffComposerForCheck() => AddContextButton.Focus();
-
-    /// <summary>
-    /// The payload the copy button would hand the clipboard, without touching it: a self-check that ran the real
-    /// write would leave whatever the person had copied gone, which is the one thing a check may not do here.
-    /// </summary>
-    internal DataTransfer? PreviewCopyPayloadForCheck => PictureTransferOf(_previewBytes);
 
     /// <summary>The session's attachment directory, as the store sees it. A check that claims a deleted session
     /// took its pictures with it has to look at the disk, not at a list this view keeps.</summary>

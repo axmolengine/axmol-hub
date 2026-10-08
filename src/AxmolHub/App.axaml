@@ -18,6 +18,9 @@
         <!-- Order matters: the control theme references icons and colors, so it must come after them. -->
         <ResourceInclude Source="avares://AxmolHub/Theme/HubTokens.axaml" />
         <ResourceInclude Source="avares://AxmolHub/Theme/HubIcons.axaml" />
+        <!-- Metrics are theme-independent and referenced by the control theme's frames, so they load with the
+             other dictionaries rather than as a Style. -->
+        <ResourceInclude Source="avares://AxmolHub/Theme/HubMetrics.axaml" />
         <ResourceInclude Source="avares://AxmolHub/Theme/HubControls.axaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>

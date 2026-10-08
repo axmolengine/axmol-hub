@@ -57,6 +57,14 @@
       <SolidColorBrush x:Key="Hub.DangerText" Color="#F294A7" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#8A5A64" />
 
+      <!-- Diff row tints for the inspector's changed-files view. The ink for a removed line is Hub.DangerText,
+           which is ink and not a destructive button, so the "red is only for what runs unasked" rule is not in
+           play here; these two are the row's floor. They must separate from Hub.SurfaceAlt in both variants —
+           a tint that equals its surface is a tint nobody can see, which is exactly how the light-theme
+           SurfaceRaised/SurfaceAlt bug looked. -->
+      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#1F3A32" />
+      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#3A2A2E" />
+
       <!-- Notification dot (the "update available" badge on the Settings nav item). Its own semantic
            on purpose: an available update is not a danger/error, so it must not reuse Hub.Danger
            (which is also deliberately low-chroma for ink/fill use). Values are tuned for a small
@@ -125,6 +133,11 @@
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#E5A6B2" />
+
+      <!-- Light counterparts of the diff row tints; see the Dark dictionary's note. Light has nowhere above
+           white to go, so both sit clearly below Hub.SurfaceAlt (#EDEEF2) instead of above it. -->
+      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#D9EFE4" />
+      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#F6DFE5" />
 
       <!-- See the note in the Dark dictionary: a distinct semantic from Hub.Danger, tuned as a filled dot. -->
       <SolidColorBrush x:Key="Hub.NotificationDot" Color="#D93025" />

@@ -939,6 +939,8 @@ public partial class ShellCheckWindow : Window
         await CheckComposerKeysAsync(shell, panel);
         await CheckTypographyAsync(shell, panel);
         await CheckScrollAsync(shell, panel);
+        await CheckActivityOrchestrationAsync(shell, panel);
+        await CheckInspectorAndSteerAsync(shell, panel);
 
         shell.Chat.DeleteConversation(opsConversation.Id);
         shell.Chat.ClientOverride = null;
@@ -1858,38 +1860,38 @@ public partial class ShellCheckWindow : Window
                 "夹具：这条消息在气泡下画了一张缩略图（实际 " + panel.RenderedPictureCountForCheck + " 张）");
 
             panel.ClickRenderedPictureForCheck(0);
-            var shown = panel.PicturePreviewSizeForCheck;
-            Check(panel.PicturePreviewOpenForCheck && shown == (8, 8)
-                  && panel.PicturePreviewCaptionForCheck.Contains("image/png", StringComparison.Ordinal),
-                "点缩略图打开预览，显示的就是那张图本身（实际 " + shown.Width + "×" + shown.Height
-                + "，说明「" + panel.PicturePreviewCaptionForCheck + "」）");
-            Check(panel.PicturePreviewButtonCountForCheck == 2,
-                "预览上有复制与关闭两个动作，都只用图标说话（实际 "
-                + panel.PicturePreviewButtonCountForCheck + " 个）");
+            var shown = shell.PictureViewerSizeForCheck;
+            Check(shell.PictureViewerOpenForCheck && shown == (8, 8)
+                  && shell.PictureViewerCaptionForCheck.Contains("image/png", StringComparison.Ordinal),
+                "点缩略图打开窗口级查看器，显示的就是那张图本身（实际 " + shown.Width + "×" + shown.Height
+                + "，说明「" + shell.PictureViewerCaptionForCheck + "」）");
+            Check(shell.PictureViewerButtonCountForCheck == 2,
+                "查看器上有复制与关闭两个动作，都只用图标说话（实际 "
+                + shell.PictureViewerButtonCountForCheck + " 个）");
 
             // The payload, not the clipboard: a check that ran the real write would leave whatever the person had
             // copied gone, which is the one thing this suite may not do to the machine it runs on.
-            Check(panel.PreviewCopyPayloadForCheck?.Items.FirstOrDefault()
+            Check(shell.PictureViewerCopyPayloadForCheck?.Items.FirstOrDefault()
                     ?.TryGetRaw(DataFormat.Bitmap) is Bitmap copied
                   && copied.PixelSize is { Width: 8, Height: 8 },
                 "复制按钮交出的就是这张图的位图，而不是文件名或一段文字");
 
-            panel.PressEscapeForCheck();
-            Check(!panel.PicturePreviewOpenForCheck, "Esc 关掉预览，键盘不必绕到那个 × 上");
+            shell.PressViewerKeyForCheck(Key.Escape);
+            Check(!shell.PictureViewerOpenForCheck, "Esc 关掉查看器，键盘不必绕到那个 × 上");
             panel.ClickRenderedPictureForCheck(0);
-            panel.ClickPreviewButtonForCheck(1);
-            Check(!panel.PicturePreviewOpenForCheck, "预览上的 × 也关得住（与 Esc 是同一条路，不是同一个按钮）");
+            shell.ClickPictureViewerButtonForCheck(1);
+            Check(!shell.PictureViewerOpenForCheck, "查看器上的 × 也关得住（与 Esc 是同一条路，不是同一个按钮）");
 
             // ── 还没发出去的草稿也要能看 ──
             panel.AddImageForCheck(png);
             panel.ClickPendingPictureForCheck(0);
-            var draft = panel.PicturePreviewSizeForCheck;
-            Check(panel.PendingPictureCountForCheck == 1 && panel.PicturePreviewOpenForCheck
+            var draft = shell.PictureViewerSizeForCheck;
+            Check(panel.PendingPictureCountForCheck == 1 && shell.PictureViewerOpenForCheck
                   && draft == (8, 8),
                 "草稿缩略图也点得开：发出去之前是最后能反悔的时刻（实际 " + draft.Width + "×" + draft.Height + "）");
-            panel.PressEscapeForCheck();
+            shell.PressViewerKeyForCheck(Key.Escape);
 
-            // And the frame proves it painted. Measured as a difference against the same frame with the preview
+            // And the frame proves it painted. Measured as a difference against the same frame with the viewer
             // shut, because the thumbnails in the transcript carry the fixture's colours too — a count compared
             // against zero would pass on a page of thumbnails and fail on nothing.
             var shot = System.IO.Path.Combine(scratch, "preview.png");
@@ -1900,14 +1902,14 @@ public partial class ShellCheckWindow : Window
             Dispatcher.UIThread.RunJobs();
             SmokeCapture.Capture(shell, shot);
             var enlarged = FixturePixels(shot);
-            Check(panel.PicturePreviewOpenForCheck && enlarged > thumbnails + 50_000,
-                "预览把那张图放大画在屏幕上（缩略图 " + thumbnails + " 像素 → 打开后 " + enlarged + "）");
-            panel.ClickPreviewButtonForCheck(1);
+            Check(shell.PictureViewerOpenForCheck && enlarged > thumbnails + 50_000,
+                "查看器把那张图放大画在屏幕上（缩略图 " + thumbnails + " 像素 → 打开后 " + enlarged + "）");
+            shell.ClickPictureViewerButtonForCheck(1);
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
             SmokeCapture.Capture(shell, shot);
             var closed = FixturePixels(shot);
-            Check(!panel.PicturePreviewOpenForCheck && closed * 4 < enlarged,
+            Check(!shell.PictureViewerOpenForCheck && closed * 4 < enlarged,
                 "关掉之后回到缩略图那一帧（放大时 " + enlarged + " → 关掉后 " + closed
                 + "）：覆盖层是收起来的，不是盖在上面的");
         }
@@ -2034,10 +2036,10 @@ public partial class ShellCheckWindow : Window
                 "按下发送后焦点回到输入框：接下来通常还要接着说");
             await panel.WaitForRunToFinishForCheck();
 
-            // ── Esc：先关预览，再停回复 ──
+            // ── Esc：先关查看器，再停回复 ──
             panel.AddImageForCheck(png);
             panel.ClickPendingPictureForCheck(0);
-            Check(panel.PicturePreviewOpenForCheck, "夹具：预览开着，图也还在草稿里");
+            Check(shell.PictureViewerOpenForCheck, "夹具：查看器开着，图也还在草稿里");
 
             var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             chat.ClientOverride = (_, _) => new ScriptedChatClient(["这条会被停住"], gate: hold.Task);
@@ -2045,8 +2047,8 @@ public partial class ShellCheckWindow : Window
             _ = panel.SendComposerForCheck();
             await WaitUntilAsync(() => panel.IsStreamingForCheck);
             panel.PressEscapeForCheck();
-            Check(!panel.PicturePreviewOpenForCheck && panel.IsStreamingForCheck,
-                "预览开着时 Esc 只收预览，不停正在写的回复（覆盖层是屏幕上唯一正在被看的东西）");
+            Check(!shell.PictureViewerOpenForCheck && panel.IsStreamingForCheck,
+                "查看器开着时 Esc 只收查看器，不停正在写的回复（覆盖层是屏幕上唯一正在被看的东西）");
             panel.PressEscapeForCheck();
             await WaitUntilAsync(() => !panel.IsStreamingForCheck);
             Check(!panel.IsStreamingForCheck, "再按一次 Esc 才停住这条回复");
@@ -2070,6 +2072,15 @@ public partial class ShellCheckWindow : Window
             await WaitUntilAsync(() => panel.IsStreamingForCheck);
             panel.SetInputForCheck("半路改的主意");
             await panel.SendComposerForCheck();
+            Dispatcher.UIThread.RunJobs();
+            // The first Enter while a reply is running only lifts the sentence onto the confirm strip: a steer
+            // cancels the segment and is the routing table's strongest signal, so it takes a second tap.
+            Check(panel.SteerConfirmVisibleForCheck
+                  && panel.SteerConfirmTextForCheck == "半路改的主意"
+                  && panel.IsStreamingForCheck,
+                "回复进行中再按一次发送只是把这句摆到确认条上，还没有真的插话（实际「"
+                + panel.SteerConfirmTextForCheck + "」）");
+            panel.ClickSteerCommitForCheck();
             steerHold.SetResult(true);
             await panel.WaitForRunToFinishForCheck();
             panel.SetInputForCheck("");
@@ -2253,6 +2264,200 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
+    /// 聊天编排：一段机器活动折成一个可折叠组，思考态由按相位变形的指示器承担。
+    ///
+    /// The grouping and the glyph are the two things that only exist while a run is in flight or just finished,
+    /// which is exactly why they rot silently. The group is read off the rendered transcript (count, head
+    /// sentence, fold state driven through IsChecked the way a person drives it); the glyph is read twice — once
+    /// mid-run to prove its clock starts on the waiting phase, once after to prove the clock <b>stops</b>, since
+    /// an animation that never stops repaints a full canvas for nobody.
+    /// </summary>
+    private async Task CheckActivityOrchestrationAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+        var session = chat.StartConversation();
+        var workspace = ScratchDirectory.Resolve("activity-workspace");
+        System.IO.Directory.CreateDirectory(workspace);
+        chat.SetWorkspaceRoot(session.Id, workspace);
+        chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
+        chat.OpenConversation(session.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            // ── the thinking glyph starts its clock, and stops it ──
+            var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["想好了再答"], gate: hold.Task);
+            panel.SetInputForCheck("先想想");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            // Wait on the bubble's frame counter, not on the ticking itself: the 350ms tick drives both the
+            // elapsed label and the glyph's phase, so a frame > 0 proves that tick has run at least once — and
+            // waiting on the asserted predicate would turn the cell into a retry-until-pass.
+            await WaitUntilAsync(() => panel.LiveFrameForCheck > 0);
+            Check(panel.LiveGlyphTickingForCheck
+                  && panel.LiveGlyphPhaseForCheck == ActivityPhase.WaitingFirstToken,
+                "回复还没吐字时，思考指示器按「等第一个字」的相位走针（相位 "
+                + panel.LiveGlyphPhaseForCheck + "，可见 " + panel.LiveGlyphVisibleForCheck
+                + "，走针 " + panel.LiveGlyphTickingForCheck + "，帧 " + panel.LiveFrameForCheck + "）");
+            hold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+            Check(!panel.LiveGlyphTickingForCheck,
+                "回复结束后思考指示器停针：一个停不下来的动画会一直重绘整块画布");
+
+            // ── a run of tool calls folds into one collapsible group, counted rather than listed ──
+            // Its own session: the waiting-glyph run above leaves a thinking-only turn behind, and a second
+            // activity run in the same transcript would fold into a second group and miscount this one.
+            var groupSession = chat.StartConversation();
+            chat.SetWorkspaceRoot(groupSession.Id, workspace);
+            chat.SetApprovalMode(groupSession.Id, ToolApprovalModes.Full);
+            chat.OpenConversation(groupSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            var activity = new ApprovalChatClient
+            {
+                CallsRemaining = 1,
+                ToolName = "list_directory",
+                Arguments = new Dictionary<string, object?> { ["path"] = "." },
+            };
+            chat.ClientOverride = (_, _) => activity;
+            panel.SetInputForCheck("看看这仓库根目录");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Check(panel.ActivityGroupCountForCheck == 1,
+                "一段带工具调用的活动折成一个可折叠组，而不是一路铺开（实际 "
+                + panel.ActivityGroupCountForCheck + " 组：["
+                + string.Join(" | ", Enumerable.Range(0, panel.ActivityGroupCountForCheck)
+                    .Select(g => panel.ActivityGroupTitleForCheck(g)))
+                + "]；转录 " + string.Join(",", groupSession.Messages.Select(m =>
+                    m.Role + (m.ToolCallId is { Length: > 0 } ? "/call" : "")
+                    + (m.Reasoning is { Length: > 0 } ? "/reason" : "")
+                    + (m.Text.Length == 0 ? "/empty" : ""))) + "）");
+            Check(panel.ActivityGroupTitleForCheck(0).Contains("1", StringComparison.Ordinal),
+                "组头按调用次数说话，而不是把每条工具行都摊出来（实际「"
+                + panel.ActivityGroupTitleForCheck(0) + "」）");
+            Check(!panel.ActivityGroupExpandedForCheck(0),
+                "活动组默认收起：细节是点进去才看的，不该先糊一屏");
+            panel.SetActivityGroupExpandedForCheck(0, true);
+            Check(panel.ActivityGroupExpandedForCheck(0), "点一下组头就展开，逐条工具行才出现");
+            panel.SetActivityGroupExpandedForCheck(0, false);
+            Check(!panel.ActivityGroupExpandedForCheck(0), "再点一下收回去");
+            chat.DeleteConversation(groupSession.Id);
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
+    /// 右侧审阅面板与插话二次确认：一个是看计划/diff 的地方，一个是「先别急着插话」的那一下。
+    ///
+    /// The inspector is asserted two ways: its column mechanics on the real shell (opens, follows the assistant
+    /// page off-screen, closes, clamps its width), and its content on a panel fed a fixture snapshot directly —
+    /// a check can Reload it with a known changed-file list and a canned diff and read the rows back without a
+    /// live run behind it. The steer strip is driven through its own buttons: the first Enter only lifts the
+    /// draft onto the strip, edit puts it back, Esc is edit and never discard, and discard is the one action that
+    /// destroys the sentence.
+    /// </summary>
+    private async Task CheckInspectorAndSteerAsync(MainWindow shell, ChatPanel panel)
+    {
+        var chat = shell.Chat;
+        var savedOverride = chat.ClientOverride;
+
+        // ── the inspector column: a real third column that belongs to the assistant page ──
+        shell.OpenAssistant();
+        shell.NavigateTo("Assistant");
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.OpenInspector("plan") && shell.InspectorVisibleForCheck
+              && shell.InspectorWidthForCheck is >= 300 and <= 520,
+            "打开审阅面板：它是聊天右边真实的一列，宽度落在可读区间里（实际 "
+            + shell.InspectorWidthForCheck + "）");
+        shell.NavigateTo("Settings");
+        Check(!shell.InspectorVisibleForCheck, "离开助手页，审阅面板跟着收起：它是助手的，不是每页的");
+        shell.NavigateTo("Assistant");
+        Check(shell.InspectorVisibleForCheck, "回到助手页，之前打开的面板还在");
+        shell.CloseInspector();
+        Check(!shell.InspectorVisibleForCheck, "关掉之后那一列真的让位给聊天，而不是留一条空白");
+
+        // ── the inspector content, fed a fixture snapshot directly ──
+        var inspector = new InspectorPanel();
+        var changes = new[]
+        {
+            new ChangedFile("note.txt", ChangeVerdict.Edited, "call-1", 3,
+                "@@ -1,2 +1,2 @@\n 第一行\n-第二行\n+第二行（已改）", null, null, "Edited note.txt", true),
+        };
+        inspector.Reload("# 计划\n\n- 先看实现\n- 再动手", changes,
+            _ => ("@@ -1,2 +1,2 @@\n 第一行\n-第二行\n+第二行（已改）", UndoCopyState.Read), "changes");
+        Check(inspector.ChangeRowCountForCheck == 1 && inspector.FirstChangePathForCheck == "note.txt"
+              && inspector.ChangesTabVisibleForCheck && !inspector.PlanTabVisibleForCheck,
+            "改动页把这次会话动过的文件列出来，并停在被点开的哪一页（实际 "
+            + inspector.ChangeRowCountForCheck + " 行，首行「" + inspector.FirstChangePathForCheck + "」）");
+        inspector.Reload("# 计划\n\n- 先看实现", changes,
+            _ => ((string?)null, UndoCopyState.Read), "plan");
+        Check(inspector.PlanTabVisibleForCheck && !inspector.ChangesTabVisibleForCheck,
+            "计划页与改动页各显示各的，切一页不会把另一页也带出来");
+
+        // ── the steer strip: a second tap before an interjection spends a request ──
+        var session = chat.StartConversation();
+        chat.OpenConversation(session.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(["这条会被引导打断"], gate: hold.Task);
+            panel.SetInputForCheck("正在答的这句");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+
+            panel.SetInputForCheck("半路改的主意");
+            await panel.SendComposerForCheck();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.SteerConfirmVisibleForCheck
+                  && panel.SteerConfirmTextForCheck == "半路改的主意"
+                  && panel.InputTextForCheck.Length == 0,
+                "回复进行中第一次回车只是把草稿摆上确认条、输入框随之清空，还没有真的插话（条上「"
+                + panel.SteerConfirmTextForCheck + "」，框里「" + panel.InputTextForCheck + "」）");
+
+            panel.ClickSteerEditForCheck();
+            Check(!panel.SteerConfirmVisibleForCheck && panel.InputTextForCheck == "半路改的主意",
+                "「编辑」把草稿原样放回输入框，确认条收起：这是草稿回到框里的唯一一条路");
+
+            await panel.SendComposerForCheck();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.SteerConfirmVisibleForCheck, "夹具：再按一次发送，确认条又出现了");
+            panel.PressComposerKeyForCheck(Key.Escape);
+            Check(!panel.SteerConfirmVisibleForCheck && panel.InputTextForCheck == "半路改的主意",
+                "Esc 等于「编辑」而不是「丢弃」：一个会删掉整句的键不能是随手按下的那个");
+
+            await panel.SendComposerForCheck();
+            Dispatcher.UIThread.RunJobs();
+            panel.ClickSteerDiscardForCheck();
+            Check(!panel.SteerConfirmVisibleForCheck && panel.InputTextForCheck.Length == 0,
+                "「丢弃」是唯一会毁掉草稿的动作，只有图标、没有键盘路径");
+
+            hold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
     /// 图片入料：一个人递进来的三条路，和一条消息最多能带几张。
     ///
     /// The three entrances (menu, paste, drop) all end in the same admission, so the group drives it through the
@@ -2261,8 +2466,7 @@ public partial class ShellCheckWindow : Window
     /// and a session directory that outlives the session it belonged to.
     /// </summary>
     private async Task CheckPictureAsync(MainWindow shell, ChatPanel panel)
-    {
-        var chat = shell.Chat;
+    {        var chat = shell.Chat;
         var savedOverride = chat.ClientOverride;
         var scratch = ScratchDirectory.Resolve("picture-check");
         var png = System.IO.Path.Combine(scratch, "capture.png");
@@ -2403,6 +2607,11 @@ public partial class ShellCheckWindow : Window
             panel.DropForCheck(dragged);
             panel.SetInputForCheck("再看这张图");
             await panel.SendComposerForCheck();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.SteerConfirmVisibleForCheck && panel.SteerConfirmTextForCheck == "再看这张图",
+                "回复进行中带图再发一次，先摆到确认条上，图跟着这句一起走（实际「"
+                + panel.SteerConfirmTextForCheck + "」）");
+            panel.ClickSteerCommitForCheck();
             hold.SetResult(true);
             await panel.WaitForRunToFinishForCheck();
             var steered = chat.StoredCopyForCheck(entrance.Id)?.Messages
@@ -2764,19 +2973,31 @@ public partial class ShellCheckWindow : Window
             shell.NavigateTo("Assistant");
             Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 0,
                 "返回该会话后后台审批标记隐藏，但待确认卡仍可操作");
-            Check(panel.PlanApprovalActionsForCheck.SequenceEqual(
-                      ["ChatPlanApprove", "ChatPlanRevise", "ChatPlanReject"], StringComparer.Ordinal),
-                "计划卡提供批准执行、要求修改、拒绝三个明确动作（实际 "
-                + string.Join(", ", panel.PlanApprovalActionsForCheck) + "）");
+            Check(panel.PlanReviewChoicesForCheck.SequenceEqual(
+                      ["ChatPlanApprove", "ChatPlanRevise"], StringComparer.Ordinal)
+                  && panel.PlanReviewHasContinueForCheck
+                  && panel.PlanReviewHasCancelForCheck,
+                "计划审阅给出 A 批准 / B 要求修改两个选项，外加继续与取消，没有「退出计划模式」那第三行（实际 "
+                + string.Join(", ", panel.PlanReviewChoicesForCheck) + "）");
 
-            panel.ClickPlanApprovalActionForCheck("ChatPlanRevise");
-            Check(approvedSession.Messages.Last(turn => turn.Role == ChatRoles.Assistant).PlanApprovalState
-                      == PlanApprovalStates.RevisionRequested
+            // Choosing B opens the revision box, and continue stays disabled until there is something in it: a tap
+            // that looks like focusing a text box must not be the tap that spends a request.
+            panel.ClickPlanChoiceForCheck("ChatPlanRevise");
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PlanFeedbackVisibleForCheck && !panel.PlanContinueEnabledForCheck,
+                "选「要求修改」展开反馈框，且在写进内容之前继续是禁用的");
+            const string revision = "先把测试补上，再改实现";
+            panel.SetPlanFeedbackForCheck(revision);
+            Check(panel.PlanContinueEnabledForCheck, "写了修改意见之后继续按钮才可用");
+            panel.ClickPlanContinueForCheck();
+            await WaitForIdleAsync(chat);
+            Dispatcher.UIThread.RunJobs();
+            Check(approvedSession.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                      && turn.PlanApprovalState == PlanApprovalStates.RevisionRequested)
                   && chat.ActiveMode == ChatModes.Plan
-                  && panel.InputTextForCheck.StartsWith(HubStrings.Get("ChatPlanRevisionPrompt"),
-                      StringComparison.Ordinal),
-                "要求修改会记录决定、保持计划模式，并把修改请求放入输入框");
-            await panel.SendForCheckAsync(panel.InputTextForCheck);
+                  && approvedSession.Messages.Any(turn => turn.Role == ChatRoles.User && turn.Text == revision),
+                "要求修改会记录决定、保持计划模式，并把修改意见当成一条用户消息发出去");
             Check(approvedSession.Messages.Count(turn =>
                       turn.Role == ChatRoles.Assistant && turn.PlanApprovalState == PlanApprovalStates.Pending) == 1,
                 "修改请求可以再次发送，新的计划重新进入待确认状态");
@@ -2784,7 +3005,8 @@ public partial class ShellCheckWindow : Window
                 "修改后再次生成计划只新增一次待审事件（实际 "
                 + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
 
-            panel.ClickPlanApprovalActionForCheck("ChatPlanApprove");
+            panel.ClickPlanChoiceForCheck("ChatPlanApprove");
+            panel.ClickPlanContinueForCheck();
             await WaitForIdleAsync(chat);
             var approvedCopy = chat.StoredCopyForCheck(approvedSession.Id);
             var approvedInstruction = "Implement the following plan, which I have reviewed and approved. "
@@ -2815,7 +3037,7 @@ public partial class ShellCheckWindow : Window
             panel.Reload();
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            panel.ClickPlanApprovalActionForCheck("ChatPlanReject");
+            panel.ClickPlanCancelForCheck();
             var rejectedCopy = chat.StoredCopyForCheck(rejectedSession.Id);
             Check(rejectedCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)
                       ?.PlanApprovalState == PlanApprovalStates.Rejected
@@ -3123,8 +3345,8 @@ public partial class ShellCheckWindow : Window
                   && !panel.ApprovalCardTextForCheck.Contains("\\u", StringComparison.Ordinal),
                 "工具参数在转录与卡片里都是可读原文，不再出现 \\uXXXX 转义（实际「" + parkedArguments + "」）");
             Check(panel.ApprovalCardActionsForCheck.SequenceEqual(new[]
-                      { "ApprovalAllow", "ApprovalAllowAlways", "ApprovalDeny" }, StringComparer.Ordinal),
-                "卡片给出批准 / 总是允许 / 拒绝三个出口（实际 "
+                      { "ApprovalAllowAlways", "ApprovalDeny", "ApprovalAllow" }, StringComparer.Ordinal),
+                "卡片给出三个出口：左边是本会话总是允许的安静授权，右边是拒绝 / 允许这一对，允许是最后落点（实际 "
                 + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
             Check(panel.ApprovalCardActionsAreCalmForCheck,
                 "拒绝按钮不按危险操作上色（destructive 留给「不问就干且后果重」）");

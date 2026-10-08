@@ -552,6 +552,71 @@ public static class HubTexts
         ["ChatWriteRecordFormat"] = ("写入 {0}", "wrote {0}"),
         ["ChatUndoButton"] = ("撤销", "Undo"),
         ["ChatUndoTip"] = ("把 {0} 恢复到这次写入之前的内容", "Put {0} back to what it held before this write"),
+
+        // ── The decision surfaces that live in the composer (2026-10-08) ──
+        // A pending call and a pending plan are both a question the run is parked on, and both are now asked in
+        // the composer rather than in a row the person has to scroll back to. The title names the tool because
+        // "run file_write" is not the question — what it writes is, and that is the body.
+        ["ChatApprovalWantsFormat"] = ("{0} 想要执行一个操作", "{0} wants to run an action"),
+        ["ChatApprovalWaitingLine"] = ("{0} 正在等你批准，决定在输入区", "{0} is waiting for your decision in the composer"),
+        ["ChatApprovalMoreWaitingFormat"] = ("还有 {0} 项在等待", "{0} more waiting"),
+        ["ChatApprovalExpand"] = ("展开完整内容", "Expand"),
+        ["ChatApprovalCollapse"] = ("收起", "Collapse"),
+        // "Always allow" renamed to say its consequence: the bare word promised more than the grant does, which
+        // is per session and per tool.
+        ["ApprovalAllowAlwaysForTool"] = ("本会话不再问 {0}", "Stop asking about {0} in this session"),
+        ["ChatPlanReviewTitle"] = ("审阅计划", "Review plan"),
+        ["ChatPlanReviewOpen"] = ("查看计划", "View plan"),
+        ["ChatPlanReviewContinue"] = ("继续", "Continue"),
+        ["ChatPlanOptionApprove"] = ("批准并开始实施", "Approve and start implementing"),
+        ["ChatPlanOptionRevise"] = ("我要修改计划", "Suggest changes to the plan"),
+        ["ChatPlanFeedbackPlaceholder"] = ("说说计划要改哪里…", "Tell me what to change…"),
+        ["ChatPlanWaitingLine"] = ("计划等你审阅，决定在输入区", "The plan is waiting for you in the composer"),
+        // ── Steering needs a second tap ──
+        // A steer cancels the segment being generated and is the routing table's strongest signal, so the first
+        // Enter only shows what would be sent. The consequence lives in the tooltip rather than as a second
+        // line of text: the composer already says everything else.
+        ["ChatSteerConfirmTip"] = ("插话会打断当前回复，已生成的部分就此为止", "Interjecting cancels the reply being generated; what it has said so far is final"),
+        ["ChatSteerEdit"] = ("改一改", "Edit it"),
+        ["ChatSteerDiscard"] = ("丢弃", "Discard"),
+        ["ChatSteerDraftMoved"] = ("还有一条没插出去", "One interjection was never sent"),
+        ["ChatSteerPicturesSuffix"] = ("+ {0} 张图", "+ {0} picture(s)"),
+        ["ChatSteerYieldNotice"] = ("先处理上面的请求", "Resolve the request above first"),
+        // ── The window-level picture viewer ──
+        ["PictureViewerPositionFormat"] = ("第 {0} / {1} 张", "{0} of {1}"),
+        ["PictureViewerPrevious"] = ("上一张", "Previous picture"),
+        ["PictureViewerNext"] = ("下一张", "Next picture"),
+        ["PictureViewerCopy"] = ("复制图片", "Copy picture"),
+        ["PictureViewerClose"] = ("关闭", "Close"),
+        ["PictureViewerMissing"] = ("图片已不可读", "Picture no longer readable"),
+        // ── The right-hand inspector ──
+        ["InspectorTabPlan"] = ("计划", "Plan"),
+        ["InspectorTabChanges"] = ("改动", "Changes"),
+        ["InspectorClose"] = ("关闭面板", "Close panel"),
+        ["InspectorChangesEmpty"] = ("这个会话还没改动任何文件", "This session has not touched any file yet"),
+        ["InspectorPlanEmpty"] = ("还没有生成计划", "No plan yet"),
+        // Four honest ways a diff can be unavailable. Each names why it stopped instead of drawing nothing:
+        // a created file has no before by construction, and a copy that aged out or was spent by a revert is
+        // gone for good in a store bounded at 64 files / 8 MiB.
+        ["InspectorDiffCreatedFile"] = ("新建的文件没有改动前", "A new file has no before"),
+        ["InspectorDiffCopyGone"] = ("改动前的副本已经不在了", "The pre-image has aged out of Hub's bounded store"),
+        ["InspectorDiffCopySpent"] = ("那次写入已被撤销，副本用完", "The copy was spent by a revert"),
+        ["InspectorDiffUnreadable"] = ("现在读不到这个文件，或它不是文本", "The file is gone or is not text"),
+        ["InspectorDiffRefusedLine"] = ("没有改动", "No change"),
+        ["InspectorAddedFormat"] = ("+{0}", "+{0}"),
+        ["InspectorRemovedFormat"] = ("−{0}", "−{0}"),
+        ["InspectorExpandHint"] = ("展开看 diff", "Expand to see the diff"),
+        // ── A run's activity, folded into one collapsible group ──
+        ["ActivityGroupToolCountFormat"] = ("执行工具 {0} 次", "{0} tool call(s)"),
+        ["ActivityGroupRunningFormat"] = ("正在执行中 · {0}", "Running · {0}"),
+        ["ActivityGroupThoughtFormat"] = ("已思考 {0}", "Thought for {0}"),
+        ["ActivityRowThought"] = ("已思考", "Thought"),
+        ["ActivityRowRead"] = ("读取 {0}", "read {0}"),
+        ["ActivityRowSearch"] = ("搜索 {0}", "search {0}"),
+        ["ActivityRowList"] = ("列出 {0}", "list {0}"),
+        ["ActivityRowEditFile"] = ("编辑文件 {0}", "edit {0}"),
+        ["ActivityRowRunCommand"] = ("执行命令", "run command"),
+        ["ActivityRowExpandThought"] = ("看思考全文", "Show the full thinking"),
         // Recorded as the user's own turn, in their voice: it is the thing they just did by clicking, and the
         // assistant has to read it before it touches the same file again.
         ["ChatUndoNotifiedFormat"] = ("我已撤销那次写入：{0} 已恢复到写入之前的内容。",

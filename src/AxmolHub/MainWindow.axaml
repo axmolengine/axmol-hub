@@ -113,9 +113,150 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
+
+    <!-- The viewer's prev/next. Visible at rest, in tertiary ink, brightening on hover: navigation that only
+         appears on hover is a dead end in a surface whose whole job is being looked at, which is the same
+         exemption the approval card has and for the same reason. -->
+    <Style Selector="Button.picture-nav">
+      <Setter Property="Width" Value="36" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="CornerRadius" Value="18" />
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Opacity" Value="0.75" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.picture-nav:pointerover">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <!-- The viewer's caption-row buttons (copy, close). Quieter than the round nav arrows because they sit
+         beside text, but still visible at rest for the same reason the arrows are. -->
+    <Style Selector="Button.viewer-action">
+      <Setter Property="Width" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.viewer-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+    </Style>
+    <Style Selector="TextBlock.picture-viewer-caption">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- The viewer's scrim. An overlay of this window rather than a Popup on purpose: a popup is its own
+         top-level window, so nothing that photographs this one would ever see it, and a viewer nobody can
+         assert on is a viewer that quietly stops working. The scrim is the theme's own raised surface at
+         almost full opacity rather than a literal black, so it reads in both themes. -->
+    <Style Selector="Border.picture-preview-scrim">
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
+      <Setter Property="Opacity" Value="0.94" />
+    </Style>
+
+    <!-- ==================== Inspector pane ====================
+         The tabs read as text with an underline on the selected one rather than as a boxed TabControl: the pane
+         is already a boxed column, and a second box inside it is chrome saying "navigation" a second time. -->
+    <Style Selector="Button.inspector-tab">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0,0,0,2" />
+      <Setter Property="Padding" Value="2,4" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.inspector-tab:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.inspector-tab.selected">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-empty">
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.inspector-change-header">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="6,5" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Button.inspector-change-header:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.inspector-change-header.expanded">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-path">
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.inspector-verdict">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Width" Value="16" />
+      <Setter Property="TextAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.inspector-verdict.created">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-verdict.edited">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-verdict.unchanged">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-verdict.refused">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Danger}" />
+    </Style>
+    <Style Selector="TextBlock.inspector-count-added">
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style Selector="TextBlock.inspector-count-removed">
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+    <!-- The diff body: one bordered block, each line a plate. Adds and deletes carry the theme's own tinted
+         surfaces rather than raw green/red, so they read in both themes without shouting. -->
+    <Style Selector="Border.inspector-diff">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+    <Style Selector="Border.inspector-diff-line">
+      <Setter Property="Padding" Value="8,1" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.inspector-diff-line.diff-add">
+      <Setter Property="Background" Value="{DynamicResource Hub.DiffAddSurface}" />
+    </Style>
+    <Style Selector="Border.inspector-diff-line.diff-del">
+      <Setter Property="Background" Value="{DynamicResource Hub.DiffDeleteSurface}" />
+    </Style>
+    <Style Selector="Border.inspector-diff-line.diff-hunk TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="Border.inspector-diff-line.diff-header TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
   </Window.Styles>
 
-  <Grid ColumnDefinitions="Auto,*">
+  <!-- Two layers: the shell (sidebar, page, inspector) and, above it, the window-level picture viewer. The
+       viewer is a sibling of the whole shell rather than a column-spanning child of it, so the inspector
+       column coming and going cannot change what the viewer covers — and it stays inside this window, which
+       is what keeps it photographable by the shell self-check (a Popup would be its own top-level). -->
+  <Grid>
+  <Grid x:Name="ShellRoot" ColumnDefinitions="Auto,*,Auto">
 
     <!-- ==================== Sidebar ==================== -->
     <Grid Grid.Column="0" ColumnDefinitions="*,5">
@@ -301,5 +442,48 @@
 
     </Grid>
 
+    <!-- ==================== Inspector ====================
+         The right-hand review pane: the plan in full, and the diff of every file this conversation changed.
+         A real column rather than an in-page pane because PageHost's margins would keep it from ever reaching
+         the window edge, and the right-edge pixel assertion needs something at the edge to measure. The grip
+         is the sidebar's vocabulary mirrored: five pixels of hit area, hand-rolled pointer handlers, no
+         GridSplitter anywhere in this app. -->
+    <Grid Grid.Column="2" ColumnDefinitions="5,*" IsVisible="False" x:Name="InspectorColumn">
+      <Border x:Name="InspectorResizeGrip" Grid.Column="0" Background="Transparent"
+              Cursor="SizeWestEast" IsVisible="False" />
+      <Border x:Name="Inspector" Grid.Column="1" Width="360" ClipToBounds="True"
+              Background="{DynamicResource Hub.SurfaceAlt}"
+              BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1,0,0,0">
+        <ContentControl x:Name="InspectorHost" />
+      </Border>
+    </Grid>
+
+  </Grid>
+
+  <!-- ==================== Picture viewer ====================
+       Fills the window because a capture is only readable at the size the window allows. The margins leave a
+       lane for the prev/next buttons and keep the top bar and status strip readable, so opening a picture
+       never feels like losing the window. -->
+  <Grid x:Name="PictureViewerHost" IsVisible="False">
+    <Border x:Name="PictureViewerScrim" Classes="picture-preview-scrim" />
+    <Image x:Name="PictureViewerImage" Stretch="Uniform" Margin="72,44,72,44" />
+    <Button x:Name="PicturePrevButton" Classes="picture-nav" HorizontalAlignment="Left"
+            VerticalAlignment="Center" Margin="18,0,0,0" ToolTip.Tip="{DynamicResource PictureViewerPrevious}">
+      <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
+            Fill="{DynamicResource Hub.TextSecondary}" RenderTransform="rotate(180deg)"
+            RenderTransformOrigin="50%,50%" />
+    </Button>
+    <Button x:Name="PictureNextButton" Classes="picture-nav" HorizontalAlignment="Right"
+            VerticalAlignment="Center" Margin="0,0,18,0" ToolTip.Tip="{DynamicResource PictureViewerNext}">
+      <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
+            Fill="{DynamicResource Hub.TextSecondary}" />
+    </Button>
+    <Grid VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,14"
+          ColumnDefinitions="Auto,Auto">
+      <TextBlock x:Name="PictureViewerCaption" Classes="picture-viewer-caption" />
+      <StackPanel x:Name="PictureViewerBar" Grid.Column="1" Orientation="Horizontal" Spacing="4"
+                  Margin="14,0,0,0" />
+    </Grid>
+  </Grid>
   </Grid>
 </Window>

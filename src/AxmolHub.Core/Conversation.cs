@@ -96,9 +96,12 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// part of the conversation rather than a display nicety: DeepSeek answers 400 on any request whose history
     /// came from a thinking model that was also offered tools, unless each assistant message carries its own
     /// <c>reasoning_content</c> back. Nullable for the usual reason — a session written before this existed has
-    /// no such property and still has to load — and it is deliberately <b>not</b> rendered in the transcript:
-    /// the answer is what the person asked for, and a wall of chain-of-thought under every reply is a different
-    /// product decision than a wire field that a gateway requires.</summary>
+    /// no such property and still has to load — and it is deliberately <b>not</b> rendered as prose under the
+    /// reply: the answer is what the person asked for, and a wall of chain-of-thought beneath every message is a
+    /// different product decision than a wire field a gateway requires. A turn that <i>only</i> thought (reasoning
+    /// present, <see cref="Text"/> empty) is still an activity turn, so the transcript folds it into the collapsed
+    /// "已思考 Ns" group with the tool calls around it rather than printing it inline — reachable on purpose, never
+    /// in the way by default.</summary>
     public string? Reasoning { get; init; }
 
     /// <summary>Permission state of a tool call that needed one; <c>null</c> means there was nothing to decide.
