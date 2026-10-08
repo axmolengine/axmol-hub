@@ -67,6 +67,8 @@ Keep each commit scoped to one change; do not sweep unrelated working-copy modif
 Do not add `Co-authored-by` trailers to commit messages.
 
 - **No long-winded commit bodies.** The commit message body must not be a long essay — keep it short.
+- **English only, title and body.** Commit messages are pure English; the entire history is. Chinese
+  belongs in code comments and in the docs, where it is the norm — not in a commit message.
 
 A release is cut by a commit titled `Version x.y.z` (also `Version x.y.z-beta` or
 `Version x.y.z (Preview)`). Its **only** change is the version in `Directory.Build.props` — it is the
