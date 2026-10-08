@@ -47,11 +47,11 @@ brew install --cask dotnet-sdk
 
 ```bash
 # Ubuntu 24.04 / 25.04 / 25.10 —— .NET 已在 Ubuntu 自己的源里，不用加任何第三方源
-sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0
+sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0 dotnet-runtime-8.0
 
 # Ubuntu 22.04 —— .NET 10 只来自 Canonical 的 backports PPA
 sudo add-apt-repository ppa:dotnet/backports
-sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0
+sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0 dotnet-runtime-8.0
 ```
 
 不要再按老教程去加 `packages.microsoft.com`：微软**已不再**通过它为 Ubuntu 提供包（且该源只有 x64），和 Ubuntu 源混用正是 .NET 包冲突（package mix-up）报错的来源。arm64 主机请用 Ubuntu 源或上面的安装脚本。
