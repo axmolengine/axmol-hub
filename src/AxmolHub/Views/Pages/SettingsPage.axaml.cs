@@ -468,15 +468,11 @@ public partial class SettingsPage : UserControl
     {
         if (!_ready) return;
 
-        var mode = SelectedToolApprovalModeForCheck;
-        if (mode == _preferences.ToolApprovalMode) return;
-
-        _preferences.ToolApprovalMode = mode;
-        _preferencesStore.Save(_preferences);
-        // Sessions that follow this default change meaning with it, including the chip on the assistant page
-        // that says so. That page is cached and navigation does not reload it, so this is the only moment the
-        // new default can arrive.
-        _chat.NotifyAppSettingsChanged();
+        // One owner for the write. The assistant already reads this setting, offers the same change on the
+        // composer's own menu row, and records the move in the activity log; a second path here would be a second
+        // meaning for "the default moved", and the one that skips the audit line is the one that leaves a mystery
+        // in the log the next time a call asks — or stops asking — for a reason nobody can read back.
+        _chat.SetDefaultApprovalMode(SelectedToolApprovalModeForCheck);
     }
 
     /// <summary>

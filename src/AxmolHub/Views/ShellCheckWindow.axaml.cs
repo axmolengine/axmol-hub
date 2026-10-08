@@ -3924,6 +3924,28 @@ public partial class ShellCheckWindow : Window
                       StringComparison.Ordinal),
                 "批准、总是允许、拒绝与重启后的批准各留下一行审计");
 
+            // …and so does the answer nobody clicked. Every cell above reads a behaviour; this one reads the log
+            // that says *why* a call went through, which is the thing a person needs when the card they expected
+            // is missing three sessions from now. The four answers have to be tellable apart: a call let through
+            // by a grant they forgot about is not the same situation as one the mode covers, and only the second
+            // one is fixed by changing the mode.
+            var gateLines = System.IO.File.ReadAllLines(shell.Workspace.Log.FilePath);
+            Check(gateLines.Any(line => line.Contains("Tool gate: allowed-by-mode run_command · auto · WorkspaceCommand",
+                       StringComparison.Ordinal))
+                  && gateLines.Any(line => line.Contains("Tool gate: asked run_command · ask · WorkspaceCommand",
+                       StringComparison.Ordinal))
+                  && gateLines.Any(line => line.Contains("Tool gate: allowed-by-app-grant run_command · ask · WorkspaceCommand",
+                       StringComparison.Ordinal))
+                  && gateLines.Any(line => line.Contains("Tool gate: allowed-by-session-grant file_write · ask · WorkspaceWrite",
+                       StringComparison.Ordinal))
+                  && gateLines.Any(line => line.Contains("Tool gate: asked capture_screen · ask · SystemCommand",
+                       StringComparison.Ordinal)),
+                "闸门每一次会动的判定都留下一行，并说清是哪种答案（模式放行 / 会话授权 / 应用信任 / 该问）");
+            // A read is not a decision and must not crowd the log with one line per lookup: an exploration turn
+            // makes dozens, and the record a person reads would be the transcript twice over.
+            Check(!gateLines.Any(line => line.Contains("· ReadOnly", StringComparison.Ordinal)),
+                "只读工具不进闸门审计，日志留下的都是真的动过手");
+
             // ── the mode is pickable: a chip on the composer row, app-wide default in Settings ──
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.OpenConversation(parkSession.Id);
@@ -4042,6 +4064,14 @@ public partial class ShellCheckWindow : Window
             // cell above left it there), and setting the same index raises no SelectionChanged, so a "restore"
             // through it would be a no-op that the next cell would blame on the row it just clicked.
             chat.SetDefaultApprovalMode(ToolApprovalModes.Ask);
+            // Both settings that decide a card write a line, because the transcript alone cannot tell "the mode
+            // allows this" apart from "somebody moved a switch a minute ago" — which is precisely the question a
+            // missing card raises. One session override and one app default were changed above; both are here.
+            var modeLines = System.IO.File.ReadAllLines(shell.Workspace.Log.FilePath);
+            Check(modeLines.Any(line => line.Contains("Approval mode: auto", StringComparison.Ordinal))
+                  && modeLines.Any(line => line.Contains("Approval mode: follow default", StringComparison.Ordinal))
+                  && modeLines.Any(line => line.Contains("Approval default: auto", StringComparison.Ordinal)),
+                "会话档位与应用默认各自改动都留下一行审计，包括清回「跟随默认」那次");
             Dispatcher.UIThread.RunJobs();
 
             // The chip is pickable before any session exists: deciding how much to allow is something a person

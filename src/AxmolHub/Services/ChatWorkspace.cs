@@ -2630,6 +2630,8 @@ public sealed class ChatWorkspace : IDisposable
         if (preferences is null || preferences.ToolApprovalMode == normalized) return false;
         preferences.ToolApprovalMode = normalized;
         PersistPreferences(preferences);
+        // The app-wide answer to "how strict is the assistant", written down where the per-session one already is.
+        AuditWrite?.Invoke($"Approval default: {normalized}");
         NotifyAppSettingsChanged();
         return true;
     }
@@ -2661,6 +2663,10 @@ public sealed class ChatWorkspace : IDisposable
     {
         var normalized = mode is null ? null : ToolApprovalModes.Normalize(mode);
         if (!_sessions.TryUpdate(conversationId, conversation => conversation.ApprovalMode = normalized)) return false;
+        // Recorded because a mode is the reason a call did or did not ask, and the gate's own line reads as a
+        // mystery switch unless the log also says when the setting moved. One transcript can be answered under
+        // three modes across a restart, and only this line makes that readable afterwards.
+        Audit(conversationId, $"Approval mode: {normalized ?? "follow default"}");
         Changed?.Invoke();
         return true;
     }
@@ -2711,6 +2717,8 @@ public sealed class ChatWorkspace : IDisposable
     /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask
     /// the call is recorded as waiting and the stream ends. The run keeps its slot and the decision can be made
     /// later — after a restart, even — because the pending call is in the transcript rather than in memory.
+    /// Every answer above the read-only tier is written to the audit, because "why did that one not ask" is a
+    /// question about a setting, and the log is where a person goes to read a setting back.
     /// </summary>
     private async Task<ChatPipeline.ToolGateOutcome> GateToolCallAsync(
         ConversationRun run, ChatPipeline.ToolCallInfo call, ChatToolScope scope)
@@ -2720,15 +2728,18 @@ public sealed class ChatWorkspace : IDisposable
             var conversation = _sessions.Peek(run.ConversationId);
             var projects = ProjectPaths(scope);
             var risk = ChatTools.RiskOf(call.Name, call.ArgumentsJson, scope.Workspace, projects);
+            var mode = ApprovalModeFor(run.ConversationId);
+            var sessionGrant = ToolTrust.Contains(conversation?.AutoApprovedTools, call.Name);
+            var appGrant = ToolTrust.Contains(TrustedTools, call.Name);
             // A grant buys a pass on everything except the tier that reaches past the sandbox. Left unbounded, one
             // click on 「总是允许」 would end up covering the screen and another session's first model call, and the
             // three-mode ladder would be a decoration: what decides a call would be whichever verb was clicked
             // last, rather than what the call can do.
-            var granted = risk != ToolRisk.SystemCommand
-                          && (ToolTrust.Contains(conversation?.AutoApprovedTools, call.Name)
-                              || ToolTrust.Contains(TrustedTools, call.Name));
-            if (granted || !ToolApprovalPolicy.RequiresApproval(ApprovalModeFor(run.ConversationId), risk))
-                return (Parks: false, Preview: (string?)null);
+            var granted = risk != ToolRisk.SystemCommand && (sessionGrant || appGrant);
+            var parks = !granted && ToolApprovalPolicy.RequiresApproval(mode, risk);
+            if (risk != ToolRisk.ReadOnly)
+                Audit(run.ConversationId, $"Tool gate: {VerdictFor(parks, granted, sessionGrant)} {call.Name} · {mode} · {risk}");
+            if (!parks) return (Parks: false, Preview: (string?)null);
 
             // Computed only for a call that is about to park, and frozen here: a read-only call costs no file
             // access, and a write's card has to keep showing the diff the gate saw even after a restart. The scope
@@ -2756,6 +2767,15 @@ public sealed class ChatWorkspace : IDisposable
         }).ConfigureAwait(false);
         return ChatPipeline.ToolGateOutcome.Pending;
     }
+
+    /// <summary>Which of the four answers the gate gave, in the words the audit log keeps. Named rather than
+    /// inlined because the line is the only place a person can see that a call went through on a <i>grant</i>
+    /// rather than on the mode — the difference between "auto-approval allows this" and "I once clicked a
+    /// button", and the second one is the one that surprises somebody when they change the mode back.</summary>
+    private static string VerdictFor(bool parks, bool granted, bool sessionGrant)
+        => parks ? "asked"
+            : granted ? sessionGrant ? "allowed-by-session-grant" : "allowed-by-app-grant"
+            : "allowed-by-mode";
 
     /// <summary>Flips a recorded call to waiting and freezes what approving it would do. Nothing is written as its
     /// result: an unanswered call in the transcript is the record that a decision is owed, and
@@ -3429,12 +3449,9 @@ public sealed class ChatWorkspace : IDisposable
                     ToolActivityChanged?.Invoke(run.ConversationId, info.Name, true);
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
-                // A call that never asks still leaves a line. "Exempt from approval" is a decision about cards,
-                // not about the record — this is the one tool tier that writes into the user's repository with
-                // nothing clicked, so the trail is the only thing showing it happened. Read off the request's own
-                // scope rather than a fresh one: this callback is inside the model's loop, off the UI thread.
-                if (!failed && ChatTools.RiskOf(info.Name, info.ArgumentsJson, request.Scope.Workspace) == ToolRisk.AssistantNote)
-                    Audit(run.ConversationId, $"Tool note: {info.Name} ran without approval");
+                // A call that never asked still leaves a line, and it comes from the gate: "Exempt from approval"
+                // is a decision about cards, not about the record — this is the one tool tier that writes into the
+                // user's repository with nothing clicked, so the trail is the only thing showing it happened.
                 // Asked for here, acted on by the pump: this callback runs inside the model's tool loop, where
                 // awaiting a compression request would deadlock the loop that is waiting for the result.
                 run.RequestCompaction();
