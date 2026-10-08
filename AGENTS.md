@@ -34,7 +34,11 @@ Rules that follow from this:
   stay quiet until hovered.
 - **Match the established shell**: slim sidebar with the conversation list under the AI assistant nav
   item, centered 780–820px chat column, right-aligned user pill, borderless assistant text, centered
-  greeting + suggestion chips on empty state, 28px status strip.
+  greeting + suggestion chips on empty state, 28px status strip. The assistant page may also open a
+  right-hand **inspector column** (plan review, file diffs) as a real third shell column, not an
+  in-page pane — only a real column reaches the window edge the right-edge assertion measures. When it
+  is open the chat column is allowed to compress, but never below a **560px floor**; the 780–820 band is
+  the at-rest width, not a minimum the inspector may violate.
 
 When in doubt, remove chrome first. New UI must come with `--verify-shell` assertions (object graph
 or rendered pixels) — interaction bugs are silent at build time.
