@@ -212,7 +212,19 @@ dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --check-secrets
 
 无头（在 Avalonia 启动之前就返回），只写临时目录，末行打印 `backend=` 与档名。三平台 CI 矩阵都跑这一条。密钥存储的契约断言另有 `dotnet run --project tests/AxmolHub.Checks -- artifacts/checks --check-secret-store`（2026-10-07 实测 52 条 PASS，只能在 Windows 上跑，原因见 `docs/ci.md` §2.7）。
 
-同一台机器上的 Linux 真跑已经做过：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；上面那条 `dotnet publish` 的**自包含**产物与 AppImage 仍未实测。
+**Linux 真跑记录（2026-10-08 更新）**：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；同日在原生 Ubuntu（.NET 10.0.112 + `squashfs-tools`）补上了此前"仍未实测"的那半条 —— `installer/Build.ps1 -Runtime linux-x64` 产出 `axmol-hub-<v>-linux-x64.AppImage`（自包含，约 50 MB）与 full nupkg，`--appimage-extract` 解开后确认 `usr/bin/AxmolHub`、`.DirIcon`（512 PNG）、`usr/bin/Assets/hub-icon-{256,512}.png` 都在位；GUI 在真实 X11 会话里起得来，`xprop` 读到 `WM_CLASS = "…, \"axmol-hub\"` 与一份 `_NET_WM_ICON`。**未实测**的仍是签名/公证之外的东西：跨改名的增量更新（见下）与 macOS 通道。
+
+**改名带来的两个一次性代价**（`AxmolHub.App` → `AxmolHub`）：Windows 会把它当成**新的通知发送者**，用户对该应用已设的通知开关与历史归零一次（after-install 钩子会重新给 `Axmol Hub.lnk` 打 AppUserModelID 戳，投递本身不断）；而包内多数路径同时改名，**首个跨改名的更新包几乎没有 delta**，那一次用户下载的是接近全量的包。用户可见的启动路径不受影响 —— 协议与快捷方式指向的是安装根目录下 packTitle 派生的稳定启动器 `Axmol Hub.exe`（见 `installer/README.md`）。
+
+Linux 的桌面身份（窗口类 / `.desktop` 文件名 / 图标名同为 `axmol-hub`）与图标铺设由 App 自己在每次启动时完成，因此**不用打开 GUI 也能验证这台机器上图标到底铺不铺得下去**：
+
+```bash
+dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --check-linux-integration ./tmp/hub-integration
+```
+
+无头（同样在 Avalonia 启动之前返回），`XDG_DATA_HOME` 被指进 scratch 目录、绝不写真实的 `~/.local/share`；断言桌面入口可解析、`Icon=`/`StartupWMClass=` 与窗口类同名、两档 hicolor PNG 的 IHDR 尺寸与桶名相符、重复注册不重写文件，退出码即失败条数。要看真效果：正常启动一次（非 `--smoke` 等自动化模式，它们刻意跳过注册），然后在 GNOME 里搜 `Axmol`。
+
+**边界**：`.AppImage` **文件本身**在文件管理器里的图标不在这里解决 —— vpk 不用 `appimagetool`，只把 `.DirIcon` 压进镜像，纯净的 GNOME/Nautilus 不读镜像内部，需要 appimaged / Gearlever / AppImageLauncher 这类 DE 集成守护进程。运行窗口与"显示应用"的图标是本次修的部分。
 
 构建 Windows 安装包并进行隔离安装检查：
 

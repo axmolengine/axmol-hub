@@ -103,6 +103,8 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 | macOS arm64 / x64 | `macos-15` | `axmol-hub-<v>-osx-{arm64,x64}.pkg` | `--mainExe` |
 | Linux x64 | `ubuntu-24.04` | `axmol-hub-<v>-linux-x64.AppImage` | `--mainExe` |
 
+Linux 那一行有两个只有把 AppImage 解开才看得见的细节（`unsquashfs` 在这份文件上找不到 superblock，因为它是 runtime + squashfs 拼接；用 `./xxx.AppImage --appimage-extract`）。其一，`--icon` 给的那张 PNG 被 vpk 一次写成三份：AppDir 根的 `Axmol.Hub.png`、`.DirIcon`、以及 `usr/share/icons/hicolor/scalable/apps/Axmol.Hub.png` —— 所以 `--icon` 的尺寸直接决定这三处的观感，1254 原图在这里毫无收益。其二，生成的 `Axmol.Hub.desktop` 里 `Exec=` 取 `--mainExe`，而 `Icon=` 与 `StartupWMClass=` 都取 **packId**（`Axmol.Hub`），与窗口真实的 WM_CLASS（`axmol-hub`，见 `Services/LinuxDesktopIdentity`）不是一个字符串；Velopack 的运行时库在 Linux 上既不装菜单也不铺图标（`src/lib-csharp` 只有 locator，shell 链接那套是 Windows 专属），所以**桌面匹配不能指望 AppDir 里这份** —— 生效的是 App 每次启动自己写的 `~/.local/share/applications/axmol-hub.desktop`。副作用：若宿主装了 AppImageLauncher 一类集成工具，它会把 AppDir 那份也注册进去，"显示应用"里于是出现两个 Axmol Hub 图块，只有 `StartupWMClass` 对得上的那个会跟着窗口高亮。
+
 单平台调试仍可用 `Publish.ps1`：
 
 ```powershell
@@ -132,4 +134,4 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 - **macOS**：Gatekeeper 只认 Apple 签发的 Developer ID + 公证，`.app` / `.pkg` / `.dmg` 没有免费 OSS 签名通路。macOS 通道接入时只有两条路：Apple Developer Program，或在下载页给出 `xattr -r -d com.apple.quarantine` 的指引。
 - **Linux**：`.rpm` / `.deb` 走 GPG 签名；AppImage 场景没有等价的「未知发布者」拦截，自己生成 GPG 密钥即可。
 
-`Build-Hosts.ps1` 发布各宿主的自包含 CLI；`Build-Icon.ps1` 从源 PNG 生成 16–256 像素多尺寸 ICO。修改图标后先重新生成 ICO，再构建应用。
+`Build-Hosts.ps1` 发布各宿主的自包含 CLI；`Build-Icon.ps1` 从源 PNG 一次生成 16–256 像素多尺寸 ICO **与 256 / 512 两档单尺寸 PNG**（Linux 用：512 交给 `vpk` 的 `--icon`，256 随载荷走、给窗口图标与图标主题）。修改图标后先重跑这个脚本再构建应用；脚本用 System.Drawing，**只能在 Windows 上跑**。
