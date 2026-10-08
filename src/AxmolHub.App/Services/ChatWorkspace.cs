@@ -1750,6 +1750,32 @@ public sealed class ChatWorkspace : IDisposable
         return conversation;
     }
 
+    /// <summary>
+    /// The same empty draft, but belonging to <paramref name="workspaceRoot"/> — which is what a ＋ sitting on a
+    /// workspace group means: "a new session <em>here</em>". Null asks for the plain-chat case, so the draft is put
+    /// away from any directory rather than keeping whatever the composer's chip happened to be holding; the group
+    /// a session lands in is derived from this field, so setting it is the whole of the routing.
+    ///
+    /// <para>Two deliberate omissions. There is no "does this folder still exist" check: the group on screen can
+    /// only be reached from a session that names that directory, and a directory the user has moved is repaired
+    /// from the ⋯ next to this ＋ — refusing to create would hide the repair. And a draft that already has a
+    /// message is left alone, because re-homing a conversation with history under somebody's feet is a worse
+    /// surprise than a button that did nothing.</para>
+    ///
+    /// <para>A directory picked in the chip while nothing was on screen is not orphaned by this: that pending value
+    /// goes to the session <see cref="StartConversation"/> creates, and the write here replaces it with the group
+    /// the click came from — which is the direction the user was pointing in.</para>
+    /// </summary>
+    public Conversation StartOrOpenEmptyConversation(string? workspaceRoot)
+    {
+        var conversation = StartOrOpenEmptyConversation();
+        if (conversation.Messages.Count > 0) return conversation;
+        // SetWorkspaceRoot normalizes and persists through the registry, and treats blank as "no directory" — so
+        // the group's own spelling is passed straight through rather than second-guessed here.
+        SetWorkspaceRoot(conversation.Id, workspaceRoot);
+        return conversation;
+    }
+
     public Conversation? OpenConversation(string id)
     {
         // The registry hands back the one instance, so opening a session that is streaming does not swap in a

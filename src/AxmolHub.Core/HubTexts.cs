@@ -614,6 +614,10 @@ public static class HubTexts
         ["GroupRecentChats"] = ("最近聊天", "Recent chats"),
         ["GroupArchived"] = ("已归档", "Archived"),
         ["ToggleGroup"] = ("展开或折叠这一组", "Expand or collapse this group"),
+        // 分组标题右侧的 ＋：归属由会话的工作目录派生，所以「在这个项目里新建」不需要任何额外状态。
+        // 工具条上那个全局 ＋ 说的是 NewConversationTip（沿用 composer 当前选择），两者语义不同，文案也不同。
+        ["GroupNewSessionTip"] = ("新建会话", "New session"),
+        ["GroupNewChatTip"] = ("新建对话", "New chat"),
         ["ArchiveConversation"] = ("归档对话", "Archive conversation"),
         ["RestoreConversation"] = ("恢复对话", "Restore conversation"),
         ["RestoreAllArchived"] = ("全部恢复", "Restore all archived"),

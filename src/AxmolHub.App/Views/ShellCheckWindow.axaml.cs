@@ -1008,6 +1008,9 @@ public partial class ShellCheckWindow : Window
     ///
     /// 夹具用两个真实存在的目录加一个<b>从不创建</b>的目录。第三个夹具是这条特性存在的原因，也是最容易被
     /// 写歪的地方：一个只在目录存在时才成立的分组，恰好会在用户最需要改路径的那一刻什么都不显示。
+    ///
+    /// 分组标题右侧的 ＋ 也在这里验：它把新会话的归属写成被点的那条目录，所以「在搬走的目录上点 ＋」这一条
+    /// 用的是同一个从不创建的夹具——拦下来才是 bug。
     /// </summary>
     private void CheckWorkspaceGroups(string scratchRoot, MainWindow shell)
     {
@@ -1220,6 +1223,74 @@ public partial class ShellCheckWindow : Window
               && sidebar.SessionRowCountForCheck == 5,
             "分组菜单不计入会话行的操作菜单数（实际菜单 " + sidebar.SessionMenuCount
             + " / 行 " + sidebar.SessionRowCountForCheck + "）");
+
+        // ── 分组标题上的 ＋：在谁的名字下面点，新建的会话就属于谁 ──
+        // 归属本来就是从会话的工作目录派生出来的，所以这里不需要任何新状态，要验的只有一件事：＋ 把目录写进了
+        // 那条新会话。空会话按既有规矩不占列表行，所以“落进分组”这一步要等它发出第一条消息才看得见。
+        // 断言失败时也要能打印出实际目录，所以这里读的是“没有就算了”的形状，而不是让一次空引用把整段带走。
+        string RootOf(string? id) => id is null ? "（没有建出来）" : chat.WorkspaceRootFor(id) ?? "（无目录）";
+
+        var groupAFirst = sidebar.NewSessionFromGroupForCheck(keyA);
+        var liveAfterFirst = sidebar.ConversationCount;
+        Check(groupAFirst is { Length: > 0 } && chat.ActiveConversation?.Id == groupAFirst
+              && chat.WorkspaceRootFor(groupAFirst) == System.IO.Path.GetFullPath(workspaceA)
+              && sidebar.GroupNewTipForCheck(keyA) == HubStrings.Get("GroupNewSessionTip"),
+            "工作区分组最右侧的 ＋ 当场建一条属于这个目录的会话（实际目录 " + RootOf(groupAFirst)
+            + "，提示 " + sidebar.GroupNewTipForCheck(keyA) + "）");
+        Check(sidebar.GroupNewIsRightmostForCheck(keyA) && sidebar.GroupNewIsRightmostForCheck(SessionGroupKey.Recent),
+            "那个 ＋ 在分组标题的最右一格，⋯ 在它左边（不是靠像素比出来的，读的是列号）");
+        Check(groupAFirst is { Length: > 0 } && sidebar.NewSessionFromGroupForCheck(keyA) == groupAFirst
+              && sidebar.ConversationCount == liveAfterFirst,
+            "连着点两次 ＋ 还是同一条空会话，列表没有堆草稿（实际 " + sidebar.ConversationCount + " 项）");
+        // 建不出来就不喂消息：SeedTurnForCheck 走的是字典查找，拿 null 当键会当场抛，
+        // 一条断言失败不该把后面几十条一起带走——反向对照正是从这里发现这一点的。
+        if (groupAFirst is { Length: > 0 }) chat.SeedTurnForCheck(groupAFirst, "A 项目二");
+        sidebar.Reload();
+        Check(sidebar.GroupOfForCheck(groupAFirst ?? "") == keyA
+              && sidebar.GroupRowIdsForCheck(keyA).Contains(groupAFirst ?? ""),
+            "这条会话发出第一条消息后落进它所属的那个工作区分组（实际分组 "
+            + sidebar.GroupOfForCheck(groupAFirst ?? "") + "）");
+
+        var fromChats = sidebar.NewSessionFromGroupForCheck(SessionGroupKey.Recent);
+        Check(fromChats is { Length: > 0 } && chat.WorkspaceRootFor(fromChats) is null
+              && sidebar.GroupNewTipForCheck(SessionGroupKey.Recent) == HubStrings.Get("GroupNewChatTip"),
+            "「对话」分组最右侧的 ＋ 新建的对话没有工作目录（实际提示 "
+            + sidebar.GroupNewTipForCheck(SessionGroupKey.Recent) + "）");
+        if (fromChats is { Length: > 0 }) chat.SeedTurnForCheck(fromChats, "闲聊乙");
+        sidebar.Reload();
+        Check(sidebar.GroupOfForCheck(fromChats ?? "") == SessionGroupKey.Recent,
+            "它发出第一条消息后归在「对话」分组里，而不是某个目录下面");
+
+        // 目录已经不存在的分组也照样给 ＋，而且不拦：那条目录正是用户自己搬走的，＋ 建出来的会话先绑在旧位置上，
+        // 改路径的入口就在同一个分组的 ⋯ 里。拒掉的话，眼前什么入口都没有。
+        var goneOne = Seeded(movedAway, "又搬走一次");
+        sidebar.Reload();
+        var fromGone = sidebar.NewSessionFromGroupForCheck(keyMoved);
+        Check(sidebar.GroupOfForCheck(goneOne.Id) == keyMoved
+              && fromGone is { Length: > 0 } && fromGone != goneOne.Id
+              && chat.WorkspaceRootFor(fromGone) == System.IO.Path.GetFullPath(movedAway),
+            "目录已不存在的分组上的 ＋ 照样新建并绑定那个旧路径（实际目录 "
+            + RootOf(fromGone) + "）");
+
+        Check(!sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces),
+            "「工作区」是段标题而不是一条目录，它没有 ＋");
+        chat.SetArchived(plainOne.Id, true);
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived)
+              && !sidebar.GroupNewButtonForCheck(SessionGroupKey.Archived),
+            "「已归档」是收起来的地方，它也没有 ＋ —— 在那里新建是把这个分组反着用");
+        chat.SetArchived(plainOne.Id, false);
+        sidebar.Reload();
+
+        // ＋ 有自己的类名，所以它既不会被当成组的第三项菜单（那是读 ⋯ 的 Tag 得来的），也不会混进行操作菜单的
+        // 计数里 —— 行计数看的是每行都有菜单，多算少算都是一次假通过。
+        Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
+              && sidebar.SessionRowCountForCheck == 8
+              && sidebar.GroupMenuTitlesForCheck(keyA).Length == 2,
+            "分组上的 ＋ 不计入会话行的操作菜单数，也不算成分组的菜单项（实际菜单 "
+            + sidebar.SessionMenuCount + " / 行 " + sidebar.SessionRowCountForCheck + "）");
 
         foreach (var id in chat.Conversations.Select(summary => summary.Id).ToArray())
         {

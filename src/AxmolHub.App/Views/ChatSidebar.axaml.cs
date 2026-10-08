@@ -26,8 +26,9 @@ namespace AxmolHub.App;
 /// "AI 助手" navigation item (visible only while the assistant page is shown) and lets the whole
 /// sidebar collapse.
 ///
-/// Owns: the search field (toggled by the magnifier), the new-conversation button, the grouped conversation
-/// rows and their rename/pin/archive/delete flyout, and the workspace groups those rows are sorted into.
+/// Owns: the search field (toggled by the magnifier), the new-conversation button, the grouped conversation rows
+/// and their rename/pin/archive/delete flyout, and the workspace groups those rows are sorted into — each group
+/// with its own fold, its own actions menu, and its own ＋ for starting a session in that place.
 ///
 /// <para>The list is grouped by the directory a session works in rather than by when it last moved: several
 /// chats about one project are one job, and a sidebar that splits them across "today" and "older" shows a
@@ -240,8 +241,9 @@ public partial class ChatSidebar : UserControl
     }
 
     /// <summary>
-    /// A group's own line: the fold on the left, the actions for the group on the right, and nothing else. The
-    /// count is left off — a group is as big as the rows under it, and the rows are one scroll away.
+    /// A group's own line: the fold on the left, then ＋ and ⋯ on the right — creating is the more common act of
+    /// the two, so it takes the outer edge. Nothing else: the count is left off, because a group is as big as the
+    /// rows under it and the rows are one scroll away.
     ///
     /// <para>The header is a <see cref="ToggleButton"/> wearing the shell's expander-header theme rather than a
     /// styled default one: the default paints a checked toggle with a solid accent plate, which turns a quiet row
@@ -253,7 +255,7 @@ public partial class ChatSidebar : UserControl
         var collapsed = IsGroupCollapsed(bucket.Key);
         var row = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
             // One indent step per level, so the heading and the groups under it are one shape rather than a
             // list of names that happen to be related.
             Margin = new Thickness(bucket.Depth * 12, 8, 0, 2),
@@ -321,6 +323,37 @@ public partial class ChatSidebar : UserControl
             menuButton.Tag = menu;
             Grid.SetColumn(menuButton, 1);
             row.Children.Add(menuButton);
+        }
+
+        // ＋ belongs to a group that can hold a new session: one directory, or the plain-chat group of sessions with
+        // no directory. The Workspace heading is not a place to work and 已归档 is where sessions go to be out of
+        // the way, so a ＋ on either would be using the bucket backwards.
+        string? newTip = bucket.Key == SessionGroupKey.Recent
+            ? "GroupNewChatTip"
+            : bucket.WorkspaceRoot is { Length: > 0 } ? "GroupNewSessionTip" : null;
+        if (newTip is not null)
+        {
+            var newButton = new Button
+            {
+                Content = new Path
+                {
+                    Data = GeometryAt("Hub.Icon.Plus"),
+                    Width = 12,
+                    Height = 12,
+                    Stretch = Stretch.Uniform,
+                },
+                Width = 28,
+                Height = 22,
+                Tag = bucket.Key,
+            };
+            // Its own class, and the assertions reach the button through it: group-menu is read as "this group's
+            // menu titles" and session-menu as "this row has an actions menu", so a ＋ borrowing either would put a
+            // button in front of a reader that was never meant to describe it — and leave the ＋ itself unfound.
+            newButton.Classes.Add("group-new");
+            ToolTip.SetTip(newButton, HubStrings.Get(newTip));
+            newButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation(bucket.WorkspaceRoot);
+            Grid.SetColumn(newButton, 2);
+            row.Children.Add(newButton);
         }
 
         return row;
@@ -770,6 +803,40 @@ public partial class ChatSidebar : UserControl
         .SelectMany(button => (button.Tag as MenuFlyout)?.Items.OfType<MenuItem>() ?? [])
         .Select(item => item.Header?.ToString() ?? "")
         .ToArray();
+
+    /// <summary>Whether a group header carries the ＋ at its right edge. The two buckets that must not offer one —
+    /// the Workspace heading and the archived group — are asserted through this answer being false, so it speaks
+    /// about the button rather than about the group.</summary>
+    internal bool GroupNewButtonForCheck(string key) => GroupNewButtons(key).Any();
+
+    /// <summary>That the ＋ is the last thing in the header row, which is what "at its right edge" claims. The
+    /// column index is the structural truth of it; two buttons' pixel bounds would say the same only after a
+    /// measure pass, and a check that depends on layout timing is a check that fails on a slow machine.</summary>
+    internal bool GroupNewIsRightmostForCheck(string key) => GroupNewButtons(key).Any(button =>
+        button.Parent is Grid grid && Grid.GetColumn(button) == grid.ColumnDefinitions.Count - 1);
+
+    /// <summary>The ＋'s own words, or empty when there is no button to read them from: a group that should offer
+    /// one and does not has to fail an assertion rather than throw one that takes the suite with it.</summary>
+    internal string GroupNewTipForCheck(string key) => GroupNewButtons(key)
+        .Select(button => ToolTip.GetTip(button)?.ToString() ?? "")
+        .FirstOrDefault() ?? "";
+
+    /// <summary>Clicks a group's ＋ and hands back the conversation that ended up on screen, so an assertion can
+    /// ask both "did something appear" and "does it belong here". Null is the answer for a bucket with no ＋.</summary>
+    internal string? NewSessionFromGroupForCheck(string key)
+    {
+        var button = GroupNewButtons(key).FirstOrDefault();
+        if (button is null) return null;
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        return _chat.ActiveConversation?.Id;
+    }
+
+    private IEnumerable<Button> GroupNewButtons(string key) => GroupToggles()
+        .Where(toggle => string.Equals(toggle.Tag?.ToString(), key, StringComparison.Ordinal))
+        .Select(toggle => toggle.Parent as Grid)
+        .OfType<Grid>()
+        .SelectMany(grid => grid.Children.OfType<Button>()
+            .Where(button => button.Classes.Contains("group-new")));
 
     /// <summary>Clicks a group's 全部恢复. Archiving a workspace is confirmed by a dialog, so it is driven through
     /// <see cref="ChatWorkspace"/> by the assertions instead — what is checked here is that the menu item exists
