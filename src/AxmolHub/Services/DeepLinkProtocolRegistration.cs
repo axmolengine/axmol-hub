@@ -78,16 +78,15 @@ internal static class DeepLinkProtocolRegistration
     [SupportedOSPlatform("windows")]
     private static void TryStampStartMenuShortcut(Action<string>? diagnostic)
     {
-        var startMenu = Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-        if (!Directory.Exists(startMenu))
+        // Velopack writes the shortcut into a *Programs* folder, not the Start Menu root that
+        // SpecialFolder.StartMenu resolves to. Looking in the root made File.Exists false on every
+        // launch, so the stamp never ran and the shortcut kept Velopack's own AUMID
+        // (velopack.Axmol.Hub) — which does not match this app's notifier AUMID, so Windows silently
+        // dropped every toast. Search the per-user Programs folder first, then the all-users one.
+        var shortcut = FindStartMenuShortcut();
+        if (shortcut is null)
         {
-            diagnostic?.Invoke("Windows Start Menu directory was not found; toast AppUserModelID shortcut stamping was skipped.");
-            return;
-        }
-        var shortcut = Path.Combine(startMenu, "Axmol Hub.lnk");
-        if (!File.Exists(shortcut))
-        {
-            diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu; Windows toasts may not be delivered for this build.");
+            diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu Programs folders; Windows toasts may not be delivered for this build.");
             return;
         }
 
@@ -131,6 +130,28 @@ internal static class DeepLinkProtocolRegistration
             if (shellLink is not null && Marshal.IsComObject(shellLink))
                 Marshal.FinalReleaseComObject(shellLink);
         }
+    }
+
+    /// <summary>Locates the installed <c>Axmol Hub.lnk</c>. Velopack places it under a Start Menu
+    /// <em>Programs</em> folder — per-user for a normal install, all-users for a machine-wide one —
+    /// never the Start Menu root. Returns the first existing match, or <c>null</c> when the app is
+    /// running from a build that was never installed (no shortcut, so nothing to stamp).</summary>
+    [SupportedOSPlatform("windows")]
+    private static string? FindStartMenuShortcut()
+    {
+        foreach (var folder in new[]
+                 {
+                     Environment.SpecialFolder.Programs,
+                     Environment.SpecialFolder.CommonPrograms,
+                 })
+        {
+            var path = Environment.GetFolderPath(folder);
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) continue;
+            var shortcut = Path.Combine(path, "Axmol Hub.lnk");
+            if (File.Exists(shortcut)) return shortcut;
+        }
+
+        return null;
     }
 
     [ComImport]
