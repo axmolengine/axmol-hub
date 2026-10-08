@@ -6,8 +6,9 @@ namespace AxmolHub.Core;
 /// so moving a directory and re-pointing the sessions that used it moves the group with them, with nothing left
 /// behind to forget.
 ///
-/// <para>Two of the keys name a bucket rather than a place: sessions with no workspace at all, and sessions the
-/// user put away. Those are real states of a session, not paths, so they get a constant instead of a spelling.</para>
+/// <para>Some of the keys name a bucket rather than a place: sessions with no workspace at all, sessions the user
+/// put away, and the heading the workspace groups hang under. Those are real states of the list, not paths, so
+/// they get a constant instead of a spelling.</para>
 ///
 /// <para>A key doubles as the identity of a group in the saved collapse state, which is why <see cref="Workspace"/>
 /// canonicalizes rather than passing the path through: the same directory under two spellings must be one group
@@ -17,6 +18,13 @@ public static class SessionGroupKey
 {
     /// <summary>Sessions that were never pointed at a directory — plain chats.</summary>
     public const string Recent = "recent";
+
+    /// <summary>
+    /// The node every <see cref="Workspace"/> group hangs under. It is a heading rather than a bucket: it holds no
+    /// sessions of its own, and it exists because "which of these rows are about a project" is a question the list
+    /// should answer before a person reads a single folder name.
+    /// </summary>
+    public const string Workspaces = "workspaces";
 
     /// <summary>Sessions the user archived. A bucket rather than a flag on screen, because something hidden with
     /// no way back is indistinguishable from something lost.</summary>

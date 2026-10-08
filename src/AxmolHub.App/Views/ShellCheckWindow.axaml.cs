@@ -1062,10 +1062,15 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
 
         var tags = sidebar.GroupHeaderTagsForCheck();
-        Check(tags.Length == 4 && tags[^1] == SessionGroupKey.Recent
-              && tags.Contains(keyA) && tags.Contains(keyB) && tags.Contains(keyMoved),
-            "会话按工作目录分组，没有目录的对话统一归到末尾的「最近聊天」（实际分组："
-            + string.Join(" / ", tags.Select(tag => tag.StartsWith("ws:", StringComparison.Ordinal) ? tag[3..] : tag)) + "）");
+        var nested = tags.Skip(1).TakeWhile(tag => tag.StartsWith("ws:", StringComparison.Ordinal)).ToArray();
+        Check(tags.Length == 5 && tags[0] == SessionGroupKey.Workspaces
+              && nested.Length == 3 && nested.Contains(keyA) && nested.Contains(keyB) && nested.Contains(keyMoved)
+              && tags[4] == SessionGroupKey.Recent,
+            "所有工作区分组都挂在「工作区」根节点下，没有目录的对话作为同级的「最近聊天」排在后面（实际顺序："
+            + string.Join(" / ", tags) + "）");
+        Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Workspaces).Length == 0
+              && sidebar.GroupRowIdsForCheck(SessionGroupKey.Workspaces).Length == 0,
+            "「工作区」只是段标题：它没有可编辑的路径，也不直接收会话行");
         Check(sidebar.GroupOfForCheck(aUpper.Id) == keyA
               && sidebar.GroupOfForCheck(aOne.Id) == keyA
               && tags.Count(tag => tag == keyA) == 1,
@@ -1078,6 +1083,24 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length == 0,
             "「最近聊天」不是一条目录，因此没有可编辑的路径（实际 " 
             + sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length + " 项）");
+
+        // ── 折叠根节点：整段工作区一起收，同级不受影响 ──
+        var allRows = sidebar.SessionRowCountForCheck;
+        var plainRows = sidebar.GroupRowIdsForCheck(SessionGroupKey.Recent).Length;
+        Check(plainRows > 0 && allRows > plainRows && !sidebar.GroupCollapsedForCheck(SessionGroupKey.Workspaces),
+            "根节点默认展开（工作区分组一上来就藏着，等于没有分组）");
+        Check(sidebar.ToggleGroupForCheck(SessionGroupKey.Workspaces)
+              && sidebar.SessionRowCountForCheck == plainRows
+              && sidebar.GroupHeaderTagsForCheck().SequenceEqual([SessionGroupKey.Workspaces, SessionGroupKey.Recent]),
+            "折起「工作区」把整段工作区分组连同它们的会话一起收掉，同级的「最近聊天」不受影响（实际 "
+            + sidebar.SessionRowCountForCheck + "/" + allRows + " 行）");
+        Check(new PreferencesStore(PreferencesPathFor(scratchRoot)).Load()
+                  .SidebarGroupExpanded.TryGetValue(SessionGroupKey.Workspaces, out var rootExpanded) && !rootExpanded,
+            "根节点的折叠状态同样写进设置文件");
+        Check(sidebar.ToggleGroupForCheck(SessionGroupKey.Workspaces)
+              && sidebar.SessionRowCountForCheck == allRows
+              && sidebar.GroupHeaderTagsForCheck().Length == 5,
+            "再点一次根节点，工作区分组和它们的会话都回来");
 
         // ── 折叠 ──
         var rowsBefore = sidebar.SessionRowCountForCheck;
@@ -1126,9 +1149,10 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         var pinnedTags = sidebar.GroupHeaderTagsForCheck();
         Check(!pinnedTags.Contains("pin")
-              && pinnedTags[0] == keyA
+              && pinnedTags[0] == SessionGroupKey.Workspaces
+              && pinnedTags[1] == keyA
               && sidebar.GroupRowIdsForCheck(keyA).SequenceEqual([aUpper.Id, aOne.Id]),
-            "置顶会话不再抽成独立分组，而是把所属工作区带到最前并排在组内最前（实际分组："
+            "置顶会话不再抽成独立分组，而是把所属工作区带到根节点下的第一位并排在组内最前（实际分组："
             + string.Join(" / ", pinnedTags) + "）");
         Check(sidebar.HasPinBadgeForCheck(aUpper.Id) && !sidebar.HasPinBadgeForCheck(aOne.Id),
             "被置顶的那一行带书签标记，同组其它行没有");
@@ -1206,7 +1230,7 @@ public partial class ShellCheckWindow : Window
         sidebar.Reload();
         Check(sidebar.ConversationCount == 0 && sidebar.GroupHeaderTagsForCheck().Length == 0
               && sidebar.SessionRowCountForCheck == 0,
-            "自检清理：分组夹具（含归档的）全部删除，分组也一并消失");
+            "自检清理：分组夹具（含归档的）全部删除，工作区分组和空的「工作区」根节点一并消失");
     }
 
     /// <summary>

@@ -135,14 +135,16 @@ public partial class ChatSidebar : UserControl
 
     /// <summary>
     /// One group of the list. <c>WorkspaceRoot</c> is the directory the group is made of, and the only thing that
-    /// can be acted on: <see cref="SessionGroupKey.Recent"/> and <see cref="SessionGroupKey.Archived"/> are
-    /// buckets of many directories or of none, so they get no path to edit.
+    /// can be acted on: <see cref="SessionGroupKey.Recent"/>, <see cref="SessionGroupKey.Workspaces"/> and
+    /// <see cref="SessionGroupKey.Archived"/> are buckets of many directories, of none, or a heading over other
+    /// groups, so they get no path to edit. <c>Depth</c> is how far the header and its rows sit in from the edge.
     /// </summary>
     private sealed record SessionBucket(
         string Key,
         string Label,
         string? WorkspaceRoot,
-        ConversationSummary[] Sessions);
+        ConversationSummary[] Sessions,
+        int Depth = 0);
 
     private void RefreshConversationList()
     {
@@ -155,11 +157,24 @@ public partial class ChatSidebar : UserControl
 
         ConversationList.Children.Clear();
 
-        // Workspaces first, then the plain chats, then whatever was put away. Within a group the order is the
-        // store's own — pinned rows stay at the front, then most recently updated — and grouping a list that is
-        // already sorted keeps that order without sorting twice. Which also means a pinned session pulls its own
-        // workspace to the front: pinning says "look here first", and there is no second list to put it in now.
-        foreach (var bucket in WorkspaceBuckets(live)) AddGroup(bucket, activeId);
+        // The workspace groups hang under one heading, and the plain chats are its sibling rather than a bucket
+        // among them: "is this row about a project or just a chat" is the first thing the list answers, and it
+        // answers it by shape rather than by making a folder name readable at 11 DIP. Within a group the order is
+        // the store's own — pinned rows stay at the front, then most recently updated — and grouping a list that
+        // is already sorted keeps that order without sorting twice. A pinned session pulls its own workspace to
+        // the front of the heading, which is all pinning can mean now there is no separate list for it.
+        var workspaces = WorkspaceBuckets(live);
+        if (workspaces.Count > 0)
+        {
+            ConversationList.Children.Add(BuildGroupHeader(new SessionBucket(
+                SessionGroupKey.Workspaces, HubStrings.Get("GroupWorkspaces"), null, [])));
+            // Folding the heading takes the groups with it: they are what it is a heading over, and a folded
+            // section that still lists its contents is not folded.
+            if (!IsGroupCollapsed(SessionGroupKey.Workspaces))
+            {
+                foreach (var bucket in workspaces) AddGroup(bucket, activeId);
+            }
+        }
 
         AddGroup(new SessionBucket(SessionGroupKey.Recent, HubStrings.Get("GroupRecentChats"), null,
             [.. live.Where(summary => string.IsNullOrWhiteSpace(summary.WorkspaceRoot))]), activeId);
@@ -178,7 +193,7 @@ public partial class ChatSidebar : UserControl
             foreach (var summary in bucket.Sessions)
             {
                 ConversationList.Children.Add(BuildSessionRow(summary, openId,
-                    bucket.Key == SessionGroupKey.Archived));
+                    bucket.Key == SessionGroupKey.Archived, bucket.Depth));
             }
         }
 
@@ -216,7 +231,7 @@ public partial class ChatSidebar : UserControl
             {
                 members = byKey[key] = [];
                 buckets.Add(new SessionBucket(key, SessionGroupKey.LabelFor(summary.WorkspaceRoot),
-                    summary.WorkspaceRoot, []));
+                    summary.WorkspaceRoot, [], Depth: 1));
             }
             members.Add(summary);
         }
@@ -239,7 +254,9 @@ public partial class ChatSidebar : UserControl
         var row = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Margin = new Thickness(0, 8, 0, 2),
+            // One indent step per level, so the heading and the groups under it are one shape rather than a
+            // list of names that happen to be related.
+            Margin = new Thickness(bucket.Depth * 12, 8, 0, 2),
         };
         row.Classes.Add("group-row");
 
@@ -424,13 +441,16 @@ public partial class ChatSidebar : UserControl
         return app.TryGetResource(key, null, out var plain) == true ? plain as ControlTheme : null;
     }
 
-    private Border BuildSessionRow(ConversationSummary summary, string? activeId, bool archived)
+    private Border BuildSessionRow(ConversationSummary summary, string? activeId, bool archived, int depth)
     {
         var title = summary.Title.Length > 0 ? summary.Title : HubStrings.Get("NewConversation");
         var row = new Border
         {
             Background = Brushes.Transparent,
             CornerRadius = new CornerRadius(6),
+            // The rows follow their header in, so a session reads as belonging to the group above it without a
+            // line, a box or a second label saying so.
+            Margin = new Thickness(depth * 12, 0, 0, 0),
         };
         row.Classes.Add("session-row");
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("*,10,36") };
