@@ -2306,6 +2306,49 @@ public partial class ShellCheckWindow : Window
             Check(!panel.LiveGlyphTickingForCheck,
                 "回复结束后思考指示器停针：一个停不下来的动画会一直重绘整块画布");
 
+            // ── switching sessions does not restart the reply's clock ──
+            // The elapsed counter used to live on the bubble, and the bubble is destroyed the moment the user
+            // looks at another session, so coming back rebuilt it from zero and the reply claimed a duration that
+            // started on the way back in. The clock is the run's now, which is the only thing in this pairing that
+            // was ever running while the session was out of sight.
+            var timedSession = chat.StartConversation();
+            var idleSession = chat.StartConversation();
+            var laterPark = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstArrived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            chat.ClientOverride = (_, id) => id == timedSession.Id
+                ? new ScriptedChatClient(["切走这段时间还在跑"], null, laterPark.Task, firstArrived)
+                : new ScriptedChatClient(["另一路会话的回复"]);
+            chat.OpenConversation(timedSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            panel.SetInputForCheck("别在切回来的时候重启计时");
+            _ = panel.SendComposerForCheck();
+            await WaitForSignalAsync(firstArrived.Task);
+            // A precondition, not the assertion: until the answer has been running for a whole second there is no
+            // number on the label for a rebuilt bubble to lose, and this scene would prove nothing.
+            await WaitUntilAsync(() => panel.ChatActivityElapsedForCheck != "0s", 800);
+            var elapsedBefore = panel.ChatActivityElapsedForCheck;
+            chat.OpenConversation(idleSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.ChatActivityVisibleForCheck,
+                "切到别的会话，这一页不再画那条回复的活动状态（它在自己那一路接着跑）");
+            chat.OpenConversation(timedSession.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var elapsedAfter = panel.ChatActivityElapsedForCheck;
+            // Frame 0 is what makes this a brand-new bubble rather than the one that never left, so the label it
+            // shows can only have come off the run.
+            Check(panel.LiveFrameForCheck == 0 && elapsedAfter != "0s"
+                  && ElapsedSeconds(elapsedAfter) >= ElapsedSeconds(elapsedBefore),
+                "切回来气泡是新建的（帧 " + panel.LiveFrameForCheck + "），耗时却从「" + elapsedBefore
+                + "」继续走到「" + elapsedAfter + "」，而不是从 0s 重新开始");
+            laterPark.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+            chat.DeleteConversation(timedSession.Id);
+            chat.DeleteConversation(idleSession.Id);
+
             // ── a run of tool calls folds into one collapsible group, counted rather than listed ──
             // Its own session: the waiting-glyph run above leaves a thinking-only turn behind, and a second
             // activity run in the same transcript would fold into a second group and miscount this one.
@@ -4147,14 +4190,30 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>Waits on a state change rather than on a clock. A button click that starts work on the dispatcher
-    /// returns before that work lands, and a fixed delay would be a flake waiting to happen.</summary>
-    private static async Task WaitUntilAsync(Func<bool> settled)
+    /// returns before that work lands, and a fixed delay would be a flake waiting to happen. The budget is in
+    /// polling ticks (5 ms apart); a check that has to watch something cross a whole second passes a larger one
+    /// rather than getting its own copy of this loop.</summary>
+    private static async Task WaitUntilAsync(Func<bool> settled, int maxTicks = 400)
     {
-        for (var wait = 0; wait < 400 && !settled(); wait++)
+        for (var wait = 0; wait < maxTicks && !settled(); wait++)
         {
             Dispatcher.UIThread.RunJobs();
             await Task.Delay(5);
         }
+    }
+
+    /// <summary>Reads a duration label back into whole seconds, the two shapes <c>FormatDuration</c> writes
+    /// ("12s", "1m 05s"), so a check can compare two samples of the same counter. Anything unparseable is -1
+    /// rather than a throw: a label in the wrong shape has to fail its own assertion, not cut the rest of the
+    /// check group short.</summary>
+    private static int ElapsedSeconds(string label)
+    {
+        var text = label.Trim();
+        if (text.Length == 0 || !text.EndsWith('s')) return -1;
+        var parts = text[..^1].Split('m', StringSplitOptions.TrimEntries);
+        if (parts.Length == 2 && int.TryParse(parts[0], out var minutes) && int.TryParse(parts[1], out var tail))
+            return minutes * 60 + tail;
+        return parts.Length == 1 && int.TryParse(parts[0], out var seconds) ? seconds : -1;
     }
 
     /// <summary>A client that goes silent without stopping the world: it never produces a chunk, but it does

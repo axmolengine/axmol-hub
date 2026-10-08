@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -71,28 +70,30 @@ public partial class ChatPanel : UserControl
 
     /// <summary>
     /// The bubble showing the reply arriving in the session on screen, or null while none is. Everything it
-    /// displays is read off the run, so leaving and coming back rebuilds it from what actually arrived instead
-    /// of from a copy this view kept — which is also what lets a session keep streaming while it is hidden.
+    /// displays is read off the run, so leaving and coming back rebuilds it from what actually arrived — the text,
+    /// the tools it has been through, and the time it has been taking — instead of from a copy this view kept,
+    /// which is also what lets a session keep streaming while it is hidden.
     /// </summary>
     private LiveBubble? _live;
 
-    /// <summary>One attached run's worth of chrome: the row, the pieces of it that change while text arrives,
-    /// and the timer that animates them. Created on attach, thrown away on detach; the run outlives both.</summary>
+    /// <summary>One attached run's worth of chrome: the row, the pieces of it that change while text arrives, and
+    /// the timer that animates them. Created on attach, thrown away on detach; the run outlives both and carries
+    /// every fact the chrome displays, so nothing here survives a detach and nothing here needs to.</summary>
     private sealed class LiveBubble
     {
-        public required string ConversationId { get; init; }
+        public required ConversationRun Run { get; init; }
         public required Control Row { get; init; }
         public required TextBlock Preview { get; init; }
         public required TextBlock Status { get; init; }
         public required TextBlock Elapsed { get; init; }
         public required ActivityGlyph Glyph { get; init; }
         public DispatcherTimer? Timer { get; set; }
-        public Stopwatch Watch { get; } = new();
         public int Frame { get; set; }
 
-        /// <summary>How many tool calls this reply has finished, and whether one is in flight right now. Both
-        /// come off <see cref="ChatWorkspace.ToolActivityChanged"/>, which is the only place the view learns a
-        /// call started or came back — and the glyph's node count is exactly this number.</summary>
+        /// <summary>How many tool calls this reply has finished, and whether one is in flight right now. Both come
+        /// off the run this bubble is attached to — seeded when a switch rebuilds it, and advanced by
+        /// <see cref="ChatWorkspace.ToolActivityChanged"/>, which is the only place the view learns that a call
+        /// started or came back. The glyph's node count is exactly this number.</summary>
         public int ToolCount { get; set; }
         public bool ToolRunning { get; set; }
 
@@ -158,7 +159,7 @@ public partial class ChatPanel : UserControl
         // running out of sight must not rewrite the status line of the one on screen.
         _chat.ToolActivityChanged += (conversationId, name, completed) =>
         {
-            if (_live is not { } live || live.ConversationId != conversationId) return;
+            if (_live is not { } live || live.Run.ConversationId != conversationId) return;
             live.Status.Text = ToolActivityText(name, completed);
             // The glyph's node count is the number of calls this reply has finished; a call in flight is what
             // moves the phase off "waiting for a first token".
@@ -172,7 +173,7 @@ public partial class ChatPanel : UserControl
         };
         _chat.RunTextChanged += conversationId =>
         {
-            if (_live is { } live && live.ConversationId == conversationId) RefreshLive(live);
+            if (_live is { } live && live.Run.ConversationId == conversationId) RefreshLive(live);
         };
         _chat.RunsChanged += conversationId =>
         {
@@ -1487,11 +1488,12 @@ public partial class ChatPanel : UserControl
         // The live bubble is not a stored turn. It comes off the flow before the stored rows are laid down and
         // goes back on the end afterwards, so a repaint in the middle of a reply cannot bury it mid-transcript.
         // A bubble belonging to another session is closed for good: its run keeps going, and coming back to it
-        // rebuilds the bubble from what arrived while it was out of sight.
+        // rebuilds the bubble from what arrived while it was out of sight — text, tools and elapsed time alike,
+        // because all three are read off the run and none of them is a number this view was keeping.
         // A bubble that outlives its run would keep animating a reply that has already been written to the
         // transcript, where it now belongs — so the absence of a streaming run for this session closes it,
         // whoever happened to ask for a repaint.
-        if (_live is { } attached && (run is not { IsStreaming: true } || attached.ConversationId != conversation?.Id))
+        if (_live is { } attached && (run is not { IsStreaming: true } || attached.Run != run))
             CloseLive();
         if (_live is { } held) MessageFlow.Children.Remove(held.Row);
 
@@ -1742,8 +1744,11 @@ public partial class ChatPanel : UserControl
             HubStrings.Get("ActivityGroupThoughtFormat"), FormatDuration(last - first));
     }
 
-    /// <summary>Same shape as the live bubble's elapsed counter, so a folded group and a running one read the
-    /// same clock.</summary>
+    /// <summary>The one shape every duration in this panel is written in, shared by the live bubble's counter and a
+    /// folded group's title. The two spans are measured differently on purpose: the bubble reads the run's clock,
+    /// which banks and stops while a person is deciding on an approval card, and the group title spans the stored
+    /// turns, so it counts that decision too. A group that agreed to the second with the bubble it replaced would
+    /// mean the reply suddenly got shorter the moment it finished.</summary>
     private static string FormatDuration(TimeSpan span)
         => span.TotalMinutes >= 1
             ? $"{(int)span.TotalMinutes}m {span.Seconds:D2}s"
@@ -2455,12 +2460,13 @@ public partial class ChatPanel : UserControl
 
     /// <summary>
     /// The bubble for the reply now arriving in this session, created when the session was not on screen a
-    /// moment ago. Its text is read off the run, which is what makes "switch away, switch back" show exactly
-    /// what arrived while it was hidden — the view keeps no copy of a reply it is not painting.
+    /// moment ago. Everything on it is read off the run — the text that arrived while it was hidden, the calls it
+    /// has been through, the time it has been taking — so switching away and back shows the same reply the user
+    /// left, not one restarted from zero.
     /// </summary>
     private LiveBubble AttachLive(ConversationRun run)
     {
-        if (_live is { } existing && existing.ConversationId == run.ConversationId)
+        if (_live is { } existing && existing.Run == run)
         {
             RefreshLive(existing);
             return existing;
@@ -2490,9 +2496,11 @@ public partial class ChatPanel : UserControl
             Text = "·",
             Classes = { "chat-activity-elapsed" },
         });
+        // Seeded from the run rather than started at "0s": a bubble rebuilt a minute into a reply has to say a
+        // minute, and it should say it on the frame it appears, not after the next tick.
         var elapsed = new TextBlock
         {
-            Text = "0s",
+            Text = FormatDuration(run.Elapsed),
             Classes = { "chat-activity-elapsed" },
         };
         activity.Children.Add(elapsed);
@@ -2500,26 +2508,24 @@ public partial class ChatPanel : UserControl
 
         var bubble = new LiveBubble
         {
-            ConversationId = run.ConversationId,
+            Run = run,
             Row = BuildMessageRow(false, body, null, ChatRoles.Assistant, "", isLast: true),
             Preview = preview,
             Status = status,
             Elapsed = elapsed,
             Glyph = glyph,
+            ToolCount = run.CompletedToolCalls,
+            ToolRunning = run.IsToolRunning,
         };
         bubble.Timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         bubble.Timer.Tick += (_, _) =>
         {
             if (_live is not { } current) return;
             current.Frame++;
-            var seconds = current.Watch.Elapsed;
-            current.Elapsed.Text = seconds.TotalMinutes >= 1
-                ? $"{(int)seconds.TotalMinutes}m {seconds.Seconds:D2}s"
-                : $"{Math.Max(0, (int)seconds.TotalSeconds)}s";
+            current.Elapsed.Text = FormatDuration(current.Run.Elapsed);
             RefreshGlyphPhase(current);
         };
         _live = bubble;
-        bubble.Watch.Restart();
         bubble.Timer.Start();
         RefreshLive(bubble);
         UpdateSendState();
@@ -2527,14 +2533,14 @@ public partial class ChatPanel : UserControl
         return bubble;
     }
 
-    /// <summary>Throws the bubble away, not the reply: the run keeps streaming and a later attach reads the
-    /// text back off it. The timer goes with the row, because nothing is being animated any more.</summary>
+    /// <summary>Throws the bubble away, not the reply: the run keeps streaming and a later attach reads the text,
+    /// the tool count and the elapsed time back off it. The timer goes with the row, because nothing is being
+    /// animated any more — and it is only the animation, never the clock the answer is measured by.</summary>
     private void CloseLive()
     {
         if (_live is not { } live) return;
         live.Timer?.Stop();
         live.Timer = null;
-        live.Watch.Stop();
         MessageFlow.Children.Remove(live.Row);
         _live = null;
         UpdateSendState();
@@ -2542,9 +2548,11 @@ public partial class ChatPanel : UserControl
 
     private void RefreshLive(LiveBubble bubble)
     {
-        if (_chat.RunFor(bubble.ConversationId) is not { } run) return;
-        bubble.Preview.Text = run.LiveText;
-        if (run.LiveText.Length == 0) bubble.ShowedText = false;
+        // Read off the run the bubble is attached to, not looked up by session id: the bubble and its run are the
+        // same pairing from attach to detach, so a refresh can never land on a reply that started afterwards.
+        var text = bubble.Run.LiveText;
+        bubble.Preview.Text = text;
+        if (text.Length == 0) bubble.ShowedText = false;
         else if (!bubble.ShowedText)
         {
             bubble.ShowedText = true;
@@ -2697,8 +2705,10 @@ public partial class ChatPanel : UserControl
     internal int LiveGlyphToolCountForCheck => _live?.Glyph.ToolCount ?? 0;
 
     /// <summary>How many times the live bubble's 350ms tick has run. A check waits on this to prove the tick that
-    /// drives both the elapsed label and the glyph's phase has actually fired, rather than reading the glyph the
-    /// instant it was attached (the elapsed label starts at "0s", so it cannot tell "just attached" from "ticked").</summary>
+    /// drives both the elapsed label and the glyph's phase has actually fired, rather than reading the chrome the
+    /// instant it was attached. The label cannot serve as that proof: it is seeded from the run, so a freshly
+    /// attached bubble already reads whatever the answer has taken — which is exactly what a check switching
+    /// sessions and back wants to assert, not what it wants to wait on.</summary>
     internal int LiveFrameForCheck => _live?.Frame ?? 0;
     internal bool LiveGlyphVisibleForCheck => _live?.Glyph.IsVisible ?? false;
 

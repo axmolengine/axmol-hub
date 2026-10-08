@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,6 +48,10 @@ internal enum ChatAttentionKind
 /// Timers are two sources rather than one because the old single source had to serve two masters: a reply the
 /// user asked to stop and a stream that stalled are different events with different messages, and a session
 /// that runs long while it keeps producing is healthy, not overdue.
+///
+/// The run also keeps how long this answer has been working, and that is the one number a view cannot own: the
+/// bubble displaying it is thrown away the moment the user looks at another session, so a reply that restarted
+/// its clock on the way back would be saying something untrue about the time it took.
 /// </summary>
 internal sealed class ConversationRun : IDisposable
 {
@@ -68,6 +73,12 @@ internal sealed class ConversationRun : IDisposable
     private int _spawnsUsed;
     private volatile bool _parked;
     private int _toolRunning;
+    // The elapsed clock is banked and restarted rather than continuous, because a stretch spent waiting for a
+    // person to approve a tool is not this answer working. The ticks are monotonic, never a time of day: a wall
+    // clock stepped backwards by NTP or a timezone rule would hand the view a negative duration.
+    private long _bankedTicks;
+    private long _stretchStart = Stopwatch.GetTimestamp();
+    private bool _stretchRunning = true;
 
     public string ConversationId { get; }
     public RunPhase Phase { get; private set; } = RunPhase.Streaming;
@@ -84,6 +95,46 @@ internal sealed class ConversationRun : IDisposable
         _idleTimeout = idleTimeout;
         _linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, _idle.Token, _suspend.Token);
         Touch();
+    }
+
+    /// <summary>How long this answer has been working, minus any stretch it spent parked on a tool approval. Read
+    /// off the run rather than off a stopwatch the bubble winds itself, so a conversation switch shows the time
+    /// really taken and not the time since the bubble happened to be rebuilt.</summary>
+    public TimeSpan Elapsed
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var running = _stretchRunning ? Stopwatch.GetElapsedTime(_stretchStart).Ticks : 0L;
+                return TimeSpan.FromTicks(_bankedTicks + running);
+            }
+        }
+    }
+
+    /// <summary>Banks the stretch just run and stops the clock. Called when the run parks on an approval and when
+    /// it finishes, so the last number a viewer reads is the one the answer actually earned.</summary>
+    private void FreezeClock()
+    {
+        lock (_gate)
+        {
+            if (!_stretchRunning) return;
+            _bankedTicks += Stopwatch.GetElapsedTime(_stretchStart).Ticks;
+            _stretchRunning = false;
+        }
+    }
+
+    /// <summary>Opens the next stretch on a run that was frozen. Locking is not ceremony here: the freeze runs on
+    /// the UI thread with the gate, while <see cref="RearmAfterApproval"/> is reached from a thread-pool
+    /// continuation, and the view reads <see cref="Elapsed"/> three times a second on top of both.</summary>
+    private void ResumeClock()
+    {
+        lock (_gate)
+        {
+            if (_stretchRunning) return;
+            _stretchStart = Stopwatch.GetTimestamp();
+            _stretchRunning = true;
+        }
     }
 
     /// <summary>The text of the segment now streaming. A bubble rebuilt from this after a conversation switch
@@ -169,12 +220,16 @@ internal sealed class ConversationRun : IDisposable
     {
         _parked = true;
         Phase = RunPhase.AwaitingApproval;
+        // A person reading a card is not the answer working, so the elapsed clock banks what it has and stands
+        // down for the length of the decision.
+        FreezeClock();
     }
 
     /// <summary>
-    /// Takes the run out of the parked state with a fresh inactivity deadline. The old one may well have fired
-    /// while a person was deciding, and an expired deadline reused for the resumed stream would cancel the
-    /// first request it made; the old sources are dropped rather than reused for the same reason.
+    /// Takes the run out of the parked state with a fresh inactivity deadline and its elapsed clock running
+    /// again. The old one may well have fired while a person was deciding, and an expired deadline reused for
+    /// the resumed stream would cancel the first request it made; the old sources are dropped rather than reused
+    /// for the same reason.
     /// </summary>
     internal void RearmAfterApproval()
     {
@@ -187,6 +242,7 @@ internal sealed class ConversationRun : IDisposable
         _linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, _idle.Token, _suspend.Token);
         _parked = false;
         Phase = RunPhase.Streaming;
+        ResumeClock();
         Touch();
 
         // Nothing holds the old token any more — the stream that used it ended when the run parked.
@@ -284,12 +340,25 @@ internal sealed class ConversationRun : IDisposable
         get { lock (_gate) return [.. _toolOutcomes]; }
     }
 
+    /// <summary>How many calls this answer has already finished. The count lives here because a bubble rebuilt
+    /// after a conversation switch has to be able to say the same thing the one it replaced was saying.</summary>
+    internal int CompletedToolCalls
+    {
+        get { lock (_gate) return _toolOutcomes.Count; }
+    }
+
+    /// <summary>Whether a tool owns the run right now — the one phase the glyph cannot infer from the text.</summary>
+    internal bool IsToolRunning => Volatile.Read(ref _toolRunning) != 0;
+
     internal void ClearPaintRequest() => Interlocked.Exchange(ref _paintQueued, 0);
 
     internal void Finish(RunResult result)
     {
         Phase = RunPhase.Completed;
         Result = result;
+        // The last repaint reads this number after the run has already left the registry, so freezing it here is
+        // what keeps the elapsed the viewer saw from drifting afterwards.
+        FreezeClock();
     }
 
     public void Dispose()
