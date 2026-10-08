@@ -3939,8 +3939,13 @@ public partial class ShellCheckWindow : Window
                   && gateLines.Any(line => line.Contains("Tool gate: allowed-by-session-grant file_write · ask · WorkspaceWrite",
                        StringComparison.Ordinal))
                   && gateLines.Any(line => line.Contains("Tool gate: asked capture_screen · ask · SystemCommand",
-                       StringComparison.Ordinal)),
-                "闸门每一次会动的判定都留下一行，并说清是哪种答案（模式放行 / 会话授权 / 应用信任 / 该问）");
+                       StringComparison.Ordinal))
+                  // The directory rides in the line because the tier above the read-only ones is decided by it, and
+                  // this is the fixture where the session's stored root had already moved under the request: the
+                  // line proves the gate judged the sandbox the call runs in, not wherever the session ended up.
+                  && gateLines.Any(line => line.Contains(
+                      $"Tool gate: asked run_command · ask · WorkspaceCommand · {workspace}", StringComparison.Ordinal)),
+                "闸门每一次会动的判定都留下一行，说清是哪种答案（模式放行 / 会话授权 / 应用信任 / 该问），并带上判定用的那个目录");
             // A read is not a decision and must not crowd the log with one line per lookup: an exploration turn
             // makes dozens, and the record a person reads would be the transcript twice over.
             Check(!gateLines.Any(line => line.Contains("· ReadOnly", StringComparison.Ordinal)),

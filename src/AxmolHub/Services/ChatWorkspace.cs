@@ -2738,7 +2738,12 @@ public sealed class ChatWorkspace : IDisposable
             var granted = risk != ToolRisk.SystemCommand && (sessionGrant || appGrant);
             var parks = !granted && ToolApprovalPolicy.RequiresApproval(mode, risk);
             if (risk != ToolRisk.ReadOnly)
-                Audit(run.ConversationId, $"Tool gate: {VerdictFor(parks, granted, sessionGrant)} {call.Name} · {mode} · {risk}");
+                // The directory rides along because the tier above the read-only ones is decided by it: a line
+                // that says "allowed-by-mode" without saying which sandbox was judged is the same mystery the
+                // card was meant to answer.
+                Audit(run.ConversationId,
+                    $"Tool gate: {VerdictFor(parks, granted, sessionGrant)} {call.Name} · {mode} · {risk}"
+                    + $" · {scope.Workspace.WorkspaceRoot ?? "(no workspace)"}");
             if (!parks) return (Parks: false, Preview: (string?)null);
 
             // Computed only for a call that is about to park, and frozen here: a read-only call costs no file
