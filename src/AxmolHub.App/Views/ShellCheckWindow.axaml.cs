@@ -103,17 +103,27 @@ public partial class ShellCheckWindow : Window
 
         // Fallback: don't let the process hang forever. Two different failures look the same from here — a window
         // that never shows, and an assertion waiting on something that never arrives — and they used to be
-        // reported as one, which turned a slow-but-complete run into a lie about the window. The ceiling is now
-        // generous enough that suite length cannot trip it; a trip means a check is genuinely stuck.
+        // reported as one, which turned a slow-but-complete run into a lie about the window.
+        //
+        // The ceiling has to clear the suite's own length, not just a stuck assertion's: measured 2026-10-08 the
+        // full run finishes in 26–27 s warm and 37 s as a cold first run of a freshly built binary, and at 30 s it
+        // reported "an assertion is stuck" for a suite that was merely finishing. A genuinely stuck check waits
+        // forever, so headroom costs only the time before a real hang is named — and the constant below is what
+        // the message quotes, so the two cannot drift apart again.
         DispatcherTimer.RunOnce(() =>
         {
             if (finished) return;
             Check(false, checksStarted
-                ? "自检在 30 秒内没有跑完：有断言卡在等待上，请检查最近加入的断言组"
-                : "窗口在 30 秒内没有触发 Opened，断言未执行");
+                ? $"自检在 {(int)SuiteCeiling.TotalSeconds} 秒内没有跑完：有断言卡在等待上，请检查最近加入的断言组"
+                : $"窗口在 {(int)SuiteCeiling.TotalSeconds} 秒内没有触发 Opened，断言未执行");
             Finish();
-        }, TimeSpan.FromSeconds(30));
+        }, SuiteCeiling);
     }
+
+    /// <summary>How long the whole check run may take before it is called stuck, rather than merely slow. Three
+    /// times the slowest completed run on record; raise it with the suite, because a ceiling the suite can brush
+    /// produces a failure that names the wrong cause.</summary>
+    private static readonly TimeSpan SuiteCeiling = TimeSpan.FromSeconds(120);
 
     private void Check(bool ok, string message)
     {
