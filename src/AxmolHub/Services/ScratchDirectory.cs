@@ -17,13 +17,13 @@ namespace AxmolHub.App;
 /// </summary>
 internal static class ScratchDirectory
 {
-    /// <summary>The repo root. Walks up from the assembly location looking for <c>src/AxmolHub.App</c>; returns null when not found.</summary>
+    /// <summary>The repo root. Walks up from the assembly location looking for <c>src/AxmolHub</c>; returns null when not found.</summary>
     public static string? RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (Directory.Exists(Path.Combine(directory.FullName, "src", "AxmolHub.App")))
+            if (Directory.Exists(Path.Combine(directory.FullName, "src", "AxmolHub")))
             {
                 return directory.FullName;
             }

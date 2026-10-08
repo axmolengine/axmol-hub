@@ -15,7 +15,7 @@
 
 ## 图形界面：Avalonia 依赖闭包
 
-Avalonia 版界面（`src/AxmolHub.App/`）引入 **31 个** NuGet 包（从 `project.assets.json` 数出的完整传递闭包，含 `Avalonia.Controls.DataGrid`；同项目的 `Velopack` 另算一节）。**`Avalonia` / `Avalonia.Desktop` / `Avalonia.Themes.Fluent` 三项及其绝大多数传递依赖是 MIT**（`Avalonia.*` 12.1.3、`SkiaSharp` 3.119.4、`HarfBuzzSharp` 8.3.1.3、`MicroCom.Runtime`、`Tmds.DBus.Protocol` 等，均按包内 nuspec 的 `MIT` 表达式核对）。
+Avalonia 版界面（`src/AxmolHub/`）引入 **31 个** NuGet 包（从 `project.assets.json` 数出的完整传递闭包，含 `Avalonia.Controls.DataGrid`；同项目的 `Velopack` 另算一节）。**`Avalonia` / `Avalonia.Desktop` / `Avalonia.Themes.Fluent` 三项及其绝大多数传递依赖是 MIT**（`Avalonia.*` 12.1.3、`SkiaSharp` 3.119.4、`HarfBuzzSharp` 8.3.1.3、`MicroCom.Runtime`、`Tmds.DBus.Protocol` 等，均按包内 nuspec 的 `MIT` 表达式核对）。
 
 **例外一个，必须单独声明**：
 
@@ -41,4 +41,4 @@ Avalonia 版界面（`src/AxmolHub.App/`）引入 **31 个** NuGet 包（从 `pr
 
 ## 图标
 
-`src/AxmolHub.App/Assets/hub-icon.png` 参照 Axmol 引擎 logo 的五棱台节点线框形状重设计（中心增加轮毂节点与辐条以示区分），由脚本生成；ICO 由同一原图按 `installer/Build-Icon.ps1` 转换，未复制其他 Hub 的品牌图标。
+`src/AxmolHub/Assets/hub-icon.png` 参照 Axmol 引擎 logo 的五棱台节点线框形状重设计（中心增加轮毂节点与辐条以示区分），由脚本生成；ICO 由同一原图按 `installer/Build-Icon.ps1` 转换，未复制其他 Hub 的品牌图标。

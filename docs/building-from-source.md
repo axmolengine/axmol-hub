@@ -4,7 +4,7 @@
 
 ## 从源码运行界面
 
-界面在 `src/AxmolHub.App/`（`net8.0`，目标三平台）。开发机需要装 **.NET 10 SDK**（最稳妥：`net8.0` 目标框架下，Avalonia 12.1.3 的分析器/源生成器是按编译器 4.14 编译的，而 SDK 8 的旧补丁——例如 Ubuntu 上 `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx——只带编译器 4.8，源生成器整个不产出，报一排 `CS0103: The name 'InitializeComponent' does not exist`。SDK 8 只有够新的补丁、编译器 ≥ 4.14 才够，.NET 10 一定够）。**SDK 版本要求就是 10.0.x**，构建命令各平台一致，差别只在怎么装 SDK。
+界面在 `src/AxmolHub/`（`net8.0`，目标三平台）。开发机需要装 **.NET 10 SDK**（最稳妥：`net8.0` 目标框架下，Avalonia 12.1.3 的分析器/源生成器是按编译器 4.14 编译的，而 SDK 8 的旧补丁——例如 Ubuntu 上 `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx——只带编译器 4.8，源生成器整个不产出，报一排 `CS0103: The name 'InitializeComponent' does not exist`。SDK 8 只有够新的补丁、编译器 ≥ 4.14 才够，.NET 10 一定够）。**SDK 版本要求就是 10.0.x**，构建命令各平台一致，差别只在怎么装 SDK。
 
 ### 安装 .NET 10 SDK
 
@@ -59,8 +59,8 @@ sudo apt-get update && sudo apt-get install -y dotnet-sdk-10.0 dotnet-runtime-8.
 然后在本仓库根目录执行：
 
 ```powershell
-dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c Release
-dotnet run --project src/AxmolHub.App -- --data-root ./data
+dotnet build src/AxmolHub/AxmolHub.App.csproj -c Release
+dotnet run --project src/AxmolHub -- --data-root ./data
 ```
 
 **四个页面（项目 / 引擎 / 工具链 / 设置）与四个对话框窗口**：左侧 218px 导航、三行内容区（页面 / 状态栏 / 日志面板）、统计卡、表格、设备条、操作按钮行的位置与文案都与原 WPF 版对齐；与原版只有三处刻意差异，原因写在 [avalonia-migration-plan.md](avalonia-migration-plan.md) §5.7。业务逻辑全在 `AxmolHub.Core`（界面项目只负责装配），编排在 `Services/HubWorkspace.cs`。
@@ -70,7 +70,7 @@ dotnet run --project src/AxmolHub.App -- --data-root ./data
 默认数据根是每用户的 `%LocalAppData%\AxmolHub\data`，设置保存在 `%LocalAppData%\AxmolHub\hub-settings.json` —— 不能放在程序目录旁边，因为 Velopack 更新时整体替换安装目录、卸载时删除整个安装目录。可以指定独立配置：
 
 ```powershell
-dotnet run --project src/AxmolHub.App -- --data-root ./data --preferences ./artifacts/dev-preferences.json
+dotnet run --project src/AxmolHub -- --data-root ./data --preferences ./artifacts/dev-preferences.json
 ```
 
 `--data-root` 优先于保存的设置；`--preferences` 可用于隔离开发或检查配置。不要将设置、数据目录或下载的工具链提交到 Git。
@@ -89,16 +89,16 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 
 ```powershell
 # 外壳、本地化与数据根切换的自检（706 条断言）
-dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-shell ./tmp/shell-check.txt
+dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（46 条）/ 基础件（26 条）
-dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-theme ./tmp/theme.txt
-dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-foundation ./tmp/foundation.txt
+dotnet run --project src/AxmolHub -- --data-root ./data --verify-theme ./tmp/theme.txt
+dotnet run --project src/AxmolHub -- --data-root ./data --verify-foundation ./tmp/foundation.txt
 # 无头截图：主窗口一张
-dotnet run --project src/AxmolHub.App -- --data-root ./data --smoke ./tmp/smoke.png
+dotnet run --project src/AxmolHub -- --data-root ./data --smoke ./tmp/smoke.png
 # 无头截图：四个页面 × 中英两种语言，共 8 张（README 里的页面图由此生成）
-dotnet run --project src/AxmolHub.App -- --data-root ./data --smoke-pages ./tmp/pages
+dotnet run --project src/AxmolHub -- --data-root ./data --smoke-pages ./tmp/pages
 # 真操作验收：在真实引擎源码树上跑引擎管理链路（后面跟若干个引擎目录）
-dotnet run --project src/AxmolHub.App -- --data-root ./data --verify-ops ./tmp/ops-check.txt <引擎目录> [更多引擎目录...]
+dotnet run --project src/AxmolHub -- --data-root ./data --verify-ops ./tmp/ops-check.txt <引擎目录> [更多引擎目录...]
 ```
 
 上面的 `--data-root ./data` **不要省**：省了就用每用户的真实数据根，自检会读到你自己的引擎、项目与凭据（原因见上一节）。括号里的断言数**只是那一刻的实测值**——`--verify-shell` 的总数按场景扇出，改前改后都要自己跑一遍拿数，别拿算术去预测它。
@@ -121,7 +121,7 @@ AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式�
 **Windows 通知与任务栏标记手动诊断**：使用单独的数据目录启动应用，可立即请求一个示例 Toast 和 30 秒任务栏标记，不会创建或修改真实会话。开发版：
 
 ```powershell
-dotnet run --project src\AxmolHub.App -- --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
+dotnet run --project src\AxmolHub -- --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
 ```
 
 安装版可用同一参数启动安装目录中的稳定启动器（将路径替换为本机实际位置）：
@@ -194,7 +194,7 @@ foreach ($g in 'providers','sessions','context','workspace','tool-policy','memor
 发布自包含图形版（RID 换成 `osx-arm64` / `osx-x64` / `linux-x64` 即可交叉发布，但只有 Windows 那一条实测过）：
 
 ```powershell
-dotnet publish src/AxmolHub.App/AxmolHub.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
+dotnet publish src/AxmolHub/AxmolHub.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
 ```
 
 > **Linux 另需一个中文字体。** 最小化安装的 Ubuntu 不带任何 CJK 字体，中文界面会整片显示成方框 ——
@@ -207,7 +207,7 @@ dotnet publish src/AxmolHub.App/AxmolHub.App.csproj -c Release -r win-x64 --self
 不用打开 GUI 也能验证这台机器到底存得了存不了：
 
 ```bash
-dotnet src/AxmolHub.App/bin/Release/net8.0/AxmolHub.App.dll --check-secrets
+dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.App.dll --check-secrets
 ```
 
 无头（在 Avalonia 启动之前就返回），只写临时目录，末行打印 `backend=` 与档名。三平台 CI 矩阵都跑这一条。密钥存储的契约断言另有 `dotnet run --project tests/AxmolHub.Checks -- artifacts/checks --check-secret-store`（2026-10-07 实测 52 条 PASS，只能在 Windows 上跑，原因见 `docs/ci.md` §2.7）。

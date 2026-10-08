@@ -24,7 +24,7 @@
 矩阵为 `windows-latest` / `macos-latest` / `ubuntu-latest`，每个平台做五件事：
 
 1. **构建 Core + CLI** —— 两者都是 `net8.0`，不含任何 Windows 专属 API（无 `Registry`、无 P/Invoke），全部跨平台差异走 `OperatingSystem.IsWindows()` 运行时分支，因此三平台都应编译通过。
-2. **构建 Avalonia 版 GUI**（`src/AxmolHub.App/`）—— `net8.0`、无 `-windows` 目标框架，三平台同构，**没有 `if` 条件**。
+2. **构建 Avalonia 版 GUI**（`src/AxmolHub/`）—— `net8.0`、无 `-windows` 目标框架，三平台同构，**没有 `if` 条件**。
 3. **断言宿主检测** —— 见下节。
 4. **发布自包含 CLI** 到对应 RID（`win-x64` / `osx-arm64` / `linux-x64`）。
 5. **在目标宿主上真的执行一次刚发布的二进制** —— 交叉发布本身不构成证据，能跑才算。
@@ -65,7 +65,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 ```yaml
 # 三平台，无条件；这是唯一的 GUI 构建步骤
 - name: Build Avalonia app
-  run: dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
+  run: dotnet build src/AxmolHub/AxmolHub.App.csproj -c ${{ env.CONFIGURATION }}
 ```
 
 `AxmolHub.App` 是 `net8.0`、不带 `-windows`，三平台同构。注意它是**纯编译**：Avalonia 的三个平台后端（`Avalonia.Win32` / `Avalonia.X11` / `Avalonia.Native`）都是被 `Avalonia.Desktop` 无条件拉进来的托管包，所以一次 `dotnet build` 就已覆盖三平台的编译面。**"能显示窗口"仍未被 CI 验证** —— 那需要 `xvfb-run`（Linux）之类的显示环境；在 CI 从未真实跑过之前不引入这类易红步骤。

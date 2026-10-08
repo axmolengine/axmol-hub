@@ -1,6 +1,6 @@
 # Axmol Hub
 
-<img src="src/AxmolHub.App/Assets/hub-icon.png" alt="Axmol Hub icon" width="96" />
+<img src="src/AxmolHub/Assets/hub-icon.png" alt="Axmol Hub icon" width="96" />
 
 **A standalone desktop app that manages Axmol engines, projects, and build toolchains.**
 
@@ -62,8 +62,8 @@ Per-OS installation steps for the required **.NET 10 SDK** live in [docs/buildin
 Quick start:
 
 ```powershell
-dotnet build src/AxmolHub.App/AxmolHub.App.csproj -c Release
-dotnet run --project src/AxmolHub.App -- --data-root ./data
+dotnet build src/AxmolHub/AxmolHub.App.csproj -c Release
+dotnet run --project src/AxmolHub -- --data-root ./data
 ```
 
 The CLI exposes a `--json` contract for scripts, CI, MCP, and the Axmol Editor; see [docs/cli-json-contract.md](docs/cli-json-contract.md).
@@ -108,4 +108,4 @@ Privacy: see [Privacy policy](#privacy-policy).
 
 ## License
 
-Axmol Hub's own code is [MIT](LICENSE). Third-party files, engines, SDKs, compilers, and runtimes keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The HUB icon was produced with a generative image tool; source PNG and multi-size ICO are kept in `src/AxmolHub.App/Assets/`.
+Axmol Hub's own code is [MIT](LICENSE). Third-party files, engines, SDKs, compilers, and runtimes keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The HUB icon was produced with a generative image tool; source PNG and multi-size ICO are kept in `src/AxmolHub/Assets/`.

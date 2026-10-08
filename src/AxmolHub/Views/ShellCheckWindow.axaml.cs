@@ -5752,7 +5752,7 @@ public partial class ShellCheckWindow : Window
 
     /// <summary>The source directory, or null when not found (installed artifacts have no .axaml source).</summary>
     private static string? FindSourceDirectory() => ScratchDirectory.RepositoryRoot() is { } root
-        ? System.IO.Path.Combine(root, "src", "AxmolHub.App")
+        ? System.IO.Path.Combine(root, "src", "AxmolHub")
         : null;
 
     // ---------------------------------------------------------------------

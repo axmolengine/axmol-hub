@@ -58,13 +58,13 @@ if ($NoClean) {
 # 已被删名的文件不会被 publish 清掉，需要彻底重来时手工删除 artifacts/app。
 $taskIsPrereleaseBuild = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
-dotnet publish "$taskRoot/src/AxmolHub.App/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
+dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.App.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
 # 图标格式按平台：Windows 用多尺寸 ICO，macOS 要求 ICNS（.app bundle 图标），Linux 用 PNG（.DirIcon）。
-$taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.png'
-if ($Runtime -like 'win-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.ico' }
-if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub.App/Assets/hub-icon.icns' }
+$taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.png'
+if ($Runtime -like 'win-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.ico' }
+if ($Runtime -like 'osx-*') { $taskIcon = Join-Path $taskRoot 'src/AxmolHub/Assets/hub-icon.icns' }
 
 # 主程序名按平台取：Windows 产物带 .exe，macOS/Linux 是 Avalonia 的无后缀同名可执行文件。
 # 参数名三平台统一用 --mainExe（官方 vpk 1.2.x 的跨平台参数；master 源码里出现的 --exeName

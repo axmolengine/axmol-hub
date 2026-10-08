@@ -44,7 +44,7 @@ or rendered pixels) — interaction bugs are silent at build time.
 Always start the app against the repository's own `data/` directory:
 
 ```powershell
-dotnet run --project src/AxmolHub.App -- --data-root ./data
+dotnet run --project src/AxmolHub -- --data-root ./data
 ```
 
 Without `--data-root`, the app falls back to the per-user data root

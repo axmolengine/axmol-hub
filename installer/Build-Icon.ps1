@@ -1,4 +1,4 @@
-param([string]$Source = "$PSScriptRoot/../src/AxmolHub.App/Assets/hub-icon.png", [string]$Output = "$PSScriptRoot/../src/AxmolHub.App/Assets/hub-icon.ico")
+param([string]$Source = "$PSScriptRoot/../src/AxmolHub/Assets/hub-icon.png", [string]$Output = "$PSScriptRoot/../src/AxmolHub/Assets/hub-icon.ico")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $sourceImage = [Drawing.Image]::FromFile((Resolve-Path -LiteralPath $Source).Path)
