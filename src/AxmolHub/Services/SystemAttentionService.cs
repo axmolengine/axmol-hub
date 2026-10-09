@@ -155,6 +155,10 @@ internal sealed class SystemAttentionService : IDisposable
 
     private void ShowWindowsToast(string title, string body, string conversationId)
     {
+        // 进程内直接调 WinRT toast API（Microsoft.Windows.SDK.Contracts 投影）。之前的
+        // powershell.exe 外挂进程方案在 Windows 11 上加载不了 WinRT 类型（"Unable to find
+        // type ... ContentType=WindowsRuntime"），每条 toast 都以 exit 1 静默失败。
+        // AUMID 与 protocol 深链保持不变，投递身份仍靠开始菜单快捷方式打戳。
         var link = $"axmolhub://conversation/{Uri.EscapeDataString(conversationId)}";
         var xml = new XmlDocument();
         var toast = xml.CreateElement("toast");
@@ -173,58 +177,13 @@ internal sealed class SystemAttentionService : IDisposable
         toast.AppendChild(visual);
         xml.AppendChild(toast);
 
-        var xmlBytes = Encoding.UTF8.GetBytes(xml.OuterXml);
-        var encodedXml = Convert.ToBase64String(xmlBytes);
-        var script = "$ErrorActionPreference = 'Stop'; try { "
-                     + "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; "
-                     + "$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]; "
-                     + "$bytes = [Convert]::FromBase64String('" + encodedXml + "'); "
-                     + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument; "
-                     + "$doc.LoadXml([Text.Encoding]::UTF8.GetString($bytes)); "
-                     + "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc); "
-                     + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('"
-                     + WindowsAppUserModelId + "').Show($toast); "
-                     + "Write-Output 'Toast.Show completed.' "
-                     + "} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }";
-        var start = new ProcessStartInfo("powershell.exe")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoLogo");
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-WindowStyle");
-        start.ArgumentList.Add("Hidden");
-        start.ArgumentList.Add("-EncodedCommand");
-        start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-        var process = Process.Start(start) ?? throw new IOException("Could not start PowerShell for the Windows toast.");
-        Report($"Started Windows toast helper for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
-        _ = ObserveWindowsToastAsync(process, conversationId);
-    }
-
-    private async Task ObserveWindowsToastAsync(Process process, string conversationId)
-    {
-        using (process)
-        {
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            if (process.ExitCode != 0)
-            {
-                var diagnostic = (await error.ConfigureAwait(false)).Trim();
-                Report($"Windows toast helper failed for conversation {conversationId} "
-                       + $"(exit {process.ExitCode}): {diagnostic}");
-                return;
-            }
-
-            var details = (await output.ConfigureAwait(false)).Trim();
-            Report($"Windows toast helper completed for conversation {conversationId}."
-                   + (details.Length == 0 ? "" : " " + details));
-        }
+        var doc = new Windows.Data.Xml.Dom.XmlDocument();
+        doc.LoadXml(xml.OuterXml);
+        var notification = new Windows.UI.Notifications.ToastNotification(doc);
+        Windows.UI.Notifications.ToastNotificationManager
+            .CreateToastNotifier(WindowsAppUserModelId)
+            .Show(notification);
+        Report($"Showed Windows toast for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
     }
 
     private void ShowLinuxNotification(string title, string body, string conversationId)
@@ -389,6 +348,10 @@ internal sealed class SystemAttentionService : IDisposable
     {
         private static readonly Guid TaskbarClass = new("56FDF344-FD6D-11D0-958A-006097C9A090");
         private static readonly Guid TaskbarInterface = new("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84");
+        private static readonly Guid TaskbarInterface4 = new("C43DC798-95D1-4BEA-9030-BB99E2983A1A");
+        // IID_ITaskbarList（Vista 时代的基础接口）：版本门控把 ITaskbarList3 拒之门外的进程
+        // 仍然能拿到它，从它再 QueryInterface 一次有时能绕过创建时的门控。
+        private static readonly Guid TaskbarBaseInterface = new("56FDF342-FD6D-11D0-958A-006097C9A090");
 
         /// <summary>The one failure worth remembering: the shell object was created but does not expose
         /// <c>ITaskbarList3</c>. Mapping it to an exception loses the number, which is why it is checked here
@@ -410,11 +373,42 @@ internal sealed class SystemAttentionService : IDisposable
             }
 
             var classId = TaskbarClass;
-            var interfaceId = TaskbarInterface;
-            hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref interfaceId, out var taskbar);
+            // 优先 ITaskbarList4：本机（Windows 11）实测 shell 的 TaskbarList 对象对
+            // IID_ITaskbarList3 一律 E_NOINTERFACE、对 IID_ITaskbarList4 正常 —— 与
+            // manifest supportedOS 无关（2026-10-09 探针验证）。ITaskbarList4 继承
+            // ITaskbarList3，vtable 前 19 槽完全一致，下面的 HrInit（槽 3）与
+            // SetOverlayIcon（槽 18）用法不变；Win7 没有 4，自然退回 3。
+            hr = E_NOINTERFACE;
+            IntPtr taskbar = IntPtr.Zero;
+            foreach (var interfaceId in new[] { TaskbarInterface4, TaskbarInterface })
+            {
+                var iid = interfaceId;
+                hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref iid, out taskbar);
+                if (hr == 0) break;
+            }
+            if (hr == E_NOINTERFACE)
+            {
+                // 兜底：先拿不受门控的 ITaskbarList，再 QueryInterface 要 4 / 3。
+                var baseId = TaskbarBaseInterface;
+                hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref baseId, out var baseTaskbar);
+                if (hr == 0)
+                {
+                    var baseVtable = Marshal.ReadIntPtr(baseTaskbar);
+                    var queryInterface = Marshal.GetDelegateForFunctionPointer<QueryInterfaceDelegate>(
+                        Marshal.ReadIntPtr(baseVtable, 0));
+                    hr = E_NOINTERFACE;
+                    foreach (var interfaceId in new[] { TaskbarInterface4, TaskbarInterface })
+                    {
+                        var wantedId = interfaceId;
+                        hr = queryInterface(baseTaskbar, ref wantedId, out taskbar);
+                        if (hr == 0) break;
+                    }
+                    Marshal.Release(baseTaskbar);
+                }
+            }
             if (hr != 0)
             {
-                failure = $"CoCreateInstance(CLSID_TaskbarList, ITaskbarList3) returned {Code(hr)}.";
+                failure = $"CoCreateInstance(CLSID_TaskbarList, ITaskbarList3/4) returned {Code(hr)}.";
                 return false;
             }
 
@@ -514,6 +508,9 @@ internal sealed class SystemAttentionService : IDisposable
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int HrInitDelegate(IntPtr self);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int QueryInterfaceDelegate(IntPtr self, ref Guid interfaceId, out IntPtr instance);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int SetOverlayIconDelegate(IntPtr self, IntPtr window, IntPtr icon, [MarshalAs(UnmanagedType.LPWStr)] string description);

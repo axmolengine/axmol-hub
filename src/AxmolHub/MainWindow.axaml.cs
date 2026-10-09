@@ -407,6 +407,13 @@ public partial class MainWindow : Window
 
     private void SyncApprovalBadge()
     {
+        // _chat.Changed 可以从后台线程触发；ITaskbarList3 必须在本窗口所在的 STA 单元里
+        // 请求，跨单元调用要么封送失败（E_NOINTERFACE），要么作用到错误的任务栏按钮上。
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(SyncApprovalBadge);
+            return;
+        }
         if (_windowIsOpen && !App.Options.IsAutomation)
             _attention.SetApprovalBadge(this, _attentionDiagnosticBadge
                 ?? _chat.PendingBackgroundApprovalCount(AssistantVisible ? _chat.ViewedConversationId : null) > 0);
