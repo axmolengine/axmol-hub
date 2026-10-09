@@ -2,14 +2,20 @@
   <PropertyGroup>
     <!-- WinExe 只是 Windows 下不弹控制台；在 macOS / Linux 上就是普通可执行文件。 -->
     <OutputType>WinExe</OutputType>
-    <!-- 曾经刻意用纯 net8.0（"要在三平台构建"），2026-10-09 改为带 Windows 平台的 TFM：
-         Windows toast 通知需要 WinRT 投影（Windows.UI.Notifications），.NET 5+ 只在
-         -windows10.0.x TFM 下由 CsWinRT 内置提供；外挂 powershell.exe 的旧方案在
-         Windows 11 上加载不了 WinRT 类型，每条 toast 静默失败。
-         三平台构建不受影响：非 Windows 主机加 EnableWindowsTargeting 即可还原/编译，
-         产物仍是跨平台 net8.0 程序集，WinRT 调用点全部有 OS 守卫（SystemAttentionService）。 -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- 刻意不加 -windows：这个项目要在三平台构建。Avalonia 12.1.3 的 lib/ 同时提供 net8.0 与 net10.0，
+         与 Core / Cli 的 net8.0 对齐即可，不需要升 TFM。
+         2026-10-09 曾经为进程内 WinRT toast 升到 net8.0-windows10.0.19041.0，当天实测后回退，两条理由：
+         ① 带 Windows 平台的 TFM 会让 NuGet 从 osx 依赖图里静默剪掉 HarfBuzzSharp.NativeAssets.macOS，
+            `dotnet publish -r osx-arm64` 的产物里没有 libHarfBuzzSharp.dylib（同一命令在 fae2bd8 上有）；
+            Skia / Avalonia.Native 的原生库没被剪，所以只有文字整形这一项无声消失，补一条显式 pin 才能保住，
+            而"每次升级都要重新数一遍原生资产"正是这次踩到的那类静默回归。
+         ② 当初换 TFM 的理由（powershell.exe 外挂进程在 Windows 11 加载不了 WinRT 类型）不成立：
+            那段脚本在 Windows 11 26300 的 Windows PowerShell 5.1 上类型加载、XML 解析、
+            ToastNotification 构造全部成功。进程内投影确实只有 -windows TFM 这一条路
+            （Microsoft.Windows.SDK.Contracts 在纯 net8.0 上报 92 个 NETSDK1130），但投递方式不值得
+            用①去换：同机的 Electron 客户端 opencode 的 toast 身份只靠开始菜单快捷方式打戳，
+            机制本身不是投递成功的决定因素。 -->
+    <TargetFramework>net8.0</TargetFramework>
     <!-- 名字的历史：AxmolHub.App.Avalonia（与 WPF 版并存期）→ AxmolHub.App（P6 删掉 WPF 版后
          去掉 .Avalonia，那次是纯重命名，namespace / x:Class / avares 一律没动）→ AxmolHub
          （2026-10-08）。留 `.App` 的理由在 P6 就没了，而它一直在付出真实代价：程序集名同时决定
@@ -44,9 +50,6 @@
          依赖集合没有变，只是换了宿主项目）。Core 与 Cli 仍保持零依赖、可离线构建。 -->
     <PackageReference Include="Markdown.Avalonia" Version="12.0.0-a3" />
     <PackageReference Include="Markdig" Version="0.40.0" />
-    <!-- Windows toast 的 WinRT 投影。选它而不是 net8.0-windows10.0.x TFM：纯 net8.0
-         就能用，不违背上面"刻意不加 -windows"的三平台构建决定；非 Windows 平台只编译
-         不触碰这些类型（SystemAttentionService 里按 OS 守卫，方法级隔离）。 -->
     <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Avalonia" Version="12.1.3" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />

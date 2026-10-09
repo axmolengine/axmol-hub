@@ -37,6 +37,12 @@ public partial class MainWindow : Window
     private string? _attentionDiagnosticConversationId;
     private bool _windowIsOpen;
 
+    /// <summary>Forced window-visibility answer for the self-check, or <c>null</c> to read the platform. The
+    /// suite drives a real <see cref="MainWindow"/> that is never the foreground window and can never truly be
+    /// minimized, so without this the desktop half of the visibility composition could only ever be asserted in
+    /// one of its two states.</summary>
+    private bool? _windowVisibleOverride;
+
     /// <summary>
     /// The AI assistant page's state. **One instance for the window's whole life**, created before the page
     /// is: it persists providers/conversations under the data root, so unlike <see cref="HubWorkspace"/>
@@ -149,6 +155,38 @@ public partial class MainWindow : Window
         {
             _windowIsOpen = true;
             SyncApprovalBadge();
+            // Microsoft's contract is that no ITaskbarList3 call may precede the shell's TaskbarButtonCreated
+            // message, which explorer posts asynchronously after the HWND appears. Honouring that literally needs
+            // a Win32 window-proc hook Avalonia only offers through platform-specific APIs, so this takes the
+            // cheap route: one deferred retry. It is safe because SetApprovalBadge records the applied state only
+            // on success, so repeating a state that already took is a no-op and a failed one is free to try again.
+            // Without it, an approval restored at startup whose first attempt loses the race stays undotted until
+            // some later transcript change raises Changed — which for an idle session may never come.
+            DispatcherTimer.RunOnce(SyncApprovalBadge, TimeSpan.FromSeconds(1));
+        };
+        WireWindowVisibility();
+    }
+
+    /// <summary>
+    /// Keeps the taskbar badge following the user rather than only the transcript. Minimizing with an approval on
+    /// the conversation in front of you is the moment the dot becomes useful; restoring the window is the moment
+    /// it becomes a lie. Neither used to be noticed, because nothing in the shell tracked window state at all.
+    ///
+    /// Subscribed here — once, in the constructor — and deliberately <b>not</b> in <see cref="WireChatRuns"/> or
+    /// the chrome wiring: those are re-run by the data-root switch while the window itself survives it, so a
+    /// subscription placed there would fire twice after one switch and three times after two. Avalonia 12 has no
+    /// <c>StateChanged</c> event on <see cref="Window"/>, so <see cref="Window.WindowState"/> is read off the
+    /// property-changed stream. Minimizing normally raises both <c>Deactivated</c> and the property change; the
+    /// second call is free, because <see cref="SystemAttentionService.SetApprovalBadge"/> deduplicates on
+    /// (handle, applied value).
+    /// </summary>
+    private void WireWindowVisibility()
+    {
+        Activated += (_, _) => SyncApprovalBadge();
+        Deactivated += (_, _) => SyncApprovalBadge();
+        PropertyChanged += (_, e) =>
+        {
+            if (e.Property == WindowStateProperty) SyncApprovalBadge();
         };
     }
 
@@ -368,7 +406,7 @@ public partial class MainWindow : Window
     {
         if (App.Options.IsAutomation) return;
         if (!SystemAttentionService.ShouldNotifyApproval(
-                conversationId, _chat.ViewedConversationId, AssistantVisible)) return;
+                conversationId, _chat.ViewedConversationId, AttentionNow)) return;
         var title = _chat.SessionTitleFor(conversationId);
         if (string.IsNullOrWhiteSpace(title)) title = HubStrings.Get("Conversation");
         var titleKey = kind == ChatAttentionKind.PlanApproval
@@ -387,7 +425,7 @@ public partial class MainWindow : Window
     {
         if (App.Options.IsAutomation) return;
         if (!SystemAttentionService.ShouldNotifyRun(
-                conversationId, _chat.ViewedConversationId, AssistantVisible,
+                conversationId, _chat.ViewedConversationId, AttentionNow,
                 _chat.HasPendingPlanApproval(conversationId), outcome.Result))
             return;
 
@@ -407,8 +445,10 @@ public partial class MainWindow : Window
 
     private void SyncApprovalBadge()
     {
-        // _chat.Changed 可以从后台线程触发；ITaskbarList3 必须在本窗口所在的 STA 单元里
-        // 请求，跨单元调用要么封送失败（E_NOINTERFACE），要么作用到错误的任务栏按钮上。
+        // This reads window state and asks the shell for a taskbar overlay, both of which belong to the UI
+        // thread, and it is reached from ChatWorkspace.Changed — one of 54 raise sites, only some of which are
+        // provably on the UI thread. So hop rather than assume. The hop is not about COM apartments: the overlay
+        // interface is created and marshalled correctly from an MTA thread as well.
         if (!Dispatcher.UIThread.CheckAccess())
         {
             Dispatcher.UIThread.Post(SyncApprovalBadge);
@@ -416,7 +456,7 @@ public partial class MainWindow : Window
         }
         if (_windowIsOpen && !App.Options.IsAutomation)
             _attention.SetApprovalBadge(this, _attentionDiagnosticBadge
-                ?? _chat.PendingBackgroundApprovalCount(AssistantVisible ? _chat.ViewedConversationId : null) > 0);
+                ?? _chat.PendingBackgroundApprovalCount(AttentionBadgeConversation) > 0);
     }
 
     private void NotificationActivated(string conversationId)
@@ -836,6 +876,29 @@ public partial class MainWindow : Window
 
     /// <summary>Whether the assistant page is the one on screen.</summary>
     internal bool AssistantVisible => _currentKey == "Assistant";
+
+    /// <summary>Whether the window is in front of the user: focused, and not minimized. Read live rather than
+    /// cached out of <c>Activated</c>/<c>Deactivated</c>, because a cached copy is the thing that goes stale —
+    /// missed once during a data-root switch or across a window the shell recreated, and the Hub then believes
+    /// the user is watching forever. The events below are subscribed only to re-apply the badge when the answer
+    /// flips; no decision depends on having received them.</summary>
+    private bool WindowVisibleNow
+        => _windowVisibleOverride ?? (IsActive && WindowState != WindowState.Minimized);
+
+    /// <summary>The one place both attention paths compose their visibility answer, so the toast gate and the
+    /// taskbar badge cannot drift apart the way they did while each derived its own from page selection.</summary>
+    internal AttentionVisibility AttentionNow => new(WindowVisibleNow, AssistantVisible);
+
+    /// <summary>The conversation the badge may treat as on screen. Computed here rather than inside
+    /// <see cref="SyncApprovalBadge"/> so the self-check asserts the value that was really used instead of a
+    /// second copy of the rule.</summary>
+    internal string? AttentionBadgeConversation
+        => AttentionNow.BadgeVisibleConversation(_chat.ViewedConversationId);
+
+    /// <summary>Forces the desktop half of <see cref="AttentionNow"/> for the self-check; <c>null</c> hands the
+    /// answer back to the platform. The suite must reset it — an override left behind is a product path that has
+    /// stopped reading the desktop.</summary>
+    internal void SetWindowVisibleForCheck(bool? visible) => _windowVisibleOverride = visible;
 
     /// <summary>The settings gear's tooltip, for the shell self-check: the button is icon-only, so the tip is
     /// the only place its name is spelled out.</summary>

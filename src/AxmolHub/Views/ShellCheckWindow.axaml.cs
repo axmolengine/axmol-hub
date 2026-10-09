@@ -151,6 +151,7 @@ public partial class ShellCheckWindow : Window
             "自检起步语言被强制为中文（否则断言会随用户设置漂移，实测 " + HubStrings.Language + "）");
 
         CheckStringDefinition();
+        CheckWindowsTaskbarBadge();
         await CheckCjkFontNoticeAsync();
         CheckEveryXamlResourceKeyResolves();
         var shell = CheckShell(scratchRoot);
@@ -3146,32 +3147,70 @@ public partial class ShellCheckWindow : Window
                   && activatedId == approvedSession.Id
                   && !SystemAttentionService.TryGetConversationId("axmolhub://conversation/not-a-guid", out _),
                 "系统通知激活链接只解析有效的会话深链（实际 " + activatedId + "）");
-            Check(SystemAttentionService.ShouldNotifyApproval(approvedSession.Id, observer.Id, assistantPageVisible: true)
-                  && !SystemAttentionService.ShouldNotifyApproval(
-                      approvedSession.Id, approvedSession.Id, assistantPageVisible: true)
-                  && SystemAttentionService.ShouldNotifyApproval(
-                      approvedSession.Id, approvedSession.Id, assistantPageVisible: false)
-                  && Enum.GetValues<RunResult>()
+            // The gate is a pure predicate, so its whole truth table needs no window: three inputs (window in
+            // front, assistant page on screen, this very conversation viewed) decide one output. The eight rows
+            // are written out rather than derived from the implementation — a table generated from the predicate
+            // would be the predicate restating itself.
+            var viewed = approvedSession.Id;
+            var background = observer.Id;
+            Check(!SystemAttentionService.ShouldNotifyApproval(viewed, viewed, new AttentionVisibility(true, true))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, background, new AttentionVisibility(true, true))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, viewed, new AttentionVisibility(true, false))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, background, new AttentionVisibility(true, false))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, viewed, new AttentionVisibility(false, true))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, background, new AttentionVisibility(false, true))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, viewed, new AttentionVisibility(false, false))
+                  && SystemAttentionService.ShouldNotifyApproval(viewed, background, new AttentionVisibility(false, false)),
+                "系统通知闸门：只有「窗口在前台 + 停在助手页 + 正是该会话」三条同时成立才不打扰；窗口失焦或最小化时，即便正停在该会话也照样提醒（八种组合全覆盖）");
+            Check(Enum.GetValues<RunResult>()
                       .Where(result => result is RunResult.Completed or RunResult.Failed or RunResult.TimedOut)
                       .All(result => SystemAttentionService.ShouldNotifyRun(
-                          approvedSession.Id, observer.Id, assistantPageVisible: true,
+                          viewed, background, new AttentionVisibility(true, true),
                           hasPendingPlan: false, result))
                   && SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, approvedSession.Id, assistantPageVisible: false,
+                      viewed, viewed, new AttentionVisibility(false, true),
                       hasPendingPlan: false, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, approvedSession.Id, assistantPageVisible: true,
+                      viewed, viewed, new AttentionVisibility(true, true),
                       hasPendingPlan: false, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      viewed, background, new AttentionVisibility(false, true),
                       hasPendingPlan: true, RunResult.Completed)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      viewed, background, new AttentionVisibility(false, true),
                       hasPendingPlan: false, RunResult.Cancelled)
                   && !SystemAttentionService.ShouldNotifyRun(
-                      approvedSession.Id, observer.Id, assistantPageVisible: true,
+                      viewed, background, new AttentionVisibility(false, true),
                       hasPendingPlan: false, RunResult.Parked),
-                "助手页只提醒非当前会话；离开助手页时同一会话也提醒，完成/失败/超时提醒而取消、暂停不报完成");
+                "运行结束闸门：完成/失败/超时提醒而取消、暂停不报完成，仍有待确认计划时让位给审批提醒；失焦与最小化下同样成立");
+            Check(new AttentionVisibility(true, true).BadgeVisibleConversation(viewed) == viewed
+                  && new AttentionVisibility(true, false).BadgeVisibleConversation(viewed) is null
+                  && new AttentionVisibility(false, true).BadgeVisibleConversation(viewed) is null
+                  && new AttentionVisibility(false, false).BadgeVisibleConversation(viewed) is null,
+                "任务栏红点与系统通知读同一份可见性判定：窗口失焦或最小化、或不在助手页时，正看着的会话也算看不见");
+
+            // The composition in MainWindow is what actually feeds the predicate, and it is the half that was
+            // wrong: the shell used to hand the gate page selection and nothing else. Both states have to be
+            // forced, because the suite drives a real MainWindow that is never the foreground window and can
+            // never truly be minimized. Reset immediately — an override left behind is a product path that has
+            // stopped reading the desktop.
+            shell.NavigateTo("Assistant");
+            shell.SetWindowVisibleForCheck(true);
+            var forcedVisible = shell.AttentionNow;
+            var badgeWhileVisible = shell.AttentionBadgeConversation;
+            shell.SetWindowVisibleForCheck(false);
+            var forcedHidden = shell.AttentionNow;
+            var badgeWhileHidden = shell.AttentionBadgeConversation;
+            shell.SetWindowVisibleForCheck(null);
+            Dispatcher.UIThread.RunJobs();
+            Check(forcedVisible is { WindowVisible: true, AssistantPageVisible: true }
+                  && badgeWhileVisible == chat.ViewedConversationId
+                  && forcedHidden is { WindowVisible: false, AssistantPageVisible: true }
+                  && badgeWhileHidden is null
+                  && shell.AttentionNow.WindowVisible == (shell.IsActive && shell.WindowState != WindowState.Minimized),
+                "外壳把「窗口在前台」与「停在助手页」两个独立事实一起交给闸门；最小化或失焦时正看着的会话不再算可见，"
+                + "撤销强制后回到平台读数（可见时算作正在看的会话 "
+                + (badgeWhileVisible ?? "无") + "，隐藏时 " + (badgeWhileHidden ?? "无") + "）");
 
             await shell.HandleInstallLinkAsync(deepLink);
             panel.Reload();
@@ -7069,6 +7108,69 @@ public partial class ShellCheckWindow : Window
     /// hooked up at all** (the code reads perfectly fine, yet the conclusion is always "don't
     /// prompt", and the feature silently doesn't exist).
     /// </summary>
+    /// <summary>
+    /// The taskbar overlay's COM contract. Every identifier here is a literal transcribed from the Windows SDK,
+    /// and a wrong one fails silently in the product: <c>CoCreateInstance</c> answers E_NOINTERFACE,
+    /// <see cref="SystemAttentionService"/> latches "this host does not expose the overlay at all", and the badge
+    /// stays dead for the rest of the session behind one line in a log nobody reads. That is what shipped for the
+    /// whole of 0.8.x — the IID's last group read <c>9E9F8A5EEA84</c> where the real <c>IID_ITaskbarList3</c> ends
+    /// <c>9E9F8A5EEFAF</c>, and the wrong value is not a Windows behaviour but a value no shell object has ever
+    /// answered (zero occurrences in <c>explorerframe.dll</c>, no <c>HKCR\Interface</c> entry).
+    ///
+    /// The literal assertions run on all three platforms and cannot flake. The live probe is Windows-only, asks
+    /// for no overlay, and therefore paints nothing on the desktop it runs on.
+    /// </summary>
+    private void CheckWindowsTaskbarBadge()
+    {
+        Check(SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface
+                  == Guid.Parse("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF")
+              && SystemAttentionService.WindowsTaskbarBadge.TaskbarClass
+                  == Guid.Parse("56FDF344-FD6D-11D0-958A-006097C9A090"),
+            "任务栏 overlay 用的 IID_ITaskbarList3 与 CLSID_TaskbarList 和 Windows SDK 的 ShObjIdl_core.h 逐字一致（实际 "
+            + SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface + " / "
+            + SystemAttentionService.WindowsTaskbarBadge.TaskbarClass + "）");
+
+        // Negative controls, so the assertion above is not a constant compared with itself and the near misses
+        // stay distinguished: the value that actually shipped broken, IID_ITaskbarList (…F342, one hex digit from
+        // the CLSID's …F344), and the two interfaces on either side of the one we want. Without these, pasting a
+        // sibling identifier in would leave the suite green.
+        Check(SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface
+                  != Guid.Parse("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84")
+              && SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface
+                  != Guid.Parse("56FDF342-FD6D-11D0-958A-006097C9A090")
+              && SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface
+                  != Guid.Parse("602D4995-B13A-429B-A66E-1935E44F4317")
+              && SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface
+                  != Guid.Parse("C43DC798-95D1-4BEA-9030-BB99E2983A1A")
+              && SystemAttentionService.WindowsTaskbarBadge.TaskbarClass
+                  != SystemAttentionService.WindowsTaskbarBadge.TaskbarInterface,
+            "IID_ITaskbarList3 与四个易混标识符都不相同：曾经的错值 …9E9F8A5EEA84、只差一个十六进制位的 IID_ITaskbarList …56FDF342、"
+            + "ITaskbarList2、ITaskbarList4，且 CLSID 不等于 IID");
+
+        if (!OperatingSystem.IsWindows())
+        {
+            _lines.Add("SKIP  非 Windows 平台没有任务栏 overlay，跳过 ITaskbarList3 的真实探测");
+            return;
+        }
+
+        // Really ask this host for the interface. Creating the object and running HrInit touches no window, so
+        // this is safe on a live desktop, and it is the only assertion anywhere proving the shipped identifier is
+        // one this machine's shell answers rather than one that merely matches a header. A thread that never
+        // initialized COM is reported as a skip, not a failure — that is a fact about the session running the
+        // suite. A SKIP here on Windows is itself the thing to notice: it would mean the probe never actually ran.
+        var probed = SystemAttentionService.WindowsTaskbarBadge.TryProbe(out var hr, out var failure);
+        if (!probed && hr == SystemAttentionService.WindowsTaskbarBadge.CO_E_NOTINITIALIZED)
+        {
+            _lines.Add("SKIP  本线程未初始化 COM，跳过 ITaskbarList3 的真实探测（" + failure + "）");
+            return;
+        }
+
+        Check(probed,
+            "本机真的能按 IID_ITaskbarList3 建出任务栏对象并完成 HrInit（hr="
+            + SystemAttentionService.WindowsTaskbarBadge.Code(hr)
+            + (failure is null ? "" : "，" + failure) + "）");
+    }
+
     private async Task CheckCjkFontNoticeAsync()
     {
         // ① Decision: only "genuinely no font + UI language is Chinese" bothers the user.

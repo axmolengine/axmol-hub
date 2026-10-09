@@ -7,6 +7,31 @@ using Avalonia.Platform;
 
 namespace AxmolHub;
 
+/// <summary>
+/// What the shell knows about whether the user can see the assistant right now. Two independent facts kept
+/// apart on purpose: which page is on screen is a navigation answer, whether the window is in front of the user
+/// is a desktop answer. Folding them into one flag would make the row "minimized, still on the assistant page,
+/// still on this very conversation ⇒ notify" impossible to assert — it would come out true by construction, and
+/// a predicate that cannot be falsified is a decoration.
+/// </summary>
+internal readonly record struct AttentionVisibility(bool WindowVisible, bool AssistantPageVisible)
+{
+    /// <summary>Whether this conversation is the one the user is actually looking at. All three conditions must
+    /// hold: the 2026-10-09 investigation found the gate reading page selection alone, so the one thing everybody
+    /// does to test a notification — start a run and walk away from the window — was the one thing that
+    /// suppressed it.</summary>
+    internal bool IsLookingAt(string conversationId, string? viewedConversationId)
+        => WindowVisible
+           && AssistantPageVisible
+           && string.Equals(conversationId, viewedConversationId, StringComparison.Ordinal);
+
+    /// <summary>The conversation the taskbar badge may treat as on screen, or <c>null</c> when nobody can see it.
+    /// The badge and the toast read visibility through this one type so the dot can never say "hidden" while the
+    /// toast says "visible" — which is what happened while each path computed its own answer.</summary>
+    internal string? BadgeVisibleConversation(string? viewedConversationId)
+        => WindowVisible && AssistantPageVisible ? viewedConversationId : null;
+}
+
 /// <summary>Delivers actionable chat attention through the host OS and marks unresolved approvals on its app icon.</summary>
 internal sealed class SystemAttentionService : IDisposable
 {
@@ -21,15 +46,17 @@ internal sealed class SystemAttentionService : IDisposable
     internal event Action<string>? NotificationActivated;
     internal event Action<string>? Diagnostic;
 
+    /// <summary>Whether an approval deserves a system notification: the inverse of "the user can see it". A
+    /// window that is unfocused or minimized is a window the user has walked away from, so the conversation on
+    /// screen counts as unseen exactly like one on another page.</summary>
     internal static bool ShouldNotifyApproval(
-        string conversationId, string? viewedConversationId, bool assistantPageVisible)
-        => !assistantPageVisible
-           || !string.Equals(conversationId, viewedConversationId, StringComparison.Ordinal);
+        string conversationId, string? viewedConversationId, AttentionVisibility visibility)
+        => !visibility.IsLookingAt(conversationId, viewedConversationId);
 
     internal static bool ShouldNotifyRun(
-        string conversationId, string? viewedConversationId, bool assistantPageVisible,
+        string conversationId, string? viewedConversationId, AttentionVisibility visibility,
         bool hasPendingPlan, RunResult result)
-        => ShouldNotifyApproval(conversationId, viewedConversationId, assistantPageVisible)
+        => ShouldNotifyApproval(conversationId, viewedConversationId, visibility)
            && !hasPendingPlan
            && result is not (RunResult.Cancelled or RunResult.Parked);
 
@@ -72,7 +99,10 @@ internal sealed class SystemAttentionService : IDisposable
     private bool? _badgedVisible;
 
     /// <summary>Set once the host has answered that it does not expose the overlay at all. That answer does not
-    /// change mid-session, and re-asking turned one refusal into forty lines of log.</summary>
+    /// change mid-session, and re-asking turned one refusal into forty lines of log. It is also why the wrong
+    /// <c>IID_ITaskbarList3</c> was fatal rather than merely noisy: E_NOINTERFACE is the one code latched here,
+    /// so a single bad literal kept the badge dead for the rest of every session, and nothing downstream ever
+    /// asked the shell again. The identifier is now pinned by <c>--verify-shell</c>.</summary>
     private bool _badgeUnsupported;
 
     internal bool SetApprovalBadge(Window window, bool visible)
@@ -155,10 +185,6 @@ internal sealed class SystemAttentionService : IDisposable
 
     private void ShowWindowsToast(string title, string body, string conversationId)
     {
-        // 进程内直接调 WinRT toast API（Microsoft.Windows.SDK.Contracts 投影）。之前的
-        // powershell.exe 外挂进程方案在 Windows 11 上加载不了 WinRT 类型（"Unable to find
-        // type ... ContentType=WindowsRuntime"），每条 toast 都以 exit 1 静默失败。
-        // AUMID 与 protocol 深链保持不变，投递身份仍靠开始菜单快捷方式打戳。
         var link = $"axmolhub://conversation/{Uri.EscapeDataString(conversationId)}";
         var xml = new XmlDocument();
         var toast = xml.CreateElement("toast");
@@ -177,13 +203,71 @@ internal sealed class SystemAttentionService : IDisposable
         toast.AppendChild(visual);
         xml.AppendChild(toast);
 
-        var doc = new Windows.Data.Xml.Dom.XmlDocument();
-        doc.LoadXml(xml.OuterXml);
-        var notification = new Windows.UI.Notifications.ToastNotification(doc);
-        Windows.UI.Notifications.ToastNotificationManager
-            .CreateToastNotifier(WindowsAppUserModelId)
-            .Show(notification);
-        Report($"Showed Windows toast for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
+        var xmlBytes = Encoding.UTF8.GetBytes(xml.OuterXml);
+        var encodedXml = Convert.ToBase64String(xmlBytes);
+        // Windows toasts go through a Windows PowerShell child process rather than in-process, and both
+        // halves of that choice are measured rather than assumed. In-process WinRT needs a `-windows` TFM
+        // (Microsoft.Windows.SDK.Contracts fails on plain net8.0 with 92 x NETSDK1130), and that TFM makes
+        // NuGet silently prune HarfBuzzSharp.NativeAssets.macOS from the osx publish — see the csproj note.
+        // The claim this replaced was that this very script "cannot load WinRT types on Windows 11"; run
+        // against Windows PowerShell 5.1 on build 26300 it loads the types, parses the XML and constructs the
+        // ToastNotification. The XML arrives base64 because title and body are user- and model-derived, and a
+        // quote in them would otherwise have to survive C# escaping and PowerShell's parser on the way to a
+        // notification nobody sees failing.
+        var script = "$ErrorActionPreference = 'Stop'; try { "
+                     + "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; "
+                     + "$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]; "
+                     + "$bytes = [Convert]::FromBase64String('" + encodedXml + "'); "
+                     + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument; "
+                     + "$doc.LoadXml([Text.Encoding]::UTF8.GetString($bytes)); "
+                     + "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc); "
+                     + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('"
+                     + WindowsAppUserModelId + "').Show($toast); "
+                     + "Write-Output 'Toast.Show completed.' "
+                     + "} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }";
+        var start = new ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("-NoLogo");
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-WindowStyle");
+        start.ArgumentList.Add("Hidden");
+        start.ArgumentList.Add("-EncodedCommand");
+        start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+        var process = Process.Start(start) ?? throw new IOException("Could not start PowerShell for the Windows toast.");
+        Report($"Started Windows toast helper for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
+        _ = ObserveWindowsToastAsync(process, conversationId);
+    }
+
+    /// <summary>Waits the child process out so its exit code and stderr can be reported. A toast that never
+    /// appeared is otherwise indistinguishable from a toast that was never asked for, and the whole 0.8.x
+    /// notification investigation turned on exactly that distinction: the log had no line from either half of
+    /// this pair, which meant the code path had not run rather than having run and been refused by Windows.</summary>
+    private async Task ObserveWindowsToastAsync(Process process, string conversationId)
+    {
+        using (process)
+        {
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                var diagnostic = (await error.ConfigureAwait(false)).Trim();
+                Report($"Windows toast helper failed for conversation {conversationId} "
+                       + $"(exit {process.ExitCode}): {diagnostic}");
+                return;
+            }
+
+            var details = (await output.ConfigureAwait(false)).Trim();
+            Report($"Windows toast helper completed for conversation {conversationId}."
+                   + (details.Length == 0 ? "" : " " + details));
+        }
     }
 
     private void ShowLinuxNotification(string title, string body, string conversationId)
@@ -344,19 +428,46 @@ internal sealed class SystemAttentionService : IDisposable
         private static extern IntPtr objc_msgSendString(IntPtr receiver, IntPtr selector, IntPtr argument);
     }
 
-    private static class WindowsTaskbarBadge
+    /// <summary>The Windows taskbar overlay. <c>internal</c> rather than <c>private</c> because
+    /// <c>--verify-shell</c> pins the two identifiers below and probes the interface for real; both assertions
+    /// read the production constants and the production create path rather than a copy of either.</summary>
+    internal static class WindowsTaskbarBadge
     {
-        private static readonly Guid TaskbarClass = new("56FDF344-FD6D-11D0-958A-006097C9A090");
-        private static readonly Guid TaskbarInterface = new("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84");
-        private static readonly Guid TaskbarInterface4 = new("C43DC798-95D1-4BEA-9030-BB99E2983A1A");
-        // IID_ITaskbarList（Vista 时代的基础接口）：版本门控把 ITaskbarList3 拒之门外的进程
-        // 仍然能拿到它，从它再 QueryInterface 一次有时能绕过创建时的门控。
-        private static readonly Guid TaskbarBaseInterface = new("56FDF342-FD6D-11D0-958A-006097C9A090");
+        /// <summary><c>CLSID_TaskbarList</c>. It sits one hex digit from <c>IID_ITaskbarList</c> below
+        /// (<c>…F344</c> against <c>…F342</c>); both are transcribed from the SDK, and transposing them fails
+        /// as silently as the interface literal did.</summary>
+        internal static readonly Guid TaskbarClass = new("56FDF344-FD6D-11D0-958A-006097C9A090");
+
+        /// <summary><c>IID_ITaskbarList3</c>, from <c>MIDL_INTERFACE</c> at <c>ShObjIdl_core.h:15676</c>.
+        /// For the whole of 0.8.x this read <c>…9E9F8A5EEA84</c> — a plausible-looking tail that no shell object
+        /// has ever answered, so <c>CoCreateInstance</c> returned E_NOINTERFACE on every call and the latch in
+        /// <see cref="SetApprovalBadge"/> turned one wrong literal into a badge that stayed dead for the rest of
+        /// every session. The value was never a Windows behaviour: <c>…EEA84</c> appears zero times in
+        /// <c>explorerframe.dll</c> and has no <c>HKCR\Interface</c> entry, while this one appears once and has
+        /// a registered proxy/stub. Do not edit it without editing the assertion that pins it.</summary>
+        internal static readonly Guid TaskbarInterface = new("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF");
+
+        /// <summary>Vtable slots, counted from <c>ITaskbarList3Vtbl</c> in the SDK header: IUnknown's three,
+        /// then <c>ITaskbarList</c>'s five (<c>HrInit</c> first), then <c>ITaskbarList2</c>'s one, then
+        /// <c>ITaskbarList3</c>'s — where <c>SetOverlayIcon</c> is the tenth, declared after the progress, tab
+        /// and thumbbar methods rather than in the order the prose documentation lists them. Named because a
+        /// bare <c>18</c> cannot be checked at a glance, and this file has already shipped one unverifiable
+        /// literal.</summary>
+        private const int HrInitSlot = 3;
+        private const int SetOverlayIconSlot = 18;
+
+        /// <summary><c>CLSCTX_INPROC_SERVER</c>: the taskbar object is <c>explorerframe.dll</c> in this process.</summary>
+        private const uint ClsCtxInprocServer = 1;
 
         /// <summary>The one failure worth remembering: the shell object was created but does not expose
         /// <c>ITaskbarList3</c>. Mapping it to an exception loses the number, which is why it is checked here
         /// rather than by catching <see cref="InvalidCastException"/> upstream.</summary>
         internal const int E_NOINTERFACE = unchecked((int)0x80004002);
+
+        /// <summary>Reported by the self-check as a skip rather than a failure: it says COM was never
+        /// initialized on the thread running the suite, which is a fact about that session and not about the
+        /// identifier under test.</summary>
+        internal const int CO_E_NOTINITIALIZED = unchecked((int)0x800401F0);
 
         /// <summary>Applies or clears the overlay, naming the step that refused and the code it answered with.
         /// Three separate calls can fail here — creating the object, initializing it, and the overlay itself —
@@ -372,60 +483,11 @@ internal sealed class SystemAttentionService : IDisposable
                 return false;
             }
 
-            var classId = TaskbarClass;
-            // 优先 ITaskbarList4：本机（Windows 11）实测 shell 的 TaskbarList 对象对
-            // IID_ITaskbarList3 一律 E_NOINTERFACE、对 IID_ITaskbarList4 正常 —— 与
-            // manifest supportedOS 无关（2026-10-09 探针验证）。ITaskbarList4 继承
-            // ITaskbarList3，vtable 前 19 槽完全一致，下面的 HrInit（槽 3）与
-            // SetOverlayIcon（槽 18）用法不变；Win7 没有 4，自然退回 3。
-            hr = E_NOINTERFACE;
-            IntPtr taskbar = IntPtr.Zero;
-            foreach (var interfaceId in new[] { TaskbarInterface4, TaskbarInterface })
-            {
-                var iid = interfaceId;
-                hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref iid, out taskbar);
-                if (hr == 0) break;
-            }
-            if (hr == E_NOINTERFACE)
-            {
-                // 兜底：先拿不受门控的 ITaskbarList，再 QueryInterface 要 4 / 3。
-                var baseId = TaskbarBaseInterface;
-                hr = CoCreateInstance(ref classId, IntPtr.Zero, 1, ref baseId, out var baseTaskbar);
-                if (hr == 0)
-                {
-                    var baseVtable = Marshal.ReadIntPtr(baseTaskbar);
-                    var queryInterface = Marshal.GetDelegateForFunctionPointer<QueryInterfaceDelegate>(
-                        Marshal.ReadIntPtr(baseVtable, 0));
-                    hr = E_NOINTERFACE;
-                    foreach (var interfaceId in new[] { TaskbarInterface4, TaskbarInterface })
-                    {
-                        var wantedId = interfaceId;
-                        hr = queryInterface(baseTaskbar, ref wantedId, out taskbar);
-                        if (hr == 0) break;
-                    }
-                    Marshal.Release(baseTaskbar);
-                }
-            }
-            if (hr != 0)
-            {
-                failure = $"CoCreateInstance(CLSID_TaskbarList, ITaskbarList3/4) returned {Code(hr)}.";
-                return false;
-            }
-
+            if (!TryCreate(out var taskbar, out hr, out failure)) return false;
             try
             {
-                var vtable = Marshal.ReadIntPtr(taskbar);
-                var initialize = Marshal.GetDelegateForFunctionPointer<HrInitDelegate>(
-                    Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
-                hr = initialize(taskbar);
-                if (hr != 0)
-                {
-                    failure = $"ITaskbarList3::HrInit returned {Code(hr)}.";
-                    return false;
-                }
-
-                var method = Marshal.ReadIntPtr(vtable, 18 * IntPtr.Size);
-                var setOverlay = Marshal.GetDelegateForFunctionPointer<SetOverlayIconDelegate>(method);
+                var setOverlay = Marshal.GetDelegateForFunctionPointer<SetOverlayIconDelegate>(
+                    Marshal.ReadIntPtr(Marshal.ReadIntPtr(taskbar), SetOverlayIconSlot * IntPtr.Size));
                 var icon = visible ? CreateDotIcon() : IntPtr.Zero;
                 try
                 {
@@ -449,7 +511,49 @@ internal sealed class SystemAttentionService : IDisposable
             }
         }
 
-        private static string Code(int value) => $"0x{value:x8}";
+        /// <summary>Creates the shell's taskbar object and runs <c>HrInit</c>, handing back an owned pointer the
+        /// caller must release. Split out of <see cref="TrySet"/> so the self-check probes the production path:
+        /// an assertion that re-declared the identifiers, or re-implemented the create, would prove nothing
+        /// about the ones actually shipped.</summary>
+        private static bool TryCreate(out IntPtr taskbar, out int hr, out string? failure)
+        {
+            taskbar = IntPtr.Zero;
+            failure = null;
+            var classId = TaskbarClass;
+            var interfaceId = TaskbarInterface;
+            hr = CoCreateInstance(ref classId, IntPtr.Zero, ClsCtxInprocServer, ref interfaceId, out taskbar);
+            if (hr != 0)
+            {
+                failure = $"CoCreateInstance(CLSID_TaskbarList, IID_ITaskbarList3) returned {Code(hr)}.";
+                return false;
+            }
+
+            var initialize = Marshal.GetDelegateForFunctionPointer<HrInitDelegate>(
+                Marshal.ReadIntPtr(Marshal.ReadIntPtr(taskbar), HrInitSlot * IntPtr.Size));
+            hr = initialize(taskbar);
+            if (hr != 0)
+            {
+                failure = $"ITaskbarList3::HrInit returned {Code(hr)}.";
+                Marshal.Release(taskbar);
+                taskbar = IntPtr.Zero;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Creates, initializes and releases the taskbar object without ever asking for an overlay, so
+        /// it paints nothing and is safe to run against a live desktop. It is the only check anywhere that
+        /// proves the shipped identifier is one this host actually answers, rather than one that merely matches
+        /// a header.</summary>
+        internal static bool TryProbe(out int hr, out string? failure)
+        {
+            if (!TryCreate(out var taskbar, out hr, out failure)) return false;
+            Marshal.Release(taskbar);
+            return true;
+        }
+
+        internal static string Code(int value) => $"0x{value:x8}";
 
         private static IntPtr CreateDotIcon()
         {
@@ -508,9 +612,6 @@ internal sealed class SystemAttentionService : IDisposable
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int HrInitDelegate(IntPtr self);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate int QueryInterfaceDelegate(IntPtr self, ref Guid interfaceId, out IntPtr instance);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int SetOverlayIconDelegate(IntPtr self, IntPtr window, IntPtr icon, [MarshalAs(UnmanagedType.LPWStr)] string description);

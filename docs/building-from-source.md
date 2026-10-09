@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（894 条断言）
+# 外壳、本地化与数据根切换的自检（904 条断言）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（46 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-theme ./tmp/theme.txt
@@ -116,7 +116,7 @@ dotnet run --project src/AxmolHub -- --data-root ./data --verify-ops ./tmp/ops-c
 
 `--verify-shell` 有三条值得单独说的断言：
 
-AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、后台待审批标记、通知过滤与会话深链激活。只有需要用户处理的审批显示任务栏/Dock 标记；任务完成不显示标记。当前 Assistant 页面正在显示的会话不弹系统通知，切到其他页面后该会话的完成或审批也会通知。自检会禁用真实系统通知和任务栏/Dock 标记；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
+AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、后台待审批标记、通知过滤（含窗口失焦与最小化）与会话深链激活。只有需要用户处理的审批显示任务栏/Dock 标记；任务完成不显示标记。「用户看得见这条会话」要三件事同时成立：窗口在前台（既未失焦也未最小化）、停在 Assistant 页、且该页正显示这条会话——少任何一件都会通知。所以最小化或 Alt-Tab 走开之后，即使走开的正是当前会话，它的完成与审批也照样提醒；任务栏红点读同一份判定，随窗口最小化出现、随窗口回到前台消失。自检会禁用真实系统通知和任务栏/Dock 标记；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
 
 **Windows 通知与任务栏标记手动诊断**：使用单独的数据目录启动应用，可立即请求一个示例 Toast 和 30 秒任务栏标记，不会创建或修改真实会话。开发版：
 
@@ -130,7 +130,7 @@ dotnet run --project src\AxmolHub -- --data-root .\tmp\attention-test-data --pre
 & "$env:LOCALAPPDATA\Programs\Axmol Hub\Axmol Hub.exe" --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
 ```
 
-应用日志位于 `.\tmp\attention-test-data\logs\`，筛选 `[System attention]` 可检查开始菜单快捷方式的 AppUserModelID、Toast 子进程错误及任务栏 overlay 的 HRESULT。Windows 设置中还需允许 Axmol Hub 通知，并关闭勿扰/专注助手后重测。Toast 需要开始菜单中的 `Axmol Hub.lnk` 带有匹配的 AppUserModelID；诊断会报告快捷方式缺失或写入失败。开发版只有在已有匹配快捷方式（通常由安装版创建）时才能完成 Toast 展示验证；任务栏标记诊断不依赖安装版。自检模式不会弹真实通知，`--test-system-attention` 才是桌面手测入口。
+应用日志位于 `.\tmp\attention-test-data\logs\`，筛选 `[System attention]` 可检查开始菜单快捷方式的 AppUserModelID、Toast 子进程的退出码与 stderr、以及任务栏 overlay 的 HRESULT。成功特征：红点是 `The diagnostic taskbar badge was requested successfully.`，toast 是 `Started Windows toast helper …` 紧跟 `Windows toast helper completed … Toast.Show completed.`。失败特征同样直白：`Could not update the taskbar badge: CoCreateInstance(CLSID_TaskbarList, IID_ITaskbarList3) returned 0x80004002`，那个 `0x80004002`(E_NOINTERFACE) 就是 0.8.x 整段时间红点不亮的原因——它不是 Windows 的行为，而是代码里的 `IID_ITaskbarList3` 字面量末段抄错（`…9E9F8A5EEA84`，真值 `…9E9F8A5EEFAF`），这个值在 `explorerframe.dll` 里一次都没有、`HKCR\Interface` 里也没有；`--verify-shell` 现在把两个标识符连同四个易混近邻一起钉住。Windows 设置中还需允许 Axmol Hub 通知，并关闭勿扰/专注助手后重测。Toast 需要开始菜单中的 `Axmol Hub.lnk` 带有匹配的 AppUserModelID（同机的 Electron 客户端只靠这一条就够，不需要再写 `HKCU\Software\Classes\AppUserModelId`）；诊断会报告快捷方式缺失或写入失败。开发版只有在已有匹配快捷方式（通常由安装版创建）时才能完成 Toast 展示验证；任务栏标记诊断不依赖安装版。自检模式不会弹真实通知，`--test-system-attention` 才是桌面手测入口。**但它证明的是投递，不是触发**：诊断直接调 `Show()`，绕过 `ShouldNotifyApproval`/`ShouldNotifyRun` 闸门，所以它全绿也说明不了"最小化后会不会提醒"——那一半要按上一节的三条件手动走一遍：停在当前会话、起一个 run、把窗口最小化或 Alt-Tab 走开（不要切页、不要换会话）。
 
 - **真切一次语言再切回来**，然后去读**早于切换就已建好**的控件上的文字（外壳导航项、设置页说明、引擎页表头）。它同时证明"已存在的控件跟着换文字"和"切回中文也生效"，并把设置文件落在临时目录里 —— 自检**不会**碰到你 `%LocalAppData%\AxmolHub\` 下的真实设置。去掉 `HubStrings.Apply` 那一行，构建照样 0 error，自检报 6 条 FAIL、退出 1。
 - **切换一次数据根再切回来**：换根、落盘、旧页面被丢弃、引擎列表跟着变空、拒绝盘符根、重复切换是无操作。漏掉"丢弃旧页面"的后果是"界面看着正常，一点按钮就在读一个已经不属于当前会话的工作区"——去掉 `_pages.Clear()` 一行，构建照样 0 error，自检报 3 条 FAIL、退出 1。
