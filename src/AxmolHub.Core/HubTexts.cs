@@ -424,6 +424,7 @@ public static class HubTexts
         // The meter's rows. Each one is something a person can act on: the schemas by changing the mode, the
         // attachments by un-adding a folder, the messages by compressing. A row nobody can act on is decoration.
         ["ChatContextCatSystem"] = ("系统提示", "System prompt"),
+        ["ChatContextCatCharter"] = ("项目规则", "Project rules"),
         ["ChatContextCatSummary"] = ("历史摘要", "Earlier summary"),
         ["ChatContextCatMemory"] = ("记忆索引", "Memory index"),
         ["ChatContextCatTools"] = ("工具声明", "Tool schemas"),

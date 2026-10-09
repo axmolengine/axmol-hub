@@ -14,6 +14,11 @@ public enum ContextCostKind
     /// <summary>The mode's instructions: what "you are the assistant in agent mode" costs.</summary>
     SystemPrompt,
 
+    /// <summary>The workspace's own <c>AGENTS.md</c>, read from its root. Its own row because it is the part of the
+    /// system message the <b>user</b> wrote: when a session behaves oddly, the question is whether Hub's own
+    /// instructions or this repository's charter is responsible, and one number answers that.</summary>
+    ProjectCharter,
+
     /// <summary>The stored summary of the earlier turns, which rides inside the system message.</summary>
     Summary,
 
@@ -55,13 +60,16 @@ public sealed class ContextLedger
     private readonly List<(ContextCostKind Kind, long Units)> _parts = [];
     private long _seenUnits;
 
-    /// <summary>What a mode's system message costs, split into the three things that make it up. One message pays
-    /// one framing cost, so the split must happen inside a single message rather than as three messages — three
-    /// would read four tokens above the request for instructions nobody wrote.</summary>
-    public void AddSystemPrompt(string? modePrompt, string? summarySection, string? memorySection)
+    /// <summary>What a mode's system message costs, split into the four things that make it up. One message pays
+    /// one framing cost, so the split must happen inside a single message rather than as four messages — four
+    /// would read twelve tokens above the request for instructions nobody wrote. The parts are added in the order
+    /// the caller composes the string, because the split is reproduced by prefix differences and a part added out
+    /// of order bills the wrong heading.</summary>
+    public void AddSystemPrompt(string? modePrompt, string? charterSection, string? summarySection, string? memorySection)
     {
         BeginMessage();
         AddPart(ContextCostKind.SystemPrompt, modePrompt);
+        AddPart(ContextCostKind.ProjectCharter, charterSection);
         AddPart(ContextCostKind.Summary, summarySection);
         AddPart(ContextCostKind.MemoryIndex, memorySection);
         EndMessage(ContextCostKind.SystemPrompt);

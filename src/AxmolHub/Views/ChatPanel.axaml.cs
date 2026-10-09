@@ -570,6 +570,7 @@ public partial class ChatPanel : UserControl
     private static string ContextCategoryKey(ContextCostKind kind) => kind switch
     {
         ContextCostKind.SystemPrompt => "ChatContextCatSystem",
+        ContextCostKind.ProjectCharter => "ChatContextCatCharter",
         ContextCostKind.Summary => "ChatContextCatSummary",
         ContextCostKind.MemoryIndex => "ChatContextCatMemory",
         ContextCostKind.ToolSchema => "ChatContextCatTools",
