@@ -907,7 +907,7 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var usageBeforeCompression = panel.ContextUsageForCheck;
+        var usageBeforeCompression = panel.ContextUsedForCheck;
         panel.OpenContextPopoverForCheck();
         Check(panel.ContextCompressButtonEnabledForCheck,
             "有足够的早期对话且模型可用时，压缩上下文按钮启用");
@@ -942,9 +942,18 @@ public partial class ShellCheckWindow : Window
               && shell.Chat.PreparedSystemPromptForCheck(compressionSession.Id)
                   .Contains("保留的历史摘要", StringComparison.Ordinal),
             "后续模型请求使用摘要与最近四条消息，而不再发送已压缩的前缀");
-        Check(panel.ContextUsageForCheck < usageBeforeCompression
+        Check(panel.ContextUsedForCheck < usageBeforeCompression
               && !panel.ContextCompressButtonEnabledForCheck,
             "压缩后估算占用下降，且没有更多可压缩的早期内容时按钮禁用");
+        // The summary is not a display nicety here: it rides in the system message of every later request, so a
+        // meter that cannot name it is metering a cost it does not show. A heading with nothing in it is not
+        // shown at all, which is the other half of the same rule — a column of zeros teaches a reader to skip it.
+        var summaryRows = panel.ContextCategoryRowsForCheck;
+        Check(summaryRows.Any(row => row.StartsWith(HubStrings.Get("ChatContextCatSummary"), StringComparison.Ordinal))
+              && summaryRows.Any(row => row.StartsWith(HubStrings.Get("ChatContextCatMessages"), StringComparison.Ordinal))
+              && summaryRows.All(row => row.Split('=')[1] != "0"),
+            "摘要落进系统提示之后，明细里就有「历史摘要」一行，且每一行都有数字、没有 0 占位（"
+            + string.Join("；", summaryRows) + "）");
         panel.CloseContextPopoverForCheck();
         shell.Chat.DeleteConversation(compressionSession.Id);
 
@@ -4218,7 +4227,9 @@ public partial class ShellCheckWindow : Window
             await WaitForIdleAsync(chat);
 
             var copy = chat.StoredCopyForCheck(session.Id);
-            var (used, budget) = chat.TranscriptUsageForCheck(session.Id);
+            var usage = chat.TranscriptUsageForCheck(session.Id);
+            var used = usage.Used;
+            var budget = usage.Room;
             var results = copy?.Messages.Where(turn => turn.Role == ChatRoles.Tool).ToList() ?? [];
             var cleared = results.Count(turn => turn.Text.StartsWith(ContextElider.Marker, StringComparison.Ordinal));
             var firstResult = results.FirstOrDefault()?.Text ?? "无";
@@ -4247,6 +4258,17 @@ public partial class ShellCheckWindow : Window
                   && copy.Messages.Skip(SummaryBoundary(copy)).All(turn => turn.ApprovalState is null),
                 "压缩只归档较早的前缀，磁盘上的转录一条没少（工具结果 "
                 + (copy?.Messages.Count(turn => turn.Role == ChatRoles.Tool) ?? -1) + " 条）");
+
+            // The tool declarations used to be the meter's blind spot: they went on the wire of every request
+            // while no line of the panel priced them, and a total that leaves one out reports a session smaller
+            // than the request that carries it. This is the fixture where the schemas are certainly measured, so
+            // it is where the rows have to add up to the reading.
+            var schemaRow = usage.Categories.FirstOrDefault(
+                category => category.Kind == ContextCostKind.ToolSchema);
+            Check(schemaRow is { Tokens: > 0 }
+                  && usage.Categories.Sum(category => category.Tokens) == usage.Used,
+                "工具声明在明细里有自己的一行，而所有行相加就是圆环的读数（声明 " + schemaRow?.Tokens
+                + " tokens，合计 " + usage.Used + "）");
 
             Check(HubStrings.Get("ChatContextCompacted") is { Length: > 0 } notice
                   && notice != "ChatContextCompacted",
@@ -4295,6 +4317,27 @@ public partial class ShellCheckWindow : Window
                 + (stuckCopy?.ContextIneffectiveCompactions ?? -1) + "，硬顶读数由那行写着）");
 
             chat.AuditWrite = savedAuditWrite;
+            // The floor the audit just described has a half a person can act on: turns this session still holds
+            // that never go out. A full ring cannot say it, and "压缩了三次还是满的" without "有几轮根本没发出去"
+            // reads like the transcript is all still there.
+            panel.OpenContextPopoverForCheck();
+            Dispatcher.UIThread.RunJobs();
+            var stuckUsage = panel.ContextReadingForCheck;
+            var droppedLine = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextDroppedFormat"), stuckUsage.DroppedTurns);
+            Check(stuckUsage.DroppedTurns > 0
+                  && panel.ContextPopoverNoteForCheck.Contains(droppedLine, StringComparison.Ordinal)
+                  && panel.ContextPopoverNoteForCheck.Contains(HubStrings.Get("ChatContextOverfull"),
+                      StringComparison.Ordinal),
+                "窗口小到放不下时，面板直说最早几轮没有发出去，而不是让人以为整段历史都还在（截了 "
+                + stuckUsage.DroppedTurns + " 轮，读数 " + stuckUsage.Used + "/" + stuckUsage.Room + "）");
+            Check(stuckUsage.Estimated == stuckUsage.Categories.Sum(category => category.Tokens)
+                  || stuckUsage.IsMeasured,
+                "每一行的数字都来自总数：要么相加就是读数，要么读数已经换成模型自己报的（行 "
+                + string.Join("、", stuckUsage.Categories.Select(category => category.Kind + ":"
+                    + category.Tokens)) + "）");
+            panel.CloseContextPopoverForCheck();
+
             chat.DeleteConversation(stuck.Id);
         }
         finally
@@ -4442,11 +4485,21 @@ public partial class ShellCheckWindow : Window
             chat.TryEnqueueSend(unreported.Id, "这一轮没人报数", null, out _);
             await WaitForIdleAsync(chat);
             var quiet = chat.StoredCopyForCheck(unreported.Id);
-            var (quietUsed, quietBudget) = chat.TranscriptUsageForCheck(unreported.Id);
+            var quietUsage = chat.TranscriptUsageForCheck(unreported.Id);
             Check(quiet?.LastInputTokens == 0 && quiet.LastUsageAt is null
-                  && quietBudget == ContextBudget.FallbackTokens && quietUsed < 5_000 && quietUsed > 0,
-                "从不报用量的网关不会被读成 0，这条会话仍然按估算计量（实测 " + quietUsed
-                + "/" + quietBudget + "）");
+                  && quietUsage.EffectiveWindow == ContextBudget.FallbackTokens
+                  && quietUsage.Source == CapabilitySource.Fallback
+                  && !quietUsage.IsMeasured
+                  && quietUsage.Used < 5_000 && quietUsage.Used > 0,
+                "从不报用量的网关不会被读成 0，这条会话仍然按估算计量（实测 " + quietUsage.Used
+                + "/" + quietUsage.Room + "，窗口 " + quietUsage.EffectiveWindow + "）");
+            // The rows are the whole point of the meter: a category that never made it into the total is a
+            // conversation being reported as smaller than the request that carries it, which is exactly the hole
+            // the tool schemas sat in until they had a row of their own.
+            Check(quietUsage.Categories.Sum(category => category.Tokens) == quietUsage.Used
+                  && quietUsage.Used + quietUsage.Free + quietUsage.OutputReserve == quietUsage.EffectiveWindow,
+                "分类相加就是圆环的读数，窗口也分完给回复预留、空闲和已经用掉的三块（"
+                + string.Join("、", quietUsage.Categories.Select(category => category.Kind)) + "）");
 
             // Phase 2: the same app path with a report on the end of the stream.
             sent.Clear();
@@ -4460,7 +4513,9 @@ public partial class ShellCheckWindow : Window
             chat.TryEnqueueSend(measured.Id, "这一次它报了数", null, out _);
             await WaitForIdleAsync(chat);
             var report = chat.StoredCopyForCheck(measured.Id);
-            var (used, budget) = chat.TranscriptUsageForCheck(measured.Id);
+            var usage = chat.TranscriptUsageForCheck(measured.Id);
+            var used = usage.Used;
+            var budget = usage.EffectiveWindow;
 #pragma warning disable SCME0001
             var wire = (sent.Count > 0
                 ? sent[0].LastOptions?.RawRepresentationFactory?.Invoke(sent[0]) as OpenAI.Chat.ChatCompletionOptions
@@ -4478,6 +4533,47 @@ public partial class ShellCheckWindow : Window
                       / ContextReport.MaximumDriftPermille,
                 "一次读数最多把尺度挪 4×：窗口从 " + ContextBudget.FallbackTokens + " 收到 " + budget
                 + "，再多就不算了");
+
+            // The same numbers as the person sees them. This fixture is deliberately the hard case: the model
+            // reported a request bigger than the window the correction left, which is the one condition a clamped
+            // ring used to render as "full, like usual" — and it is the condition a reader has to be able to act on.
+            panel.OpenContextPopoverForCheck();
+            Dispatcher.UIThread.RunJobs();
+            var ring = panel.ContextReadingForCheck;
+            var tip = panel.ContextTooltipForCheck;
+            var shownPercent = int.Parse(panel.ContextPopoverPercentForCheck.TrimEnd('%'),
+                System.Globalization.CultureInfo.CurrentCulture);
+            Check(tip.StartsWith(HubStrings.Get("ChatContextReportedFormat").Split("{0}")[0], StringComparison.Ordinal)
+                  && !tip.StartsWith(HubStrings.Get("ChatContextEstimateFormat").Split("{0}")[0], StringComparison.Ordinal),
+                "有过实测的会话不再自称「预计」：圆环的提示换成了「上次请求实测」那条文案（实际「" + tip + "」）");
+            Check(ring.IsMeasured && ring.MeasuredInputTokens == 48_000 && ring.Estimated < ring.Used
+                  && ring.Categories.Sum(category => category.Tokens) == ring.Estimated,
+                "实测与估算各留一份，明细相加等于估算本身：两者的差就是这条会话今天学到的东西（实测 "
+                + ring.Used + "，估算 " + ring.Estimated + "）");
+            Check(ring.Free == 0 && ring.Used > ring.Room && shownPercent > 100
+                  && shownPercent == (int)Math.Round(100d * ring.Used / ring.Room)
+                  && panel.ContextArcForCheck == 1d,
+                "环不自我封顶：模型报的数比修正后的房间还大时，面板就报出 100% 以上、空闲为 0，而画的弧仍然只到整圈"
+                + "（实际 " + shownPercent + "%，房间 " + ring.Room + "）");
+            Check(panel.ContextPopoverNoteForCheck.Contains(HubStrings.Get("ChatContextOverfull"),
+                      StringComparison.Ordinal)
+                  && panel.ContextPopoverNoteForCheck.Contains(
+                      HubStrings.Get("ChatContextDriftNote").Split('{')[0], StringComparison.Ordinal),
+                "装不下与窗口被收窄都写成了话，而不是留一个满格的圆环让人猜");
+            Check(panel.ContextPopoverSourceForCheck.Contains(
+                      HubStrings.Get(ContextBudget.SourceLabelKey(ring.Source)), StringComparison.Ordinal)
+                  && panel.ContextPopoverSourceForCheck.Contains(
+                      ring.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                      StringComparison.Ordinal),
+                "分母说清是谁给的（这条是兜底值）以及现在是多少");
+            var rows = panel.ContextCategoryRowsForCheck;
+            Check(rows.Any(row => row.StartsWith(HubStrings.Get("ChatContextCatFree"), StringComparison.Ordinal)
+                                  && row.EndsWith("=0", StringComparison.Ordinal))
+                  && rows.Any(row => row.StartsWith(HubStrings.Get("ChatContextCatReserve"), StringComparison.Ordinal))
+                  && rows.Any(row => row.StartsWith(HubStrings.Get("ChatContextCatMessages"), StringComparison.Ordinal)),
+                "空闲那一行如实写着 0，而不是把装不下的会话抹成一个满格的圆环；回复预留也占一行（"
+                + string.Join("；", rows) + "）");
+            panel.CloseContextPopoverForCheck();
 
             // Phase 3: the refusal that says the field itself is unwelcome. One retry with the ask taken out of
             // the request, and the concession written into that provider's own options in providers.json — the

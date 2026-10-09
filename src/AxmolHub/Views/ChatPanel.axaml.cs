@@ -469,31 +469,114 @@ public partial class ChatPanel : UserControl
     private void UpdateContextRing()
     {
         if (_chat is null) return;
-        var (used, budget) = CurrentContextUsage();
-        var ratio = budget > 0 ? (double)used / budget : 0;
-        ContextRing.Usage = Math.Clamp(ratio, 0, 1);
-        ContextPopoverPercent.Text = Math.Clamp((int)Math.Round(ratio * 100), 0, 100).ToString(
-            System.Globalization.CultureInfo.CurrentCulture) + "%";
-        UpdateContextProgressFill();
+        var usage = CurrentContextUsage();
+        // The arc is a picture and a picture cannot draw past its own circle, so the arc clamps. The reading
+        // beside it does not: a conversation that no longer fits is at more than 100%, and reporting that as a
+        // full ring turns "this session has to be compressed" into the same look as a normal long one.
+        ContextRing.Usage = Math.Clamp(usage.Fill, 0, 1);
+        var percent = (int)Math.Round(usage.Fill * 100);
+        ContextPopoverPercent.Text = percent.ToString(System.Globalization.CultureInfo.CurrentCulture) + "%";
+        UpdateContextProgressFill(usage);
         RefreshContextCompressionButton();
+        RenderContextBreakdown(usage);
+        // Two different claims, so two different sentences. "预计" over a number the model itself reported is a
+        // lie, and the measured reading is the one thing on this screen a person can hold the gateway to.
         ToolTip.SetTip(ContextButton, string.Format(
             System.Globalization.CultureInfo.CurrentCulture,
-            HubStrings.Get("ChatContextEstimateFormat"),
-            used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-            budget.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-            Math.Clamp((int)Math.Round(ratio * 100), 0, 100)));
+            HubStrings.Get(usage.IsMeasured ? "ChatContextReportedFormat" : "ChatContextEstimateFormat"),
+            usage.Used.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            usage.Room.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            percent));
     }
 
-    private (int Used, int Budget) CurrentContextUsage()
-        => _chat.EstimateContextUsage(InputBox.Text ?? "");
+    private ContextUsage CurrentContextUsage() => _chat.EstimateContextUsage(InputBox.Text ?? "");
 
-    private void UpdateContextProgressFill()
+    private void UpdateContextProgressFill(ContextUsage? usage = null)
     {
         if (ContextProgressTrack is null || ContextProgressFill is null) return;
-        var (used, budget) = CurrentContextUsage();
-        var ratio = budget > 0 ? Math.Clamp((double)used / budget, 0, 1) : 0;
-        ContextProgressFill.Width = ContextProgressTrack.Bounds.Width * ratio;
+        var reading = usage ?? CurrentContextUsage();
+        // A bar has an end, so it fills up to it; the percentage next to it is allowed to say 118%.
+        ContextProgressFill.Width = ContextProgressTrack.Bounds.Width
+                                     * Math.Clamp((double)reading.Used / Math.Max(1, reading.Room), 0, 1);
     }
+
+    /// <summary>
+    /// The popover's breakdown: every heading that holds something, then the room that is left, then the share of
+    /// the window held back for the answer. The rows and the ring's number come out of one reading, so the column
+    /// adds up to what the ring claims — the identity that has been missing since the meter existed, and the one
+    /// that says a category was left out of the total rather than quietly showing a smaller session.
+    /// </summary>
+    private void RenderContextBreakdown(ContextUsage usage)
+    {
+        ContextCategoryList.Children.Clear();
+        foreach (var category in usage.Categories)
+            AddContextCategoryRow(HubStrings.Get(ContextCategoryKey(category.Kind)), category.Tokens);
+        AddContextCategoryRow(HubStrings.Get("ChatContextCatFree"), usage.Free);
+        AddContextCategoryRow(HubStrings.Get("ChatContextCatReserve"), usage.OutputReserve);
+
+        ContextPopoverSource.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatContextSourceFormat"),
+            HubStrings.Get(ContextBudget.SourceLabelKey(usage.Source)),
+            usage.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture));
+
+        // What the reading cannot say by itself: that its floor came from a response rather than a guess, that
+        // turns this session still holds never went out, that the window was corrected down from what the
+        // provider published, and that the conversation is past the room it has.
+        var notes = new List<string>();
+        if (usage.IsMeasured)
+            notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextMeasuredNote"),
+                usage.MeasuredInputTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
+        if (usage.DriftPermille > ContextReport.UncalibratedPermille
+            && usage.EffectiveWindow != usage.RawWindow)
+            notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextDriftNote"),
+                usage.RawWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                usage.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
+        if (usage.DroppedTurns > 0)
+            notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextDroppedFormat"), usage.DroppedTurns));
+        var overfull = usage.Free == 0 && usage.Used > usage.Room;
+        if (overfull) notes.Add(HubStrings.Get("ChatContextOverfull"));
+        ContextPopoverNote.Text = string.Join(Environment.NewLine, notes);
+        ContextPopoverNote.IsVisible = notes.Count > 0;
+        // Bound rather than set, and cleared when it no longer applies: a brush read by value would keep the
+        // danger colour of whatever theme the popover happened to be built in.
+        if (overfull)
+            ContextPopoverNote.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.DangerText"));
+        else ContextPopoverNote.ClearValue(TextBlock.ForegroundProperty);
+    }
+
+    private void AddContextCategoryRow(string label, int tokens)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        row.Children.Add(new TextBlock
+        {
+            Classes = { "context-category-label" },
+            Text = label,
+        });
+        var value = new TextBlock
+        {
+            Classes = { "context-category-value" },
+            Text = tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+        };
+        Grid.SetColumn(value, 1);
+        row.Children.Add(value);
+        ContextCategoryList.Children.Add(row);
+    }
+
+    /// <summary>The heading a cost row is filed under. The keys live with the rest of the wording, because a row
+    /// named in code rather than in the string table is a row that stays Chinese when the app turns English.</summary>
+    private static string ContextCategoryKey(ContextCostKind kind) => kind switch
+    {
+        ContextCostKind.SystemPrompt => "ChatContextCatSystem",
+        ContextCostKind.Summary => "ChatContextCatSummary",
+        ContextCostKind.MemoryIndex => "ChatContextCatMemory",
+        ContextCostKind.ToolSchema => "ChatContextCatTools",
+        ContextCostKind.Messages => "ChatContextCatMessages",
+        ContextCostKind.Attachments => "ChatContextCatAttachments",
+        _ => "ChatContextCatImages",
+    };
 
     private void RefreshContextCompressionButton()
     {
@@ -3061,7 +3144,18 @@ public partial class ChatPanel : UserControl
     internal string SelectedReasoningForCheck => _chat.ActiveReasoningEffort;
     internal string ReasoningChipTextForCheck => SelectedReasoningLabel.Text ?? "";
     internal bool ReasoningPickerEnabledForCheck => SelectedReasoningLabel.IsVisible;
-    internal double ContextUsageForCheck => ContextRing.Usage;
+    internal double ContextArcForCheck => ContextRing.Usage;
+
+    /// <summary>The whole reading behind the ring, absolute numbers and all. A ratio alone cannot tell a session
+    /// that is full from one that no longer fits, which is the distinction the panel exists to make.</summary>
+    internal ContextUsage ContextReadingForCheck => CurrentContextUsage();
+
+    internal int ContextUsedForCheck => CurrentContextUsage().Used;
+    internal string[] ContextCategoryRowsForCheck => ContextCategoryList.Children.OfType<Grid>()
+        .Select(row => string.Join("=", row.Children.OfType<TextBlock>().Select(cell => cell.Text)))
+        .ToArray();
+    internal string ContextPopoverSourceForCheck => ContextPopoverSource.Text ?? "";
+    internal string ContextPopoverNoteForCheck => ContextPopoverNote.Text ?? "";
     internal string ContextTooltipForCheck => ToolTip.GetTip(ContextButton)?.ToString() ?? "";
     internal string ContextPopoverTitleForCheck => ContextPopoverTitle.Text ?? "";
     internal string ContextPopoverPercentForCheck => ContextPopoverPercent.Text ?? "";

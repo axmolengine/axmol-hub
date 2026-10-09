@@ -415,10 +415,35 @@ public static class HubTexts
         ["ChatRoutingAuto"] = ("自动（按任务强度）", "Auto (by task strength)"),
         ["ChatRoutingAutoChip"] = ("自动路由", "Auto routing"),
         ["ChatContextEstimateFormat"] = ("预计上下文：{0} / {1} tokens（{2}%），仅为本地估算", "Estimated context: {0} / {1} tokens ({2}%), local estimate only"),
+        // The other reading of the same ring: the model itself said what the last request cost, so the number is
+        // no longer a guess. Two keys because two different claims, and "预计" over a measured figure is a lie.
+        ["ChatContextReportedFormat"] = ("上下文：{0} / {1} tokens（{2}%），上次请求实测", "Context: {0} / {1} tokens ({2}%), measured from the last request"),
         ["ChatContextEstimateHint"] = ("按字符数估算，实际 token 用量可能不同。", "Estimated from text length; actual token usage may differ."),
         ["ChatContextWindow"] = ("上下文窗口", "Context window"),
         ["ChatContextPopoverHint"] = ("展示当前任务的上下文占用情况；压缩会摘要早期内容，需等待片刻并消耗少量积分。", "Shows how much of the current task's context is in use. Compression summarizes earlier messages and may take a moment and use a small amount of credits."),
-        ["ChatContextCategoriesPending"] = ("分类明细待更新", "Category breakdown coming soon"),
+        // The meter's rows. Each one is something a person can act on: the schemas by changing the mode, the
+        // attachments by un-adding a folder, the messages by compressing. A row nobody can act on is decoration.
+        ["ChatContextCatSystem"] = ("系统提示", "System prompt"),
+        ["ChatContextCatSummary"] = ("历史摘要", "Earlier summary"),
+        ["ChatContextCatMemory"] = ("记忆索引", "Memory index"),
+        ["ChatContextCatTools"] = ("工具声明", "Tool schemas"),
+        ["ChatContextCatMessages"] = ("消息·调用·结果·推理", "Messages, calls, results, reasoning"),
+        ["ChatContextCatAttachments"] = ("附件文本", "Attached text"),
+        ["ChatContextCatImages"] = ("图片", "Images"),
+        ["ChatContextCatReserve"] = ("回复预留", "Held for the reply"),
+        ["ChatContextCatFree"] = ("空闲", "Free space"),
+        // Where the denominator came from. The window number decides when a session compacts, so a reading that
+        // cannot say whether 128 000 was reported or assumed cannot be argued with.
+        ["ChatContextSourceFormat"] = ("窗口 {1} tokens，来源：{0}", "Window of {1} tokens, from {0}"),
+        ["ChatContextMeasuredNote"] = ("{0} tokens 是上次请求的实测值，它之后的新增按估算补上。",
+            "{0} tokens is what the last request measured; the turns since then are estimated on top."),
+        // Both numbers, because the two are not the same claim: the provider published one, this session's own
+        // response proved the other. A reader who sees only the smaller figure would look for a setting nobody set.
+        ["ChatContextDriftNote"] = ("这条会话的实测把窗口从 {0} 收窄到 {1}。",
+            "This session's own reading corrected the window from {0} to {1}."),
+        ["ChatContextDroppedFormat"] = ("最早 {0} 轮没有发出去，只发了最近的部分", "{0} oldest turns were not sent — only the newest part goes out"),
+        ["ChatContextOverfull"] = ("已经超出这个会话可用的窗口：先压缩，或去掉一个附件。",
+            "Past the room this conversation has: compress it, or drop an attachment."),
         ["ChatCompressContext"] = ("压缩上下文", "Compress context"),
         ["ChatCompressingContext"] = ("正在压缩上下文…", "Compressing context…"),
         ["ChatContextCompressUnavailable"] = ("当前对话没有足够的早期内容可供压缩。", "There is not enough earlier conversation to compress yet."),

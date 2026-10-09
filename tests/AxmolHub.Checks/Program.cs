@@ -1790,6 +1790,80 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A transcript full of tool output reported nothing to reclaim.");
     Console.WriteLine("PASS: tier one clears the older tool results in place, keeps every call paired, and never asks the model.");
 
+    // ── 圆环的每一行相加，就是它报出的那个总数 ──
+    // The meter used to be one number nobody could take apart, so a piece that never made it into the total was
+    // invisible — which is precisely how the tool declarations went unpriced while riding on every request. These
+    // rows are the fix, and the identity is the assertion that keeps it: the categories must add up to the same
+    // integer the trimmer bills the request, field by field, including the awkward ones. A turn whose text is two
+    // Latin letters and whose attachment is one ideograph divides to 0 + 1 separately but to 2 as one message; the
+    // split therefore has to come from the message's own total, not from each field on its own.
+    var meterMode = "You are the assistant.";
+    var meterSummary = new string('总', 40);
+    var meterMemory = new string('m', 20);
+    var meterTurns = new List<ChatTurn>
+    {
+        ChatTurn.User("看下构建日志") with { AttachedContext = new string('文', 700) },
+        ChatTurn.User("ab") with { AttachedContext = "文" },
+        ChatTurn.FunctionCall("c1", "read_file", """{"path":"build.log"}"""),
+        ChatTurn.FunctionResult("c1", new string('x', 3_000)),
+        ChatTurn.Assistant("改好了") with
+        {
+            Reasoning = new string('想', 40),
+            Images = [new ChatImage("frame.png", "image/png", 24_576)],
+        },
+    };
+    var meter = new ContextLedger();
+    meter.AddSystemPrompt(meterMode, meterSummary, meterMemory);
+    meter.AddToolSchema(1_234);
+    foreach (var turn in meterTurns) meter.AddTurn(turn);
+    var meterRows = meter.Categories();
+    var billedAlone = ContextTrimmer.EstimateTokens(meterMode + meterSummary + meterMemory)
+                      + 1_234 + meterTurns.Sum(ContextTrimmer.EstimateTokens);
+    if (meterRows.Sum(row => row.Tokens) != billedAlone || meter.TotalTokens != billedAlone)
+        throw new Exception($"The breakdown adds to {meterRows.Sum(row => row.Tokens)} while the request is billed at "
+                            + $"{billedAlone}; a heading is missing from the total.");
+    if (meterRows.Any(row => row.Tokens <= 0))
+        throw new Exception($"A heading with nothing in it is being shown as {meterRows.First(row => row.Tokens <= 0).Tokens}.");
+    if (meterRows.Count(row => row.Kind == ContextCostKind.Summary) != 1
+        || meterRows.Count(row => row.Kind == ContextCostKind.Attachments) != 1
+        || meterRows.Count(row => row.Kind == ContextCostKind.Images) != 1)
+        throw new Exception($"The headings are not each booked once ({string.Join(",", meterRows.Select(row => row.Kind))}).");
+    if (meterRows.First(row => row.Kind == ContextCostKind.Images).Tokens != ContextTrimmer.ImageTokenCost)
+        throw new Exception("A picture's row does not cost the figure the estimator charges for it.");
+    // The negative half, and the reason the identity above is not decoration: dividing every field on its own is
+    // the obvious way to split a turn, and it throws whole tokens away to the remainder. One message is billed as
+    // one division, so the rows have to be cut out of that division rather than each priced by itself.
+    static long FieldUnits(ChatTurn turn) => TokenWeighing.Units(turn.Text) + TokenWeighing.Units(turn.AttachedContext)
+                                             + TokenWeighing.Units(turn.ToolArguments) + TokenWeighing.Units(turn.Reasoning);
+    var dividedOnce = meterTurns.Sum(turn => ContextTrimmer.ToTokens(FieldUnits(turn)));
+    var dividedPerField = meterTurns.Sum(turn => ContextTrimmer.ToTokens(TokenWeighing.Units(turn.Text))
+        + ContextTrimmer.ToTokens(TokenWeighing.Units(turn.AttachedContext))
+        + ContextTrimmer.ToTokens(TokenWeighing.Units(turn.ToolArguments))
+        + ContextTrimmer.ToTokens(TokenWeighing.Units(turn.Reasoning)));
+    if (dividedPerField >= dividedOnce)
+        throw new Exception($"Per-field division lost nothing ({dividedPerField} against {dividedOnce}), so the identity proves nothing.");
+    // The framing cost of each message rides in the text row too, which is why it is added here and not counted as
+    // a field: a turn is one message whatever fields it carries.
+    var fieldRowBudget = dividedOnce + meterTurns.Count * ContextTrimmer.MessageOverheadTokens;
+    if (meterRows.Where(row => row.Kind is ContextCostKind.Messages or ContextCostKind.Attachments)
+            .Sum(row => row.Tokens) != fieldRowBudget)
+        throw new Exception("The rows split each field on its own instead of dividing one message once.");
+    var emptySplit = new ContextLedger();
+    emptySplit.AddSystemPrompt(meterMode, null, "");
+    if (emptySplit.Categories().Count != 1
+        || !emptySplit.Categories().Single().Kind.Equals(ContextCostKind.SystemPrompt))
+        throw new Exception("An empty summary or memory index still took a row in the popover.");
+    // Where the denominator came from has to be sayable, and the two surfaces that say it must not own two
+    // different spellings of the same five facts.
+    var sourceKeys = new[]
+    {
+        CapabilitySource.UserOverride, CapabilitySource.EndpointReported, CapabilitySource.LearnedFromRefusal,
+        CapabilitySource.ManifestDeclared, CapabilitySource.Fallback, CapabilitySource.None,
+    }.Select(ContextBudget.SourceLabelKey).ToArray();
+    if (sourceKeys.Any(string.IsNullOrWhiteSpace) || sourceKeys.Distinct().Count() != 5)
+        throw new Exception($"Two window sources share one label, or one has none ({string.Join(",", sourceKeys)}).");
+    Console.WriteLine("PASS: the context breakdown adds up to the billed total, omits nothing, and names where the window came from.");
+
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
         [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);

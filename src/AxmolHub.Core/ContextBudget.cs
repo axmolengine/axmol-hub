@@ -156,4 +156,19 @@ public static class ContextBudget
         if (provider is null || string.IsNullOrWhiteSpace(modelName)) return null;
         return provider.ModelCapabilities.GetValueOrDefault(modelName.Trim());
     }
+
+    /// <summary>
+    /// The one resource key that names where a window number came from. Both surfaces that show a window — the
+    /// meter's popover and the catalog's override row — have to say "the gateway told me 1M" versus "nobody told
+    /// me, so I assumed", because that difference is the whole reason a session compacts early or late; two switch
+    /// statements spelling it out are two chances for them to disagree about what the same number meant.
+    /// </summary>
+    public static string SourceLabelKey(CapabilitySource source) => source switch
+    {
+        CapabilitySource.UserOverride => "CapabilitySourceOverride",
+        CapabilitySource.EndpointReported => "CapabilitySourceEndpoint",
+        CapabilitySource.LearnedFromRefusal => "CapabilitySourceLearned",
+        CapabilitySource.ManifestDeclared => "CapabilitySourceManifest",
+        _ => "CapabilitySourceFallback",
+    };
 }

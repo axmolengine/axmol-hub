@@ -1627,14 +1627,7 @@ public partial class SettingsPage : UserControl
             VerticalAlignment = VerticalAlignment.Center,
             Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ModelContextFormat"), tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture))
-                   + " · " + HubStrings.Get(source switch
-                   {
-                       CapabilitySource.UserOverride => "CapabilitySourceOverride",
-                       CapabilitySource.EndpointReported => "CapabilitySourceEndpoint",
-                       CapabilitySource.LearnedFromRefusal => "CapabilitySourceLearned",
-                       CapabilitySource.ManifestDeclared => "CapabilitySourceManifest",
-                       _ => "CapabilitySourceFallback",
-                   }),
+                   + " · " + HubStrings.Get(ContextBudget.SourceLabelKey(source)),
             Tag = SectionTags.ModelContext,
         });
 

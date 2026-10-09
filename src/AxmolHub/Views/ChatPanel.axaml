@@ -775,6 +775,20 @@
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
+    <!-- One row of the context breakdown: the heading on the left, its cost on the right. The number is a figure
+         a person compares down the column, so it is the row that gets the primary ink. -->
+    <Style Selector="TextBlock.context-category-label">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.context-category-value">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
+      <Setter Property="TextAlignment" Value="Right" />
+    </Style>
     <Style Selector="Button.context-compress">
       <Setter Property="MinHeight" Value="40" />
       <Setter Property="CornerRadius" Value="9" />
@@ -1093,8 +1107,13 @@
           <Border x:Name="ContextProgressFill" HorizontalAlignment="Left"
                   Background="{DynamicResource Hub.Success}" CornerRadius="3" />
         </Grid>
-        <TextBlock Classes="context-popover-status"
-                   Text="{DynamicResource ChatContextCategoriesPending}" />
+        <!-- The breakdown, rebuilt from the same reading as the ring on every refresh: rows a person can act on
+             (schemas by mode, attachments by un-adding a folder, messages by compressing) and the two lines that
+             say where the denominator came from and how many turns never went out. -->
+        <StackPanel x:Name="ContextCategoryList" Spacing="3" />
+        <TextBlock x:Name="ContextPopoverSource" Classes="context-popover-status" TextWrapping="Wrap" />
+        <TextBlock x:Name="ContextPopoverNote" Classes="context-popover-status" TextWrapping="Wrap"
+                   IsVisible="False" />
         <Button x:Name="CompressContextButton" Classes="context-compress"
                 HorizontalContentAlignment="Center"
                 Content="{DynamicResource ChatCompressContext}" />
