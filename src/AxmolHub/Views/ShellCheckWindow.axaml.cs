@@ -598,6 +598,19 @@ public partial class ShellCheckWindow : Window
 
         // Held open at the first token so the mid-stream button state can be asserted, not just the end state.
         var streaming = panel.BeginSendForCheckAsync("第一问");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var streamingFlowWidth = panel.MessageFlowWidthForCheck;
+        Check(streamingFlowWidth > 0
+              && Math.Abs(panel.MessageRowWidthForCheck(0) - streamingFlowWidth) <= 1
+              && Math.Abs(panel.UserPillRightForCheck(0) - panel.MessageRowWidthForCheck(0)) <= 1
+              && Math.Abs(panel.LiveRowWidthForCheck - streamingFlowWidth) <= 1
+              && Math.Abs(panel.LiveActivityLeftForCheck) <= 1,
+            "回复生成期间消息流保持整列宽度，用户消息靠右、助手思考状态靠左（列 "
+            + Fmt(streamingFlowWidth) + "，用户行 " + Fmt(panel.MessageRowWidthForCheck(0))
+            + "，用户气泡右沿 " + Fmt(panel.UserPillRightForCheck(0))
+            + "，活动行 " + Fmt(panel.LiveRowWidthForCheck)
+            + "，活动左沿 " + Fmt(panel.LiveActivityLeftForCheck) + "）");
         Check(panel.SendIconIsStopForCheck && panel.SendButtonEnabledForCheck,
             "流式进行中发送按钮切换为停止图标并保持可点（点它即取消）");
         Check(panel.ChatActivityVisibleForCheck
@@ -619,6 +632,15 @@ public partial class ShellCheckWindow : Window
             "流式结束后按钮回到发送箭头");
         Check(!panel.ChatActivityVisibleForCheck && panel.ChatActivityTextForCheck.Length == 0,
             "流式结束后清除活动状态");
+        Check(Math.Abs(panel.MessageFlowWidthForCheck - streamingFlowWidth) <= 1
+              && Math.Abs(panel.MessageRowWidthForCheck(0) - streamingFlowWidth) <= 1
+              && Math.Abs(panel.UserPillRightForCheck(0) - panel.MessageRowWidthForCheck(0)) <= 1
+              && Math.Abs(panel.MessageRowWidthForCheck(1) - streamingFlowWidth) <= 1,
+            "流式结束后用户消息仍贴列右侧、助手回复仍占同一消息列（流式列 "
+            + Fmt(streamingFlowWidth) + "，完成列 " + Fmt(panel.MessageFlowWidthForCheck)
+            + "，用户行 " + Fmt(panel.MessageRowWidthForCheck(0))
+            + "，用户气泡右沿 " + Fmt(panel.UserPillRightForCheck(0))
+            + "，助手行 " + Fmt(panel.MessageRowWidthForCheck(1)) + "）");
 
         Check(opsConversation.Messages.Count == 2 && opsConversation.Messages[0].Role == ChatRoles.User,
             "会话记录了用户与助手两轮（实际 " + opsConversation.Messages.Count + "）");

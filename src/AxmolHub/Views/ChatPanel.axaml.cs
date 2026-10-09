@@ -210,7 +210,12 @@ public partial class ChatPanel : UserControl
             InputBox.Focus();
         };
         ScrollToBottomButton.Click += (_, _) => ScrollToEnd();
-        MessageScroller.ScrollChanged += (_, _) => UpdateScrollAffordance();
+        MessageScroller.SizeChanged += (_, _) => UpdateMessageColumnWidth();
+        MessageScroller.ScrollChanged += (_, _) =>
+        {
+            UpdateMessageColumnWidth();
+            UpdateScrollAffordance();
+        };
         InputBox.PropertyChanged += (_, e) =>
         {
             if (e.Property == TextBox.TextProperty)
@@ -2945,6 +2950,16 @@ public partial class ChatPanel : UserControl
         ScrollToBottomButton.IsVisible = extent > viewport + StickEpsilon && !atBottom;
     }
 
+    private void UpdateMessageColumnWidth()
+    {
+        var viewportWidth = MessageScroller.Viewport.Width;
+        if (viewportWidth <= 0) return;
+
+        var width = Math.Min(MessageColumn.MaxWidth, viewportWidth);
+        if (double.IsNaN(MessageColumn.Width) || Math.Abs(MessageColumn.Width - width) > 0.1)
+            MessageColumn.Width = width;
+    }
+
     // ───────────────────────── Self-check hooks ─────────────────────────
 
     /// <summary>Message rows are Borders carrying the message-row class (both row kinds, since the container
@@ -3322,6 +3337,17 @@ public partial class ChatPanel : UserControl
     internal bool ChatActivityVisibleForCheck => _live is { Timer: not null };
     internal string ChatActivityTextForCheck => _live?.Status.Text ?? "";
     internal string ChatActivityElapsedForCheck => _live?.Elapsed.Text ?? "";
+    internal double MessageFlowWidthForCheck => MessageFlow.Bounds.Width;
+    internal double MessageRowWidthForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?.Bounds.Width ?? -1;
+    internal double UserPillRightForCheck(int visibleIndex)
+        => MessageRows.ElementAtOrDefault(visibleIndex)?
+            .GetLogicalDescendants().OfType<Border>()
+            .FirstOrDefault(border => border.Classes.Contains("user-pill"))?.Bounds.Right ?? -1;
+    internal double LiveRowWidthForCheck => _live?.Row.Bounds.Width ?? -1;
+    internal double LiveActivityLeftForCheck
+        => _live?.Row.GetLogicalDescendants().OfType<StackPanel>()
+            .FirstOrDefault(stack => stack.Classes.Contains("chat-activity"))?.Bounds.X ?? -1;
     internal string? LastNoticeTextForCheck
         => CurrentNoticeRow?.Children.OfType<TextBlock>().FirstOrDefault()?.Text;
 

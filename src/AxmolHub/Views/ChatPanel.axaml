@@ -950,14 +950,18 @@
 
     <!-- Message area: messages flow directly on the background, centered 820px column. -->
     <Grid Grid.Row="0">
-      <ScrollViewer x:Name="MessageScroller" VerticalScrollBarVisibility="Auto">
+      <ScrollViewer x:Name="MessageScroller"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
         <StackPanel>
           <!-- Fork provenance: one quiet line above the transcript, doubling as the jump back to the source. -->
           <Button x:Name="ForkNotice" Classes="fork-notice" IsVisible="False"
                   MaxWidth="820" HorizontalAlignment="Center" Margin="0,12,0,0" />
-          <StackPanel x:Name="MessageFlow"
-                      MaxWidth="820" HorizontalAlignment="Center"
-                      Margin="0,16,0,16" Spacing="10" />
+          <Border x:Name="MessageColumn"
+                  MaxWidth="820" HorizontalAlignment="Center" Margin="0,16,0,16">
+            <StackPanel x:Name="MessageFlow"
+                        HorizontalAlignment="Stretch" Spacing="10" />
+          </Border>
           <!-- What the app last had to say about a run, kept out of the flow: a row inside MessageFlow is not
                counted as a turn, so every rebuild of the transcript either erased it or left it sitting between
                two messages that arrived after it. -->
