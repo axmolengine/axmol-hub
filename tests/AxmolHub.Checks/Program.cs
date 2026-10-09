@@ -640,6 +640,41 @@ if (args.Contains("--check-ai-copilot"))
     Assert(new ModelCapabilities().Protocol == ModelProtocols.Chat,
         "a provider that publishes nothing about protocols stays on chat");
 
+    // 目录的另一种真实形状，2026-10-09 从 GitHub 手里抓下来的：一台它不认识的 OAuth 应用（我们的设备码）拿到的
+    // 清单里没有 gpt-5，八行全是 model_picker_enabled:false，而旧行的 limits 下面根本没有 vision 子对象。
+    // 下面是一个裁剪到三行的同形状版本。少一个 ValueKind 判断，对 Undefined 的 JsonElement 调 TryGetProperty
+    // 就抛 InvalidOperationException，设置页于是把一个 HTTP 200 的真目录报成「Operation not valid」——
+    // 请求形状无罪，解析器有罪。
+    var reduced = GithubCopilotModelsSource.Parse(Encoding.UTF8.GetBytes("""
+        {"data":[
+         {"id":"gpt-4o-mini","object":"model","name":"GPT-4o mini","vendor":"OpenAI",
+          "capabilities":{"object":"model_capabilities","type":"chat","tokenizer":"o200k_base",
+            "limits":{"max_context_window_tokens":128000,"max_output_tokens":16384,"max_prompt_tokens":128000},
+            "supports":{"parallel_tool_calls":true,"streaming":true,"tool_calls":true}},
+          "is_chat_default":true,"is_chat_fallback":false,"model_picker_enabled":false,"preview":false},
+         {"id":"gpt-4o","object":"model","name":"GPT-4o","vendor":"OpenAI",
+          "capabilities":{"object":"model_capabilities","type":"chat","tokenizer":"o200k_base",
+            "limits":{"max_context_window_tokens":128000,"vision":{"supported_media_types":["image/jpeg","image/png"]}},
+            "supports":{"streaming":true,"vision":true,"tool_calls":true}},
+          "is_chat_default":false,"is_chat_fallback":true,"model_picker_enabled":false,"preview":false},
+         {"id":"text-embedding-3-small","object":"model","name":"Text Embedding 3 Small",
+          "capabilities":{"object":"model_capabilities","type":"embeddings","limits":{"max_input_tokens":8191}},
+          "model_picker_enabled":false,"preview":false}
+        ]}
+        """));
+    Assert(reduced.Reachable && reduced.Problem is null,
+        "a legacy catalog row whose limits carry no vision child is an answer, not a broken endpoint");
+    Assert(reduced.Models.SequenceEqual(new[] { "gpt-4o-mini", "gpt-4o" }, StringComparer.Ordinal),
+        "an all-unpicked catalog still offers the two rows GitHub names as the chat default and fallback");
+    Assert(reduced.Capabilities["gpt-4o-mini"].ContextTokens == 128000
+           && reduced.Capabilities["gpt-4o-mini"].MaxOutputTokens == 16384,
+        "the window still reads out of a limits object that has no vision block");
+    Assert(!reduced.Capabilities["gpt-4o-mini"].AcceptsInput("image")
+           && reduced.Capabilities["gpt-4o"].AcceptsInput("image"),
+        "a model never reported as taking pictures is not handed one by the parser");
+    Assert(!reduced.Models.Contains("text-embedding-3-small"),
+        "the embeddings row is still dropped even when nothing in the catalog is pickable");
+
     // The two dynamic headers, decided on a serialized body.
     Assert(!ProviderRequestPolicy.IsToolRound("""{"messages":[{"role":"user","content":"hi"}]}"""),
         "a human prompt reports x-initiator: user");

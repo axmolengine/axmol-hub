@@ -220,8 +220,14 @@ public sealed class GithubCopilotModelsSource : IModelCapabilitySource
     private static IReadOnlyList<string> MediaTypes(JsonElement limits)
     {
         var values = new List<string>();
+        // The ValueKind test is not decoration. A row whose `limits` has no `vision` child — every legacy model
+        // Copilot still lists, which is the whole catalog for a token from an OAuth App GitHub does not recognize —
+        // makes Object() hand back a *default* JsonElement, and asking an Undefined element for a property throws
+        // InvalidOperationException rather than returning false. That throw is what the settings page reported as
+        // "Operation is not valid" for an endpoint that had answered 200 with a real catalog.
         var vision = Object(limits, "vision");
-        if (!vision.TryGetProperty("supported_media_types", out var array)
+        if (vision.ValueKind != JsonValueKind.Object
+            || !vision.TryGetProperty("supported_media_types", out var array)
             || array.ValueKind != JsonValueKind.Array)
             return values;
 
