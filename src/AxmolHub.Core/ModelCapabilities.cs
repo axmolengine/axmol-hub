@@ -103,6 +103,38 @@ public sealed class ModelCapabilities
         if (InputModalities.Count == 0) return true;
         return InputModalities.Contains(modality, StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Which wire to call this model on, read from whatever the catalog said about protocols.
+    ///
+    /// <para>Responses is chosen only when the endpoint named it and did <b>not</b> also name chat. A model that
+    /// answers on both stays on chat, because that is the path whose reasoning replay and tool loop are already
+    /// proven here — taking the newer wire just because it is offered would trade a known-good request shape for
+    /// a coin flip.</para>
+    ///
+    /// <para>Silence is chat, which is the case for every provider except Copilot today: an empty
+    /// <see cref="EndpointTypes"/> means nobody published the field, not that the model speaks nothing.</para>
+    /// </summary>
+    public string Protocol
+        => EndpointTypes.Contains(ModelProtocols.Responses, StringComparer.OrdinalIgnoreCase)
+           && !EndpointTypes.Contains(ModelProtocols.Chat, StringComparer.OrdinalIgnoreCase)
+            ? ModelProtocols.Responses
+            : ModelProtocols.Chat;
+}
+
+/// <summary>
+/// The request wires Hub knows how to speak. Both are OpenAI's; what differs is the body and the event stream,
+/// so the choice belongs next to the model rather than next to the provider — GitHub Copilot serves its gpt-5
+/// class models on <c>/responses</c> while keeping others on <c>/chat/completions</c>, and a model can appear on
+/// both.
+/// </summary>
+public static class ModelProtocols
+{
+    /// <summary>OpenAI <c>chat/completions</c>. The default, and what every endpoint in this app answers on.</summary>
+    public const string Chat = "chat";
+
+    /// <summary>OpenAI <c>responses</c>. Different request body, different event stream, different client.</summary>
+    public const string Responses = "responses";
 }
 
 /// <summary>One provider's answer to "which models do you serve, and what can each of them do?".</summary>

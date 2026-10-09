@@ -42,6 +42,11 @@ public static class ChatReasoningEfforts
     /// not end up reasoning at a strength nobody picked. <c>"auto"</c> is the name this value used to have, and it
     /// still loads — the rename may not strand a session.</summary>
     public static string Normalize(string? effort) => effort is Low or Medium or High or XHigh or Max or Ultra ? effort : Default;
+
+    /// <summary>Whether a value is a strength tier at all. <see cref="Normalize"/> cannot answer that — it folds
+    /// everything unrecognized into <see cref="Default"/>, which is right for a stored session and wrong for a
+    /// provider's catalog, where a name we do not implement must not become a menu entry.</summary>
+    public static bool IsTier(string? effort) => effort is Low or Medium or High or XHigh or Max or Ultra;
 }
 
 /// <summary>

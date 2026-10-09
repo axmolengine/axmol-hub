@@ -9,10 +9,12 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class ModelCapabilitySources
 {
-    /// <summary>Every source in the build, in priority order. Add a provider family here.</summary>
+    /// <summary>Every source in the build, in priority order. Add a provider family here.
+    /// <see cref="OpenAiCompatibleModelsSource"/> stays first because it is also the fallback for an unknown id.</summary>
     public static IReadOnlyList<IModelCapabilitySource> All { get; } =
     [
         new OpenAiCompatibleModelsSource(),
+        new GithubCopilotModelsSource(),
     ];
 
     /// <summary>The source for one provider: whatever its manifest entry names in <c>capabilitySource</c>, or the
