@@ -191,6 +191,24 @@ public sealed class Conversation
     public List<ChatTurn> Messages { get; set; } = [];
     public string ContextSummary { get; set; } = "";
     public int ContextSummaryThroughMessageCount { get; set; }
+
+    /// <summary>How far tier one of compaction has cleared tool results (see <see cref="ContextElider"/>), as a
+    /// message count. A watermark rather than a re-scan because the turns after it are the ones the model is
+    /// working with today: a second clear must not reach back into them while the first clear's savings are still
+    /// being spent, and the meter needs to be able to say "the older N tool results are placeholders" truthfully.
+    /// Zero for every session written before clearing was a tier — which is correct, since none of them has.</summary>
+    public int ContextElidedThroughMessageCount { get; set; }
+
+    /// <summary>How many compactions have run on this session without getting the conversation under
+    /// <see cref="ContextCompaction.TargetRatio"/>. Reset by the one that does. The count exists because a tier
+    /// that cannot help will keep being asked to try, and each try is a request someone is paying for.</summary>
+    public int ContextIneffectiveCompactions { get; set; }
+
+    /// <summary>Whether automatic compaction has stopped on this session. Set when the attempts run out, cleared
+    /// by a hand-press from the meter — a person who asks for it again is telling Hub the transcript changed in a
+    /// way the counter cannot see.</summary>
+    public bool ContextCompactionBlocked { get; set; }
+
     public string Mode { get; set; } = ChatModes.Agent;
     public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Default;
 

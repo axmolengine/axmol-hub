@@ -81,6 +81,22 @@ public static class ContextBudget
     public static int AttachmentCeilingTokens(int windowTokens) =>
         Math.Clamp(windowTokens / 4, 1024, 32_768);
 
+    /// <summary>
+    /// The largest a stored context summary is allowed to get. A summary that is a quarter the size of what it
+    /// replaced has not compressed anything, it has just moved the text — and because the summary rides in the
+    /// system prompt, which the trimmer keeps unconditionally, an uncapped summary is a floor under the window
+    /// that no later compaction can remove. Both bounds are load-bearing: a tenth-of-a-window cap on a small
+    /// local model would be a summary too short to remember the task.
+    /// </summary>
+    public static int SummaryCeilingTokens(int windowTokens) => Math.Clamp(windowTokens / 8, 512, 4_096);
+
+    /// <summary>
+    /// What the summarizing request may spend on its own answer. A thinking model given a small output budget
+    /// can spend all of it on the chain of thought and return empty text, which reads as a failed compaction;
+    /// the ceiling keeps one summary from eating the window it is trying to free.
+    /// </summary>
+    public static int SummaryOutputTokens(int windowTokens) => Math.Clamp(windowTokens / 16, 1_024, 8_192);
+
     /// <summary>Resolves the window for one (provider, model) pair.</summary>
     public static ContextWindow For(ModelProvider? provider, string? modelName)
     {

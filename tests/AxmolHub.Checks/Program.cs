@@ -1724,6 +1724,72 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"A 4× calibration left {fourTimes.Tokens} instead of a quarter of the window.");
     Console.WriteLine("PASS: the model's own token report is the measurement, merged as a window and used as the denominator.");
 
+    // ── 压缩分两档，便宜的那档先跑 ──
+    // The rule used to be "half the raw window, then ask the model to summarize". Half of a hosted window is a
+    // lot of transcript, and the one tier that costs nothing was never tried. The thresholds are therefore stated
+    // against the room — the window minus the answer's share — and the tiers are ordered by what they cost.
+    var room = 10_000;
+    if (ContextCompaction.ShouldCompact(5_000, room) || ContextCompaction.ShouldCompact(8_499, room)
+        || !ContextCompaction.ShouldCompact(8_500, room))
+        throw new Exception("Compaction no longer starts at 85% of the room, or still starts at half the window.");
+    if (!ContextCompaction.ReachedTarget(6_000, room) || ContextCompaction.ReachedTarget(6_001, room))
+        throw new Exception("The target a tier has to clear is not the 60% the audit says it is.");
+    if (!ContextCompaction.IsHardStopped(9_700, room) || ContextCompaction.IsHardStopped(9_699, room))
+        throw new Exception("The point past which no tier can help is not the 97% the ring will name.");
+    if (ContextCompaction.Ratio(1_000, 0) != 1d || ContextCompaction.Ratio(0, 0) != 1d)
+        throw new Exception("A conversation with no room at all read as empty instead of full.");
+    if (ContextBudget.SummaryCeilingTokens(1_000_000) != 4_096 || ContextBudget.SummaryCeilingTokens(2_048) != 512
+        || ContextBudget.SummaryCeilingTokens(16_000) != 2_000)
+        throw new Exception("The summary ceiling is not an eighth-of-the-window with both a floor and a cap.");
+    if (ContextBudget.SummaryOutputTokens(64_000) != 4_000 || ContextBudget.SummaryOutputTokens(512) != 1_024
+        || ContextBudget.SummaryOutputTokens(10_000_000) != 8_192)
+        throw new Exception("The summarizing request's own answer budget left its documented bounds.");
+    Console.WriteLine("PASS: compaction triggers at 85% of the room, stops at 60%, and prices its two tiers in the right order.");
+
+    // Tier one: the transcript's own tool results, cleared in place. The assertions are the invariants the tier
+    // is allowed to have — nothing removed, nothing re-timed, the newest work left alone, and a second pass that
+    // does nothing because the first one already did it.
+    var call = ChatTurn.FunctionCall("c1", "read_file", """{"path":"big.txt"}""");
+    var answer = ChatTurn.FunctionResult("c1", new string('y', 4_000));
+    var tail = new[] { ChatTurn.User("接着看"), ChatTurn.Assistant("好的") };
+    var clearable = new List<ChatTurn> { call, answer };
+    clearable.AddRange(tail);
+    var through = ContextElider.Boundary(clearable, keepRecent: 2);
+    if (through != 2)
+        throw new Exception($"The clear boundary ran past the pair it was given ({through}).");
+    var clearedList = ContextElider.Clear(clearable, through);
+    if (clearedList.Count != clearable.Count
+        || clearedList[0].Role != ChatRoles.Assistant || clearedList[0].ToolCallId != "c1"
+        || clearedList[1].Role != ChatRoles.Tool || clearedList[1].ToolCallId != "c1"
+        || clearedList[1].Text.Length > 400)
+        throw new Exception("Clearing a tool result removed it, unpaired it, or left its body where it was.");
+    if (clearedList[1].At != answer.At || clearedList[1].ToolName != answer.ToolName)
+        throw new Exception("A cleared turn lost the timestamp or the name it was written with.");
+    if (!clearedList[1].Text.Contains("4000", StringComparison.Ordinal)
+        || !clearedList[1].Text.Contains("call the tool again", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"The placeholder does not say what went or how to get it back ({clearedList[1].Text}).");
+    if (ContextElider.Clear(clearedList, through).SequenceEqual(clearedList) == false
+        || ContextElider.ReclaimableTokens(clearedList, through) != 0)
+        throw new Exception("A second pass over an already cleared transcript changed it again, or still billed it.");
+    if (!ContextElider.IsClearable(answer) || ContextElider.IsClearable(clearedList[1])
+        || ContextElider.IsClearable(ChatTurn.User("用户的提问")))
+        throw new Exception("A turn was billed as clearable that should never be, or a real one was missed.");
+    var pictureResult = ChatTurn.FunctionResult("c2", new string('z', 900), false, [new ChatImage("frame.png", "image/png", 24_576)]);
+    var pictureThrough = ContextElider.Boundary([pictureResult], keepRecent: 0);
+    var clearedPicture = ContextElider.Clear([pictureResult], pictureThrough)[0];
+    if (clearedPicture.Images.Count != 0 || !clearedPicture.Text.Contains("picture", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Clearing a captured frame dropped the file reference without saying so, or kept the bytes.");
+    // A boundary that would open on an unanswered call walks back, the same rule the summarizer's cut obeys —
+    // and here it matters more, because this one rewrites the file the next request is assembled from.
+    var splitProne = new List<ChatTurn> { call, answer, ChatTurn.FunctionCall("c3", "build", "{}") };
+    splitProne.AddRange(tail);
+    var safeThrough = ContextElider.Boundary(splitProne, keepRecent: 2);
+    if (ContextCompression.SplitsToolCall(splitProne, safeThrough))
+        throw new Exception($"The clear boundary at {safeThrough} split a call from its result.");
+    if (ContextElider.ReclaimableTokens(splitProne, safeThrough) <= 0)
+        throw new Exception("A transcript full of tool output reported nothing to reclaim.");
+    Console.WriteLine("PASS: tier one clears the older tool results in place, keeps every call paired, and never asks the model.");
+
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
         [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);

@@ -97,6 +97,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// somewhere the UI thread also reads has to marshal itself. It is a callback rather than a return value
     /// because this method is an iterator: by the time the caller could read a result, the transcript it belongs
     /// to has already moved on.
+    ///
+    /// <paramref name="maxOutputTokens"/> is for the requests whose own size is the point — a context summary,
+    /// whose answer must stay smaller than the text it replaced — and it beats the provider's pass-through
+    /// <c>max_tokens</c>. A reasoning model handed a stingy budget can spend all of it thinking and return an
+    /// empty answer, which reads as a failed compaction, so the caller that knows the window sets this one.
     /// </summary>
     public async IAsyncEnumerable<string> SendAsync(
         ModelProvider provider,
@@ -111,6 +116,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<ChatImage, BinaryData?>? images = null,
         Action<string>? onReasoning = null,
         Action<ContextReport>? onUsage = null,
+        int? maxOutputTokens = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -128,7 +134,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // measuring a growing loop against the first request's size would calibrate the wrong number.
         var firstRequestEstimate = trimmed.Sum(ContextTrimmer.EstimateTokens) + schemaTokens;
         var observed = new ContextReport();
-        var options = BuildOptions(provider, modelName, reasoningEffort, tools);
+        var options = BuildOptions(provider, modelName, reasoningEffort, tools, maxOutputTokens);
         var parked = new GateState();
         // The chain of thought behind the response now streaming, and whether a call has already been filed from
         // it. The invoker runs after a response has finished streaming and before the next request goes out, so
@@ -420,9 +426,12 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     };
 
     /// <summary>Maps the provider's pass-through options onto the request; unknown keys are ignored rather
-    /// than rejected, so a manifest entry can carry an option this build does not know yet.</summary>
+    /// than rejected, so a manifest entry can carry an option this build does not know yet.
+    /// <paramref name="maxOutputTokens"/> is the caller's own answer budget and wins over the provider's: a
+    /// request whose size was worked out against one window should not inherit a cap typed for another.</summary>
     private static ChatOptions? BuildOptions(
-        ModelProvider provider, string? modelName, string? reasoningEffort, IReadOnlyList<AITool>? tools)
+        ModelProvider provider, string? modelName, string? reasoningEffort, IReadOnlyList<AITool>? tools,
+        int? maxOutputTokens = null)
     {
         var options = new ChatOptions();
         var any = false;
@@ -514,6 +523,15 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     any = true;
                     break;
             }
+        }
+
+        // Last, after the provider's own pass-through options: a caller that sized this request against a known
+        // window is making a promise about that request, and a `max_tokens` typed for the conversation as a whole
+        // must not silently turn a summary into a full-length reply.
+        if (maxOutputTokens is > 0)
+        {
+            options.MaxOutputTokens = maxOutputTokens.Value;
+            any = true;
         }
 
         return any ? options : null;

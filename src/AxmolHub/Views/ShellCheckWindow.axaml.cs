@@ -901,7 +901,8 @@ public partial class ShellCheckWindow : Window
         var compressionSession = shell.Chat.StartConversation(checkProvider.Id);
         for (var i = 0; i < 10; i++)
             shell.Chat.SeedTurnForCheck(compressionSession.Id, $"较早的上下文 {i}: " + new string('x', 500));
-        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(["保留的历史摘要"]);
+        ScriptedChatClient? summaryRequest = null;
+        shell.Chat.ClientOverride = (_, _) => summaryRequest = new ScriptedChatClient(["保留的历史摘要"]);
         panel.SetInputForCheck("");
         panel.Reload();
         shell.UpdateLayout();
@@ -914,6 +915,23 @@ public partial class ShellCheckWindow : Window
         var compressionTask = panel.ContextCompressionTaskForCheck;
         Check(compressionTask is not null, "压缩按钮触发了实际模型摘要请求");
         if (compressionTask is not null) await compressionTask;
+
+        // The summarizing request read back off the request itself: the six headings are a contract with the
+        // next model read, and the answer budget is what stops a thinking model from spending the whole budget on
+        // its chain of thought and returning an empty summary.
+        var summaryPrompt = string.Join(Environment.NewLine, summaryRequest?.LastMessages?.Select(message => message.Text) ?? []);
+        Check(summaryPrompt.Contains("## Task", StringComparison.Ordinal)
+              && summaryPrompt.Contains("## Decisions", StringComparison.Ordinal)
+              && summaryPrompt.Contains("## Files", StringComparison.Ordinal)
+              && summaryPrompt.Contains("## Verified", StringComparison.Ordinal)
+              && summaryPrompt.Contains("## Open", StringComparison.Ordinal)
+              && summaryPrompt.Contains("## Names", StringComparison.Ordinal)
+              && summaryPrompt.Contains("untrusted data", StringComparison.Ordinal),
+            "摘要请求带的是六段固定骨架，并且仍然把转录当不可信数据框住（抓到 "
+            + (summaryRequest?.LastMessages?.Count ?? -1) + " 条消息）");
+        Check(summaryRequest?.LastOptions?.MaxOutputTokens is > 0,
+            "摘要请求自己带输出预算，不会因为窗口小就要求模型只回一句话（实际 "
+            + (summaryRequest?.LastOptions?.MaxOutputTokens ?? -1) + " tokens）");
 
         var compressedCopy = shell.Chat.StoredCopyForCheck(compressionSession.Id);
         Check(compressedCopy?.ContextSummary == "保留的历史摘要"
@@ -4201,16 +4219,30 @@ public partial class ShellCheckWindow : Window
 
             var copy = chat.StoredCopyForCheck(session.Id);
             var (used, budget) = chat.TranscriptUsageForCheck(session.Id);
-            var firstResult = copy?.Messages.FirstOrDefault(turn => turn.Role == ChatRoles.Tool)?.Text ?? "无";
+            var results = copy?.Messages.Where(turn => turn.Role == ChatRoles.Tool).ToList() ?? [];
+            var cleared = results.Count(turn => turn.Text.StartsWith(ContextElider.Marker, StringComparison.Ordinal));
+            var firstResult = results.FirstOrDefault()?.Text ?? "无";
             Check(refusal is null && copy is not null
                   && copy.ContextSummaryThroughMessageCount > 0
                   && copy.ContextSummary.Length > 0
                   && EveryToolCallAnswered(copy)
                   && copy.Messages[^1].Text == ApprovalChatClient.Answer,
-                "工具循环把上下文顶过半窗之后自动压缩，且每个调用仍有配对结果（压缩边界 "
+                "工具循环把上下文顶过有效窗口 85% 之后自动压缩，且每个调用仍有配对结果（压缩边界 "
                 + (copy?.ContextSummaryThroughMessageCount ?? -1) + "，共 " + (copy?.Messages.Count ?? -1)
                 + " 条，占用 " + used + "/" + budget + " tokens，首个工具结果「"
                 + firstResult[..Math.Min(160, firstResult.Length)] + "」）");
+            // Tier one lands on the disk: the older results are rewritten where they are kept, the watermark says
+            // how far the clear reached, and the ones the model is still working with keep their bodies. A tier
+            // that only edited the outgoing copy would leave all three of those at zero.
+            Check(cleared > 0 && copy?.ContextElidedThroughMessageCount > 0
+                  && results.Count > cleared
+                  && results.All(turn => turn.ToolCallId is { Length: > 0 }),
+                "第一档就地清掉较早的工具结果、最近的留着正文，一条调用也没被拆散（清了 "
+                + cleared + "/" + results.Count + " 条，水印 " + (copy?.ContextElidedThroughMessageCount ?? -1)
+                + "，转录仍剩 " + (copy?.Messages.Count ?? -1) + " 条）");
+            Check(results.Any(turn => turn.Text.StartsWith(ContextElider.Marker, StringComparison.Ordinal)
+                      && turn.Text.Contains("call the tool again", StringComparison.Ordinal)),
+                "清掉的那条写明了怎么把内容取回来，而不是留个空洞让模型以为自己跳过了这一步");
             Check(copy is not null && copy.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 5
                   && copy.Messages.Skip(SummaryBoundary(copy)).All(turn => turn.ApprovalState is null),
                 "压缩只归档较早的前缀，磁盘上的转录一条没少（工具结果 "
@@ -4228,6 +4260,7 @@ public partial class ShellCheckWindow : Window
 
             // A second run appends to the same day's file. Overwriting instead would be silent: the log would
             // look right until the second session of a day erased the first.
+            chat.OpenConversation(session.Id);
             chat.TryEnqueueSend(session.Id, "再读五次", null, out _);
             await WaitForIdleAsync(chat);
             var twice = System.IO.File.ReadAllText(logFile);
@@ -4236,6 +4269,33 @@ public partial class ShellCheckWindow : Window
                       StringComparison.Ordinal),
                 "第二次运行追加到同一天的日志，第一次的记录仍在（实际 "
                 + twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) + " 段）");
+
+            // 抖动保护：窗口小到连"系统提示 + 工具声明 + 最新一轮"这块地板都放不下时，压缩再多档也不会到
+            // target。三次额度是给这种情况设的，硬顶让它提前结束；停下来那一次必须在审计里说清为什么，否则
+            // 用户只看到圆环一直满着，却不知道 Hub 已经不再自己动手了。
+            var stuckAudits = new List<string>();
+            var savedAuditWrite = chat.AuditWrite;
+            chat.AuditWrite = line => stuckAudits.Add(line);
+            if (fixtureProvider is not null) fixtureProvider.MaxContextTokens = 1_600;
+            var stuck = chat.StartConversation(providerId);
+            chat.SetWorkspaceRoot(stuck.Id, workspace);
+            chat.ClientOverride = (_, _) => new ApprovalChatClient
+            {
+                CallsRemaining = 2,
+                ToolName = "read_file",
+                Arguments = new Dictionary<string, object?> { ["path"] = "big.txt" },
+            };
+            chat.OpenConversation(stuck.Id);
+            chat.TryEnqueueSend(stuck.Id, "在小窗口上反复压缩", null, out _);
+            await WaitForIdleAsync(chat);
+            var stuckCopy = chat.StoredCopyForCheck(stuck.Id);
+            Check(stuckCopy?.ContextCompactionBlocked == true
+                  && stuckAudits.Any(line => line.Contains("Auto compaction stopped", StringComparison.Ordinal)),
+                "压不动的会话被停止自动压缩，并留下一行说明原因的审计（无效次数 "
+                + (stuckCopy?.ContextIneffectiveCompactions ?? -1) + "，硬顶读数由那行写着）");
+
+            chat.AuditWrite = savedAuditWrite;
+            chat.DeleteConversation(stuck.Id);
         }
         finally
         {
@@ -6206,6 +6266,10 @@ public partial class ShellCheckWindow : Window
         /// asked for has to be asserted on the same object the real request is built from.</summary>
         public Microsoft.Extensions.AI.ChatOptions? LastOptions { get; private set; }
 
+        /// <summary>The messages of the request that was just made, system prompt first — which is how a check
+        /// reads the instructions Hub gave the model without reaching into the private builder that made them.</summary>
+        public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage>? LastMessages { get; private set; }
+
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
             Microsoft.Extensions.AI.ChatOptions? options = null,
@@ -6218,6 +6282,7 @@ public partial class ShellCheckWindow : Window
             [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
         {
             LastOptions = options;
+            LastMessages = messages.ToList();
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
             // composer button can be asserted instead of only its end state. The wait is cancellation-aware:
             // a real stream dies when its token is cancelled, and "stop pressed while parked mid-reply" is
