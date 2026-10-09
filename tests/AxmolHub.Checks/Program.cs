@@ -1567,6 +1567,52 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("An unlisted modality was treated as supported (or a listed refusal as silence).");
     Console.WriteLine("PASS: a model that never said what it accepts still accepts a picture.");
 
+    // ── 拒信里的数字才是模型的窗口，但只有拒信才算 ──
+    // A gateway that has never described its models still states the window in the one message where it has to
+    // be honest. The reading has to survive the phrasings in the wild, where the size of the prompt that just
+    // failed sits in the same sentence as the limit: mistaking one for the other shrinks the conversation to
+    // nothing on every retry, which is worse than never learning at all.
+    var openAiRefusal = "This model's maximum context length is 8192 tokens. However, your messages resulted"
+        + " in 9000 tokens. Please reduce the length of the messages.";
+    if (!ContextOverflow.IsContextOverflow(openAiRefusal)
+        || ContextOverflow.TryReadRealLimit(openAiRefusal) != 8192)
+        throw new Exception("An OpenAI-shaped overflow did not name 8192 as its window.");
+    var anthropicRefusal = "400 prompt is too long: 100562 tokens > 200000 maximum";
+    if (!ContextOverflow.IsContextOverflow(anthropicRefusal)
+        || ContextOverflow.TryReadRealLimit(anthropicRefusal) != 200000)
+        throw new Exception($"An Anthropic-shaped overflow read {ContextOverflow.TryReadRealLimit(anthropicRefusal)}"
+                            + " instead of the 200000 it allowed.");
+    // A refusal that says no number is still a refusal, and a number that cannot be a window is not one either.
+    if (!ContextOverflow.IsContextOverflow("too many tokens")
+        || ContextOverflow.TryReadRealLimit("too many tokens") is not null
+        || ContextOverflow.TryReadRealLimit("maximum context length is 64 tokens") is not null)
+        throw new Exception("A numberless or implausible overflow was read as a window, or a real one missed.");
+    // The two numbers in the sentence the other way round: this is the shape that would let a naive "first
+    // number in the message" read the size of the prompt that just failed as the model's window.
+    var reversed = "Your prompt has 9000 tokens, which exceeds the maximum context length of 8192 tokens.";
+    if (!ContextOverflow.IsContextOverflow(reversed)
+        || ContextOverflow.TryReadRealLimit(reversed) != 8192)
+        throw new Exception($"A prompt size was read as the window ({ContextOverflow.TryReadRealLimit(reversed)}).");
+    // The negative control: an authentication failure, or a 400 about something else that mentions the same
+    // letters, must stay a plain failure. Compacting on it would throw away a conversation to fix a wrong key.
+    if (ContextOverflow.IsContextOverflow("Incorrect API key provided")
+        || ContextOverflow.TryReadRealLimit("Incorrect API key provided") is not null
+        || ContextOverflow.IsContextOverflow("Invalid schema for function 'file_read': context_length is required"))
+        throw new Exception("A failure that is not an overflow was treated as one.");
+    // And the learned number has to reach the meter, or learning is a fact nobody acts on: a refusal outranks
+    // the catalog entry it contradicts.
+    var learnedProvider = new ModelProvider
+    {
+        Id = "learn", Name = "Learn", BaseUrl = "https://learn.test/v1", MaxContextTokens = 128_000,
+    };
+    learnedProvider.ModelCapabilities["m"] = withWindow.WithContext(65_536, CapabilitySource.LearnedFromRefusal);
+    var afterLearning = ContextBudget.For(learnedProvider, "m");
+    if (afterLearning.Tokens != 65_536 || afterLearning.Source != CapabilitySource.LearnedFromRefusal
+        || afterLearning.ConversationRoom <= 0)
+        throw new Exception($"A window learned from a refusal was not the window the meter used"
+                            + $" ({afterLearning.Tokens}, {afterLearning.Source}).");
+    Console.WriteLine("PASS: an overflow refusal names the window it violated, and that number is what the next request is measured against.");
+
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
         [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);

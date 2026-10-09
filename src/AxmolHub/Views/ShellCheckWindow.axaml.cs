@@ -934,6 +934,7 @@ public partial class ShellCheckWindow : Window
         await CheckToolApprovalAsync(shell, panel, sidebar);
         await CheckPlanApprovalAsync(shell, panel);
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
+        await CheckOverflowRecoveryAsync(shell, panel, checkModel);
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
         await CheckSpawnAsync(shell, panel);
@@ -4240,6 +4241,106 @@ public partial class ShellCheckWindow : Window
             chat.ClientOverride = savedOverride;
             if (fixtureProvider is not null) fixtureProvider.MaxContextTokens = savedWindow;
             chat.DeleteConversation(session.Id);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>
+    /// 超限拒信即学即重试：网关回一句「maximum context length is 4096」时，这个数字同时是这次请求失败的原因
+    /// 和这个模型窗口的第一手证词。Hub 记下它、压缩一次、把这一轮重发一遍 —— 一条拒信不该让用户去按第二次发送。
+    ///
+    /// 夹具先铺 10 条长对话，为的是让「压缩」这一层真的发生：只发一条消息的会话没有可归档的前缀，那样这条断言
+    /// 就只剩下重试，而重试本身并不解决超限。三次请求的编号就是这条链的形状：第 1 次被拒，第 2 次是摘要，
+    /// 第 3 次才是重发。反面夹具同样要紧：401 不是窗口满，为它压缩、重试、或者照着它学一个窗口，三样都是错的。
+    /// </summary>
+    private async Task CheckOverflowRecoveryAsync(MainWindow shell, ChatPanel panel, string model)
+    {
+        var chat = shell.Chat;
+        var provider = chat.AddProvider("Overflow check local", "http://localhost:11436/v1", model, null);
+        var session = chat.StartConversation(provider!.Id);
+        chat.SelectChatModel(provider.Id, model);
+        for (var index = 0; index < 10; index++)
+            chat.SeedTurnForCheck(session.Id, $"较早的上下文 {index}: " + new string('x', 500));
+
+        var audits = new List<string>();
+        var savedAudit = chat.AuditWrite;
+        var savedOverride = chat.ClientOverride;
+        var requests = 0;
+        chat.AuditWrite = line => audits.Add(line);
+        chat.ClientOverride = (_, _) =>
+        {
+            requests++;
+            return requests switch
+            {
+                1 => new ScriptedChatClient([], exception: new ArgumentException(
+                    "This model's maximum context length is 4096 tokens. However, your messages resulted"
+                    + " in 5000 tokens. Please reduce the length of the messages.")),
+                2 => new ScriptedChatClient(["拒信之后压缩出的前情"]),
+                _ => new ScriptedChatClient(["拒信之后重发的回答"]),
+            };
+        };
+
+        var learnedProviderId = provider.Id;
+        try
+        {
+            var before = chat.ContextWindowFor(learnedProviderId, model);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            chat.OpenConversation(session.Id);
+            chat.TryEnqueueSend(session.Id, "这一轮超出了模型的窗口", null, out var refusal);
+            await WaitForIdleAsync(chat);
+
+            var copy = chat.StoredCopyForCheck(session.Id);
+            var after = chat.ContextWindowFor(learnedProviderId, model);
+            var answers = copy?.Messages.Count(turn => turn.Role == ChatRoles.Assistant
+                                                       && turn.Text == "拒信之后重发的回答") ?? -1;
+            Check(refusal is null && requests == 3 && answers == 1,
+                "超限之后先压缩再重发一次，用户不必自己再按一次发送（请求 " + requests
+                + " 次，重发的回答 " + answers + " 条）");
+            Check(copy is not null && copy.ContextSummary == "拒信之后压缩出的前情"
+                  && copy.ContextSummaryThroughMessageCount > 0,
+                "超限触发的压缩确实落了盘（摘要边界 "
+                + (copy?.ContextSummaryThroughMessageCount ?? -1) + " 条）");
+            Check(before.Tokens == ContextBudget.FallbackTokens && before.Source == CapabilitySource.Fallback
+                  && after.Tokens == 4096 && after.Source == CapabilitySource.LearnedFromRefusal,
+                "窗口从兜底的 " + before.Tokens + " 换成拒信里那个模型的 " + after.Tokens
+                + "，来源写明是学来的（原先 " + before.Source + "，现在 " + after.Source + "）");
+            Check(audits.Any(line => line.Contains("Context overflow", StringComparison.Ordinal)
+                                      && line.Contains("4096", StringComparison.Ordinal)),
+                "这次超限在审计里留下一行，写的是网关自己报出的那个窗口（实际 "
+                + string.Join(" / ", audits.Where(line =>
+                    line.Contains("overflow", StringComparison.OrdinalIgnoreCase))) + "）");
+
+            // 反面夹具：钥匙不对。它既不该被当成窗口满，也不该学出一个窗口来。
+            var negativeProvider = chat.AddProvider("Overflow negative local", "http://localhost:11436/v1", model, null);
+            var negativeSession = chat.StartConversation(negativeProvider!.Id);
+            chat.SelectChatModel(negativeProvider.Id, model);
+            var negativeRequests = 0;
+            chat.ClientOverride = (_, _) =>
+            {
+                negativeRequests++;
+                return new ScriptedChatClient([], exception: new ArgumentException("Incorrect API key provided"));
+            };
+            chat.OpenConversation(negativeSession.Id);
+            chat.TryEnqueueSend(negativeSession.Id, "钥匙不对的那一次", null, out _);
+            await WaitForIdleAsync(chat);
+            var negativeWindow = chat.ContextWindowFor(negativeProvider.Id, model);
+            Check(negativeRequests == 1 && negativeWindow.Source == CapabilitySource.Fallback
+                  && chat.StoredCopyForCheck(negativeSession.Id)
+                      ?.Messages.Any(turn => turn.Role == ChatRoles.Assistant) != true,
+                "鉴权失败不压缩、不重试，也没有照着它学出一个窗口（请求 " + negativeRequests
+                + " 次，窗口来源 " + negativeWindow.Source + "）");
+            chat.DeleteConversation(negativeSession.Id);
+            chat.RemoveProvider(negativeProvider.Id);
+        }
+        finally
+        {
+            chat.AuditWrite = savedAudit;
+            chat.ClientOverride = savedOverride;
+            chat.DeleteConversation(session.Id);
+            chat.RemoveProvider(learnedProviderId);
             await WaitForIdleAsync(chat);
             panel.Reload();
             Dispatcher.UIThread.RunJobs();

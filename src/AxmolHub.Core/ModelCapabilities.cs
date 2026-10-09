@@ -74,6 +74,21 @@ public sealed class ModelCapabilities
     /// <summary>When the endpoint said this. Null for a manifest or hand-declared value, which has no fetch.</summary>
     public DateTimeOffset? ObservedAt { get; init; }
 
+    /// <summary>The same record with a different window and the provenance that comes with it — the shape a
+    /// learned number takes, since a refusal rewrites one field of what the catalog said and must keep the rest.</summary>
+    public ModelCapabilities WithContext(int tokens, CapabilitySource source) => new()
+    {
+        ContextTokens = tokens,
+        MaxOutputTokens = MaxOutputTokens,
+        InputModalities = InputModalities,
+        OutputModalities = OutputModalities,
+        EndpointTypes = EndpointTypes,
+        EffortLevels = EffortLevels,
+        ContextStrategies = ContextStrategies,
+        Source = source,
+        ObservedAt = DateTimeOffset.Now,
+    };
+
     /// <summary>Whether anything at all is known about this model.</summary>
     public bool IsEmpty => ContextTokens is null && MaxOutputTokens is null
                             && InputModalities.Count == 0 && OutputModalities.Count == 0

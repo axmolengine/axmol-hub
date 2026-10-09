@@ -3282,13 +3282,21 @@ public sealed class ChatWorkspace : IDisposable
     /// partial reply would leave the user turn with no answer and no trace of what the model had already said.
     /// An error is different — it is reported through the outcome so the view can show it as a notice rather
     /// than as the model's words.</summary>
+    /// <param name="run">The live run whose next segment this is.</param>
+    /// <param name="mayRetryOverflow">Whether this send may still spend the one retry a context-overflow refusal
+    /// buys. It travels as an argument rather than as state on the run because the run's segment buffers are
+    /// cleared at the top of every send, including the retry's own — a flag kept there would be reset by the very
+    /// call it was supposed to stop, and an oversized transcript would be re-sent forever.</param>
     private async Task<(RunResult Result, string? NoticeKey, bool Danger, string? Detail)> StreamSegmentAsync(
-        ConversationRun run)
+        ConversationRun run, bool mayRetryOverflow = true)
     {
         run.BeginSegment();
         var request = await ReadOnUiAsync(() => PrepareRequest(run.ConversationId, run.SteerCount)).ConfigureAwait(false);
         if (request is null) return (RunResult.Failed, "NoAvailableChatModels", true, null);
 
+        // The retry records its own reply, so the segment that retried must not append a second copy of the same
+        // text the call below already wrote to the transcript.
+        var replyRecorded = false;
         try
         {
             await foreach (var chunk in StreamAsync(request.Value, run).ConfigureAwait(false))
@@ -3324,6 +3332,22 @@ public sealed class ChatWorkspace : IDisposable
         {
             return (RunResult.Failed, "ChatConnectionFailed", true, ex.Message);
         }
+        catch (Exception ex) when (mayRetryOverflow && ContextOverflow.IsContextOverflow(ex.Message))
+        {
+            // The provider has just stated the size of its window in the one message where it has to be honest.
+            // Record that number, compact, and send the turn once more: making someone press the same button
+            // twice because Hub sized the model from a default is a worse outcome than one extra request.
+            var named = ContextOverflow.TryReadRealLimit(ex.Message);
+            if (named is { } learned) await NoteLearnedWindowAsync(run.ConversationId, learned);
+            Audit(run.ConversationId, named is { } limit
+                ? $"Context overflow: provider named a {limit} token window; compacting and retrying once"
+                : "Context overflow: the request did not fit and no window was named; compacting and retrying once");
+            await CompactForOverflowAsync(run).ConfigureAwait(false);
+            var retry = await StreamSegmentAsync(run, mayRetryOverflow: false).ConfigureAwait(false);
+            // The call above put its own reply on the record; this segment's finally must not write it twice.
+            replyRecorded = true;
+            return retry;
+        }
         catch (Exception ex)
         {
             // A refusal naming the reasoning field and the tier asked for is information about the model, not
@@ -3338,7 +3362,7 @@ public sealed class ChatWorkspace : IDisposable
         {
             var reply = run.LiveText;
             var thought = run.LiveReasoning;
-            if (reply.Length > 0 || thought.Length > 0)
+            if (!replyRecorded && (reply.Length > 0 || thought.Length > 0))
             {
                 // A reply with thinking but no text is a real thing a reasoning model produces, and the thinking
                 // still has to be on the record: the next request that carries tools is rejected without it.
@@ -3352,6 +3376,22 @@ public sealed class ChatWorkspace : IDisposable
                 if (thought.Length > 0)
                     await NoteReasoningEvidenceAsync(run.ConversationId, effortAsked, rejected: false);
             }
+        }
+    }
+
+    /// <summary>Compaction asked for by a refusal rather than by a threshold: the request already failed, so
+    /// waiting for the next tool result to trip the trigger would retry the same oversized prompt.</summary>
+    private async Task CompactForOverflowAsync(ConversationRun run)
+    {
+        try
+        {
+            await CompressContextAsync(run.ConversationId, run.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A failed compaction leaves the transcript as it was; the retry will fail the same way, and the
+            // audit line above has already said which. Failing the run over it would hide that reason.
+            Audit(run.ConversationId, $"Context compaction failed: {ex.Message}");
         }
     }
 
@@ -3388,6 +3428,33 @@ public sealed class ChatWorkspace : IDisposable
                 AiProviderManifest.CreateBuiltIn(provider.Id)?.ReasoningModels, reasoning);
             Audit(conversationId, $"Reasoning {(rejected ? "refused" : "confirmed")}: {level} on {choice.ModelName}");
             Changed?.Invoke();
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Records the window a provider just named in a refusal. It outranks the catalog's number because it came
+    /// from the model that turned the request down, and because it cannot be stale in the way a preset can: it
+    /// is the size that request failed against, measured this minute.
+    /// </summary>
+    private async Task NoteLearnedWindowAsync(string conversationId, int tokens)
+    {
+        await ApplyOnUiAsync(() =>
+        {
+            if (ModelFor(conversationId) is not { } choice) return;
+            var provider = choice.Provider;
+            var cache = _modelLists.Load().FirstOrDefault(entry => entry.Id == provider.Id);
+            var capabilities = new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase);
+            if (cache?.Capabilities is { } cached)
+                foreach (var (name, caps) in cached)
+                    capabilities[name] = caps;
+
+            var known = capabilities.GetValueOrDefault(choice.ModelName) ?? new ModelCapabilities();
+            if (known.ContextTokens == tokens && known.Source == CapabilitySource.LearnedFromRefusal) return;
+            capabilities[choice.ModelName] = known.WithContext(tokens, CapabilitySource.LearnedFromRefusal);
+
+            _modelLists.Save(provider.Id, cache?.Models ?? [], cache?.ReasoningModels, capabilities);
+            provider.ModelCapabilities = MergeCapabilities(
+                AiProviderManifest.CreateBuiltIn(provider.Id)?.ModelCapabilities, capabilities);
         }).ConfigureAwait(false);
     }
 
