@@ -2486,6 +2486,59 @@ public partial class ShellCheckWindow : Window
             panel.SetActivityGroupExpandedForCheck(0, false);
             Check(!panel.ActivityGroupExpandedForCheck(0), "再点一下收回去");
             chat.DeleteConversation(groupSession.Id);
+
+            // ── one action row opens into its own concrete operation ──
+            // The group opening was only half the story: inside, each row still folded its command to a 60-char chip
+            // and hid the tool's answer behind a hover that a trackpad can't reach and a check can't read. A row now
+            // carries its own expander. The seed uses a run_command whose command is longer than that chip and whose
+            // payload the collapsed row never shows, so the opened detail is the only place these strings can come from.
+            var detailSession = chat.StartConversation();
+            chat.SetWorkspaceRoot(detailSession.Id, workspace);
+            chat.SetApprovalMode(detailSession.Id, ToolApprovalModes.Full);
+            chat.OpenConversation(detailSession.Id);
+            var longCommand =
+                "cmake -S D:/dev/axmolengine/axmol-hub/samples/cpp/CMakeLists.txt -B build && cmake --build build";
+            var detailTurns = chat.ActiveConversation!.Messages;
+            detailTurns.Add(ChatTurn.User("把计算器编一下"));
+            detailTurns.Add(ChatTurn.FunctionCall("call_det", "run_command", "{\"command\":\"" + longCommand + "\"}"));
+            detailTurns.Add(ChatTurn.FunctionResult("call_det", "shell: PowerShell 7 · exit: 0"));
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ActivityGroupCountForCheck == 1 && panel.ActivityRowToggleCountForCheck == 1,
+                "每条工具行自带一个可点开的展开器（组 " + panel.ActivityGroupCountForCheck
+                + "，展开器 " + panel.ActivityRowToggleCountForCheck + "）");
+            panel.SetActivityGroupExpandedForCheck(0, true);
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.ActivityRowExpandedForCheck(0),
+                "工具行默认也是收起的：先只看到一句动作，点开才看那次调用的细节");
+            panel.SetActivityRowExpandedForCheck(0, true);
+            Dispatcher.UIThread.RunJobs();
+            var detailText = panel.ActivityRowDetailTextForCheck(0);
+            Check(panel.ActivityRowExpandedForCheck(0)
+                  && detailText.Contains(longCommand, StringComparison.Ordinal)
+                  && detailText.Contains("shell: PowerShell 7 · exit: 0", StringComparison.Ordinal),
+                "点开这一行看得到完整命令原文（未截断）与工具返回的 payload（实际详情「" + detailText + "」）");
+            panel.SetActivityRowExpandedForCheck(0, false);
+            Dispatcher.UIThread.RunJobs();
+            Check(!panel.ActivityRowExpandedForCheck(0), "再点一下把这条行收回去");
+
+            // ── the expander arrow lives on the left, in the status slot, and is the sidebar's own glyph ──
+            // The arrow used to sit on the row's right edge, so the eye crossed the whole column to reach it, and a
+            // checked group head wore the Fluent accent plate like a purple pill. The arrow is now the sidebar's
+            // ChevronRight, sharing the status cell (it swaps in on hover), and the head borrows the Expander theme.
+            Check(panel.ActivityRowChevronCountForCheck == panel.ActivityRowsForCheck.Length
+                  && panel.ActivityRowChevronColumnForCheck(0) == 0,
+                "每条工具行的展开箭头在左侧、与状态图标同一格（箭头 " + panel.ActivityRowChevronCountForCheck
+                + " 颗 / 行 " + panel.ActivityRowsForCheck.Length + " 条，第 0 行箭头在第 "
+                + panel.ActivityRowChevronColumnForCheck(0) + " 列）");
+            Check(panel.ActivityRowChevronUsesSidebarGlyphForCheck,
+                "展开箭头用的就是左栏工作区那颗 >／v，不是另画的相似物");
+            Check(panel.ActivityGroupHeadUsesExpanderForCheck,
+                "组头走左栏的 Expander 主题：拿它的左箭头，也不再被涂成紫色药丸");
+            Check(panel.ActivityRowStatusSizeForCheck == 10,
+                "执行状态的对勾/八叉缩到 10，安静地待在箭头旁边（实际 " + panel.ActivityRowStatusSizeForCheck + "）");
+            chat.DeleteConversation(detailSession.Id);
         }
         finally
         {

@@ -511,44 +511,28 @@
       <Setter Property="Margin" Value="0,2" />
       <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
+    <!-- The head borrows the sidebar's Expander header theme: the same left `>`/`v` arrow, the same hover
+         brightening, and — crucially — no accent plate. The default ToggleButton template paints a checked control
+         with a solid accent block, which would turn a quiet run header into a purple pill. -->
     <Style Selector="ToggleButton.activity-group-head">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="2,3" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-    </Style>
-    <Style Selector="ToggleButton.activity-group-head:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
-    </Style>
-    <Style Selector="ToggleButton.activity-group-head Path.activity-group-chevron">
-      <Setter Property="Width" Value="10" />
-      <Setter Property="Height" Value="10" />
-      <Setter Property="Stretch" Value="Uniform" />
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="RenderTransformOrigin" Value="50%,50%" />
-      <Setter Property="RenderTransform" Value="rotate(-90deg)" />
-    </Style>
-    <Style Selector="ToggleButton.activity-group-head:checked Path.activity-group-chevron">
-      <Setter Property="RenderTransform" Value="rotate(0deg)" />
+      <Setter Property="Theme" Value="{StaticResource HubExpanderHeader}" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     </Style>
     <Style Selector="ToggleButton.activity-group-head TextBlock">
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="Margin" Value="6,0,0,0" />
     </Style>
     <Style Selector="Grid.activity-row">
       <Setter Property="Margin" Value="18,3,0,3" />
     </Style>
     <Style Selector="Grid.activity-row Path.activity-status">
-      <Setter Property="Width" Value="12" />
-      <Setter Property="Height" Value="12" />
+      <Setter Property="Width" Value="10" />
+      <Setter Property="Height" Value="10" />
       <Setter Property="Stretch" Value="Uniform" />
       <Setter Property="Fill" Value="Transparent" />
       <Setter Property="Stroke" Value="{DynamicResource Hub.Success}" />
-      <Setter Property="StrokeThickness" Value="1.7" />
+      <Setter Property="StrokeThickness" Value="1.5" />
       <Setter Property="StrokeLineCap" Value="Round" />
       <Setter Property="StrokeJoin" Value="Round" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -589,6 +573,79 @@
     <Style Selector="Border.file-chip TextBlock.file-chip-del">
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
       <Setter Property="Margin" Value="4,0,0,0" />
+    </Style>
+    <!-- One folded tool exchange, and the detail it reveals when clicked. The collapsed row names the action; the
+         toggle underneath it lays the whole exchange out (arguments in, payload back) so the concrete operation is
+         readable on the page instead of stranded one hover away in a tooltip. A bare transparent template keeps the
+         checked state from painting the Fluent accent plate behind an indented row. -->
+    <Style Selector="ToggleButton.activity-row-toggle">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" Padding="0" ClipToBounds="True">
+            <ContentPresenter Content="{TemplateBinding Content}"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <!-- The left slot holds the status glyph and the expander arrow in one cell; they trade places on hover rather
+         than opacity-fading (a fade would blank a pixel capture), and both are 10×10 so the swap never shifts the
+         row's text sideways. -->
+    <Style Selector="ToggleButton.activity-row-toggle Path.activity-row-chevron">
+      <Setter Property="Width" Value="10" />
+      <Setter Property="Height" Value="10" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="RenderTransformOrigin" Value="50%,50%" />
+      <Setter Property="RenderTransform" Value="rotate(0deg)" />
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="ToggleButton.activity-row-toggle:pointerover Path.activity-row-chevron">
+      <Setter Property="IsVisible" Value="True" />
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="ToggleButton.activity-row-toggle:checked Path.activity-row-chevron">
+      <Setter Property="IsVisible" Value="True" />
+      <Setter Property="RenderTransform" Value="rotate(90deg)" />
+    </Style>
+    <Style Selector="ToggleButton.activity-row-toggle:pointerover Path.activity-status">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="ToggleButton.activity-row-toggle:checked Path.activity-status">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Border.activity-detail">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="Margin" Value="18,2,0,6" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+    <Style Selector="Border.activity-detail TextBlock.activity-detail-label">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="Margin" Value="0,6,0,2" />
+    </Style>
+    <Style Selector="Border.activity-detail TextBlock.activity-detail-label:first-child">
+      <Setter Property="Margin" Value="0,0,0,2" />
+    </Style>
+    <Style Selector="Border.activity-detail TextBlock.activity-detail-body">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="Margin" Value="0,0,0,2" />
     </Style>
     <!-- The result line finally gets the style its class has asked for since it was written. Size, trim and
          wrap only: colour stays owned by the muted/danger classes in the row's class list, because this page's

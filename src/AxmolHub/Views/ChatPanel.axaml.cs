@@ -1859,7 +1859,7 @@ public partial class ChatPanel : UserControl
             {
                 var call = calls.TryGetValue(answered, out var paired) ? paired : null;
                 if (call?.ToolName == ChatChanges.FileWriteTool) continue;
-                inner.Children.Add(BuildActivityRow(call, turn));
+                inner.Children.Add(BuildActivityRowShell(call, turn));
                 continue;
             }
 
@@ -1890,22 +1890,20 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private Control BuildActivityGroupHead(List<(int Index, ChatTurn Turn, string? ToolName)> turns, int callCount)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-        grid.Children.Add(new Avalonia.Controls.Shapes.Path
-        {
-            Classes = { "activity-group-chevron" },
-            Data = ThemeGeometry("Hub.Icon.Chevron"),
-        });
+        // The head toggle carries the HubExpanderHeader theme, which supplies the same left `>`/`v` arrow the
+        // sidebar's workspace groups use — so no chevron is built here, and the grid only lays out the sentence and
+        // the aggregate diff chip.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
 
         var (text, added, removed) = GroupSummary(turns, callCount);
         var label = new TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis };
-        Grid.SetColumn(label, 1);
+        Grid.SetColumn(label, 0);
         grid.Children.Add(label);
 
         if (added + removed > 0)
         {
             var chip = BuildDiffChip(added, removed);
-            Grid.SetColumn(chip, 2);
+            Grid.SetColumn(chip, 1);
             grid.Children.Add(chip);
         }
 
@@ -1973,10 +1971,115 @@ public partial class ChatPanel : UserControl
         return new Border { Classes = { "file-chip" }, Child = row };
     }
 
+    /// <summary>One folded tool exchange wrapped in its own expander. The collapsed line names the action; clicking
+    /// it reveals the whole exchange — the arguments the call was made with and the payload that came back — in a
+    /// detail panel that grows downward in place. The concrete operation is therefore on the page, not stranded one
+    /// hover away in a tooltip, which a trackpad can't reach and a check can't read.</summary>
+    private Control BuildActivityRowShell(ChatTurn? call, ChatTurn result)
+    {
+        var toggle = new ToggleButton { Classes = { "activity-row-toggle" }, Content = BuildActivityRow(call, result) };
+
+        var detail = BuildActivityRowDetail(call, result);
+
+        // The fold is driven off IsChecked, never Click: a raised Click does not flip a ToggleButton, so wiring
+        // Click would leave this both untestable and half-broken — the same reason the group head is wired this way.
+        toggle.IsCheckedChanged += (_, _) => detail.IsVisible = toggle.IsChecked == true;
+
+        return new Border
+        {
+            Classes = { "activity-row-shell" },
+            Child = new StackPanel { Spacing = 0, Children = { toggle, detail } },
+        };
+    }
+
+    private static Border BuildActivityRowDetail(ChatTurn? call, ChatTurn result)
+    {
+        var body = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+
+        body.Children.Add(new TextBlock
+        {
+            Classes = { "activity-detail-label" },
+            Text = HubStrings.Get("ActivityDetailInput"),
+        });
+        body.Children.Add(new TextBlock
+        {
+            Classes = { "activity-detail-body" },
+            Text = FormatToolArguments(call),
+            MaxHeight = 160,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        body.Children.Add(new TextBlock
+        {
+            Classes = { "activity-detail-label" },
+            Text = HubStrings.Get("ActivityDetailOutput"),
+        });
+        body.Children.Add(new TextBlock
+        {
+            Classes = { "activity-detail-body" },
+            Text = FormatToolResult(result),
+            MaxHeight = 200,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        return new Border
+        {
+            Classes = { "activity-detail" },
+            IsVisible = false,
+            Child = body,
+        };
+    }
+
+    /// <summary>The call's arguments as a small readable block: each top-level JSON field on its own
+    /// <c>key: value</c> line, strings unquoted and everything else verbatim. This is where a long command shows in
+    /// full — the collapsed row's chip truncates for a glance, but the detail does not. Unparseable arguments are
+    /// shown as their raw text rather than dropped.</summary>
+    private static string FormatToolArguments(ChatTurn? call)
+    {
+        var args = call?.ToolArguments;
+        if (string.IsNullOrWhiteSpace(args)) return HubStrings.Get("ActivityDetailEmpty");
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(args);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return args;
+            var lines = new List<string>();
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                var value = property.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? property.Value.GetString() ?? ""
+                    : property.Value.GetRawText();
+                lines.Add($"{property.Name}: {value}");
+            }
+            // An empty object parses fine but says nothing; show the raw text so the reader sees what was sent.
+            return lines.Count > 0 ? string.Join("\n", lines) : args;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return args;
+        }
+    }
+
+    /// <summary>The payload the tool returned, normalized to one line ending style and capped so a compiler's whole
+    /// stderr can't stretch the transcript — a tool output that matters is read in full via the inspector, not here.
+    /// A truncated tail is said so rather than cut silently.</summary>
+    private static string FormatToolResult(ChatTurn result)
+    {
+        const int cap = 4096;
+        var text = result.Text?.Replace("\r\n", "\n").Replace("\r", "\n") ?? "";
+        if (text.Length == 0) return HubStrings.Get("ActivityDetailEmpty");
+        return text.Length > cap ? text[..cap] + HubStrings.Get("ActivityDetailTruncated") : text;
+    }
+
     /// <summary>One folded tool exchange as a single descriptive row: a status mark, the action named from its
-    /// call, and — for a command — the command itself inline. The raw payload the tool returned is not shown; it
-    /// lives on the row's tooltip, which is what keeps the AI lane reading as actions rather than a stack of
-    /// result fragments that leave the right half of the column empty.</summary>
+    /// call, and — for a command — the command itself inline. This is the collapsed line inside
+    /// <see cref="BuildActivityRowShell"/>; the full arguments and payload live in the detail it reveals. The left
+    /// slot carries two glyphs in one cell — the execution status at rest, and the same `>`/`v` arrow the sidebar
+    /// uses, which the row's styles swap in on hover and while expanded — so the affordance sits where the eye
+    /// already is rather than stranded on the right edge.</summary>
     private Control BuildActivityRow(ChatTurn? call, ChatTurn result)
     {
         var grid = new Grid { Classes = { "activity-row" }, ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
@@ -1986,6 +2089,13 @@ public partial class ChatPanel : UserControl
         {
             Classes = { "activity-status" },
             Data = ThemeGeometry(result.ToolFailed ? "Hub.Icon.Close" : "Hub.Icon.CopySuccess"),
+        });
+
+        // Same cell as the status, so the hover swap never shifts the row's text sideways; both glyphs are 10×10.
+        grid.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Classes = { "activity-row-chevron" },
+            Data = ThemeGeometry("Hub.Icon.ChevronRight"),
         });
 
         var text = new TextBlock { Classes = { "activity-row-text" } };
@@ -3033,6 +3143,82 @@ public partial class ChatPanel : UserControl
         => MessageFlow.GetLogicalDescendants().OfType<Grid>()
             .Where(grid => grid.Classes.Contains("activity-row"))
             .Sum(grid => grid.GetLogicalDescendants().OfType<Button>().Count());
+
+    // ── the per-row detail each folded action reveals on click ──
+    // A shell holds one toggle and one detail panel, created together and in the same order, so the Nth toggle pairs
+    // with the Nth detail by index. The detail's IsVisible is what the toggle's IsCheckedChanged drives, so the
+    // expanded state is read off the panel rather than guessed from the button.
+
+    internal int ActivityRowToggleCountForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<ToggleButton>()
+            .Count(button => button.Classes.Contains("activity-row-toggle"));
+
+    internal bool ActivityRowExpandedForCheck(int index)
+        => ActivityRowDetailAt(index) is { IsVisible: true };
+
+    /// <summary>Opens/closes a row's detail the way a person does — by setting the toggle's IsChecked, which is what
+    /// the IsCheckedChanged wiring reads. A raised Click never flips a ToggleButton, so a check must not use one.</summary>
+    internal void SetActivityRowExpandedForCheck(int index, bool expanded)
+    {
+        var toggle = MessageFlow.GetLogicalDescendants().OfType<ToggleButton>()
+            .Where(button => button.Classes.Contains("activity-row-toggle"))
+            .ElementAtOrDefault(index);
+        if (toggle is not null) toggle.IsChecked = expanded;
+    }
+
+    /// <summary>The whole text a row's detail panel shows (labels, the formatted arguments, the payload), joined so a
+    /// check can prove both the full command and the returned line are present once the row is opened.</summary>
+    internal string ActivityRowDetailTextForCheck(int index)
+        => ActivityRowDetailAt(index) is { } detail
+            ? string.Join(" ~ ", detail.GetLogicalDescendants().OfType<TextBlock>()
+                .Select(block => block.Text ?? "").Where(text => text.Length > 0))
+            : "";
+
+    private Border? ActivityRowDetailAt(int index)
+        => MessageFlow.GetLogicalDescendants().OfType<Border>()
+            .Where(border => border.Classes.Contains("activity-detail"))
+            .ElementAtOrDefault(index);
+
+    // ── the left-slot expander arrow: where it sits, what glyph it is, and the status it swaps with ──
+
+    private IEnumerable<Avalonia.Controls.Shapes.Path> ActivityRowChevronsForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .Where(path => path.Classes.Contains("activity-row-chevron"));
+
+    /// <summary>One arrow per action row — the affordance lives on the left, not stranded on the right edge.</summary>
+    internal int ActivityRowChevronCountForCheck => ActivityRowChevronsForCheck.Count();
+
+    /// <summary>The grid column the Nth row's arrow sits in: 0 (the status slot) is the whole point of the move.</summary>
+    internal int ActivityRowChevronColumnForCheck(int index)
+        => ActivityRowChevronsForCheck.ElementAtOrDefault(index) is { } chevron
+            ? Grid.GetColumn(chevron)
+            : -1;
+
+    /// <summary>Whether the arrow is the sidebar's own glyph, so the chat's expander reads as the same affordance as
+    /// the workspace groups in the left rail rather than a look-alike.</summary>
+    internal bool ActivityRowChevronUsesSidebarGlyphForCheck
+        => ActivityRowChevronsForCheck.Any(path => ReferenceEquals(path.Data, ThemeGeometry("Hub.Icon.ChevronRight")));
+
+    /// <summary>The first row's status glyph size — asserted small so the ✓/✕ stay quiet under the 10px arrow.</summary>
+    internal double ActivityRowStatusSizeForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Avalonia.Controls.Shapes.Path>()
+            .FirstOrDefault(path => path.Classes.Contains("activity-status"))?.Width ?? -1;
+
+    /// <summary>Whether the group head borrows the sidebar's Expander header theme. That theme is what keeps a
+    /// checked head from painting the Fluent accent plate — the purple pill — and gives it the shared left arrow.</summary>
+    internal bool ActivityGroupHeadUsesExpanderForCheck
+    {
+        get
+        {
+            var head = MessageFlow.GetLogicalDescendants().OfType<ToggleButton>()
+                .FirstOrDefault(button => button.Classes.Contains("activity-group-head"));
+            if (head?.Theme is null) return false;
+            var app = Application.Current;
+            return app is not null
+                   && app.TryGetResource("HubExpanderHeader", app.ActualThemeVariant, out var theme)
+                   && ReferenceEquals(head.Theme, theme);
+        }
+    }
 
     /// <summary>Folds/unfolds a group the way a person does — by setting the head's IsChecked, which is what the
     /// IsCheckedChanged wiring reads. A raised Click never flips a ToggleButton, so a check must not use one.</summary>

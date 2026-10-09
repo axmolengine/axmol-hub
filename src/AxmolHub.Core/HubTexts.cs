@@ -651,6 +651,13 @@ public static class HubTexts
         ["ActivityRowRunCommand"] = ("执行命令", "run command"),
         ["ActivityRowGeneric"] = ("调用 {0}", "call {0}"),
         ["ActivityRowExpandThought"] = ("看思考全文", "Show the full thinking"),
+        // Under a folded action row, one expandable panel lays the exchange out in full: the arguments the call
+        // was made with and the payload that came back. The collapsed row only names the action; this is where the
+        // concrete operation becomes readable rather than one hover away.
+        ["ActivityDetailInput"] = ("输入", "Input"),
+        ["ActivityDetailOutput"] = ("输出", "Output"),
+        ["ActivityDetailEmpty"] = ("无内容", "Nothing"),
+        ["ActivityDetailTruncated"] = ("…（已截断）", "… (truncated)"),
         // Recorded as the user's own turn, in their voice: it is the thing they just did by clicking, and the
         // assistant has to read it before it touches the same file again.
         ["ChatUndoNotifiedFormat"] = ("我已撤销那次写入：{0} 已恢复到写入之前的内容。",
