@@ -118,6 +118,34 @@ public sealed class AiModelReasoning
 
     /// <summary>Provider-specific JSON fields required to enable reasoning for this model.</summary>
     public Dictionary<string, JsonElement> RequestOptions { get; set; } = [];
+
+    /// <summary>
+    /// Levels this model was <b>seen</b> answering at: a reply came back with thinking on it while one of these
+    /// had been asked for. Observed, so it belongs to the model cache rather than the manifest, and it outranks
+    /// every declaration — the model said so with its behaviour, which is stronger than a catalog saying so
+    /// with a field.
+    /// </summary>
+    public List<string> ObservedEfforts { get; set; } = [];
+
+    /// <summary>
+    /// Levels this model turned down: its refusal named the reasoning field and that value. Hub stops offering
+    /// them, which is what makes the fail-open choice in <see cref="ModelCatalog"/> safe to have made — being
+    /// wrong costs one visible error, and then the app knows.
+    /// </summary>
+    public List<string> RejectedEfforts { get; set; } = [];
+
+    /// <summary>A copy with its own lists. Every merge and every cache round-trip uses it, because two
+    /// <see cref="AiModelReasoning"/> objects sharing one list would let a later observation rewrite an
+    /// earlier provider's profile.</summary>
+    public AiModelReasoning Clone() => new()
+    {
+        Efforts = [.. Efforts],
+        DefaultEffort = DefaultEffort,
+        RequestOptions = RequestOptions.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(),
+            StringComparer.Ordinal),
+        ObservedEfforts = [.. ObservedEfforts],
+        RejectedEfforts = [.. RejectedEfforts],
+    };
 }
 
 /// <summary>One provider entry in the built-in manifest (<c>manifests/ai-providers.json</c>, camelCase keys).</summary>

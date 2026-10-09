@@ -385,7 +385,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             pair => pair.Key,
             pair => pair.Value.Clone(),
             StringComparer.Ordinal);
-        var effectiveReasoningEffort = ModelCatalog.SupportsReasoningEffort(provider, modelName, reasoningEffort ?? "")
+        // Sent when a person chose it and the model has not refused it — not when some metadata promised it.
+        // Quietly dropping a tier the screen still shows is the interface-versus-wire split this app treats as a
+        // bug: the request has to say what the screen says, and the model's answer is what teaches Hub about the
+        // model, not a guess written into a file beforehand.
+        var effectiveReasoningEffort = ModelCatalog.MaySendEffort(provider, modelName, reasoningEffort)
             ? reasoningEffort
             : null;
         if (effectiveReasoningEffort is null

@@ -927,12 +927,17 @@ public partial class ChatPanel : UserControl
             };
             item.Click += (_, _) => _chat.SelectChatModel(choice.Provider.Id, choice.ModelName);
 
-            if (ModelCatalog.ReasoningFor(choice.Provider, choice.ModelName) is { Efforts.Count: > 0 } reasoning)
+            var knownEfforts = ModelCatalog.EffortsFor(choice.Provider, choice.ModelName);
+            if (knownEfforts.Count > 0 || ModelCatalog.MayTryUnreportedEfforts(choice.Provider, choice.ModelName))
             {
+                // A model that never reported a tier is offered the whole ladder — the first refusal trims it,
+                // and the first thinking reply confirms it. Unknown must not read as impossible, or the only way
+                // to find out is to ship a manifest entry for every model someone might connect to.
                 var currentEffort = isSelected ? _chat.ActiveReasoningEffort : ChatReasoningEfforts.Default;
-                foreach (var (effort, labelKey) in ReasoningChoices.Where(choice =>
-                             choice.Value == ChatReasoningEfforts.Default
-                             || reasoning.Efforts.Contains(choice.Value, StringComparer.OrdinalIgnoreCase)))
+                foreach (var (effort, labelKey) in ReasoningChoices.Where(candidate =>
+                             candidate.Value == ChatReasoningEfforts.Default
+                             || knownEfforts.Count == 0
+                             || knownEfforts.Contains(candidate.Value, StringComparer.OrdinalIgnoreCase)))
                 {
                     var effortItem = new MenuItem
                     {

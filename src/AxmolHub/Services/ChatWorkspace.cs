@@ -174,9 +174,11 @@ public sealed class ChatWorkspace : IDisposable
         if (effort is not (ChatReasoningEfforts.Default or ChatReasoningEfforts.Low
             or ChatReasoningEfforts.Medium or ChatReasoningEfforts.High or ChatReasoningEfforts.XHigh
             or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra)) return false;
+        // Choosing a tier is allowed unless this model refused that one; "the manifest never mentioned it" is
+        // not a refusal, and treating it as one is what made the menu unreachable on the default gateway.
         if (effort != ChatReasoningEfforts.Default
             && (SelectedChatModel is not { } choice
-                || !ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName, effort))) return false;
+                || !ModelCatalog.MaySendEffort(choice.Provider, choice.ModelName, effort))) return false;
         _selectedReasoningEffort = effort;
         if (_active is not null) _sessions.TryUpdate(_active.Id, conversation =>
         {
@@ -3324,6 +3326,12 @@ public sealed class ChatWorkspace : IDisposable
         }
         catch (Exception ex)
         {
+            // A refusal naming the reasoning field and the tier asked for is information about the model, not
+            // only a failed turn: recorded, that tier stops being offered, and the fail-open above stays cheap.
+            var effortAsked = await ReadOnUiAsync(
+                () => _sessions.Peek(run.ConversationId)?.ReasoningEffort).ConfigureAwait(false);
+            var refused = ModelCatalog.RejectedEffortOf(ex.Message, [effortAsked]);
+            if (refused is not null) await NoteReasoningEvidenceAsync(run.ConversationId, refused, rejected: true);
             return (RunResult.Failed, "ChatFailed", true, ex.Message);
         }
         finally
@@ -3334,11 +3342,53 @@ public sealed class ChatWorkspace : IDisposable
             {
                 // A reply with thinking but no text is a real thing a reasoning model produces, and the thinking
                 // still has to be on the record: the next request that carries tools is rejected without it.
+                var effortAsked = await ReadOnUiAsync(
+                    () => _sessions.Peek(run.ConversationId)?.ReasoningEffort).ConfigureAwait(false);
                 await ApplyOnUiAsync(() => _sessions.TryUpdate(run.ConversationId, opened =>
                     opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
                         { Reasoning = thought.Length > 0 ? thought : null }))).ConfigureAwait(false);
+                // A reply that came back with thinking under it is the strongest evidence there is that this
+                // model can think at this tier — it was asked, and it answered.
+                if (thought.Length > 0)
+                    await NoteReasoningEvidenceAsync(run.ConversationId, effortAsked, rejected: false);
             }
         }
+    }
+
+    /// <summary>
+    /// Remembers what one model did with one reasoning tier — proved it, or refused it — in the observation
+    /// channel (<c>models-cache.json</c>) rather than the provider's configuration, because it is a fact about
+    /// the endpoint that changes when the endpoint does. A manifest entry is a guess made the day a preset was
+    /// written; that is how the default gateway ended up with 205 models and exactly one reported tier menu.
+    /// </summary>
+    private async Task NoteReasoningEvidenceAsync(string conversationId, string? effort, bool rejected)
+    {
+        if (effort is not { Length: > 0 } level || level == ChatReasoningEfforts.Default) return;
+        await ApplyOnUiAsync(() =>
+        {
+            if (ModelFor(conversationId) is not { } choice) return;
+            var provider = choice.Provider;
+            var cache = _modelLists.Load().FirstOrDefault(entry => entry.Id == provider.Id);
+            var reasoning = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
+            if (cache?.ReasoningModels is { } cached)
+                foreach (var (name, profile) in cached)
+                    reasoning[name] = profile.Clone();
+
+            var observed = reasoning.GetValueOrDefault(choice.ModelName) ?? new AiModelReasoning();
+            var bucket = rejected ? observed.RejectedEfforts : observed.ObservedEfforts;
+            if (bucket.Contains(level, StringComparer.OrdinalIgnoreCase)) return;
+            bucket.Add(level);
+            reasoning[choice.ModelName] = observed;
+
+            // Capabilities ride along: the same entry holds the windows the gateway reported, and Save replaces
+            // the whole provider record — leaving them out would erase a model's window every time a reply
+            // proved that model could think.
+            _modelLists.Save(provider.Id, cache?.Models ?? [], reasoning, cache?.Capabilities);
+            provider.ReasoningModels = MergeReasoningModels(
+                AiProviderManifest.CreateBuiltIn(provider.Id)?.ReasoningModels, reasoning);
+            Audit(conversationId, $"Reasoning {(rejected ? "refused" : "confirmed")}: {level} on {choice.ModelName}");
+            Changed?.Invoke();
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Builds one request against the transcript as it stands, on the UI thread: the history copy and

@@ -196,10 +196,14 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         Check(panel.ModelChoiceCount == 1,
             "模型选择器排除未鉴权 provider，只列出可用模型（实际 " + panel.ModelChoiceCount + " 项）");
+        // 语义在这一轮翻了面：从前「元数据没写」被当成「这个模型不能思考」，于是推理档在默认网关的 205 个
+        // 模型上永远点不开——档位菜单要出现得有证据，而证据只有发出去才拿得到。现在未知照样问得出去，
+        // 但 EffortsFor 仍然是空的：可以问，不等于替它编一档。
         Check(panel.SelectModelForCheck(checkProvider!.Id, checkModel)
               && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
-              && !panel.ReasoningPickerEnabledForCheck,
-            "未知模型仍可选择，但不会臆测其推理档位");
+              && panel.ReasoningPickerEnabledForCheck
+              && ModelCatalog.EffortsFor(checkProvider, checkModel).Count == 0,
+            "未知模型的推理档位问得出去，但没有任何一档是被臆测出来的");
         checkProvider.ReasoningModels[checkModel] = new AiModelReasoning
         {
             Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.High],

@@ -950,9 +950,17 @@ if (args.Contains("--check-ai-sessions"))
     var openAiProvider = AiProviderManifest.CreateBuiltIn("openai")!;
     var deepSeekProvider = AiProviderManifest.CreateBuiltIn("deepseek")!;
     if (!ModelCatalog.SupportsReasoningEffort(openAiProvider, "gpt-6.1-sol")
-        || ModelCatalog.SupportsReasoningEffort(deepSeekProvider, "deepseek-flash")
-        || ModelCatalog.SupportsReasoningEffort(openAiProvider, "unknown-model"))
-        throw new Exception("Reasoning support should be explicit, model-scoped, and unknown by default.");
+        || ModelCatalog.EffortsFor(openAiProvider, "gpt-6.1-sol") is not ["low", "medium", "high", "xhigh", "max", "ultra"])
+        throw new Exception("Declared reasoning tiers should still load, per model, and decide what is offered.");
+    // "Nobody told us" is no longer the same as "it cannot". The assertion this replaces demanded that an
+    // unknown model report no support at all — and that is precisely why the tier menu never appeared for the
+    // 205 models on the default gateway: the manifest names one model, the gateway publishes nothing, and a
+    // capability that can only be demonstrated after it has been granted stays hidden forever.
+    if (!ModelCatalog.MaySendEffort(openAiProvider, "unknown-model", ChatReasoningEfforts.High)
+        || ModelCatalog.EffortsFor(openAiProvider, "unknown-model").Count != 0)
+        throw new Exception("An undescribed model must stay askable while still offering nothing as known.");
+    if (ModelCatalog.MaySendEffort(openAiProvider, "unknown-model", ChatReasoningEfforts.Default))
+        throw new Exception("The 'default' tier is not a strength; it must never go on the wire as one.");
     var openAiReasoning = ModelCatalog.ReasoningFor(openAiProvider, "gpt-6.1-sol");
     if (openAiReasoning is not { DefaultEffort: ChatReasoningEfforts.Low }
         || !openAiReasoning.Efforts.SequenceEqual(["low", "medium", "high", "xhigh", "max", "ultra"]))
@@ -973,6 +981,40 @@ if (args.Contains("--check-ai-sessions"))
         || ModelCatalog.SupportsReasoningEffort(deepSeekProvider, "deepseek-flash", ChatReasoningEfforts.Medium))
         throw new Exception("DeepSeek effort choices should match the live /models metadata.");
     Console.WriteLine("PASS: reasoning efforts come from explicit model metadata, including DeepSeek /models.");
+    // What a model was seen to do outranks what a file said, and what it refused closes only that one tier.
+    static ModelProvider ProviderWith(string model, AiModelReasoning profile)
+    {
+        var provider = new ModelProvider { Id = "evidence", BaseUrl = "https://evidence.test/v1" };
+        provider.ReasoningModels[model] = profile;
+        return provider;
+    }
+
+    var observed = ProviderWith("m", new AiModelReasoning { ObservedEfforts = [ChatReasoningEfforts.High] });
+    if (ModelCatalog.EffortsFor(observed, "m") is not ["high"]
+        || !ModelCatalog.SupportsReasoningEffort(observed, "m"))
+        throw new Exception("A tier a reply proved is not offered, so evidence never reaches the menu.");
+
+    var partialRefusal = ProviderWith("m", new AiModelReasoning { RejectedEfforts = [ChatReasoningEfforts.Ultra] });
+    if (ModelCatalog.MaySendEffort(partialRefusal, "m", ChatReasoningEfforts.Ultra)
+        || !ModelCatalog.MaySendEffort(partialRefusal, "m", ChatReasoningEfforts.Low))
+        throw new Exception("A refusal closed the wrong tier — it must close the one that was refused, no more.");
+
+    var everyRefusal = ProviderWith("m", new AiModelReasoning
+        { RejectedEfforts = [.. ModelCatalog.ReasoningEffortLadder] });
+    if (ModelCatalog.MayTryUnreportedEfforts(everyRefusal, "m")
+        || ModelCatalog.SupportsReasoningEffort(everyRefusal, "m"))
+        throw new Exception("A model that refused every tier is still being offered the menu.");
+
+    // The reader has to be able to tell a refusal from an unrelated failure: a bad credential must not quietly
+    // delete a model's whole tier menu, which is what a loose match would do on the next 401.
+    if (ModelCatalog.RejectedEffortOf(
+            "Error: value 'ultra' is not supported for field reasoning_effort", ["ultra", "max"]) != "ultra")
+        throw new Exception("A refusal that named the field and the value was not read as one.");
+    if (ModelCatalog.RejectedEffortOf("Incorrect API key provided: sk-abcdef", ["ultra", "max"]) is not null)
+        throw new Exception("An authentication failure was read as a model declining a reasoning tier.");
+    if (ModelCatalog.RejectedEffortOf("reasoning_effort is not supported by this model", ["low"]) is not null)
+        throw new Exception("A refusal naming the field but not the asked-for value invented an answer.");
+    Console.WriteLine("PASS: reasoning tiers come from evidence — proved by a reply, closed by a refusal, never by an unrelated error.");
 
     // Pipeline: turn <-> ChatMessage conversion is lossless, and streaming yields the fake text.
     var turns = new List<ChatTurn> { ChatTurn.System("sys"), ChatTurn.User("hello"), ChatTurn.Assistant("hi"), new(ChatRoles.Tool, "result", DateTimeOffset.Now) };
