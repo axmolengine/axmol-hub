@@ -201,6 +201,40 @@ public sealed class Conversation
     /// would have given then.</summary>
     public string Routing { get; set; } = ChatRouting.Manual;
 
+    /// <summary>
+    /// The last token count the model itself reported for this session's input, and the companions that make it
+    /// usable: which reply it belongs to, and which model said it.
+    ///
+    /// <para><b>Why these are on the session and not global.</b> A reported count is a fact about one model
+    /// reading one transcript. The same conversation through a different tokenizer is a different number, and
+    /// <c>orcarouter/auto</c> can answer with another model than it did last turn — so a reading whose model no
+    /// longer matches the model being asked is not evidence about anything and is ignored.</para>
+    ///
+    /// <para><see cref="LastUsageAt"/> is the anchor that keeps the sum honest: the meter adds the measured input
+    /// to the estimate of turns written <i>after</i> that instant, so the same text is never counted twice. Zero
+    /// throughout means nothing was ever measured — a gateway that stays silent about usage, which is common
+    /// enough that estimating is the fallback rather than the exception.</para>
+    /// </summary>
+    public int LastInputTokens { get; set; }
+    public int LastOutputTokens { get; set; }
+
+    /// <summary>The reasoning tokens inside <see cref="LastOutputTokens"/>. Kept apart because a thinking model's
+    /// chain of thought is most of what its reply cost, and folding it into the answer would hide the category.</summary>
+    public int LastReasoningTokens { get; set; }
+
+    /// <summary>Input tokens the endpoint says it served from cache. Zero on a gateway that does not report it,
+    /// which is not the same claim as "nothing was cached" — see <see cref="LastInputTokens"/>.</summary>
+    public int LastCachedInputTokens { get; set; }
+
+    public DateTimeOffset? LastUsageAt { get; set; }
+    public string? LastUsageModelId { get; set; }
+
+    /// <summary>Per mille between what the model reported and what the estimator guessed for the same request,
+    /// capped at <see cref="ContextReport.MaximumDriftPermille"/>. Zero means no reading yet, which is the same
+    /// as 1000 — the property is a plain int so a session file written before it existed loads uncalibrated
+    /// rather than needing a default the old file cannot carry.</summary>
+    public int ContextEstimateDriftPermille { get; set; }
+
     /// <summary>The session that started this one, when a session was spawned rather than typed into. Nullable
     /// for the same reason <see cref="BranchSourceId"/> is: every conversation file written before spawning
     /// existed has no such property and still has to load, and a session nobody spawned has no parent to name.

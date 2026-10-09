@@ -20,6 +20,28 @@ public readonly record struct ContextWindow(int Tokens, int OutputReserve, Capab
     /// and the honest failure there is one oversized request the provider can name — not an empty prompt the
     /// model answers with an apology.</summary>
     public const int MinimumConversationTokens = 512;
+
+    /// <summary>
+    /// The window as one session's own measurement says it is.
+    ///
+    /// <para>The estimate is a character rule, and a character rule reads a transcript of Chinese, JSON and code
+    /// as if it were English prose. A model that reported 40 000 tokens for what Hub sized at 25 000 is not
+    /// arguing about arithmetic — it is stating the size of the room. The correction is applied <b>here</b>, to
+    /// the denominator, rather than to <see cref="ContextTrimmer.EstimateTokens"/>, so the estimator stays the
+    /// pure text→token function its own file promises: the calibration is a fact about the session that was
+    /// measured, not a property of the text.</para>
+    ///
+    /// <para>A reading below 1000 is ignored on purpose. An estimate that turns out to have been generous is not
+    /// rewarded with more room than the model published, because nothing about that direction ever overflows.</para>
+    /// </summary>
+    public ContextWindow WithDrift(int driftPermille)
+        => driftPermille > ContextReport.UncalibratedPermille
+            ? this with
+            {
+                Tokens = Math.Max(MinimumConversationTokens + OutputReserve,
+                    (int)(Tokens * (long)ContextReport.UncalibratedPermille / driftPermille)),
+            }
+            : this;
 }
 
 /// <summary>

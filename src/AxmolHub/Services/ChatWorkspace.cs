@@ -212,9 +212,9 @@ public sealed class ChatWorkspace : IDisposable
     internal (int Used, int Budget) EstimateContextUsage(string draft)
     {
         var choice = SelectedChatModel;
-        var window = ContextBudget.For(choice?.Provider, choice?.ModelName);
-        var budget = window.Tokens;
         var conversation = _active;
+        var window = SessionWindow(conversation, choice?.Provider, choice?.ModelName);
+        var budget = window.Tokens;
         // The declarations are part of what goes on the wire, so they are both subtracted from the room the
         // turns get and added to what the meter reports — the same arithmetic ChatPipeline.SendAsync runs.
         var schema = conversation is null ? 0 : SchemaTokensFor(NormalizeMode(conversation.Mode));
@@ -224,7 +224,11 @@ public sealed class ChatWorkspace : IDisposable
             : [];
         history.Add(ChatTurn.User(draft));
         var trimmed = ContextTrimmer.Trim(history, room, EffectiveSystemPrompt(conversation));
-        return (trimmed.Sum(ContextTrimmer.EstimateTokens) + schema, budget);
+        // The draft is not in the transcript yet, so the measured branch has to be told about it separately —
+        // otherwise typing a long message into a session that has already been measured would leave the ring
+        // dead still, which is the one thing a composer meter must never do.
+        return (SentTokens(conversation, trimmed.Sum(ContextTrimmer.EstimateTokens) + schema,
+            ContextTrimmer.EstimateTokens(ChatTurn.User(draft))), budget);
     }
 
     /// <summary>
@@ -574,16 +578,80 @@ public sealed class ChatWorkspace : IDisposable
     private (int Used, int Budget) EstimateTranscript(string conversationId)
     {
         var modelChoice = ModelFor(conversationId);
-        var window = ContextBudget.For(modelChoice?.Provider, modelChoice?.ModelName);
-        var budget = window.Tokens;
         var conversation = _sessions.Peek(conversationId);
+        var window = SessionWindow(conversation, modelChoice?.Provider, modelChoice?.ModelName);
+        var budget = window.Tokens;
         var schema = conversation is null ? 0 : SchemaTokensFor(NormalizeMode(conversation.Mode));
         var room = Math.Max(ChatPipeline.MinimumConversationBudgetTokens, window.ConversationRoom - schema);
         var history = conversation is null
             ? new List<ChatTurn>()
             : conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList();
         var trimmed = ContextTrimmer.Trim(history, room, EffectiveSystemPrompt(conversation));
-        return (trimmed.Sum(ContextTrimmer.EstimateTokens) + schema, budget);
+        return (SentTokens(conversation, trimmed.Sum(ContextTrimmer.EstimateTokens) + schema), budget);
+    }
+
+    /// <summary>
+    /// The window a session should be measured against, with the correction its own last measurement asked for.
+    /// A report from a model this session is no longer talking to is not evidence — <c>orcarouter/auto</c> can
+    /// answer with a different model on the next turn, and one tokenizer's number is not another's scale.
+    /// </summary>
+    private static ContextWindow SessionWindow(Conversation? conversation, ModelProvider? provider, string? modelName)
+    {
+        var window = ContextBudget.For(provider, modelName);
+        return conversation is not null && MatchesMeasuredModel(conversation, modelName)
+            ? window.WithDrift(conversation.ContextEstimateDriftPermille)
+            : window;
+    }
+
+    /// <summary>Whether this session's reading belongs to the model now being asked.</summary>
+    private static bool MatchesMeasuredModel(Conversation conversation, string? modelName)
+        => conversation.LastInputTokens > 0
+           && conversation.LastUsageModelId is { Length: > 0 } measuredModel
+           && string.Equals(measuredModel, modelName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// What the transcript costs as far as anybody knows. With a reading from the model itself, that number is
+    /// the floor and only the turns written <b>after</b> the request it came from are estimated on top — the
+    /// report cannot see what has been typed since. Without one, the estimate is all there is, and the tool
+    /// declarations have to be added by hand because nothing measured them either.
+    ///
+    /// <para>The measured branch does not add the schema: the model counted the whole request it was sent, and
+    /// counting the same declarations twice is how a meter reaches 100% on an empty conversation.</para>
+    /// </summary>
+    private static int SentTokens(Conversation? conversation, int wholeTranscriptEstimate, int beyondTranscript = 0)
+    {
+        if (conversation is null || conversation.LastInputTokens <= 0 || conversation.LastUsageAt is null)
+            return wholeTranscriptEstimate;
+        var written = conversation.LastUsageAt.Value;
+        // The turn still being typed is not in the transcript, so it arrives as its own estimate — a ring that
+        // refuses to move while a long message is being written is a ring that has stopped describing anything.
+        return conversation.LastInputTokens
+               + conversation.Messages.Where(turn => turn.At > written).Sum(ContextTrimmer.EstimateTokens)
+               + Math.Max(0, beyondTranscript);
+    }
+
+    /// <summary>Records what the model said it spent, and what that implies for the estimate. Posted from the
+    /// stream's thread: the numbers belong to the session, and the session belongs to the UI thread.</summary>
+    private void NoteContextUsage(string conversationId, string modelName, ContextReport report)
+    {
+        if (!report.IsMeasured) return;
+        RaiseOnUi(() =>
+        {
+            if (!_sessions.TryUpdate(conversationId, opened =>
+                {
+                    opened.LastInputTokens = report.InputTokens;
+                    opened.LastOutputTokens = report.OutputTokens;
+                    opened.LastReasoningTokens = report.ReasoningTokens;
+                    opened.LastCachedInputTokens = report.CachedInputTokens;
+                    // The anchor is this moment, not the transcript's length: the reply still streaming lands
+                    // after it and is therefore estimated on top of the measurement, which is exactly right —
+                    // the request that was measured did not contain it.
+                    opened.LastUsageAt = DateTimeOffset.Now;
+                    opened.LastUsageModelId = modelName;
+                    opened.ContextEstimateDriftPermille = report.DriftPermille;
+                })) return;
+            Changed?.Invoke();
+        });
     }
 
     /// <summary>
@@ -3283,12 +3351,13 @@ public sealed class ChatWorkspace : IDisposable
     /// An error is different — it is reported through the outcome so the view can show it as a notice rather
     /// than as the model's words.</summary>
     /// <param name="run">The live run whose next segment this is.</param>
-    /// <param name="mayRetryOverflow">Whether this send may still spend the one retry a context-overflow refusal
-    /// buys. It travels as an argument rather than as state on the run because the run's segment buffers are
-    /// cleared at the top of every send, including the retry's own — a flag kept there would be reset by the very
-    /// call it was supposed to stop, and an oversized transcript would be re-sent forever.</param>
+    /// <param name="mayRecover">Whether this send may still spend the one retry a refusal buys — a context
+    /// overflow that names its window, or an endpoint that declined the stream-usage field. The budget travels
+    /// as an argument rather than as state on the run because the run's segment buffers are cleared at the top of
+    /// every send, including the retry's own: a flag kept there would be reset by the very call it was supposed
+    /// to stop, and an oversized transcript would be re-sent forever.</param>
     private async Task<(RunResult Result, string? NoticeKey, bool Danger, string? Detail)> StreamSegmentAsync(
-        ConversationRun run, bool mayRetryOverflow = true)
+        ConversationRun run, bool mayRecover = true)
     {
         run.BeginSegment();
         var request = await ReadOnUiAsync(() => PrepareRequest(run.ConversationId, run.SteerCount)).ConfigureAwait(false);
@@ -3332,7 +3401,7 @@ public sealed class ChatWorkspace : IDisposable
         {
             return (RunResult.Failed, "ChatConnectionFailed", true, ex.Message);
         }
-        catch (Exception ex) when (mayRetryOverflow && ContextOverflow.IsContextOverflow(ex.Message))
+        catch (Exception ex) when (mayRecover && ContextOverflow.IsContextOverflow(ex.Message))
         {
             // The provider has just stated the size of its window in the one message where it has to be honest.
             // Record that number, compact, and send the turn once more: making someone press the same button
@@ -3343,13 +3412,24 @@ public sealed class ChatWorkspace : IDisposable
                 ? $"Context overflow: provider named a {limit} token window; compacting and retrying once"
                 : "Context overflow: the request did not fit and no window was named; compacting and retrying once");
             await CompactForOverflowAsync(run).ConfigureAwait(false);
-            var retry = await StreamSegmentAsync(run, mayRetryOverflow: false).ConfigureAwait(false);
+            var retry = await StreamSegmentAsync(run, mayRecover: false).ConfigureAwait(false);
             // The call above put its own reply on the record; this segment's finally must not write it twice.
             replyRecorded = true;
             return retry;
         }
         catch (Exception ex)
         {
+            // A refusal naming the stream-usage field is an endpoint declining one optional part of the request,
+            // and the ask is cheap to drop: turn it off for this provider — where a person can see it and undo it
+            // — then send the turn again. Losing the reply over a billing field nobody agreed to argue about is
+            // the worse outcome, and so is failing the same way on every later message.
+            if (mayRecover && ChatPipeline.DeclinedStreamUsage(ex.Message)
+                && await ForgoStreamUsageAsync(run).ConfigureAwait(false))
+            {
+                var recovered = await StreamSegmentAsync(run, mayRecover: false).ConfigureAwait(false);
+                replyRecorded = true;
+                return recovered;
+            }
             // A refusal naming the reasoning field and the tier asked for is information about the model, not
             // only a failed turn: recorded, that tier stops being offered, and the fail-open above stays cheap.
             var effortAsked = await ReadOnUiAsync(
@@ -3393,6 +3473,29 @@ public sealed class ChatWorkspace : IDisposable
             // audit line above has already said which. Failing the run over it would hide that reason.
             Audit(run.ConversationId, $"Context compaction failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Stops asking one provider for its end-of-stream token report, and writes the decision into that provider's
+    /// own pass-through options — the same <c>include_stream_usage</c> key a person can set by hand in
+    /// <c>providers.json</c>, so the machine's concession is readable and reversible rather than a hidden flag.
+    /// Returns false when the provider was already not asking, which is what bounds the recovery to one retry: a
+    /// gateway that fails for some other reason and happens to mention the field must not be argued with forever.
+    /// </summary>
+    private async Task<bool> ForgoStreamUsageAsync(ConversationRun run)
+    {
+        var backedOff = false;
+        await ApplyOnUiAsync(() =>
+        {
+            if (ModelFor(run.ConversationId) is not { } choice) return;
+            var provider = choice.Provider;
+            if (!provider.WantsStreamUsage) return;
+            provider.ExtraOptions[ModelProvider.StreamUsageOption] = "false";
+            _providers.Save(_providerList);
+            Audit(run.ConversationId, $"{provider.Name} declined the stream usage report; stopped asking");
+            backedOff = true;
+        }).ConfigureAwait(false);
+        return backedOff;
     }
 
     /// <summary>
@@ -3494,7 +3597,7 @@ public sealed class ChatWorkspace : IDisposable
                 mode,
                 TailFailures(history),
                 HasWrittenFile(history),
-                UsageRatio(choice.Provider, choice.ModelName, history),
+                UsageRatio(conversation, choice.Provider, choice.ModelName, history),
                 steers > 0,
                 history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Images.Count ?? 0,
                 history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Text.Length ?? 0,
@@ -3577,12 +3680,20 @@ public sealed class ChatWorkspace : IDisposable
                                    && writes.Contains(id));
     }
 
-    private static double UsageRatio(ModelProvider provider, string? modelName, IReadOnlyList<ChatTurn> history)
+    private static double UsageRatio(Conversation? conversation, ModelProvider provider, string? modelName,
+        IReadOnlyList<ChatTurn> history)
     {
-        // Measured against the room the conversation actually has — the window minus the answer's share — so the
-        // router escalates on the same fill the trimmer would hit, not on a bigger number that never arrives.
-        var room = ContextBudget.For(provider, modelName).ConversationRoom;
-        return room <= 0 ? 0 : (double)history.Sum(ContextTrimmer.EstimateTokens) / room;
+        // Measured against the room the conversation actually has — the window minus the answer's share, minus
+        // whatever this session's own last report said about the estimate — so the router escalates on the same
+        // fill the trimmer would hit, not on a bigger number that never arrives.
+        var room = SessionWindow(conversation, provider, modelName).ConversationRoom;
+        if (room <= 0) return 0;
+        // The model's own number where the session has one: a router that escalates on a guess is a router that
+        // escalates on the shape of Hub's arithmetic rather than on the size of the conversation.
+        var used = conversation is not null && MatchesMeasuredModel(conversation, modelName)
+            ? SentTokens(conversation, 0)
+            : history.Sum(ContextTrimmer.EstimateTokens);
+        return (double)used / room;
     }
 
     /// <summary>The tier as this model can receive it, walking down its own ladder rather than up. Nothing is
@@ -3669,6 +3780,9 @@ public sealed class ChatWorkspace : IDisposable
             },
             modelName: request.ModelName,
             onReasoning: thought => run.AppendReasoning(thought),
+            // The measurement lands while the reply is still streaming, which is the point: the ring the person
+            // is watching has to be reading the model's numbers before they decide whether to keep typing.
+            onUsage: report => NoteContextUsage(run.ConversationId, request.ModelName, report),
             cancellationToken: run.Token);
     }
 

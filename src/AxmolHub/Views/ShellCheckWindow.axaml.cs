@@ -935,6 +935,7 @@ public partial class ShellCheckWindow : Window
         await CheckPlanApprovalAsync(shell, panel);
         await CheckAutoCompactionAsync(shell, panel, checkProvider.Id);
         await CheckOverflowRecoveryAsync(shell, panel, checkModel);
+        await CheckUsageReadBackAsync(shell, panel, checkModel);
         await CheckWorkspaceChipAsync(shell, panel);
         await CheckCrossSessionAsync(shell, panel, sidebar);
         await CheckSpawnAsync(shell, panel);
@@ -4347,6 +4348,135 @@ public partial class ShellCheckWindow : Window
         }
     }
 
+    /// <summary>
+    /// 用量读回：请求要问网关要这个数，拿到之后它既当读数的下限，也当分母的修正。
+    ///
+    /// 三条各自独立的证据，一条比一条难伪造。第一条形在<strong>出站请求</strong>里 —— 不要求用量就没有最后那个
+    /// chunk，而这一条只有读请求本体才证得了。第二条是「实测赢过估算」：夹具报 48000，而这条会话自己按字符估
+    /// 只有几十，圆环读的是那个 48000。第三条是封顶：单次读数最多把尺度挪 4×，否则一个瞎报的网关能把窗口压成
+    /// 一条缝。反面夹具照旧 —— 从不报用量的会话必须继续用估算，而不是读出一个 0。
+    /// </summary>
+    private async Task CheckUsageReadBackAsync(MainWindow shell, ChatPanel panel, string model)
+    {
+        var chat = shell.Chat;
+        var provider = chat.AddProvider("Usage check local", "http://localhost:11436/v1", model, null);
+        var declined = chat.AddProvider("Usage decline local", "http://localhost:11436/v1", model, null);
+        var unreported = chat.StartConversation(provider!.Id);
+        var measured = chat.StartConversation(provider.Id);
+        var healing = chat.StartConversation(declined!.Id);
+        chat.SelectChatModel(provider.Id, model);
+        chat.SelectChatModel(declined.Id, model);
+        var savedOverride = chat.ClientOverride;
+        var sent = new List<ScriptedChatClient>();
+        try
+        {
+            // Phase 1: a gateway that never says what a request cost. The session has to keep estimating — a
+            // meter that read the absence of a report as zero would call an overflowing conversation empty.
+            chat.ClientOverride = (_, _) =>
+            {
+                var client = new ScriptedChatClient(["没有用量的回答"]);
+                sent.Add(client);
+                return client;
+            };
+            chat.OpenConversation(unreported.Id);
+            chat.TryEnqueueSend(unreported.Id, "这一轮没人报数", null, out _);
+            await WaitForIdleAsync(chat);
+            var quiet = chat.StoredCopyForCheck(unreported.Id);
+            var (quietUsed, quietBudget) = chat.TranscriptUsageForCheck(unreported.Id);
+            Check(quiet?.LastInputTokens == 0 && quiet.LastUsageAt is null
+                  && quietBudget == ContextBudget.FallbackTokens && quietUsed < 5_000 && quietUsed > 0,
+                "从不报用量的网关不会被读成 0，这条会话仍然按估算计量（实测 " + quietUsed
+                + "/" + quietBudget + "）");
+
+            // Phase 2: the same app path with a report on the end of the stream.
+            sent.Clear();
+            chat.ClientOverride = (_, _) =>
+            {
+                var client = new ScriptedChatClient(["实测回答"], usage: [(48_000, 600, 400, 0)]);
+                sent.Add(client);
+                return client;
+            };
+            chat.OpenConversation(measured.Id);
+            chat.TryEnqueueSend(measured.Id, "这一次它报了数", null, out _);
+            await WaitForIdleAsync(chat);
+            var report = chat.StoredCopyForCheck(measured.Id);
+            var (used, budget) = chat.TranscriptUsageForCheck(measured.Id);
+#pragma warning disable SCME0001
+            var wire = (sent.Count > 0
+                ? sent[0].LastOptions?.RawRepresentationFactory?.Invoke(sent[0]) as OpenAI.Chat.ChatCompletionOptions
+                : null)?.Patch.ToString() ?? "";
+#pragma warning restore SCME0001
+            Check(wire.Contains("stream_options", StringComparison.Ordinal)
+                  && wire.Contains("include_usage", StringComparison.Ordinal),
+                "发出去的请求确实向网关要了用量报告，没有这个字段就没有最后那个 chunk（补丁 "
+                + wire[..Math.Min(160, wire.Length)] + "）");
+            Check(report?.LastInputTokens == 48_000 && report.LastReasoningTokens == 400
+                  && report.LastUsageModelId == model && used >= 48_000,
+                "模型报的输入成了读数的下限，估算只补它之后新写的那几轮（实测 " + used + "）");
+            Check(report?.ContextEstimateDriftPermille == ContextReport.MaximumDriftPermille
+                  && budget == ContextBudget.FallbackTokens * ContextReport.UncalibratedPermille
+                      / ContextReport.MaximumDriftPermille,
+                "一次读数最多把尺度挪 4×：窗口从 " + ContextBudget.FallbackTokens + " 收到 " + budget
+                + "，再多就不算了");
+
+            // Phase 3: the refusal that says the field itself is unwelcome. One retry with the ask taken out of
+            // the request, and the concession written into that provider's own options in providers.json — the
+            // same key a person can set by hand, so what the machine decided is readable afterwards.
+            var attempts = 0;
+            sent.Clear();
+            chat.ClientOverride = (_, _) =>
+            {
+                attempts++;
+                var client = new ScriptedChatClient(
+                    ["退避之后的回答"],
+                    exception: attempts == 1
+                        ? new ArgumentException("Invalid parameter: 'stream_options' is not supported by this endpoint")
+                        : null,
+                    usage: attempts == 1 ? null : [(700, 8, 0, 0)]);
+                sent.Add(client);
+                return client;
+            };
+            chat.OpenConversation(healing.Id);
+            chat.TryEnqueueSend(healing.Id, "网关不肯给这个字段", null, out _);
+            await WaitForIdleAsync(chat);
+            var healedProvider = chat.Providers.FirstOrDefault(candidate => candidate.Id == declined!.Id);
+            var providersFile = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(shell.Workspace.Store.Root, "ai", "providers.json"));
+#pragma warning disable SCME0001
+            var secondWire = (sent.Count > 1
+                ? sent[1].LastOptions?.RawRepresentationFactory?.Invoke(sent[1]) as OpenAI.Chat.ChatCompletionOptions
+                : null)?.Patch.ToString() ?? "";
+#pragma warning restore SCME0001
+            var persisted = System.IO.File.ReadAllText(System.IO.Path.Combine(
+                shell.Workspace.Store.Root, "ai", "providers.json"));
+            Check(attempts == 2 && healedProvider?.WantsStreamUsage == false
+                  && healedProvider.ExtraOptions.GetValueOrDefault(ModelProvider.StreamUsageOption) == "false"
+                  && persisted.Contains(ModelProvider.StreamUsageOption, StringComparison.Ordinal),
+                "被拒一次之后 Hub 不再向这个 provider 要这个字段，退避同时落在 providers.json 里（请求 "
+                + attempts + " 次，文件里" + (persisted.Contains(ModelProvider.StreamUsageOption,
+                    StringComparison.Ordinal) ? "有" : "没有") + "这个键）");
+            Check(sent.Count == 2 && !secondWire.Contains("stream_options", StringComparison.Ordinal),
+                "重发那一次的请求体里已经没有这个字段了（补丁 "
+                + (secondWire.Length == 0 ? "整个 raw options 都不需要了"
+                    : secondWire[..Math.Min(160, secondWire.Length)]) + "）");
+            Check(chat.StoredCopyForCheck(healing.Id)?.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                  && turn.Text == "退避之后的回答") == true,
+                "为一个可选字段失败一次不算失败：这一轮的回答还是送到了用户面前");
+        }
+        finally
+        {
+            chat.ClientOverride = savedOverride;
+            chat.DeleteConversation(unreported.Id);
+            chat.DeleteConversation(measured.Id);
+            chat.DeleteConversation(healing.Id);
+            chat.RemoveProvider(provider.Id);
+            chat.RemoveProvider(declined.Id);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
     private static int SummaryBoundary(Conversation conversation)
         => Math.Clamp(conversation.ContextSummaryThroughMessageCount, 0, conversation.Messages.Count);
 
@@ -6068,8 +6198,14 @@ public partial class ShellCheckWindow : Window
         Task? gate = null,
         Task? afterFirstChunkGate = null,
         System.Threading.Tasks.TaskCompletionSource<bool>? firstChunkReached = null,
-        Exception? exception = null) : Microsoft.Extensions.AI.IChatClient
+        Exception? exception = null,
+        (long Input, long Output, long Reasoning, long Cached)[]? usage = null) : Microsoft.Extensions.AI.IChatClient
     {
+        /// <summary>The options of the request that was just made, so a check can read what would have gone on
+        /// the wire. The scripted client answers instead of a gateway, and the field a gateway would have been
+        /// asked for has to be asserted on the same object the real request is built from.</summary>
+        public Microsoft.Extensions.AI.ChatOptions? LastOptions { get; private set; }
+
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
             Microsoft.Extensions.AI.ChatOptions? options = null,
@@ -6081,6 +6217,7 @@ public partial class ShellCheckWindow : Window
             Microsoft.Extensions.AI.ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
         {
+            LastOptions = options;
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
             // composer button can be asserted instead of only its end state. The wait is cancellation-aware:
             // a real stream dies when its token is cancelled, and "stop pressed while parked mid-reply" is
@@ -6098,6 +6235,25 @@ public partial class ShellCheckWindow : Window
                     firstChunkReached?.TrySetResult(true);
                     if (afterFirstChunkGate is not null) await afterFirstChunkGate.WaitAsync(cancellationToken);
                 }
+                await Task.Yield();
+            }
+
+            // The end-of-stream token report, in the same shape the gateway puts it: a sibling content on its own
+            // update, after the text. Without it the read-back path could only ever be tested against a network.
+            if (usage is null) yield break;
+            foreach (var report in usage)
+            {
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant,
+                [
+                    new Microsoft.Extensions.AI.UsageContent(new Microsoft.Extensions.AI.UsageDetails
+                    {
+                        InputTokenCount = report.Input,
+                        OutputTokenCount = report.Output,
+                        ReasoningTokenCount = report.Reasoning,
+                        CachedInputTokenCount = report.Cached,
+                        TotalTokenCount = report.Input + report.Output,
+                    }),
+                ]);
                 await Task.Yield();
             }
         }

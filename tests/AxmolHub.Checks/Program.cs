@@ -1125,6 +1125,69 @@ if (args.Contains("--check-ai-sessions"))
         throw new Exception("GPT-6.1-Sol ultra was not forwarded as an API effort value.");
     Console.WriteLine("PASS: GPT-6.1-Sol ultra is forwarded through the provider-specific request field.");
 
+    // Asking for the token report is a field in the same body as the reasoning tier, and the pinned OpenAI SDK
+    // exposes neither as a property — both go through one JSON patch on one raw representation. Two assignments
+    // to RawRepresentationFactory would compile and the second would win, so the request would quietly stop
+    // carrying the tier while the screen still showed it. This is the assertion that catches that shape.
+    var wireClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(wireClient).SendAsync(
+                       openAiProvider, [ChatTurn.User("hi")],
+                       reasoningEffort: ChatReasoningEfforts.Ultra, modelName: "gpt-6.1-sol")) { }
+#pragma warning disable SCME0001
+    var wirePatch = (wireClient.LastOptions?.RawRepresentationFactory?.Invoke(wireClient)
+        as OpenAI.Chat.ChatCompletionOptions)?.Patch.ToString();
+#pragma warning restore SCME0001
+    if (wirePatch is null || !wirePatch.Contains("stream_options", StringComparison.Ordinal)
+        || !wirePatch.Contains("include_usage", StringComparison.Ordinal)
+        || !wirePatch.Contains("\"ultra\"", StringComparison.Ordinal))
+        throw new Exception($"The usage ask and the reasoning field did not both reach one request ({wirePatch}).");
+    Console.WriteLine("PASS: the request asks for a usage report without displacing the reasoning field beside it.");
+
+    var declined = AiProviderManifest.CreateBuiltIn("openai")!;
+    declined.ExtraOptions[ModelProvider.StreamUsageOption] = "false";
+    var declinedClient = new FakeChatClient(["ok"]);
+    await foreach (var _ in new ChatPipeline(declinedClient).SendAsync(
+                       declined, [ChatTurn.User("hi")],
+                       reasoningEffort: ChatReasoningEfforts.Ultra, modelName: "gpt-6.1-sol")) { }
+#pragma warning disable SCME0001
+    var declinedPatch = (declinedClient.LastOptions?.RawRepresentationFactory?.Invoke(declinedClient)
+        as OpenAI.Chat.ChatCompletionOptions)?.Patch.ToString();
+#pragma warning restore SCME0001
+    if (declined.WantsStreamUsage
+        || declinedPatch is null || declinedPatch.Contains("stream_options", StringComparison.Ordinal)
+        || !declinedPatch.Contains("reasoning_effort", StringComparison.Ordinal))
+        throw new Exception($"include_stream_usage=false did not take just the usage field out ({declinedPatch}).");
+    Console.WriteLine("PASS: a provider that was told not to ask gets no usage field and keeps the rest of its request.");
+
+    // The read-back itself: the report is a sibling content on the stream, so the pipeline has to catch it where
+    // it catches the text. The largest input is the window; the outputs add up.
+    ContextReport? handed = null;
+    var measuredClient = new FakeChatClient(["a", "b"], usage:
+        [(900, 10, 4, 1), (1_200, 20, 8, 2)]);
+    await foreach (var _ in new ChatPipeline(measuredClient).SendAsync(
+                       openAiProvider, [ChatTurn.User("hello there")], modelName: "gpt-plain",
+                       onUsage: report => handed = report)) { }
+    if (handed is null || !handed.IsMeasured
+        || handed.InputTokens != 1_200 || handed.OutputTokens != 30
+        || handed.ReasoningTokens != 12 || handed.CachedInputTokens != 2
+        || handed.EstimatedInputTokens <= 0)
+        throw new Exception($"A reported usage chunk did not reach the caller ({handed?.InputTokens ?? -1} in, "
+                            + $"{handed?.OutputTokens ?? -1} out).");
+    if (handed.DriftPermille <= ContextReport.UncalibratedPermille)
+        throw new Exception("The reading was paired with nothing, so the estimate could not be corrected by it.");
+    Console.WriteLine("PASS: the token report on the stream is handed to the caller, largest input and summed output.");
+
+    // The negative control: a gateway that never sends the chunk. Silent is not zero — the session keeps
+    // estimating, and a meter that read 0 would say an overflowing conversation was empty.
+    var silent = new FakeChatClient(["ok"]);
+    ContextReport? neverHanded = null;
+    await foreach (var _ in new ChatPipeline(silent).SendAsync(
+                       openAiProvider, [ChatTurn.User("hi")], modelName: "gpt-plain",
+                       onUsage: report => neverHanded = report)) { }
+    if (neverHanded is not null)
+        throw new Exception("A client that reported nothing produced a measurement anyway.");
+    Console.WriteLine("PASS: a gateway that reports no usage leaves the session estimating instead of reading zero.");
+
     // The pipeline applies the budget it is given: an oversized history reaches the client trimmed.
     var longHistory = new List<ChatTurn>();
     for (var index = 0; index < 40; index++) longHistory.Add(ChatTurn.User($"turn {index} " + new string('z', 400)));
@@ -1612,6 +1675,54 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"A window learned from a refusal was not the window the meter used"
                             + $" ({afterLearning.Tokens}, {afterLearning.Source}).");
     Console.WriteLine("PASS: an overflow refusal names the window it violated, and that number is what the next request is measured against.");
+
+    // ── 模型报的数才是测量，估算只是猜测 ──
+    // One send in agent mode is up to seventeen HTTP requests, because the tool loop re-sends the growing
+    // transcript every time. Only the largest of those inputs ever held the whole window, while every output is
+    // separate money: summing the inputs would report a seventeen-fold window and drive the meter backwards, and
+    // taking the largest output would under-bill the reply. The rule is therefore asymmetric on purpose, and the
+    // pairing with Hub's own estimate of that same request is what makes the estimate get better.
+    var reading = new ContextReport();
+    if (reading.IsMeasured || reading.DriftPermille != ContextReport.UncalibratedPermille)
+        throw new Exception("An empty report read as a measurement, or calibrated itself out of nothing.");
+    reading.Merge(inputTokens: 900, outputTokens: 10, reasoningTokens: 4, cachedInputTokens: 1, estimatedInputTokens: 890);
+    reading.Merge(inputTokens: 1_200, outputTokens: 20, reasoningTokens: 8, cachedInputTokens: 2, estimatedInputTokens: 1_000);
+    reading.Merge(inputTokens: 600, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0, estimatedInputTokens: 4_000);
+    if (!reading.IsMeasured || reading.InputTokens != 1_200 || reading.CachedInputTokens != 2
+        || reading.OutputTokens != 35 || reading.ReasoningTokens != 12 || reading.Requests != 3)
+        throw new Exception($"A report did not merge the way a window is read (input {reading.InputTokens}, "
+                            + $"output {reading.OutputTokens}, reasoning {reading.ReasoningTokens}, "
+                            + $"cached {reading.CachedInputTokens}).");
+    if (reading.EstimatedInputTokens != 1_000)
+        throw new Exception("The estimate kept with the largest input is not the one the reading must be compared to.");
+    // A single reading cannot move the scale more than 4×, and an estimate that turns out to have been generous
+    // is not rewarded with more room than the model published — only the direction that overflows is corrected.
+    if (reading.DriftPermille != 1_200)
+        throw new Exception($"The drift over its own estimate read {reading.DriftPermille} instead of 1200 per mille.");
+    var underReading = new ContextReport();
+    underReading.Merge(40, 1, 0, 0, 10_000);
+    if (underReading.DriftPermille != ContextReport.UncalibratedPermille)
+        throw new Exception("An estimate that over-read the transcript was rewarded with a bigger window.");
+    var runaway = new ContextReport();
+    runaway.Merge(10_000_000, 1, 0, 0, 100);
+    if (runaway.DriftPermille != ContextReport.MaximumDriftPermille)
+        throw new Exception($"A single absurd reading moved the scale past its cap ({runaway.DriftPermille}).");
+    var calibrated = new ContextWindow(128_000, 8_000, CapabilitySource.EndpointReported);
+    if (calibrated.WithDrift(ContextReport.UncalibratedPermille) != calibrated
+        || calibrated.WithDrift(0) != calibrated
+        || calibrated.WithDrift(999) != calibrated)
+        throw new Exception("A reading at or below the neutral ratio changed the window it was supposed to explain.");
+    var halved = calibrated.WithDrift(2_000);
+    if (halved.Tokens != 64_000 || halved.ConversationRoom != 56_000 || halved.Source != calibrated.Source)
+        throw new Exception($"The measurement did not become the denominator ({halved.Tokens} tokens, "
+                            + $"{halved.Source}).");
+    if (calibrated.WithDrift(ContextReport.MaximumDriftPermille).ConversationRoom
+        < ContextWindow.MinimumConversationTokens + calibrated.OutputReserve)
+        throw new Exception("The calibration can shrink a window under the floor it documents.");
+    var fourTimes = calibrated.WithDrift(ContextReport.MaximumDriftPermille);
+    if (fourTimes.Tokens != 32_000)
+        throw new Exception($"A 4× calibration left {fourTimes.Tokens} instead of a quarter of the window.");
+    Console.WriteLine("PASS: the model's own token report is the measurement, merged as a window and used as the denominator.");
 
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
@@ -5315,7 +5426,8 @@ sealed class InMemorySecretStore : ISecretStore
 /// <summary>A scripted <see cref="IChatClient"/> for the <c>--check-ai-sessions</c> assertions: yields fixed
 /// text chunks and records the messages it was asked to answer, so the pipeline can be tested with no network
 /// at all. This is the payoff of routing every provider through the M.E.AI abstraction — the seam is fakeable.</summary>
-sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation = false) : IChatClient
+sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation = false,
+    (long Input, long Output, long Reasoning, long Cached)[]? usage = null) : IChatClient
 {
     public IList<ChatMessage>? LastMessages { get; private set; }
     public ChatOptions? LastOptions { get; private set; }
@@ -5336,6 +5448,26 @@ sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation
             yield return new ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, chunk);
             await Task.Yield();
         }
+
+        // The third argument is the end-of-stream report a real gateway puts after the last chunk. It is a
+        // parameter rather than a second client class because the read-back assertions need the same scripted
+        // text path, and a usage chunk is the only part of it that differs.
+        if (usage is not null)
+            foreach (var report in usage)
+            {
+                yield return new ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant,
+                [
+                    new UsageContent(new UsageDetails
+                    {
+                        InputTokenCount = report.Input,
+                        OutputTokenCount = report.Output,
+                        ReasoningTokenCount = report.Reasoning,
+                        CachedInputTokenCount = report.Cached,
+                        TotalTokenCount = report.Input + report.Output,
+                    }),
+                ]);
+                await Task.Yield();
+            }
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) => null;

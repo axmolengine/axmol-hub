@@ -24,10 +24,27 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     private const int SmallestWorthEliding = 512;
 
     public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        => base.GetResponseAsync(Elide(messages, budgetTokens), options, cancellationToken);
+    {
+        var elided = Elide(messages, budgetTokens);
+        LastEstimatedInputTokens = EstimateTokens(elided);
+        return base.GetResponseAsync(elided, options, cancellationToken);
+    }
 
     public override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        => base.GetStreamingResponseAsync(Elide(messages, budgetTokens), options, cancellationToken);
+    {
+        var elided = Elide(messages, budgetTokens);
+        LastEstimatedInputTokens = EstimateTokens(elided);
+        return base.GetStreamingResponseAsync(elided, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// What the list that went out last cost, in Hub's own currency. It exists so a reported token count has
+    /// something to be compared <i>against</i>: the drift between this number and the model's answer is the only
+    /// way the estimate ever gets better, and pairing a measurement with the size of some other request would
+    /// calibrate the wrong thing. Sequential invocation is what makes "last" mean "this one" — the function
+    /// invoker is configured with <c>AllowConcurrentInvocation = false</c>, so no second list is ever in flight.
+    /// </summary>
+    public int LastEstimatedInputTokens { get; private set; }
 
     public static List<ChatMessage> Elide(IEnumerable<ChatMessage> messages, int budgetTokens)
     {

@@ -278,6 +278,21 @@ public sealed class ModelProvider
     /// <summary>Provider-specific extension options (e.g. <c>reasoning_effort</c>), passed through without interpretation.</summary>
     public Dictionary<string, string?> ExtraOptions { get; set; } = new();
 
+    /// <summary>
+    /// The option that turns the end-of-stream token report on or off. Written by a person who knows their
+    /// gateway rejects the field, and written by Hub itself when a refusal names it — which is why the rule is
+    /// "off only when it says false": an absent key means nobody has complained yet, and asking a gateway that
+    /// answers anyway costs nothing.
+    /// </summary>
+    public const string StreamUsageOption = "include_stream_usage";
+
+    /// <summary>Whether to ask this endpoint for a usage chunk at the end of each stream.</summary>
+    [JsonIgnore]
+    public bool WantsStreamUsage => ExtraOptions.TryGetValue(StreamUsageOption, out var value)
+                                    && string.Equals(value?.Trim(), "false", StringComparison.OrdinalIgnoreCase)
+        ? false
+        : true;
+
     /// <summary>Whether this provider participates in an affiliate program; the UI must disclose it when true.</summary>
     public bool Affiliate { get; set; }
 

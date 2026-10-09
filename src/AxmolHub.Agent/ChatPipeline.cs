@@ -91,6 +91,12 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// stream, the cancellation surfaces to the caller as <see cref="OperationCanceledException"/>, and nothing
     /// is written as a tool result. Resuming is the caller's job — it runs the approved call itself and starts
     /// a new request whose history ends with the real result.
+    ///
+    /// <paramref name="onUsage"/> fires on the stream's thread, once per report the endpoint sends, with the
+    /// running total so far — the same thread rule as the tool callbacks, so a caller that writes any of it
+    /// somewhere the UI thread also reads has to marshal itself. It is a callback rather than a return value
+    /// because this method is an iterator: by the time the caller could read a result, the transcript it belongs
+    /// to has already moved on.
     /// </summary>
     public async IAsyncEnumerable<string> SendAsync(
         ModelProvider provider,
@@ -104,6 +110,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         string? modelName = null,
         Func<ChatImage, BinaryData?>? images = null,
         Action<string>? onReasoning = null,
+        Action<ContextReport>? onUsage = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -116,6 +123,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var budget = Math.Max(MinimumConversationBudgetTokens, window.ConversationRoom - schemaTokens);
         var trimmed = ContextTrimmer.Trim(history, budget, systemPrompt);
         var messages = ToChatMessages(trimmed, images);
+        // Hub's own reading of the request it is about to send. Kept next to the request rather than recomputed
+        // later, because the only comparison that means anything is this transcript against this estimate —
+        // measuring a growing loop against the first request's size would calibrate the wrong number.
+        var firstRequestEstimate = trimmed.Sum(ContextTrimmer.EstimateTokens) + schemaTokens;
+        var observed = new ContextReport();
         var options = BuildOptions(provider, modelName, reasoningEffort, tools);
         var parked = new GateState();
         // The chain of thought behind the response now streaming, and whether a call has already been filed from
@@ -125,15 +137,17 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var thinking = new StringBuilder();
         var thinkingSpent = false;
         IChatClient effectiveClient = client;
+        ToolLoopContextGuard? guard = null;
         if (tools is { Count: > 0 })
         {
             // The guard sits inside the invoking client so it sees the message list as the loop grows it;
             // ContextTrimmer only ever sees the first iteration. The harvest sits inside the guard for the same
             // reason and one more: it must read the list as it will actually go out, assistant messages the loop
             // added since the last request included, or the reasoning it hands the wire policy is stale by a turn.
-            IChatClient sending = reasoning is null
+            guard = reasoning is null
                 ? new ToolLoopContextGuard(client, budget)
                 : new ToolLoopContextGuard(new ReasoningHarvestClient(client, reasoning), budget);
+            IChatClient sending = guard;
             var functionClient = new FunctionInvokingChatClient(sending, null, null)
             {
                 AllowConcurrentInvocation = false,
@@ -221,9 +235,41 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     thinking.Append(said);
                     onReasoning?.Invoke(said);
                 }
+                else if (content is UsageContent measurement)
+                {
+                    // The only measurement in this system. Everything else about the size of a conversation is a
+                    // weighted guess, and a guess that is never compared to anything stays wrong forever. It rides
+                    // the stream as a sibling content — the same shape as the reasoning above — so a gateway that
+                    // never sends one leaves this arm unentered rather than reporting zero.
+                    var details = measurement.Details;
+                    observed.Merge(
+                        TokenCount(details.InputTokenCount),
+                        TokenCount(details.OutputTokenCount),
+                        // Reasoning is reported separately and sits *inside* the output count on this protocol, so
+                        // it is kept as its own field rather than added to it — a thinking model's chain of thought
+                        // is most of what the reply cost, and invisible if folded into the answer.
+                        TokenCount(details.ReasoningTokenCount),
+                        TokenCount(details.CachedInputTokenCount),
+                        guard?.LastEstimatedInputTokens ?? firstRequestEstimate);
+                    onUsage?.Invoke(observed);
+                }
             }
         }
     }
+
+    /// <summary>A reported count, in the units the rest of Hub counts in. The contract is <c>long?</c> — a gateway
+    /// that reports nothing and a gateway that reports zero both mean "no reading", and a number beyond what an
+    /// int holds is a broken gateway rather than a big model.</summary>
+    private static int TokenCount(long? reported)
+        => reported is > 0 and <= int.MaxValue ? (int)reported.Value : 0;
+
+    /// <summary>Whether a refusal is about the stream-usage field itself. Narrow on purpose — the field is named
+    /// with a spelling no other failure uses, so a wrong key or a full window can never be mistaken for a
+    /// gateway declining to report tokens.</summary>
+    public static bool DeclinedStreamUsage(string? message)
+        => message is { Length: > 0 }
+           && (message.Contains("stream_options", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("include_usage", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// What the tool declarations of one request cost, in tokens. A function's name, its description and its
@@ -426,17 +472,28 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
         }
 
-        if (requestOptions is { Count: > 0 })
+        // One factory, one patch, both fields written into it. The pinned OpenAI SDK has no public
+        // <c>StreamOptions</c> property on <c>ChatCompletionOptions</c> — measured, not assumed: reflection over
+        // the assembly's public instance properties finds <c>Patch</c> and nothing stream-shaped, while its own
+        // XML documentation lists a <c>StreamOptions</c> member the assembly does not expose. So asking for usage
+        // goes through the same JSON patch as the reasoning fields that were never modelled either, and the two
+        // have to share one assignment: a second factory would silently throw the reasoning patch away.
+        var askForStreamUsage = provider.WantsStreamUsage;
+        if (requestOptions is { Count: > 0 } || askForStreamUsage)
         {
             options.RawRepresentationFactory = _ =>
             {
                 var rawOptions = new OpenAI.Chat.ChatCompletionOptions();
 #pragma warning disable SCME0001 // Required to add provider-specific JSON fields not modeled by ChatOptions.
                 var patch = new JsonPatch(BinaryData.FromString("[]").ToMemory());
-                foreach (var (key, value) in requestOptions)
-                    patch.Set(
-                        System.Text.Encoding.UTF8.GetBytes("$." + key),
-                        BinaryData.FromString(value.GetRawText()));
+                if (requestOptions is { Count: > 0 })
+                    foreach (var (key, value) in requestOptions)
+                        patch.Set(
+                            System.Text.Encoding.UTF8.GetBytes("$." + key),
+                            BinaryData.FromString(value.GetRawText()));
+                if (askForStreamUsage)
+                    patch.Set(System.Text.Encoding.UTF8.GetBytes("$.stream_options"),
+                        BinaryData.FromString("""{"include_usage":true}"""));
                 rawOptions.Patch = patch;
 #pragma warning restore SCME0001
                 return rawOptions;
