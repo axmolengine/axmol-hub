@@ -112,10 +112,16 @@
              PlaceholderText="{DynamicResource SearchConversations}"
              PlaceholderForeground="{DynamicResource Hub.TextTertiary}" />
 
-    <ScrollViewer x:Name="ConversationScrollViewer"
-                  VerticalScrollBarVisibility="Visible">
-      <!-- Keep group actions out of the scrollbar's hit area at every list height. -->
-      <StackPanel x:Name="ConversationList" Spacing="3" Margin="0,0,16,0" />
-    </ScrollViewer>
+    <Grid>
+      <ScrollViewer x:Name="ConversationScrollViewer"
+                    VerticalScrollBarVisibility="Visible">
+        <!-- Keep group actions out of the scrollbar's hit area at every list height. -->
+        <StackPanel x:Name="ConversationList" Spacing="3" Margin="0,0,16,0" />
+      </ScrollViewer>
+      <Border x:Name="IdleScrollThumb" Width="6" Margin="0,2,2,2"
+              HorizontalAlignment="Right"
+              Background="{DynamicResource Hub.ScrollThumb}" CornerRadius="4"
+              IsVisible="False" IsHitTestVisible="False" />
+    </Grid>
   </DockPanel>
 </UserControl>

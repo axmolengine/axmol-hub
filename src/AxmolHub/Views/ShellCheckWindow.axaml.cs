@@ -200,8 +200,13 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.SearchBoxVisibleForCheck, "点击助手导航行搜索按钮展开过滤框");
         shell.ClickAssistantSearchForCheck();
         Check(!sidebar.SearchBoxVisibleForCheck, "再次点击搜索按钮收起过滤框");
-        Check(sidebar.VerticalScrollBarVisibleForCheck && !sidebar.ListIsScrollableForCheck,
-            "侧栏会话列表即使没有溢出也始终显示滚动条（空列表仍可见）");
+        Check(sidebar.VerticalScrollBarVisibleForCheck && !sidebar.ListIsScrollableForCheck
+              && sidebar.IdleScrollThumbVisibleForCheck
+              && sidebar.IdleScrollThumbHeightForCheck >= 1
+              && sidebar.IdleScrollThumbTrackCoverageForCheck >= 0.98,
+            "侧栏会话列表未溢出时仍显示铺满轨道的完整滚动条滑块（滑块高 "
+            + Fmt(sidebar.IdleScrollThumbHeightForCheck) + "，覆盖率 "
+            + Fmt(sidebar.IdleScrollThumbTrackCoverageForCheck) + "）");
 
         // Give the page one usable local provider/model in the isolated test data root. The chat model
         // selector must not offer a key-required provider before it is authenticated.
@@ -542,6 +547,11 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         Check(sidebar.ConversationCount == 18 && sidebar.ListIsScrollableForCheck,
             "会话超出侧栏高度时列表可滚动（而不是覆盖底部品牌行，实际 " + sidebar.ConversationCount + " 项）");
+        var scrollbarThumbLayout = sidebar.VerticalScrollBarThumbLayoutForCheck;
+        Check(sidebar.VerticalScrollBarVisibleForCheck && !sidebar.IdleScrollThumbVisibleForCheck
+              && scrollbarThumbLayout.Thumb > 0 && scrollbarThumbLayout.Thumb < scrollbarThumbLayout.Track,
+            "列表溢出时隐藏装饰滑块并显示可滚动的比例滑块（滑块/轨道 "
+            + Fmt(scrollbarThumbLayout.Thumb) + "/" + Fmt(scrollbarThumbLayout.Track) + "）");
         var groupNewRightInset = sidebar.GroupNewRightInsetForCheck(SessionGroupKey.Recent);
         Check(groupNewRightInset >= 15,
             "列表滚动时「对话」分组的 ＋ 与滚动槽保持安全间距（实际右侧留白 "
@@ -553,6 +563,12 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.PruneEmptyConversations() >= 1 && sidebar.ConversationCount == 0,
             "自检清理：滚动夹具删除后空会话也被一次性移除");
         sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!sidebar.ListIsScrollableForCheck && sidebar.IdleScrollThumbVisibleForCheck
+              && sidebar.IdleScrollThumbTrackCoverageForCheck >= 0.98,
+            "列表从溢出缩回空闲状态后恢复完整滚动条滑块（覆盖率 "
+            + Fmt(sidebar.IdleScrollThumbTrackCoverageForCheck) + "）");
 
         // ── Sidebar collapse: the ☰ toggle hides the whole panel and nothing peeks through ──
         Check(shell.SidebarExpandedForCheck && shell.SidebarClipsForCheck,

@@ -67,6 +67,8 @@ public partial class ChatSidebar : UserControl
         _preferences = preferences;
         InitializeComponent();
 
+        ConversationScrollViewer.SizeChanged += (_, _) => UpdateIdleScrollThumb();
+        ConversationScrollViewer.ScrollChanged += (_, _) => UpdateIdleScrollThumb();
         _chat.Changed += Reload;
         _chat.RunsChanged += _ => RefreshRunDots();
 
@@ -208,6 +210,12 @@ public partial class ChatSidebar : UserControl
                 Margin = new Thickness(8, 6),
             });
         }
+    }
+
+    private void UpdateIdleScrollThumb()
+    {
+        IdleScrollThumb.IsVisible = ConversationScrollViewer.Bounds.Height > 1
+                                    && !ListIsScrollableForCheck;
     }
 
     private static ConversationSummary[] Matching(IEnumerable<ConversationSummary> summaries, string query)
@@ -1069,4 +1077,28 @@ public partial class ChatSidebar : UserControl
     internal bool VerticalScrollBarVisibleForCheck
         => ConversationScrollViewer.GetVisualDescendants().OfType<ScrollBar>()
             .Any(scrollBar => scrollBar.Orientation == Orientation.Vertical && scrollBar.IsVisible);
+
+    internal bool IdleScrollThumbVisibleForCheck => IdleScrollThumb.IsVisible;
+    internal double IdleScrollThumbHeightForCheck => IdleScrollThumb.Bounds.Height;
+    internal double IdleScrollThumbTrackCoverageForCheck
+    {
+        get
+        {
+            var track = ConversationScrollViewer.GetVisualDescendants().OfType<Track>()
+                .FirstOrDefault(candidate => candidate.Orientation == Orientation.Vertical);
+            return track is { Bounds.Height: > 0 }
+                ? IdleScrollThumb.Bounds.Height / track.Bounds.Height
+                : 0;
+        }
+    }
+
+    internal (double Thumb, double Track) VerticalScrollBarThumbLayoutForCheck
+    {
+        get
+        {
+            var track = ConversationScrollViewer.GetVisualDescendants().OfType<Track>()
+                .FirstOrDefault(candidate => candidate.Orientation == Orientation.Vertical);
+            return (track?.Thumb?.Bounds.Height ?? -1, track?.Bounds.Height ?? -1);
+        }
+    }
 }
