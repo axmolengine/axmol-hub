@@ -4989,6 +4989,26 @@ public partial class ShellCheckWindow : Window
         }
     }
 
+    /// <summary>
+    /// Pumps until something a worker posted has landed, with a ceiling so a thing that never lands fails an
+    /// assertion instead of stalling the run.
+    ///
+    /// <para><c>Progress&lt;T&gt;</c> reports from the flow's worker thread by *posting* to the UI thread, and a
+    /// check that resumes the instant its awaited task finishes can read the field before that post has run: the
+    /// device-code window was built, and the page reported it as having no window at all. An await is not enough
+    /// on its own either — the continuation is itself a queued job, and it can be the one that runs first.</para>
+    /// </summary>
+    private static async Task WaitUntilPostedAsync(Func<bool> landed)
+    {
+        for (var tick = 0; tick < 100 && !landed(); tick++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        Dispatcher.UIThread.RunJobs();
+    }
+
     /// <summary>Waits on a state change rather than on a clock. A button click that starts work on the dispatcher
     /// returns before that work lands, and a fixed delay would be a flake waiting to happen. The budget is in
     /// polling ticks (5 ms apart); a check that has to watch something cross a whole second passes a larger one
@@ -5718,6 +5738,136 @@ public partial class ShellCheckWindow : Window
               && settings.ProviderGroupForId("orcarouter") is { IsLinked: false },
             "移除凭据后该 provider 回到未鉴权（实际 " + CountCredentials(shell.Chat, "orcarouter") + " 份）");
 
+        // ── GitHub Copilot：设备码登录，从清单声明到窗口上的那串代码 ──
+        //
+        // The loopback flow above cannot be run to a landing from a harness: it ends when the wait expires, and
+        // the assertion only proves a refusal was reported. A device code is the opposite shape — every request
+        // is one this app makes itself — so the whole thing can be driven here: the code the provider issues, the
+        // poll that waits for an approval that a scripted answer grants, and the window the person would have
+        // read. No browser, no GitHub account, and no request that could spend anyone's Copilot quota.
+        // The assertions below describe a *first* adoption, so the run starts from one. This data root is the
+        // harness's sandbox, but the one state worth carrying across is a sign-in someone did for real: it is
+        // recorded here and put back at the end, because a suite that quietly logs the developer out of Copilot
+        // on every run would be the reason nobody dares run it against their own data.
+        var priorCopilot = shell.Chat.CredentialFor("github-copilot");
+        if (shell.Chat.Providers.Any(candidate => candidate.Id == "github-copilot"))
+            shell.Chat.RemoveProvider("github-copilot");
+        var copilot = shell.Chat.AddPreset("github-copilot");
+        Check(copilot is not null, "清单里的 GitHub Copilot 预设可以被采纳");
+        settings.RefreshProviderGroupsForCheck();
+        Check(copilot is { SupportsOAuth: true }
+              && copilot.OAuth?.EffectiveFlow == ProviderOAuthFlows.DeviceCode,
+            "它声明的是设备码流程，页面也承认能浏览器登录（实际流程「"
+            + (copilot?.OAuth?.EffectiveFlow ?? "无 oauth") + "」）");
+        Check(settings.ProviderGroupForId("github-copilot") is { IsLinked: false } freshCopilot
+              && freshCopilot.AuthButtonText == HubStrings.Get("Authenticate"),
+            "刚采纳的 copilot 分组以未鉴权出现，动作写着「鉴权」");
+
+        // 先在「用户在设备上拒绝了」这一支上走一遍：窗口要建出来，凭据一份都不许留。
+        var refused = new DeviceCodeProbeHandler(
+            """{"error":"access_denied","error_description":"the end user skipped the consent screen"}""");
+        settings.UseOAuthHandlerForCheck(refused);
+        await settings.RunDeviceCodeFlowForCheck("github-copilot");
+        await WaitUntilPostedAsync(() => settings.DeviceWindowForCheck is not null);
+        var refusedWindow = settings.DeviceWindowForCheck;
+        Check(refusedWindow is not null, "设备码登录把授权窗口建了出来（实际 " + (refusedWindow is null ? "没有" : "有") + "）");
+        Check(refusedWindow?.CodeForCheck == DeviceCodeProbeHandler.UserCode,
+            "窗口上的代码就是服务端返回的那一串（实际「" + refusedWindow?.CodeForCheck + "」）");
+        Check(refusedWindow?.LinkForCheck == DeviceCodeProbeHandler.VerificationUri,
+            "验证地址取自响应而不是清单里的字符串（实际「" + refusedWindow?.LinkForCheck + "」）");
+        // The polling secret is a credential too, and it is not the thing a person types. Reading every text
+        // block rather than the three named properties is what makes "it is not on screen" a fact.
+        Check(refusedWindow is not null
+              && !refusedWindow.TextsForCheck.Contains("dc-never-display-this", StringComparison.Ordinal),
+            "屏上只有用户要输的代码，没有轮询用的 device_code");
+        Check((refusedWindow?.LogicalChildCountForCheck ?? 0) >= 5
+              && refusedWindow is not null && !refusedWindow.CopyRevealedForCheck,
+            "窗口里真的摆了控件，复制按钮要悬停才亮（实际 "
+            + (refusedWindow?.LogicalChildCountForCheck ?? 0) + " 个节点）");
+        Check(refusedWindow?.StatusForCheck == HubStrings.Get("AuthDeviceWaiting"),
+            "窗口先说一句在等什么（实际「" + refusedWindow?.StatusForCheck + "」）");
+        Check(refused.Requests.Any(entry => entry.Contains("/login/device/code", StringComparison.Ordinal))
+              && refused.Requests.All(entry => !entry.Contains("openid-configuration", StringComparison.Ordinal)),
+            "登录走清单声明的设备码端点，一个 discovery 请求都没发（实际 "
+            + string.Join(" → ", refused.Requests.ConvertAll(entry => entry.Split(' ')[1])) + "）");
+        Check(refused.Requests.Count > 0
+              && refused.Requests[0].Contains("\"client_id\":\"" + (copilot?.OAuth?.ClientId ?? "") + "\"")
+              && refused.Requests[0].Contains("read:user"),
+            "取码请求带的是清单里的公开 client_id 和 read:user（实际 " + refused.Requests.FirstOrDefault() + "）");
+        Check(refused.Requests.All(entry => !entry.Contains("client_secret", StringComparison.Ordinal)),
+            "客户端密钥一次都没有出现：这是公开客户端，密钥存在 GitHub 那边但不属于这个二进制");
+        Check(CountCredentials(shell.Chat, "github-copilot") == 0, "被拒绝的登录不留任何凭据");
+        Check(settings.StatusLineText.StartsWith(HubStrings.Get("AuthOAuthFailed"), StringComparison.Ordinal),
+            "被拒绝时状态行说清是没登录成功，而不是停在等待中（实际「" + settings.StatusLineText + "」）");
+
+        // 关掉窗口就是取消。这一支必须在轮询还活着的时候动手，所以流程发起来、泵几下、再关窗收尸。
+        var waiting = new DeviceCodeProbeHandler("""{"error":"authorization_pending"}""");
+        settings.UseOAuthHandlerForCheck(waiting);
+        var pending = settings.RunDeviceCodeFlowForCheck("github-copilot");
+        await WaitUntilPostedAsync(() => settings.DeviceWindowForCheck is not null);
+
+        Check(settings.CloseDeviceWindowForCheck(), "等待授权期间可以把这个窗口关掉");
+        var ended = await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(5))) == pending;
+        Check(ended, "关掉窗口之后等待中的登录按时收尾，而不是留下一条没人听的轮询");
+        Check(settings.StatusLineText == HubStrings.Get("AuthOAuthCancelled"),
+            "关窗口这条路径的结论走状态行（实际「" + settings.StatusLineText + "」）");
+        Check(CountCredentials(shell.Chat, "github-copilot") == 0, "取消的登录同样不留凭据");
+        Check(waiting.Requests.Count(entry => entry.Contains("/login/oauth/access_token", StringComparison.Ordinal)) >= 1
+              && waiting.Requests.Any(entry => entry.Contains("device_code", StringComparison.Ordinal)),
+            "轮询真的开始了，而且带着取码时拿到的 device_code（实际 " + waiting.Requests.Count + " 个请求）");
+
+        // 批准的那一次：同一个流程，服务端这次给了 token，于是凭据与模型清单一起落地。
+        var approved = new DeviceCodeProbeHandler(
+            """{"access_token":"ghu-copilot-probe","token_type":"bearer","scope":"read:user"}""");
+        var catalog = new ModelListProbeHandler(
+            """{"data":[{"id":"gpt-5-mini","model_picker_enabled":true,"is_chat_default":true,"policy":{"state":"enabled"},"supported_endpoints":["/chat/completions","/responses"],"capabilities":{"type":"chat","limits":{"max_context_window_tokens":264000},"supports":{"vision":true,"reasoning_effort":["low","medium","high"]}}},{"id":"exec-agent-a","model_picker_enabled":false,"policy":{"state":"enabled"},"supported_endpoints":["/chat/completions"],"capabilities":{"type":"chat","limits":{"max_context_window_tokens":128000}}},{"id":"text-embedding-3-small","model_picker_enabled":false,"policy":{"state":"disabled"},"capabilities":{"type":"embeddings"}},{"id":"gpt-4o","model_picker_enabled":false,"policy":{"state":"enabled"},"capabilities":{"type":"chat","limits":{"max_context_window_tokens":128000}}}]}""");
+        settings.UseOAuthHandlerForCheck(approved);
+        settings.UseModelListHandlerForCheck(catalog);
+        await settings.RunDeviceCodeFlowForCheck("github-copilot");
+        var landed = shell.Chat.CredentialFor("github-copilot");
+        Check(landed is { Source: CredentialSources.OAuth } && landed.Secret == "ghu-copilot-probe",
+            "设备码批准后落库的是一份 OAuth 凭据（实际来源「" + (landed?.Source ?? "无凭据") + "」）");
+        settings.RefreshProviderGroupsForCheck();
+        var linkedCopilot = settings.ProviderGroupForId("github-copilot");
+        Check(linkedCopilot is { IsLinked: true } && linkedCopilot.AuthButtonText == HubStrings.Get("DisconnectProvider"),
+            "登录成功之后分组显示已鉴权，同一个按钮变成「断开鉴权」（实际「"
+            + linkedCopilot?.AuthButtonText + "」）");
+        Check(catalog.Requests.Count == 1
+              && catalog.Requests[0].Headers.Authorization?.Parameter == "ghu-copilot-probe",
+            "登录收尾时刷新的模型清单用的就是刚拿到的令牌（实际 " + catalog.Requests.Count + " 次请求）");
+        Check(catalog.Requests.Count > 0
+              && catalog.Requests[0].Headers.TryGetValues("x-github-api-version", out var apiVersions)
+              && apiVersions.Contains("2026-06-01"),
+            "清单声明的 x-github-api-version 真的跟着请求发出去了");
+        var offeredModels = shell.Chat.Providers
+            .First(candidate => candidate.Id == "github-copilot").Models
+            .ConvertAll(model => model.Name);
+        Check(offeredModels.Contains("gpt-5-mini") && !offeredModels.Contains("exec-agent-a")
+              && !offeredModels.Contains("gpt-4o") && !offeredModels.Contains("text-embedding-3-small"),
+            "只采纳目录里真的能挑的那一行，其余三类各自被 capability type、picker 与 policy 挡掉（实际 ["
+            + string.Join(",", offeredModels) + "]）");
+        Check(AxmolHub.Agent.ChatClientFactory.ProtocolFor(
+                  shell.Chat.Providers.First(candidate => candidate.Id == "github-copilot"), "gpt-5-mini")
+              == ModelProtocols.Chat,
+            "gpt-5-mini 同时给了两个端点，取 chat 而不是 responses");
+
+        // Leave the provider list the way the checks after this one expect it.
+        if (landed is not null) shell.Chat.RemoveCredential(landed.Id);
+        Check(shell.Chat.RemoveProvider("github-copilot"), "验证用的 copilot provider 可以移除");
+        settings.RefreshProviderGroupsForCheck();
+        Check(settings.ProviderGroupForId("github-copilot") is null, "移除后分组从页面消失");
+        if (priorCopilot?.Secret is { Length: > 0 } realToken)
+        {
+            // 归还这次运行之前真实存在的那次登录。脚本令牌只是断言用的道具，真人那份才是这台机器上唯一
+            // 有价值的凭据——一次自测不该把它弄丢。
+            shell.Chat.AddPreset("github-copilot");
+            shell.Chat.AddOAuthCredential(
+                "github-copilot", priorCopilot.AccountId, priorCopilot.Scope, realToken);
+            settings.RefreshProviderGroupsForCheck();
+            Check(settings.ProviderGroupForId("github-copilot") is { IsLinked: true },
+                "跑完设备码断言之后，先前真实存在的登录又回来了");
+        }
+
         // ── Disconnect versus remove: the two intentions stay separate ──
         // Disconnect is "revoke on this machine": it clears the credential and the mark, and leaves the
         // provider itself alone. Asserting the *group* survives is the half that catches an implementation
@@ -6349,6 +6499,51 @@ public partial class ShellCheckWindow : Window
             }
 
             return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+        }
+    }
+
+    /// <summary>
+    /// Answers the two requests a device-code sign-in makes, and remembers what it was asked.
+    ///
+    /// <para>A separate handler from <see cref="OAuthProbeHandler"/> for the standing reason: the two flows are
+    /// different conversations, and a handler that answered both would let a check of one pass on the other's
+    /// response. Discovery is not served at all here, so a flow that went looking for a discovery document would
+    /// be seen doing it rather than silently succeeding.</para>
+    ///
+    /// <para>The verification URI it returns is <b>deliberately not</b> the one in the manifest. The assertion
+    /// worth having is "the screen shows the address this response named", and that is only observable when the
+    /// two differ — otherwise a window that printed a hard-coded URL would pass.</para>
+    /// </summary>
+    /// <param name="tokenBody">what every poll of the token endpoint answers.</param>
+    private sealed class DeviceCodeProbeHandler(string tokenBody) : System.Net.Http.HttpMessageHandler
+    {
+        public const string UserCode = "ABCD-1234";
+        public const string VerificationUri = "https://example.test/verify-device";
+
+        /// <summary>Every request this handler saw, in order: "METHOD path body".</summary>
+        public List<string> Requests { get; } = [];
+
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            var body = request.Content is null
+                ? ""
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            Requests.Add((request.Method.Method + " " + path + " " + body).TrimEnd());
+
+            var payload = path.EndsWith("/login/device/code", StringComparison.Ordinal)
+                ? $$"""
+                  {"device_code":"dc-never-display-this","user_code":"{{UserCode}}",
+                   "verification_uri":"{{VerificationUri}}","expires_in":900,"interval":5}
+                  """
+                : tokenBody;
+
+            return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+            };
         }
     }
 

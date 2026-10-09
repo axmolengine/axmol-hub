@@ -787,6 +787,13 @@ public static class HubTexts
         ["AuthOAuthScopeRejected"] = ("授权返回的权限范围比请求的更宽（{0}），已拒绝该密钥。请在授权页面仅勾选接口访问权限。", "The granted scope ({0}) is wider than the one requested, so the key was refused. On the consent page, grant API access only."),
         ["AuthOAuthNoBrowser"] = ("无法自动打开浏览器，请手动访问下面的地址：", "Could not open a browser automatically; open this address by hand:"),
         ["AuthOAuthPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥，无法完成登录。", "Secure key storage is not available on this platform yet, so sign-in cannot complete."),
+        // 设备码登录（RFC 8628）：验证码在别的设备上输入，所以这里的说明不提浏览器在哪台机器上。
+        // 地址只出现一次——提示语里不再重复一遍，它是下面那一行可点击的文本。
+        ["AuthDeviceTitle"] = ("在浏览器中登录", "Sign in from your browser"),
+        ["AuthDeviceHint"] = ("在任意设备的浏览器打开下面的地址，然后输入验证码。", "Open the address below in a browser on any device, then enter the code."),
+        ["AuthDeviceWaiting"] = ("等待授权完成…关闭此窗口即取消。", "Waiting for you to approve… closing this window cancels."),
+        ["AuthDeviceCopy"] = ("复制验证码", "Copy the code"),
+        ["AuthDeviceCopied"] = ("验证码已复制，粘贴到授权页即可。", "Code copied — paste it into the browser."),
         // 两种登录入口同时出现时，中间的分隔文案。
         ["AuthOrSeparator"] = ("或", "or"),
         // "Active" survives the account list's removal because the *model* rows reuse it to mark the model in

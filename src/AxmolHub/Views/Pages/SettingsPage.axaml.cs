@@ -2099,6 +2099,42 @@ public partial class SettingsPage : UserControl
         SetProviderStatus(false, HubStrings.Get("AuthOAuthPending"));
         if (button is not null) button.IsEnabled = false;
 
+        // A device-code sign-in needs a surface for the code and a way to be cancelled; the loopback flow needs
+        // neither, because its redirect comes back to this machine by itself. The window is what the person
+        // cancels *by* — closing it stops the polling, so there is no Cancel button repeating that.
+        CancellationTokenSource? deviceCancellation = null;
+        DeviceAuthWindow? device = null;
+        IProgress<AxmolHub.Agent.DeviceCodeChallenge>? deviceProgress = null;
+        if (provider.OAuth?.EffectiveFlow == ProviderOAuthFlows.DeviceCode)
+        {
+            deviceCancellation = new CancellationTokenSource();
+            // Progress<T> posts to the synchronization context it was created on — the UI thread here. The flow
+            // reports the challenge from a worker, and a window must not be built or shown from one.
+            deviceProgress = new Progress<AxmolHub.Agent.DeviceCodeChallenge>(challenge =>
+            {
+                device = new DeviceAuthWindow(challenge);
+                DeviceWindowForCheck = device;
+                // Closing the window IS the cancel, which is why the subscription lives here and not inside the
+                // window: the flow is already awaiting by the time a window exists, so only the caller holds a
+                // token it can hand to it. Without this line the polling would keep running against a window the
+                // person already threw away, and the sign-in would land after they said no.
+                device.Closed += (_, _) =>
+                {
+                    // A close that arrives after the run has already finished lands on a source the finally block
+                    // disposed. That is not a failure to report — the sign-in being over is exactly what the close
+                    // wanted — so the no-op is written out instead of being left to throw inside an event handler,
+                    // where there is nobody to see it.
+                    try { deviceCancellation?.Cancel(); }
+                    catch (ObjectDisposedException) { }
+                };
+                // Same tolerance AuthDialog shows: a design-time host has no top-level window to own this one,
+                // and the window still opens standalone rather than swallowing the sign-in. A check host keeps it
+                // off screen for the reason every detached window in this app exists: the assertions read the
+                // object graph, and a second live top-level window would be measuring the harness instead.
+                if (!_deviceWindowStaysOffScreen) device.Show(Owner()!);
+            });
+        }
+
         try
         {
             var result = await _chat.SignInWithOAuthAsync(provider.Id, url =>
@@ -2107,7 +2143,7 @@ public partial class SettingsPage : UserControl
                 // is about to be rebuilt anyway), so it goes to the status line, which is already the channel
                 // for every other outcome of this flow.
                 SetProviderStatus(false, HubStrings.Get("AuthOAuthNoBrowser") + "\n" + url);
-            });
+            }, deviceCancellation?.Token ?? default, deviceProgress);
 
             if (result is null)
             {
@@ -2149,6 +2185,14 @@ public partial class SettingsPage : UserControl
         finally
         {
             if (button is not null) button.IsEnabled = true;
+            // The outcome belongs to the settings status line — the same channel every other sign-in result
+            // uses — so the code window has nothing left to say and goes away. IsVisible rather than a
+            // try/catch: when the person closed it themselves (which is how they cancel), closing it again is
+            // an error for a state that is already the one we wanted. An off-screen check window was never
+            // opened, so there is nothing to close — and Window.Close on a window with no platform side behind
+            // it is not a thing to discover at assertion time.
+            if (!_deviceWindowStaysOffScreen && device is { IsVisible: true }) device.Close();
+            deviceCancellation?.Dispose();
         }
     }
 
@@ -2708,6 +2752,51 @@ public partial class SettingsPage : UserControl
         if (provider is null) return Task.CompletedTask;
 
         return SignInAsync(provider, null);
+    }
+
+    /// <summary>The device-code window the last sign-in built, whether or not it went on screen.</summary>
+    internal DeviceAuthWindow? DeviceWindowForCheck { get; private set; }
+
+    private bool _deviceWindowStaysOffScreen;
+
+    /// <summary>
+    /// Runs the device-code sign-in for one named provider and hands back the task instead of awaiting it.
+    ///
+    /// <para>Returning rather than awaiting is the point: closing the code window only means something while the
+    /// flow is still waiting for the approval, which is exactly the moment a check has to act in.</para>
+    ///
+    /// <para>The window is built but never opened — a shell check measures the settings page's own layout, and a
+    /// second live top-level window would be measuring the harness instead of the product. One-way like the
+    /// injected transport next to it: this page instance belongs to the check run, and a flag that quietly reset
+    /// itself mid-suite would make the window assertions depend on where they sit in the file.</para>
+    /// </summary>
+    internal Task RunDeviceCodeFlowForCheck(string providerId)
+    {
+        var provider = _chat?.Providers.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null) return Task.CompletedTask;
+
+        DeviceWindowForCheck = null;
+        _deviceWindowStaysOffScreen = true;
+        // Shorter than the five minutes a person walking to their phone needs, longer than the interval the
+        // scripted poll answers with: a run that is cancelled or approved ends on its own, and only a broken
+        // cancel reaches this ceiling. It is not zero, because "the wait ran out" has to stay a thing that can
+        // happen *after* the check has finished acting.
+        _chat!.DeviceCodeWait = TimeSpan.FromSeconds(10);
+        return SignInAsync(provider, null);
+    }
+
+    /// <summary>
+    /// Closes the device-code window the way the person does, and says whether there was one to close.
+    ///
+    /// <para>Routed through the window's own <see cref="Window.Closed"/> event rather than the cancellation
+    /// source, because the subscription between the two is the thing under test: a check that cancelled the
+    /// token itself would pass on a page that had forgotten to wire the close at all.</para>
+    /// </summary>
+    internal bool CloseDeviceWindowForCheck()
+    {
+        if (DeviceWindowForCheck is null) return false;
+        DeviceWindowForCheck.CloseForCheck();
+        return true;
     }
 
     /// <summary>

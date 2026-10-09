@@ -16,5 +16,9 @@
   <ItemGroup>
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 抓包裁剪下来的 provider 响应样本。放在输出目录而不是按仓库相对路径读，是因为断言必须能在 CI 里
+         跑编译好的 exe：cwd 一变，"tests/..." 就变成一个查不到的文件，而一条读不到样本的断言比一条失败的
+         断言更糟——它会绿。 -->
+    <Content Include="Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

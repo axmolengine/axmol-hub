@@ -1,0 +1,451 @@
+{
+ "object": "list",
+ "data": [
+  {
+   "billing": {
+    "restricted_to": [
+     "free",
+     "edu",
+     "pro",
+     "pro_plus",
+     "individual_trial",
+     "max"
+    ],
+    "token_prices": {
+     "batch_size": 0,
+     "default": {
+      "cache_price": 0,
+      "cache_write_price": 0,
+      "input_price": 0,
+      "output_price": 0
+     }
+    }
+   },
+   "capabilities": {
+    "family": "exec-agent",
+    "limits": {
+     "max_context_window_tokens": 260000,
+     "max_output_tokens": 16000,
+     "max_prompt_tokens": 244000
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "streaming": true,
+     "tool_calls": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "exec-agent-a",
+   "is_chat_default": false,
+   "is_chat_fallback": false,
+   "model_picker_enabled": false,
+   "model_picker_price_category": "low",
+   "name": "Exec Agent A",
+   "object": "model",
+   "preview": true,
+   "supported_endpoints": [
+    "/chat/completions"
+   ],
+   "vendor": "Fireworks",
+   "version": "exec-agent-a"
+  },
+  {
+   "billing": {
+    "restricted_to": [
+     "pro",
+     "edu",
+     "pro_plus",
+     "individual_trial",
+     "business",
+     "enterprise",
+     "max"
+    ],
+    "token_prices": {
+     "batch_size": 1000000,
+     "default": {
+      "cache_price": 17,
+      "cache_write_price": 0,
+      "context_max": 272000,
+      "input_price": 175,
+      "output_price": 1400
+     }
+    }
+   },
+   "capabilities": {
+    "family": "gpt-5.3-codex",
+    "limits": {
+     "max_context_window_tokens": 400000,
+     "max_output_tokens": 128000,
+     "max_prompt_tokens": 272000,
+     "vision": {
+      "max_prompt_image_size": 3145728,
+      "max_prompt_images": 1,
+      "supported_media_types": [
+       "image/jpeg",
+       "image/png",
+       "image/webp",
+       "image/gif",
+       "application/pdf"
+      ]
+     }
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "reasoning_effort": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "streaming": true,
+     "structured_outputs": true,
+     "tool_calls": true,
+     "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "gpt-5.3-codex",
+   "is_chat_default": false,
+   "is_chat_fallback": true,
+   "model_picker_category": "powerful",
+   "model_picker_enabled": true,
+   "model_picker_price_category": "medium",
+   "name": "GPT-5.3-Codex",
+   "object": "model",
+   "preview": false,
+   "supported_endpoints": [
+    "/responses",
+    "ws:/responses"
+   ],
+   "vendor": "OpenAI",
+   "version": "gpt-5.3-codex"
+  },
+  {
+   "billing": {
+    "restricted_to": [
+     "pro",
+     "pro_plus",
+     "individual_trial",
+     "business",
+     "enterprise",
+     "max"
+    ],
+    "token_prices": {
+     "batch_size": 1000000,
+     "default": {
+      "cache_price": 25,
+      "cache_write_price": 0,
+      "context_max": 272000,
+      "input_price": 250,
+      "output_price": 1500
+     },
+     "long_context": {
+      "cache_price": 50,
+      "cache_write_price": 0,
+      "context_max": 922000,
+      "input_price": 500,
+      "output_price": 2250
+     }
+    }
+   },
+   "capabilities": {
+    "family": "gpt-5.4",
+    "limits": {
+     "max_context_window_tokens": 1050000,
+     "max_output_tokens": 128000,
+     "max_prompt_tokens": 922000,
+     "vision": {
+      "max_prompt_image_size": 3145728,
+      "max_prompt_images": 1,
+      "supported_media_types": [
+       "image/jpeg",
+       "image/png",
+       "image/webp",
+       "image/gif",
+       "application/pdf"
+      ]
+     }
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "reasoning_effort": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "streaming": true,
+     "structured_outputs": true,
+     "tool_calls": true,
+     "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "gpt-5.4",
+   "info_messages": [
+    {
+     "code": "model_pending_deprecation",
+     "message": "GPT-5.4 has a planned deprecation date of 2026-10-19."
+    }
+   ],
+   "is_chat_default": false,
+   "is_chat_fallback": false,
+   "model_picker_category": "powerful",
+   "model_picker_enabled": true,
+   "model_picker_price_category": "medium",
+   "name": "GPT-5.4",
+   "object": "model",
+   "policy": {
+    "state": "enabled",
+    "terms": "Enable access to the latest GPT-5.4 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.4](https://gh.io/copilot-openai)."
+   },
+   "preview": false,
+   "supported_endpoints": [
+    "/responses",
+    "/chat/completions",
+    "ws:/responses"
+   ],
+   "vendor": "OpenAI",
+   "version": "gpt-5.4"
+  },
+  {
+   "billing": {
+    "restricted_to": [
+     "free",
+     "pro",
+     "pro_plus",
+     "individual_trial",
+     "edu",
+     "max",
+     "business",
+     "enterprise"
+    ],
+    "token_prices": {
+     "batch_size": 1000000,
+     "default": {
+      "cache_price": 30,
+      "cache_write_price": 0,
+      "context_max": 917504,
+      "input_price": 300,
+      "output_price": 1500
+     }
+    }
+   },
+   "capabilities": {
+    "family": "kimi-k3",
+    "limits": {
+     "max_context_window_tokens": 1048576,
+     "max_output_tokens": 131072,
+     "max_prompt_tokens": 917504,
+     "vision": {
+      "max_prompt_image_size": 3145728,
+      "max_prompt_images": 1,
+      "supported_media_types": [
+       "image/jpeg",
+       "image/png",
+       "image/webp",
+       "image/gif"
+      ]
+     }
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "reasoning_effort": [
+      "low",
+      "high",
+      "max"
+     ],
+     "streaming": true,
+     "structured_outputs": true,
+     "tool_calls": true,
+     "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "kimi-k3",
+   "is_chat_default": false,
+   "is_chat_fallback": false,
+   "model_picker_category": "powerful",
+   "model_picker_enabled": true,
+   "model_picker_price_category": "medium",
+   "name": "Kimi K3",
+   "object": "model",
+   "policy": {
+    "state": "enabled",
+    "terms": "Enable access to Kimi K3 from Moonshot AI."
+   },
+   "preview": false,
+   "supported_endpoints": [
+    "/chat/completions"
+   ],
+   "vendor": "Moonshot AI",
+   "version": "kimi-k3"
+  },
+  {
+   "billing": {
+    "token_prices": {
+     "batch_size": 1000000,
+     "default": {
+      "cache_price": 2,
+      "cache_write_price": 0,
+      "input_price": 25,
+      "output_price": 200
+     }
+    }
+   },
+   "capabilities": {
+    "family": "gpt-5-mini",
+    "limits": {
+     "max_context_window_tokens": 264000,
+     "max_output_tokens": 64000,
+     "max_prompt_tokens": 128000,
+     "vision": {
+      "max_prompt_image_size": 3145728,
+      "max_prompt_images": 1,
+      "supported_media_types": [
+       "image/jpeg",
+       "image/png",
+       "image/webp",
+       "image/gif",
+       "application/pdf"
+      ]
+     }
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "reasoning_effort": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "streaming": true,
+     "structured_outputs": true,
+     "tool_calls": true,
+     "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "gpt-5-mini",
+   "info_messages": [
+    {
+     "code": "model_pending_deprecation",
+     "message": "GPT-5 mini has a planned deprecation date of 2026-10-19."
+    }
+   ],
+   "is_chat_default": true,
+   "is_chat_fallback": false,
+   "model_picker_category": "lightweight",
+   "model_picker_enabled": true,
+   "model_picker_price_category": "low",
+   "name": "GPT-5 mini",
+   "object": "model",
+   "policy": {
+    "state": "enabled",
+    "terms": "Enable access to the latest GPT-5 mini model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5 mini](https://gh.io/copilot-openai)."
+   },
+   "preview": false,
+   "supported_endpoints": [
+    "/chat/completions",
+    "/responses",
+    "ws:/responses"
+   ],
+   "vendor": "Azure OpenAI",
+   "version": "gpt-5-mini"
+  },
+  {
+   "billing": {
+    "token_prices": {
+     "batch_size": 0,
+     "default": {
+      "cache_price": 0,
+      "cache_write_price": 0,
+      "input_price": 0,
+      "output_price": 0
+     }
+    }
+   },
+   "capabilities": {
+    "family": "text-embedding-3-small",
+    "limits": {
+     "max_inputs": 512
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "dimensions": true
+    },
+    "tokenizer": "cl100k_base",
+    "type": "embeddings"
+   },
+   "id": "text-embedding-3-small",
+   "is_chat_default": false,
+   "is_chat_fallback": false,
+   "model_picker_enabled": false,
+   "name": "Embedding V3 small",
+   "object": "model",
+   "preview": false,
+   "vendor": "Azure OpenAI",
+   "version": "text-embedding-3-small"
+  },
+  {
+   "billing": {
+    "token_prices": {
+     "batch_size": 0,
+     "default": {
+      "cache_price": 0,
+      "cache_write_price": 0,
+      "input_price": 0,
+      "output_price": 0
+     }
+    }
+   },
+   "capabilities": {
+    "family": "gpt-4o",
+    "limits": {
+     "max_context_window_tokens": 128000,
+     "max_output_tokens": 4096,
+     "max_prompt_tokens": 64000,
+     "vision": {
+      "max_prompt_image_size": 3145728,
+      "max_prompt_images": 1,
+      "supported_media_types": [
+       "image/jpeg",
+       "image/png",
+       "image/webp",
+       "image/gif"
+      ]
+     }
+    },
+    "object": "model_capabilities",
+    "supports": {
+     "parallel_tool_calls": true,
+     "streaming": true,
+     "tool_calls": true,
+     "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+   },
+   "id": "gpt-4o",
+   "is_chat_default": false,
+   "is_chat_fallback": false,
+   "model_picker_enabled": false,
+   "model_picker_price_category": "medium",
+   "name": "GPT-4o",
+   "object": "model",
+   "preview": false,
+   "vendor": "Azure OpenAI",
+   "version": "gpt-4o-2024-11-20"
+  }
+ ]
+}

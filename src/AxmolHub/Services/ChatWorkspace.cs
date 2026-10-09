@@ -1048,6 +1048,8 @@ public sealed class ChatWorkspace : IDisposable
                 // Same reasoning as the two lines above: the probe is a manifest fact, refreshed every load.
                 provider.KeyValidation = builtIn.KeyValidation;
                 provider.CapabilitySource = builtIn.CapabilitySource;
+                provider.ExtraHeaders = builtIn.ExtraHeaders;
+                provider.RequestSemantics = builtIn.RequestSemantics;
                 // ??= and not = : a persisted number is now a deliberate human setting — except where nothing was
                 // ever stored, which is what made an install run every model against 8192 while its own gateway
                 // published 128000 for the preset and the saved row said null.
@@ -1529,29 +1531,35 @@ public sealed class ChatWorkspace : IDisposable
     public async Task<OAuthSignInOutcome?> SignInWithOAuthAsync(
         string providerId,
         Action<string>? onManualUrl = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<DeviceCodeChallenge>? deviceProgress = null)
     {
         if (!CanStoreSecrets) return null;
 
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
-        if (provider?.OAuth is not { DiscoveryUrl.Length: > 0 } oauth) return null;
+        if (provider?.OAuth is not { IsUsableFlow: true } oauth) return null;
 
-        var flow = new OrcaRouterOAuthFlow(
-            _oauthHttp ?? new HttpClient { Timeout = OAuthTimeout },
-            url =>
-            {
-                // Try the browser first; when that fails the URL is handed to the caller instead of being
-                // swallowed, because a sign-in with no browser and no link is a dead end.
-                if (!BrowserOpener(url)) onManualUrl?.Invoke(url);
-            },
-            OAuthTimeout);
+        var http = _oauthHttp ?? new HttpClient { Timeout = OAuthTimeout };
+        void OpenOrReport(string url)
+        {
+            // Try the browser first; when that fails the URL is handed to the caller instead of being
+            // swallowed, because a sign-in with no browser and no link is a dead end.
+            if (!BrowserOpener(url)) onManualUrl?.Invoke(url);
+        }
 
         try
         {
             // No ConfigureAwait(false): the continuation calls AddOAuthCredential → SaveCredentials → Changed,
             // which ChatPanel.Reload consumes by mutating Avalonia controls. Keep it on the captured UI context
             // (same rule as RefreshModelsAsync), or the sign-in would touch the visual tree from a worker thread.
-            var result = await flow.SignInAsync(oauth, cancellationToken);
+            //
+            // The two flows are chosen by the manifest's declared shape rather than by provider id: which
+            // endpoints a preset talks to is a fact about the service, and a device-code provider has no
+            // discovery document to find on its own.
+            var result = oauth.EffectiveFlow == ProviderOAuthFlows.DeviceCode
+                ? await new DeviceCodeOAuthFlow(http, OpenOrReport, DeviceCodeWait)
+                    .SignInAsync(oauth, deviceProgress, cancellationToken)
+                : await new OrcaRouterOAuthFlow(http, OpenOrReport, OAuthTimeout).SignInAsync(oauth, cancellationToken);
             var credential = AddOAuthCredential(providerId, result.AccountId, result.Scope, result.Key);
             return credential is null
                 ? new OAuthSignInOutcome(Error: "The credential could not be stored.")
@@ -1850,6 +1858,14 @@ public sealed class ChatWorkspace : IDisposable
     /// — an assertion harness that waited 45 seconds would look like a hang.
     /// </summary>
     internal TimeSpan OAuthTimeout { get; set; } = OrcaRouterOAuthFlow.DefaultTimeout;
+
+    /// <summary>
+    /// How long a device-code sign-in is prepared to wait for the approval. The flow's own figure is the default
+    /// because the person may be walking to another device to type a code; it is injectable for the same reason
+    /// <see cref="OAuthTimeout"/> is — a harness has no hands, and an assertion that waits five minutes reads as
+    /// a hang rather than as a result.
+    /// </summary>
+    internal TimeSpan DeviceCodeWait { get; set; } = DeviceCodeOAuthFlow.DefaultWait;
 
     private HttpClient? _oauthHttp;
 

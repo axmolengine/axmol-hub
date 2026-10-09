@@ -60,6 +60,38 @@
       "keyValidation": { "type": "httpGetModels", "path": "/models" }
     },
     {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "description": "Your existing GitHub Copilot subscription, used as a model endpoint. Sign in with a code you can enter on any device, or paste a personal access token instead. Requests are billed against your Copilot premium requests, and the model list comes from GitHub with each model's real context window.",
+      "descriptionZh": "把你已有的 GitHub Copilot 订阅当作模型端点使用。可以用设备验证码登录（在任意设备的浏览器里输入），也可以粘贴个人访问令牌。请求计入你的 Copilot 高级请求额度，模型列表连同每个模型的真实上下文窗口都由 GitHub 返回。",
+      "baseUrl": "https://api.githubcopilot.com",
+      "defaultEnabledModels": ["gpt-5-mini"],
+      "_defaultEnabledModelsNote": "Enabled only if the account's catalog reports it, which is the whole point of naming GitHub's own chat default instead of a list: the picker set differs by plan, and a name the endpoint does not report is skipped rather than offered. Without any default the first sign-in would land on an empty model list.",
+      "maxContextTokens": 264000,
+      "_maxContextTokensNote": "This is the window of GitHub's own chat default (gpt-5-mini) and it is only a floor: the catalog this preset reads publishes max_context_window_tokens per model — kimi-k3 and gpt-5.4 report 1,048,576 and 1,050,000 — and a per-model number outranks a provider-level one in ContextBudget. Declaring it anyway is what keeps an offline first run from silently trimming every tool result to the 8192 fallback.",
+      "capabilitySource": "github-copilot-models",
+      "requestSemantics": "copilot",
+      "extraHeaders": {
+        "user-agent": "AxmolHub",
+        "x-github-api-version": "2026-06-01",
+        "openai-intent": "conversation-panel",
+        "x-initiator": "user"
+      },
+      "_extraHeadersNote": "x-initiator is a default, not a claim: ProviderRequestPolicy rewrites it per request from the conversation actually being sent, because Copilot meters premium requests against a human prompt and a tool round that reports 'user' spends the subscriber's allowance. Which of these headers are strictly required has not been measured (no billable probe was run) — the set is what the reference clients send, and the first real sign-in will show whether any of it can go.",
+      "authMethods": ["oauth", "apiKey"],
+      "keyValidation": { "type": "httpGetModels", "path": "/models" },
+      "oauth": {
+        "flow": "deviceCode",
+        "clientId": "Ov23lidzcoGFYNmdeTsg",
+        "deviceAuthorizationUrl": "https://github.com/login/device/code",
+        "tokenUrl": "https://github.com/login/oauth/access_token",
+        "scope": "read:user",
+        "appName": "Axmol Hub",
+        "minIntervalSeconds": 5
+      },
+      "_oauthNote": "clientId is a public identifier, not a secret (RFC 8252 §2.1): a native client's id ships in the binary whatever it says, so GitHub's device flow asks for nothing beside it. The app's client secret is deliberately absent — storing one here would distribute it. Scope is read:user and nothing else: it is the minimum that authenticates a Copilot call, and it cannot read repositories, so a token leaked by a rebuilt client costs its owner premium requests rather than their code."
+    },
+    {
       "id": "ollama",
       "name": "Ollama (local)",
       "description": "A model running on this machine through Ollama. No account and no key are needed; the server must be running and the model pulled first.",
