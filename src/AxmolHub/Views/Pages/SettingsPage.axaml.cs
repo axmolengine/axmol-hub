@@ -1607,50 +1607,31 @@ public partial class SettingsPage : UserControl
         => !provider.RequiresCredential || IsLinked(provider);
 
     /// <summary>
-    /// The window this model is treated as having, and the one box that says otherwise. The number is shown with
-    /// where it came from, because the difference between "the gateway told me 1M" and "nobody told me, so I am
-    /// assuming" is the whole reason a conversation compacts early or late — and a person deciding whether to
-    /// correct it has to be able to see which of the two they are looking at.
+    /// The window this model is treated as having, stated once as a number. Where that number came from lives in
+    /// the tooltip, not in a suffix: the same source tag already rides the chat's usage line, so repeating it
+    /// here would say one thing twice on a page that is only explaining a capability.
+    ///
+    /// <para>There is deliberately <b>no</b> box on this row. The one it replaces parsed on <c>TextChanged</c>
+    /// and wrote through <see cref="ChatWorkspace.SetModelContextTokens"/>, whose <c>Changed</c> event rebuilds
+    /// every provider group — so the first keystroke tore down the very text box being typed in. A number that
+    /// is wrong is corrected in <c>ai/providers.json</c>, which is what the tooltip now names; the model
+    /// property and its precedence in <see cref="ContextBudget"/> are untouched, so that file remains a real
+    /// path rather than a documented-looking one.</para>
     /// </summary>
     private Control BuildModelContextRow(ModelProvider provider, ProviderModel model)
     {
         var (tokens, _, source) = _chat!.ContextWindowFor(provider.Id, model.Name);
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        row.Children.Add(new TextBlock
+        var line = new TextBlock
         {
             Classes = { "muted" },
             VerticalAlignment = VerticalAlignment.Center,
             Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ModelContextFormat"), tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture))
-                   + " · " + HubStrings.Get(ContextBudget.SourceLabelKey(source)),
+                HubStrings.Get("ModelContextFormat"), tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)),
             Tag = SectionTags.ModelContext,
-        });
-
-        var box = new TextBox
-        {
-            Width = 92,
-            PlaceholderText = tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-            Text = model.MaxContextTokens?.ToString(System.Globalization.CultureInfo.CurrentCulture) ?? "",
-            Tag = SectionTags.ModelContextOverride,
         };
-        ToolTip.SetTip(box, HubStrings.Get("ModelContextOverrideHint"));
-        box.TextChanged += (_, _) =>
-        {
-            // Parse-what-you-type, and let an empty or unreadable box mean "no override" rather than "the last
-            // number I was typing". A half-entered 64000 must not silently become the model's window.
-            var parsed = int.TryParse(box.Text.Trim(), System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.CurrentCulture, out var value) && value > 0
-                ? value
-                : (int?)null;
-            _chat!.SetModelContextTokens(provider.Id, model.Name, parsed);
-        };
-        row.Children.Add(box);
-        return row;
+        ToolTip.SetTip(line, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ModelContextSourceHint"), HubStrings.Get(ContextBudget.SourceLabelKey(source))));
+        return line;
     }
 
     private Control BuildModelRow(ModelProvider provider, ProviderModel model)
@@ -2689,18 +2670,26 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// The first model row that rendered a context line, as text plus whether its override box came with it.
-    /// A generic "first row" rather than a named one because which models are configured is the user's data,
-    /// and an assertion that depends on it would fail for reasons that have nothing to do with this feature.
-    /// )
+    /// The first model row that rendered a context line: its text, the tooltip behind it, and whether any editor
+    /// came with it. <c>HasEditor</c> is asserted <b>false</b> on purpose — this row used to carry a text box that
+    /// rebuilt the page on every keystroke, and an assertion that only checked the box was present would have
+    /// passed the day it was deleted and told nobody why it should never come back.
+    ///
+    /// <para>A generic "first row" rather than a named one because which models are configured is the user's data,
+    /// and an assertion that depends on it would fail for reasons that have nothing to do with this feature.</para>
     /// </summary>
-    internal (string Text, bool HasOverrideBox) FirstModelContextRowForCheck()
+    internal (string Text, string Tip, bool HasEditor) FirstModelContextRowForCheck()
     {
         var text = GroupCards.SelectMany(group => group.GetVisualDescendants().OfType<TextBlock>())
             .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.ModelContext);
-        var box = GroupCards.SelectMany(group => group.GetVisualDescendants().OfType<TextBox>())
-            .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.ModelContextOverride);
-        return (text?.Text ?? "", box is not null);
+        if (text is null) return ("", "", false);
+
+        // Scoped to the row, not the page: a text box elsewhere on Settings is legitimate, one on this row is the
+        // defect this line exists to keep out.
+        var row = text.GetVisualAncestors().OfType<Border>()
+            .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.ModelRow);
+        return (text.Text ?? "", ToolTip.GetTip(text) as string ?? "",
+                row is not null && row.GetVisualDescendants().OfType<TextBox>().Any());
     }
 
     /// <summary>
@@ -2900,7 +2889,6 @@ public partial class SettingsPage : UserControl
         internal const string ModelRow = "provider-model-row";
         internal const string ModelEnabled = "provider-model-enabled";
         internal const string ModelContext = "provider-model-context";
-        internal const string ModelContextOverride = "provider-model-context-override";
         internal const string ModelCatalog = "provider-model-catalog";
         internal const string AddModelButton = "provider-add-model";
         internal const string RemoveAllModels = "provider-remove-all-models";

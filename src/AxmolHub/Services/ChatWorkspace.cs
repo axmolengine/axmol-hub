@@ -1401,9 +1401,15 @@ public sealed class ChatWorkspace : IDisposable
 
     /// <summary>
     /// Corrects one model's context window by hand, or — with <paramref name="tokens"/> null — stops correcting
-    /// it. This is the single knob for the case every gateway eventually creates: an id the catalog does not
+    /// it. The case it exists for is the one every gateway eventually creates: an id the catalog does not
     /// describe, or describes wrongly. It lives on the model rather than on the provider because a window is a
     /// property of the model, and because one provider here fronts two hundred models that do not agree.
+    ///
+    /// <para><b>No view calls this any more.</b> The settings row used to, on <c>TextChanged</c>, and that is how
+    /// it broke: the save raised <c>Changed</c>, the settings page rebuilt every provider group, and the first
+    /// keystroke destroyed the box being typed in. The row now states the number and points at
+    /// <c>ai/providers.json</c>, where <see cref="ProviderModel.MaxContextTokens"/> is read back through this same
+    /// property. Do not "restore the missing UI" without fixing the rebuild-while-typing first.</para>
     /// </summary>
     public bool SetModelContextTokens(string providerId, string name, int? tokens)
     {

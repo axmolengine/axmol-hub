@@ -831,8 +831,12 @@ public static class HubTexts
         ["ModelUse"] = ("使用此模型", "Use this model"),
         ["ModelEnabledHint"] = ("在聊天模型选择器中启用或隐藏此模型。", "Show or hide this model in the chat model picker."),
         ["ModelContextFormat"] = ("上下文 {0}", "context {0}"),
-        ["ModelContextOverrideHint"] = ("覆盖这个模型的上下文窗口（token）。留空则回到模型自己报的数字。",
-            "Override this model's context window in tokens. Leave it empty to go back to what the model reports."),
+        // The row itself states only the number; where that number came from is a tooltip, because the same tag
+        // is already on the chat's usage line and a settings row that repeats it says one thing twice. The
+        // correction path is named here rather than shown as a control on purpose: `MaxContextTokens` is the
+        // exact casing ProviderStore writes, so what this sentence advertises is what the file actually holds.
+        ["ModelContextSourceHint"] = ("Hub 按这个数字决定这段对话什么时候压缩。来源：{0}。要纠正，编辑数据目录里的 ai/providers.json，给这个模型写 MaxContextTokens。",
+            "Hub compacts a conversation against this number. Source: {0}. To correct it, edit ai/providers.json in the data folder and set MaxContextTokens on this model."),
         ["CapabilitySourceEndpoint"] = ("模型自报", "reported"),
         ["CapabilitySourceManifest"] = ("预设声明", "preset"),
         ["CapabilitySourceOverride"] = ("手动设置", "yours"),

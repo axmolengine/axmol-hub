@@ -5651,13 +5651,28 @@ public partial class ShellCheckWindow : Window
         Check(withTwo is { ModelEnabled.Length: 2 }
               && withTwo.ModelEnabled.All(enabled => enabled),
             "新添加的模型默认启用（实际 [" + string.Join(", ", withTwo?.ModelEnabled ?? []) + "]）");
-        // The row reads out the window this model is treated as having, and carries the one box that says
-        // otherwise. The expected prefix comes from the resource because this suite runs in both languages, and
-        // a hard-coded "上下文" would pass in one and silently never render in the other.
+        // The row states the window this model is treated as having, and nothing else. No editor: the box it
+        // replaced parsed on every keystroke and the save behind it rebuilt every provider group, so the first
+        // digit typed tore down the box being typed in. No source suffix either — that tag already rides the
+        // chat's usage line, and repeating it here would state one thing twice. The prefix comes from the
+        // resource because this suite runs in both languages, and a hard-coded "上下文" would pass in one and
+        // silently never render in the other.
         var contextRow = settings.FirstModelContextRowForCheck();
+        var contextSources = Enum.GetValues<CapabilitySource>()
+            .Select(source => HubStrings.Get(ContextBudget.SourceLabelKey(source)))
+            .Where(label => label.Length > 0)
+            .ToArray();
         Check(contextRow.Text.StartsWith(HubStrings.Get("ModelContextFormat").Split('{')[0], StringComparison.Ordinal)
-              && contextRow.HasOverrideBox,
-            "模型行读出这个模型被当作多大的窗口，并给出可改的覆盖框（实际「" + contextRow.Text + "」）");
+              && contextRow.Text.Any(char.IsDigit)
+              && !contextRow.HasEditor,
+            "模型行只读出这个模型被当作多大的窗口，行上不再挂任何可编辑框（实际「" + contextRow.Text + "」）");
+        Check(contextRow.Text.Length > 0
+              && !contextSources.Any(label => contextRow.Text.Contains(label, StringComparison.Ordinal)),
+            "来源不再出现在行文本里，聊天用量行是它唯一的常驻陈述（实际「" + contextRow.Text + "」）");
+        Check(contextRow.Tip.Length > 0
+              && contextSources.Any(label => contextRow.Tip.Contains(label, StringComparison.Ordinal))
+              && contextRow.Tip.Contains("providers.json", StringComparison.Ordinal),
+            "来源与纠正路径一起收进 tooltip（实际「" + contextRow.Tip + "」）");
         Check(settings.SetModelEnabledForCheck("deepseek", secondModel, false)
               && shell.Chat.Providers.First(provider => provider.Id == "deepseek")
                   .Models.Single(model => model.Name == secondModel).Enabled == false
