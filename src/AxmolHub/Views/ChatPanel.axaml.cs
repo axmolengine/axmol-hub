@@ -1807,36 +1807,63 @@ public partial class ChatPanel : UserControl
     };
 
     /// <summary>
-    /// One collapsible group over a run of machine turns. The head counts calls ("执行工具 3 次") or, when the
-    /// run only thought, says how long it thought — measured off the turns' own timestamps rather than
-    /// guessed. Collapsed by default: the charter hides secondary things, and what a run did is secondary to
-    /// what it said until the person asks.
+    /// <summary>
+    /// One collapsible group over a run of machine turns. The head names the work as a full-width sentence (the
+    /// first action, and how many followed) rather than a bare count, so a tools-only turn is a line of content
+    /// and not a lonely pill. Collapsed by default: the charter hides secondary things.
     ///
-    /// The rows inside are ordinary rendered turns, so every per-turn surface (the pending signpost, the write
-    /// record with its undo, a failed call's danger line) keeps working unchanged — the group is a container,
-    /// not a re-implementation.
+    /// Inside, each tool exchange is folded into a single row. A read/search/list/find/command becomes one
+    /// descriptive <c>activity-row</c> built from its call and result (the raw payload moves to the tooltip), so
+    /// the AI lane reads as actions rather than a stack of result fragments. A write keeps its existing record
+    /// line with the undo — that line is the write's one exit and its approval trace, and it is asserted
+    /// elsewhere — so the group is a container that routes each turn to the row shape that fits it, not a
+    /// re-implementation of the per-turn surfaces.
     /// </summary>
     private void AppendActivityGroup(string conversationId, List<(int Index, ChatTurn Turn, string? ToolName)> turns,
         int lastIndex)
     {
+        // Pair each call with the result that answered it, so one row can say what was done and how it went.
+        var calls = new Dictionary<string, ChatTurn>(StringComparer.Ordinal);
+        var results = new Dictionary<string, ChatTurn>(StringComparer.Ordinal);
+        foreach (var (_, turn, _) in turns)
+        {
+            if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 } id) calls[id] = turn;
+            else if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } answered) results[answered] = turn;
+        }
+
         var inner = new StackPanel { Spacing = 2 };
-        var callCount = 0;
+        var callCount = calls.Count;
         foreach (var (index, turn, toolName) in turns)
         {
-            if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 }) callCount++;
+            // A call that owed a decision, or a write that left a copy, keeps its own surface (signpost / record
+            // with undo) — those are functional and asserted, so route them through the ordinary turn renderer.
+            if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 } callId)
+            {
+                if (turn.ApprovalState is { Length: > 0 } || turn.UndoName is { Length: > 0 })
+                    AppendRenderedTurn(conversationId, index, turn, toolName, isLast: index == lastIndex,
+                        markdown: false, target: inner);
+                // A plain read/command call renders no row of its own: its action row is drawn from the result
+                // below, so emitting an empty row here would only add a gap.
+                continue;
+            }
+
+            // A tool result folds into its call's row — except a write, whose record line above already speaks
+            // for the exchange.
+            if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } answered)
+            {
+                var call = calls.TryGetValue(answered, out var paired) ? paired : null;
+                if (call?.ToolName == ChatChanges.FileWriteTool) continue;
+                inner.Children.Add(BuildActivityRow(call, turn));
+                continue;
+            }
+
+            // A thinking-only turn (or anything else machine-shaped) renders as before.
             AppendRenderedTurn(conversationId, index, turn, toolName, isLast: index == lastIndex,
                 markdown: false, target: inner);
         }
 
         var head = new ToggleButton { Classes = { "activity-group-head" } };
-        var headRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        headRow.Children.Add(new Avalonia.Controls.Shapes.Path
-        {
-            Classes = { "activity-group-chevron" },
-            Data = ThemeGeometry("Hub.Icon.Chevron"),
-        });
-        headRow.Children.Add(new TextBlock { Text = ActivityGroupTitle(turns, callCount) });
-        head.Content = headRow;
+        head.Content = BuildActivityGroupHead(turns, callCount);
 
         var body = new StackPanel { Name = "ActivityGroupBody", Spacing = 0, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
         body.Children.Add(inner);
@@ -1849,18 +1876,192 @@ public partial class ChatPanel : UserControl
         MessageFlow.Children.Add(group);
     }
 
-    /// <summary>The head's sentence. A call count when there were calls; a measured thinking duration when
-    /// there were not — "执行工具 0 次" would be a count of nothing, which is not a sentence.</summary>
-    private static string ActivityGroupTitle(List<(int Index, ChatTurn Turn, string? ToolName)> turns, int callCount)
+    /// <summary>
+    /// The head's full-width row: a chevron, a sentence naming the first action (and how many followed), and an
+    /// aggregate <c>+N −M</c> when the run edited files. Naming the work rather than counting it is what keeps a
+    /// tools-only turn from reading as a lonely pill stranded at the left edge with an empty middle — the AI lane
+    /// stays a full-width line the eye can rest on.
+    /// </summary>
+    private Control BuildActivityGroupHead(List<(int Index, ChatTurn Turn, string? ToolName)> turns, int callCount)
     {
-        if (callCount > 0)
-            return string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ActivityGroupToolCountFormat"), callCount);
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        grid.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Classes = { "activity-group-chevron" },
+            Data = ThemeGeometry("Hub.Icon.Chevron"),
+        });
 
-        var first = turns[0].Turn.At;
-        var last = turns[^1].Turn.At;
-        return string.Format(System.Globalization.CultureInfo.CurrentCulture,
-            HubStrings.Get("ActivityGroupThoughtFormat"), FormatDuration(last - first));
+        var (text, added, removed) = GroupSummary(turns, callCount);
+        var label = new TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetColumn(label, 1);
+        grid.Children.Add(label);
+
+        if (added + removed > 0)
+        {
+            var chip = BuildDiffChip(added, removed);
+            Grid.SetColumn(chip, 2);
+            grid.Children.Add(chip);
+        }
+
+        return grid;
+    }
+
+    private static (string Text, int Added, int Removed) GroupSummary(
+        List<(int Index, ChatTurn Turn, string? ToolName)> turns, int callCount)
+    {
+        if (callCount == 0)
+        {
+            var first = turns[0].Turn.At;
+            var last = turns[^1].Turn.At;
+            return (string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ActivityGroupThoughtFormat"), FormatDuration(last - first)), 0, 0);
+        }
+
+        var calls = turns
+            .Where(t => t.Turn.Role == ChatRoles.Assistant && t.Turn.ToolCallId is { Length: > 0 })
+            .ToList();
+        var head = DescribeToolCall(calls[0].Turn);
+        var text = calls.Count > 1
+            ? string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ActivityGroupToolSummaryFormat"), head, calls.Count - 1)
+            : head;
+        var (added, removed) = AggregateDiff(calls);
+        return (text, added, removed);
+    }
+
+    /// <summary>The aggregate line count of the run's edits, off the frozen previews only — a write that never
+    /// parked froze nothing, and reading the disk to total a header would be the whole list paying for one line.
+    /// When nothing was frozen the header simply carries no chip.</summary>
+    private static (int Added, int Removed) AggregateDiff(
+        List<(int Index, ChatTurn Turn, string? ToolName)> calls)
+    {
+        var added = 0;
+        var removed = 0;
+        foreach (var call in calls)
+        {
+            if (call.Turn.ApprovalPreview is { Length: > 0 } preview)
+            {
+                var (a, r) = ChatChanges.CountChanges(preview);
+                added += a;
+                removed += r;
+            }
+        }
+        return (added, removed);
+    }
+
+    private static Control BuildDiffChip(int added, int removed)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (added > 0) row.Children.Add(new TextBlock
+        {
+            Classes = { "file-chip-add" },
+            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("InspectorAddedFormat"), added),
+        });
+        if (removed > 0) row.Children.Add(new TextBlock
+        {
+            Classes = { "file-chip-del" },
+            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("InspectorRemovedFormat"), removed),
+        });
+        return new Border { Classes = { "file-chip" }, Child = row };
+    }
+
+    /// <summary>One folded tool exchange as a single descriptive row: a status mark, the action named from its
+    /// call, and — for a command — the command itself inline. The raw payload the tool returned is not shown; it
+    /// lives on the row's tooltip, which is what keeps the AI lane reading as actions rather than a stack of
+    /// result fragments that leave the right half of the column empty.</summary>
+    private Control BuildActivityRow(ChatTurn? call, ChatTurn result)
+    {
+        var grid = new Grid { Classes = { "activity-row" }, ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        if (result.ToolFailed) grid.Classes.Add("failed");
+
+        grid.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Classes = { "activity-status" },
+            Data = ThemeGeometry(result.ToolFailed ? "Hub.Icon.Close" : "Hub.Icon.CopySuccess"),
+        });
+
+        var text = new TextBlock { Classes = { "activity-row-text" } };
+        text.Text = call is not null
+            ? DescribeToolCall(call)
+            : FirstLine(result.Text);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+
+        var command = call?.ToolName == "run_command" ? ArgField(call.ToolArguments, "command", "cmd") : null;
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            var oneLine = command.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            var chip = new Border
+            {
+                Classes = { "file-chip" },
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Child = new TextBlock { Text = oneLine.Length > 60 ? oneLine[..60] + "…" : oneLine },
+            };
+            Grid.SetColumn(chip, 2);
+            grid.Children.Add(chip);
+        }
+
+        if (result.Text.Length > 0) ToolTip.SetTip(grid, result.Text);
+        return grid;
+    }
+
+    private static string FirstLine(string text)
+    {
+        var at = text.IndexOf('\n');
+        var line = (at < 0 ? text : text[..at]).Trim();
+        return line.Length > 80 ? line[..80] + "…" : line;
+    }
+
+    /// <summary>One tool call, said the way the reference says it: a verb naming the work plus the file or
+    /// pattern it touched, so the row is about the action rather than the payload that came back.</summary>
+    private static string DescribeToolCall(ChatTurn call)
+    {
+        var name = call.ToolName ?? "";
+        var args = call.ToolArguments;
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var path = ChatUndoStore.WritePathOf(args);
+        if (path.Length == 0) path = ArgField(args, "path", "file_path", "dir") ?? "";
+
+        return name switch
+        {
+            "read_file" when path.Length > 0
+                => string.Format(culture, HubStrings.Get("ActivityRowRead"), path),
+            "file_write" when path.Length > 0
+                => string.Format(culture, HubStrings.Get("ActivityRowEditFile"), path),
+            "search_text"
+                => string.Format(culture, HubStrings.Get("ActivityRowSearch"),
+                    ArgField(args, "pattern", "query") ?? ""),
+            "find_files"
+                => string.Format(culture, HubStrings.Get("ActivityRowFind"),
+                    ArgField(args, "pattern", "query", "glob") ?? ""),
+            "list_directory"
+                => string.Format(culture, HubStrings.Get("ActivityRowList"), path.Length > 0 ? path : "."),
+            "run_command" => HubStrings.Get("ActivityRowRunCommand"),
+            _ => string.Format(culture, HubStrings.Get("ActivityRowGeneric"), name),
+        };
+    }
+
+    /// <summary>The first string-valued field among <paramref name="keys"/> from a tool's JSON arguments, or null.
+    /// A malformed payload is treated as absent rather than thrown: a description is not worth failing a paint.</summary>
+    private static string? ArgField(string? json, params string[] keys)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            foreach (var key in keys)
+                if (doc.RootElement.TryGetProperty(key, out var value)
+                    && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                    return value.GetString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+        return null;
     }
 
     /// <summary>The one shape every duration in this panel is written in, shared by the live bubble's counter and a
@@ -2799,6 +3000,23 @@ public partial class ChatPanel : UserControl
 
     internal bool ActivityGroupExpandedForCheck(int index)
         => ActivityGroupBodyAt(index) is { IsVisible: true };
+
+    /// <summary>The description text of every folded action row, in order. A tool exchange now renders as one
+    /// <c>activity-row</c> (not a message-row), so this — not <c>PaintedRowsForCheck</c> — is what a check reads to
+    /// prove each call produced exactly one row and a late-inserted result rebuilt rather than duplicated it.</summary>
+    internal string[] ActivityRowsForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Grid>()
+            .Where(grid => grid.Classes.Contains("activity-row"))
+            .Select(grid => grid.GetLogicalDescendants().OfType<TextBlock>()
+                .FirstOrDefault(text => text.Classes.Contains("activity-row-text"))?.Text ?? "")
+            .ToArray();
+
+    /// <summary>How many buttons live inside action rows — must stay zero: a tool exchange is not a readable
+    /// message, and acting on one half of a call/result pair orphans the other, so the folded row carries none.</summary>
+    internal int ActivityRowActionCountForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Grid>()
+            .Where(grid => grid.Classes.Contains("activity-row"))
+            .Sum(grid => grid.GetLogicalDescendants().OfType<Button>().Count());
 
     /// <summary>Folds/unfolds a group the way a person does — by setting the head's IsChecked, which is what the
     /// IsCheckedChanged wiring reads. A raised Click never flips a ToggleButton, so a check must not use one.</summary>

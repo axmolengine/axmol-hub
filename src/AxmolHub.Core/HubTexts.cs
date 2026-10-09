@@ -636,14 +636,19 @@ public static class HubTexts
         ["InspectorExpandHint"] = ("展开看 diff", "Expand to see the diff"),
         // ── A run's activity, folded into one collapsible group ──
         ["ActivityGroupToolCountFormat"] = ("执行工具 {0} 次", "{0} tool call(s)"),
+        // The collapsed head reads as a full-width sentence naming the first action, so a tools-only turn is a
+        // line of content rather than a lonely pill stranded at the left edge with an empty middle.
+        ["ActivityGroupToolSummaryFormat"] = ("{0} 以及另外 {1} 个工具调用", "{0} and {1} other tool calls"),
         ["ActivityGroupRunningFormat"] = ("正在执行中 · {0}", "Running · {0}"),
         ["ActivityGroupThoughtFormat"] = ("已思考 {0}", "Thought for {0}"),
         ["ActivityRowThought"] = ("已思考", "Thought"),
         ["ActivityRowRead"] = ("读取 {0}", "read {0}"),
         ["ActivityRowSearch"] = ("搜索 {0}", "search {0}"),
         ["ActivityRowList"] = ("列出 {0}", "list {0}"),
+        ["ActivityRowFind"] = ("查找 {0}", "find {0}"),
         ["ActivityRowEditFile"] = ("编辑文件 {0}", "edit {0}"),
         ["ActivityRowRunCommand"] = ("执行命令", "run command"),
+        ["ActivityRowGeneric"] = ("调用 {0}", "call {0}"),
         ["ActivityRowExpandThought"] = ("看思考全文", "Show the full thinking"),
         // Recorded as the user's own turn, in their voice: it is the thing they just did by clicking, and the
         // assistant has to read it before it touches the same file again.

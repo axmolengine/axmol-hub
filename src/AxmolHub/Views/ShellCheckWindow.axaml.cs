@@ -646,17 +646,17 @@ public partial class ShellCheckWindow : Window
             "用户消息操作条显示相对时间，悬停提示为完整本地时间，助手消息不重复显示");
         Check(panel.MessageActionCount > 0, "消息操作条渲染进消息流（实际 " + panel.MessageActionCount + " 个按钮）");
 
-        // A tool exchange still renders as a bubble but must carry no action bar at all: it is not a readable
-        // message, and acting on one half of a call/result pair orphans the other half.
+        // A tool exchange folds into one descriptive action row, which by construction carries no message-action
+        // bar: it is not a readable message, and acting on one half of a call/result pair orphans the other.
         opsConversation.Messages.Add(ChatTurn.FunctionCall("call_check", "get_projects", "{}"));
         opsConversation.Messages.Add(ChatTurn.FunctionResult("call_check", "[]"));
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(panel.BubbleActionBarOpacity(2) == -1 && panel.BubbleActionBarOpacity(3) == -1
-              && panel.BubbleIconActionCount(2) == 0 && panel.BubbleIconActionCount(3) == 0,
-            "工具调用与工具结果气泡不带任何操作条（实际 opacity "
-            + panel.BubbleActionBarOpacity(2) + " / " + panel.BubbleActionBarOpacity(3) + "）");
+        var genericRow = string.Format(CultureInfo.CurrentCulture, HubStrings.Get("ActivityRowGeneric"), "get_projects");
+        Check(panel.ActivityRowsForCheck.Contains(genericRow) && panel.ActivityRowActionCountForCheck == 0,
+            "工具调用与结果折成一条动作行，且这条行里没有任何操作按钮（实际行 "
+            + string.Join(" / ", panel.ActivityRowsForCheck) + "，行内按钮 " + panel.ActivityRowActionCountForCheck + "）");
         opsConversation.Messages.RemoveRange(opsConversation.Messages.Count - 2, 2);
         panel.Reload();
         shell.UpdateLayout();
@@ -1577,7 +1577,7 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var rowsBefore = panel.PaintedRowsForCheck.Count;
+        var rowsBefore = panel.ActivityRowsForCheck.Length;
         // The decision was already painted, so nothing else about the transcript's shape changes here: this is
         // purely an insert at index 1's neighbour, which is the case counting cannot see.
         chat.ActiveConversation!
@@ -1585,20 +1585,16 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var rowsAfter = panel.PaintedRowsForCheck;
-        Check(rowsAfter.Count == rowsBefore + 1
-              && rowsAfter.Count(row => row.Contains("shell: PowerShell 7", StringComparison.Ordinal)) == 1
-              && rowsAfter.Count(row => row.Contains("list_directory · '.agents/'", StringComparison.Ordinal)) == 1,
-            "迟到的工具结果插回调用旁边时，转录整段重排：新行出现一次，旧行不重复（实际 "
-            + rowsAfter.Count + " 行，来自 " + rowsBefore + " 行）");
-
-        // What a tool handed back is provider payload, not something the assistant said: a JSON array painted in
-        // the assistant's voice reads as a reply nobody wrote. It gets one quiet line naming the tool and its
-        // first line of output; the rest stays on hover.
-        Check(rowsAfter.Any(row => row == "run_command → shell: PowerShell 7 · exit: 0")
-              && rowsAfter.Count(row => row == "list_directory · '.agents/' · depth 2") == 1,
-            "工具结果以一行摘要呈现而不是原始负载，工具名只说一次（实际 "
-            + string.Join(" / ", rowsAfter.Where(row => row.Length > 0)) + "）");
+        var rowsAfter = panel.ActivityRowsForCheck;
+        // A tool exchange folds into one action row, so the invariant the incremental renderer must keep is that
+        // the late-inserted result adds exactly one row and rebuilds — no call drawn twice, none skipped.
+        var runText = HubStrings.Get("ActivityRowRunCommand");
+        var listText = string.Format(CultureInfo.CurrentCulture, HubStrings.Get("ActivityRowList"), ".");
+        Check(rowsAfter.Length == rowsBefore + 1
+              && rowsAfter.Count(row => row == runText) == 1
+              && rowsAfter.Count(row => row == listText) == 1,
+            "迟到的工具结果插回调用旁边时，转录整段重排：每个调用恰有一条动作行，新行出现一次、旧行不重复（实际 "
+            + rowsAfter.Length + " 行，来自 " + rowsBefore + " 行：" + string.Join(" / ", rowsAfter) + "）");
 
         chat.DeleteConversation(shifted.Id);
         panel.Reload();
@@ -2414,13 +2410,17 @@ public partial class ShellCheckWindow : Window
                     m.Role + (m.ToolCallId is { Length: > 0 } ? "/call" : "")
                     + (m.Reasoning is { Length: > 0 } ? "/reason" : "")
                     + (m.Text.Length == 0 ? "/empty" : ""))) + "）");
-            Check(panel.ActivityGroupTitleForCheck(0).Contains("1", StringComparison.Ordinal),
-                "组头按调用次数说话，而不是把每条工具行都摊出来（实际「"
+            var listVerb = string.Format(CultureInfo.CurrentCulture, HubStrings.Get("ActivityRowList"), ".");
+            Check(panel.ActivityGroupTitleForCheck(0).Contains(listVerb, StringComparison.Ordinal),
+                "组头用满宽的一句话点名这次做了什么，而不是一个贴左的计数药丸（实际「"
                 + panel.ActivityGroupTitleForCheck(0) + "」）");
             Check(!panel.ActivityGroupExpandedForCheck(0),
                 "活动组默认收起：细节是点进去才看的，不该先糊一屏");
             panel.SetActivityGroupExpandedForCheck(0, true);
-            Check(panel.ActivityGroupExpandedForCheck(0), "点一下组头就展开，逐条工具行才出现");
+            Check(panel.ActivityGroupExpandedForCheck(0)
+                  && panel.ActivityRowsForCheck.Count(row => row == listVerb) == 1,
+                "点一下组头展开，每个工具是一行描述动作的行（实际行 "
+                + string.Join(" / ", panel.ActivityRowsForCheck) + "）");
             panel.SetActivityGroupExpandedForCheck(0, false);
             Check(!panel.ActivityGroupExpandedForCheck(0), "再点一下收回去");
             chat.DeleteConversation(groupSession.Id);
