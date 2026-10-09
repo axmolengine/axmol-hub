@@ -209,14 +209,20 @@ public sealed class ChatWorkspace : IDisposable
 
     internal (int Used, int Budget) EstimateContextUsage(string draft)
     {
-        var provider = SelectedChatModel?.Provider;
-        var budget = provider?.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
-        var history = _active is { } conversation
+        var choice = SelectedChatModel;
+        var window = ContextBudget.For(choice?.Provider, choice?.ModelName);
+        var budget = window.Tokens;
+        var conversation = _active;
+        // The declarations are part of what goes on the wire, so they are both subtracted from the room the
+        // turns get and added to what the meter reports — the same arithmetic ChatPipeline.SendAsync runs.
+        var schema = conversation is null ? 0 : SchemaTokensFor(NormalizeMode(conversation.Mode));
+        var room = Math.Max(ChatPipeline.MinimumConversationBudgetTokens, window.ConversationRoom - schema);
+        var history = conversation is not null
             ? conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList()
             : [];
         history.Add(ChatTurn.User(draft));
-        var trimmed = ContextTrimmer.Trim(history, budget, EffectiveSystemPrompt(_active));
-        return (trimmed.Sum(ContextTrimmer.EstimateTokens), budget);
+        var trimmed = ContextTrimmer.Trim(history, room, EffectiveSystemPrompt(conversation));
+        return (trimmed.Sum(ContextTrimmer.EstimateTokens) + schema, budget);
     }
 
     /// <summary>
@@ -565,13 +571,17 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     private (int Used, int Budget) EstimateTranscript(string conversationId)
     {
-        var budget = ModelFor(conversationId)?.Provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
+        var modelChoice = ModelFor(conversationId);
+        var window = ContextBudget.For(modelChoice?.Provider, modelChoice?.ModelName);
+        var budget = window.Tokens;
         var conversation = _sessions.Peek(conversationId);
+        var schema = conversation is null ? 0 : SchemaTokensFor(NormalizeMode(conversation.Mode));
+        var room = Math.Max(ChatPipeline.MinimumConversationBudgetTokens, window.ConversationRoom - schema);
         var history = conversation is null
             ? new List<ChatTurn>()
             : conversation.Messages.Skip(SummaryMessageCount(conversation)).ToList();
-        var trimmed = ContextTrimmer.Trim(history, budget, EffectiveSystemPrompt(conversation));
-        return (trimmed.Sum(ContextTrimmer.EstimateTokens), budget);
+        var trimmed = ContextTrimmer.Trim(history, room, EffectiveSystemPrompt(conversation));
+        return (trimmed.Sum(ContextTrimmer.EstimateTokens) + schema, budget);
     }
 
     /// <summary>
@@ -729,12 +739,20 @@ public sealed class ChatWorkspace : IDisposable
                 provider.OAuth = builtIn.OAuth;
                 // Same reasoning as the two lines above: the probe is a manifest fact, refreshed every load.
                 provider.KeyValidation = builtIn.KeyValidation;
+                provider.CapabilitySource = builtIn.CapabilitySource;
+                // ??= and not = : a persisted number is now a deliberate human setting — except where nothing was
+                // ever stored, which is what made an install run every model against 8192 while its own gateway
+                // published 128000 for the preset and the saved row said null.
+                provider.MaxContextTokens ??= builtIn.MaxContextTokens;
             }
 
             cachedModelLists.TryGetValue(provider.Id, out var modelCache);
             provider.ReasoningModels = MergeReasoningModels(
                 builtIn?.ReasoningModels,
                 modelCache?.ReasoningModels);
+            provider.ModelCapabilities = MergeCapabilities(
+                builtIn?.ModelCapabilities,
+                modelCache?.Capabilities);
         }
 
         // First run (nothing saved yet): adopt the single default preset so the conversation page has a
@@ -1071,6 +1089,39 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Corrects one model's context window by hand, or — with <paramref name="tokens"/> null — stops correcting
+    /// it. This is the single knob for the case every gateway eventually creates: an id the catalog does not
+    /// describe, or describes wrongly. It lives on the model rather than on the provider because a window is a
+    /// property of the model, and because one provider here fronts two hundred models that do not agree.
+    /// </summary>
+    public bool SetModelContextTokens(string providerId, string name, int? tokens)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null) return false;
+
+        var model = provider.Models.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (model is null) return false;
+
+        var corrected = tokens is > 0 ? tokens : null;
+        if (model.MaxContextTokens == corrected) return true;
+
+        model.MaxContextTokens = corrected;
+        SaveProviders();
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>What Hub believes one model's window is, and where that came from — read by the settings row so
+    /// it can show the number it is about to let a person override.</summary>
+    public (int Tokens, int OutputReserve, CapabilitySource Source) ContextWindowFor(string providerId, string name)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        var window = ContextBudget.For(provider, name);
+        return (window.Tokens, window.OutputReserve, window.Source);
+    }
+
     /// <summary>Enables a model chosen from the provider's cached catalog, adding it if it is not configured yet.</summary>
     public bool EnableCatalogModel(string providerId, string name)
     {
@@ -1378,9 +1429,10 @@ public sealed class ChatWorkspace : IDisposable
         provider.Models.AddRange(kept);
 
         provider.Normalize();
-        var declaredReasoning = AiProviderManifest.CreateBuiltIn(providerId)?.ReasoningModels;
-        provider.ReasoningModels = MergeReasoningModels(declaredReasoning, result.ReasoningModels);
-        _modelLists.Save(providerId, result.Models, result.ReasoningModels);
+        var declared = AiProviderManifest.CreateBuiltIn(providerId);
+        provider.ReasoningModels = MergeReasoningModels(declared?.ReasoningModels, result.ReasoningModels);
+        provider.ModelCapabilities = MergeCapabilities(declared?.ModelCapabilities, result.Capabilities);
+        _modelLists.Save(providerId, result.Models, result.ReasoningModels, result.Capabilities);
         SaveProviders();
         return result;
     }
@@ -1421,6 +1473,27 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     public IReadOnlyList<string> CachedModels(string providerId)
         => _modelLists.Load().FirstOrDefault(entry => entry.Id == providerId)?.Models ?? [];
+
+    /// <summary>
+    /// Declared first, observed over it: a manifest entry is a guess made the day the preset was written, and
+    /// the endpoint is the model talking about itself now. A model nobody described is absent from the result
+    /// rather than present with nulls, so <see cref="ContextBudget"/> can still tell "unknown" from "described".
+    /// </summary>
+    private static Dictionary<string, ModelCapabilities> MergeCapabilities(
+        IReadOnlyDictionary<string, ModelCapabilities>? declared,
+        IReadOnlyDictionary<string, ModelCapabilities>? fetched)
+    {
+        var result = new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase);
+        if (declared is not null)
+            foreach (var (name, caps) in declared)
+                if (!caps.IsEmpty) result[name] = caps;
+
+        if (fetched is not null)
+            foreach (var (name, caps) in fetched)
+                if (!caps.IsEmpty) result[name] = caps;
+
+        return result;
+    }
 
     private static Dictionary<string, AiModelReasoning> MergeReasoningModels(
         IReadOnlyDictionary<string, AiModelReasoning>? declared,
@@ -2945,8 +3018,11 @@ public sealed class ChatWorkspace : IDisposable
         run.RearmAfterApproval();
         var result = ToolApprovalResults.Unavailable;
         var failed = true;
-        var budget = await ReadOnUiAsync(() => ModelFor(run.ConversationId)?.Provider.MaxContextTokens
-                                               ?? ContextTrimmer.DefaultBudgetTokens).ConfigureAwait(false);
+        var budget = await ReadOnUiAsync(() =>
+        {
+            var selected = ModelFor(run.ConversationId);
+            return ContextBudget.For(selected?.Provider, selected?.ModelName).Tokens;
+        }).ConfigureAwait(false);
         var scope = await ReadOnUiAsync(() => ScopeFor(run.ConversationId)).ConfigureAwait(false);
         if (ChatTools.Find(call.Value.Name, call.Value.Mode, scope) is { } tool)
         {
@@ -3301,7 +3377,7 @@ public sealed class ChatWorkspace : IDisposable
                 mode,
                 TailFailures(history),
                 HasWrittenFile(history),
-                UsageRatio(choice.Provider, history),
+                UsageRatio(choice.Provider, choice.ModelName, history),
                 steers > 0,
                 history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Images.Count ?? 0,
                 history.LastOrDefault(turn => turn.Role == ChatRoles.User)?.Text.Length ?? 0,
@@ -3327,6 +3403,10 @@ public sealed class ChatWorkspace : IDisposable
         // session that a `set_workspace` in this very segment may already have moved.
         var scope = ScopeFor(conversationId);
         var tools = ChatTools.CreateFor(mode, scope);
+        // What this mode's declarations cost is remembered for the meter: building the tools is the only place
+        // that knows, and the ring redraws on every keystroke, so it must not pay for the reflection again.
+        // The set of tools per mode is static, so one figure per mode is the truth rather than a stale guess.
+        _schemaTokensByMode[mode] = ChatPipeline.ToolSchemaTokens(tools);
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
         // The attachment resolver is bound to this conversation because the turn names the file, and which
@@ -3338,6 +3418,13 @@ public sealed class ChatWorkspace : IDisposable
                 ? BinaryData.FromBytes(bytes)
                 : null);
     }
+
+    private readonly Dictionary<string, int> _schemaTokensByMode = new(StringComparer.Ordinal);
+
+    /// <summary>The tokens one mode's tool declarations take out of the window, as last measured while building a
+    /// real request. Zero before the first request of that mode in this run — the meter then reads a little low,
+    /// which is the honest direction for a number this app has not observed yet.</summary>
+    internal int SchemaTokensFor(string mode) => _schemaTokensByMode.GetValueOrDefault(mode);
 
     /// <summary>The last route this session's requests were sent on, for the surface that has to say what actually
     /// ran rather than what was picked. Absent for a session that is not routed.</summary>
@@ -3373,10 +3460,12 @@ public sealed class ChatWorkspace : IDisposable
                                    && writes.Contains(id));
     }
 
-    private static double UsageRatio(ModelProvider provider, IReadOnlyList<ChatTurn> history)
+    private static double UsageRatio(ModelProvider provider, string? modelName, IReadOnlyList<ChatTurn> history)
     {
-        var budget = provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
-        return budget <= 0 ? 0 : (double)history.Sum(ContextTrimmer.EstimateTokens) / budget;
+        // Measured against the room the conversation actually has — the window minus the answer's share — so the
+        // router escalates on the same fill the trimmer would hit, not on a bigger number that never arrives.
+        var room = ContextBudget.For(provider, modelName).ConversationRoom;
+        return room <= 0 ? 0 : (double)history.Sum(ContextTrimmer.EstimateTokens) / room;
     }
 
     /// <summary>The tier as this model can receive it, walking down its own ladder rather than up. Nothing is

@@ -1606,6 +1606,60 @@ public partial class SettingsPage : UserControl
     private bool CanListModels(ModelProvider provider)
         => !provider.RequiresCredential || IsLinked(provider);
 
+    /// <summary>
+    /// The window this model is treated as having, and the one box that says otherwise. The number is shown with
+    /// where it came from, because the difference between "the gateway told me 1M" and "nobody told me, so I am
+    /// assuming" is the whole reason a conversation compacts early or late — and a person deciding whether to
+    /// correct it has to be able to see which of the two they are looking at.
+    /// </summary>
+    private Control BuildModelContextRow(ModelProvider provider, ProviderModel model)
+    {
+        var (tokens, _, source) = _chat!.ContextWindowFor(provider.Id, model.Name);
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        row.Children.Add(new TextBlock
+        {
+            Classes = { "muted" },
+            VerticalAlignment = VerticalAlignment.Center,
+            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ModelContextFormat"), tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture))
+                   + " · " + HubStrings.Get(source switch
+                   {
+                       CapabilitySource.UserOverride => "CapabilitySourceOverride",
+                       CapabilitySource.EndpointReported => "CapabilitySourceEndpoint",
+                       CapabilitySource.LearnedFromRefusal => "CapabilitySourceLearned",
+                       CapabilitySource.ManifestDeclared => "CapabilitySourceManifest",
+                       _ => "CapabilitySourceFallback",
+                   }),
+            Tag = SectionTags.ModelContext,
+        });
+
+        var box = new TextBox
+        {
+            Width = 92,
+            Watermark = tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            Text = model.MaxContextTokens?.ToString(System.Globalization.CultureInfo.CurrentCulture) ?? "",
+            Tag = SectionTags.ModelContextOverride,
+        };
+        ToolTip.SetTip(box, HubStrings.Get("ModelContextOverrideHint"));
+        box.TextChanged += (_, _) =>
+        {
+            // Parse-what-you-type, and let an empty or unreadable box mean "no override" rather than "the last
+            // number I was typing". A half-entered 64000 must not silently become the model's window.
+            var parsed = int.TryParse(box.Text.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.CurrentCulture, out var value) && value > 0
+                ? value
+                : (int?)null;
+            _chat!.SetModelContextTokens(provider.Id, model.Name, parsed);
+        };
+        row.Children.Add(box);
+        return row;
+    }
+
     private Control BuildModelRow(ModelProvider provider, ProviderModel model)
     {
         var inUse = ReferenceEquals(model, provider.ActiveModel);
@@ -1623,6 +1677,7 @@ public partial class SettingsPage : UserControl
                 BrushOrNull("Hub.TextOnAccent")));
         }
         text.Children.Add(nameRow);
+        text.Children.Add(BuildModelContextRow(provider, model));
 
         var actions = new StackPanel
         {
@@ -2597,6 +2652,21 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
+    /// The first model row that rendered a context line, as text plus whether its override box came with it.
+    /// A generic "first row" rather than a named one because which models are configured is the user's data,
+    /// and an assertion that depends on it would fail for reasons that have nothing to do with this feature.
+    /// )
+    /// </summary>
+    internal (string Text, bool HasOverrideBox) FirstModelContextRowForCheck()
+    {
+        var text = GroupCards.SelectMany(group => group.GetVisualDescendants().OfType<TextBlock>())
+            .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.ModelContext);
+        var box = GroupCards.SelectMany(group => group.GetVisualDescendants().OfType<TextBox>())
+            .FirstOrDefault(candidate => candidate.Tag as string == SectionTags.ModelContextOverride);
+        return (text?.Text ?? "", box is not null);
+    }
+
+    /// <summary>
     /// The group rendered for one provider id, or <c>null</c> when no group was rendered for it.
     ///
     /// Keyed on the id rather than the display name: a preset's name is copy ("Ollama (local)") and can change
@@ -2747,6 +2817,8 @@ public partial class SettingsPage : UserControl
 
         internal const string ModelRow = "provider-model-row";
         internal const string ModelEnabled = "provider-model-enabled";
+        internal const string ModelContext = "provider-model-context";
+        internal const string ModelContextOverride = "provider-model-context-override";
         internal const string ModelCatalog = "provider-model-catalog";
         internal const string AddModelButton = "provider-add-model";
         internal const string RemoveAllModels = "provider-remove-all-models";

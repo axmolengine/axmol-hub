@@ -1429,6 +1429,102 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"A Chinese result was capped in characters, not tokens ({wideCapped.Length} characters, {TokenWeighing.Units(wideCapped)} units).");
     Console.WriteLine("PASS: one tool result is capped in tokens for Chinese too, not in characters.");
 
+    // ── 工具的声明本身也要花窗口 ──
+    // Every declaration (name, description, JSON schema) rides on every later request while the mode offers
+    // the tool, and it was priced by nothing: the category the other clients call "System Tools" / "Tools"
+    // simply did not exist in Hub's arithmetic.
+    static int ProbeSchemaTokens(string description) => ChatPipeline.ToolSchemaTokens(
+        [AIFunctionFactory.Create(() => "ok", new AIFunctionFactoryOptions { Name = "read_file", Description = description })]);
+
+    var bareSchema = ProbeSchemaTokens("Read a file.");
+    var wideSchema = ProbeSchemaTokens(new string('描', 400));
+    if (bareSchema <= 0)
+        throw new Exception("A tool declaration costs nothing, so the window never sees the schema it sends every request.");
+    if (wideSchema <= bareSchema * 3)
+        throw new Exception($"A Chinese tool description is still priced like Latin ({bareSchema} vs {wideSchema}).");
+    if (ChatPipeline.ToolSchemaTokens(null) != 0 || ChatPipeline.ToolSchemaTokens([]) != 0)
+        throw new Exception("Ask mode, which offers no tools, was charged for a schema anyway.");
+    if (ChatPipeline.MinimumConversationBudgetTokens <= 0)
+        throw new Exception("A mode whose schemas outgrow its window would be left with no room at all.");
+    Console.WriteLine("PASS: a mode's tool declarations are priced against the window they share with the conversation.");
+
+    // ── 窗口从模型自己报的元数据里读，不是从手抄的表里猜 ──
+    var catalogJson = """
+    {"data":[
+      {"id":"vendor/with-window","context_length":1000000,
+       "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+       "supported_endpoint_types":["openai","anthropic"],
+       "top_provider":{"context_length":1000000,"max_completion_tokens":128000}},
+      {"id":"vendor/bare-id","created":1,"owned_by":"Vendor"},
+      {"id":"vendor/zero-window","top_provider":{"context_length":0,"max_completion_tokens":-5}},
+      {"id":"vendor/quoted-window","context_length":"128000"},
+      {"id":"vendor/absurd-window","context_length":99999999999},
+      {"id":"vendor/huge-but-real","context_length":2000000}
+    ]}
+    """;
+    var catalog = OpenAiCompatibleModelsSource.Parse(System.Text.Encoding.UTF8.GetBytes(catalogJson));
+    if (catalog.Models.Count != 6)
+        throw new Exception($"The catalog did not list every model ({catalog.Models.Count}).");
+    var withWindow = catalog.Capabilities["vendor/with-window"];
+    if (withWindow.ContextTokens != 1000000 || withWindow.MaxOutputTokens != 128000
+        || withWindow.InputModalities is not ["text", "image"]
+        || withWindow.EndpointTypes is not ["openai", "anthropic"]
+        || withWindow.Source != CapabilitySource.EndpointReported)
+        throw new Exception("A reported window, output cap or modality list did not survive the parser.");
+    if (catalog.Capabilities.ContainsKey("vendor/bare-id"))
+        throw new Exception("A model the endpoint described with an id alone was recorded as if it had been described.");
+    if (catalog.Capabilities.ContainsKey("vendor/zero-window") || catalog.Capabilities.ContainsKey("vendor/quoted-window")
+        || catalog.Capabilities.ContainsKey("vendor/absurd-window"))
+        throw new Exception("A zero, negative, quoted or absurd context_length was accepted as a window.");
+    if (catalog.Capabilities["vendor/huge-but-real"].ContextTokens != 2000000)
+        throw new Exception("A two-million-token window was rejected as implausible.");
+    Console.WriteLine("PASS: a model's window, output cap and input modalities come from its own metadata, and junk is not a window.");
+
+    // The resolver, not the parser: five sites used to write `provider.MaxContextTokens ?? 8192`, which made the
+    // whole app run every hosted model against a 2023 number. Order is the contract, so it is asserted at every
+    // rung rather than only at the one that happens to be reached today.
+    var resolverProvider = new ModelProvider
+    {
+        Id = "probe", Name = "Probe", BaseUrl = "https://probe.test/v1",
+        Models =
+        [
+            new ProviderModel { Name = "override-me", MaxContextTokens = 4096 },
+            new ProviderModel { Name = "vendor/with-window" },
+        ],
+    };
+    resolverProvider.ModelCapabilities["vendor/with-window"] = withWindow;
+    var reported = ContextBudget.For(resolverProvider, "vendor/with-window");
+    if (reported.Tokens != 1000000 || reported.Source != CapabilitySource.EndpointReported)
+        throw new Exception($"The endpoint's own number was not used ({reported.Tokens}, {reported.Source}).");
+    if (reported.OutputReserve != 128000 || reported.ConversationRoom != 1000000 - 128000)
+        throw new Exception($"The answer's share was not held back before the room was measured (reserve {reported.OutputReserve}).");
+    var overridden = ContextBudget.For(resolverProvider, "override-me");
+    if (overridden.Tokens != 4096 || overridden.Source != CapabilitySource.UserOverride)
+        throw new Exception("A hand-set window did not outrank everything the endpoint said.");
+    if (overridden.OutputReserve < ContextBudget.MinimumOutputReserveTokens
+        || overridden.OutputReserve * 4 > overridden.Tokens)
+        throw new Exception($"A 4096-token model was left with no room to answer (reserve {overridden.OutputReserve}).");
+    var unknown = ContextBudget.For(resolverProvider, "never-described");
+    if (unknown.Tokens != ContextBudget.FallbackTokens || unknown.Source != CapabilitySource.Fallback || unknown.IsDeclared)
+        throw new Exception($"An undescribed model did not fall back honestly ({unknown.Tokens}, {unknown.Source}).");
+    var providerDeclared = new ModelProvider { Id = "preset", BaseUrl = "https://p.test/v1", MaxContextTokens = 64000 };
+    if (ContextBudget.For(providerDeclared, "any").Tokens != 64000)
+        throw new Exception("A preset's declared window was ignored for a model the endpoint never described.");
+    if (ContextBudget.For(null, null).Tokens != ContextBudget.FallbackTokens
+        || ContextBudget.AttachmentCeilingTokens(8192) != 2048
+        || ContextBudget.AttachmentCeilingTokens(1_000_000) != 32_768)
+        throw new Exception("The fallback or the one-quarter attachment ceiling is not the number the meter says it is.");
+    Console.WriteLine("PASS: the window resolves per model — override, endpoint, preset, fallback — and never as one global 8192.");
+
+    // Modality questions answer "unknown" as "allowed", because a gateway that publishes nothing must not have
+    // the user's screenshots taken away from them on the strength of an absence.
+    if (!withWindow.AcceptsInput("image") || !withWindow.AcceptsInput("text"))
+        throw new Exception("A model that said it takes images was told it does not.");
+    if (new ModelCapabilities { ContextTokens = 8192 }.AcceptsInput("image") != true
+        || new ModelCapabilities { ContextTokens = 8192, InputModalities = ["text"] }.AcceptsInput("image"))
+        throw new Exception("An unlisted modality was treated as supported (or a listed refusal as silence).");
+    Console.WriteLine("PASS: a model that never said what it accepts still accepts a picture.");
+
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
         [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);
@@ -1710,8 +1806,11 @@ if (args.Contains("--check-ai-context"))
 
     // ── The loop ends on its own, and stays inside the window while it runs ──
     var insistent = new InsistentToolClient();
+    // A threshold test owns its threshold: the fixture declares the window it is testing against rather than
+    // inheriting whatever the fallback for an undescribed model happens to be this release.
     var probeProvider = new ModelProvider
-        { Id = "probe", Name = "probe", BaseUrl = "https://example.invalid/v1", Model = "probe" };
+        { Id = "probe", Name = "probe", BaseUrl = "https://example.invalid/v1", Model = "probe", MaxContextTokens = 8192 };
+    var probeWindow = ContextBudget.For(probeProvider, probeProvider.Model);
     var probeTool = AIFunctionFactory.Create((Func<string>)(() => new string('y', 20000)),
         new AIFunctionFactoryOptions { Name = "get_projects", Description = "probe" });
     var answered = new StringBuilder();
@@ -1735,15 +1834,15 @@ if (args.Contains("--check-ai-context"))
     if (insistent.LastOptions?.Tools is not null)
         throw new Exception("The final request still offered tools, so the model could ask for another round.");
 
-    // Every round returned 20 000 characters against an 8192-token window, so by the last request the older
-    // results must have been elided — with the messages themselves still there, pairing intact.
+    // Every round returned 20 000 characters against the 8192-token window this fixture declares, so by the last
+    // request the older results must have been elided — with the messages themselves still there, pairing intact.
     var lastResults = insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionResultContent>()
         .Select(result => result.Result?.ToString() ?? "").ToList();
     if (lastResults.Count < ChatPipeline.MaximumToolIterations)
         throw new Exception($"The final request carried only {lastResults.Count} tool results.");
     if (!lastResults.Any(text => text.Contains("elided")) || !lastResults.Any(text => !text.Contains("elided")))
         throw new Exception("The loop either elided nothing or elided the result it is reasoning about.");
-    if (lastResults.Any(text => text.Length > ToolResultCap.TokensFor(ContextTrimmer.DefaultBudgetTokens) * ContextTrimmer.CharactersPerToken + 64))
+    if (lastResults.Any(text => text.Length > ToolResultCap.TokensFor(probeWindow.Tokens) * ContextTrimmer.CharactersPerToken + 64))
         throw new Exception("A tool result reached the model without being capped.");
     if (!insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionCallContent>().Select(call => call.CallId)
              .SequenceEqual(insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionResultContent>().Select(result => result.CallId)))

@@ -4169,9 +4169,13 @@ public partial class ShellCheckWindow : Window
         System.IO.File.WriteAllText(System.IO.Path.Combine(workspace, "big.txt"),
             string.Concat(Enumerable.Range(1, 4000).Select(index => $"row-{index:D4} " + new string('y', 40) + "\n")));
 
-        // The self-check provider, which declares no window and so falls back to the 8 KiB default: against a
-        // provider that advertises 128k, five tool results are nowhere near half the budget and nothing would
-        // compact. The threshold is the thing under test, so the window has to be a known small one.
+        // A threshold test owns its threshold. This provider declares no window, and the fallback for an
+        // undescribed model is a hosted-sized number now rather than the 2023 default of 8192 — so the fixture
+        // states the small window it is testing against instead of inheriting whatever the fallback happens to
+        // be this release. Five tool results are nowhere near half of 128k, and nothing would compact.
+        var fixtureProvider = chat.Providers.FirstOrDefault(candidate => candidate.Id == providerId);
+        var savedWindow = fixtureProvider?.MaxContextTokens;
+        if (fixtureProvider is not null) fixtureProvider.MaxContextTokens = 8192;
         var session = chat.StartConversation(providerId);
         // Five calls rather than the eight the loop allows: each one is a request, and the reply that follows is
         // another, so the fixture has to stay inside the iteration cap it is not testing.
@@ -4230,6 +4234,7 @@ public partial class ShellCheckWindow : Window
         finally
         {
             chat.ClientOverride = savedOverride;
+            if (fixtureProvider is not null) fixtureProvider.MaxContextTokens = savedWindow;
             chat.DeleteConversation(session.Id);
             await WaitForIdleAsync(chat);
             panel.Reload();
@@ -4300,6 +4305,22 @@ public partial class ShellCheckWindow : Window
                     [HubStrings.Get("ChatWorkspaceMenuChoose"), HubStrings.Get("ChatWorkspaceMenuClear")],
                     StringComparer.Ordinal),
                 "绑定之后菜单多出「清除」一行（实际 " + string.Join(" / ", panel.WorkspaceMenuTitlesForCheck) + "）");
+
+            // 附件按「模型装得下多少」封顶，而不只是按磁盘字节数：160 KiB 的中文是几万 token，从前的小窗口里
+            // 截断器会把整条附件连同它的问题一起丢掉 —— 人递上来的东西，反而成了本轮消失的那一段。
+            var attachRoot = Path.Combine(ScratchDirectory.Resolve("attachment-ceiling"),
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(attachRoot);
+            File.WriteAllText(Path.Combine(attachRoot, "big.md"), new string('漢', 8000));
+            File.WriteAllText(Path.Combine(attachRoot, "small.md"), "small file body");
+            var attached = ChatContextReader.ReadFolder(attachRoot, "attachment-ceiling", windowTokens: 8192);
+            Directory.Delete(attachRoot, recursive: true);
+            Check(TokenWeighing.Units(attached) <= 8192L / 4 * ContextTrimmer.CharactersPerToken + 96
+                  && attached.Contains("--- big.md ---", StringComparison.Ordinal)
+                  && attached.Contains("small file body", StringComparison.Ordinal)
+                  && attached.Contains("characters truncated", StringComparison.Ordinal),
+                "文件夹附件按窗口体积封顶，超长文件留头留尾，每个文件仍留下自己的名字（实际 "
+                + attached.Length + " 字符 / " + TokenWeighing.Units(attached) + " 单位）");
 
             // The guard the picker shares with set_workspace: Hub's own data directory is not a sandbox, and
             // refusing it must leave the binding alone rather than clear it.
@@ -5054,6 +5075,13 @@ public partial class ShellCheckWindow : Window
         Check(withTwo is { ModelEnabled.Length: 2 }
               && withTwo.ModelEnabled.All(enabled => enabled),
             "新添加的模型默认启用（实际 [" + string.Join(", ", withTwo?.ModelEnabled ?? []) + "]）");
+        // The row reads out the window this model is treated as having, and carries the one box that says
+        // otherwise. The expected prefix comes from the resource because this suite runs in both languages, and
+        // a hard-coded "上下文" would pass in one and silently never render in the other.
+        var contextRow = settings.FirstModelContextRowForCheck();
+        Check(contextRow.Text.StartsWith(HubStrings.Get("ModelContextFormat").Split('{')[0], StringComparison.Ordinal)
+              && contextRow.HasOverrideBox,
+            "模型行读出这个模型被当作多大的窗口，并给出可改的覆盖框（实际「" + contextRow.Text + "」）");
         Check(settings.SetModelEnabledForCheck("deepseek", secondModel, false)
               && shell.Chat.Providers.First(provider => provider.Id == "deepseek")
                   .Models.Single(model => model.Name == secondModel).Enabled == false
@@ -5314,6 +5342,36 @@ public partial class ShellCheckWindow : Window
         Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
                 """{"object":"list","data":[{"id":"m","owned_by":"me","permission":[],"extra":{"x":1}}]}""")) is ["m"],
             "只读 data[].id，多余字段不影响解析");
+        // 存档里写着 null 的内置预设，不再把 manifest 声明的窗口抹掉。这条链以前是「所有模型都按 8192 跑」
+        // 的根因：文件里存着 null，载入时不回填清单值，于是每一处 ?? 8192 都落到那个 2023 年的数字上。
+        var presetProvider = shell.Chat.Providers.FirstOrDefault(
+            candidate => candidate.Id == "orcarouter");
+        Check(presetProvider?.MaxContextTokens == 128000,
+            "内置预设声明的窗口不再被存档里的 null 抹掉（实际 "
+            + (presetProvider?.MaxContextTokens?.ToString(System.Globalization.CultureInfo.CurrentCulture) ?? "空") + "）");
+        var presetWindow = ContextBudget.For(presetProvider, presetProvider?.Model);
+        Check(presetWindow.Tokens == 128000 && presetWindow.IsDeclared
+              && presetWindow.ConversationRoom < presetWindow.Tokens - ContextBudget.MinimumOutputReserveTokens,
+            "默认网关按它自己声明的窗口计，并先留出回答的那一份（窗口 "
+            + presetWindow.Tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)
+            + "，可谈 " + presetWindow.ConversationRoom.ToString("N0", System.Globalization.CultureInfo.CurrentCulture) + "）");
+
+        var overrideModel = presetProvider?.Models.FirstOrDefault();
+        if (overrideModel is not null)
+        {
+            var beforeOverride = ContextBudget.For(presetProvider, overrideModel.Name).Tokens;
+            Check(shell.Chat.SetModelContextTokens("orcarouter", overrideModel.Name, 4096)
+                  && ContextBudget.For(presetProvider, overrideModel.Name).Tokens == 4096
+                  && ContextBudget.For(presetProvider, overrideModel.Name).Source == CapabilitySource.UserOverride,
+                "手填的窗口覆盖掉网关与预设的数字（覆盖前 "
+                + beforeOverride.ToString("N0", System.Globalization.CultureInfo.CurrentCulture) + "）");
+            // And back out of it: an override nobody can take away is a trap, and leaving one set would change
+            // the fixture for every assertion that runs after this one.
+            Check(shell.Chat.SetModelContextTokens("orcarouter", overrideModel.Name, null)
+                  && ContextBudget.For(presetProvider, overrideModel.Name).Tokens == beforeOverride,
+                "覆盖可以撤销，回到覆盖前那个数字");
+        }
+
         var effortMetadata = ModelList.ParseMetadata(System.Text.Encoding.UTF8.GetBytes(
             """{"object":"list","data":[{"id":"deepseek-flash","effort":{"supported_levels":["low","high","max"],"default_level":"high"}}]}"""));
         Check(effortMetadata.Models is ["deepseek-flash"]

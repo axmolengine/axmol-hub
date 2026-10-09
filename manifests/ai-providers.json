@@ -65,7 +65,9 @@
       "description": "A model running on this machine through Ollama. No account and no key are needed; the server must be running and the model pulled first.",
       "descriptionZh": "通过 Ollama 在本地运行的模型，无需账户和密钥，但需要先启动本机服务并拉取模型。",
       "baseUrl": "http://localhost:11434/v1",
-      "authMethods": ["none"]
+      "authMethods": ["none"],
+      "maxContextTokens": 8192,
+      "_maxContextTokensNote": "A local server answers /v1/models with ids and nothing else, and its OpenAI layer truncates an oversized prompt silently instead of refusing it — so there is no 400 to learn the real window from, and the hosted fallback of 128000 would only make Hub believe a 4k model holds 128k. Declared low on purpose; the per-model override in the model catalog is the way to raise it for a model pulled with a bigger num_ctx."
     }
   ]
 }

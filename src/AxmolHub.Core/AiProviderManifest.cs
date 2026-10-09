@@ -139,6 +139,9 @@ public sealed class AiProviderEntry
 
     public string BaseUrl { get; set; } = "";
     public int? MaxContextTokens { get; set; }
+    /// <summary>Which source knows how to read this provider's model catalog
+    /// (<see cref="ModelCapabilitySources.All"/>). Absent means the OpenAI-compatible default.</summary>
+    public string? CapabilitySource { get; set; }
     /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
     public List<string> DefaultEnabledModels { get; set; } = [];
     /// <summary>Explicit capabilities for models whose reasoning support is known.</summary>
@@ -321,6 +324,7 @@ public static class AiProviderManifest
                 // that blames the user's key. The list comes from GET {baseUrl}/models after authenticating
                 // (see ModelCatalog), and a keyless provider gets it with no secret at all.
                 MaxContextTokens = entry.MaxContextTokens,
+                CapabilitySource = entry.CapabilitySource,
                 Affiliate = entry.Affiliate,
                 ReferralUrl = entry.ReferralUrl,
                 AuthMethods = [.. entry.EffectiveAuthMethods],

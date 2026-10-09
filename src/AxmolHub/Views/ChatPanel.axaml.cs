@@ -1142,11 +1142,16 @@ public partial class ChatPanel : UserControl
     {
         if (_contextAttachments.Count == 0) return Task.FromResult<string?>(null);
         var attachments = _contextAttachments.ToArray();
+        // The window is read here rather than inside the task: the folder is priced against what the model can
+        // actually hold, and a pool thread must not reach the workspace.
+        var windowTokens = _chat?.SelectedChatModel is { } selected
+            ? ContextBudget.For(selected.Provider, selected.ModelName).Tokens
+            : ContextBudget.FallbackTokens;
         return Task.Run<string?>(() =>
         {
             var sections = attachments.Select(attachment =>
             {
-                var contents = ChatContextReader.ReadFolder(attachment.Path, attachment.Name);
+                var contents = ChatContextReader.ReadFolder(attachment.Path, attachment.Name, windowTokens);
                 return attachment.Details is { Length: > 0 }
                     ? attachment.Details + "\n\n" + contents
                     : contents;

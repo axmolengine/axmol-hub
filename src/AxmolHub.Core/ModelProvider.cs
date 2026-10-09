@@ -79,6 +79,23 @@ public sealed class ModelProvider
     public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// What each model said about itself: window, output cap, input modalities. <b>Derived, not persisted</b>,
+    /// for the same reason as <see cref="ReasoningModels"/> — this is an observation of what the endpoint
+    /// reported, and the observation channel (<c>data/ai/models-cache.json</c>) is what re-derives it. A
+    /// persisted guess at someone's context window is how an install keeps believing a 4k model holds 128k
+    /// tokens long after the gateway stopped saying so.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, ModelCapabilities> ModelCapabilities { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The id of the <see cref="IModelCapabilitySource"/> that knows how to ask this provider for its
+    /// catalog. A manifest fact, refreshed every load, so a preset can gain a protocol without a reinstall; a
+    /// custom provider leaves it null and gets the OpenAI-compatible default.</summary>
+    [JsonIgnore]
+    public string? CapabilitySource { get; set; }
+
+    /// <summary>
     /// The two models Hub may switch between when a session is routed automatically, both of them named by the
     /// user. unset (or only half set) means auto routing changes the reasoning tier and never the model: which
     /// of a provider's tiers is "the cheap one" is a decision about someone's bill and their taste, and Hub

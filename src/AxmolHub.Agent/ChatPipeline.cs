@@ -38,6 +38,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// <summary>A tool that keeps failing is a stuck loop, not a hard problem; three in a row ends the turn.</summary>
     public const int MaximumConsecutiveToolErrors = 3;
 
+    /// <summary>What is left for the conversation once the tool declarations have taken their share never goes
+    /// below this. A model whose whole window is smaller than its own schemas is a configuration mistake, and
+    /// the honest failure for that is one oversized request the provider can name, not an empty prompt.</summary>
+    public const int MinimumConversationBudgetTokens = ContextWindow.MinimumConversationTokens;
+
     /// <summary>How a call's arguments are recorded. System.Text.Json's default encoder escapes quotes, angle
     /// brackets and every non-ASCII character, so a stored edit of Chinese source read back as
     /// <c>\u7B80\u6613</c> in the approval card that prints this string for a human to decide on. The transcript
@@ -101,7 +106,14 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Action<string>? onReasoning = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var budget = provider.MaxContextTokens ?? ContextTrimmer.DefaultBudgetTokens;
+        // The tool declarations ride every request, and nothing used to price them: seventeen functions of
+        // name, description and JSON schema is a category of the window that was simply absent from the
+        // arithmetic. They are subtracted from what the conversation may use, so the window the results are
+        // capped against stays the model's own — otherwise switching from ask to agent mode would silently
+        // shrink every tool result as well as every turn.
+        var window = ContextBudget.For(provider, modelName);
+        var schemaTokens = ToolSchemaTokens(tools);
+        var budget = Math.Max(MinimumConversationBudgetTokens, window.ConversationRoom - schemaTokens);
         var trimmed = ContextTrimmer.Trim(history, budget, systemPrompt);
         var messages = ToChatMessages(trimmed, images);
         var options = BuildOptions(provider, modelName, reasoningEffort, tools);
@@ -163,7 +175,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     // Capped once, here, so the transcript records exactly what the model was shown. Two
                     // renderings of one result is how a replayed conversation diverges from the run that
                     // produced it — and an uncapped result can push the whole window out on its own.
-                    var text = ToolResultCap.Apply(SerializeToolResult(result), budget);
+                    // Capped against the model's whole window, not against the conversation budget: the schema
+                    // cost of a mode must not quietly shrink every result that mode can ask for.
+                    var text = ToolResultCap.Apply(SerializeToolResult(result), window.Tokens);
                     if (onToolCompleted is not null)
                         await onToolCompleted(info, text, false).ConfigureAwait(false);
                     return text;
@@ -209,6 +223,28 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// What the tool declarations of one request cost, in tokens. A function's name, its description and its
+    /// JSON schema all go on the wire of <b>every</b> later request as long as the mode offers that tool, so
+    /// they are part of the window the conversation has to share — the same category the products that got
+    /// here first list separately in their context breakdown ("System Tools" / "Tools"). One message's worth
+    /// of framing is charged per declaration, since that is what the chat format adds for each one.
+    /// </summary>
+    public static int ToolSchemaTokens(IReadOnlyList<AITool>? tools)
+    {
+        if (tools is not { Count: > 0 }) return 0;
+        var units = 0L;
+        foreach (var tool in tools)
+        {
+            units += TokenWeighing.Units(tool.Name) + TokenWeighing.Units(tool.Description);
+            if (tool is AIFunctionDeclaration declaration && declaration.JsonSchema is { } schema)
+                units += TokenWeighing.Units(schema.ToString());
+            units += (long)ContextTrimmer.CharactersPerToken * ContextTrimmer.MessageOverheadTokens;
+        }
+
+        return ContextTrimmer.ToTokens(units);
     }
 
     /// <summary>One bit crossing from the invoker, which runs on a thread-pool thread, back to the iterator.</summary>

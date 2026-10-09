@@ -26,6 +26,15 @@ public static class ToolResultCap
     /// compiler puts its errors, and the marker matters because a silently shortened result reads as a
     /// complete one.</summary>
     public static string Apply(string text, int budgetTokens)
+        => ApplyWithLimit(text, (long)TokensFor(budgetTokens) * ContextTrimmer.CharactersPerToken);
+
+    /// <summary>The same bound stated as the tokens one block of text may take, rather than as a share of the
+    /// window. Used by attachments, where the caller has already decided how much of the window an upload
+    /// gets and every file inside it still has to stay in the conversation with its header intact.</summary>
+    public static string ApplyTokenBudget(string text, int maxTokens)
+        => ApplyWithLimit(text, (long)Math.Max(1, maxTokens) * ContextTrimmer.CharactersPerToken);
+
+    private static string ApplyWithLimit(string text, long limitUnits)
     {
         if (string.IsNullOrEmpty(text)) return text ?? "";
 
@@ -33,7 +42,6 @@ public static class ToolResultCap
         // a Chinese result truncated at "3072 characters" was really costing about 3072 <i>tokens</i>, three
         // times the cap the caller asked for. For ASCII the unit count is the character count, so the split
         // lands where it always did.
-        var limitUnits = (long)TokensFor(budgetTokens) * ContextTrimmer.CharactersPerToken;
         if (TokenWeighing.Units(text) <= limitUnits) return text;
 
         // A quarter of the cap, and never more than HeadCharacters — both limits are stated in units now, so a

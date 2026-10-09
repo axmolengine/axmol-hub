@@ -41,6 +41,11 @@ public sealed record ModelFetchResult(IReadOnlyList<string> Models, string? Prob
     public IReadOnlyDictionary<string, AiModelReasoning> ReasoningModels { get; init; }
         = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>What the endpoint said each model can do — window, output cap, modalities. Absent for a model
+    /// the endpoint described with an id alone, which is the common case and not an error.</summary>
+    public IReadOnlyDictionary<string, ModelCapabilities> Capabilities { get; init; }
+        = new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Whether the endpoint answered — including with an empty list.</summary>
     public bool Reachable => Problem is null;
 
@@ -84,50 +89,37 @@ public static class ModelList
     /// either the manifest's own or something the user typed, and either way the answer is worth refusing
     /// rather than chasing.</para>
     /// </summary>
-    public static async Task<ModelFetchResult> FetchAsync(
+    public static Task<ModelFetchResult> FetchAsync(
         HttpClient client,
         ModelProvider provider,
         CancellationToken cancellationToken = default)
+        => FetchWithSourceAsync(client, provider, cancellationToken);
+
+    /// <summary>
+    /// Runs one provider's own question — "which models do you serve, and what can each hold?" — through the
+    /// source that knows how to ask it, and turns the batch into the result the callers already handle.
+    ///
+    /// <para>The transport lives with the source, because for Ollama the question is two calls rather than one
+    /// and for Anthropic it is a different set of headers; what stays here is the rule that has not changed:
+    /// an unreachable endpoint is a <b>value</b>, never an exception, because this runs unattended right after
+    /// a browser sign-in closes.</para>
+    /// </summary>
+    private static async Task<ModelFetchResult> FetchWithSourceAsync(
+        HttpClient client,
+        ModelProvider provider,
+        CancellationToken cancellationToken)
     {
-        if (!AiProviderEntry.IsUsableBaseUrl(provider.BaseUrl))
-        {
-            return ModelFetchResult.Unreachable("The provider's base URL is not usable.");
-        }
-
-        var url = provider.BaseUrl.TrimEnd('/') + "/models";
-
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-            // Rule 1. Ollama answers with no credential at all, so the header exists only when there is a
-            // secret to put in it — an Authorization header carrying an empty token reads as a rejected key.
-            if (provider.Credential?.Secret is { Length: > 0 } secret)
-            {
-                request.Headers.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", secret);
-            }
-
-            using var response = await client
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                // A 401 here is the *fetch* failing, not the key check: the two are separate requests with
-                // separate rules, and this one reports "could not read the list" for all of them alike.
-                return ModelFetchResult.Unreachable($"The provider returned HTTP {(int)response.StatusCode}.");
-            }
-
-            var declared = response.Content.Headers.ContentLength;
-            if (declared > MaxBytes)
-            {
-                return ModelFetchResult.Unreachable($"The model list is too large ({declared} bytes).");
-            }
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            var parsed = ParseMetadata(await ReadBoundedAsync(stream, cancellationToken).ConfigureAwait(false));
-            return new ModelFetchResult(parsed.Models, null) { ReasoningModels = parsed.ReasoningModels };
+            var batch = await ModelCapabilitySources.For(provider)
+                .FetchAsync(client, provider, cancellationToken).ConfigureAwait(false);
+            return batch.Reachable
+                ? new ModelFetchResult(batch.Models, null)
+                {
+                    ReasoningModels = batch.Reasoning,
+                    Capabilities = batch.Capabilities,
+                }
+                : ModelFetchResult.Unreachable(batch.Problem!);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -145,7 +137,7 @@ public static class ModelList
     /// <c>Content-Length</c>: a chunked response declares no length at all, and the cap is the only thing
     /// standing between a misbehaving endpoint and an unbounded buffer.
     /// </summary>
-    private static async Task<byte[]> ReadBoundedAsync(Stream stream, CancellationToken cancellationToken)
+    internal static async Task<byte[]> ReadBoundedAsync(Stream stream, CancellationToken cancellationToken)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[81920];
@@ -186,48 +178,17 @@ public static class ModelList
     /// </summary>
     public static IReadOnlyList<string> Parse(byte[] payload) => ParseMetadata(payload).Models;
 
-    /// <summary>Parses model IDs plus the optional effort metadata published by richer model-list endpoints.</summary>
+    /// <summary>Parses model IDs plus the optional effort metadata published by richer model-list endpoints.
+    /// The rules live in <see cref="OpenAiCompatibleModelsSource"/>, which reads the capability fields from the
+    /// same bytes; this stays as the two-field view the existing callers and assertions were written against.</summary>
     public static (IReadOnlyList<string> Models, IReadOnlyDictionary<string, AiModelReasoning> ReasoningModels)
         ParseMetadata(byte[] payload)
     {
-        JsonDocument document;
-        try
-        {
-            document = JsonDocument.Parse(payload);
-        }
-        catch (JsonException)
-        {
-            return ([], new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase));
-        }
-
-        using (document)
-        {
-            var reasoningModels = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return ([], reasoningModels);
-            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-                return ([], reasoningModels);
-
-            var models = new List<string>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in data.EnumerateArray())
-            {
-                if (entry.ValueKind != JsonValueKind.Object) continue;
-                if (!entry.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String) continue;
-
-                var name = (id.GetString() ?? "").Trim();
-                if (name.Length == 0) continue;
-                if (!seen.Add(name)) continue;
-
-                models.Add(name);
-                if (TryParseReasoning(entry, out var reasoning)) reasoningModels[name] = reasoning;
-                if (models.Count >= MaxModels) break;
-            }
-
-            return (models, reasoningModels);
-        }
+        var batch = OpenAiCompatibleModelsSource.Parse(payload);
+        return (batch.Models, batch.Reasoning);
     }
 
-    private static bool TryParseReasoning(JsonElement model, out AiModelReasoning reasoning)
+    internal static bool TryParseReasoning(JsonElement model, out AiModelReasoning reasoning)
     {
         reasoning = new AiModelReasoning();
         if (!model.TryGetProperty("effort", out var effort)
@@ -269,6 +230,12 @@ public sealed class ModelListCacheEntry
     public DateTimeOffset FetchedAt { get; set; }
     public List<string> Models { get; set; } = [];
     public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>What the endpoint said each model can do. An older cache file simply has no such property and
+    /// loads as empty, which is the store's standing rule: a damaged or stale cache costs a refetch, not a
+    /// failed start.</summary>
+    public Dictionary<string, ModelCapabilities> Capabilities { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -320,7 +287,8 @@ public sealed class ModelListStore(string root)
     public void Save(
         string providerId,
         IReadOnlyList<string>? models,
-        IReadOnlyDictionary<string, AiModelReasoning>? reasoningModels = null)
+        IReadOnlyDictionary<string, AiModelReasoning>? reasoningModels = null,
+        IReadOnlyDictionary<string, ModelCapabilities>? capabilities = null)
     {
         var document = new ModelListCacheDocument { Providers = Load() };
         document.Providers.RemoveAll(entry => entry.Id == providerId);
@@ -335,6 +303,12 @@ public sealed class ModelListStore(string root)
                 ReasoningModels = reasoningModels is null
                     ? new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase)
                     : reasoningModels.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value,
+                        StringComparer.OrdinalIgnoreCase),
+                Capabilities = capabilities is null
+                    ? new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase)
+                    : capabilities.ToDictionary(
                         pair => pair.Key,
                         pair => pair.Value,
                         StringComparer.OrdinalIgnoreCase),

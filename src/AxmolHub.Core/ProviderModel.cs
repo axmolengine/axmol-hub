@@ -29,6 +29,15 @@ public sealed class ProviderModel
     /// <summary>Whether this model is offered in chat's model picker.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// A person's own number for this model's context window, outranking anything the endpoint reported. It
+    /// exists for the case every gateway creates: a model id the catalog does not describe, or describes it
+    /// wrongly, on a deployment nobody can ask. On the <b>model</b> rather than the provider, because the
+    /// window is a property of the model — a gateway fronting two hundred of them cannot answer for all of
+    /// them with one number, which is the limitation the provider-level field still falls back on.
+    /// </summary>
+    public int? MaxContextTokens { get; set; }
+
     /// <summary>The picker binds this object directly, so what it shows is this (same rule as ModelProvider).</summary>
     public override string ToString() => Name;
 }
