@@ -5892,6 +5892,11 @@ public partial class ShellCheckWindow : Window
         Check(refusedWindow is not null, "设备码登录把授权窗口建了出来（实际 " + (refusedWindow is null ? "没有" : "有") + "）");
         Check(refusedWindow?.CodeForCheck == DeviceCodeProbeHandler.UserCode,
             "窗口上的代码就是服务端返回的那一串（实际「" + refusedWindow?.CodeForCheck + "」）");
+        // 屏上保持服务端原样是为了和浏览器里那一页对得上，复制出去的是去掉分隔符的那一份 —— 粘贴时多一个
+        // '-' 是没人会注意到的那种失败。
+        Check(refusedWindow?.CopyTextForCheck == "ABCD1234"
+              && refusedWindow?.CodeForCheck == "ABCD-1234",
+            "复制的代码不含中间的分隔符，而屏上仍是原样（实际复制「" + refusedWindow?.CopyTextForCheck + "」）");
         Check(refusedWindow?.LinkForCheck == DeviceCodeProbeHandler.VerificationUri,
             "验证地址取自响应而不是清单里的字符串（实际「" + refusedWindow?.LinkForCheck + "」）");
         // The polling secret is a credential too, and it is not the thing a person types. Reading every text

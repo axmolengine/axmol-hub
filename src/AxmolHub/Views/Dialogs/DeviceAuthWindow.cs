@@ -127,9 +127,20 @@ public sealed class DeviceAuthWindow : Window
     /// and a log is chrome this window has no room for.</summary>
     public void Report(string status) => _status.Text = status;
 
+    /// <summary>
+    /// What goes on the clipboard: the code without its separator.
+    ///
+    /// <para>The hyphen GitHub puts in a user code is a display aid — the person reads <c>ABCD-1234</c> off this
+    /// screen and types it into a field that wants <c>ABCD1234</c>. Copying the on-screen spelling therefore hands
+    /// over one character more than the credential, and a paste is exactly the case where nobody notices. The
+    /// window keeps showing the code as it arrived, so it still matches the page the person is looking at beside
+    /// it; only the copied text is normalized.</para>
+    /// </summary>
+    internal static string ClipboardText(string shown) => shown.Replace("-", "");
+
     private async Task CopyCodeAsync()
     {
-        var text = _code.Text ?? "";
+        var text = ClipboardText(_code.Text ?? "");
         var clipboard = GetTopLevel(this)?.Clipboard;
         if (clipboard is null || text.Length == 0) return;
         try
@@ -163,6 +174,10 @@ public sealed class DeviceAuthWindow : Window
     internal string CodeForCheck => _code.Text ?? "";
     internal string LinkForCheck => _link.Text ?? "";
     internal string StatusForCheck => _status.Text ?? "";
+
+    /// <summary>The text the copy button would put on the clipboard, read without touching a clipboard: a check
+    /// that drove the real one would be asserting on whatever the session's clipboard already held.</summary>
+    internal string CopyTextForCheck => ClipboardText(CodeForCheck);
     internal int LogicalChildCountForCheck => this.GetLogicalDescendants().Count();
     internal bool CopyRevealedForCheck => _copy.Opacity > 0;
 
