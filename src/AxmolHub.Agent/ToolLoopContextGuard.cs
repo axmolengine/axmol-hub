@@ -88,26 +88,42 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
         _ => result.Result.ToString(),
     };
 
+    /// <summary>
+    /// Prices the outgoing list in the same currency as <see cref="ContextTrimmer"/>. Core cannot see
+    /// <see cref="ChatMessage"/>, so the walk over content types has to live here — but the <i>weighting</i> does
+    /// not, and that is the point: this used to be a second char/3 policy, which meant the two estimators could
+    /// and did disagree about the same bytes. One message pays its framing once, however many content parts it
+    /// carries, and a picture is priced in tokens rather than converted to imaginary characters so it survives a
+    /// division.
+    /// </summary>
     private static int EstimateTokens(IReadOnlyList<ChatMessage> messages)
     {
-        var characters = 0;
+        var tokens = 0;
         foreach (var message in messages)
         {
-            characters += ContextTrimmer.CharactersPerToken * ContextTrimmer.MessageOverheadTokens;
+            var units = 0L;
             foreach (var content in message.Contents)
-                characters += content switch
+                units += content switch
                 {
-                    TextContent text => text.Text?.Length ?? 0,
-                    FunctionResultContent result => TextOf(result)?.Length ?? 0,
-                    FunctionCallContent call => call.Arguments is null ? 0 : JsonSerializer.Serialize(call.Arguments).Length,
-                    // A picture contributes no characters to a character count, and this guard counts only
-                    // characters — left unpriced it would bill an 8 MiB screenshot as free and let the loop grow
-                    // the request past the window on exactly the turn where ContextTrimmer had already charged
-                    // for it. The fixed floor is converted to characters so it survives the division below.
-                    DataContent => ContextTrimmer.CharactersPerToken * ContextTrimmer.ImageTokenCost,
-                    _ => 0,
+                    // TextReasoningContent is a sibling of TextContent, not a subclass — Microsoft.Extensions.AI
+                    // states so in its own docs — so it needs its own arm. Before it had one, a 30k-character
+                    // chain of thought was free inside the loop that grows it: the guard would decide it had
+                    // room while the request was already past the window.
+                    TextReasoningContent thought => TokenWeighing.Units(thought.Text),
+                    TextContent text => TokenWeighing.Units(text.Text),
+                    FunctionResultContent result => TokenWeighing.Units(TextOf(result)),
+                    FunctionCallContent call => call.Arguments is null
+                        ? 0L
+                        : TokenWeighing.Units(JsonSerializer.Serialize(call.Arguments)),
+                    // A picture contributes no characters to a character count, and left unpriced it would bill
+                    // an 8 MiB screenshot as free and let the loop grow the request past the window on exactly the
+                    // turn where ContextTrimmer had already charged for it.
+                    DataContent => (long)ContextTrimmer.ImageTokenCost * ContextTrimmer.CharactersPerToken,
+                    _ => 0L,
                 };
+            tokens += ContextTrimmer.ToTokens(units) + ContextTrimmer.MessageOverheadTokens;
         }
-        return characters / ContextTrimmer.CharactersPerToken;
+
+        return tokens;
     }
 }

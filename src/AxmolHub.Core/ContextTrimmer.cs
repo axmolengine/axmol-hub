@@ -4,8 +4,14 @@ namespace AxmolHub.Core;
 /// Keeps a conversation inside a model's context window by dropping the oldest turns (a sliding window).
 ///
 /// Pure function on purpose: context management is the part of a long-session chat most likely to be
-/// re-tuned (sliding window now, summarisation later), so it lives behind a testable boundary rather than
-/// inside the streaming pipeline. When the strategy changes, only this file changes.
+/// re-tuned, so it lives behind a testable boundary rather than inside the streaming pipeline. When the
+/// strategy changes, only this file changes.
+///
+/// <para><b>This is the last tier, not the only one.</b> A conversation that outgrows the window is first
+/// compacted by clearing older tool results (<c>ToolLoopContextGuard</c>, on the wire) and then, if that is
+/// not enough, by asking the model to summarize the earlier turns (the workspace's compaction path). Trimming
+/// is what is left when a summary has already been spent and the newest turns still do not fit — and it runs
+/// once per request, before the loop grows the list.</para>
 ///
 /// Rules, in order:
 /// <list type="number">
@@ -19,8 +25,11 @@ public static class ContextTrimmer
 {
     public const int DefaultBudgetTokens = 8192;
 
-    /// <summary>Rough characters-per-token used when no tokenizer is available. Deliberately conservative
-    /// (real English averages nearer 4) so the estimate over-counts rather than overflows the window.</summary>
+    /// <summary>Estimate-units per token. Real English averages nearer 4 characters per token, so the divisor of
+    /// 3 over-counts Latin on purpose — an estimate that is high spends the window sooner, which is a dropped
+    /// turn, while one that is low sends an oversized request, which is a failed turn. Scripts that tokenize at
+    /// about one token per character get there through <see cref="TokenWeighing"/> rather than by moving this
+    /// number, which would have taken the conservatism away from English to pay for Chinese.</summary>
     public const int CharactersPerToken = 3;
 
     /// <summary>Per-message cost of the role and delimiters every chat format adds.</summary>
@@ -32,22 +41,33 @@ public static class ContextTrimmer
     /// a dropped turn; an estimate that is low sends an oversized request, which is a failed turn.</summary>
     public const int ImageTokenCost = 1024;
 
-    /// <summary>Estimates the token cost of a turn: its text plus a small per-message overhead for the role
-    /// and delimiters every chat format adds. A tool call's arguments are counted too — an anchored edit
-    /// carries the old and new text there, which is regularly the largest part of the turn. Attachments are
-    /// counted by the fixed <see cref="ImageTokenCost"/> because their bytes are on the wire as a data URL,
-    /// and a turn whose only text is "这是什么错" is not the cheap turn the character count suggests. A thinking
-    /// model's reasoning is charged as well, and it is the largest field on the turn by far: a gateway that
-    /// makes the client send it back puts it on the wire of every later request, so a window that ignored it
-    /// would keep "fitting" a conversation it can no longer afford to send.</summary>
+    /// <summary>Estimates the token cost of a turn: every text field it carries, priced in
+    /// <see cref="TokenWeighing"/> units, plus <b>one</b> per-message overhead for the role and delimiters every
+    /// chat format adds. The overhead used to be charged once per field, which put four imaginary framing costs
+    /// on a turn that was text plus an attachment plus arguments plus reasoning; the framing of a chat format
+    /// belongs to the message, not to each string inside it. A tool call's arguments are counted too — an
+    /// anchored edit carries the old and new text there, which is regularly the largest part of the turn.
+    /// Attachments are counted by the fixed <see cref="ImageTokenCost"/> because their bytes are on the wire as
+    /// a data URL, and a turn whose only text is "这是什么错" is not the cheap turn the character count suggests.
+    /// A thinking model's reasoning is charged as well, and it is the largest field on the turn by far: a
+    /// gateway that makes the client send it back puts it on the wire of every later request, so a window that
+    /// ignored it would keep "fitting" a conversation it can no longer afford to send.</summary>
     public static int EstimateTokens(ChatTurn turn)
-        => EstimateTokens(turn.Text)
-           + (string.IsNullOrEmpty(turn.AttachedContext) ? 0 : EstimateTokens(turn.AttachedContext))
-           + (string.IsNullOrEmpty(turn.ToolArguments) ? 0 : EstimateTokens(turn.ToolArguments))
-           + (string.IsNullOrEmpty(turn.Reasoning) ? 0 : EstimateTokens(turn.Reasoning))
-           + turn.Images.Count * ImageTokenCost;
+    {
+        var units = TokenWeighing.Units(turn.Text)
+                    + TokenWeighing.Units(turn.AttachedContext)
+                    + TokenWeighing.Units(turn.ToolArguments)
+                    + TokenWeighing.Units(turn.Reasoning);
+        return ToTokens(units) + MessageOverheadTokens + turn.Images.Count * ImageTokenCost;
+    }
 
-    public static int EstimateTokens(string text) => text.Length / CharactersPerToken + MessageOverheadTokens;
+    /// <summary>The cost of one message holding <paramref name="text"/>.</summary>
+    public static int EstimateTokens(string text) => ToTokens(TokenWeighing.Units(text)) + MessageOverheadTokens;
+
+    /// <summary>Converts estimate-units to tokens. The divisor is the same for every script because the script
+    /// difference is carried by the weights, not by the division: an ASCII string's unit count is its length, so
+    /// this is exactly the count the estimator produced before CJK was weighed.</summary>
+    public static int ToTokens(long units) => (int)(units / CharactersPerToken);
 
     /// <summary>
     /// Returns the turns that fit in <paramref name="budget"/> tokens, newest-first selection with the

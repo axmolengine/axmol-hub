@@ -1390,6 +1390,45 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"The capped result lost its head, its tail, or its marker ({cappedResult.Length} characters).");
     if (ToolResultCap.Apply("short", 8192) != "short") throw new Exception("A result inside the cap was rewritten.");
 
+    // ── 中文按真实体积计价，英文的数字一个都不动 ──
+    // The ASCII half of this is the compatibility anchor for every other number in this file: the trimmer's
+    // budget figures, the cap arithmetic above, the shell fixtures that count characters. If it moves, the
+    // estimate is not merely different — every assertion standing on it is silently re-calibrated.
+    const string asciiSample = "The quick brown fox jumps";
+    if (ContextTrimmer.EstimateTokens(asciiSample)
+        != asciiSample.Length / ContextTrimmer.CharactersPerToken + ContextTrimmer.MessageOverheadTokens)
+        throw new Exception($"ASCII pricing moved to {ContextTrimmer.EstimateTokens(asciiSample)}; budgets are calibrated on it.");
+    var hanSample = ChatTurn.User(new string('中', 300));
+    var latinSample = ChatTurn.User(new string('n', 300));
+    if (ContextTrimmer.EstimateTokens(hanSample) <= ContextTrimmer.EstimateTokens(latinSample) * 3)
+        throw new Exception($"300 Chinese characters still priced like 300 Latin ones ({ContextTrimmer.EstimateTokens(hanSample)} vs {ContextTrimmer.EstimateTokens(latinSample)}).");
+    if (TokenWeighing.Units("\U0001F600\U0001F600") != 4)
+        throw new Exception($"A surrogate pair was not counted once ({TokenWeighing.Units("\U0001F600\U0001F600")} units for two emoji).");
+    if (TokenWeighing.Units("\U00020000") != TokenWeighing.Units("中"))
+        throw new Exception("A CJK extension-B ideograph was priced as an emoji rather than as an ideograph.");
+    Console.WriteLine("PASS: the estimator weighs Chinese at its real size and leaves Latin exactly where it was.");
+
+    // One message, four priced fields: the role framing belongs to the message, not to each string in it.
+    var framedTurn = ChatTurn.FunctionCall("c9", "file_write", """{"old_string":"aaaa","new_string":"bbbb"}""",
+        text: "写入", reasoning: "想一想");
+    var framedUnits = TokenWeighing.Units(framedTurn.Text) + TokenWeighing.Units(framedTurn.ToolArguments)
+                      + TokenWeighing.Units(framedTurn.Reasoning);
+    if (ContextTrimmer.EstimateTokens(framedTurn)
+        != ContextTrimmer.ToTokens(framedUnits) + ContextTrimmer.MessageOverheadTokens)
+        throw new Exception($"A multi-field turn paid the message framing more than once ({ContextTrimmer.EstimateTokens(framedTurn)}).");
+    Console.WriteLine("PASS: one message pays its role framing once, however many fields it carries.");
+
+    // The cap counts the same currency, so a Chinese result can no longer cost three times what it was capped at.
+    var wideResult = new string('漢', 4000);
+    var wideCapped = ToolResultCap.Apply(wideResult, 8192);
+    if (TokenWeighing.Units(wideCapped) > ToolResultCap.TokensFor(8192) * ContextTrimmer.CharactersPerToken + 64
+        || !wideCapped.StartsWith(wideResult[..64], StringComparison.Ordinal)
+        || !wideCapped.EndsWith(wideResult[^64..], StringComparison.Ordinal)
+        || !wideCapped.Contains("characters truncated")
+        || wideCapped.Length >= 1200)
+        throw new Exception($"A Chinese result was capped in characters, not tokens ({wideCapped.Length} characters, {TokenWeighing.Units(wideCapped)} units).");
+    Console.WriteLine("PASS: one tool result is capped in tokens for Chinese too, not in characters.");
+
     // ── The window cannot open on an orphaned tool result ──
     var trimmedOrphan = ContextTrimmer.Trim(
         [ChatTurn.FunctionResult("c0", "上一轮的答案"), ChatTurn.User("新问题"), ChatTurn.Assistant("回答")], 4096);
@@ -1627,6 +1666,41 @@ if (args.Contains("--check-ai-context"))
     if (resultTexts.Take(2).Any(text => !text.Contains("elided"))
         || resultTexts.Skip(2).Any(text => text.Contains("elided") || text.Length != 4000))
         throw new Exception($"Elision did not spare exactly the newest {ToolLoopContextGuard.KeepRecentResults} results.");
+
+    // A chain of thought is priced inside the loop too. TextReasoningContent is a *sibling* of TextContent in
+    // Microsoft.Extensions.AI — its own docs say neither type derives from the other — so no arm of the guard's
+    // estimator would notice it by accident. The same fixture therefore runs twice, with and without the
+    // thinking block: without it the list fits the budget and nothing is elided, with it two results have to
+    // go. That difference is the assertion, and it is what pins the field down as priced rather than free.
+    static List<ChatMessage> ThinkingLoopFixture(bool withThought)
+    {
+        var fixture = new List<ChatMessage>
+        {
+            new(ChatRole.System, "system rules"),
+            new(ChatRole.User, "问题"),
+        };
+        for (var step = 0; step < 6; step++)
+        {
+            var contents = new List<AIContent>();
+            if (step == 0 && withThought) contents.Add(new TextReasoningContent(new string('x', 6000)));
+            contents.Add(new FunctionCallContent($"th-{step}", "read_file",
+                new Dictionary<string, object?> { ["path"] = $"{step}.cpp" }));
+            fixture.Add(new ChatMessage(ChatRole.Assistant, contents));
+            fixture.Add(new ChatMessage(ChatRole.Tool, [new FunctionResultContent($"th-{step}", new string('y', 600))]));
+        }
+
+        return fixture;
+    }
+
+    static int ElidedResults(List<ChatMessage> messages, int budget)
+        => ToolLoopContextGuard.Elide(messages, budget)
+            .SelectMany(message => message.Contents).OfType<FunctionResultContent>()
+            .Select(result => result.Result?.ToString() ?? "").Count(text => text.Contains("elided"));
+
+    if (ElidedResults(ThinkingLoopFixture(true), 1500) != 2
+        || ElidedResults(ThinkingLoopFixture(false), 1500) != 0)
+        throw new Exception("The loop's estimate did not price the chain of thought (expected 2 elided with it, 0 without).");
+    Console.WriteLine("PASS: a thinking model's reasoning is priced inside the tool loop, not only on the turn.");
 
     // The round budget is a floor, not a magic number: one debug cycle is search, read, edit, build, read what the
     // compiler said — five rounds — and a run that cannot fit two of those stops the model before it has verified
