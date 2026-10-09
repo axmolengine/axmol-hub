@@ -2,11 +2,13 @@
 
 <img src="src/AxmolHub/Assets/hub-icon.png" alt="Axmol Hub icon" width="96" />
 
-**A standalone desktop app that manages Axmol engines, projects, and build toolchains.**
+**The Axmol workbench: engines, projects, and build toolchains managed for you — with a general-purpose coding agent built in, one that reads your code, edits it, and runs the build until it passes.**
+
+The assistant is a general programming and debugging tool first. Axmol awareness — the engine index, the project digest, a toolchain pinned to the engine's own `1k/build.profiles`, and a shell the agent can drive and verify itself — is what makes it correct about this stack, not a limit on what it will answer.
 
 [![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359)
 
-Current version **v0.2.x** — early stage. The GUI is C# / .NET 8 / **Avalonia** (`net8.0`, targeting three platforms; validated on Windows, macOS / Linux not yet verified). The currently validated engine baseline is **Axmol 2.11.5**.
+Early stage — see [Releases](https://github.com/axmolengine/axmol-hub/releases) for what is shipping. The GUI is C# / .NET 8 / **Avalonia** (`net8.0`, targeting three platforms; validated on Windows, macOS / Linux not yet verified), and it is validated against the engine's current release line rather than one pinned build.
 
 ![Axmol Hub main window](docs/images/hub.png)
 
@@ -45,7 +47,7 @@ Installer packages are not yet code-signed, and first-install verification on a 
 Use a published Windows installer and pick a writable install directory. The installer bundles the .NET runtime — **no .NET SDK needed**; the engine and dev tools are downloaded on demand, not bundled with the Hub.
 
 1. In Settings, choose the data directory, default project directory, and language. The data directory needs enough space for engines, tools, and build caches.
-2. On the **Engines** page, install Axmol 2.11.5. On the **Toolchains** page, select the engine version and run `setup.ps1` to prepare the toolchain.
+2. On the **Engines** page, install the engine version you want to target. On the **Toolchains** page, select that engine version and run `setup.ps1` to prepare the toolchain.
 3. On the **Projects** page, create a project ("C++" or "C++ + Lua"), then click **Build** and pick a platform and configuration.
 4. Open the output directory after a successful build; click **Run** to launch. Android needs a connected device with an explicit serial.
 
