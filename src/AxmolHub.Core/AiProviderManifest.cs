@@ -36,14 +36,48 @@ public static class ProviderAuthMethods
 }
 
 /// <summary>
+/// The browser sign-in shapes a manifest entry can declare, named in <c>oauth.flow</c>.
+///
+/// <para>Two rather than a grant registry, because each one is a different *interaction for the person signing
+/// in*: one opens a tab that redirects back to this machine, the other hands out a short code to type into any
+/// device. An interaction nobody has to render has nothing to assert, so the third shape arrives with the
+/// provider that needs it instead of being reserved now.</para>
+/// </summary>
+public static class ProviderOAuthFlows
+{
+    /// <summary>Authorization Code + PKCE: endpoints read from an RFC 8414 discovery document, callback on loopback.</summary>
+    public const string Discovery = "discovery";
+
+    /// <summary>RFC 8628 device code: the provider issues a short code and the client polls until it is approved.</summary>
+    public const string DeviceCode = "deviceCode";
+}
+
+/// <summary>
+/// The provider families whose per-request header semantics <see cref="AiProviderEntry.RequestSemantics"/> can
+/// name. One entry, because one family is implemented; a second arrives with the provider that needs it rather
+/// than as a guess at what a generic dialect would look like.
+/// </summary>
+public static class ProviderRequestSemantics
+{
+    /// <summary>GitHub Copilot: an initiator header that distinguishes a human prompt from the model's own tool
+    /// rounds (it is what the quota is metered against), and a vision marker on requests that carry a picture.</summary>
+    public const string Copilot = "copilot";
+}
+
+/// <summary>
 /// The OAuth configuration for a provider, declared in the manifest next to the endpoint it belongs to.
 ///
-/// Only the <b>discovery</b> URL is declared, never the authorization/token endpoints themselves: OrcaRouter's
-/// own documentation is explicit that clients must read them from <c>/.well-known/openid-configuration</c>
-/// rather than hard-coding, because the document is what reflects the correct host for the deployment being
-/// talked to (a self-hosted relay would otherwise silently send users to the wrong site). The document is
-/// fetched at sign-in time, not at load time, so a manifest entry costs nothing until someone actually
-/// signs in.
+/// <para><b>A discovery flow declares only its discovery URL.</b> OrcaRouter's own documentation is explicit that
+/// clients must read the authorization and token endpoints from <c>/.well-known/openid-configuration</c> rather
+/// than hard-coding them, because the document is what reflects the correct host for the deployment being talked
+/// to (a self-hosted relay would otherwise silently send users to the wrong site). The document is fetched at
+/// sign-in time, not at load time, so a manifest entry costs nothing until someone actually signs in.</para>
+///
+/// <para><b>A device flow declares its endpoints instead</b>, because there is no discovery document to ask:
+/// GitHub publishes the device-code and token URLs as fixed addresses alongside the public client id. The two
+/// shapes are not interchangeable, which is what <see cref="Flow"/> is for — and see
+/// <see cref="IsUsableFlow"/> for the one rule that keeps a half-declared entry from being offered as a
+/// button.</para>
 /// </summary>
 public sealed class AiProviderOAuth
 {
@@ -54,7 +88,8 @@ public sealed class AiProviderOAuth
     /// The scope to request. OrcaRouter grants <c>api</c> (a normal inference key) or <c>connector</c> (a key
     /// restricted to their Connect carrier, which cannot call the inference API and needs a workspace
     /// Admin/Owner to approve). We ask for <c>api</c> and <b>refuse a key whose granted scope is wider</b> —
-    /// the docs call for that comparison in as many words.
+    /// the docs call for that comparison in as many words. A device-flow entry names its own scope here
+    /// (GitHub signs in with <c>read:user</c> and nothing else).
     /// </summary>
     public string Scope { get; set; } = "api";
 
@@ -75,6 +110,64 @@ public sealed class AiProviderOAuth
     /// <b>sign-ups</b> made during the flow, while the app id attributes <b>usage</b> of the minted key.
     /// </summary>
     public string? ReferralCode { get; set; }
+
+    /// <summary>Which sign-in shape this entry describes. See <see cref="ProviderOAuthFlows"/>.</summary>
+    public string Flow { get; set; } = ProviderOAuthFlows.Discovery;
+
+    /// <summary>
+    /// The client id a <see cref="ProviderOAuthFlows.DeviceCode"/> sign-in asks the provider under.
+    ///
+    /// <para><b>Not a secret, and deliberately no secret beside it.</b> RFC 8252 §2.1 treats a native client's
+    /// id as public — it is a statement about the endpoint, not a credential — and a desktop app that shipped a
+    /// client secret would have it pulled out of the binary on demand. So the id belongs in this JSON file next
+    /// to the URLs it pairs with, and the secret field is not merely unused but must stay absent: an entry that
+    /// grows one has to be read as a mistake rather than a capability.</para>
+    /// </summary>
+    public string? ClientId { get; set; }
+
+    /// <summary>Where to POST to ask for a device code (<c>verification_uri</c> comes back in the answer).</summary>
+    public string? DeviceAuthorizationUrl { get; set; }
+
+    /// <summary>Where to poll for the token once the code has been approved on some other device.</summary>
+    public string? TokenUrl { get; set; }
+
+    /// <summary>
+    /// The floor for the polling interval, in seconds. The provider's own <c>interval</c> wins whenever it is
+    /// larger — this only stops a manifest (or a mocked response) from asking for a sub-second poll, which is
+    /// how a sign-in that should cost a dozen requests starts costing hundreds.
+    /// </summary>
+    public int MinIntervalSeconds { get; set; } = 5;
+
+    /// <summary>The declared flow, normalized: anything unrecognized is discovery, because that is the flow every
+    /// entry written before device sign-in existed is describing.</summary>
+    [JsonIgnore]
+    public string EffectiveFlow
+        => Flow == ProviderOAuthFlows.DeviceCode ? ProviderOAuthFlows.DeviceCode : ProviderOAuthFlows.Discovery;
+
+    /// <summary>
+    /// Whether this entry declares enough to finish a sign-in, rather than declaring an <c>oauth</c> method and
+    /// failing halfway through.
+    ///
+    /// <para>Both branches require an absolute https URL, with loopback excepted: these are the addresses a
+    /// credential is handed over at, so a hand-edited manifest that allowed plain http would let whoever owns
+    /// the path read back the device code and take the account's token with it. Loopback http stays legal
+    /// because that is how a self-hosted relay presents itself, and it is the one case where the user typed the
+    /// host themselves.</para>
+    /// </summary>
+    [JsonIgnore]
+    public bool IsUsableFlow => EffectiveFlow switch
+    {
+        ProviderOAuthFlows.DeviceCode => ClientId is { Length: > 0 }
+                                         && IsSafeEndpoint(DeviceAuthorizationUrl)
+                                         && IsSafeEndpoint(TokenUrl),
+        _ => IsSafeEndpoint(DiscoveryUrl),
+    };
+
+    /// <summary>Whether a declared OAuth endpoint is an address it is safe to send a credential to.</summary>
+    internal static bool IsSafeEndpoint(string? url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttps
+               || (uri.Scheme == Uri.UriSchemeHttp && uri.Host is "localhost" or "127.0.0.1" or "[::1]"));
 }
 
 /// <summary>
@@ -170,6 +263,32 @@ public sealed class AiProviderEntry
     /// <summary>Which source knows how to read this provider's model catalog
     /// (<see cref="ModelCapabilitySources.All"/>). Absent means the OpenAI-compatible default.</summary>
     public string? CapabilitySource { get; set; }
+    /// <summary>
+    /// Headers this provider's endpoint needs on every request, beyond the credential itself.
+    ///
+    /// <para>GitHub Copilot is the reason the field exists: it answers 400 without an initiator header and
+    /// refuses the api-version-less shape of the call otherwise, and the OpenAI client has no header bag — its
+    /// options carry an endpoint, a credential and policies, nothing else. Declaring them in the manifest rather
+    /// than hard-coding them keeps the promise the file exists for: a preset can change what it sends without a
+    /// release.</para>
+    ///
+    /// <para>These are the <b>static</b> ones. Per-request values — whether this call was started by the person
+    /// or by the model's own tool loop, whether the body carries a picture — are computed in the pipeline and
+    /// must not be parked here. A manifest field that could claim "always user-initiated" would quietly mis-bill
+    /// every tool round against the user's quota.</para>
+    /// </summary>
+    public Dictionary<string, string> ExtraHeaders { get; set; } = [];
+
+    /// <summary>
+    /// Which provider family's <b>per-request</b> header semantics this endpoint speaks: values that cannot be
+    /// declared as constants because they depend on the body about to go out — whether this call was started by
+    /// the person or by the model's own tool loop, whether the request carries a picture.
+    ///
+    /// <para>Separate from <see cref="ExtraHeaders"/> rather than folded into it for the reason stated there: a
+    /// manifest value is a claim that is true for every request, and "user-initiated" is not one. Empty means
+    /// "no family semantics", which is every provider shipping today except the ones that opt in.</para>
+    /// </summary>
+    public string? RequestSemantics { get; set; }
     /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
     public List<string> DefaultEnabledModels { get; set; } = [];
     /// <summary>Explicit capabilities for models whose reasoning support is known.</summary>
@@ -223,11 +342,16 @@ public sealed class AiProviderEntry
         }
     }
 
-    /// <summary>Whether this provider offers browser sign-in (and therefore has usable OAuth configuration).</summary>
+    /// <summary>
+    /// Whether this provider offers browser sign-in, and whether it carries enough configuration to complete
+    /// one. The rule lives on <see cref="AiProviderOAuth.IsUsableFlow"/> rather than here because
+    /// <see cref="ModelProvider.SupportsOAuth"/> has to answer the same question from the runtime object: two
+    /// predicates that drift are how a picker renders a button that dies halfway through.
+    /// </summary>
     [JsonIgnore]
     public bool SupportsOAuth
         => EffectiveAuthMethods.Contains(ProviderAuthMethods.OAuth)
-           && OAuth is { DiscoveryUrl.Length: > 0 };
+           && OAuth is { IsUsableFlow: true };
 
     /// <summary>
     /// The blurb for a given UI language. Presets are shipped copy, not user data, so this is the one place in
@@ -353,6 +477,10 @@ public static class AiProviderManifest
                 // (see ModelCatalog), and a keyless provider gets it with no secret at all.
                 MaxContextTokens = entry.MaxContextTokens,
                 CapabilitySource = entry.CapabilitySource,
+                // Copied into its own dictionary for the same reason as OAuth below: a provider that outlives this
+                // call must not hold a reference into a document that gets re-read.
+                ExtraHeaders = new Dictionary<string, string>(entry.ExtraHeaders, StringComparer.OrdinalIgnoreCase),
+                RequestSemantics = entry.RequestSemantics,
                 Affiliate = entry.Affiliate,
                 ReferralUrl = entry.ReferralUrl,
                 AuthMethods = [.. entry.EffectiveAuthMethods],
@@ -366,6 +494,11 @@ public static class AiProviderManifest
                         AppName = oauth.AppName,
                         AppId = oauth.AppId,
                         ReferralCode = oauth.ReferralCode,
+                        Flow = oauth.Flow,
+                        ClientId = oauth.ClientId,
+                        DeviceAuthorizationUrl = oauth.DeviceAuthorizationUrl,
+                        TokenUrl = oauth.TokenUrl,
+                        MinIntervalSeconds = oauth.MinIntervalSeconds,
                     }
                     : null,
                 // Copied for the same reason as OAuth above, and filtered through IsKnown so a hand-edited

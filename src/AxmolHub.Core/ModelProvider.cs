@@ -96,6 +96,26 @@ public sealed class ModelProvider
     public string? CapabilitySource { get; set; }
 
     /// <summary>
+    /// Headers this provider needs on every outbound request besides the credential, declared by the manifest —
+    /// see <see cref="AiProviderEntry.ExtraHeaders"/> for why they are declared at all. Empty for every preset
+    /// that predates the field and for a custom endpoint, which has no manifest entry to ask.
+    ///
+    /// <para><b>Refreshed each load, never persisted</b>, like <see cref="CapabilitySource"/>: these are a fact
+    /// about the service, not a choice the user made, and a copy saved into <c>providers.json</c> would outlive
+    /// the manifest correction that fixes it.</para>
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, string> ExtraHeaders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Which provider family's per-request header semantics this provider speaks — see
+    /// <see cref="AiProviderEntry.RequestSemantics"/> for what that means and why it is not a header. Another
+    /// manifest fact, so the same rule as <see cref="ExtraHeaders"/>: refreshed every load, never persisted.
+    /// </summary>
+    [JsonIgnore]
+    public string? RequestSemantics { get; set; }
+
+    /// <summary>
     /// The two models Hub may switch between when a session is routed automatically, both of them named by the
     /// user. unset (or only half set) means auto routing changes the reasoning tier and never the model: which
     /// of a provider's tiers is "the cheap one" is a decision about someone's bill and their taste, and Hub
@@ -123,13 +143,15 @@ public sealed class ModelProvider
 
     /// <summary>
     /// Whether this provider offers browser sign-in, and whether it carries enough OAuth configuration to
-    /// complete one. A declared <c>oauth</c> method with no discovery URL is treated as unsupported rather
-    /// than offered and then failing halfway through.
+    /// complete one. The predicate is <see cref="AiProviderOAuth.IsUsableFlow"/>, shared with
+    /// <see cref="AiProviderEntry.SupportsOAuth"/>: this class used to require a discovery URL of its own, which
+    /// is a rule that happens to be wrong for a device-code provider — GitHub publishes no discovery document for
+    /// the flow, so the preset would have been declared, authenticated nothing, and not even rendered a button.
     /// </summary>
     [JsonIgnore]
     public bool SupportsOAuth
         => EffectiveAuthMethods.Contains(ProviderAuthMethods.OAuth)
-           && OAuth is { DiscoveryUrl.Length: > 0 };
+           && OAuth is { IsUsableFlow: true };
 
     /// <summary>Whether this provider has a pasted-key entrance (false for a keyless local endpoint such as Ollama).</summary>
     [JsonIgnore]
