@@ -183,6 +183,8 @@ public partial class ShellCheckWindow : Window
         Check(shell.AssistantVisible, "导航到助手页后它真的显示出来");
         Check(shell.CurrentPage is ChatPanel, "助手页由 ChatPanel 承载（整屏页面而不是右侧抽屉）");
         Check(shell.NavAssistant.IsChecked == true, "助手页同时点亮了左侧导航项");
+        Check(sidebar.VerticalScrollBarVisibleForCheck && !sidebar.ListIsScrollableForCheck,
+            "侧栏会话列表即使没有溢出也始终显示滚动条（空列表仍可见）");
 
         // Give the page one usable local provider/model in the isolated test data root. The chat model
         // selector must not offer a key-required provider before it is authenticated.
@@ -522,6 +524,10 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         Check(sidebar.ConversationCount == 18 && sidebar.ListIsScrollableForCheck,
             "会话超出侧栏高度时列表可滚动（而不是覆盖底部品牌行，实际 " + sidebar.ConversationCount + " 项）");
+        var groupNewRightInset = sidebar.GroupNewRightInsetForCheck(SessionGroupKey.Recent);
+        Check(groupNewRightInset >= 15,
+            "列表滚动时「对话」分组的 ＋ 与滚动槽保持安全间距（实际右侧留白 "
+            + Fmt(groupNewRightInset) + "）");
 
         // Cleanup: the fillers have messages so they go the ordinary way; the empty draft left over from ＋ is
         // what the prune path clears.

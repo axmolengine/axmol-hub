@@ -149,8 +149,9 @@
              PlaceholderForeground="{DynamicResource Hub.TextTertiary}" />
 
     <ScrollViewer x:Name="ConversationScrollViewer"
-                  VerticalScrollBarVisibility="Auto">
-      <StackPanel x:Name="ConversationList" Spacing="3" />
+                  VerticalScrollBarVisibility="Visible">
+      <!-- Keep group actions out of the scrollbar's hit area at every list height. -->
+      <StackPanel x:Name="ConversationList" Spacing="3" Margin="0,0,16,0" />
     </ScrollViewer>
   </DockPanel>
 </UserControl>

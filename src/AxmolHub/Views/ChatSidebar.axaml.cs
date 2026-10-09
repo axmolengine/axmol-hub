@@ -815,6 +815,15 @@ public partial class ChatSidebar : UserControl
     internal bool GroupNewIsRightmostForCheck(string key) => GroupNewButtons(key).Any(button =>
         button.Parent is Grid grid && Grid.GetColumn(button) == grid.ColumnDefinitions.Count - 1);
 
+    internal double GroupNewRightInsetForCheck(string key)
+    {
+        var button = GroupNewButtons(key).FirstOrDefault();
+        if (button is null) return -1;
+
+        var right = button.TranslatePoint(new Point(button.Bounds.Width, 0), ConversationScrollViewer);
+        return right is { } point ? ConversationScrollViewer.Bounds.Width - point.X : -1;
+    }
+
     /// <summary>The ＋'s own words, or empty when there is no button to read them from: a group that should offer
     /// one and does not has to fail an assertion rather than throw one that takes the suite with it.</summary>
     internal string GroupNewTipForCheck(string key) => GroupNewButtons(key)
@@ -1056,4 +1065,8 @@ public partial class ChatSidebar : UserControl
     internal bool ListIsScrollableForCheck
         => ConversationScrollViewer.Bounds.Height > 1
            && ConversationScrollViewer.Extent.Height > ConversationScrollViewer.Viewport.Height + 1;
+
+    internal bool VerticalScrollBarVisibleForCheck
+        => ConversationScrollViewer.GetVisualDescendants().OfType<ScrollBar>()
+            .Any(scrollBar => scrollBar.Orientation == Orientation.Vertical && scrollBar.IsVisible);
 }
