@@ -2184,6 +2184,19 @@ public sealed class ChatWorkspace : IDisposable
         return conversation;
     }
 
+    /// <summary>
+    /// Validates a folder chosen for a new workspace before opening or changing any conversation. Unlike
+    /// <see cref="SelectWorkspaceRoot"/>, a rejected choice must not retarget the conversation that was already
+    /// on screen.
+    /// </summary>
+    public (Conversation? Conversation, WorkspacePathVerdict? Verdict) StartOrOpenEmptyConversationInWorkspace(
+        string workspaceRoot)
+    {
+        var (verdict, full) = ValidateWorkspacePath(workspaceRoot);
+        if (verdict is not null) return (null, verdict);
+        return (StartOrOpenEmptyConversation(full), null);
+    }
+
     public Conversation? OpenConversation(string id)
     {
         // The registry hands back the one instance, so opening a session that is streaming does not swap in a

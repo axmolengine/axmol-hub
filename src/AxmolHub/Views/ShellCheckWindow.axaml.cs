@@ -1144,6 +1144,26 @@ public partial class ShellCheckWindow : Window
         }
         chat.RestoreArchivedSessions();
         chat.PruneEmptyConversations();
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        Check(sidebar.GroupHeaderTagsForCheck().SequenceEqual([SessionGroupKey.Workspaces])
+              && sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces)
+              && sidebar.GroupNewTipForCheck(SessionGroupKey.Workspaces) == HubStrings.Get("GroupNewWorkspaceTip")
+              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.ChineseLanguage) == "新建工作区"
+              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.EnglishLanguage) == "New workspace",
+            "没有工作区会话时根节点仍显示，并提供新建入口（实际分组："
+            + string.Join(" / ", sidebar.GroupHeaderTagsForCheck()) + "）");
+        var priorWorkspace = chat.StartConversation();
+        chat.SetWorkspaceRoot(priorWorkspace.Id, workspaceBase);
+        Check(sidebar.NewWorkspaceForCheck(scratchRoot) == WorkspacePathVerdict.ProtectedRoot
+              && chat.ActiveConversation?.Id == priorWorkspace.Id
+              && chat.WorkspaceRootFor(priorWorkspace.Id) == System.IO.Path.GetFullPath(workspaceBase),
+            "拒绝 Hub 数据目录不会打开会话或改动当前工作目录");
+        chat.DeleteConversation(priorWorkspace.Id);
+        chat.PruneEmptyConversations();
+        sidebar.Reload();
 
         var workspaceA = Full("ws-a");
         var workspaceB = Full("ws-b");
@@ -1153,6 +1173,16 @@ public partial class ShellCheckWindow : Window
         var keyA = SessionGroupKey.Workspace(workspaceA)!;
         var keyB = SessionGroupKey.Workspace(workspaceB)!;
         var keyMoved = SessionGroupKey.Workspace(movedAway)!;
+        var createdWorkspaceVerdict = sidebar.NewWorkspaceForCheck(workspaceA);
+        var createdWorkspace = chat.ActiveConversation;
+        Check(createdWorkspaceVerdict is null && createdWorkspace is not null
+              && chat.WorkspaceRootFor(createdWorkspace.Id) == System.IO.Path.GetFullPath(workspaceA),
+            "从根节点选择现有目录后打开的空会话绑定到该工作区（实际目录 "
+            + (createdWorkspace is null ? "（没有建出来）" : chat.WorkspaceRootFor(createdWorkspace.Id) ?? "（无目录）")
+            + "）");
+        if (createdWorkspace is not null) chat.DeleteConversation(createdWorkspace.Id);
+        chat.PruneEmptyConversations();
+        sidebar.Reload();
 
         Conversation Seeded(string? root, string title)
         {
@@ -1289,7 +1319,7 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived)
               && sidebar.GroupCollapsedForCheck(SessionGroupKey.Archived)
               && !sidebar.GroupHeaderTagsForCheck().Contains(keyB),
-            "归档分组排在末尾并默认折起；该目录下的会话都被归档后，工作区分组自己就消失了");
+            "归档分组排在末尾并默认折起；该目录下的会话都被归档后，其目录分组消失，Workspace 根节点保留");
         Check(sidebar.ToggleGroupForCheck(SessionGroupKey.Archived)
               && sidebar.GroupOfForCheck(bOne.Id) == SessionGroupKey.Archived,
             "展开归档分组能看到被归档的那条对话");
@@ -1359,9 +1389,11 @@ public partial class ShellCheckWindow : Window
         // 截图里它本来就是隐形的，像素既证明不了显形，也证明不了没显形。
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(sidebar.GroupNewOpacityForCheck(keyA) == 0
+        Check(sidebar.GroupNewOpacityForCheck(SessionGroupKey.Workspaces) == 0
+              && sidebar.GroupNewOpacityForCheck(keyA) == 0
               && sidebar.GroupNewOpacityForCheck(SessionGroupKey.Recent) == 0,
             "分组上的 ＋ 平时不占视觉：样式没落上去时会一直亮着（实测静止不透明度 "
+            + sidebar.GroupNewOpacityForCheck(SessionGroupKey.Workspaces) + " / "
             + sidebar.GroupNewOpacityForCheck(keyA) + "）");
         Check(groupAFirst is { Length: > 0 } && sidebar.NewSessionFromGroupForCheck(keyA) == groupAFirst
               && sidebar.ConversationCount == liveAfterFirst,
@@ -1396,8 +1428,10 @@ public partial class ShellCheckWindow : Window
             "目录已不存在的分组上的 ＋ 照样新建并绑定那个旧路径（实际目录 "
             + RootOf(fromGone) + "）");
 
-        Check(!sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces),
-            "「工作区」是段标题而不是一条目录，它没有 ＋");
+        Check(sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces)
+              && sidebar.GroupNewTipForCheck(SessionGroupKey.Workspaces) == HubStrings.Get("GroupNewWorkspaceTip")
+              && sidebar.GroupNewIsRightmostForCheck(SessionGroupKey.Workspaces),
+            "「工作区」根节点的 ＋ 位于最右侧，提示新建工作区");
         chat.SetArchived(plainOne.Id, true);
         sidebar.Reload();
         shell.UpdateLayout();
@@ -1423,9 +1457,10 @@ public partial class ShellCheckWindow : Window
         chat.RestoreArchivedSessions();
         chat.PruneEmptyConversations();
         sidebar.Reload();
-        Check(sidebar.ConversationCount == 0 && sidebar.GroupHeaderTagsForCheck().Length == 0
+        Check(sidebar.ConversationCount == 0
+              && sidebar.GroupHeaderTagsForCheck().SequenceEqual([SessionGroupKey.Workspaces])
               && sidebar.SessionRowCountForCheck == 0,
-            "自检清理：分组夹具（含归档的）全部删除，工作区分组和空的「工作区」根节点一并消失");
+            "自检清理：所有会话删除后保留空的 Workspace 根节点");
     }
 
     /// <summary>

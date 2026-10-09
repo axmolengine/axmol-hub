@@ -28,7 +28,7 @@ namespace AxmolHub;
 ///
 /// Owns: the search field (toggled by the navigation magnifier), the grouped conversation rows
 /// and their rename/pin/archive/delete flyout, and the workspace groups those rows are sorted into — each group
-/// with its own fold, its own actions menu, and its own ＋ for starting a session in that place.
+/// with its own fold and actions menu; workspace headings also offer a ＋ to choose a folder for a new session.
 ///
 /// <para>The list is grouped by the directory a session works in rather than by when it last moved: several
 /// chats about one project are one job, and a sidebar that splits them across "today" and "older" shows a
@@ -167,10 +167,10 @@ public partial class ChatSidebar : UserControl
         // is already sorted keeps that order without sorting twice. A pinned session pulls its own workspace to
         // the front of the heading, which is all pinning can mean now there is no separate list for it.
         var workspaces = WorkspaceBuckets(live);
+        ConversationList.Children.Add(BuildGroupHeader(new SessionBucket(
+            SessionGroupKey.Workspaces, HubStrings.Get("GroupWorkspaces"), null, [])));
         if (workspaces.Count > 0)
         {
-            ConversationList.Children.Add(BuildGroupHeader(new SessionBucket(
-                SessionGroupKey.Workspaces, HubStrings.Get("GroupWorkspaces"), null, [])));
             // Folding the heading takes the groups with it: they are what it is a heading over, and a folded
             // section that still lists its contents is not folded.
             if (!IsGroupCollapsed(SessionGroupKey.Workspaces))
@@ -333,12 +333,15 @@ public partial class ChatSidebar : UserControl
             row.Children.Add(menuButton);
         }
 
-        // ＋ belongs to a group that can hold a new session: one directory, or the plain-chat group of sessions with
-        // no directory. The Workspace heading is not a place to work and 已归档 is where sessions go to be out of
-        // the way, so a ＋ on either would be using the bucket backwards.
-        string? newTip = bucket.Key == SessionGroupKey.Recent
-            ? "GroupNewChatTip"
-            : bucket.WorkspaceRoot is { Length: > 0 } ? "GroupNewSessionTip" : null;
+        // A named workspace group starts a session there. The Workspace heading has no directory of its own, so
+        // its ＋ asks for one; the plain-chat group stays directory-free and archived stays action-free.
+        string? newTip = bucket.Key switch
+        {
+            SessionGroupKey.Workspaces => "GroupNewWorkspaceTip",
+            SessionGroupKey.Recent => "GroupNewChatTip",
+            _ when bucket.WorkspaceRoot is { Length: > 0 } => "GroupNewSessionTip",
+            _ => null,
+        };
         if (newTip is not null)
         {
             var newButton = new Button
@@ -359,13 +362,51 @@ public partial class ChatSidebar : UserControl
             // button in front of a reader that was never meant to describe it — and leave the ＋ itself unfound.
             newButton.Classes.Add("group-new");
             ToolTip.SetTip(newButton, HubStrings.Get(newTip));
-            newButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation(bucket.WorkspaceRoot);
+            if (bucket.Key == SessionGroupKey.Workspaces)
+                newButton.Click += async (_, _) => await PickWorkspaceForNewConversationAsync();
+            else
+                newButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation(bucket.WorkspaceRoot);
             Grid.SetColumn(newButton, 2);
             row.Children.Add(newButton);
         }
 
         return row;
     }
+
+    private async System.Threading.Tasks.Task PickWorkspaceForNewConversationAsync()
+    {
+        var owner = TopLevel.GetTopLevel(this);
+        if (owner is null) return;
+        var result = await Pickers.PickFolderAsync(owner, HubStrings.Get("ChatWorkspacePickTitle"));
+        if (result.Outcome == PickOutcome.Cancelled) return;
+        if (result.Outcome == PickOutcome.NotLocal)
+        {
+            StatusReporter?.Invoke(HubStrings.Get("ChatFolderNotLocal"));
+            return;
+        }
+        if (result.Path is not { Length: > 0 } path)
+        {
+            StatusReporter?.Invoke(HubStrings.Get("LocalPathRequired"));
+            return;
+        }
+
+        StartWorkspaceConversation(path);
+    }
+
+    private WorkspacePathVerdict? StartWorkspaceConversation(string path)
+    {
+        var (conversation, verdict) = _chat.StartOrOpenEmptyConversationInWorkspace(path);
+        if (verdict is { } refusal)
+        {
+            ReportWorkspaceRejection(refusal, path);
+            return refusal;
+        }
+        if (conversation is null)
+            throw new InvalidOperationException("A validated workspace did not produce a conversation.");
+        return null;
+    }
+
+    internal WorkspacePathVerdict? NewWorkspaceForCheck(string path) => StartWorkspaceConversation(path);
 
     /// <summary>
     /// What a group offers. Only a workspace has actions of its own: it is the one bucket that names a place, so
@@ -812,9 +853,7 @@ public partial class ChatSidebar : UserControl
         .Select(item => item.Header?.ToString() ?? "")
         .ToArray();
 
-    /// <summary>Whether a group header carries the ＋ at its right edge. The two buckets that must not offer one —
-    /// the Workspace heading and the archived group — are asserted through this answer being false, so it speaks
-    /// about the button rather than about the group.</summary>
+    /// <summary>Whether a group header carries the ＋ at its right edge.</summary>
     internal bool GroupNewButtonForCheck(string key) => GroupNewButtons(key).Any();
 
     /// <summary>That the ＋ is the last thing in the header row, which is what "at its right edge" claims. The

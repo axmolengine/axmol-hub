@@ -73,8 +73,8 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
-    <!-- The ＋ on a group header, at the outer right edge of the row: it starts a session that belongs to that
-         group, so it appears exactly where the place has already been named. It has its own class for the same
+    <!-- The ＋ on a group header, at the outer right edge of the row: workspace groups start a session at that
+         directory, while the Workspace heading asks for a directory first. It has its own class for the same
          reason the group's ⋯ does — one class family is read as proof that every row has an actions menu, the
          other as a group's menu titles — so a ＋ wearing either would be read as something it is not. Reveal
          follows the row: a group header is hover chrome like everything else here. -->
