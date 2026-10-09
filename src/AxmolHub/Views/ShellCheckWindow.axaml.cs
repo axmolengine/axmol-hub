@@ -183,6 +183,23 @@ public partial class ShellCheckWindow : Window
         Check(shell.AssistantVisible, "导航到助手页后它真的显示出来");
         Check(shell.CurrentPage is ChatPanel, "助手页由 ChatPanel 承载（整屏页面而不是右侧抽屉）");
         Check(shell.NavAssistant.IsChecked == true, "助手页同时点亮了左侧导航项");
+        Check(shell.AssistantActionsRightmostForCheck
+              && shell.AssistantSearchButtonForCheck.IsVisible
+              && shell.AssistantNewButtonForCheck.IsVisible
+              && shell.AssistantSearchButtonForCheck.Width == 26
+              && shell.AssistantSearchButtonForCheck.Height == 26
+              && shell.AssistantNewButtonForCheck.Width == 26
+              && shell.AssistantNewButtonForCheck.Height == 26,
+            "搜索和新建按钮同排右对齐于助手导航项，且尺寸比旧工具栏更紧凑");
+        Check(ToolTip.GetTip(shell.AssistantSearchButtonForCheck)?.ToString()
+                  == HubStrings.Get("SearchConversationsTip")
+              && ToolTip.GetTip(shell.AssistantNewButtonForCheck)?.ToString()
+                  == HubStrings.Get("NewConversationTip"),
+            "助手导航行的搜索和新建按钮保留各自提示");
+        shell.ClickAssistantSearchForCheck();
+        Check(sidebar.SearchBoxVisibleForCheck, "点击助手导航行搜索按钮展开过滤框");
+        shell.ClickAssistantSearchForCheck();
+        Check(!sidebar.SearchBoxVisibleForCheck, "再次点击搜索按钮收起过滤框");
         Check(sidebar.VerticalScrollBarVisibleForCheck && !sidebar.ListIsScrollableForCheck,
             "侧栏会话列表即使没有溢出也始终显示滚动条（空列表仍可见）");
 
@@ -505,7 +522,8 @@ public partial class ShellCheckWindow : Window
             "通过会话操作菜单删除指定的历史对话");
 
         // ── New-conversation (+) reuses an existing empty session instead of stacking empties ──
-        var emptyA = shell.Chat.StartOrOpenEmptyConversation();
+        shell.ClickAssistantNewForCheck();
+        var emptyA = shell.Chat.ActiveConversation!;
         var emptyB = shell.Chat.StartOrOpenEmptyConversation();
         Check(emptyA.Id == emptyB.Id && sidebar.ConversationCount == 0,
             "＋ 复用已有的空会话，而空会话本身不占列表项（实际会话 " + sidebar.ConversationCount + "）");

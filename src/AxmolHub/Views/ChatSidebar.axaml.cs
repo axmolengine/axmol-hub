@@ -26,7 +26,7 @@ namespace AxmolHub;
 /// "AI 助手" navigation item (visible only while the assistant page is shown) and lets the whole
 /// sidebar collapse.
 ///
-/// Owns: the search field (toggled by the magnifier), the new-conversation button, the grouped conversation rows
+/// Owns: the search field (toggled by the navigation magnifier), the grouped conversation rows
 /// and their rename/pin/archive/delete flyout, and the workspace groups those rows are sorted into — each group
 /// with its own fold, its own actions menu, and its own ＋ for starting a session in that place.
 ///
@@ -77,12 +77,6 @@ public partial class ChatSidebar : UserControl
             if (e.Property == TextBox.TextProperty) RefreshConversationList();
         };
 
-        SearchToggle.Click += (_, _) => ToggleSearch();
-        NewButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation();
-
-        ToolTip.SetTip(SearchToggle, HubStrings.Get("SearchConversationsTip"));
-        ToolTip.SetTip(NewButton, HubStrings.Get("NewConversationTip"));
-
         Reload();
     }
 
@@ -107,6 +101,12 @@ public partial class ChatSidebar : UserControl
             SearchBox.Text = "";
         }
     }
+
+    internal bool SearchBoxVisibleForCheck => SearchBox.IsVisible;
+
+    internal void ToggleSearchFromNavigation() => ToggleSearch();
+
+    internal void StartNewConversationFromNavigation() => _chat.StartOrOpenEmptyConversation();
 
     // ───────────────────────── Session list ─────────────────────────
 

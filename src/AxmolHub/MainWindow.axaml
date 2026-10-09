@@ -41,6 +41,30 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
 
+    <Style Selector="Button.assistant-action">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="26" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.assistant-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.assistant-action Path">
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="StrokeThickness" Value="1.6" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+    </Style>
+    <Style Selector="Button.assistant-action:pointerover Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+
     <!-- The bottom popup-menu entry: the brand/host text block is one quiet button. -->
     <Style Selector="Button.host">
       <Setter Property="Background" Value="Transparent" />
@@ -345,14 +369,25 @@
               </StackPanel>
             </RadioButton>
 
-            <RadioButton x:Name="NavAssistant" Classes="nav" GroupName="Navigation">
-              <StackPanel Orientation="Horizontal">
-                <Path Classes="icon" Data="{StaticResource Hub.Icon.Assistant}"
-                      Width="17" Height="17" Stretch="Uniform"
-                      VerticalAlignment="Center" Margin="0,0,13,0" />
-                <TextBlock Text="{DynamicResource Assistant}" VerticalAlignment="Center" />
-              </StackPanel>
-            </RadioButton>
+            <Grid ColumnDefinitions="*,Auto,Auto">
+              <RadioButton x:Name="NavAssistant" Grid.ColumnSpan="3"
+                           Classes="nav" GroupName="Navigation" Padding="9,10,64,10">
+                <StackPanel Orientation="Horizontal">
+                  <Path Classes="icon" Data="{StaticResource Hub.Icon.Assistant}"
+                        Width="17" Height="17" Stretch="Uniform"
+                        VerticalAlignment="Center" Margin="0,0,13,0" />
+                  <TextBlock Text="{DynamicResource Assistant}" VerticalAlignment="Center" />
+                </StackPanel>
+              </RadioButton>
+              <Button x:Name="AssistantSearchButton" Grid.Column="1" Classes="assistant-action"
+                      IsVisible="False" VerticalAlignment="Center">
+                <Path Data="{StaticResource Hub.Icon.Search}" Width="14" Height="14" Stretch="Uniform" />
+              </Button>
+              <Button x:Name="AssistantNewButton" Grid.Column="2" Classes="assistant-action"
+                      IsVisible="False" VerticalAlignment="Center">
+                <Path Data="{StaticResource Hub.Icon.Plus}" Width="14" Height="14" Stretch="Uniform" />
+              </Button>
+            </Grid>
 
           </StackPanel>
 

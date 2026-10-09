@@ -118,7 +118,17 @@ public partial class MainWindow : Window
         NavProjects.IsCheckedChanged += (_, _) => OnNavigated(NavProjects, "Projects");
         NavInstalls.IsCheckedChanged += (_, _) => OnNavigated(NavInstalls, "Installs");
         NavToolchains.IsCheckedChanged += (_, _) => OnNavigated(NavToolchains, "Toolchains");
-        NavAssistant.IsCheckedChanged += (_, _) => OnNavigated(NavAssistant, "Assistant");
+        NavAssistant.IsCheckedChanged += (_, _) =>
+        {
+            var assistantSelected = NavAssistant.IsChecked == true;
+            AssistantSearchButton.IsVisible = assistantSelected;
+            AssistantNewButton.IsVisible = assistantSelected;
+            OnNavigated(NavAssistant, "Assistant");
+        };
+        AssistantSearchButton.Click += (_, _) => _chatSidebar!.ToggleSearchFromNavigation();
+        AssistantNewButton.Click += (_, _) => _chatSidebar!.StartNewConversationFromNavigation();
+        ToolTip.SetTip(AssistantSearchButton, HubStrings.Get("SearchConversationsTip"));
+        ToolTip.SetTip(AssistantNewButton, HubStrings.Get("NewConversationTip"));
 
         // Settings is no longer a nav item: it is the gear at the bottom of the rail. It still navigates like
         // one, so the page keeps its cached instance and ScrollViewer position.
@@ -755,6 +765,20 @@ public partial class MainWindow : Window
 
     /// <summary>The conversation sidebar section, for the shell self-check.</summary>
     internal ChatSidebar ChatSidebarSection => _chatSidebar!;
+
+    internal Button AssistantSearchButtonForCheck => AssistantSearchButton;
+    internal Button AssistantNewButtonForCheck => AssistantNewButton;
+    internal bool AssistantActionsRightmostForCheck
+        => NavAssistant.Parent is Grid grid
+           && AssistantSearchButton.Parent == grid
+           && AssistantNewButton.Parent == grid
+           && Grid.GetColumnSpan(NavAssistant) == grid.ColumnDefinitions.Count
+           && Grid.GetColumn(AssistantSearchButton) == grid.ColumnDefinitions.Count - 2
+           && Grid.GetColumn(AssistantNewButton) == grid.ColumnDefinitions.Count - 1;
+    internal void ClickAssistantSearchForCheck()
+        => AssistantSearchButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+    internal void ClickAssistantNewForCheck()
+        => AssistantNewButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>The top-bar title text as shown, for the shell self-check.</summary>
     internal string PageTitleText => PageTitle.Text ?? "";
