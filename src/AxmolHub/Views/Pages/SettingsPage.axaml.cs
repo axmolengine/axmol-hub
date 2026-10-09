@@ -1641,7 +1641,7 @@ public partial class SettingsPage : UserControl
         var box = new TextBox
         {
             Width = 92,
-            Watermark = tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            PlaceholderText = tokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
             Text = model.MaxContextTokens?.ToString(System.Globalization.CultureInfo.CurrentCulture) ?? "",
             Tag = SectionTags.ModelContextOverride,
         };
