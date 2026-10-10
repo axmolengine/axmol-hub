@@ -153,19 +153,28 @@ public sealed class ChatWorkspace : IDisposable
     public bool SupportsReasoningEffort
         => SelectedChatModel is { } choice && ModelCatalog.SupportsReasoningEffort(choice.Provider, choice.ModelName);
 
-    /// <summary>The history the sidebar lists: every session that holds something and is still being looked at.
-    /// A new chat is the composer's blank state rather than a conversation, so it earns its row with its first
-    /// message — a session that only exists because someone clicked ＋ is not history. A streaming reply has its
-    /// question stored by then, so no session is ever hidden while it is working. Archived sessions are the other
-    /// half: they leave this list and come back through <see cref="ArchivedConversations"/>.</summary>
+    /// <summary>Whether a session earns a row. A plain new chat is the composer's blank state rather than a
+    /// conversation, so it waits for its first message — a session that only exists because someone clicked ＋ is
+    /// not history. A draft pointed at a directory is the exception, because the ＋ that made it was a workspace
+    /// ＋: the directory is the thing that was asked for, and a group that stayed invisible until the user typed
+    /// something read as a button that did nothing. A streaming reply has its question stored by then, so no
+    /// session is ever hidden while it is working.</summary>
+    private static bool IsListed(ConversationSummary summary)
+        => summary.MessageCount > 0 || !string.IsNullOrWhiteSpace(summary.WorkspaceRoot);
+
+    /// <summary>The history the sidebar lists: every <see cref="IsListed"/> session still being looked at.
+    /// Archived sessions are the other half: they leave this list and come back through
+    /// <see cref="ArchivedConversations"/>.</summary>
     public IReadOnlyList<ConversationSummary> Conversations
-        => [.. _sessions.List().Where(summary => summary.MessageCount > 0 && !summary.Archived)];
+        => [.. _sessions.List().Where(summary => IsListed(summary) && !summary.Archived)];
 
     /// <summary>The sessions the user put away, newest first. A separate list rather than a flag on the one above
     /// because the sidebar shows them in a group of their own, and something with no way back on screen is
-    /// indistinguishable from something deleted — which this is deliberately not.</summary>
+    /// indistinguishable from something deleted — which this is deliberately not. The same listing rule applies
+    /// here, so putting a workspace's only draft away leaves a row to bring back rather than a group that
+    /// vanished with nothing left to click.</summary>
     public IReadOnlyList<ConversationSummary> ArchivedConversations
-        => [.. _sessions.List().Where(summary => summary.MessageCount > 0 && summary.Archived)];
+        => [.. _sessions.List().Where(summary => IsListed(summary) && summary.Archived)];
 
     public bool SelectMode(string mode)
     {
@@ -2174,21 +2183,28 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Opens the most recent empty conversation if one already exists, otherwise starts a new one.
-    /// The new-conversation (+) button goes through this so repeated clicks cannot stack up empty
-    /// sessions in the history. An archived session is never handed back here, however empty it is: ＋
-    /// starting a chat that lands in a place the user put away would undo that decision without saying so.
+    /// The empty draft a ＋ may hand back, or <c>null</c> when nothing is reusable and a new session has to start.
+    /// A draft already claimed by a directory is never taken on another directory's behalf: the group it holds on
+    /// screen is the answer to a click meant for that directory, and re-homing it would move a workspace the user
+    /// can see just because ＋ was pressed somewhere else. An unclaimed draft is fair game for any group, which is
+    /// what keeps repeated clicks from stacking up sessions that hold nothing. An archived session is never handed
+    /// back here, however empty it is.
     /// </summary>
-    public Conversation StartOrOpenEmptyConversation()
+    private ConversationSummary? FindEmptyDraft(string? workspaceRoot)
     {
-        var empty = _sessions.List()
+        var wanted = SessionGroupKey.Workspace(workspaceRoot);
+        return _sessions.List()
             .Where(summary => summary.MessageCount == 0 && !summary.Archived)
+            .Where(summary => SessionGroupKey.Workspace(summary.WorkspaceRoot) is not { } at || at == wanted)
             .OrderByDescending(summary => summary.UpdatedAt)
             .FirstOrDefault();
+    }
 
-        if (empty is null) return StartConversation();
-
-        var conversation = _sessions.Load(empty.Id)
+    /// <summary>Makes an empty draft the session on screen. Loading through the registry rather than building a
+    /// summary back up is what makes it the one instance a later write goes to.</summary>
+    private Conversation OpenDraft(ConversationSummary draft)
+    {
+        var conversation = _sessions.Load(draft.Id)
             ?? throw new InvalidOperationException("Conversation index listed an id that no longer exists.");
         _active = conversation;
         _selectedMode = NormalizeMode(conversation.Mode);
@@ -2196,6 +2212,17 @@ public sealed class ChatWorkspace : IDisposable
         Changed?.Invoke();
         return conversation;
     }
+
+    /// <summary>
+    /// Opens the most recent empty conversation if one already exists, otherwise starts a new one.
+    /// The new-conversation (+) button goes through this so repeated clicks cannot stack up empty
+    /// sessions in the history. An archived session is never handed back here, however empty it is: ＋
+    /// starting a chat that lands in a place the user put away would undo that decision without saying so.
+    /// Only a draft belonging to no directory is reused, because a workspace's own draft is on screen under that
+    /// group and a plain ＋ may not quietly move it out from under the person looking at it.
+    /// </summary>
+    public Conversation StartOrOpenEmptyConversation()
+        => FindEmptyDraft(null) is { } draft ? OpenDraft(draft) : StartConversation();
 
     /// <summary>
     /// The same empty draft, but belonging to <paramref name="workspaceRoot"/> — which is what a ＋ sitting on a
@@ -2215,7 +2242,11 @@ public sealed class ChatWorkspace : IDisposable
     /// </summary>
     public Conversation StartOrOpenEmptyConversation(string? workspaceRoot)
     {
-        var conversation = StartOrOpenEmptyConversation();
+        // The draft this group already owns if it has one, otherwise an unclaimed one, otherwise a new session:
+        // two workspaces ＋ in a row get two drafts, because the second click may not move the first group.
+        var conversation = FindEmptyDraft(workspaceRoot) is { } draft
+            ? OpenDraft(draft)
+            : StartConversation();
         if (conversation.Messages.Count > 0) return conversation;
         // SetWorkspaceRoot normalizes and persists through the registry, and treats blank as "no directory" — so
         // the group's own spelling is passed straight through rather than second-guessed here.
@@ -2417,7 +2448,10 @@ public sealed class ChatWorkspace : IDisposable
     /// Archives or restores every session that works in one directory, and answers how many it actually changed.
     /// The workspace has no record of its own to mark, so putting one away means putting its sessions away — and
     /// when the last of them goes, the group is gone with them, because a group is what its sessions make it.
-    /// Restoring works the same way from the archived list: the directory the sessions still name is the group.
+    /// A workspace holding only its starting draft is put away by the same act rather than a special case: that
+    /// draft is the group, and a ⋯ that answered with nothing for the one workspace the user just added would be
+    /// a menu item that only looks broken. Restoring works the same way from the archived list: the directory the
+    /// sessions still name is the group.
     /// </summary>
     public int ArchiveWorkspace(string? workspaceRoot, bool archived)
     {
@@ -2427,7 +2461,7 @@ public sealed class ChatWorkspace : IDisposable
         var changed = 0;
         foreach (var summary in _sessions.List())
         {
-            if (summary.MessageCount == 0 || summary.Archived == archived) continue;
+            if (summary.Archived == archived) continue;
             if (SessionGroupKey.Workspace(summary.WorkspaceRoot) != key) continue;
             if (archived) StopRunFor(summary.Id);
             if (!_sessions.TryUpdate(summary.Id, conversation => conversation.Archived = archived)) continue;

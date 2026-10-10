@@ -1190,6 +1190,22 @@ public partial class ShellCheckWindow : Window
             "从根节点选择现有目录后打开的空会话绑定到该工作区（实际目录 "
             + (createdWorkspace is null ? "（没有建出来）" : chat.WorkspaceRootFor(createdWorkspace.Id) ?? "（无目录）")
             + "）");
+        // The ＋ <em>was</em> the request: "make this folder a workspace". A group that only shows up once the user
+        // types something makes that button look dead, so the draft alone has to hold the header up — and it has
+        // to hold it up after a restart as well, which is what reading the store back off disk proves. An empty
+        // draft with no directory stays unlisted, so this is the workspace case specifically, not a licence for
+        // the sidebar to fill up with abandoned chats.
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var draftOnlyTags = sidebar.GroupHeaderTagsForCheck();
+        Check(draftOnlyTags.Contains(keyA)
+              && sidebar.GroupRowIdsForCheck(keyA).SequenceEqual([createdWorkspace?.Id ?? ""])
+              && new ConversationStore(shell.Workspace.Store.Root).List()
+                  .Any(summary => summary.Id == createdWorkspace?.Id && summary.MessageCount == 0
+                                  && SessionGroupKey.Workspace(summary.WorkspaceRoot) == keyA),
+            "只有一条空草稿的工作区当场成组，重开列表后仍在（实际分组："
+            + string.Join(" / ", draftOnlyTags) + "）");
         if (createdWorkspace is not null) chat.DeleteConversation(createdWorkspace.Id);
         chat.PruneEmptyConversations();
         sidebar.Reload();
@@ -1386,10 +1402,11 @@ public partial class ShellCheckWindow : Window
 
         // ── The ＋ on a group header: whoever's name you click under owns the new session ──
         // Belonging is derived from the session's working directory anyway, so no new state is needed here;
-        // the only thing to verify is that ＋ wrote the directory into that new session. By the existing rule
-        // an empty session takes no list row, so the "lands in the group" step is only visible after it sends
-        // its first message. The actual directory must still be printable when an assertion fails, so this
-        // reads a "absent is fine" shape rather than letting one null reference take the whole section down.
+        // the only thing to verify is that ＋ wrote the directory into that new session. A draft that carries a
+        // directory already holds its group's header up, so what the message below pins is that the row stays in
+        // that group once it stops being a draft. The actual directory must still be printable when an assertion
+        // fails, so this reads a "absent is fine" shape rather than letting one null reference take the whole
+        // section down.
         string RootOf(string? id) => id is null ? "（没有建出来）" : chat.WorkspaceRootFor(id) ?? "（无目录）";
 
         var groupAFirst = sidebar.NewSessionFromGroupForCheck(keyA);
@@ -1464,11 +1481,80 @@ public partial class ShellCheckWindow : Window
         // ＋ has its own style class, so it is neither mistaken for the group's third menu item (that comes
         // from reading the ⋯'s Tag) nor mixed into the actions-menu count — the row count expects a menu on
         // every row, and counting one too many or too few is a false pass.
+        // Nine, not eight: the ninth is fromGone, the still-empty draft the last ＋ made under a directory that no
+        // longer exists. It holds a row because a workspace draft does now, which is the whole point of the group
+        // it sits in.
         Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
-              && sidebar.SessionRowCountForCheck == 8
+              && sidebar.SessionRowCountForCheck == 9
               && sidebar.GroupMenuTitlesForCheck(keyA).Length == 2,
             "分组上的 ＋ 不计入会话行的操作菜单数，也不算成分组的菜单项（实际菜单 "
             + sidebar.SessionMenuCount + " / 行 " + sidebar.SessionRowCountForCheck + "）");
+
+        // ── A workspace is a place, not a side effect of the draft that announced it ──
+        // Two ＋ in a row used to hand back the same draft and overwrite its directory, so the first workspace
+        // vanished the moment the second was picked, and a plain 对话 ＋ could take that draft away from either.
+        // What keeps them apart is one rule: a draft may be reused only by the directory it already names, or by
+        // nobody yet. No new state is involved — the directory on the session is the whole claim.
+        var workspaceC = Full("ws-c");
+        var workspaceD = Full("ws-d");
+        Directory.CreateDirectory(workspaceC);
+        Directory.CreateDirectory(workspaceD);
+        var keyC = SessionGroupKey.Workspace(workspaceC)!;
+        var keyD = SessionGroupKey.Workspace(workspaceD)!;
+        sidebar.NewWorkspaceForCheck(workspaceC);
+        var draftC = chat.ActiveConversation?.Id ?? "";
+        sidebar.NewWorkspaceForCheck(workspaceD);
+        var draftD = chat.ActiveConversation?.Id ?? "";
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var twoGroups = sidebar.GroupHeaderTagsForCheck();
+        Check(draftC.Length > 0 && draftD.Length > 0 && draftC != draftD
+              && twoGroups.Contains(keyC) && twoGroups.Contains(keyD)
+              && chat.WorkspaceRootFor(draftC) == System.IO.Path.GetFullPath(workspaceC)
+              && chat.WorkspaceRootFor(draftD) == System.IO.Path.GetFullPath(workspaceD),
+            "连着新建两个工作区各自成组，前一个不被后一个顶掉（实际分组："
+            + string.Join(" / ", twoGroups) + "）");
+
+        // The plain-chat ＋ may not reach into either group for its blank draft, and it does not need to: an
+        // unclaimed draft is what it is allowed to hold, and it gets its own.
+        shell.ClickAssistantNewForCheck();
+        var plainDraft = chat.ActiveConversation?.Id ?? "";
+        sidebar.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var afterPlain = sidebar.GroupHeaderTagsForCheck();
+        Check(plainDraft.Length > 0 && plainDraft != draftC && plainDraft != draftD
+              && chat.WorkspaceRootFor(plainDraft) is null
+              && sidebar.GroupRowIdsForCheck(keyC).Contains(draftC)
+              && sidebar.GroupRowIdsForCheck(keyD).Contains(draftD)
+              && afterPlain.Contains(keyC) && afterPlain.Contains(keyD),
+            "「对话 ＋」另起一条无目录草稿，两个工作区分组和它们的草稿都不被挪走（实际目录 "
+            + RootOf(plainDraft) + "）");
+
+        // ⋯ on a group whose only session is a draft has to answer too: a menu item that does nothing for the one
+        // workspace the user just added reads as a broken button. The draft is the group, so putting it away is
+        // putting the group away — and it comes back through the same archived list as any other session.
+        Check(sidebar.ArchiveWorkspaceForCheck(workspaceC, archived: true) == 1
+              && !sidebar.GroupHeaderTagsForCheck().Contains(keyC)
+              && sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived),
+            "只有一条空草稿的工作区也能整组归档（实际分组："
+            + string.Join(" / ", sidebar.GroupHeaderTagsForCheck()) + "）");
+        Check(sidebar.RestoreAllArchivedFromMenuForCheck(SessionGroupKey.Archived)
+              && sidebar.GroupHeaderTagsForCheck().Contains(keyC),
+            "全部恢复把撑起分组的那条草稿带回来，分组随之回来");
+        // A fixture that could not be created leaves an empty id behind; deleting one would throw and take the
+        // assertions after it down with it.
+        void DropDraft(string id)
+        {
+            if (id.Length > 0) chat.DeleteConversation(id);
+        }
+
+        DropDraft(draftC);
+        DropDraft(draftD);
+        DropDraft(plainDraft);
+        chat.PruneEmptyConversations();
+        sidebar.Reload();
 
         foreach (var id in chat.Conversations.Select(summary => summary.Id).ToArray())
         {
