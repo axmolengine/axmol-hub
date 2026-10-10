@@ -334,6 +334,12 @@
       <Setter Property="Padding" Value="14,12" />
       <Setter Property="ClipToBounds" Value="True" />
       <Setter Property="MaxHeight" Value="300" />
+      <!-- The host holds the keyboard when it arrives, so a letter key reaches the panel's tunnel handler before
+           anything has been clicked. It is a carrier, not a control: no tab stop, and the adorner is nulled the way
+           every focusable thing in this app nulls it, or the whole card would gain a dashed ring. -->
+      <Setter Property="Focusable" Value="True" />
+      <Setter Property="IsTabStop" Value="False" />
+      <Setter Property="FocusAdorner" Value="{x:Null}" />
     </Style>
     <Style Selector="TextBlock.approval-title">
       <Setter Property="FontSize" Value="13" />
@@ -385,8 +391,27 @@
       <Setter Property="FontSize" Value="12" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
+    <!-- The button carries `approval-action` too, and that class's :pointerover rule declares a Background, so
+         this rule has to declare one as well: a state rule that only sets Opacity loses the fill to the other
+         class and the accent button turned grey under the cursor — with white ink on it, effectively blank in
+         the light theme. -->
     <Style Selector="Button.approval-allow:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
       <Setter Property="Opacity" Value="0.88" />
+    </Style>
+    <!-- Continue is the only accent button in the app that can be disabled, and the theme's answer to that is 40%
+         opacity: the fill turns into a grey-blue smear that reads as broken rather than as not yet. Drained
+         instead of dimmed, so the state change is the fill going away, which is the verb the rest of the card
+         uses, and the accent keeps its ring and its ink. The second rule exists because the theme puts the 0.4 on
+         the template's Frame, where a plain Opacity setter on the button cannot reach it. -->
+    <Style Selector="Button.approval-allow:disabled">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="Button.approval-allow:disabled /template/ Border#Frame">
+      <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="Button.approval-deny">
       <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
@@ -426,7 +451,11 @@
       <Setter Property="RenderTransform" Value="rotate(-90deg)" />
     </Style>
 
-    <!-- ── Plan review: lettered options over the composer ── -->
+    <!-- ── Plan review: a flat lettered list over the composer ──
+         The options are lines, not plates: nothing a person does to the card — hovering it, choosing a line,
+         putting the caret in the revision line — may move anything, so the row heights are fixed and the revision
+         line is a line of text rather than a box inside a box. Only what is typed changes the geometry.
+         Selection lives entirely in the letter cap, which lifts off the card and takes the accent ring. -->
     <Style Selector="TextBlock.plan-review-title">
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -436,6 +465,7 @@
     <Style Selector="Button.plan-review-open">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Padding" Value="6,3" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="FontSize" Value="12" />
@@ -445,24 +475,30 @@
     <Style Selector="Button.plan-review-open:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
+    <!-- MinHeight 0 because the theme's 34 would house an 18px cap in a plate, and a plate is what this list
+         stopped having. The padding is what the cap plus its hover hint needs and no more. -->
     <Style Selector="Button.plan-review-option">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="6,5" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="6,4" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     </Style>
     <Style Selector="Button.plan-review-option:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
-    <Style Selector="Button.plan-review-option.selected">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-    </Style>
+    <!-- An idle cap is an outline: a key on the card, not a plate on the card. The armed cap lifts to
+         Hub.SurfaceRaised and takes the accent ring, which is the one treatment that separates from the card in
+         both variants. Sinking it to Hub.SurfaceSunken instead was measured and rejected: that token sits four
+         levels off Hub.SurfaceAlt in dark and is pure white in light, where a light theme has nowhere to lift a
+         surface, so the letter would read in one theme and vanish in the other. The ring carries the state on its
+         own even over a hovered row, whose fill lands one level off the lifted cap. -->
     <Style Selector="Border.plan-review-key">
       <Setter Property="Width" Value="18" />
       <Setter Property="Height" Value="18" />
       <Setter Property="CornerRadius" Value="5" />
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -473,18 +509,36 @@
       <Setter Property="HorizontalAlignment" Value="Center" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <Style Selector="Button.plan-review-option.selected Border.plan-review-key">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+    </Style>
+    <Style Selector="Button.plan-review-option.selected Border.plan-review-key TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
     <Style Selector="TextBlock.plan-review-label">
       <Setter Property="FontSize" Value="13" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="Margin" Value="10,0,0,0" />
     </Style>
+    <!-- The revision line is the second option, not a panel under it, so it borrows `message-edit`'s treatment:
+         no plate, no ring, no padding. With zero border thickness the theme's focus rule has nothing to paint,
+         which is the point — the caret is the only thing that appears when the line is entered. Its left margin is
+         the label's, so the caret lands under A's text. -->
     <Style Selector="TextBox.plan-feedback">
-      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="MaxHeight" Value="88" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="10,0,0,0" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="PlaceholderForeground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="AcceptsReturn" Value="True" />
       <Setter Property="TextWrapping" Value="Wrap" />
-      <Setter Property="Margin" Value="28,4,0,0" />
     </Style>
     <Style Selector="Button.plan-review-cancel">
       <Setter Property="Background" Value="Transparent" />

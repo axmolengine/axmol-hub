@@ -313,12 +313,22 @@ public partial class ChatPanel : UserControl
         // closes its picture viewer first, then puts an expanded inspector back in its column (both of those
         // handlers live in MainWindow, above this one), then a decision covering the composer is answered, then
         // a steer waiting for its second tap goes back to being a draft, and only then does Escape mean "stop
-        // the reply". Tunnel, so this runs before the composer's own key handling gets a turn.
+        // the reply". The plan card's letter keys ride the same handler for the same reason. Tunnel, so this runs
+        // before the composer's own key handling gets a turn.
         AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
+            if (TryChoosePlanOptionByKey(e)) return;
             if (e.Key != Key.Escape) return;
             if (DecisionHost.IsVisible)
             {
+                if (e.Source is TextBox && _decisionPlanIndex >= 0)
+                {
+                    // Escape leaves the revision line with the sentence still in it; the next Escape answers the
+                    // card. A key that deletes a paragraph is a key pressed by accident.
+                    DecisionHost.Focus();
+                    e.Handled = true;
+                    return;
+                }
                 DismissDecisionByEscape();
                 e.Handled = true;
                 return;
@@ -3611,9 +3621,83 @@ public partial class ChatPanel : UserControl
         => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
             .Any(button => button.Tag as string == "ChatPlanCancel") == true;
 
-    internal bool PlanFeedbackVisibleForCheck
+    private Button? PlanOptionRowForCheck(string tag)
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(candidate => candidate.Tag as string == tag
+                                       && candidate.Classes.Contains("plan-review-option"));
+
+    private TextBox? PlanFeedbackBoxForCheck
         => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<TextBox>()
-            .FirstOrDefault(box => box.Name == "PlanFeedbackBox") is { IsVisible: true };
+            .FirstOrDefault(box => box.Name == "PlanFeedbackBox");
+
+    /// <summary>The letter cap inside one option row, as painted. An armed cap once took the very fill the plate
+    /// under it wore and its letter disappeared into the card; a build passes that, so the fills are what gets
+    /// read back rather than the class names that produce them.</summary>
+    internal Border? PlanCapForCheck(string tag)
+        => PlanOptionRowForCheck(tag)?.GetLogicalDescendants().OfType<Border>()
+            .FirstOrDefault(cap => cap.Classes.Contains("plan-review-key"));
+
+    /// <summary>Which option is armed, or empty when none is. Nothing read the <c>selected</c> class before this,
+    /// so a card that kept lighting the same cap whatever happened would pass every check that only clicks and
+    /// counts.</summary>
+    internal string PlanSelectedChoiceForCheck
+        => PlanReviewChoicesForCheck.FirstOrDefault(tag =>
+            PlanOptionRowForCheck(tag)?.Classes.Contains("selected") == true) ?? "";
+
+    /// <summary>The card's painted height. The flat list's whole promise is that choosing a line moves nothing,
+    /// and a hand-checked margin is exactly the kind of 8px thing that comes back, so the height is measured.</summary>
+    internal double PlanReviewCardHeightForCheck => PlanApprovalCards.FirstOrDefault()?.Bounds.Height ?? 0;
+
+    /// <summary>The card as a visual, for the frames a check photographs.</summary>
+    internal Border? PlanReviewCardForCheck => PlanApprovalCards.FirstOrDefault();
+
+    internal Button? PlanContinueButtonForCheck
+        => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Name == "PlanContinueButton");
+
+    internal string PlanFeedbackTextForCheck => PlanFeedbackBoxForCheck?.Text ?? "";
+
+    /// <summary>The revision line's painted height, and the height its own text asked for. A box arranged shorter
+    /// than it measured is clipping what was typed into it — the one failure mode an inline line can have that a
+    /// screenshot of an empty one never shows.</summary>
+    internal double PlanFeedbackHeightForCheck => PlanFeedbackBoxForCheck?.Bounds.Height ?? 0;
+
+    internal double PlanFeedbackDesiredHeightForCheck => PlanFeedbackBoxForCheck?.DesiredSize.Height ?? 0;
+
+    internal bool PlanFeedbackClippedForCheck
+        => PlanFeedbackBoxForCheck is { } box && box.Bounds.Height + 0.5 < box.DesiredSize.Height;
+
+    /// <summary>
+    /// Presses a key while the plan card is up, through the routed event the way
+    /// <see cref="PressComposerKeyForCheck"/> does, so a check exercises the wiring rather than the private method
+    /// the wiring happens to call. <paramref name="inRevisionLine"/> sends it from the caret's own control, which
+    /// is how "A and B are letters while somebody is typing" and "Escape leaves the line" reach the handler.
+    /// Returns whether the card took the key, so the negative half is asserted instead of assumed.
+    /// </summary>
+    internal bool PressPlanCardKeyForCheck(Key key, bool inRevisionLine = false,
+        KeyModifiers modifiers = KeyModifiers.None)
+    {
+        var source = inRevisionLine ? (Control?)PlanFeedbackBoxForCheck : DecisionHost;
+        if (source is null) return false;
+        var args = new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = key,
+            KeyModifiers = modifiers,
+            Source = source,
+        };
+        source.RaiseEvent(args);
+        return args.Handled;
+    }
+
+    /// <summary>Moves the caret into the revision line the way a tab does, so "nothing moves" is measured for
+    /// focus as well as for clicks.</summary>
+    internal void FocusPlanFeedbackForCheck() => PlanFeedbackBoxForCheck?.Focus();
+
+    /// <summary>The revision line is option B itself now, so it is on screen from the first frame rather than
+    /// opened by choosing something.</summary>
+    internal bool PlanFeedbackVisibleForCheck
+        => PlanFeedbackBoxForCheck is { IsVisible: true, Bounds: { Width: > 0 } };
 
     internal bool PlanContinueEnabledForCheck
         => PlanApprovalCards.FirstOrDefault()?.GetLogicalDescendants().OfType<Button>()

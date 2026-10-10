@@ -3350,16 +3350,101 @@ public partial class ShellCheckWindow : Window
                 "计划审阅给出 A 批准 / B 要求修改两个选项，外加继续与取消，没有「退出计划模式」那第三行（实际 "
                 + string.Join(", ", panel.PlanReviewChoicesForCheck) + "）");
 
-            // Choosing B opens the revision box, and continue stays disabled until there is something in it: a tap
-            // that looks like focusing a text box must not be the tap that spends a request.
+            // The revision line is option B itself, not a panel that opens under it, so choosing it and putting the
+            // caret in it must not move the card by a pixel — that flatness is the whole redesign, and a hand
+            // checked margin is exactly the 8px thing that comes back, so the height is measured rather than
+            // eyeballed. Continue still stays disabled until the line holds something: a tap that looks like
+            // focusing a text box must not be the tap that spends a request.
+            var cardHeight = panel.PlanReviewCardHeightForCheck;
+            var planCardDirectory = ScratchDirectory.Resolve("plan-review-card");
+            var restStats = panel.PlanReviewCardForCheck is { } restCard
+                ? SmokeCapture.Capture(restCard, System.IO.Path.Combine(planCardDirectory, "rest.png"))
+                : null;
             panel.ClickPlanChoiceForCheck("ChatPlanRevise");
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            Check(panel.PlanFeedbackVisibleForCheck && !panel.PlanContinueEnabledForCheck,
-                "选「要求修改」展开反馈框，且在写进内容之前继续是禁用的");
+            var heightAfterChoosing = panel.PlanReviewCardHeightForCheck;
+            panel.FocusPlanFeedbackForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PlanSelectedChoiceForCheck == "ChatPlanRevise"
+                  && panel.PlanFeedbackVisibleForCheck
+                  && !panel.PlanContinueEnabledForCheck
+                  && cardHeight > 0
+                  && heightAfterChoosing == cardHeight
+                  && panel.PlanReviewCardHeightForCheck == cardHeight,
+                "B 就是那条意见行：选中它、把光标放进去，卡片高度一像素都不动，且在写进内容之前继续是禁用的（高度 "
+                + cardHeight + " / " + heightAfterChoosing + " / " + panel.PlanReviewCardHeightForCheck + "）");
+            // The armed cap lifts off the card and the idle one stays an outline. This is the invariant the old
+            // pair broke by giving both the same fill: the letter survived in the object graph and disappeared on
+            // the screen, which is exactly the class of bug a build cannot see.
+            var armedCap = panel.PlanCapForCheck("ChatPlanRevise");
+            var idleCap = panel.PlanCapForCheck("ChatPlanApprove");
+            Check(ThemeProbe.IsToken(armedCap?.Background, "Hub.SurfaceRaised")
+                  && ThemeProbe.IsToken(armedCap?.BorderBrush, "Hub.AccentBorder")
+                  && ThemeProbe.ColorOf(idleCap?.Background) != ThemeProbe.ColorOf(armedCap?.Background)
+                  && ThemeProbe.Separates(ThemeProbe.TokenColor("Hub.SurfaceRaised"),
+                      ThemeProbe.TokenColor("Hub.SurfaceAlt")),
+                "选中的字母帽抬起并描上主色边，未选的是空心框，两者不会糊在同一张卡上（帽面 "
+                + ThemeProbe.Describe(armedCap?.Background) + "）");
+            // The state the old card looked worst in: the revision line chosen and still empty, so Continue has
+            // nothing to act on. That used to be the accent fill at 40% opacity, which reads as a broken button
+            // rather than as one waiting for its content.
+            var emptyLineStats = panel.PlanReviewCardForCheck is { } emptyLineCard
+                ? SmokeCapture.Capture(emptyLineCard, System.IO.Path.Combine(planCardDirectory, "revise-empty.png"))
+                : null;
+            Check(!panel.PlanContinueEnabledForCheck
+                  && !ThemeProbe.IsToken(panel.PlanContinueButtonForCheck?.Background, "Hub.Accent")
+                  && ThemeProbe.IsToken(panel.PlanContinueButtonForCheck?.Foreground, "Hub.Accent")
+                  && emptyLineStats is { } emptyLine && !emptyLine.IsBlank(),
+                "意见行还空着时继续是「放掉颜色」而不是变一块灰蓝糊（字色 "
+                + ThemeProbe.Describe(panel.PlanContinueButtonForCheck?.Foreground) + "，帧 distinct="
+                + (emptyLineStats?.DistinctColors ?? 0) + "）");
             const string revision = "先把测试补上，再改实现";
             panel.SetPlanFeedbackForCheck(revision);
             Check(panel.PlanContinueEnabledForCheck, "写了修改意见之后继续按钮才可用");
+            // Both states of the flat list are photographed, not only counted. The complaint this answers was made
+            // about the screen, and a card can satisfy every object-graph check while painting a letter in the
+            // colour of the plate behind it.
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var revisingStats = panel.PlanReviewCardForCheck is { } revisingCard
+                ? SmokeCapture.Capture(revisingCard, System.IO.Path.Combine(planCardDirectory, "revising.png"))
+                : null;
+            Check(restStats is { } rest && !rest.IsBlank()
+                  && revisingStats is { } revising && !revising.IsBlank(),
+                "计划审阅卡的静止态与写意见态都真实渲染出非空白帧（distinct="
+                + (restStats?.DistinctColors ?? 0) + "/" + (revisingStats?.DistinctColors ?? 0)
+                + "，帧在 " + planCardDirectory + "）");
+            // What is typed has to be readable. The flatness promise covers choosing a line, not writing one, so
+            // the line is checked for the other failure: a box arranged shorter than the height its own text asked
+            // for is clipping the sentence it exists to hold.
+            Check(panel.PlanFeedbackTextForCheck == revision && !panel.PlanFeedbackClippedForCheck,
+                "写进意见之后这一行仍然放得下整句话（行高 " + panel.PlanFeedbackHeightForCheck
+                + "，需要 " + panel.PlanFeedbackDesiredHeightForCheck + "）");
+
+            // The letters on the caps are a shortcut, not decoration: they choose the option the way the pointer
+            // does. And they stand down where a letter is content — the caret's own line — and under a modifier,
+            // where Ctrl+A means select all.
+            Check(panel.PressPlanCardKeyForCheck(Key.A)
+                  && panel.PlanSelectedChoiceForCheck == "ChatPlanApprove"
+                  && panel.PressPlanCardKeyForCheck(Key.B)
+                  && panel.PlanSelectedChoiceForCheck == "ChatPlanRevise",
+                "A / B 键换选中项，走的是和点击同一条路（实际停在 " + panel.PlanSelectedChoiceForCheck + "）");
+            Check(!panel.PressPlanCardKeyForCheck(Key.A, inRevisionLine: true)
+                  && panel.PlanSelectedChoiceForCheck == "ChatPlanRevise"
+                  && panel.PlanFeedbackTextForCheck == revision
+                  && !panel.PressPlanCardKeyForCheck(Key.A, modifiers: KeyModifiers.Control)
+                  && panel.PlanSelectedChoiceForCheck == "ChatPlanRevise",
+                "光标在意见行里时 A 是字母：不抢选中、不吞已写的字，Ctrl+A 也不归这张卡管");
+            // Escape's first job on this card is to leave the line, not to answer the card: the key somebody hits
+            // to get out of a text box must not delete the paragraph typed into it. The second Escape is the
+            // dismissal that was already there.
+            Check(panel.PressPlanCardKeyForCheck(Key.Escape, inRevisionLine: true)
+                  && panel.PlanFeedbackTextForCheck == revision
+                  && panel.PlanApprovalCardOnScreenForCheck
+                  && panel.PlanSelectedChoiceForCheck == "ChatPlanRevise",
+                "在意见行里按 Esc 只是离开这一行：卡还在、字还在、选中项没被顺手动走");
             panel.ClickPlanContinueForCheck();
             await WaitForIdleAsync(chat);
             Dispatcher.UIThread.RunJobs();
@@ -4262,6 +4347,10 @@ public partial class ShellCheckWindow : Window
                 + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
             Check(panel.ApprovalCardActionsAreCalmForCheck,
                 "拒绝按钮不按危险操作上色（destructive 留给「不问就干且后果重」）");
+            // The two decision kinds share one host, and only one of them is a lettered list. A key the tool card
+            // has no use for must come back unhandled rather than move a selection that does not exist.
+            Check(!panel.PressPlanCardKeyForCheck(Key.A) && !panel.PressPlanCardKeyForCheck(Key.B),
+                "工具审批卡上没有字母选项，A / B 不被它认领");
 
             // And it is really painted: an object graph can describe a card that lays out to nothing.
             var cardVisual = panel.ApprovalCardForCheck;

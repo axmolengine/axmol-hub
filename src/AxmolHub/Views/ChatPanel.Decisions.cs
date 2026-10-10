@@ -31,7 +31,8 @@ public partial class ChatPanel
     /// <summary>The turn index of the plan the host is reviewing, or -1.</summary>
     private int _decisionPlanIndex = -1;
 
-    /// <summary>Which plan option row is selected. Enter executes it, so there is always exactly one.</summary>
+    /// <summary>Which plan option is armed. The letter keys and the pointer both choose it and Continue acts on
+    /// what it says, so there is always exactly one.</summary>
     private string _planSelectedOption = ChatPlanStates.Approve;
 
     /// <summary>A draft waiting for its second tap, with the session it was typed in: switching conversations
@@ -172,6 +173,10 @@ public partial class ChatPanel
         DecisionHost.IsVisible = true;
         // One flag, one meaning: the covered content leaves the tab order and hit-testing in a single step.
         ComposerContent.IsEnabled = false;
+        // A decision that just arrived takes the keyboard, or the letter keys on it are only reachable after
+        // something has been clicked: a key the window itself holds never travels down this panel's route. Only
+        // on arrival — a repaint must not move a caret somebody is using.
+        if (!same && planIndex >= 0) DecisionHost.Focus();
     }
 
     /// <summary>Escape on the host answers it the quiet way: a pending call is refused (one Denied result, the
@@ -346,14 +351,15 @@ public partial class ChatPanel
     // ── content: a pending plan ──
 
     /// <summary>
-    /// The review surface: two lettered options, an inline feedback box under B, and a footer whose left half
-    /// is deliberately empty — A and B already say everything, and a third label there would be the charter's
-    /// second telling. There is no "exit plan mode and I will prompt myself" row: the owner removed it, and
-    /// <see cref="ChatWorkspace.TryResolvePlanApproval"/> has no such decision either.
+    /// The review surface: a flat lettered list and a footer whose left half is deliberately empty — A and B
+    /// already say everything, and a third label there would be the charter's second telling. B is the revision
+    /// line itself rather than a box that opens under it, because nothing a person does to this card is allowed to
+    /// move anything else on it. There is no "exit plan mode and I will prompt myself" row: the owner removed it,
+    /// and <see cref="ChatWorkspace.TryResolvePlanApproval"/> has no such decision either.
     /// </summary>
     private Control BuildPlanReviewHost(string conversationId, int turnIndex)
     {
-        var host = new StackPanel { Spacing = 8 };
+        var host = new StackPanel { Spacing = 6 };
 
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         header.Children.Add(new TextBlock
@@ -368,9 +374,9 @@ public partial class ChatPanel
             Classes = { "plan-review-open" },
             Tag = "ChatPlanReviewOpen",
         };
-        var openLabel = new TextBlock { Text = HubStrings.Get("ChatPlanReviewOpen") + " ↗" };
-        openLabel.Bind(TextBlock.FontFamilyProperty, new DynamicResourceExtension("Hub.Font.Ui"));
-        open.Content = openLabel;
+        // No glyph on this one: the words already say where they go, and a hand-concatenated arrow is a string
+        // no translation table owns.
+        open.Content = HubStrings.Get("ChatPlanReviewOpen");
         // The one invitation to go and read it. The transcript's card opens the same pane, but this row is where
         // the decision is being asked and the card may already be scrolled out of sight — and it carries the
         // index of the plan under review, so the two entrances can never disagree about which plan they show.
@@ -379,14 +385,14 @@ public partial class ChatPanel
         header.Children.Add(open);
         host.Children.Add(header);
 
-        var options = new StackPanel { Name = "PlanReviewOptions", Spacing = 4 };
+        var options = new StackPanel { Name = "PlanReviewOptions", Spacing = 2 };
         options.Children.Add(BuildPlanOptionRow(conversationId, turnIndex, "A",
-            ChatPlanStates.Approve, "ChatPlanOptionApprove", feedback: false));
+            ChatPlanStates.Approve, "ChatPlanOptionApprove"));
         options.Children.Add(BuildPlanOptionRow(conversationId, turnIndex, "B",
-            ChatPlanStates.Revise, "ChatPlanOptionRevise", feedback: true));
+            ChatPlanStates.Revise, "ChatPlanOptionRevise"));
         host.Children.Add(options);
 
-        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 6, 0, 0) };
+        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 2, 0, 0) };
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var cancel = new Button
         {
@@ -418,29 +424,33 @@ public partial class ChatPanel
     }
 
     private Control BuildPlanOptionRow(string conversationId, int turnIndex, string letter, string option,
-        string labelKey, bool feedback)
+        string textKey)
     {
         var row = new Button
         {
             Classes = { "plan-review-option" },
             Tag = option == ChatPlanStates.Approve ? "ChatPlanApprove" : "ChatPlanRevise",
         };
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), ColumnDefinitions = new ColumnDefinitions("26,*") };
-        var key = new Border { Classes = { "plan-review-key" }, Child = new TextBlock { Text = letter } };
-        grid.Children.Add(key);
-        grid.Children.Add(new TextBlock { Classes = { "plan-review-label" }, Text = HubStrings.Get(labelKey) });
-        Grid.SetColumn(grid.Children[1], 1);
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("26,*") };
+        grid.Children.Add(new Border { Classes = { "plan-review-key" }, Child = new TextBlock { Text = letter } });
 
         TextBox? box = null;
-        if (feedback)
+        if (option == ChatPlanStates.Approve)
         {
+            grid.Children.Add(new TextBlock { Classes = { "plan-review-label" }, Text = HubStrings.Get(textKey) });
+        }
+        else
+        {
+            // The revision line is option B rather than a panel that opens under it: at rest it is one more line of
+            // the list, and entering it shows a caret and nothing else. It carries the option's own words as its
+            // placeholder, so being shown the choice and being told what to write are the same line.
             box = new TextBox
             {
                 Name = "PlanFeedbackBox",
                 Classes = { "plan-feedback" },
-                PlaceholderText = HubStrings.Get("ChatPlanFeedbackPlaceholder"),
-                IsVisible = false,
+                PlaceholderText = HubStrings.Get(textKey),
             };
+            ToolTip.SetTip(box, HubStrings.Get("ChatPlanFeedbackPlaceholder"));
             // Enter inside the feedback is "send this revision"; Shift+Enter is a newline. The AcceptsReturn
             // box swallows Enter before any bubble handler sees it, so this is a tunnel handler like the
             // composer's own.
@@ -450,30 +460,64 @@ public partial class ChatPanel
                 e.Handled = true;
                 CommitPlanReview(conversationId, turnIndex);
             }, RoutingStrategies.Tunnel);
-            // Typing into the feedback is what enables continue; without this the button would stay disabled
-            // until something else happened to repaint the host.
             box.PropertyChanged += (_, e) =>
             {
-                if (e.Property == TextBox.TextProperty) MarkPlanSelection();
+                // The caret is the choosing: a pointer or a tab that lands here has picked B. Typed text does not
+                // pick it, because a line still holding last round's feedback must not outvote an explicit click
+                // on A — but every text change re-reads Continue's enabled state, which nothing else repaints.
+                if (e.Property == InputElement.IsFocusedProperty) ChoosePlanOption(ChatPlanStates.Revise);
+                else if (e.Property == TextBox.TextProperty) MarkPlanSelection();
             };
-            Grid.SetRow(box, 1);
-            Grid.SetColumnSpan(box, 2);
             grid.Children.Add(box);
         }
+        Grid.SetColumn(grid.Children[1], 1);
 
         row.Content = grid;
-        row.Click += (_, _) =>
-        {
-            _planSelectedOption = option;
-            MarkPlanSelection();
-            box?.Focus();
-        };
+        row.Click += (_, _) => ChoosePlanOption(option, box);
         return row;
     }
 
-    /// <summary>Applies the selected option's look and the continue button's enabled state. B with an empty
-    /// feedback box disables continue rather than sending nothing: a tap that looks like focusing a text box
-    /// must not be the tap that spends a request.</summary>
+    /// <summary>Arms one option and, for the revision line, puts the caret in it. The pointer, the letter key and
+    /// the line's own focus all arrive here, so "the key does what the click does" is one implementation rather
+    /// than two that drift.</summary>
+    private void ChoosePlanOption(string option, TextBox? feedbackBox = null)
+    {
+        _planSelectedOption = option;
+        MarkPlanSelection();
+        feedbackBox?.Focus();
+    }
+
+    /// <summary>
+    /// The letter keys choose a plan option, which is what makes the caps on the rows a shortcut rather than
+    /// decoration. Three gates, each one load-bearing: the plan card has to be the thing that is up (the tool
+    /// approval shares this host and has no options), no modifier may be down (Ctrl+A is select-all, Alt+B belongs
+    /// to somebody else), and the key must not have come from a text box — while the caret is in the revision
+    /// line, A and B are letters. Returns whether the key was taken, so a check can assert the negative half too.
+    /// </summary>
+    private bool TryChoosePlanOptionByKey(KeyEventArgs e)
+    {
+        if (_decisionPlanIndex < 0 || !DecisionHost.IsVisible) return false;
+        if (e.KeyModifiers != KeyModifiers.None) return false;
+        if (e.Source is TextBox) return false;
+        var option = e.Key switch
+        {
+            Key.A => ChatPlanStates.Approve,
+            Key.B => ChatPlanStates.Revise,
+            _ => null,
+        };
+        if (option is null) return false;
+        ChoosePlanOption(option, option == ChatPlanStates.Revise ? FindPlanFeedbackBox() : null);
+        e.Handled = true;
+        return true;
+    }
+
+    private TextBox? FindPlanFeedbackBox()
+        => DecisionHost.GetLogicalDescendants().OfType<TextBox>()
+            .FirstOrDefault(box => box.Name == "PlanFeedbackBox");
+
+    /// <summary>Applies the armed option's look and the continue button's enabled state. B with an empty revision
+    /// line disables continue rather than sending nothing: a tap that looks like focusing a text box must not be
+    /// the tap that spends a request.</summary>
     private void MarkPlanSelection()
     {
         if (DecisionHost.Child is not StackPanel host) return;
@@ -483,11 +527,7 @@ public partial class ChatPanel
         foreach (var row in options.Children.OfType<Button>())
         {
             var isApprove = row.Tag as string == "ChatPlanApprove";
-            var selected = (_planSelectedOption == ChatPlanStates.Approve) == isApprove;
-            row.Classes.Set("selected", selected);
-            var box = row.GetLogicalDescendants().OfType<TextBox>()
-                .FirstOrDefault(candidate => candidate.Name == "PlanFeedbackBox");
-            if (box is not null) box.IsVisible = selected && !isApprove;
+            row.Classes.Set("selected", (_planSelectedOption == ChatPlanStates.Approve) == isApprove);
         }
 
         var continueButton = host.GetLogicalDescendants().OfType<Button>()
@@ -519,8 +559,7 @@ public partial class ChatPanel
             return;
         }
 
-        var feedback = DecisionHost.GetLogicalDescendants().OfType<TextBox>()
-            .FirstOrDefault(box => box.Name == "PlanFeedbackBox")?.Text ?? "";
+        var feedback = FindPlanFeedbackBox()?.Text ?? "";
         if (feedback.Trim().Length == 0) return;
 
         ResolvePlanApproval(conversationId, turnIndex, PlanApprovalStates.RevisionRequested);
