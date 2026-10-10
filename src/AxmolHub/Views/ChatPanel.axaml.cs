@@ -127,6 +127,42 @@ public partial class ChatPanel : UserControl
     /// <see cref="DeriveActivityGroup"/>.</summary>
     private ActivityGroupView? _openGroup;
 
+    /// <summary>Which folds the person opened, held as data rather than as a control's state. Extending a group
+    /// in place keeps its head alive, but not every rebuild can be avoided: a decision rewrites what an
+    /// already-painted turn looks like, and a result approved late is filed beside its call rather than at the
+    /// end. A group is keyed by the turn it starts on and a row by the call it reports — both survive a teardown,
+    /// so the fold comes back where the person left it. Nothing is in these sets on its own: a fold nobody opened
+    /// stays collapsed, which is what the charter asks of secondary detail.</summary>
+    private readonly Dictionary<string, HashSet<string>> _expandedGroups = new();
+    private readonly Dictionary<string, HashSet<string>> _expandedRows = new();
+
+    private static bool IsFoldOpen(Dictionary<string, HashSet<string>> memory, string conversationId, string key)
+        => memory.TryGetValue(conversationId, out var open) && open.Contains(key);
+
+    private static void RememberFold(Dictionary<string, HashSet<string>> memory, string conversationId,
+        string key, bool opened)
+    {
+        if (!memory.TryGetValue(conversationId, out var set))
+        {
+            if (!opened) return;
+            memory[conversationId] = set = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        if (opened) set.Add(key);
+        else set.Remove(key);
+    }
+
+    /// <summary>Drops the fold choices of sessions that no longer exist. Deleting a conversation raises
+    /// <see cref="ChatWorkspace.Changed"/>, so this runs on the very repaint that follows it and the two sets
+    /// never outlive the conversations they name.</summary>
+    private void PruneFoldMemory()
+    {
+        if (_expandedGroups.Count == 0 && _expandedRows.Count == 0) return;
+        var alive = _chat!.Conversations.Select(summary => summary.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var gone in _expandedGroups.Keys.Where(id => !alive.Contains(id)).ToArray()) _expandedGroups.Remove(gone);
+        foreach (var gone in _expandedRows.Keys.Where(id => !alive.Contains(id)).ToArray()) _expandedRows.Remove(gone);
+    }
+
     private static string SlotKey(ChatTurn turn)
         => turn.At.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
            + ":" + turn.Role + ":" + (turn.ToolCallId ?? "") + ":" + turn.Text.Length;
@@ -1739,6 +1775,7 @@ public partial class ChatPanel : UserControl
     private void RenderMessages()
     {
         if (_chat is null) return;
+        PruneFoldMemory();
         var conversation = _chat.ActiveConversation;
         var run = conversation is null ? null : _chat.RunFor(conversation.Id);
 
@@ -2010,10 +2047,21 @@ public partial class ChatPanel : UserControl
         var inner = new StackPanel { Spacing = 2 };
         var body = new StackPanel { Name = "ActivityGroupBody", Spacing = 0, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
         body.Children.Add(inner);
+        // The turn a run starts on is the group's identity: it does not move while the run grows, and a rebuild
+        // slices the same run out of the same turn — so keying the fold to it is what lets an opened head come
+        // back open.
+        var foldKey = SlotKey(turns[0].Turn);
         // Driven off IsCheckedChanged rather than Click: a real click flips IsChecked (which fires this), and so
         // does a check that sets IsChecked directly — a raised Click never reaches a ToggleButton's OnClick, so
-        // wiring the fold to Click would leave it untestable and half-broken.
-        head.IsCheckedChanged += (_, _) => body.IsVisible = head.IsChecked == true;
+        // wiring the fold to Click would leave it untestable and half-broken. Wired before the remembered state is
+        // applied, because the panel's visibility has to keep exactly one source.
+        head.IsCheckedChanged += (_, _) =>
+        {
+            var expanded = head.IsChecked == true;
+            body.IsVisible = expanded;
+            RememberFold(_expandedGroups, conversationId, foldKey, expanded);
+        };
+        head.IsChecked = IsFoldOpen(_expandedGroups, conversationId, foldKey);
 
         var group = new Border { Classes = { "activity-group" }, Child = new StackPanel { Spacing = 2, Children = { head, body } } };
         MessageFlow.Children.Add(group);
@@ -2079,7 +2127,7 @@ public partial class ChatPanel : UserControl
             {
                 var call = calls.TryGetValue(answered, out var paired) ? paired : null;
                 if (call?.ToolName == ChatChanges.FileWriteTool) continue;
-                inner.Children.Add(BuildActivityRowShell(call, turn));
+                inner.Children.Add(BuildActivityRowShell(conversationId, call, turn));
                 continue;
             }
 
@@ -2184,15 +2232,24 @@ public partial class ChatPanel : UserControl
     /// it reveals the whole exchange — the arguments the call was made with and the payload that came back — in a
     /// detail panel that grows downward in place. The concrete operation is therefore on the page, not stranded one
     /// hover away in a tooltip, which a trackpad can't reach and a check can't read.</summary>
-    private Control BuildActivityRowShell(ChatTurn? call, ChatTurn result)
+    private Control BuildActivityRowShell(string conversationId, ChatTurn? call, ChatTurn result)
     {
         var toggle = new ToggleButton { Classes = { "activity-row-toggle" }, Content = BuildActivityRow(call, result) };
 
         var detail = BuildActivityRowDetail(call, result);
+        // The call is this row's identity, and it is the one thing a rebuild cannot move: the group re-derives its
+        // rows from the transcript, so an opened exchange stays open through it.
+        var foldKey = result.ToolCallId ?? "";
 
         // The fold is driven off IsChecked, never Click: a raised Click does not flip a ToggleButton, so wiring
         // Click would leave this both untestable and half-broken — the same reason the group head is wired this way.
-        toggle.IsCheckedChanged += (_, _) => detail.IsVisible = toggle.IsChecked == true;
+        toggle.IsCheckedChanged += (_, _) =>
+        {
+            var expanded = toggle.IsChecked == true;
+            detail.IsVisible = expanded;
+            RememberFold(_expandedRows, conversationId, foldKey, expanded);
+        };
+        toggle.IsChecked = IsFoldOpen(_expandedRows, conversationId, foldKey);
 
         return new Border
         {

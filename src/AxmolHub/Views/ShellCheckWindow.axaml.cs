@@ -2636,14 +2636,17 @@ public partial class ShellCheckWindow : Window
             // One call answered is one row inside one group, and the stream is now held at the park.
             await WaitUntilAsync(() => panel.ActivityRowsForCheck.Length == 1);
             panel.SetActivityGroupExpandedForCheck(0, true);
+            panel.SetActivityRowExpandedForCheck(0, true);
             panel.ScrollTranscriptForCheck(40);
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
             var openedToken = panel.ActivityGroupInstanceTokenForCheck(0);
+            var openedDetail = panel.ActivityRowDetailTextForCheck(0);
             Check(panel.ActivityGroupExpandedForCheck(0) && openedToken != 0
+                  && panel.ActivityRowExpandedForCheck(0) && openedDetail.Length > 0
                   && !panel.ViewAtBottomForCheck && panel.ScrollToBottomVisible,
-                "夹具：组已展开、转录读到中间，回底板的按钮升起来了（组 " + panel.ActivityGroupCountForCheck
-                + "，行 " + panel.ActivityRowsForCheck.Length + "）");
+                "夹具：组与其第一行都展开了、转录读到中间，回底板的按钮升起来了（组 "
+                + panel.ActivityGroupCountForCheck + "，行 " + panel.ActivityRowsForCheck.Length + "）");
 
             livePark.SetResult(true);
             await WaitUntilAsync(() => panel.ActivityRowsForCheck.Length == 2);
@@ -2665,6 +2668,14 @@ public partial class ShellCheckWindow : Window
                   && Math.Abs(panel.FlowOffsetForCheck - 40) < 1,
                 "跑着的工具调用不再把读数位置拽回底部，也没有因为整段清空而被夹到 0（offset 现在是 "
                 + panel.FlowOffsetForCheck + "）");
+            // The group re-derives its rows off the transcript as each call lands, so a row the person opened only
+            // stays open if that choice was remembered by the call it reports rather than left on a control that
+            // is being replaced.
+            Check(panel.ActivityRowExpandedForCheck(0) && panel.ActivityRowDetailTextForCheck(0) == openedDetail,
+                "组重新推导过行之后，人点开的那条工具行还开着，详情也还是同一份（详情「"
+                + panel.ActivityRowDetailTextForCheck(0) + "」）");
+            Check(!panel.ActivityRowExpandedForCheck(1),
+                "新长出来的那条工具行默认收起：记住人开过的折叠，不等于替他每一个都打开");
             await panel.WaitForRunToFinishForCheck();
 
             // The same page then gets a second run, which has to open its own fold and default it to collapsed:
@@ -2686,6 +2697,26 @@ public partial class ShellCheckWindow : Window
                 "新的一轮机器活开自己的第二折，默认收起；人开过的那一折不受牵连（组 "
                 + panel.ActivityGroupCountForCheck + "，第一折展开 " + panel.ActivityGroupExpandedForCheck(0)
                 + "，第二折展开 " + panel.ActivityGroupExpandedForCheck(1) + "）");
+
+            // The one rebuild no running stream can avoid: reading another session and coming back lays this one
+            // out from nothing, so the fold the person left open has to return from a remembered choice rather
+            // than from a control that no longer exists.
+            var readBack = chat.StartConversation();
+            chat.OpenConversation(readBack.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            chat.OpenConversation(liveSession.Id);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ActivityGroupCountForCheck == 2
+                  && panel.ActivityGroupExpandedForCheck(0) && !panel.ActivityGroupExpandedForCheck(1)
+                  && panel.ActivityRowExpandedForCheck(0) && !panel.ActivityRowExpandedForCheck(1)
+                  && panel.ActivityRowDetailTextForCheck(0) == openedDetail,
+                "切到别的会话再切回来（整段重建），开过的组与行按人留下的选择恢复，没开过的照旧收起（第一折 "
+                + panel.ActivityGroupExpandedForCheck(0) + "，第二折 " + panel.ActivityGroupExpandedForCheck(1)
+                + "，行 0 " + panel.ActivityRowExpandedForCheck(0) + "）");
+            chat.DeleteConversation(readBack.Id);
             chat.DeleteConversation(liveSession.Id);
         }
         finally
