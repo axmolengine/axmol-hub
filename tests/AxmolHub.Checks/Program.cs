@@ -3320,6 +3320,20 @@ if (args.Contains("--check-ai-tools"))
     if (!commandPreview.Contains("cmake --build build") || !commandPreview.Contains(workspace)
         || !commandPreview.Contains("idle timeout 60s"))
         throw new Exception($"A command did not preview with its shell, directory and timeout:{Environment.NewLine}{commandPreview}");
+    // The command tier is decided by the verb as well as the directory now, so the card has to say which of the
+    // two it is answering for: somebody watching a command park under 自动审批 needs to read that it moves the
+    // repository, and a `git status` card in the strict tier must not claim the same thing.
+    var gitWriteCard = Preview("run_command", """{"command":"git commit -m x"}""");
+    if (!gitWriteCard.Contains("git write · moves the index", StringComparison.Ordinal)
+        || !gitWriteCard.Contains("git commit -m x", StringComparison.Ordinal))
+        throw new Exception($"A git write did not preview as one:{Environment.NewLine}{gitWriteCard}");
+    if (!Preview("run_command", """{"command":"git lfs install"}""").Contains("does not recognise", StringComparison.Ordinal))
+        throw new Exception("An unrecognised git subcommand previewed as a recognised one.");
+    if (Preview("run_command", """{"command":"git status"}""").Contains("git write", StringComparison.Ordinal)
+        || Preview("run_command", """{"command":"git --no-pager diff HEAD"}""").Contains("git write", StringComparison.Ordinal)
+        || commandPreview.Contains("git write", StringComparison.Ordinal))
+        throw new Exception("A command that moves nothing in git carried the git flag anyway.");
+    Console.WriteLine("PASS: a command that writes to git says so on its card, and a git read does not.");
     var workspacePreview = Preview("set_workspace", JsonSerializer.Serialize(new { path = workspace }));
     if (!workspacePreview.Contains("exists"))
         throw new Exception($"A workspace preview did not state the facts:{Environment.NewLine}{workspacePreview}");
@@ -4150,6 +4164,138 @@ if (args.Contains("--check-ai-tool-policy"))
     if (parkClient.SecondRequest.Count > 0)
         throw new Exception("The follow-up request went out with the approval placeholder: " + parkClient.SecondRequest.Count + " messages.");
     Console.WriteLine("PASS: a parked call ends the turn with no result, and its placeholder never reaches the model.");
+
+    // Git is not a tool, so the rule that decides whether `run_command` may touch a repository is a pure function
+    // over the command line — and it is asserted as a table rather than sampled. The ladder only goes up: every
+    // case that is not a named git write has to keep the tier it had, because a classifier that stops a build loop
+    // at `git status` is the failure mode this feature would cause, and that half of the rule is invisible in a
+    // sample of the interesting cases.
+    var gitCases = new (string Command, GitGrade Expected)[]
+    {
+        // Reads, in the spellings the assistant actually emits: global options before the verb, a value-taking
+        // `-c`, the no-pager prefix, a redirect after the arguments.
+        ("git status", GitGrade.GitRead),
+        ("git status --porcelain=v1 -z --untracked-files=all", GitGrade.GitRead),
+        ("git diff", GitGrade.GitRead),
+        ("git diff HEAD~3 -- src/main.cpp", GitGrade.GitRead),
+        ("git --no-pager diff --stat", GitGrade.GitRead),
+        ("git -c core.quotepath=false log -1", GitGrade.GitRead),
+        ("git --git-dir=.git rev-parse HEAD", GitGrade.GitRead),
+        ("git -C sub status", GitGrade.GitRead),
+        ("git log --oneline -20", GitGrade.GitRead),
+        ("git show HEAD:README.md", GitGrade.GitRead),
+        ("git blame src/main.cpp", GitGrade.GitRead),
+        ("git grep TODO", GitGrade.GitRead),
+        ("git ls-files", GitGrade.GitRead),
+        ("git reflog", GitGrade.GitRead),
+        // The five verbs that are reads or writes depending on their arguments.
+        ("git branch", GitGrade.GitRead),
+        ("git branch -a", GitGrade.GitRead),
+        ("git branch --show-current", GitGrade.GitRead),
+        ("git tag", GitGrade.GitRead),
+        ("git tag -l 'v1*'", GitGrade.GitRead),
+        ("git remote -v", GitGrade.GitRead),
+        ("git remote show origin", GitGrade.GitRead),
+        ("git config user.name", GitGrade.GitRead),
+        ("git config --list", GitGrade.GitRead),
+        ("git stash list", GitGrade.GitRead),
+        ("git worktree list", GitGrade.GitRead),
+        // Writes: the index, the tree, a ref, or history.
+        ("git add -A", GitGrade.GitWrite),
+        ("git commit -m \"fix: the title\"", GitGrade.GitWrite),
+        ("git commit --amend --no-edit", GitGrade.GitWrite),
+        ("git push origin main", GitGrade.GitWrite),
+        ("git pull", GitGrade.GitWrite),
+        ("git fetch origin", GitGrade.GitWrite),
+        ("git reset --hard HEAD~1", GitGrade.GitWrite),
+        ("git checkout main", GitGrade.GitWrite),
+        ("git switch -c feature", GitGrade.GitWrite),
+        ("git restore src/main.cpp", GitGrade.GitWrite),
+        ("git clean -fd", GitGrade.GitWrite),
+        ("git merge feature", GitGrade.GitWrite),
+        ("git rebase -i HEAD~3", GitGrade.GitWrite),
+        ("git cherry-pick abc123", GitGrade.GitWrite),
+        ("git revert HEAD", GitGrade.GitWrite),
+        ("git rm -r build", GitGrade.GitWrite),
+        ("git mv a.cpp b.cpp", GitGrade.GitWrite),
+        ("git stash", GitGrade.GitWrite),
+        ("git stash pop", GitGrade.GitWrite),
+        ("git tag v1.0.0", GitGrade.GitWrite),
+        ("git tag -d v0.9.0", GitGrade.GitWrite),
+        ("git branch new-topic", GitGrade.GitWrite),
+        ("git branch -d old-topic", GitGrade.GitWrite),
+        ("git config user.email hi@example.com", GitGrade.GitWrite),
+        ("git config --unset http.proxy", GitGrade.GitWrite),
+        ("git remote set-url origin https://example.com/x.git", GitGrade.GitWrite),
+        ("git worktree add ../side main", GitGrade.GitWrite),
+        ("git submodule update --init", GitGrade.GitWrite),
+        ("git init", GitGrade.GitWrite),
+        ("git clone https://example.com/x.git", GitGrade.GitWrite),
+        ("git gc --prune=now", GitGrade.GitWrite),
+        // Compound lines, pipes and redirects: the worst segment wins, and a separator inside a quoted message
+        // must not invent a segment of its own.
+        ("git add -A && git commit -m x", GitGrade.GitWrite),
+        ("cmake --build build && git commit -m x", GitGrade.GitWrite),
+        ("git status; git log -1", GitGrade.GitRead),
+        ("git log --oneline | head -5", GitGrade.GitRead),
+        ("git diff HEAD > tmp/diff.txt", GitGrade.GitRead),
+        ("git status 2>&1", GitGrade.GitRead),
+        ("git commit -m \"a; b\" && git push", GitGrade.GitWrite),
+        // A shell started for one command is that command: leaving `pwsh -c "git push"` on the read tier would be
+        // the route around this whole rule, and it is the route a model finds.
+        ("pwsh -c \"git push\"", GitGrade.GitWrite),
+        ("powershell -Command \"git commit -m x\"", GitGrade.GitWrite),
+        ("cmd /c git push", GitGrade.GitWrite),
+        ("sh -c \"git reset --hard\"", GitGrade.GitWrite),
+        ("env LC_ALL=C git commit -m x", GitGrade.GitWrite),
+        ("timeout 60 git clone https://example.com/x.git", GitGrade.GitWrite),
+        ("& git status", GitGrade.GitRead),
+        // What is deliberately NOT graded upward, and said out loud because it is a blind spot rather than an
+        // oversight: a payload in a variable and a script file are both unknowable without running something, and
+        // every client's subcommand rules are blind the same way. `echo "git commit"` is the one that must stay
+        // quiet, since the quoted pair is one argument to echo rather than a call.
+        ("pwsh -c $cmd", GitGrade.NotGit),
+        ("bash deploy.sh", GitGrade.NotGit),
+        ("echo \"git commit\"", GitGrade.NotGit),
+        // Ordinary work must not start costing cards because the word git appears near it.
+        ("npm test", GitGrade.NotGit),
+        ("cmake --build build --config Debug", GitGrade.NotGit),
+        ("gitk", GitGrade.NotGit),
+        ("github cli status", GitGrade.NotGit),
+        ("git", GitGrade.NotGit),
+        ("git --version", GitGrade.NotGit),
+        // A verb this build has never heard of is not assumed harmless, and an option that swallowed its own
+        // value is not assumed to be a read.
+        ("git my-tool thing", GitGrade.GitUnclassifiable),
+        ("git -C", GitGrade.GitUnclassifiable),
+    };
+    foreach (var (command, expected) in gitCases)
+    {
+        var actual = GitCommandGrades.Grade(command);
+        if (actual != expected)
+            throw new Exception($"Graded 「{command}」 as {actual}, expected {expected}.");
+    }
+    Console.WriteLine($"PASS: all {gitCases.Length} git command lines grade to the tier the ladder intends.");
+
+    // An unrecognised git verb has to behave like a write where the ladder is read, or the extra enum value would
+    // be decoration: this is the assertion that connects the grade to the gate.
+    if (GitCommandGrades.Elevates(GitGrade.NotGit) || GitCommandGrades.Elevates(GitGrade.GitRead)
+        || !GitCommandGrades.Elevates(GitGrade.GitWrite) || !GitCommandGrades.Elevates(GitGrade.GitUnclassifiable))
+        throw new Exception("Elevates() no longer means exactly \"more than the sandbox tier\".");
+
+    // The gate hands the raw arguments in, so the wrapper is asserted with the rest: absent, blank, unparseable
+    // and unrelated JSON all keep today's tier, which is what the approval-card fixtures and the audit lines in
+    // the shell suite depend on. A card about a command Hub could not read would have nothing in it to approve,
+    // and the tool body refuses an empty command before it can run anything.
+    if (GitCommandGrades.CommandOf(null) != GitGrade.NotGit
+        || GitCommandGrades.CommandOf("{}") != GitGrade.NotGit
+        || GitCommandGrades.CommandOf("{\"command\":\"\"}") != GitGrade.NotGit
+        || GitCommandGrades.CommandOf("not json at all") != GitGrade.NotGit
+        || GitCommandGrades.CommandOf("{\"other\":1}") != GitGrade.NotGit
+        || GitCommandGrades.CommandOf("{\"command\":\"git push\"}") != GitGrade.GitWrite
+        || GitCommandGrades.CommandOf("{\"command\":\"git status\",\"timeout_seconds\":5}") != GitGrade.GitRead)
+        throw new Exception("The command-argument reader graded a call it should have left on its old tier.");
+    Console.WriteLine("PASS: a run_command with nothing readable in its arguments keeps the tier it had.");
     return;
 }
 if (args.Contains("--check-ai-cross-session"))

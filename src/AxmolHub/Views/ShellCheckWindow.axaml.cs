@@ -3989,6 +3989,10 @@ public partial class ShellCheckWindow : Window
         var peerSession = chat.StartConversation();
         // A call on the tier no grant can open, so its card can be shown to have lost the button that would lie.
         var screenSession = chat.StartConversation();
+        // The same tier, reached through the sandbox's own tool rather than past it: a git write starts in the
+        // directory the person chose and still moves state <c>file_write</c> cannot hand back. This fixture is the
+        // one that proves a grant on <c>run_command</c> does not open it.
+        var gitWriteSession = chat.StartConversation();
         // The tier a grant <i>can</i> open, reached through the tool that leaves the machine: web_fetch shares it
         // with a sandbox command, so its card is the pair to the capture card below — one ladder, two answers, and
         // a fixture that only ever shows one of them cannot say which button the gate actually reads.
@@ -4005,6 +4009,14 @@ public partial class ShellCheckWindow : Window
         var movedClient = new ApprovalChatClient();
         var grantClient = new ApprovalChatClient { ToolName = "run_command" };
         var peerClient = new ApprovalChatClient { ToolName = "run_command" };
+        // Chosen so the cell is safe even when the rule it tests is broken: `tmp/` is gitignored and the index is
+        // clean, so a `git commit` that escaped the check would answer "nothing to commit" rather than write
+        // history into the repository the check is running in.
+        var gitWriteClient = new ApprovalChatClient
+        {
+            ToolName = "run_command",
+            Arguments = new Dictionary<string, object?> { ["command"] = "git commit -m \"hub self-check\"" },
+        };
         var screenClient = new ApprovalChatClient
         {
             ToolName = "capture_screen",
@@ -4079,6 +4091,7 @@ public partial class ShellCheckWindow : Window
                 var id when id == searchedSession.Id => searchedClient,
                 var id when id == grantSession.Id => grantClient,
                 var id when id == peerSession.Id => peerClient,
+                var id when id == gitWriteSession.Id => gitWriteClient,
                 var id when id == screenSession.Id => screenClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
@@ -4118,7 +4131,7 @@ public partial class ShellCheckWindow : Window
             batchClient.Thinking = [batchThinking];
             foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession,
                     badgeSession, batchSession, autoRunSession, askRunSession, movedSession, grantSession, peerSession,
-                    fetchSession, searchSession, searchedSession })
+                    gitWriteSession, fetchSession, searchSession, searchedSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -4171,6 +4184,28 @@ public partial class ShellCheckWindow : Window
                   && ChatTools.RiskOf("spawn_session", null, sandbox) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("没登记过的工具", null, sandbox) == ToolRisk.SystemCommand,
                 "只读查询登记为只读，写文件是工作区写，沙箱里的命令自成一档、没有沙箱或落在受保护目录时退回系统命令，抓屏与派生子会话仍在最高档，没听过的工具名按系统命令兜底而不是放行");
+
+            // The command tier is no longer decided by the directory alone. `git reset --hard` starts in the
+            // sandbox the person chose and still moves state that <c>file_write</c> cannot hand back, so the verb
+            // decides it too — and the half that must <b>not</b> move is asserted with the half that must, because
+            // a read that starts costing a card is the failure this rule could cause: the model stops looking at
+            // the repository and answers from a file it read three turns ago. The unparseable-argument case is
+            // the third line of the pair: an absent command has to keep the tier the fixtures above assume.
+            string Command(string line) => System.Text.Json.JsonSerializer.Serialize(new { command = line });
+            Check(ChatTools.RiskOf("run_command", Command("git status"), sandbox) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf("run_command", Command("git -C sub diff HEAD"), sandbox) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf("run_command", Command("git log --oneline -5"), sandbox) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf("run_command", Command("cmake --build build"), sandbox) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf("run_command", null, sandbox) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf("run_command", Command("git commit -m x"), sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("run_command", Command("git add -A && git commit -m x"), sandbox) == ToolRisk.SystemCommand
+                  // The route around the rule: a shell started for one command is that command.
+                  && ChatTools.RiskOf("run_command", Command("""pwsh -c "git push"""), sandbox) == ToolRisk.SystemCommand
+                  // A verb this build has never heard of is not assumed harmless, and the directory still decides
+                  // when there is no directory to decide with.
+                  && ChatTools.RiskOf("run_command", Command("git lfs install"), sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("run_command", Command("git status"), WorkspaceToolScope.Empty) == ToolRisk.SystemCommand,
+                "git 写命令按子命令升到最高档、读命令与读不出的参数留在沙箱档，包在 shell 里的写照样升，认不出的子命令按写处理");
 
             // web_fetch on its own line rather than folded into the aggregate above, because of a specific negative
             // control: deleting its arm drops the name into the fallback, and the fallback answers SystemCommand —
@@ -4328,9 +4363,15 @@ public partial class ShellCheckWindow : Window
             Check(agentPrompt.Contains("run the check the project itself uses")
                   && agentPrompt.Contains("if you did not run it, say so")
                   && agentPrompt.Contains("output written to a file inside the workspace")
+                  // The tier is now a fact about the verb, and a model that does not know it will spend the turn
+                  // discovering it: the prompt has to state that git reads are free and git writes cost a card,
+                  // and name the route around the rule so the model does not take it.
+                  && agentPrompt.Contains("git status, git diff and git log are graded as ordinary sandbox commands")
+                  && agentPrompt.Contains("costs a card in every mode but full access")
+                  && agentPrompt.Contains("instead of hiding it inside a shell -c payload")
                   && !agentPrompt.Contains("axmol", StringComparison.OrdinalIgnoreCase)
                   && !agentPrompt.Contains("1kiss", StringComparison.OrdinalIgnoreCase),
-                "Agent 提示词写明「验证过才报结果、输出被截断就落文件再读」，且不含引擎专属命令名");
+                "Agent 提示词写明「验证过才报结果、输出被截断就落文件再读」，并写清 git 读命令免批、写命令必弹卡且不许绕进脚本，且不含引擎专属命令名");
 
             // Only this process can prove the encoding case: Hub is a windowed app with no console, and setting
             // a console's output codepage is what PowerShell does when told to — it throws where there is no
@@ -4461,6 +4502,26 @@ public partial class ShellCheckWindow : Window
                   && peerSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 1,
                 "另一个没被授权过的会话里，同一条命令不再弹卡——应用级信任是跨会话的（实际工具结果 "
                 + peerSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) + " 条）");
+            // The grant is live app-wide at this exact moment, which is when the top tier has to show it: the same
+            // tool, the same sandbox, a verb that moves the repository — it still parks under 自动审批, and its
+            // card carries no 「总是允许」 that the gate would ignore. Without this cell the trust list asserted
+            // above would only prove that a grant opens the tier it is meant to open.
+            chat.SetApprovalMode(gitWriteSession.Id, ToolApprovalModes.Auto);
+            chat.OpenConversation(gitWriteSession.Id);
+            chat.TryEnqueueSend(gitWriteSession.Id, "把改动提交一下", null, out _);
+            var gitCallId = await WaitForPendingCallAsync(gitWriteSession);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(ToolTrust.Contains(chat.TrustedTools, "run_command")
+                  && gitCallId is not null
+                  && gitWriteSession.Messages.Count(turn => turn.Role == ChatRoles.Tool) == 0
+                  && panel.ApprovalCardActionsForCheck.SequenceEqual(new[] { "ApprovalDeny", "ApprovalAllow" },
+                      StringComparer.Ordinal),
+                "「总是允许」也开不了这一档：git 写命令在自动审批下仍然挂起，卡上不给那个不会兑现的按钮（实际 "
+                + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
+            chat.TryResolveApproval(gitWriteSession.Id, gitCallId ?? "", approved: false, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
             // Taken straight back: a grant left here would let a later session's expectation pass for the wrong
             // reason, and "it stopped asking" would stop meaning "the tier allows it".
             chat.RevokeAllTrustedTools();
@@ -5258,7 +5319,8 @@ public partial class ShellCheckWindow : Window
             chat.IdleTimeout = savedIdleTimeout;
             foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id,
                     restartSession.Id, badgeSession.Id, batchSession.Id, autoRunSession.Id, askRunSession.Id,
-                    movedSession.Id, grantSession.Id, peerSession.Id, screenSession.Id, fetchSession.Id,
+                    movedSession.Id, grantSession.Id, peerSession.Id, gitWriteSession.Id, screenSession.Id,
+                    fetchSession.Id,
                     searchSession.Id, searchedSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);

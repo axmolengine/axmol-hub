@@ -46,14 +46,9 @@ internal static class ChatTools
             or "search_text" or "list_directory" or "find_files"
             => ToolRisk.ReadOnly,
         "file_write" or "send_to_session" => ToolRisk.WorkspaceWrite,
-        // Decided by the same check the tool body runs before it spawns the shell
-        // (<see cref="WorkspacePaths.VerifyCommandRoot"/>, which <c>WorkspaceTools.RunCommand</c> calls first), so
-        // "this call is exempt" and "this call stays in the sandbox" are one expression rather than two that can
-        // drift apart. A missing, protected or link-ridden root is not a workspace command, and a command with no
-        // sandbox asks in every tier but full.
-        "run_command" => WorkspacePaths.VerifyCommandRoot(scope.WorkspaceRoot, scope.Guards) == WorkspacePathVerdict.Allowed
-            ? ToolRisk.WorkspaceCommand
-            : ToolRisk.SystemCommand,
+        // Decided by one method rather than an inline ternary, because there are now two things that can make a
+        // command cost more than the sandbox tier, and both have to be read from the same place the gate reads.
+        "run_command" => RunCommandRisk(scope, argumentsJson),
         // Reading a page sends nothing the shell could not already send: a sandboxed run_command has been able to
         // reach the same address without a card since the auto tier was drawn, and a refusal that pushes the model
         // off the named, bounded, source-showing tool and onto that path is a worse guard, not a stricter one. So
@@ -85,6 +80,28 @@ internal static class ChatTools
             : ToolRisk.AssistantNote,
         _ => ToolRisk.SystemCommand,
     };
+
+    /// <summary>
+    /// A command's tier: the directory it will run in, and what the command does to a repository.
+    ///
+    /// The root comes from the same check the tool body runs before it spawns the shell
+    /// (<see cref="WorkspacePaths.VerifyCommandRoot"/>, which <c>WorkspaceTools.RunCommand</c> calls first), so
+    /// "this call is exempt" and "this call stays in the sandbox" are one expression rather than two that can
+    /// drift apart. A missing, protected or link-ridden root is not a workspace command, and a command with no
+    /// sandbox asks in every tier but full.
+    ///
+    /// The verb is the second half, and it is the reason the arm is a method: <c>git reset --hard</c> does run in
+    /// the directory the person chose, and still moves state no file tool can hand back, so it belongs on the same
+    /// tier as the screen and another session — the one tier a 「总是允许」 grant cannot open (see the gate in
+    /// <c>ChatWorkspace</c>) and the one that keeps asking under 自动审批. Git *reads* stay on the sandbox tier
+    /// where every established client leaves them: a model that has to ask permission to see <c>git status</c>
+    /// answers from a file it read three turns ago instead, which is a worse guard, not a stricter one.
+    /// </summary>
+    private static ToolRisk RunCommandRisk(WorkspaceToolScope scope, string? argumentsJson)
+        => WorkspacePaths.VerifyCommandRoot(scope.WorkspaceRoot, scope.Guards) != WorkspacePathVerdict.Allowed
+           || GitCommandGrades.Elevates(GitCommandGrades.CommandOf(argumentsJson))
+            ? ToolRisk.SystemCommand
+            : ToolRisk.WorkspaceCommand;
 
     /// <summary>Finds a registered tool by name. The path that executes an <i>approved</i> call needs this,
     /// because it invokes the function itself instead of handing the call back to the model loop.</summary>

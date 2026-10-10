@@ -66,8 +66,16 @@ public static class ToolPreviews
             : FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Relative);
     }
 
-    /// <summary>Names the shell and the directory as well as the command: what a person is approving is "this, in
-    /// there", and a bare command line hides the part that decides how much damage it can do.</summary>
+    /// <summary>
+    /// Names the shell and the directory as well as the command: what a person is approving is "this, in there",
+    /// and a bare command line hides the part that decides how much damage it can do.
+    ///
+    /// The git grade rides on the same line because the tier is no longer decided by the directory alone, and a
+    /// card that parks a command under 自动审批 without saying why reads as a bug in the mode. The sentence names
+    /// what the command can reach — the index, the tree, history — rather than repeating that it asks: the card
+    /// being on screen already said that. An unrecognised subcommand is said differently on purpose, because
+    /// "this move the index" would be a claim about a verb this build has never seen.
+    /// </summary>
     private static string CommandPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
     {
         var shell = CommandShells.ForCurrent();
@@ -77,7 +85,15 @@ public static class ToolPreviews
         var timeout = arguments.TryGetValue("timeout_seconds", out var seconds) && seconds.TryGetInt32(out var value)
             ? value
             : WorkspaceTools.DefaultCommandTimeoutSeconds;
-        return $"{shell.Label} · {root} · idle timeout {timeout}s\n{Text(arguments, "command")}";
+        var head = $"{shell.Label} · {root} · idle timeout {timeout}s";
+        var grade = GitCommandGrades.Grade(Text(arguments, "command"));
+        var flag = grade switch
+        {
+            GitGrade.GitWrite => "\ngit write · moves the index, the working tree, or history",
+            GitGrade.GitUnclassifiable => "\ngit subcommand Hub does not recognise · treated as a write",
+            _ => "",
+        };
+        return $"{head}{flag}\n{Text(arguments, "command")}";
     }
 
     /// <summary>The facts needed to say yes to a new sandbox: does it exist, is it a repository, and is it
