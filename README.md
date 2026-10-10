@@ -2,9 +2,9 @@
 
 <img src="src/AxmolHub/Assets/hub-icon.png" alt="Axmol Hub icon" width="96" />
 
-**The Axmol workbench: engines, projects, and build toolchains managed for you — with a general-purpose coding agent built in, one that reads your code, edits it, and runs the build until it passes.**
+**The Axmol workbench: engines, projects, and build toolchains — with a general-purpose coding agent built in**
 
-The assistant is a general programming and debugging tool first. Axmol awareness — the engine index, the project digest, a toolchain pinned to the engine's own `1k/build.profiles`, and a shell the agent can drive and verify itself — is what makes it correct about this stack, not a limit on what it will answer.
+The assistant is a general programming and debugging tool first. Axmol awareness — the engine index, the project digest, a toolchain pinned to the engine's own `1k/build.profiles`, and a shell the agent can drive and verify itself
 
 [![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359)
 
@@ -97,7 +97,7 @@ Keep changes scoped: UI logic in `AxmolHub`, build and state logic in `Core`, an
 
 ## Privacy policy
 
-Axmol Hub does not collect telemetry or personal information. It opens a network connection for three things: to fetch engine and toolchain version information and to download the engines, toolchains, and dependencies you choose to install or update (from axmol.dev, GitHub, and configured mirrors); to the model provider you configure, for sign-in, the model list, and the requests you send; and to the one address shown on an approval card when the assistant reads a web page with `web_fetch` (https only, at most 1 MiB, and the page's scripts and styles are stripped before its text reaches the model). The last channel is on by default and can be switched off in Settings; turning it off removes the tool entirely. Log files written for troubleshooting stay on your machine.
+Axmol Hub does not collect telemetry or personal information. It opens a network connection for three things: to fetch engine and toolchain version information and to download the engines, toolchains, and dependencies you choose to install or update (from axmol.dev, GitHub, and configured mirrors); to the model provider you configure, for sign-in, the model list, and the requests you send; and to the one address shown on an approval card when the assistant reads a web page with `web_fetch` (https only, at most 1 MiB, and the page's scripts and styles are stripped before its text reaches the model). The last channel is on by default and can be switched off in Settings; turning it off removes the tool entirely. If you declare a server-side tool for a provider (`serverTools` in `ai/providers.json`), that provider's service may also read pages on its own to answer you — Hub sends the declaration, not the request, and the same Settings switch withholds it. Nothing is declared for any built-in provider until a gateway has been measured honouring one. Log files written for troubleshooting stay on your machine.
 
 ## Code signing policy
 
