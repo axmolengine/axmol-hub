@@ -7,10 +7,10 @@
 `vpk` 是 .NET 全局工具，但这里不装到 PATH、也不做全局安装，而是按 `installer/packaging-manifest.json` 锁定的版本与 SHA-256 下载后装进工作区：
 
 ```powershell
-dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-packaging
+dotnet run --project tests/AxmolHub.Checks -- cache/packaging-tools --prepare-packaging
 ```
 
-该命令先校验 `.nupkg` 的 SHA-256，再从已校验的本地源安装，产出 `artifacts/packaging-tools/vpk/`。
+该命令先校验 `.nupkg` 的 SHA-256，再从已校验的本地源安装，产出 `cache/packaging-tools/vpk/`。
 
 ## 构建与验收
 
@@ -33,7 +33,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 
 - 安装包：名字规则只写在 `installer/AssetNames.ps1` 一处 —— `Build.ps1` 用它改名，`Publish.ps1` 与 `Publish-All.ps1` 按同一个名字找回文件，规则各拼一遍就是"改了一处、发布 job 在另一处红"。Windows 本地 `Build.ps1` 默认把 `vpk` 产出的 `{packId}{-channel}-Setup.exe` 改名为 `AxmolHub.exe`，发布时改为 `axmol-hub-<version>-<runtime>.exe`；macOS 一律 `axmol-hub-<version>-<runtime>.pkg`。**Linux 不带版本段**，恒为 `axmol-hub-linux-x64.AppImage`：AppImage 不是装完即弃的安装器，而是用户留下并反复运行的那个文件，名字一变每次发布都得重发链接、书签和脚本。版本仍可从标题栏（`Axmol Hub v0.8.3`）、桌面入口的 `X-AppImage-Version` 与随包 `.sha256` 三处任一确认。
 - 更新载荷：`vpk` 产出 `{packId}-<version>{-channel}-{full|delta}.nupkg`，`Publish-All.ps1` 上传时把它改名为与既有 release 命名一致的 `axmol-hub-<version>-<runtime>-{full|delta}.nupkg`，**并同步改写 feed 里的 `FileName`** —— 否则客户端按 feed 找不到包。公开资产前缀由 `assetPrefix` 固定，因此修改安装身份不会改变安装包或更新载荷的既有名称。
-- Windows 包内主程序固定为 `current\AxmolHub.exe`（与程序集同名；2026-10-08 之前叫 `AxmolHub.App.exe`，旧名只留在 MuiCache 的清理名单里）；Velopack 稳定启动器叫 `AxmolHub.exe`，位于安装根目录 `%LocalAppData%\dev.axmol.hubapp\`。Velopack 初建的 `AxmolHub.lnk` 会在安装后/首次启动时改为 `Axmol Hub.lnk`，卸载前恢复生成名以便 Velopack 删除。用户下载的 Setup 也叫 `AxmolHub.exe`，但位于安装目录之外。
+- Windows 包内主程序固定为 `current\AxmolHub.exe`（与程序集同名；2026-10-08 之前叫 `AxmolHub.App.exe`，旧名只留在 MuiCache 的清理名单里）；Velopack 稳定启动器为 `Axmol Hub.exe`，位于安装根目录 `%LocalAppData%\dev.axmol.hubapp\`，桌面与开始菜单快捷方式均为 `Axmol Hub.lnk`。这三样都由 vpk 按 `--packTitle`（`Axmol Hub`）原生生成 —— 安装器 exe 的 ProductName / FileDescription 同样取自 `--packTitle` —— 安装后不再改名。用户下载的 Setup 本地名为 `AxmolHub.exe`，位于安装目录之外。
 
 其中 `{-channel}` 段：`vpk` **只在 Windows 且 channel 恰为平台默认值 `win` 时省略**，其余一律带 `-<channel>`（macOS 出 `-osx-…`、Linux 出 `-linux-…`）。本项目 channel = **完整 RID**（`win-x64` / `osx-arm64` / `osx-x64` / `linux-x64`，见 `Build.ps1`），因 `win-x64 ≠ win`，**四个平台（含 Windows）的 nupkg 都带 `-<rid>-` 段**。feed 名同理 = `releases.<rid>.json`。
 
@@ -81,7 +81,7 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 ## 与原 Inno 链路的差异（有意接受）
 
 - **没有向导。** Velopack 的 Windows 安装器是一键式的：不提供安装目录选择页，也不提供安装语言选择。目录可用 `Setup.exe --installto <DIR>` 覆盖；安装语言不再存在，界面语言由应用内设置决定，冷启动默认 `en-US`（可切到 `zh-CN`；默认值单点定义在 `HubTexts.DefaultLanguage`）。
-- **桌面快捷方式固定为不创建。** Inno 里它是个默认不勾选的选项，而一键安装没有界面承载这个选项，因此打包时固定 `--shortcuts StartMenuRoot`。
+- **桌面与开始菜单快捷方式都创建。** 一键安装没有界面承载“是否建桌面快捷方式”这个选项，因此打包时固定 `--shortcuts Desktop,StartMenuRoot`，两处各建一个 `Axmol Hub.lnk`（名带空格，由 `--packTitle` 决定）。
 - **没有 MSVC/工具链相关行为变化**：安装包仍然只含自包含 Hub、清单与许可文件，不捆绑引擎、工具链、Debug CRT 或用户设置。
 
 ## 发布到 GitHub Release

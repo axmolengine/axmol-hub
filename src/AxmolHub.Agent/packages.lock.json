@@ -191,6 +191,13 @@
       "axmolhub.core": {
         "type": "Project"
       }
+    },
+    "net8.0/win-x64": {
+      "System.Text.Encodings.Web": {
+        "type": "Transitive",
+        "resolved": "10.0.12",
+        "contentHash": "5wdXVVbJ5TH6YdKJYM0CHvQOY6SiCCeQ3KyLRx9daWag0cT9g4FT5CGN2qCNWbHZkqaCOEPRiA0uCBARB5Vk7w=="
+      }
     }
   }
 }

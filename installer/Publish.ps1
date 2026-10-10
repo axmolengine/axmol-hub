@@ -43,8 +43,8 @@ if ($Stage -eq 'Upload' -and $env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME -ne 
 
 $taskSlug = ($RepoUrl -replace '^https?://[^/]+/', '') -replace '\.git$', ''
 $taskOutput = Join-Path $taskRoot "artifacts/releases/$Runtime"
-$taskVpk = Join-Path $taskRoot 'artifacts/packaging-tools/vpk/vpk.exe'
-if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'artifacts/packaging-tools/vpk/vpk' }
+$taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk.exe'
+if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk' }
 
 if ($Stage -in @('All', 'Build')) {
     if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskManifest.packages[0].version) first." }

@@ -21,7 +21,9 @@ $taskRun = [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $taskWork = Join-Path $taskRoot "artifacts/install-checks/$taskRun"
 New-Item -ItemType Directory -Force -Path $taskWork | Out-Null
 $taskPackId = $taskManifest.packId
-$taskTitle = 'AxmolHub'
+# 标题与 installer/Build.ps1 的 --packTitle 默认值同源（'Axmol Hub'）：
+# 它同时决定安装器版本资源（ProductName/FileDescription）、快捷方式名和安装根启动器 stub 名。
+$taskTitle = 'Axmol Hub'
 if ($Isolated) {
     $taskPackId = $taskManifest.packId + '.Validation.' + $taskRun
     $taskTitle = 'AxmolHub Validation ' + $taskRun
@@ -32,6 +34,10 @@ $taskSettings = Join-Path $taskWork 'user data/hub-settings.json'
 $taskStub = Join-Path $taskInstall ($taskTitle + '.exe')
 # Windows 包内主程序名，与 Build.ps1 里 --mainExe 的 win 分支同值；改名时两处一起动。
 $taskMainExe = 'AxmolHub.exe'
+# vpk 按 --packTitle 命名快捷方式（桌面 + 开始菜单各一个，同名）。
+$taskShortcutName = $taskTitle + '.lnk'
+$taskStartMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) $taskShortcutName
+$taskDesktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $taskShortcutName
 
 function Get-HubUninstallEntry([string]$packId) {
     Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
@@ -41,8 +47,9 @@ function Quote([string]$value) { '"' + $value + '"' }
 
 if (-not $Isolated) {
     $taskExisting = Join-Path $env:LOCALAPPDATA $taskManifest.packId
-    $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Axmol Hub.lnk'
-    if ((Test-Path -LiteralPath $taskExisting) -or (Test-Path -LiteralPath $taskShortcut)) {
+    if ((Test-Path -LiteralPath $taskExisting) -or
+            (Test-Path -LiteralPath $taskStartMenuShortcut) -or
+            (Test-Path -LiteralPath $taskDesktopShortcut)) {
         throw 'An existing Hub installation or shortcut is present. Use -Isolated, or run this on a clean account.'
     }
 }
@@ -69,6 +76,15 @@ try {
         # installer executable in this version's isolated output directory.
         $taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.exe')
         if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput, found $($taskSetup.Count)." }
+        # 安装器（Setup）的版本资源必须显示品牌名：vpk 从 --packTitle 写入 ProductName / FileDescription。
+        # 本地调试名固定为 AxmolHub.exe，但属性页里必须是没有去掉空格的 'Axmol Hub'。
+        $taskSetupInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($taskSetup[0].FullName)
+        if ($taskSetupInfo.ProductName -ne $taskTitle) {
+            throw "Installer ProductName mismatch: $($taskSetupInfo.ProductName)"
+        }
+        if ($taskSetupInfo.FileDescription -ne $taskTitle) {
+            throw "Installer FileDescription mismatch: $($taskSetupInfo.FileDescription)"
+        }
         $taskReleases[$taskVersion] = $taskSetup[0].FullName
     }
 
@@ -87,8 +103,9 @@ try {
     if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
     $taskMuiCachePath = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
     $taskMuiCacheInstalledEntry = Join-Path $taskCurrent "$taskMainExe.FriendlyAppName"
-    $taskMuiCacheStableEntry = Join-Path $taskInstall 'AxmolHub.exe.FriendlyAppName'
-    $taskMuiCacheLegacyEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
+    # 安装根下的稳定启动器现在是 'Axmol Hub.exe'；'AxmolHub.exe' 是 ≤0.8.7 的旧名。两者都要清。
+    $taskMuiCacheStableEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
+    $taskMuiCacheLegacyEntry = Join-Path $taskInstall 'AxmolHub.exe.FriendlyAppName'
     $taskMuiCacheSameDirectoryOtherAppEntry = Join-Path $taskCurrent 'OtherApp.exe.FriendlyAppName'
     $taskMuiCacheOtherEntry = Join-Path $taskWork ("UnrelatedMuiCacheProbe-" + $taskRun + '.exe.FriendlyAppName')
     New-Item -Path $taskMuiCachePath -Force | Out-Null
@@ -138,6 +155,9 @@ try {
         Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheOtherEntry -ErrorAction SilentlyContinue
     }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
+    # 安装后桌面与开始菜单都应有品牌化快捷方式（vpk 按 --packTitle 命名，名里保留空格）。
+    if (-not (Test-Path -LiteralPath $taskStartMenuShortcut)) { throw "Install did not create the Start menu shortcut: $taskShortcutName" }
+    if (-not (Test-Path -LiteralPath $taskDesktopShortcut)) { throw "Install did not create the desktop shortcut: $taskShortcutName" }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
     if ($taskProtocolCommand -notlike ('"' + $taskStub + '" "%1"')) { throw "The installed URI handler does not target the stable launcher: $taskProtocolCommand" }
     $taskMainVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskCurrent $taskMainExe))
@@ -174,9 +194,8 @@ try {
     while ((Test-Path -LiteralPath $taskCurrent) -and (Get-Date) -lt $taskDeadline) { Start-Sleep -Milliseconds 500 }
     if (Test-Path -LiteralPath $taskCurrent) { throw 'Uninstall left the application payload in place.' }
     if (Test-Path -LiteralPath $taskStub) { throw 'Uninstall left the stub executable in place.' }
-    $taskShortcutName = $taskTitle + '.lnk'
-    $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) $taskShortcutName
-    if (Test-Path -LiteralPath $taskShortcut) { throw 'Uninstall left the Start menu shortcut in place.' }
+    if (Test-Path -LiteralPath $taskStartMenuShortcut) { throw 'Uninstall left the Start menu shortcut in place.' }
+    if (Test-Path -LiteralPath $taskDesktopShortcut) { throw 'Uninstall left the desktop shortcut in place.' }
     if (Get-HubUninstallEntry $taskPackId) { throw 'Uninstall left the uninstall registry entry in place.' }
     if (Test-Path -LiteralPath $taskProtocolRegistryPath) { throw 'Uninstall left the axmolhub URI registration in place.' }
     $taskResidual = Test-Path -LiteralPath $taskInstall

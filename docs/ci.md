@@ -208,7 +208,7 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 - `meta`：解析提交信息是否为 `^Version x.y.z$`，输出 `should_package`（普通提交只验证、不打包）。
 - `verify`：三平台矩阵（§2 的验证职责，任何提交都跑）。
 - `package-*`：四个 job，`needs: meta` + `if: should_package == 'true'`，各在原生 runner 上打包：
-  1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `artifacts/packaging-tools/vpk`，**不修改 PATH**。
+  1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `cache/packaging-tools/vpk`，**不修改 PATH**。
   2. `installer/Publish.ps1 -Stage Build -Runtime <rid>`：`vpk download github` 拉回上一版（供 delta）→ `installer/Build.ps1 -NoClean` 发布自包含 App 并 `vpk pack`，产出安装器 / `.nupkg` / `releases.<channel>.json`，安装包改名为 `axmol-hub-<version>-<runtime>.<ext>` 并写 `.sha256`。版本号读自仓库根的 `Directory.Build.props`，脚本里没有第二份副本。
   3. `upload-artifact` 上传产物，artifact 名 = 平台目录名（`win-x64` 等），供 dist 的 `Publish-All.ps1` 按目录定位。
   4. Windows job 额外跑 `installer/Test.ps1 -Isolated`（一次性身份 + 相邻版本，验证安装/升级/卸载/数据保留）。**排在发布之前**：验收不过就不该有新 release。
@@ -237,7 +237,7 @@ CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 
 | `--smoke` 无头截图 | exit 0，产出 53964 字节 PNG |
 | Velopack 钩子拦截 | `AxmolHub.App.exe --veloapp-install 0.1.6` exit 0，**不弹 GUI**（自定义 `Main` 生效） |
 | 默认每用户数据根 | 不带 `--data-root` 启动即创建 `%LocalAppData%\AxmolHub\data` |
-| `--prepare-packaging` | `.nupkg` SHA-256 校验通过；`vpk` 1.2.161 装进 `artifacts/packaging-tools/vpk`，exit 0 |
+| `--prepare-packaging` | `.nupkg` SHA-256 校验通过；`vpk` 1.2.161 装进 `cache/packaging-tools/vpk`，exit 0 |
 | `installer/Build.ps1` | vpk 打包成功，产出 `Axmol.Hub-win-Setup.exe`（83,730,340 B，SHA-256 `2fe5efa9…`）、`Axmol.Hub-win-Portable.zip`（76,064,070 B，SHA-256 `ea864d58…`）、`Axmol.Hub-0.1.6-full.nupkg`、`releases.win.json` |
 | `installer/Test.ps1 -Isolated` | **9 项断言全过**：静默安装、载荷完整、自包含启动、中文与空格路径、**真实升级 0.1.6 → 0.1.7 生效**、升级保留用户数据、卸载移除载荷、卸载移除注册项与快捷方式、卸载保留用户数据；`ResidualInstallDirectory=false` |
 | 两份 workflow YAML | 结构校验通过 |

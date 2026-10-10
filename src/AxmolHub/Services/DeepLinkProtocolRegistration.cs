@@ -9,7 +9,8 @@ namespace AxmolHub;
 internal static class DeepLinkProtocolRegistration
 {
     private const string Scheme = "axmolhub";
-    private const string GeneratedShortcutName = "AxmolHub.lnk";
+    // Velopack 按 --packTitle（'Axmol Hub'）原生创建快捷方式，桌面与开始菜单都叫这个名，
+    // 不需要安装后再改名 —— 改名反而会让 Velopack 卸载时找不到自己创建的快捷方式。
     private const string BrandedShortcutName = "Axmol Hub.lnk";
 
     public static void Register(Action<string>? diagnostic = null)
@@ -39,7 +40,6 @@ internal static class DeepLinkProtocolRegistration
     [SupportedOSPlatform("windows")]
     private static void RegisterWindows(Action<string>? diagnostic)
     {
-        RenameStartMenuShortcut(restoreGeneratedName: false, diagnostic: diagnostic);
         var executable = WindowsLaunchPath();
         var command = $"\"{executable}\" \"%1\"";
         using var protocol = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + Scheme)
@@ -55,7 +55,6 @@ internal static class DeepLinkProtocolRegistration
     [SupportedOSPlatform("windows")]
     private static void UnregisterWindows()
     {
-        RenameStartMenuShortcut(restoreGeneratedName: true, diagnostic: null);
         var expectedCommand = $"\"{WindowsLaunchPath()}\" \"%1\"";
         using var commandKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\" + Scheme + @"\shell\open\command");
         if (!string.Equals(commandKey?.GetValue("") as string, expectedCommand, StringComparison.OrdinalIgnoreCase)) return;
@@ -66,8 +65,16 @@ internal static class DeepLinkProtocolRegistration
     {
         var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var installRoot = Directory.GetParent(appDirectory);
-        var stableLauncher = installRoot is null ? null : Path.Combine(installRoot.FullName, "AxmolHub.exe");
-        if (stableLauncher is not null && File.Exists(stableLauncher)) return stableLauncher;
+        // Velopack 的稳定启动器名随 --packTitle 走（现在是 'Axmol Hub.exe'）；从 ≤0.8.7 升级上来的
+        // 安装仍有旧的 'AxmolHub.exe'，两个名字都试一遍，最后退回到安装根下唯一的非 Update.exe。
+        if (installRoot is not null)
+        {
+            foreach (var name in new[] { "Axmol Hub.exe", "AxmolHub.exe" })
+            {
+                var stableLauncher = Path.Combine(installRoot.FullName, name);
+                if (File.Exists(stableLauncher)) return stableLauncher;
+            }
+        }
         if (installRoot is not null && Directory.Exists(installRoot.FullName))
         {
             var launchers = Directory.EnumerateFiles(installRoot.FullName, "*.exe", SearchOption.TopDirectoryOnly)
@@ -157,30 +164,6 @@ internal static class DeepLinkProtocolRegistration
         }
 
         return null;
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static void RenameStartMenuShortcut(bool restoreGeneratedName, Action<string>? diagnostic)
-    {
-        var path = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
-
-        var generated = Path.Combine(path, GeneratedShortcutName);
-        var branded = Path.Combine(path, BrandedShortcutName);
-        var source = restoreGeneratedName ? branded : generated;
-        var destination = restoreGeneratedName ? generated : branded;
-        if (!File.Exists(source)) return;
-
-        try
-        {
-            File.Move(source, destination, overwrite: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            var message = $"Could not rename the Hub Start Menu shortcut '{source}' to '{destination}': {ex}";
-            Trace.TraceWarning(message);
-            diagnostic?.Invoke(message);
-        }
     }
 
     [ComImport]

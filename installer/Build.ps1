@@ -20,7 +20,13 @@ $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.
 $taskPack = $taskManifest.packages[0]
 if (-not $PackId) { $PackId = $taskManifest.packId }
 if (-not $PackTitle) {
-    $PackTitle = if ($Runtime -like 'win-*') { 'AxmolHub' } else { 'Axmol Hub' }
+    # packTitle 一个值同时决定三件事，三者必须一致地显示「Axmol Hub」：
+    #   1) 安装器 exe 的版本资源 ProductName / FileDescription（vpk 从 nuspec 写入）；
+    #   2) 桌面 / 开始菜单快捷方式的 .lnk 文件名；
+    #   3) 安装根目录稳定启动器 stub 的文件名（{packTitle}.exe，见 WindowsPackCommandRunner）。
+    # 下载名与更新载荷名来自 packId / assetPrefix（AssetNames.ps1），与 packTitle 无关，
+    # 因此这里改名不会影响发布资产命名。
+    $PackTitle = 'Axmol Hub'
 }
 
 # 版本单一来源 = 仓库根的 Directory.Build.props（MSBuild 自动导入，五个项目共用一个值）。
@@ -39,9 +45,9 @@ if (-not $Channel) {
 }
 
 # 打包器固定版本、装在 workspace 内：不改 PATH，也不复用系统上可能已装的 vpk。
-$taskVpk = Join-Path $taskRoot 'artifacts/packaging-tools/vpk/vpk.exe'
-if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'artifacts/packaging-tools/vpk/vpk' }
-if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskPack.version) first: dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepare-packaging" }
+$taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk.exe'
+if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk' }
+if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskPack.version) first: dotnet run --project tests/AxmolHub.Checks -- cache/packaging-tools --prepare-packaging" }
 if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CLI $($taskPack.version)")) { throw "The workspace Velopack CLI is not the pinned $($taskPack.version)." }
 
 # 三平台都在各自原生 runner 上跑 `vpk pack`：Windows 出 Setup.exe，macOS 出 .pkg，
@@ -57,8 +63,10 @@ if ($NoClean) {
 } else {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $taskOutput
 }
-# publish 目录只覆盖不清理，与旧的 Inno 链路一致：假定 artifacts/ 是干净的。
-# 已被删名的文件不会被 publish 清掉，需要彻底重来时手工删除 artifacts/app。
+# publish 目录只覆盖不清理：被删名或体积异常的文件（旧 exe 名、巨型原生 PDB）不会被
+# publish 清掉，会被 vpk 收进包，造成包体异常甚至旧名残留。每次打包前整体清空，
+# 根治"目录只覆盖不清理"的复发——改名或原生依赖升级后无需再手工删 artifacts/app。
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $taskPublish
 $taskIsPrereleaseBuild = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
 dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
