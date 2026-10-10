@@ -94,11 +94,12 @@ public static class GitCommandGrades
     };
 
     /// <summary>Programs that only arrange somebody else's execution, so the verb to grade is the next token's.
-    /// <c>env</c> and <c>nohup</c> are the ones a build script really uses; without them <c>env git commit</c>
+    /// <c>env</c> and <c>nohup</c> are the ones a build script really uses, and <c>sudo</c> is the one that would
+    /// otherwise hide a write behind the most privileged prefix available; without them <c>env git commit</c>
     /// would read as "a program called env ran".</summary>
     private static readonly HashSet<string> PassThroughNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "command", "env", "nohup", "time", "timeout",
+        "command", "env", "nohup", "sudo", "time", "timeout",
     };
 
     /// <summary>Whether a grade has to cost more than the sandbox tier. Reads are not here on purpose.</summary>

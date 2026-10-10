@@ -4386,6 +4386,7 @@ if (args.Contains("--check-ai-tool-policy"))
         ("cmd /c git push", GitGrade.GitWrite),
         ("sh -c \"git reset --hard\"", GitGrade.GitWrite),
         ("env LC_ALL=C git commit -m x", GitGrade.GitWrite),
+        ("sudo git commit -m x", GitGrade.GitWrite),
         ("timeout 60 git clone https://example.com/x.git", GitGrade.GitWrite),
         ("& git status", GitGrade.GitRead),
         // What is deliberately NOT graded upward, and said out loud because it is a blind spot rather than an

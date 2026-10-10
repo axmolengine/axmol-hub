@@ -3230,6 +3230,97 @@ public sealed class ChatWorkspace : IDisposable
     private static IReadOnlyList<string> ProjectPaths(ChatToolScope scope)
         => scope.Snapshot?.Projects.Select(project => project.Path).ToArray() ?? [];
 
+    // ── the repository the session works in ──
+
+    /// <summary>One repository read, with the workspace root it was taken for. The root is carried beside the
+    /// snapshot because a pane showing some other directory's facts is worse than one showing nothing, and the
+    /// session's folder and the repository's root are different strings whenever the workspace is a subfolder.</summary>
+    public sealed record RepositorySnapshot(string WorkspaceRoot, GitRepositoryState State);
+
+    /// <summary>The last read. One at a time, because one pane is open at a time; a session pointed elsewhere
+    /// simply mismatches and asks for its own read.</summary>
+    private RepositorySnapshot? _repository;
+
+    /// <summary>The root the in-flight read belongs to, so a session switch mid-read is not made to wait for a
+    /// directory it is not looking at.</summary>
+    private Task<RepositorySnapshot>? _repositoryReading;
+    private string? _repositoryReadingRoot;
+
+    /// <summary>Raised when a read lands, so an open pane repaints. Nothing raises it on a timer.</summary>
+    public event Action? RepositoryChanged;
+
+    /// <summary>How many repository reads this build has actually started. A check reads it to tell "the tab was
+    /// served from the snapshot" apart from "the tab ran git again", which is the difference between a cache and
+    /// a poll — and nothing on the screen says so by itself.</summary>
+    internal int RepositoryReadsForCheck { get; private set; }
+
+    /// <summary>The key a read is remembered under. The empty string is a real answer, not a missing one: a
+    /// session with no workspace has no directory to read, and folding that away to <c>null</c> would leave every
+    /// repaint asking for a read that can only ever answer the same way again.</summary>
+    private static string RepositoryKey(string? root) => WorkspacePaths.CanonicalRoot(root) ?? "";
+
+    /// <summary>The snapshot for <paramref name="workspaceRoot"/>, or null when the last read describes a
+    /// different directory. Null is the tab's "reading" state rather than an error: the caller asks for a read.</summary>
+    public RepositorySnapshot? RepositoryFor(string? workspaceRoot)
+        => _repository is { } snapshot
+           && string.Equals(RepositoryKey(snapshot.WorkspaceRoot), RepositoryKey(workspaceRoot), StringComparison.Ordinal)
+            ? snapshot
+            : null;
+
+    /// <summary>
+    /// Read the session's repository, through git.
+    ///
+    /// Asked only from the pane — the tab opening, a tab click, the ⟳, and a run that finished while the tab was
+    /// up — and never from <see cref="Changed"/>: that event fires for every streamed token, and the transcript
+    /// scan the other tabs do there is I/O-free by contract (<c>ChatChanges.Of</c> says so in its own comment).
+    /// Concurrent asks share one read, because two clicks must not start two gits.
+    /// </summary>
+    public Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId)
+    {
+        var scope = ScopeFor(conversationId).Workspace;
+        var root = scope.WorkspaceRoot ?? "";
+        if (_repositoryReading is { } inFlight
+            && string.Equals(RepositoryKey(_repositoryReadingRoot), RepositoryKey(root), StringComparison.Ordinal))
+            return inFlight;
+        var task = ReadRepositoryAsync(root, scope);
+        _repositoryReading = task;
+        _repositoryReadingRoot = root;
+        return task;
+    }
+
+    private async Task<RepositorySnapshot> ReadRepositoryAsync(string workspaceRoot, WorkspaceToolScope scope)
+    {
+        // Counted where the read is really started, not where it is asked for: the coalesced path above never
+        // gets here, so this number is the difference between a cache and a poll.
+        RepositoryReadsForCheck++;
+        try
+        {
+            var runner = new ProcessRunner(line => scope.Log?.Write(line));
+            var state = await GitRepository.ReadAsync(workspaceRoot, runner, scope.SensitiveValues)
+                .ConfigureAwait(false);
+            var snapshot = new RepositorySnapshot(workspaceRoot, state);
+            await ApplyOnUiAsync(() =>
+            {
+                _repository = snapshot;
+                RepositoryChanged?.Invoke();
+            }).ConfigureAwait(false);
+            return snapshot;
+        }
+        finally
+        {
+            // Cleared on the way out either way: a read that threw must not leave the pane waiting on a task
+            // that will never answer, which is how one refused repository becomes a permanently stuck tab. The
+            // root is compared first because a second read for a different directory may have taken the slot
+            // while this one was running, and this one has no business clearing somebody else's.
+            if (string.Equals(RepositoryKey(_repositoryReadingRoot), RepositoryKey(workspaceRoot),
+                    StringComparison.Ordinal))
+            {
+                _repositoryReading = null;
+                _repositoryReadingRoot = null;
+            }
+        }
+    }
+
     /// <summary>
     /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask
     /// the call is recorded as waiting and the stream ends. The run keeps its slot and the decision can be made

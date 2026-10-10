@@ -296,12 +296,13 @@ public partial class MainWindow : Window
             UpdatePageTitle();
         };
         // The panel owns the transcript; the window owns the surfaces that reach past it. A picture opens in the
-        // window-level viewer (it fills the window, not the chat column), and the plan/diff review opens in the
-        // inspector column beside the page.
+        // window-level viewer (it fills the window, not the chat column), and the plan/diff/repository review
+        // opens in the inspector column beside the page.
         panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
         panel.OpenInspector = (tab, turnIndex) => OpenInspector(tab, turnIndex);
         panel.CloseInspector = CloseInspector;
         panel.ToggleInspectorExpanded = ToggleInspectorExpanded;
+        panel.RefreshInspector = RefreshInspector;
         return panel;
     }
 

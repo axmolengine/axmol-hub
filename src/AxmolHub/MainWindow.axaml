@@ -208,6 +208,12 @@
     <Style Selector="TextBlock.inspector-empty">
       <Setter Property="FontSize" Value="12" />
     </Style>
+    <!-- The repository tab's prose lines: the caveat, the branch head, and the mark that a path is in both
+         lists. One style because they are one kind of sentence; the ink itself is bound per control, so a theme
+         switch that happens while the pane is open still reaches it. -->
+    <Style Selector="TextBlock.inspector-note">
+      <Setter Property="FontSize" Value="11.5" />
+    </Style>
     <Style Selector="Button.inspector-change-header">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />

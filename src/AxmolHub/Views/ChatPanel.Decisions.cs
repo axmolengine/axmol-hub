@@ -56,6 +56,26 @@ public partial class ChatPanel
     /// whether that means a wider column, an overlay, or nothing at all on this page.</summary>
     internal Action? ToggleInspectorExpanded { get; set; }
 
+    /// <summary>Set by the shell: how the panel asks the column to repaint with the transcript it is already
+    /// showing. The panel knows when the transcript moved; only the shell knows whether a column is up at all,
+    /// on which page, and whether the pane is currently covering the window.</summary>
+    internal Action? RefreshInspector { get; set; }
+
+    /// <summary>The transcript shape the open column was last painted from: which conversation, how many turns.
+    /// A turn count rather than a token count, because everything the pane shows is a turn — a plan body, one row
+    /// per write — and rebuilding it for each streamed character would re-render markdown for a change nobody
+    /// can see.</summary>
+    private string _inspectorSignature = "";
+
+    private void RefreshInspectorIfTranscriptMoved()
+    {
+        var conversation = _chat?.ActiveConversation;
+        var signature = conversation is null ? "" : conversation.Id + ":" + conversation.Messages.Count;
+        if (signature == _inspectorSignature) return;
+        _inspectorSignature = signature;
+        RefreshInspector?.Invoke();
+    }
+
     /// <summary>The one inspector pane, kept for the window's life so switching tabs or conversations does not
     /// rebuild it and lose which file a person had expanded.</summary>
     private InspectorPanel? _inspector;
@@ -67,7 +87,7 @@ public partial class ChatPanel
     /// is a plan turn's own markdown, and each file's diff is resolved lazily through
     /// <see cref="ChatWorkspace.DiffForChange"/> so a list of twelve writes reads no file until one is opened.
     /// </summary>
-    internal Control? BuildInspectorContent(string tab, int turnIndex)
+    internal Control? BuildInspectorContent(string tab, int turnIndex, bool mayReadRepository = true)
     {
         var conversation = _chat?.ActiveConversation;
         if (_inspector is null)
@@ -75,19 +95,53 @@ public partial class ChatPanel
             _inspector = new InspectorPanel();
             _inspector.CloseRequested += () => CloseInspector?.Invoke();
             _inspector.ExpandRequested += () => ToggleInspectorExpanded?.Invoke();
+            // The pane asks; this is where the ask turns into a git read, because the panel has no session, no
+            // log and no thread to wait on — and a pane that did its own I/O could not be fed a fixture by a check.
+            _inspector.RepoRefreshRequested += RequestRepositoryRead;
         }
 
         var planText = PlanTextFor(conversation, turnIndex);
         var changes = ChatChanges.Of(conversation);
         var conversationId = conversation?.Id ?? "";
+        var repository = _chat?.RepositoryFor(conversation?.WorkspaceRoot);
+        // Entering the tab with nothing read for this directory is the moment to read it. Not before, and not on
+        // a repaint: a session that never goes looking for repository state never pays for a git run, and the
+        // transcript path that ends up here fires for every turn a running reply adds.
+        if (mayReadRepository && string.Equals(tab, "repo", StringComparison.Ordinal) && repository is null)
+            RequestRepositoryRead();
         _inspector.Reload(
             planText,
             changes,
             change => _chat is null
                 ? (null, UndoCopyState.Unreadable)
                 : (_chat.DiffForChange(change, conversationId, out var state), state),
+            repository?.State,
             tab);
+        // Painting by any route leaves the pane in step with the transcript, so the repaint that follows a
+        // click would be a second rebuild of the same thing.
+        _inspectorSignature = conversation is null ? "" : conversation.Id + ":" + conversation.Messages.Count;
         return _inspector;
+    }
+
+    /// <summary>Starts a repository read for the conversation on screen, and lets it finish on its own. The
+    /// result arrives through <see cref="OnRepositoryChanged"/>, which repaints the pane if it is still up — a
+    /// click on a tab should not hold the pointer waiting on four git calls.</summary>
+    private void RequestRepositoryRead()
+    {
+        var conversation = _chat?.ActiveConversation;
+        if (_chat is null || conversation is null) return;
+        _ = _chat.RefreshRepositoryAsync(conversation.Id);
+    }
+
+    /// <summary>A read that landed repaints the pane, but only while the repository tab is the one being looked
+    /// at. A reader who has since gone back to the plan must not have the column rewritten under them, and the
+    /// snapshot is already stored for the next time they ask.</summary>
+    private void OnRepositoryChanged()
+    {
+        if (_inspector is not { } pane || !pane.RepoTabVisibleForCheck) return;
+        // Repaint rather than re-open, because a repaint never starts another read — which is what keeps this
+        // from turning into a loop when the snapshot cannot satisfy the question the pane is asking.
+        RefreshInspector?.Invoke();
     }
 
     /// <summary>The markdown of one plan: the turn the caller pointed at when that turn is still a plan of this

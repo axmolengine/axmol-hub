@@ -663,6 +663,33 @@ public static class HubTexts
         ["InspectorDiffRefusedLine"] = ("没有改动", "No change"),
         ["InspectorAddedFormat"] = ("+{0}", "+{0}"),
         ["InspectorRemovedFormat"] = ("−{0}", "−{0}"),
+        // ── The inspector's third tab: the repository itself ──
+        // The pane already answers "what did this session do". This answers a different question — "what is
+        // uncommitted here" — and the two must not be merged, because a person's week of own work would otherwise
+        // read as the assistant's. Every state below is a sentence the tab can end on: each names why it stopped
+        // rather than drawing an empty list, which is the same rule the four diff states above follow.
+        ["InspectorTabRepo"] = ("仓库", "Repository"),
+        // The invitation on a run's +N −M chip. The count alone says how much, not where to look; this is the
+        // same one word of affordance the plan card's 「查看计划」 gives, and the only place that says the number
+        // can be pressed.
+        ["InspectorOpenChanges"] = ("看这些改动", "See these changes"),
+        ["InspectorRepoCaveat"] = ("仓库相对 HEAD 的全部改动，不只是本会话做的",
+            "Every change the repository holds against HEAD, not only this session's"),
+        ["InspectorRepoAheadBehindFormat"] = ("领先 {0} · 落后 {1}", "{0} ahead · {1} behind"),
+        ["InspectorRepoReading"] = ("正在读仓库…", "Reading the repository…"),
+        ["InspectorRepoEmpty"] = ("工作树与 HEAD 一致", "The working tree matches HEAD"),
+        ["InspectorRepoTruncatedFormat"] = ("改动太多，这里只列前 {0} 个",
+            "Too many changes; only the first {0} are listed"),
+        ["InspectorRepoRefresh"] = ("重新读一次仓库", "Read the repository again"),
+        ["InspectorRepoSessionAlsoTouched"] = ("本会话也改过这个文件", "this session touched this file too"),
+        ["InspectorRepoNoDiff"] = ("读不到这个文件的改动内容", "No diff could be read for this file"),
+        ["InspectorRepoNoWorkspace"] = ("这个会话还没有工作目录", "This session has no workspace yet"),
+        ["InspectorRepoNotGit"] = ("这个目录不是 git 仓库", "This directory is not a git repository"),
+        ["InspectorRepoGitMissing"] = ("这台机器上没有 git，读不了仓库状态",
+            "git is not on this machine, so the repository cannot be read"),
+        ["InspectorRepoUnsafe"] = ("git 不信任这个目录的归属，要你亲自认下来它才让读",
+            "git does not trust who owns this repository; it needs your own decision before Hub may read it"),
+        ["InspectorRepoFailed"] = ("git 没能回答", "git did not answer"),
         // The column's two states. The restore wording names Esc because the key is the only other way out of a
         // surface that has just covered the window, and a keyboard exit nobody announces is not a keyboard exit.
         ["InspectorExpand"] = ("撑开面板到整个窗口", "Expand the panel to the whole window"),

@@ -14,9 +14,9 @@ namespace AxmolHub;
 
 /// <summary>
 /// The shell's two right-hand surfaces: the inspector column (the plan in full, the diffs of what the assistant
-/// changed) and the window-level picture viewer. Split out of <c>MainWindow.axaml.cs</c> because both are
-/// self-contained interactions with their own state, and the shell file's job is navigation and workspace
-/// plumbing — neither of these is that.
+/// changed, and the repository's own state against HEAD) and the window-level picture viewer. Split out of
+/// <c>MainWindow.axaml.cs</c> because both are self-contained interactions with their own state, and the shell
+/// file's job is navigation and workspace plumbing — neither of these is that.
 /// </summary>
 public partial class MainWindow
 {
@@ -27,6 +27,12 @@ public partial class MainWindow
     private const double InspectorMin = 300;
     private const double InspectorMax = 520;
     private const double InspectorDefault = 360;
+
+    /// <summary>Which tab and which plan the column is currently holding. Remembered rather than re-asked, so a
+    /// repaint while a run keeps writing lands where the reader was looking instead of bouncing them back to the
+    /// plan they left two minutes ago.</summary>
+    private string _inspectorTab = "plan";
+    private int _inspectorTurn = -1;
 
     /// <summary>Drag state for the inspector grip, mirroring the sidebar's: pointer x and width at grab.</summary>
     private double _inspectorGrabStartX;
@@ -86,6 +92,8 @@ public partial class MainWindow
     /// opens, because "there is no plan yet" is itself an answer.</summary>
     internal bool OpenInspector(string tab, int turnIndex = -1)
     {
+        _inspectorTab = tab;
+        _inspectorTurn = turnIndex;
         _inspectorOpen = true;
         SetInspectorPane(_chatPanel?.BuildInspectorContent(tab, turnIndex));
         SetInspectorColumnVisible();
@@ -95,6 +103,20 @@ public partial class MainWindow
             _preferencesStore.Save(_preferences);
         }
         return true;
+    }
+
+    /// <summary>
+    /// Re-derives what is already on screen, for a transcript that keeps growing while the column is open.
+    ///
+    /// Two rules keep this cheap and honest. It does nothing when the column is not open or not on the assistant
+    /// page, and it never starts a repository read: a repaint rides on the transcript, and a git run behind every
+    /// streamed token would be a poll storm on the one surface the person is reading. A read belongs to the tab
+    /// being entered and to the ⟳, and nowhere else.
+    /// </summary>
+    internal void RefreshInspector()
+    {
+        if (!_inspectorOpen || _currentKey != "Assistant" || _chatPanel is null) return;
+        SetInspectorPane(_chatPanel.BuildInspectorContent(_inspectorTab, _inspectorTurn, mayReadRepository: false));
     }
 
     internal void CloseInspector()

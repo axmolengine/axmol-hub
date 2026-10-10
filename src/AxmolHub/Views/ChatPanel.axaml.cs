@@ -198,6 +198,9 @@ public partial class ChatPanel : UserControl
         InitializeComponent();
 
         _chat.Changed += Reload;
+        // A repository read lands whenever git finishes, which is nowhere on the token stream. The pane decides
+        // whether it still wants the answer; nothing here polls, and nothing here runs a git.
+        _chat.RepositoryChanged += OnRepositoryChanged;
         // Tool activity already arrives on the UI thread, and it carries the session it happened in: a reply
         // running out of sight must not rewrite the status line of the one on screen.
         _chat.ToolActivityChanged += (conversationId, name, completed) =>
@@ -237,6 +240,12 @@ public partial class ChatPanel : UserControl
             AppendRunNotice(outcome);
             UpdateSendState();
             ConversationStateChanged?.Invoke();
+            // A run that just finished can have moved the repository without Hub's file tool ever being part of
+            // it — a build that regenerated sources, a code format, a checkout the assistant asked to approve.
+            // So the repository tab asks for a fresh read here if it is the one being looked at. Nothing else is
+            // asked to read: the other two tabs are the transcript, which this event already repaints above.
+            if (_chat.ActiveConversation?.Id == conversationId
+                && _inspector is { } pane && pane.RepoTabVisibleForCheck) RequestRepositoryRead();
         };
         ModelPicker.Click += (_, _) => ShowModelMenu();
         ForkNotice.Click += (_, _) =>
@@ -405,6 +414,9 @@ public partial class ChatPanel : UserControl
         // place both can be brought in step with whatever just changed.
         RefreshDecisionHost();
         RefreshSteerConfirm();
+        // The right-hand column is the third surface that reads the transcript rather than the run registry. It
+        // repaints only when the transcript grew, so a reply streaming text costs no pane rebuild.
+        RefreshInspectorIfTranscriptMoved();
     }
 
     /// <summary>The four starting points the empty state offers, in the order they read best.</summary>
@@ -2210,7 +2222,16 @@ public partial class ChatPanel : UserControl
         return (added, removed);
     }
 
-    private static Control BuildDiffChip(int added, int removed)
+    /// <summary>
+    /// The run's aggregate line count, and the way into the pane that lists what produced it.
+    ///
+    /// It stays the same <c>Border.file-chip</c> wrapped in a bare transparent Button rather than becoming a
+    /// visible button: the count is the thing being read, and a plate on the head of a folded group is exactly
+    /// the chrome the charter has no room for. Wrapping it in a button is also what keeps the group open — the
+    /// button takes the pointer press, so the head's ToggleButton never sees it and the fold the reader chose
+    /// does not collapse under the click that was meant to open a diff.
+    /// </summary>
+    private Control BuildDiffChip(int added, int removed)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         if (added > 0) row.Children.Add(new TextBlock
@@ -2225,7 +2246,16 @@ public partial class ChatPanel : UserControl
             Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("InspectorRemovedFormat"), removed),
         });
-        return new Border { Classes = { "file-chip" }, Child = row };
+        var chip = new Button
+        {
+            Classes = { "file-chip-action" },
+            Tag = "InspectorOpenChanges",
+            Content = new Border { Classes = { "file-chip" }, Child = row },
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(chip, HubStrings.Get("InspectorOpenChanges"));
+        chip.Click += (_, _) => OpenInspector?.Invoke("changes", -1);
+        return chip;
     }
 
     /// <summary>One folded tool exchange wrapped in its own expander. The collapsed line names the action; clicking
@@ -3370,6 +3400,48 @@ public partial class ChatPanel : UserControl
 
     internal bool ActivityGroupExpandedForCheck(int index)
         => ActivityGroupBodyAt(index) is { IsVisible: true };
+
+    /// <summary>How many of the flow's aggregate counts are pressable. Zero would mean the number is back to
+    /// being decoration — the state the pane existed to escape and no build error would ever report.</summary>
+    internal int RunDiffChipCountForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Button>()
+            .Count(button => button.Classes.Contains("file-chip-action"));
+
+    /// <summary>Whether every chip hangs under a group head. This is the fact that makes "pressing the count does
+    /// not fold the run" a statement about the tree rather than about one fixture: the chip is the head's own
+    /// descendant, so the button taking the press is what keeps the reader's fold.</summary>
+    internal bool RunDiffChipsInsideGroupHeadsForCheck
+    {
+        get
+        {
+            var chips = MessageFlow.GetLogicalDescendants().OfType<Button>()
+                .Where(button => button.Classes.Contains("file-chip-action")).ToList();
+            return chips.Count > 0 && chips.All(chip => chip.GetLogicalAncestors()
+                .OfType<ToggleButton>().Any(head => head.Classes.Contains("activity-group-head")));
+        }
+    }
+
+    /// <summary>Presses one chip through its own click event and says whether there was a chip to press. A raised
+    /// Click is precisely what a ToggleButton ignores, so the fold state asserted next to this call can only be
+    /// explained by the wiring — not by a check that never touched the head.</summary>
+    internal bool ClickRunDiffChipForCheck(int index)
+    {
+        if (MessageFlow.GetLogicalDescendants().OfType<Button>()
+                .Where(button => button.Classes.Contains("file-chip-action"))
+                .ElementAtOrDefault(index) is not { } chip)
+            return false;
+        chip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        return true;
+    }
+
+    /// <summary>The text a chip carries, joined: the two counts the reader pressed. Read as text so a cell can
+    /// prove the pane opened from <i>this</i> run's number rather than from some other group's.</summary>
+    internal string RunDiffChipTextForCheck(int index)
+        => MessageFlow.GetLogicalDescendants().OfType<Button>()
+            .Where(button => button.Classes.Contains("file-chip-action"))
+            .ElementAtOrDefault(index) is { } chip
+            ? string.Join(" ", chip.GetLogicalDescendants().OfType<TextBlock>().Select(block => block.Text ?? ""))
+            : "";
 
     /// <summary>Which group control the Nth fold is painted from, as an instance token. A run that grows its own
     /// group leaves the token alone; a run that tears the flow down and rebuilds it hands back a fresh number even

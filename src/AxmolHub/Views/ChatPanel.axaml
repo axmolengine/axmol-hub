@@ -678,6 +678,32 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
       <Setter Property="Margin" Value="4,0,0,0" />
     </Style>
+    <!-- The run's aggregate +N −M, which is also the way into the pane that lists what produced it. The chip stays
+         the same Border, wrapped in a bare transparent Button: a default button plate on the head of a folded
+         group is chrome the shell has no room for, and the count is the thing being read. The press is taken by
+         the button, so the group's own toggle never sees it and the fold the reader opened stays open. -->
+    <Style Selector="Button.file-chip-action">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" Padding="0" ClipToBounds="True">
+            <ContentPresenter Content="{TemplateBinding Content}"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Button.file-chip-action:pointerover > Border.file-chip">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
     <!-- One folded tool exchange, and the detail it reveals when clicked. The collapsed row names the action; the
          toggle underneath it lays the whole exchange out (arguments in, payload back) so the concrete operation is
          readable on the page instead of stranded one hover away in a tooltip. A bare transparent template keeps the

@@ -2980,6 +2980,91 @@ public partial class ShellCheckWindow : Window
                 "切到别的会话再切回来（整段重建），开过的组与行按人留下的选择恢复，没开过的照旧收起（第一折 "
                 + panel.ActivityGroupExpandedForCheck(0) + "，第二折 " + panel.ActivityGroupExpandedForCheck(1)
                 + "，行 0 " + panel.ActivityRowExpandedForCheck(0) + "）");
+            // ── the run's aggregate count is the way into the pane ──
+            // The chip only exists when a write parked and froze a preview, so this fixture is the ask tier: the
+            // number on the group head is the same diff the approval card just asked about, and pressing it has to
+            // land the reader on that file rather than on a plan they did not ask for.
+            var chipSession = chat.StartConversation();
+            chat.SetWorkspaceRoot(chipSession.Id, workspace);
+            chat.SetApprovalMode(chipSession.Id, ToolApprovalModes.Ask);
+            chat.OpenConversation(chipSession.Id);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(workspace, "chip-note.txt"), "第一行\n第二行\n");
+            chat.ClientOverride = (_, _) => new ApprovalChatClient
+            {
+                CallsRemaining = 1,
+                ToolName = "file_write",
+                Arguments = new Dictionary<string, object?>
+                {
+                    ["path"] = "chip-note.txt",
+                    ["old_string"] = "第二行",
+                    ["new_string"] = "第二行（改过）",
+                },
+            };
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            panel.SetInputForCheck("改一行，然后我要看改动");
+            _ = panel.SendComposerForCheck();
+            var chipCallId = await WaitForPendingCallAsync(chipSession);
+            Check(chipCallId is not null, "夹具：那次写入先挂起来等批准，所以它才有一段被冻结的预览");
+            chat.TryResolveApproval(chipSession.Id, chipCallId ?? "", approved: true, alwaysAllow: false, out _);
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.RunDiffChipCountForCheck == 1 && panel.RunDiffChipsInsideGroupHeadsForCheck
+                  && panel.RunDiffChipTextForCheck(0).Contains("+1", StringComparison.Ordinal),
+                "这轮运行在组头上带出一个可点的 +N −M，数字正是刚批准的那段 diff（实际「"
+                + panel.RunDiffChipTextForCheck(0) + "」）");
+            var chipTokenBefore = panel.ActivityGroupInstanceTokenForCheck(0);
+            var chipPressed = panel.ClickRunDiffChipForCheck(0);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            // Bound once, non-null: if the press did not produce a pane, the cells below fail on their own terms
+            // rather than on a null dereference, and none of them is a claim about a pane that is not there.
+            var chipPane = shell.InspectorPaneForCheck ?? new InspectorPanel();
+            Check(chipPressed && shell.InspectorVisibleForCheck
+                  && shell.InspectorPaneForCheck is not null
+                  && chipPane.ChangesTabVisibleForCheck && !chipPane.RepoTabVisibleForCheck
+                  && !chipPane.PlanTabVisibleForCheck
+                  && chipPane.ChangeRowCountForCheck == 1
+                  && chipPane.FirstChangePathForCheck == "chip-note.txt"
+                  && panel.ActivityGroupInstanceTokenForCheck(0) == chipTokenBefore,
+                "点组头上那个数字，右边那一列就开到改动页并列出刚动过的文件，而那一折还是同一个控件、没有被这次点击重建");
+            // A repaint that folds everything the reader had opened is the same teardown seen from the other side:
+            // the row is opened here, before the second run, and has to come back open out of it.
+            chipPane.ClickChangeRowForCheck(0);
+            Check(chipPane.ChangeRowExpandedForCheck(0)
+                  && chipPane.ChangeRowTextForCheck(0).Contains("第二行（改过）", StringComparison.Ordinal),
+                "点开改动行才取它的 diff，取到的是批准时冻结的那一段（实际「"
+                + chipPane.ChangeRowTextForCheck(0) + "」）");
+            // The pane is open while the assistant keeps working, which is exactly when it used to stop telling the
+            // truth: it was painted once, on opening, and every write after that landed in a list nobody repainted.
+            chat.ClientOverride = (_, _) => new ApprovalChatClient
+            {
+                CallsRemaining = 1,
+                ToolName = "file_write",
+                Arguments = new Dictionary<string, object?>
+                {
+                    ["path"] = "chip-two.txt",
+                    ["old_string"] = "",
+                    ["new_string"] = "新建的一行\n",
+                },
+            };
+            panel.SetInputForCheck("再新建一个文件");
+            _ = panel.SendComposerForCheck();
+            var secondCallId = await WaitForPendingCallAsync(chipSession);
+            chat.TryResolveApproval(chipSession.Id, secondCallId ?? "", approved: true, alwaysAllow: false, out _);
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(chipPane.ChangeRowCountForCheck == 2
+                  && chipPane.FirstChangePathForCheck == "chip-note.txt",
+                "开着的改动页跟着这一轮多出来的那次写入一起长，不用重新点开（实际 "
+                + chipPane.ChangeRowCountForCheck + " 行）");
+            Check(chipPane.ChangeRowExpandedForCheck(0) && chipPane.OpenChangeCountForCheck == 1,
+                "重绘之后读者开着的那一行还开着：刷新不该把他翻开的文件折回去");
+            chat.DeleteConversation(chipSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
             chat.DeleteConversation(readBack.Id);
             chat.DeleteConversation(liveSession.Id);
         }
@@ -3091,15 +3176,138 @@ public partial class ShellCheckWindow : Window
                 "@@ -1,2 +1,2 @@\n 第一行\n-第二行\n+第二行（已改）", null, null, "Edited note.txt", true),
         };
         inspector.Reload("# 计划\n\n- 先看实现\n- 再动手", changes,
-            _ => ("@@ -1,2 +1,2 @@\n 第一行\n-第二行\n+第二行（已改）", UndoCopyState.Read), "changes");
+            _ => ("@@ -1,2 +1,2 @@\n 第一行\n-第二行\n+第二行（已改）", UndoCopyState.Read), null, "changes");
         Check(inspector.ChangeRowCountForCheck == 1 && inspector.FirstChangePathForCheck == "note.txt"
               && inspector.ChangesTabVisibleForCheck && !inspector.PlanTabVisibleForCheck,
             "改动页把这次会话动过的文件列出来，并停在被点开的哪一页（实际 "
             + inspector.ChangeRowCountForCheck + " 行，首行「" + inspector.FirstChangePathForCheck + "」）");
         inspector.Reload("# 计划\n\n- 先看实现", changes,
-            _ => ((string?)null, UndoCopyState.Read), "plan");
-        Check(inspector.PlanTabVisibleForCheck && !inspector.ChangesTabVisibleForCheck,
-            "计划页与改动页各显示各的，切一页不会把另一页也带出来");
+            _ => ((string?)null, UndoCopyState.Read), null, "plan");
+        Check(inspector.PlanTabVisibleForCheck && !inspector.ChangesTabVisibleForCheck
+              && !inspector.RepoTabVisibleForCheck,
+            "三页各显示各的，切到计划页不会把改动页或仓库页也带出来");
+
+        // ── the repository tab, fed a snapshot the same shape the reader produces ──
+        // The three states this tab can be in are three different claims, so each is asserted on its own words:
+        // the caveat that the list is the repository's rather than the session's, the per-file row with git's own
+        // two letters, and the mark that says a path is in <i>both</i> lists. Fixture-driven first — the pane must
+        // be readable without a git anywhere near the check — and the live read that proves the snapshot shape is
+        // asserted headlessly in --check-ai-workspace, where the real repository lives.
+        var repoState = new GitRepositoryState(GitReadOutcome.Ok, @"D:\dev\probe", "master", 2, 1,
+            [
+                new GitStatusEntry("src/main.cpp", "M", " ", false),
+                new GitStatusEntry("note.txt", " ", "M", false),
+                new GitStatusEntry("assets/logo.png", "?", "?", true),
+            ],
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["src/main.cpp"] = "diff --git a/src/main.cpp b/src/main.cpp\n@@ -1 +1 @@\n-old\n+new",
+            }, false, null);
+        var repoReads = 0;
+        inspector.RepoRefreshRequested += () => repoReads++;
+        inspector.Reload(null, changes, _ => ((string?)null, UndoCopyState.Read), repoState, "repo");
+        Check(inspector.RepoTabVisibleForCheck && !inspector.ChangesTabVisibleForCheck
+              && !inspector.PlanTabVisibleForCheck
+              && inspector.RepoRowCountForCheck == 3
+              && inspector.RepoHeadlineForCheck.Contains("master", StringComparison.Ordinal)
+              && inspector.RepoHeadlineForCheck.Contains(HubStrings.Get("InspectorRepoAheadBehindFormat")
+                  .Replace("{0}", "2").Replace("{1}", "1"), StringComparison.Ordinal),
+            "仓库页停在被点开的那一页，列出仓库相对 HEAD 的三个脏路径，并把分支与领先落后写在同一行（实际「"
+            + inspector.RepoHeadlineForCheck + "」）");
+        Check(inspector.RepoCaveatForCheck == HubStrings.Get("InspectorRepoCaveat"),
+            "仓库页第一句就讲清这是仓库的全部改动，不只是本会话做的（实际「" + inspector.RepoCaveatForCheck + "」）");
+        // The shared-path mark is the one place the two lists are allowed to speak to each other: note.txt is in
+        // the session's changes and in the repository's status, and saying so adds no claim to either.
+        Check(inspector.RepoRowTextForCheck(1).Contains(HubStrings.Get("InspectorRepoSessionAlsoTouched"),
+                  StringComparison.Ordinal)
+              && inspector.RepoRowTextForCheck(1).Contains("note.txt", StringComparison.Ordinal)
+              && !inspector.RepoRowTextForCheck(0).Contains(HubStrings.Get("InspectorRepoSessionAlsoTouched"),
+                  StringComparison.Ordinal),
+            "本会话也动过的那个路径被标出来，没动过的不被顺手标（实际「" + inspector.RepoRowTextForCheck(1) + "」）");
+        // A row's hunks come from the click, not from the list paint: the snapshot carries a diff for src/main.cpp
+        // and none for the untracked png, and each row has to answer differently rather than the tab deciding for
+        // all of them.
+        inspector.ClickRepoRowForCheck(0);
+        Check(inspector.RepoRowExpandedForCheck(0)
+              && inspector.RepoRowTextForCheck(0).Contains("+new", StringComparison.Ordinal),
+            "点开仓库行才取它的 diff，取到的是这个文件自己的那段（实际「" + inspector.RepoRowTextForCheck(0) + "」）");
+        inspector.ClickRepoRowForCheck(2);
+        Check(inspector.RepoRowTextForCheck(2).Contains(HubStrings.Get("InspectorRepoNoDiff"), StringComparison.Ordinal),
+            "读不到改动内容的行讲清读不到，而不是画一片空白（实际「" + inspector.RepoRowTextForCheck(2) + "」）");
+        // The ⟳ is the panel asking, not doing: it raises the event and the caller decides whether to run a git.
+        inspector.ClickRepoRefreshForCheck();
+        Check(repoReads == 1, "仓库页那个刷新按钮只把请求递出去，自己不动 git（实际收到 " + repoReads + " 次）");
+        // And each way the read can stop owns its own sentence — five outcomes, five strings, none of them the
+        // empty list, because "no changes" and "I could not ask" answer different questions.
+        var whyKeys = new (GitReadOutcome Outcome, string Key)[]
+        {
+            (GitReadOutcome.NoWorkspace, "InspectorRepoNoWorkspace"),
+            (GitReadOutcome.NotARepository, "InspectorRepoNotGit"),
+            (GitReadOutcome.GitMissing, "InspectorRepoGitMissing"),
+            (GitReadOutcome.UnsafeRepository, "InspectorRepoUnsafe"),
+            (GitReadOutcome.Failed, "InspectorRepoFailed"),
+        };
+        var whyTexts = new List<string>();
+        var whyWrong = "";
+        foreach (var (outcome, key) in whyKeys)
+        {
+            inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read),
+                GitRepositoryState.Stopped(outcome, "probe"), "repo");
+            var said = inspector.RepoNoticeForCheck;
+            if (!said.Contains(HubStrings.Get(key), StringComparison.Ordinal) && whyWrong.Length == 0)
+                whyWrong = $"{outcome} 说成了「{said}」，而不是 {key} 的那句";
+            whyTexts.Add(said);
+        }
+        Check(whyWrong.Length == 0 && whyTexts.Distinct(StringComparer.Ordinal).Count() == whyKeys.Length,
+            "五种读不到仓库的原因各说各的一句话，而不是同一个空列表换了个标题（" + whyWrong + "）");
+        // No snapshot at all is the reading state, and it is the only state that may ask for a git run.
+        inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read), null, "repo");
+        Check(inspector.RepoNoticeForCheck.Contains(HubStrings.Get("InspectorRepoReading"), StringComparison.Ordinal),
+            "还没读到仓库时面板说在读，而不是先说没有");
+
+        // The repository tab's own chain, end to end: entering the tab hands a read request to the workspace, the
+        // read answers away from the UI thread, and the answer has to land back on the pane. No git is needed to
+        // drive this path — a session without a workspace is a read that answers at once — and if the
+        // repaint-on-arrival wiring were missing, this is exactly where the tab would sit forever on 「正在读仓库…」.
+        var repoSession = shell.Chat.StartConversation();
+        shell.Chat.OpenConversation(repoSession.Id);
+        // The column only belongs to the assistant page, and a read that lands while the page is elsewhere never
+        // repaints — so the page is put where a person would be standing when they ask this.
+        shell.NavigateTo("Assistant");
+        panel.Reload();
+        shell.OpenInspector("repo", -1);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var repoReadLanded = false;
+        await WaitUntilAsync(() =>
+        {
+            repoReadLanded = shell.InspectorPaneForCheck?.RepoNoticeForCheck
+                .Contains(HubStrings.Get("InspectorRepoNoWorkspace"), StringComparison.Ordinal) == true;
+            return repoReadLanded;
+        });
+        Check(repoReadLanded && shell.InspectorVisibleForCheck
+              && shell.InspectorPaneForCheck is { } repoPane && repoPane.RepoTabVisibleForCheck
+              && repoPane.RepoRowCountForCheck == 0
+              && repoPane.RepoNoticeForCheck.Contains(HubStrings.Get("InspectorRepoNoWorkspace"),
+                  StringComparison.Ordinal),
+            "仓库页把读取请求递出去、读完自己落回面板，并说清这个会话还没有工作目录（实际「"
+            + (shell.InspectorPaneForCheck?.RepoNoticeForCheck ?? "") + "」）");
+        // And one read for one question: the same tab opened twice must not start two gits, because the pane is
+        // repaintable from the transcript and a repository read is the expensive thing on this surface.
+        var readsAfterFirst = shell.Chat.RepositoryReadsForCheck;
+        shell.CloseInspector();
+        shell.OpenInspector("repo", -1);
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.Chat.RepositoryReadsForCheck == readsAfterFirst
+              && shell.InspectorPaneForCheck is { } repoAgain
+              && repoAgain.RepoNoticeForCheck.Contains(HubStrings.Get("InspectorRepoNoWorkspace"),
+                  StringComparison.Ordinal),
+            "同一目录再开一次仓库页用的是已经读到的那一份，不是又跑一遍 git（两次之间读了 "
+            + (shell.Chat.RepositoryReadsForCheck - readsAfterFirst) + " 次）");
+        shell.CloseInspector();
+        shell.Chat.DeleteConversation(repoSession.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
 
         // ── the steer strip: a second tap before an interjection spends a request ──
         var session = chat.StartConversation();
