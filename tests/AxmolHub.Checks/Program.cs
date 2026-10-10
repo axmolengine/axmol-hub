@@ -1148,6 +1148,26 @@ if (args.Contains("--check-ai-sessions"))
         throw new Exception("A workspace group's label is not the folder it names.");
     Console.WriteLine("PASS: workspace canonical keys fold casing and separators into one spelling per directory.");
 
+    // A thinking model that writes its tool call out as prose is a real capture, not a hypothesis: five turns of
+    // one DeepSeek session each named a Hub tool and none of them ran. The fixture carries the actual bytes — the
+    // bars are U+FF5C fullwidth, and a test that typed the ASCII pipe a Markdown table is made of would pass
+    // against a shape nobody sends. Both forms have to be read: the call opens with "<｜｜DSML｜｜ invoke" and
+    // closes with "</｜｜DSML｜｜ invoke>", and a detector that knew only the opening left the closing standing.
+    const string Dsml = "<｜｜DSML｜｜";
+    var leakedToolCall = "让我先确认这件事记在哪。\n\n"
+                         + $"{Dsml} calls>\n{Dsml} invoke name=\"search_text\">\n"
+                         + $"{Dsml} parameter name=\"path\">.agents/memory</{Dsml[1..]} parameter>\n"
+                         + $"</{Dsml[1..]} invoke>\n</{Dsml[1..]} calls>";
+    if (!ControlTokens.IsLeakedCall(leakedToolCall))
+        throw new Exception("A tool call written out in the model's own special token read as ordinary prose.");
+    if (ControlTokens.IsLeakedCall("| Name | Value |\n| --- | --- |\n| answer | 42 |"))
+        throw new Exception("An ordinary Markdown table was mistaken for a leaked tool call.");
+    if (ControlTokens.IsLeakedCall("Compare <b> and </b> in HTML, and a＜fullwidth＞example."))
+        throw new Exception("Ordinary angle brackets in prose were mistaken for a leaked tool call.");
+    if (ControlTokens.Strip(leakedToolCall) != "让我先确认这件事记在哪。")
+        throw new Exception("Stripping a leaked tool call took the sentence the model actually meant to say, or left its markup behind.");
+    Console.WriteLine("PASS: a leaked tool call is recognised by its token shape and stripped without losing the prose.");
+
     var workspaceSession = Conversation.Create("orcarouter");
     workspaceSession.Append(ChatTurn.User("works inside a folder"));
     workspaceSession.WorkspaceRoot = workspaceFolder;

@@ -520,6 +520,51 @@ public partial class ShellCheckWindow : Window
             "Markdown 链接与回复中的裸 URL 均生成可点击链接");
         Check(panel.HasThemedMarkdownLink(),
             "Markdown 链接使用 Hub 主题配色而非默认纯蓝");
+
+        // ── A tool call that arrived as prose ──
+        // Transcribed from a real thinking-model reply: the model framed its call with its own special token and
+        // the gateway forwarded that as message text, so no tool ever ran. The bytes are the point — the bars are
+        // U+FF5C fullwidth, and a fixture that typed "|" instead would test a shape nobody sends.
+        const string Bars = "\uFF5C\uFF5CDSML\uFF5C\uFF5C";
+        var leakedCall = "让我先确认「计划任务」到底记在哪。\n\n"
+                         + $"<{Bars} calls>\n"
+                         + $"<{Bars} invoke name=\"search_text\">\n"
+                         + $"<{Bars} parameter name=\"path\" string=\"true\">.agents/memory</{Bars} parameter>\n"
+                         + $"</{Bars} invoke>\n"
+                         + $"</{Bars} calls>";
+        Check(ControlTokens.IsLeakedCall(leakedCall)
+              && !ControlTokens.IsLeakedCall("| Name | Value |\n| --- | --- |\n| answer | 42 |")
+              && !ControlTokens.IsLeakedCall("普通的中文，加上 <tag> 标记，都不算泄漏"),
+            "控制标记检测认的是这套 token 的形状，真表格与正常尖括号都不误伤");
+        Check(ControlTokens.Strip(leakedCall) == "让我先确认「计划任务」到底记在哪。",
+            "剥离只带走那几行标记，模型真正说的那句话留下");
+
+        var fixtureSession = shell.Chat.ActiveConversation?.Id;
+        var leakedSession = shell.Chat.StartConversation();
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([leakedCall]);
+        await panel.SendForCheckAsync("查一下计划任务记在哪");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        // The complaint was never that the reply looked odd — it was that a wall of pipes went into the Markdown
+        // engine and came back a bordered grid. So the text is on screen and no viewer was ever handed it.
+        Check(panel.FlowText.Contains("search_text", StringComparison.Ordinal)
+              && !panel.HasMarkdownHolding("search_text"),
+            "泄漏的工具调用按原文呈现，不再被 Markdown 引擎排成带边框的表格");
+        Check(panel.LastNoticeTextForCheck?.Contains(HubStrings.Get("ChatToolCallLeaked"), StringComparison.Ordinal) == true,
+            "模型把调用写成正文时，状态条说清这次调用没有执行（实际提示 "
+            + (panel.LastNoticeTextForCheck ?? "（没有提示）") + "）");
+        // Put the fixture back exactly as it was: the assertions after this one read the active session and count
+        // the rows in the list, so a check that leaves a session behind tests its own leftovers.
+        shell.Chat.ClientOverride = null;
+        shell.Chat.DeleteConversation(leakedSession.Id);
+        if (fixtureSession is { } back) shell.Chat.OpenConversation(back);
+        // The top bar takes its text from the session that is on screen, and only when the page is entered: put
+        // the fixture back and re-enter, or the next assertion reads this check's title.
+        shell.OpenAssistant();
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
         const string sampleMarkdown =
             "# Heading\n\nA **bold** word and `inline code`.\n\n"
             + "- First item\n- Second item\n\n"
@@ -1066,6 +1111,34 @@ public partial class ShellCheckWindow : Window
               && compressedCopy.ContextSummaryThroughMessageCount == 6
               && compressedCopy.Messages.Count == 10,
             "摘要落盘并记录压缩边界，原始对话仍保留以供查看");
+
+        // A leaked tool call must not be able to take up residence in the summary. The summary is read by every
+        // later request, so one that carries the markup teaches the shape to the model that has to read it — and
+        // the leak starts coming back on its own. The transcript keeps what arrived; what is kept out is what the
+        // model is shown, at both ends of a compaction.
+        var beforeLeaky = shell.Chat.ActiveConversation?.Id;
+        var leaky = shell.Chat.StartConversation();
+        for (var turn = 0; turn < 12; turn++)
+            shell.Chat.SeedTurnForCheck(leaky.Id, turn == 5 ? leakedCall : "第 " + turn + " 条普通对话内容");
+        ScriptedChatClient? leakySummarizer = null;
+        shell.Chat.ClientOverride = (_, _) => leakySummarizer = new ScriptedChatClient(["## Task\n" + leakedCall]);
+        var leakyCompressed = await shell.Chat.CompressContextAsync(leaky.Id);
+        shell.Chat.ClientOverride = null;
+        var leakyCopy = shell.Chat.StoredCopyForCheck(leaky.Id);
+        Check(leakyCompressed && leakySummarizer?.LastMessages is { } handed
+              && !handed.Any(message => message.Text.Contains("DSML", StringComparison.Ordinal)),
+            "压缩请求带去的转录不含那几行标记，摘要模型学不到这个形状（送到 "
+            + (leakySummarizer?.LastMessages?.Count ?? -1) + " 条消息）");
+        Check(leakyCopy?.ContextSummary.Contains("DSML", StringComparison.Ordinal) == true
+              && !shell.Chat.PreparedSystemPromptForCheck(leaky.Id).Contains("DSML", StringComparison.Ordinal),
+            "摘要按模型写的原样存着，但那几行标记不会跟着之后的每一次请求上到线上");
+        shell.Chat.DeleteConversation(leaky.Id);
+        // Hand the section's own session back: the meter and the history assertions after this one read whatever
+        // is on screen, and a fixture that leaves its session active tests its leftovers.
+        if (beforeLeaky is { } leakyBack) shell.Chat.OpenConversation(leakyBack);
+        shell.OpenAssistant();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
         Check(shell.Chat.PreparedHistoryCountForCheck(compressionSession.Id) == 4
               && shell.Chat.PreparedSystemPromptForCheck(compressionSession.Id)
                   .Contains("保留的历史摘要", StringComparison.Ordinal),

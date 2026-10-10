@@ -3543,6 +3543,13 @@ public partial class ChatPanel : UserControl
                            && viewer.Bounds.Width > 0
                            && viewer.Bounds.Height > 0);
 
+    /// <summary>Whether any Markdown viewer on screen was handed this text. Read as the negative it is: a leaked
+    /// tool call has to reach the reader as plain text, and the one proof of that is that no viewer ever took
+    /// it — because a viewer is exactly where its pipes turn into a table.</summary>
+    internal bool HasMarkdownHolding(string text)
+        => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
+            .Any(viewer => viewer.Markdown?.Contains(text, StringComparison.Ordinal) == true);
+
     internal bool HasRenderedMarkdownLink(string url)
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
             .Any(viewer => MarkdownMessageRenderer.HasLinkHandler(viewer, url));

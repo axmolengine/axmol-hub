@@ -546,6 +546,10 @@ public static class HubTexts
         // Not an error and not silent: the earlier turns were replaced by a summary, so a reply that seems to
         // have forgotten something has a reason the user can see.
         ["ChatContextCompacted"] = ("已自动压缩较早的上下文。", "Compacted the earlier context automatically."),
+        // The model wrote its tool call out as text instead of sending one, so no tool ran and the reply is
+        // markup. The block on screen already says which of the two it is not, and a reader who is not told
+        // spends the evening wondering why the build never started.
+        ["ChatToolCallLeaked"] = ("模型把工具调用当成了正文输出，这次调用没有执行。", "The model wrote its tool call as text instead of sending it, so nothing ran."),
         // Refusals a send can get back now that several sessions answer at once. The cap is deliberately not
         // spelled out as a number: the limit lives in code, and a literal here would go stale silently.
         ["ChatSessionBusy"] = ("这个会话正在生成回复，请先停止它或等回复结束。", "This session is already answering. Stop it or wait for the reply to finish."),

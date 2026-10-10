@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
 using Avalonia.Media;
+using AxmolHub.Core;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Threading;
 using ColorTextBlock.Avalonia;
@@ -62,7 +63,34 @@ internal static class MarkdownMessageRenderer
     internal static void RenderInto(StackPanel content, string markdown)
     {
         content.Children.Clear();
-        content.Children.Add(Render(markdown));
+        content.Children.Add(ControlTokens.IsLeakedCall(markdown) ? LeakedCall(markdown) : Render(markdown));
+    }
+
+    /// <summary>
+    /// A tool call the model wrote out instead of sending, shown as the text it is. Handing that markup to the
+    /// Markdown engine is what made it unreadable: the call is full of pipes, so the table extension laid it out
+    /// as a grid of bordered cells, and its angle brackets were eaten as malformed HTML. Neither of those is the
+    /// model's sentence — they are an accident of running its mistake through a formatter.
+    /// </summary>
+    private static Control LeakedCall(string text)
+    {
+        var block = new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(10, 8),
+        };
+        block.Bind(TextBlock.FontFamilyProperty, new DynamicResourceExtension("Hub.Font.Mono"));
+        block.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextPrimary"));
+        var well = new Border
+        {
+            Child = block,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+        };
+        well.Bind(Border.BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceSunken"));
+        well.Bind(Border.BorderBrushProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
+        return well;
     }
 
     internal static bool ApplySyntaxHighlighting(MarkdownScrollViewer viewer)
