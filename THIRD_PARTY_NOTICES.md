@@ -41,4 +41,4 @@ Avalonia 版界面（`src/AxmolHub/`）引入 **31 个** NuGet 包（从 `projec
 
 ## 图标
 
-`src/AxmolHub/Assets/hub-icon.png` 参照 Axmol 引擎 logo 的五棱台节点线框形状重设计（中心增加轮毂节点与辐条以示区分），由脚本生成；ICO 由同一原图按 `installer/Build-Icon.ps1` 转换，未复制其他 Hub 的品牌图标。
+`src/AxmolHub/Assets/hub-icon.svg` 为图标母版，参照 Axmol 引擎 logo 的五边形节点线框重设计：保留品牌渐变（品红 #A845D8 → 紫 #6470EE → 青 #3EC8F5）与分子环节点语言，中心增加发光轮毂节点（内嵌负空间 AI 星芒）并向五个顶点射出渐隐光束，以表达 "Hub = Axmol 生态中心 + 内置 coding agent" 的定位。各级 PNG（含 16/20/24/32 px 简化变体：仅保留分子环、节点与中心盘）由 `hub-icon.svg` 渲染生成；ICO 与 ICNS 分别由 `installer/Build-Icon.ps1` 与 icnsutil 从同一母版转换，未复制其他 Hub 的品牌图标。

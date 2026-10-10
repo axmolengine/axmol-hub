@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="axmol" gradientUnits="userSpaceOnUse"
+                    x1="54" y1="54" x2="458" y2="440">
+      <stop offset="0"   stop-color="#A845D8"/>
+      <stop offset="0.5" stop-color="#6470EE"/>
+      <stop offset="1"   stop-color="#3EC8F5"/>
+    </linearGradient>
+    <!-- 光束与光晕共用：以核心为圆心，随距离衰减 -->
+    <radialGradient id="beam" gradientUnits="userSpaceOnUse"
+                    cx="256" cy="266" r="212">
+      <stop offset="0"    stop-color="#9FE8FF" stop-opacity="0.50"/>
+      <stop offset="0.5"  stop-color="#7FB6FF" stop-opacity="0.20"/>
+      <stop offset="1"    stop-color="#3EC8F5" stop-opacity="0.05"/>
+    </radialGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse"
+                    cx="256" cy="266" r="215">
+      <stop offset="0"    stop-color="#9FE8FF" stop-opacity="0.18"/>
+      <stop offset="1"    stop-color="#6470EE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="#101216"/>
+  <rect x="4" y="4" width="504" height="504" rx="112" fill="none"
+        stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="6"/>
+
+  <!-- 环境光晕（很淡，只做底） -->
+  <circle cx="256" cy="266" r="215" fill="url(#glow)"/>
+
+  <!-- 五条光束：核心射向五个顶点 -->
+  <g fill="url(#beam)">
+    <path d="M256 266 L276 54    L236 54    Z"/>
+    <path d="M256 266 L60.6 181.5 L48.2 219.5 Z"/>
+    <path d="M256 266 L463.8 219.5 L451.4 181.5 Z"/>
+    <path d="M256 266 L115.1 425.7 L147.5 449.3 Z"/>
+    <path d="M256 266 L364.5 449.3 L396.9 425.7 Z"/>
+  </g>
+
+  <!-- 品牌五边形分子环 -->
+  <path d="M256 54 L54.4 200.5 L131.3 437.5 L380.7 437.5 L457.6 200.5 Z"
+        fill="none" stroke="url(#axmol)" stroke-width="18" stroke-linecap="round"/>
+
+  <g fill="url(#axmol)">
+    <circle cx="256"   cy="54"    r="38"/>
+    <circle cx="54.4"  cy="200.5" r="38"/>
+    <circle cx="457.6" cy="200.5" r="38"/>
+    <circle cx="131.3" cy="437.5" r="38"/>
+    <circle cx="380.7" cy="437.5" r="38"/>
+  </g>
+
+  <!-- Hub 核心：光环 + 亮盘 + AI 星芒 -->
+  <circle cx="256" cy="266" r="66" fill="none"
+          stroke="#9FE8FF" stroke-opacity="0.25" stroke-width="10"/>
+  <circle cx="256" cy="266" r="52" fill="#9FE8FF"/>
+  <path d="M256 232 Q263 259 290 266 Q263 273 256 300
+           Q249 273 222 266 Q249 259 256 232 Z" fill="#101216"/>
+</svg>

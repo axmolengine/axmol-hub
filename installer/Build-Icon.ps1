@@ -15,6 +15,17 @@ $sourceImage = [Drawing.Image]::FromFile((Resolve-Path -LiteralPath $Source).Pat
 $frames = @()
 try {
     foreach ($size in @($icoSizes) + $extraSizes) {
+        # Small frames use dedicated simplified variants (ring + nodes + core disc, no beams/glow/sparkle):
+        # the full design's thin beams and negative-space star decay into noise below ~48 px.
+        $frameSource = $sourceImage
+        $ownsFrameSource = $false
+        if ($size -le 32) {
+            $smallPath = Join-Path $pngDirectory ("hub-icon-small-{0}.png" -f $size)
+            if (Test-Path -LiteralPath $smallPath) {
+                $frameSource = [Drawing.Image]::FromFile((Resolve-Path -LiteralPath $smallPath).Path)
+                $ownsFrameSource = $true
+            }
+        }
         $bitmap = New-Object Drawing.Bitmap $size, $size
         $graphics = [Drawing.Graphics]::FromImage($bitmap)
         $stream = New-Object IO.MemoryStream
@@ -22,7 +33,7 @@ try {
             $graphics.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
             $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
             $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-            $graphics.DrawImage($sourceImage, 0, 0, $size, $size)
+            $graphics.DrawImage($frameSource, 0, 0, $size, $size)
             $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
             $bytes = $stream.ToArray()
             # The ICO only takes the standard eight sizes; oversized entries like 512 are emitted as standalone PNG files, not stuffed into the ICO.
@@ -30,7 +41,10 @@ try {
             if ($PngSizes -contains $size) {
                 [IO.File]::WriteAllBytes((Join-Path $pngDirectory ("hub-icon-{0}.png" -f $size)), $bytes)
             }
-        } finally { $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
+        } finally {
+            $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose()
+            if ($ownsFrameSource) { $frameSource.Dispose() }
+        }
     }
     $file = [IO.File]::Create([IO.Path]::GetFullPath($Output))
     $writer = New-Object IO.BinaryWriter $file
