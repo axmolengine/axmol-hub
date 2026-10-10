@@ -692,9 +692,10 @@ public partial class ChatPanel
     // ── the steer-confirm strip ──
 
     /// <summary>
-    /// Puts a draft on the strip instead of steering with it. A steer cancels the segment being generated and
-    /// is the routing table's strongest signal, so the first Enter only shows what would be sent; the draft
-    /// leaves the box so the composer reads as free again, exactly like the reference it was drawn from.
+    /// Puts a draft on the strip instead of steering with it. A steer is the routing table's strongest signal and
+    /// it joins a conversation already in progress, so the first Enter only shows what would be said and the
+    /// second says it; the draft leaves the box so the composer reads as free again, exactly like the reference
+    /// it was drawn from. Nothing is cancelled either way — the strip is a review, not a warning.
     /// </summary>
     private void ShowSteerConfirm(string text, string? context, IReadOnlyList<byte[]>? pictures)
     {

@@ -23,19 +23,50 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     /// buys nothing and loses the answer.</summary>
     private const int SmallestWorthEliding = 512;
 
-    public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Asked once before every request the loop makes, whether the user has added something to the conversation.
+    ///
+    /// <para>This is where a steer lands. The guard sits inside the invoking client, so it is reached once per
+    /// iteration with the message list as the loop has grown it — which is also the first moment a new
+    /// instruction can be handed over without throwing away an answer in progress, and the only such moment: the
+    /// list at this point ends in the tool results the model is waiting on, so a user message after them is a
+    /// shape the bridge accepts. Cancelling the stream to get the point across sooner costs the reasoning behind
+    /// an answer nobody asked to lose.</para>
+    /// </summary>
+    public Func<Task<ChatMessage?>>? PendingInterjection { get; init; }
+
+    public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var elided = Elide(messages, budgetTokens);
-        LastEstimatedInputTokens = EstimateTokens(elided);
-        return base.GetResponseAsync(elided, options, cancellationToken);
+        var list = await WithInterjectionAsync(messages).ConfigureAwait(false);
+        LastEstimatedInputTokens = EstimateTokens(list);
+        return await base.GetResponseAsync(list, options, cancellationToken).ConfigureAwait(false);
     }
 
-    public override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var elided = Elide(messages, budgetTokens);
-        LastEstimatedInputTokens = EstimateTokens(elided);
-        return base.GetStreamingResponseAsync(elided, options, cancellationToken);
+        var list = await WithInterjectionAsync(messages).ConfigureAwait(false);
+        LastEstimatedInputTokens = EstimateTokens(list);
+        await foreach (var update in base.GetStreamingResponseAsync(list, options, cancellationToken)
+                           .ConfigureAwait(false))
+            yield return update;
     }
+
+    /// <summary>The list that goes out: whatever the user added, then the older results shrunk to fit. In that
+    /// order, because the budget has to be spent with the new instruction already counted against it.</summary>
+    private async Task<List<ChatMessage>> WithInterjectionAsync(IEnumerable<ChatMessage> messages)
+    {
+        var list = messages.ToList();
+        if (PendingInterjection is { } ask && AtToolBoundary(list) && await ask().ConfigureAwait(false) is { } interjection)
+            list.Add(interjection);
+        return Elide(list, budgetTokens);
+    }
+
+    /// <summary>Whether this list ends where a person may legitimately be answered: on the results of the calls
+    /// the model asked for. Anything else — the first request of a turn, or a list still open on a call with no
+    /// result — is a place where adding a user message either stacks two of them or splits a call from its
+    /// answer, and both are shapes a bridge that wants alternating roles refuses.</summary>
+    private static bool AtToolBoundary(List<ChatMessage> list)
+        => list.Count > 0 && list[^1].Contents.Any(content => content is FunctionResultContent);
 
     /// <summary>
     /// What the list that went out last cost, in Hub's own currency. It exists so a reported token count has

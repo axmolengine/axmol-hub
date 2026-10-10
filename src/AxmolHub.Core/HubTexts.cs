@@ -634,7 +634,7 @@ public static class HubTexts
         // A steer cancels the segment being generated and is the routing table's strongest signal, so the first
         // Enter only shows what would be sent. The consequence lives in the tooltip rather than as a second
         // line of text: the composer already says everything else.
-        ["ChatSteerConfirmTip"] = ("插话会打断当前回复，已生成的部分就此为止", "Interjecting cancels the reply being generated; what it has said so far is final"),
+        ["ChatSteerConfirmTip"] = ("这句会等当前这一步做完就接上，正在写的回复不会被掐断", "Your words wait for the step in flight and are answered next; the reply being written is not cut short"),
         ["ChatSteerEdit"] = ("改一改", "Edit it"),
         ["ChatSteerDiscard"] = ("丢弃", "Discard"),
         ["ChatSteerDraftMoved"] = ("还有一条没插出去", "One interjection was never sent"),

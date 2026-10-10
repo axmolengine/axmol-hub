@@ -2895,9 +2895,11 @@ public sealed class ChatWorkspace : IDisposable
         return true;
     }
 
-    /// <summary>Steers a reply already in flight: the text waits on the run, the current segment is cancelled
-    /// and written as far as it got, and the next segment answers. The state lives on the run because the
-    /// reply that is being steered may not be on screen.</summary>
+    /// <summary>Steers a reply already in flight: the text waits on the run and is answered at the next point the
+    /// conversation can take a new instruction — after the tool result that is on its way back, or at the end of
+    /// the turn if there is none. Nothing is cancelled. A person reaching in is saying "this way instead", not
+    /// "throw away what you have worked out", and the answer that was thrown away was the part they still needed.
+    /// The state lives on the run because the reply being steered may not be on screen.</summary>
     public bool TrySteer(string conversationId, string text, string? attachedContext)
         => TrySteer(conversationId, text, attachedContext, null);
 
@@ -2915,7 +2917,6 @@ public sealed class ChatWorkspace : IDisposable
         }
 
         run.QueueSteer(text, attachedContext, pictures);
-        run.RequestStop();
         return true;
     }
 
@@ -3695,7 +3696,7 @@ public sealed class ChatWorkspace : IDisposable
                 // that has outgrown the window gets compacted before the next request is built from it.
                 compacted |= await CompactIfNeededAsync(run).ConfigureAwait(false);
                 if (!run.TryTakeSteer(out var steerText, out var steerContext, out var steerPictures)) break;
-                if (!await AppendSteerTurnAsync(run, steerText, steerContext, steerPictures).ConfigureAwait(false))
+                if (await AppendSteerTurnAsync(run, steerText, steerContext, steerPictures).ConfigureAwait(false) is null)
                 {
                     result = RunResult.Cancelled;
                     break;
@@ -4186,21 +4187,36 @@ public sealed class ChatWorkspace : IDisposable
                 // one label.
                 RaiseOnUi(() => ServerSearchChanged?.Invoke(run.ConversationId, notice));
             },
+            // A steer waits for the next request the loop makes rather than cancelling the one in flight. The loop
+            // has just been handed a tool result at that point, so a user message added there is a shape every
+            // bridge accepts, and the answer the person was reading is not thrown away to make the point a few
+            // seconds sooner.
+            pendingInterjection: async () =>
+            {
+                if (!run.TryTakeSteer(out var text, out var context, out var pictures)) return null;
+                return await AppendSteerTurnAsync(run, text, context, pictures).ConfigureAwait(false) is { } turn
+                    ? ChatPipeline.ToChatMessages([turn], request.Images).FirstOrDefault()
+                    : null;
+            },
             cancellationToken: run.Token);
     }
 
-    /// <summary>Appends a steered message, or reports that the session went away while it was being typed.</summary>
-    private async Task<bool> AppendSteerTurnAsync(ConversationRun run, string text, string? attachedContext,
+    /// <summary>Appends a steered message and hands back the turn it wrote, or <c>null</c> when the session went
+    /// away while it was being typed. The turn comes back because the wire copy of what the user said is built
+    /// from the same object: two conversions of two different turns is how a steer says one thing on screen and
+    /// another to the model.</summary>
+    private async Task<ChatTurn?> AppendSteerTurnAsync(ConversationRun run, string text, string? attachedContext,
         IReadOnlyList<byte[]>? pictures)
     {
-        var written = false;
+        ChatTurn? appended = null;
         await ApplyOnUiAsync(() =>
         {
-            written = _sessions.TryUpdate(run.ConversationId, opened => opened.Append(
-                ChatTurn.User(text, attachedContext, StorePictures(run.ConversationId, pictures))));
+            var turn = ChatTurn.User(text, attachedContext, StorePictures(run.ConversationId, pictures));
+            var written = _sessions.TryUpdate(run.ConversationId, opened => opened.Append(turn));
+            appended = written ? turn : null;
             if (written) Changed?.Invoke();
         }).ConfigureAwait(false);
-        return written;
+        return appended;
     }
 
     private void CompleteRun(ConversationRun run, RunResult result, bool receivedText, string? noticeKey,

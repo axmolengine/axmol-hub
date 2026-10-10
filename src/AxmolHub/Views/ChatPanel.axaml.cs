@@ -2962,9 +2962,10 @@ public partial class ChatPanel : UserControl
                     return;
                 }
 
-                // A steer cancels the segment being generated and is the routing table's strongest signal, yet
+                // A steer is the routing table's strongest signal and it joins a reply already on its way, yet
                 // until now it looked exactly like an ordinary send. The first Enter therefore only shows what
-                // would be interjected; the second one (or the strip's button) is the steer itself.
+                // would be injected; the second one (or the strip's button) is the steer itself. It waits for the
+                // step in flight rather than cancelling it.
                 ShowSteerConfirm(steerText, steerContext, steerPictures);
                 return;
             }

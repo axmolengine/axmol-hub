@@ -119,6 +119,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // A search the endpoint ran for itself, reported as it arrives. Same thread rule as the two above: this
         // fires inside the stream, on whatever thread the response is being read on.
         Action<ServerSearchNotice>? onServerSearch = null,
+        // A steer, asked for once per request the tool loop makes. It is a message the person added while the
+        // answer was going, and the loop is where it belongs: see ToolLoopContextGuard.PendingInterjection.
+        Func<Task<ChatMessage?>>? pendingInterjection = null,
         int? maxOutputTokens = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -153,9 +156,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // ContextTrimmer only ever sees the first iteration. The harvest sits inside the guard for the same
             // reason and one more: it must read the list as it will actually go out, assistant messages the loop
             // added since the last request included, or the reasoning it hands the wire policy is stale by a turn.
-            guard = reasoning is null
-                ? new ToolLoopContextGuard(client, budget)
-                : new ToolLoopContextGuard(new ReasoningHarvestClient(client, reasoning), budget);
+            guard = new ToolLoopContextGuard(
+                reasoning is null ? client : new ReasoningHarvestClient(client, reasoning), budget)
+            {
+                PendingInterjection = pendingInterjection,
+            };
             IChatClient sending = guard;
             var functionClient = new FunctionInvokingChatClient(sending, null, null)
             {

@@ -2434,16 +2434,20 @@ public partial class ShellCheckWindow : Window
             panel.SetInputForCheck("");
 
             // ── The sentence steered in mid-run is in the history too ──
+            // Two chunks with a hold between them: the first is already on the record when the steer is tapped, so
+            // the second one is what proves the reply was left to finish. Cancelled at the tap, the sentence stops
+            // at its first half and never arrives.
             var steerHold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            chat.ClientOverride = (_, _) => new ScriptedChatClient(["引导之后答的"], gate: steerHold.Task);
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(
+                ["引导之前写完的", "半路改的主意之后答的"], afterFirstChunkGate: steerHold.Task);
             panel.SetInputForCheck("把这条停住");
             _ = panel.SendComposerForCheck();
-            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            await WaitUntilAsync(() => panel.FlowText.Contains("引导之前写完的", StringComparison.Ordinal));
             panel.SetInputForCheck("半路改的主意");
             await panel.SendComposerForCheck();
             Dispatcher.UIThread.RunJobs();
-            // The first Enter while a reply is running only lifts the sentence onto the confirm strip: a steer
-            // cancels the segment and is the routing table's strongest signal, so it takes a second tap.
+            // The first Enter while a reply is running only lifts the sentence onto the confirm strip: a steer is
+            // the routing table's strongest signal, so it takes a second tap to say it.
             Check(panel.SteerConfirmVisibleForCheck
                   && panel.SteerConfirmTextForCheck == "半路改的主意"
                   && panel.IsStreamingForCheck,
@@ -2456,6 +2460,45 @@ public partial class ShellCheckWindow : Window
             panel.PressComposerKeyForCheck(Key.Up);
             Check(panel.InputTextForCheck == "半路改的主意",
                 "被引导吞掉的那句同样能 Up 回来（实际「" + panel.InputTextForCheck + "」）");
+            var steeredCopy = chat.StoredCopyForCheck(session.Id);
+            Check(steeredCopy is not null
+                  && steeredCopy.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                      && turn.Text == "引导之前写完的半路改的主意之后答的")
+                  && steeredCopy.Messages.Any(turn => turn.Role == ChatRoles.User
+                      && turn.Text == "半路改的主意"),
+                "引导不打断正在写的那条：那半句照样写完，之后才接上新指令（实际 "
+                + string.Join(" / ", (steeredCopy?.Messages ?? []).Select(turn => turn.Role + ":" + turn.Text)) + "）");
+
+            // ── The steer rides the next request, not the end of the turn ──
+            // One segment is a whole agent turn: the tool loop runs inside it, so waiting for the reply to end
+            // would make the person sit through every call they have just said to stop making. The loop asks again
+            // once a result is in hand, and that is the moment the queued sentence goes out.
+            var boundary = chat.StartConversation();
+            var loopHold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ToolCallingChatClient? loopClient = null;
+            chat.ClientOverride = (_, _) => loopClient ??= new ToolCallingChatClient
+            {
+                HoldFirstResponse = loopHold.Task,
+            };
+            panel.SetInputForCheck("先读一个工具");
+            _ = panel.SendComposerForCheck();
+            await WaitUntilAsync(() => panel.IsStreamingForCheck);
+            panel.SetInputForCheck("半路改的第二句");
+            await panel.SendComposerForCheck();
+            panel.ClickSteerCommitForCheck();
+            loopHold.SetResult(true);
+            await panel.WaitForRunToFinishForCheck();
+            var handed = loopClient?.LastMessages?.Select(message => message.Text).ToArray() ?? [];
+            Check(handed.Any(text => text.Contains("半路改的第二句", StringComparison.Ordinal))
+                  && chat.StoredCopyForCheck(boundary.Id) is { } loopCopy
+                  && loopCopy.Messages.Any(turn => turn.Text == "先说的话")
+                  && loopCopy.Messages.Any(turn => turn.Text == "后说的话"),
+                "引导在下一次请求的边界上送到模型面前，工具循环不被掐断（第二次请求 "
+                + handed.Length + " 条：" + string.Join(" | ", handed.Select(text =>
+                    text.Length > 24 ? text[..24] : text))
+                + "；转录 " + string.Join(" / ", (chat.StoredCopyForCheck(boundary.Id)?.Messages ?? [])
+                    .Select(turn => turn.Role + ":" + turn.Text)) + "）");
+            chat.DeleteConversation(boundary.Id);
         }
         finally
         {
@@ -6172,6 +6215,16 @@ public partial class ShellCheckWindow : Window
     {
         private int _calls;
 
+        /// <summary>Held before the first response is produced. The loop's second request is answered moments
+        /// after the first returns, which is no window a check can drive a steer into; parking the first response
+        /// instead leaves the steer queued before the boundary arrives, which is exactly the case worth proving.</summary>
+        public Task? HoldFirstResponse { get; init; }
+
+        /// <summary>The messages of the request that was just made. The loop asks again after each tool result, so
+        /// reading this after a two-iteration turn says what the model actually saw on its second look — which is
+        /// the only way a check can tell a steer that landed mid-loop from one that waited for the turn to end.</summary>
+        public System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage>? LastMessages { get; private set; }
+
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
             Microsoft.Extensions.AI.ChatOptions? options = null,
@@ -6183,7 +6236,9 @@ public partial class ShellCheckWindow : Window
             Microsoft.Extensions.AI.ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            LastMessages = messages.ToList();
             _calls++;
+            if (_calls == 1 && HoldFirstResponse is { } hold) await hold.ConfigureAwait(false);
             if (_calls == 1)
             {
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(
