@@ -206,71 +206,11 @@ internal sealed class SystemAttentionService : IDisposable
         toast.AppendChild(visual);
         xml.AppendChild(toast);
 
-        var xmlBytes = Encoding.UTF8.GetBytes(xml.OuterXml);
-        var encodedXml = Convert.ToBase64String(xmlBytes);
-        // Windows toasts go through a Windows PowerShell child process rather than in-process, and both
-        // halves of that choice are measured rather than assumed. In-process WinRT needs a `-windows` TFM
-        // (Microsoft.Windows.SDK.Contracts fails on plain net8.0 with 92 x NETSDK1130), and that TFM makes
-        // NuGet silently prune HarfBuzzSharp.NativeAssets.macOS from the osx publish — see the csproj note.
-        // The claim this replaced was that this very script "cannot load WinRT types on Windows 11"; run
-        // against Windows PowerShell 5.1 on build 26300 it loads the types, parses the XML and constructs the
-        // ToastNotification. The XML arrives base64 because title and body are user- and model-derived, and a
-        // quote in them would otherwise have to survive C# escaping and PowerShell's parser on the way to a
-        // notification nobody sees failing.
-        var script = "$ErrorActionPreference = 'Stop'; try { "
-                     + "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]; "
-                     + "$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]; "
-                     + "$bytes = [Convert]::FromBase64String('" + encodedXml + "'); "
-                     + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument; "
-                     + "$doc.LoadXml([Text.Encoding]::UTF8.GetString($bytes)); "
-                     + "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc); "
-                     + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('"
-                     + WindowsAppUserModelId + "').Show($toast); "
-                     + "Write-Output 'Toast.Show completed.' "
-                     + "} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }";
-        var start = new ProcessStartInfo("powershell.exe")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoLogo");
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-WindowStyle");
-        start.ArgumentList.Add("Hidden");
-        start.ArgumentList.Add("-EncodedCommand");
-        start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-        var process = Process.Start(start) ?? throw new IOException("Could not start PowerShell for the Windows toast.");
-        Report($"Started Windows toast helper for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
-        _ = ObserveWindowsToastAsync(process, conversationId);
-    }
-
-    /// <summary>Waits the child process out so its exit code and stderr can be reported. A toast that never
-    /// appeared is otherwise indistinguishable from a toast that was never asked for, and the whole 0.8.x
-    /// notification investigation turned on exactly that distinction: the log had no line from either half of
-    /// this pair, which meant the code path had not run rather than having run and been refused by Windows.</summary>
-    private async Task ObserveWindowsToastAsync(Process process, string conversationId)
-    {
-        using (process)
-        {
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            if (process.ExitCode != 0)
-            {
-                var diagnostic = (await error.ConfigureAwait(false)).Trim();
-                Report($"Windows toast helper failed for conversation {conversationId} "
-                       + $"(exit {process.ExitCode}): {diagnostic}");
-                return;
-            }
-
-            var details = (await output.ConfigureAwait(false)).Trim();
-            Report($"Windows toast helper completed for conversation {conversationId}."
-                   + (details.Length == 0 ? "" : " " + details));
-        }
+        if (WindowsToastInterop.TryShow(WindowsAppUserModelId, xml.OuterXml, out var step, out var hr))
+            Report($"Showed Windows toast for conversation {conversationId} using AppUserModelID {WindowsAppUserModelId}.");
+        else
+            Report($"Windows toast failed for conversation {conversationId} at {step}: "
+                   + $"{WindowsToastInterop.Code(hr)}.");
     }
 
     private void ShowLinuxNotification(string title, string body, string conversationId)

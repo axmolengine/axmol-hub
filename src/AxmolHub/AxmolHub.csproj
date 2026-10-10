@@ -9,12 +9,17 @@
             `dotnet publish -r osx-arm64` 的产物里没有 libHarfBuzzSharp.dylib（同一命令在 fae2bd8 上有）；
             Skia / Avalonia.Native 的原生库没被剪，所以只有文字整形这一项无声消失，补一条显式 pin 才能保住，
             而"每次升级都要重新数一遍原生资产"正是这次踩到的那类静默回归。
-         ② 当初换 TFM 的理由（powershell.exe 外挂进程在 Windows 11 加载不了 WinRT 类型）不成立：
-            那段脚本在 Windows 11 26300 的 Windows PowerShell 5.1 上类型加载、XML 解析、
-            ToastNotification 构造全部成功。进程内投影确实只有 -windows TFM 这一条路
-            （Microsoft.Windows.SDK.Contracts 在纯 net8.0 上报 92 个 NETSDK1130），但投递方式不值得
-            用①去换：同机的 Electron 客户端 opencode 的 toast 身份只靠开始菜单快捷方式打戳，
-            机制本身不是投递成功的决定因素。 -->
+         ② 曾经用「那段 PowerShell 脚本能加载 WinRT 类型」来支持换回外挂进程，2026-10-10 实测推翻：
+            这台机器（Windows 11 26300）的 Windows PowerShell 5.1 **整体失去 ContentType=WindowsRuntime
+            类型解析能力** —— ToastNotificationManager / XmlDocument / StorageFile 全失败，连
+            [Windows.Foundation.Uri, Windows.Foundation, ContentType=WindowsRuntime] 都失败
+            （有阳性对照证明脚本确实执行；System32\WinMetadata 的 winmd 与 GAC 里的
+            System.Runtime.WindowsRuntime 都在，所以不是缺文件）。真实事件日志里那条
+            `Windows toast helper failed ... Unable to find type [...]` 就是它，逐条通知如此。
+            结论：外挂脚本这条路在本机没有任何写法能通，而①仍然是真的，所以两条都不能要 ——
+            toast 改为**进程内手写 WinRT ABI 互操作**（RoGetActivationFactory + vtable，
+            见 Services/WindowsToastInterop.cs，零依赖、不动 TFM、不动依赖图），
+            IID 与槽位由 tmp/winrt-probe 探针实测（RESULT=OK），并由 verify-shell 自检钉住。 -->
     <TargetFramework>net8.0</TargetFramework>
     <!-- 名字的历史：AxmolHub.App.Avalonia（与 WPF 版并存期）→ AxmolHub.App（P6 删掉 WPF 版后
          去掉 .Avalonia，那次是纯重命名，namespace / x:Class / avares 一律没动）→ AxmolHub

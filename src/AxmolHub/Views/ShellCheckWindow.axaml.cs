@@ -152,6 +152,7 @@ public partial class ShellCheckWindow : Window
 
         CheckStringDefinition();
         CheckWindowsTaskbarBadge();
+        CheckWindowsToastInterop();
         await CheckCjkFontNoticeAsync();
         CheckEveryXamlResourceKeyResolves();
         var shell = CheckShell(scratchRoot);
@@ -7530,6 +7531,52 @@ public partial class ShellCheckWindow : Window
             "本机真的能按 IID_ITaskbarList3 建出任务栏对象并完成 HrInit（hr="
             + SystemAttentionService.WindowsTaskbarBadge.Code(hr)
             + (failure is null ? "" : "，" + failure) + "）");
+    }
+
+    /// <summary>
+    /// The WinRT toast contract: five interface IIDs and four vtable slots, all literals in
+    /// <see cref="WindowsToastInterop"/> because the app builds for plain <c>net8.0</c> and cannot reference the
+    /// projection to write them down for us. A wrong literal here fails invisibly — a mistyped IID answers
+    /// E_NOINTERFACE, a mistyped slot calls a neighbour — and the user simply never sees a notification, which is
+    /// the same symptom as "the feature was never wired up". Measured values live in the throwaway probe
+    /// (<c>tmp/winrt-probe</c>, which printed <c>RESULT=OK</c>); these assertions are what keeps them honest.
+    ///
+    /// The literal assertions run on all three platforms. The live probe is Windows-only and stops one call short
+    /// of <c>Show</c>, so it proves the objects really activate on this host without painting a notification.
+    /// </summary>
+    private void CheckWindowsToastInterop()
+    {
+        Check(WindowsToastInterop.XmlDocumentInterface == Guid.Parse("f7f3a506-1e87-42d6-bcfb-b8c809fa5494")
+              && WindowsToastInterop.XmlDocumentIoInterface == Guid.Parse("6cd0e74e-ee65-4489-9ebf-ca43e87ba637")
+              && WindowsToastInterop.ToastNotificationFactoryInterface == Guid.Parse("04124b20-82c6-4229-b109-fd9ed4662b53")
+              && WindowsToastInterop.ToastNotificationManagerStaticsInterface == Guid.Parse("50ac103f-d235-4598-bbef-98fe4d1a3ad4")
+              && WindowsToastInterop.ToastNotifierInterface == Guid.Parse("75927b93-03f3-41ec-91d3-6e5bac1b38e7"),
+            "进程内 toast 用的五个 WinRT 接口 IID 与投影实测值逐字一致（实际 "
+            + WindowsToastInterop.XmlDocumentInterface + " / " + WindowsToastInterop.XmlDocumentIoInterface + " / "
+            + WindowsToastInterop.ToastNotificationFactoryInterface + " / "
+            + WindowsToastInterop.ToastNotificationManagerStaticsInterface + " / "
+            + WindowsToastInterop.ToastNotifierInterface + "）");
+
+        // 负控：五个 IID 两两不同，且都不等于任何"看起来像"的手滑值 —— 记忆里的
+        // IToastNotificationManagerStatics 是 50F103EE-…（真值是 50AC103F-…），只对前两位足以骗过眼睛。
+        Check(WindowsToastInterop.XmlDocumentInterface != WindowsToastInterop.XmlDocumentIoInterface
+              && WindowsToastInterop.ToastNotifierInterface != WindowsToastInterop.ToastNotificationFactoryInterface
+              && WindowsToastInterop.ToastNotificationManagerStaticsInterface
+                  != Guid.Parse("50F103EE-0000-0000-0000-000000000000")
+              && WindowsToastInterop.ToastNotifierInterface
+                  != Guid.Parse("997e2675-059e-4e60-8b06-1760917c8b80"),
+            "五个 toast 接口 IID 互不相同，且不等于凭记忆写错的 50F103EE-… 与相邻的 IToastNotification …1760917c8b80");
+
+        if (!OperatingSystem.IsWindows())
+        {
+            _lines.Add("SKIP  非 Windows 平台没有 WinRT toast，跳过进程内互操作的真实探测");
+            return;
+        }
+
+        var probed = WindowsToastInterop.TryProbe(out var step, out var hr);
+        Check(probed,
+            "本机真的能按这些 IID 与槽位建出 toast 对象并拿到 notifier（停在 Show 之前，不画任何通知；"
+            + "step=" + step + "，hr=" + WindowsToastInterop.Code(hr) + "）");
     }
 
     private async Task CheckCjkFontNoticeAsync()
