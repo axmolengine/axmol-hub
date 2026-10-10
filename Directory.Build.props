@@ -17,7 +17,7 @@
          artifact where Core.dll reported 1.0.0 and Cli.dll reported 0.1.6.
          installer/Build.ps1 and installer/Test.ps1 also read the version from this file;
          stop copying extra copies anywhere else. -->
-    <Version>0.8.7</Version>
+    <Version>0.9.0</Version>
 
     <!-- The NuGet-side equivalent of the repo's existing "version + SHA-256 double pin"
          philosophy: pin each project's full transitive closure in packages.lock.json so

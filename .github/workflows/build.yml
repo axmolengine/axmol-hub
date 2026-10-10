@@ -280,7 +280,7 @@ jobs:
           restore-keys: nuget-release-
 
       - name: Prepare pinned Velopack CLI
-        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
       - name: Build release packages
         shell: pwsh
@@ -321,7 +321,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
       - name: Prepare pinned Velopack CLI
-        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
       - name: Build release packages
         shell: pwsh
@@ -358,7 +358,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
       - name: Prepare pinned Velopack CLI
-        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
       - name: Build release packages
         shell: pwsh
@@ -395,7 +395,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
 
       - name: Prepare pinned Velopack CLI
-        run: dotnet run --project tests/AxmolHub.Checks -c Release -- artifacts/packaging-tools --prepare-packaging
+        run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
       - name: Build release packages
         shell: pwsh
