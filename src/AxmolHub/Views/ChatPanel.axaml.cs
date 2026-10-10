@@ -103,8 +103,10 @@ public partial class ChatPanel : UserControl
     }
 
     /// <summary>The conversation whose turns <see cref="MessageFlow"/> currently shows, and how many of its
-    /// visible turns are already rendered. Together they let <see cref="RenderMessages"/> append only what is
-    /// new instead of tearing down and rebuilding the whole flow on every change.</summary>
+    /// visible turns have already been laid down. Together they let <see cref="RenderMessages"/> append only what
+    /// is new instead of tearing down and rebuilding the whole flow on every change. The prefix is counted in
+    /// <i>turns</i>, not in rows: a group of machine turns paints fewer rows than it consumes — a plain call
+    /// draws none, its result draws one between them — and a row count cannot point back into the transcript.</summary>
     private string? _renderedConversationId;
     private int _renderedCount;
 
@@ -119,6 +121,11 @@ public partial class ChatPanel : UserControl
     /// used to paint the shifted tail twice and skip the inserted row entirely. The slot's own identity is enough:
     /// an insert anywhere before it moves a different turn into it.</summary>
     private string _renderedTailKey = "";
+
+    /// <summary>The activity group whose run is still going, when one is: the machine turns that arrive next
+    /// belong to it, so it grows where it stands instead of the flow being rebuilt around it. See
+    /// <see cref="DeriveActivityGroup"/>.</summary>
+    private ActivityGroupView? _openGroup;
 
     private static string SlotKey(ChatTurn turn)
         => turn.At.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
@@ -1776,6 +1783,7 @@ public partial class ChatPanel : UserControl
             _renderedConversationId = conversation?.Id;
             _renderedCount = 0;
             _renderedTailKey = "";
+            _openGroup = null;
             EmptyState.IsVisible = run is not { IsStreaming: true };
             if (run is { IsStreaming: true }) MessageFlow.Children.Add(AttachLive(run).Row);
             RenderNotice();
@@ -1783,26 +1791,25 @@ public partial class ChatPanel : UserControl
             return;
         }
 
-        // A tool result lands as an insert beside its call, one render pass after the call was already folded
-        // into a group. Left alone, the incremental tail would start a *second* group for the result ("已思考 0s"
-        // under "执行工具 1 次"), so a run of machine turns would read as several folds instead of one. When the
-        // next turn continues an activity run the last rendered row already belongs to, rebuild instead: the run
-        // re-folds into a single group. Cheap because it only fires while a run is streaming tool calls.
-        var nextContinuesGroup = _renderedCount > 0 && _renderedCount < visible.Count
-            && IsActivityTurn(visible[_renderedCount].Turn)
-            && MessageFlow.Children.Count > 0
-            && MessageFlow.Children[MessageFlow.Children.Count - 1].Classes.Contains("activity-group");
-
-        if (_renderedConversationId != conversation!.Id || visible.Count < _renderedCount || approvalChanged
-            || nextContinuesGroup
+        // A teardown is for the cases an append cannot express: another session's turns, a history that shrank
+        // under an edit or a regenerate, a decision that rewrote what an already-painted turn looks like, and a
+        // turn that has moved into a slot it did not occupy when the flow was laid down. A growing activity run
+        // is none of those: its new turns extend the group that is already the last row, which is what keeps a
+        // head the person had opened from being swapped out for a fresh collapsed one.
+        var aDifferentSession = _renderedConversationId != conversation!.Id;
+        var historyShrank = visible.Count < _renderedCount;
+        if (aDifferentSession || historyShrank || approvalChanged
             || (_renderedCount > 0 && SlotKey(visible[_renderedCount - 1].Turn) != _renderedTailKey))
         {
             MessageFlow.Children.Clear();
             _renderedConversationId = conversation.Id;
             _renderedCount = 0;
+            _openGroup = null;
             // A session opens on its newest message. The scroll offset belongs to the viewer rather than to the
             // conversation, so without this a switch inherits wherever the previous one had been read up to.
-            _stickToBottom = true;
+            // Revalidating the same transcript is not a switch, though: whoever had scrolled up to read something
+            // stays where they put it.
+            if (aDifferentSession || historyShrank) _stickToBottom = true;
         }
 
         var lastIndex = conversation.Messages.Count - 1;
@@ -1816,13 +1823,38 @@ public partial class ChatPanel : UserControl
             {
                 var start = i;
                 while (i < visible.Count && IsActivityTurn(visible[i].Turn)) i++;
-                AppendActivityGroup(conversation.Id, visible.GetRange(start, i - start), lastIndex);
+                var turns = visible.GetRange(start, i - start);
+                // The run is still open while its group is the last thing on the page, so the turns that arrived
+                // since are the same piece of work: grow that group where it stands. Rebuilding it would answer a
+                // person reading the opened fold by closing it, once per tool call, for as long as the model
+                // keeps calling tools.
+                if (_openGroup is { } open && open.ConversationId == conversation.Id && open.EndVisible == start
+                    && MessageFlow.Children.Count > 0
+                    && ReferenceEquals(MessageFlow.Children[^1], open.Group))
+                {
+                    // Re-sliced from where the run began, not the turns that just arrived: a row is drawn from a
+                    // call <i>and</i> the result that answered it, so handing the group only the new second half
+                    // would draw every result as a call nobody had asked for.
+                    open.Turns = visible.GetRange(open.FirstVisible, i - open.FirstVisible);
+                    open.EndVisible = i;
+                    DeriveActivityGroup(open, conversation.Id, lastIndex);
+                }
+                else
+                {
+                    _openGroup = CreateActivityGroup(conversation.Id, start, turns);
+                    DeriveActivityGroup(_openGroup, conversation.Id, lastIndex);
+                }
+
+                _renderedCount = i;
                 continue;
             }
 
+            // Prose closes the run: the next piece of machine work is a different exchange and gets its own fold.
+            _openGroup = null;
             var (index, turn, toolName) = visible[i];
             AppendRenderedTurn(conversation.Id, index, turn, toolName, isLast: index == lastIndex,
                 markdown: i >= visible.Count - EagerMarkdownLimit, target: MessageFlow);
+            _renderedCount = i + 1;
             i++;
         }
 
@@ -1915,7 +1947,6 @@ public partial class ChatPanel : UserControl
         // untouched for every other turn.
         var actionableIndex = turn.ToolCallId is { Length: > 0 } ? (int?)null : index;
         target.Children.Add(BuildMessageRow(fromUser, body, actionableIndex, turn.Role, turn.Text, isLast, turn.At));
-        _renderedCount++;
 
         // User text is plain by nature, and a tool payload is now a quiet line rather than a bubble; only the
         // assistant's own words carry Markdown worth rendering — and a plan's words do not render here at all.
@@ -1945,9 +1976,63 @@ public partial class ChatPanel : UserControl
 
     /// <summary>
     /// <summary>
-    /// One collapsible group over a run of machine turns. The head names the work as a full-width sentence (the
-    /// first action, and how many followed) rather than a bare count, so a tools-only turn is a line of content
-    /// and not a lonely pill. Collapsed by default: the charter hides secondary things.
+    /// The shell of one collapsible activity group: its head, the panel its rows live in, and the stretch of the
+    /// transcript it stands for. Keeping those together is what lets a machine run that is still arriving grow the
+    /// group it opened instead of replacing it — the head is the control a person may well have expanded to read,
+    /// and a rebuilt group answers them with a collapsed one.
+    /// </summary>
+    private sealed class ActivityGroupView
+    {
+        public required string ConversationId { get; init; }
+
+        /// <summary>Where the run begins in the visible turns, and where it has reached so far. A next turn whose
+        /// index is exactly <see cref="EndVisible"/> continues this run; anything else is a different piece of
+        /// work and opens its own fold.</summary>
+        public required int FirstVisible { get; init; }
+
+        public int EndVisible { get; set; }
+
+        public required List<(int Index, ChatTurn Turn, string? ToolName)> Turns { get; set; }
+
+        public required Border Group { get; init; }
+
+        public required ToggleButton Head { get; init; }
+
+        public required StackPanel Inner { get; init; }
+    }
+
+    /// <summary>Lays down an empty group over the first stretch of a machine run and puts it at the end of the
+    /// flow. Its rows and its sentence come from <see cref="DeriveActivityGroup"/>.</summary>
+    private ActivityGroupView CreateActivityGroup(string conversationId, int firstVisible,
+        List<(int Index, ChatTurn Turn, string? ToolName)> turns)
+    {
+        var head = new ToggleButton { Classes = { "activity-group-head" } };
+        var inner = new StackPanel { Spacing = 2 };
+        var body = new StackPanel { Name = "ActivityGroupBody", Spacing = 0, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
+        body.Children.Add(inner);
+        // Driven off IsCheckedChanged rather than Click: a real click flips IsChecked (which fires this), and so
+        // does a check that sets IsChecked directly — a raised Click never reaches a ToggleButton's OnClick, so
+        // wiring the fold to Click would leave it untestable and half-broken.
+        head.IsCheckedChanged += (_, _) => body.IsVisible = head.IsChecked == true;
+
+        var group = new Border { Classes = { "activity-group" }, Child = new StackPanel { Spacing = 2, Children = { head, body } } };
+        MessageFlow.Children.Add(group);
+        return new ActivityGroupView
+        {
+            ConversationId = conversationId,
+            FirstVisible = firstVisible,
+            EndVisible = firstVisible + turns.Count,
+            Turns = turns,
+            Group = group,
+            Head = head,
+            Inner = inner,
+        };
+    }
+
+    /// <summary>
+    /// Redraws one group from the turns it holds: every row inside it, then the full-width sentence over them.
+    /// The head names the work (the first action, and how many followed) rather than a bare count, so a tools-only
+    /// turn is a line of content and not a lonely pill. Collapsed by default: the charter hides secondary things.
     ///
     /// Inside, each tool exchange is folded into a single row. A read/search/list/find/command becomes one
     /// descriptive <c>activity-row</c> built from its call and result (the raw payload moves to the tooltip), so
@@ -1955,21 +2040,25 @@ public partial class ChatPanel : UserControl
     /// line with the undo — that line is the write's one exit and its approval trace, and it is asserted
     /// elsewhere — so the group is a container that routes each turn to the row shape that fits it, not a
     /// re-implementation of the per-turn surfaces.
+    ///
+    /// The rows are re-derived rather than appended because a result is filed <i>beside</i> the call it answers
+    /// (<see cref="Conversation.AppendFunctionResult"/>): the turn that just arrived is not always the new thing at
+    /// the end, and rebuilding the slice from the transcript as it now stands is the only way the rows come out in
+    /// the order the conversation holds. Only this group's own children move, so an opened head and the reading
+    /// position are left alone — which is the whole point of extending rather than rebuilding.
     /// </summary>
-    private void AppendActivityGroup(string conversationId, List<(int Index, ChatTurn Turn, string? ToolName)> turns,
-        int lastIndex)
+    private void DeriveActivityGroup(ActivityGroupView view, string conversationId, int lastIndex)
     {
+        var turns = view.Turns;
         // Pair each call with the result that answered it, so one row can say what was done and how it went.
         var calls = new Dictionary<string, ChatTurn>(StringComparer.Ordinal);
-        var results = new Dictionary<string, ChatTurn>(StringComparer.Ordinal);
         foreach (var (_, turn, _) in turns)
         {
             if (turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 } id) calls[id] = turn;
-            else if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } answered) results[answered] = turn;
         }
 
-        var inner = new StackPanel { Spacing = 2 };
-        var callCount = calls.Count;
+        var inner = view.Inner;
+        inner.Children.Clear();
         foreach (var (index, turn, toolName) in turns)
         {
             // A call that owed a decision, or a write that left a copy, keeps its own surface (signpost / record
@@ -1999,18 +2088,7 @@ public partial class ChatPanel : UserControl
                 markdown: false, target: inner);
         }
 
-        var head = new ToggleButton { Classes = { "activity-group-head" } };
-        head.Content = BuildActivityGroupHead(turns, callCount);
-
-        var body = new StackPanel { Name = "ActivityGroupBody", Spacing = 0, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
-        body.Children.Add(inner);
-        // Driven off IsCheckedChanged rather than Click: a real click flips IsChecked (which fires this), and so
-        // does a check that sets IsChecked directly — a raised Click never reaches a ToggleButton's OnClick, so
-        // wiring the fold to Click would leave it untestable and half-broken.
-        head.IsCheckedChanged += (_, _) => body.IsVisible = head.IsChecked == true;
-
-        var group = new Border { Classes = { "activity-group" }, Child = new StackPanel { Spacing = 2, Children = { head, body } } };
-        MessageFlow.Children.Add(group);
+        view.Head.Content = BuildActivityGroupHead(turns, calls.Count);
     }
 
     /// <summary>
@@ -2490,18 +2568,6 @@ public partial class ChatPanel : UserControl
         // The revision's own text is sent by the review surface (CommitPlanReview) through the ordinary send
         // path; prefilling the composer here would put a prompt in front of a sentence the person already wrote.
         ConversationStateChanged?.Invoke();
-    }
-
-    private void AppendPlainBubble(string text, bool fromUser)
-    {
-        EmptyState.IsVisible = false;
-        var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = text });
-        MessageFlow.Children.Add(BuildMessageRow(fromUser, body, null,
-            fromUser ? ChatRoles.User : ChatRoles.Assistant, text, false,
-            fromUser ? DateTimeOffset.Now : null));
-        _renderedCount++;
-        ScrollToEnd();
     }
 
     /// <summary>
@@ -3247,6 +3313,14 @@ public partial class ChatPanel : UserControl
     internal bool ActivityGroupExpandedForCheck(int index)
         => ActivityGroupBodyAt(index) is { IsVisible: true };
 
+    /// <summary>Which group control the Nth fold is painted from, as an instance token. A run that grows its own
+    /// group leaves the token alone; a run that tears the flow down and rebuilds it hands back a fresh number even
+    /// when the restored head looks identical — and the person who had it open would see it close.</summary>
+    internal int ActivityGroupInstanceTokenForCheck(int index)
+        => ActivityGroupAt(index) is { } group
+            ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(group)
+            : 0;
+
     /// <summary>The description text of every folded action row, in order. A tool exchange now renders as one
     /// <c>activity-row</c> (not a message-row), so this — not <c>PaintedRowsForCheck</c> — is what a check reads to
     /// prove each call produced exactly one row and a late-inserted result rebuilt rather than duplicated it.</summary>
@@ -3831,6 +3905,10 @@ public partial class ChatPanel : UserControl
         MessageScroller.Offset = new Point(0, offset);
         UpdateScrollAffordance();
     }
+
+    /// <summary>Where the transcript is being read. The bottom flag says whether the newest line is in view; only
+    /// the offset says whether a repaint left the reader where they had put themselves.</summary>
+    internal double FlowOffsetForCheck => MessageScroller.Offset.Y;
 
     internal string InputTextForCheck => InputBox.Text ?? "";
 

@@ -2428,6 +2428,10 @@ public partial class ShellCheckWindow : Window
         var session = chat.StartConversation();
         var workspace = ScratchDirectory.Resolve("activity-workspace");
         System.IO.Directory.CreateDirectory(workspace);
+        // Held open by the last scene so a check can work on a run that is still calling tools; released on the
+        // way out whatever an assertion did, because a closed gate parks the suite, not just the cell.
+        var livePark = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var liveArrived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         chat.SetWorkspaceRoot(session.Id, workspace);
         chat.SetApprovalMode(session.Id, ToolApprovalModes.Full);
         chat.OpenConversation(session.Id);
@@ -2597,9 +2601,96 @@ public partial class ShellCheckWindow : Window
             Check(panel.ActivityRowStatusSizeForCheck == 10,
                 "执行状态的对勾/八叉缩到 10，安静地待在箭头旁边（实际 " + panel.ActivityRowStatusSizeForCheck + "）");
             chat.DeleteConversation(detailSession.Id);
+
+            // ── a group the person opened stays open while the model keeps calling tools ──
+            // Every cell above reads a finished transcript, which is how this slipped through: each new call used
+            // to tear the whole flow down and lay it back out, so the head somebody had opened to read came up
+            // collapsed again — once per call, for as long as the model kept working. The window to see it is
+            // between two calls, so the fixture parks in front of its follow-up request.
+            var liveSession = chat.StartConversation();
+            chat.SetWorkspaceRoot(liveSession.Id, workspace);
+            chat.SetApprovalMode(liveSession.Id, ToolApprovalModes.Full);
+            chat.OpenConversation(liveSession.Id);
+            panel.Reload();
+            // Reading position only means something when there is somewhere else to be, so the run is put at the
+            // end of a transcript that already overflows the column.
+            var filler = string.Join("\n\n", Enumerable.Range(1, 40)
+                .Select(line => $"第 {line} 段：这一段的长度足够把消息列撑出一屏之外，剩下的要滚动才读得完。"));
+            chat.ClientOverride = (_, _) => new ScriptedChatClient([filler]);
+            panel.SetInputForCheck("先写满一屏");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+
+            var live = new ApprovalChatClient
+            {
+                CallsRemaining = 2,
+                ToolName = "list_directory",
+                Arguments = new Dictionary<string, object?> { ["path"] = "." },
+                ParkBeforeFollowUp = livePark.Task,
+                FollowUpReached = liveArrived,
+            };
+            chat.ClientOverride = (_, _) => live;
+            panel.SetInputForCheck("接着列两次目录");
+            _ = panel.SendComposerForCheck();
+            await WaitForSignalAsync(liveArrived.Task);
+            // One call answered is one row inside one group, and the stream is now held at the park.
+            await WaitUntilAsync(() => panel.ActivityRowsForCheck.Length == 1);
+            panel.SetActivityGroupExpandedForCheck(0, true);
+            panel.ScrollTranscriptForCheck(40);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var openedToken = panel.ActivityGroupInstanceTokenForCheck(0);
+            Check(panel.ActivityGroupExpandedForCheck(0) && openedToken != 0
+                  && !panel.ViewAtBottomForCheck && panel.ScrollToBottomVisible,
+                "夹具：组已展开、转录读到中间，回底板的按钮升起来了（组 " + panel.ActivityGroupCountForCheck
+                + "，行 " + panel.ActivityRowsForCheck.Length + "）");
+
+            livePark.SetResult(true);
+            await WaitUntilAsync(() => panel.ActivityRowsForCheck.Length == 2);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ActivityGroupCountForCheck == 1,
+                "第二个工具折进同一个组里，而不是又开一折（实际 " + panel.ActivityGroupCountForCheck + " 组：["
+                + string.Join(" | ", Enumerable.Range(0, panel.ActivityGroupCountForCheck)
+                    .Select(g => panel.ActivityGroupTitleForCheck(g))) + "]）");
+            Check(panel.ActivityGroupExpandedForCheck(0),
+                "模型又调了一个工具，用户展开的根节点不会当场折叠回去");
+            Check(panel.ActivityGroupInstanceTokenForCheck(0) == openedToken,
+                "组是就地长出来的同一个控件，而不是整段重建后再恢复成展开（展开前 " + openedToken
+                + "，现在 " + panel.ActivityGroupInstanceTokenForCheck(0) + "）");
+            Check(panel.ActivityRowsForCheck.Count(row => row == listVerb) == 2,
+                "两次调用各出一行，第二次没有把第一行的结果再画一遍（实际行 "
+                + string.Join(" / ", panel.ActivityRowsForCheck) + "）");
+            Check(!panel.ViewAtBottomForCheck && panel.ScrollToBottomVisible
+                  && Math.Abs(panel.FlowOffsetForCheck - 40) < 1,
+                "跑着的工具调用不再把读数位置拽回底部，也没有因为整段清空而被夹到 0（offset 现在是 "
+                + panel.FlowOffsetForCheck + "）");
+            await panel.WaitForRunToFinishForCheck();
+
+            // The same page then gets a second run, which has to open its own fold and default it to collapsed:
+            // keeping the person's choice is one thing, inventing a second one for a group they never touched is
+            // another. It also proves the run's prose closed the first group rather than the tail folding in.
+            chat.ClientOverride = (_, _) => new ApprovalChatClient
+            {
+                CallsRemaining = 1,
+                ToolName = "list_directory",
+                Arguments = new Dictionary<string, object?> { ["path"] = "." },
+            };
+            panel.SetInputForCheck("再列一次目录");
+            await panel.SendComposerForCheck();
+            await panel.WaitForRunToFinishForCheck();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.ActivityGroupCountForCheck == 2
+                  && panel.ActivityGroupExpandedForCheck(0) && !panel.ActivityGroupExpandedForCheck(1),
+                "新的一轮机器活开自己的第二折，默认收起；人开过的那一折不受牵连（组 "
+                + panel.ActivityGroupCountForCheck + "，第一折展开 " + panel.ActivityGroupExpandedForCheck(0)
+                + "，第二折展开 " + panel.ActivityGroupExpandedForCheck(1) + "）");
+            chat.DeleteConversation(liveSession.Id);
         }
         finally
         {
+            livePark.TrySetResult(true);
             chat.ClientOverride = savedOverride;
             if (chat.Conversations.Any(summary => summary.Id == session.Id)) chat.DeleteConversation(session.Id);
             panel.Reload();
@@ -5618,6 +5709,16 @@ public partial class ShellCheckWindow : Window
         /// dies in it, so counting requests would say nothing about whether a reply was produced.</summary>
         public int Answers { get; private set; }
 
+        /// <summary>A task held before the <b>second</b> request answers, so a check can act on the transcript
+        /// while the run is still calling tools. What a person does to an open fold between one call and the next
+        /// is exactly the state a rebuild used to erase, and no fixture that answered instantly could reach it.
+        /// Cancelled like a real stream, because a check that parks has to be able to be stopped parking it.</summary>
+        public Task? ParkBeforeFollowUp { get; set; }
+
+        /// <summary>Signalled once the stream has reached that park, so the check waits for the position rather
+        /// than guessing at a delay.</summary>
+        public System.Threading.Tasks.TaskCompletionSource<bool>? FollowUpReached { get; set; }
+
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(
             System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
             Microsoft.Extensions.AI.ChatOptions? options = null,
@@ -5630,6 +5731,11 @@ public partial class ShellCheckWindow : Window
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             Requests++;
+            if (Requests >= 2)
+            {
+                FollowUpReached?.TrySetResult(true);
+                if (ParkBeforeFollowUp is { } park) await park.WaitAsync(cancellationToken);
+            }
             if (Thinking.Count > 0)
             {
                 // One block, once: it belongs to the response this call is about to answer.
