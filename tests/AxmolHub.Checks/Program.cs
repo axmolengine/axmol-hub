@@ -2941,6 +2941,144 @@ if (args.Contains("--check-ai-workspace"))
         throw new Exception($"ForCurrent disagreed with the host it is running on: {currentCapture.Id}.");
     Console.WriteLine("PASS: each host picks one capture backend, and an unusable one says so in a refusal.");
 
+    // ── the repository read: the parse first, on git's own bytes, then one live repository ──
+    // The pane shows these facts to a person deciding whether to approve a checkout, so both halves are
+    // asserted: the parse against records transcribed from measured `git status --porcelain=v1 -z -b` output
+    // (including the two shapes that break a naive split — a rename whose origin is the next NUL field, and a
+    // CJK path that stays whole only because -z never quotes), and one real repository read through the real
+    // git, so the parse cannot drift from the format it claims to implement.
+    // Six, not seven: the rename's origin is eaten, and an ignored file is not a change anybody is asked to
+    // review — a user's status.showIgnored=true would otherwise put build output on the list. The origin is
+    // spelled `A␠␠gone.txt` on purpose: a bare path would fail the record guard and be skipped by accident,
+    // which is how this cell would pass while the rename's second field was being read as a change of its own.
+    var statusReading = GitRepository.ParseStatus(
+        "## master...origin/master [ahead 2, behind 1]\0M  one.txt\0 M late.txt\0"
+        + "R  renamed.txt\0A  gone.txt\0A  sub/deep.txt\0D  目录/说明.md\0?? untracked.txt\0!! ignored.txt\0");
+    if (statusReading.BranchHeader is not { Length: > 0 } repoHeader
+        || !repoHeader.Contains("ahead 2", StringComparison.Ordinal)
+        || statusReading.Entries.Count != 6 || statusReading.Truncated)
+        throw new Exception($"The porcelain parse read {statusReading.Entries.Count} entries from a known fixture.");
+    var repoPaths = statusReading.Entries.ToDictionary(entry => entry.RelativePath, StringComparer.Ordinal);
+    if (!repoPaths.ContainsKey("renamed.txt") || repoPaths.ContainsKey("gone.txt") || repoPaths["renamed.txt"].Untracked
+        || repoPaths["renamed.txt"].Mark != "R " || !repoPaths["untracked.txt"].Untracked
+        || repoPaths["untracked.txt"].Mark != "??" || repoPaths["late.txt"].Mark != " M"
+        || !repoPaths.ContainsKey("目录/说明.md") || repoPaths.ContainsKey("ignored.txt"))
+        throw new Exception("A porcelain record shape was parsed into the wrong row: "
+            + string.Join(",", statusReading.Entries.Select(entry => entry.Mark + entry.RelativePath)));
+    var repoBranch = GitRepository.ParseBranch("## master...origin/master [ahead 2, behind 1]");
+    var repoDetached = GitRepository.ParseBranch("## HEAD (no branch)");
+    var repoNoUpstream = GitRepository.ParseBranch("## master");
+    if (repoBranch.Name != "master" || repoBranch.Ahead != 2 || repoBranch.Behind != 1 || repoBranch.Detached
+        || !repoDetached.Detached || repoDetached.Name != "HEAD (no branch)"
+        || repoNoUpstream.Name != "master" || repoNoUpstream.Ahead != 0 || repoNoUpstream.Behind != 0)
+        throw new Exception($"The branch line did not read as three facts: {repoBranch} / {repoDetached} / {repoNoUpstream}");
+    // The bound is a product decision, not a constant nobody reaches: a repository with hundreds of dirty paths
+    // has to say it was cut rather than show a page and imply it was the whole of it.
+    var repoCrowded = GitRepository.ParseStatus(
+        string.Concat(Enumerable.Range(0, 5).Select(i => $" M f{i}.txt\0")), maxEntries: 2);
+    if (repoCrowded.Entries.Count != 2 || !repoCrowded.Truncated)
+        throw new Exception("The entry bound was not enforced, or was enforced without saying so.");
+    // Sections are paired with the name list by position. This fixture carries a path with a space — the case
+    // where reading the `diff --git a/x b/y` header would be a guess — and a disagreement is reported as one.
+    var patchFixture = "diff --git a/with space.txt b/with space.txt\nindex abc..def 100644\n"
+        + "--- a/with space.txt\n+++ b/with space.txt\n@@ -1 +1 @@\n-q\n+q2\ndiff --git a/ok.txt b/ok.txt\n"
+        + "--- a/ok.txt\n+++ b/ok.txt\n@@ -1 +1 @@\n-x\n+y\n";
+    var repoSplit = GitRepository.SplitSections(patchFixture, ["with space.txt", "ok.txt"]);
+    if (!repoSplit.Aligned || repoSplit.Sections.Count != 2
+        || !repoSplit.Sections["with space.txt"].Contains("+q2", StringComparison.Ordinal)
+        || repoSplit.Sections["with space.txt"].Contains("diff --git a/ok.txt", StringComparison.Ordinal)
+        || !repoSplit.Sections["ok.txt"].StartsWith("diff --git a/ok.txt", StringComparison.Ordinal))
+        throw new Exception($"The patch was not cut at the file boundaries: {repoSplit.SectionCount} sections, "
+            + $"{repoSplit.NameCount} names, [{string.Join(" | ", repoSplit.Sections.Values)}]");
+    var repoSkewed = GitRepository.SplitSections(patchFixture, ["only-one.txt"]);
+    if (repoSkewed.Aligned || repoSkewed.Sections.Count != 1 || !repoSkewed.Sections.ContainsKey("only-one.txt"))
+        throw new Exception("A list and a patch that disagree were reported as aligned, or attributed at random.");
+    Console.WriteLine("PASS: porcelain records, the branch line and a patch's file boundaries parse as git writes them.");
+
+    // The same rules against the real thing. Guarded, because a host without git has to pass the suite with the
+    // outcome it advertises rather than a repository nobody could look at.
+    if (CommandShells.Resolve("git") is { } probeGit)
+    {
+        // git leaves objects read-only, and a recursive delete on Windows answers UnauthorizedAccessException to
+        // that, so the fixture's own removal clears the attribute first. A red run must not poison the next one.
+        static void WipeRepository(string directory)
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(directory, recursive: true);
+        }
+
+        var repoRoot = Path.Combine(root, "repo-probe");
+        if (Directory.Exists(repoRoot)) WipeRepository(repoRoot);
+        Directory.CreateDirectory(repoRoot);
+        File.WriteAllText(Path.Combine(repoRoot, "one.txt"), "one\n");
+        File.WriteAllText(Path.Combine(repoRoot, "with space.txt"), "q\n");
+        var probeRunner = new ProcessRunner(_ => { });
+        async Task Git(params string[] arguments)
+        {
+            var result = await probeRunner.RunAsync(probeGit,
+                ["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--no-optional-locks", "--no-pager",
+                 .. arguments], repoRoot, timeout: TimeSpan.FromSeconds(20));
+            if (result.ExitCode != 0)
+                throw new Exception($"git {string.Join(" ", arguments)} failed in the fixture repo: {result.Error}");
+        }
+        await Git("init", "-q");
+        // Named identities rather than the machine's: a check that commits must not depend on whose laptop it ran,
+        // and --allow-empty gives the baseline commit even though every file in here is still untracked.
+        await Git("-c", "user.name=hub-check", "-c", "user.email=hub@example.invalid", "commit",
+            "-q", "--allow-empty", "-m", "fixture: baseline");
+        File.WriteAllText(Path.Combine(repoRoot, "one.txt"), "one\ntwo\n");
+        File.WriteAllText(Path.Combine(repoRoot, "untracked 中文.txt"), "brand new\n");
+
+        var repoState = await GitRepository.ReadAsync(repoRoot, probeRunner);
+        if (repoState.Outcome != GitReadOutcome.Ok || repoState.Root is not { Length: > 0 }
+            || !Directory.Exists(repoState.Root))
+            throw new Exception($"A real repository did not read: {repoState.Outcome} · {repoState.Detail}");
+        if (string.IsNullOrEmpty(repoState.Branch) || repoState.Truncated)
+            throw new Exception($"A four-path repository read as branch 「{repoState.Branch}」 "
+                + $"truncated={repoState.Truncated}.");
+        var repoTracked = repoState.Entries.FirstOrDefault(entry => entry.RelativePath == "one.txt");
+        var repoUntracked = repoState.Entries.FirstOrDefault(entry => entry.RelativePath == "untracked 中文.txt");
+        if (repoTracked is null || repoUntracked is null || !repoUntracked.Untracked)
+            throw new Exception("A real repository's dirty paths came back as: "
+                + string.Join(",", repoState.Entries.Select(entry => entry.Mark + entry.RelativePath)));
+        // A tracked change reads as a hunk and an untracked file as a whole file against nothing — the shape
+        // ChatChanges already uses for a created file, so the two tabs cannot mean different things by it. The
+        // untracked name carries a space and CJK, which is the encoding claim this whole read rests on.
+        var repoTrackedDiff = GitRepository.DiffFor(repoState, repoTracked!);
+        var repoUntrackedDiff = GitRepository.DiffFor(repoState, repoUntracked!);
+        if (repoTrackedDiff is not { Length: > 0 } || !repoTrackedDiff.Contains("+two", StringComparison.Ordinal))
+            throw new Exception($"The tracked file's diff was wrong: {repoTrackedDiff}");
+        if (repoUntrackedDiff is not { Length: > 0 }
+            || !repoUntrackedDiff.StartsWith("--- /dev/null", StringComparison.Ordinal)
+            || !repoUntrackedDiff.Contains("brand new", StringComparison.Ordinal))
+            throw new Exception($"The untracked file's diff was wrong: {repoUntrackedDiff}");
+        // The two ways this read stops without anything to show are pane sentences, so they have to be outcomes.
+        if ((await GitRepository.ReadAsync(null, probeRunner)).Outcome != GitReadOutcome.NoWorkspace)
+            throw new Exception("A repository read with no workspace did not answer NoWorkspace.");
+        // "Not a repository" is asserted outside this repository's own tree, because a folder under the check's
+        // tmp root really is inside axmol-hub and git would answer with <i>its</i> status. Even there the
+        // expectation is set by git rather than assumed: ask whether the directory has a repository, and claim
+        // NotARepository only when it says it does not.
+        var repoLoose = Path.Combine(Path.GetTempPath(), $"hub-not-a-repo-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(repoLoose);
+        var repoHasRepository = (await probeRunner.RunAsync(probeGit, ["rev-parse", "--show-toplevel"], repoLoose,
+            timeout: TimeSpan.FromSeconds(10))).ExitCode == 0;
+        var repoStopped = await GitRepository.ReadAsync(repoLoose, probeRunner);
+        if (repoHasRepository && repoStopped.Outcome != GitReadOutcome.Ok)
+            throw new Exception($"A directory that git says sits in a repository answered {repoStopped.Outcome}.");
+        if (!repoHasRepository && (repoStopped.Outcome != GitReadOutcome.NotARepository
+                || repoStopped.Detail is not { Length: > 0 }))
+            throw new Exception($"A directory outside any repository answered {repoStopped.Outcome} · {repoStopped.Detail}");
+        Directory.Delete(repoLoose);
+        WipeRepository(repoRoot);
+        Console.WriteLine("PASS: the repository tab's facts come from git itself, on a real repository.");
+    }
+    else
+    {
+        Console.WriteLine("PASS: no git on PATH — GitMissing is the outcome this host can show, and the parse still holds.");
+    }
+
     Directory.Delete(guardRoot, recursive: true);
     return;
 }
