@@ -365,11 +365,15 @@ public static class HubTexts
         ["AllowWebFetchHint"] = (
             "默认开启。抓取只走 https、只允许公网主机，重定向不许跨出 https，一次最多读 1 MiB；把脚本、样式和导航"
             + "去掉之后，正文才交回模型。关掉它只是让这条通道不存在——命令沙箱里的 curl 从来不受这个开关约束，"
-            + "「询问审批」档下每一次抓取都照样要过一张卡。",
+            + "「询问审批」档下每一次抓取都照样要过一张卡。provider 若在 ai/providers.json 里声明了 serverTools，"
+            + "同一个开关也决定要不要让服务端自己联网搜索；那一类搜索由服务商执行，任何审批卡都拦不住它。",
             "On by default. Fetching is https only, to public hosts, with a redirect never allowed to leave "
             + "https, and at most 1 MiB is read; scripts, styles and navigation are stripped before the page text "
             + "reaches the model. Turning this off removes the channel — it has never governed curl inside the "
-            + "command sandbox — and in 「询问审批」 every fetch still asks for approval on a card."),
+            + "command sandbox — and in 「询问审批」 every fetch still asks for approval on a card. If a provider "
+            + "declares serverTools in ai/providers.json, the same switch decides whether its endpoint is offered "
+            + "a search of its own; that kind of search runs inside the service, and no approval card can stop one "
+            + "mid-reply."),
         ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
         // 下载中 / 已就绪 / 下载失败三态的状态行都要带版本号：一旦开始下载，"发现新版本 x.y.z"
         // 就被进度文案顶掉了，用户再也看不到自己要升到哪一版。{0} 是版本号，拼在状态文案前面。
@@ -662,6 +666,16 @@ public static class HubTexts
         ["ActivityRowRunCommand"] = ("执行命令", "run command"),
         ["ActivityRowFetch"] = ("抓取 {0}", "fetch {0}"),
         ["ActivityRowGeneric"] = ("调用 {0}", "call {0}"),
+        // A search the endpoint ran for itself, drawn as one live status line. It has no card and no result turn,
+        // so this is the only place the person learns the answer came from outside — and "searching" is a state of
+        // its own here rather than a variation of 「搜索 xxx」, because the queries often are not known yet: the
+        // start event arrives with nothing in it.
+        ["ActivityRowWebSearching"] = ("正在联网搜索…", "searching the web…"),
+        ["ActivityRowWebSearched"] = ("联网搜索：{0}", "searched the web for {0}"),
+        // Under the reply, the addresses it read. Named 「来源」 rather than 「参考」 because a model that searched
+        // and cited nothing has to read as unread, and a softer word would let that pass for an answer.
+        ["MessageSources"] = ("来源", "Sources"),
+        ["MessageSearchedFor"] = ("它自己查了：{0}", "it searched for: {0}"),
         ["ActivityRowExpandThought"] = ("看思考全文", "Show the full thinking"),
         // Under a folded action row, one expandable panel lays the exchange out in full: the arguments the call
         // was made with and the payload that came back. The collapsed row only names the action; this is where the

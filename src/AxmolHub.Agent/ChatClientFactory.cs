@@ -45,12 +45,22 @@ public static class ChatClientFactory
     /// <para><paramref name="interactionId"/> is the conversation's own id, for the providers that group the
     /// rounds of one tool run under it. Optional for the same reason the headers are: most providers want
     /// nothing with it, and sending a header a gateway has never heard of is a worse default than omitting it.</para>
+    ///
+    /// <para><paramref name="transport"/> is the seam that lets a self-check read <b>the serialized request
+    /// body</b> rather than Hub's intention to send one. It exists for the hosted-search assertions and for
+    /// nothing else today: a declaration that never reaches the wire is invisible from the outside, and the only
+    /// proof that matters is the JSON that left — which field it landed in, and whether a replayed item silently
+    /// vanished. Passing a handler keeps that proof free of any real endpoint (the check points it at a loopback
+    /// URL and answers from memory), so nothing is billed and no gateway is contacted. An injected transport is
+    /// <b>not</b> disposed here, the same rule the app's three <see cref="System.Net.Http.HttpClient"/> seams
+    /// follow: whoever supplied it owns it.</para>
     /// </summary>
     public static IChatClient Create(
         Core.ModelProvider provider,
         string? modelOverride,
         ReasoningTable? reasoning,
-        string? interactionId = null)
+        string? interactionId = null,
+        System.Net.Http.HttpMessageHandler? transport = null)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
@@ -82,6 +92,8 @@ public static class ChatClientFactory
             // NoWarn would also be swallowing the next one.
 #pragma warning disable OPENAI001 // OpenAI.Responses is marked experimental in the 2.14 SDK.
             var options = new ResponsesClientOptions { Endpoint = new Uri(provider.BaseUrl) };
+            if (transport is not null)
+                options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
             if (headers is not null)
                 options.AddPolicy(headers, PipelinePosition.BeforeTransport);
             return new ResponsesClient(credential, options).AsIChatClient(model);
@@ -89,6 +101,8 @@ public static class ChatClientFactory
         }
 
         var chatOptions = new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) };
+        if (transport is not null)
+            chatOptions.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
         if (reasoning is not null)
             // BeforeTransport: the last thing the pipeline does, so the connector has already built the body and
             // the transport has not yet sent it — the one moment the serialized messages exist and can still be

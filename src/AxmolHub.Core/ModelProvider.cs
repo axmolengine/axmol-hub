@@ -116,6 +116,20 @@ public sealed class ModelProvider
     public string? RequestSemantics { get; set; }
 
     /// <summary>
+    /// The tools this provider's own service can run when a request offers them
+    /// (<see cref="ProviderServerTools"/>). <b>Persisted</b>, and seeded from the manifest only when the saved
+    /// entry says nothing — the one manifest-shaped field a person may want to overrule.
+    ///
+    /// <para><see cref="ExtraHeaders"/> and <see cref="RequestSemantics"/> above are <c>[JsonIgnore]</c> because
+    /// they are facts about the service, and a stale copy in a user file would contradict a manifest correction.
+    /// This is not that kind of fact: whether a gateway honours a hosted search, ignores the field, or answers 400
+    /// to it is a property of <i>the deployment this person is standing on</i>, which nobody but them can test. So
+    /// the file may say it. Nullable rather than an empty list by default because the two cases must stay apart
+    /// after a reload — "written empty: do not offer it" versus "never written: take what the preset says".</para>
+    /// </summary>
+    public List<string>? ServerTools { get; set; }
+
+    /// <summary>
     /// The two models Hub may switch between when a session is routed automatically, both of them named by the
     /// user. unset (or only half set) means auto routing changes the reasoning tier and never the model: which
     /// of a provider's tiers is "the cheap one" is a decision about someone's bill and their taste, and Hub

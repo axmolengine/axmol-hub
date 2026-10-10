@@ -116,6 +116,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<ChatImage, BinaryData?>? images = null,
         Action<string>? onReasoning = null,
         Action<ContextReport>? onUsage = null,
+        // A search the endpoint ran for itself, reported as it arrives. Same thread rule as the two above: this
+        // fires inside the stream, on whatever thread the response is being read on.
+        Action<ServerSearchNotice>? onServerSearch = null,
         int? maxOutputTokens = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -240,6 +243,27 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     }
                     thinking.Append(said);
                     onReasoning?.Invoke(said);
+                }
+                else if (content is WebSearchToolCallContent searched)
+                {
+                    // A server-side tool the endpoint decided to run, arriving as content rather than as a call this
+                    // process has to honour: there is nothing to gate, nothing to invoke, and nothing to answer. What
+                    // it is worth is the fact of it — which queries, and later which addresses — so it is handed to
+                    // the caller as a notice and the stream keeps going. Zero queries is the in-progress signal, and
+                    // the row it draws says "searching" rather than pretending a query is known.
+                    IReadOnlyList<string> queries = searched.Queries is { } asked2 ? [.. asked2] : [];
+                    onServerSearch?.Invoke(new ServerSearchNotice(searched.CallId ?? "", queries, [], queries.Count == 0));
+                }
+                else if (content is WebSearchToolResultContent answered2)
+                {
+                    // The sources are what make the answer checkable, so they are the payload of this half. A search
+                    // that reports no output is still a search that happened; the caller decides whether an empty
+                    // notice is worth a line.
+                    IReadOnlyList<string> sources = answered2.Outputs is { } outputs
+                        ? [.. outputs.OfType<UriContent>().Select(source => source.Uri?.ToString() ?? "")
+                              .Where(address => address.Length > 0).Distinct(StringComparer.Ordinal)]
+                        : [];
+                    onServerSearch?.Invoke(new ServerSearchNotice(answered2.CallId ?? "", [], sources, false));
                 }
                 else if (content is UsageContent measurement)
                 {

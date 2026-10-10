@@ -68,6 +68,13 @@ public sealed class ChatWorkspace : IDisposable
     /// updates belongs to the session being looked at, and a background session's tool must not rewrite it.</summary>
     internal event Action<string, string, bool>? ToolActivityChanged;
 
+    /// <summary>The endpoint reported a search it ran for itself in this session. No card, no result turn, no call
+    /// id the person can act on — which is exactly why it needs its own line: the alternative is an answer that
+    /// arrived from somewhere the interface never mentioned. The session id travels for the same reason as the
+    /// tool event above, and the notice travels rather than a finished string so the view decides how much of it
+    /// to show (a search with no query yet reads differently from one that has both queries and sources).</summary>
+    internal event Action<string, ServerSearchNotice>? ServerSearchChanged;
+
     public ChatWorkspace(string dataRoot)
     {
         _dataRoot = dataRoot;
@@ -1057,6 +1064,11 @@ public sealed class ChatWorkspace : IDisposable
                 provider.CapabilitySource = builtIn.CapabilitySource;
                 provider.ExtraHeaders = builtIn.ExtraHeaders;
                 provider.RequestSemantics = builtIn.RequestSemantics;
+                // ??= on purpose, unlike the three lines above: a hosted tool is a claim about the deployment this
+                // person is standing on, and they are the only one who can test it. The manifest is the seed.
+                // The `?? []` is for the compiler, not for a real case — `CreateBuiltIn` always hands over a list —
+                // but the copy is what keeps a provider from sharing the manifest's own list.
+                provider.ServerTools ??= [.. builtIn.ServerTools ?? []];
                 // ??= and not = : a persisted number is now a deliberate human setting — except where nothing was
                 // ever stored, which is what made an install run every model against 8192 while its own gateway
                 // published 128000 for the preset and the saved row said null.
@@ -2672,6 +2684,14 @@ public sealed class ChatWorkspace : IDisposable
     internal bool SeedTurnForCheck(string conversationId, string text)
         => _sessions.TryUpdate(conversationId, opened => opened.Append(ChatTurn.User(text)));
 
+    /// <summary>An assistant reply carrying the searches its endpoint reported, appended through the same write
+    /// path a run uses. For the self-check only, and it goes through the store rather than a scripted stream
+    /// because what is being looked at here is how the stored record is <i>laid out</i> — a concern that starts
+    /// after the stream is over, and that a reload has to answer the same way a live reply does.</summary>
+    internal bool SeedSearchReplyForCheck(string conversationId, string text, ServerSearchLog searches)
+        => _sessions.TryUpdate(conversationId, opened => opened.Append(
+            new ChatTurn(ChatRoles.Assistant, text, DateTimeOffset.Now) { WebSearch = searches.ToStored() }));
+
     public bool IsRunning(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) && run.IsStreaming;
 
@@ -3755,7 +3775,13 @@ public sealed class ChatWorkspace : IDisposable
                     () => _sessions.Peek(run.ConversationId)?.ReasoningEffort).ConfigureAwait(false);
                 await ApplyOnUiAsync(() => _sessions.TryUpdate(run.ConversationId, opened =>
                     opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
-                        { Reasoning = thought.Length > 0 ? thought : null }))).ConfigureAwait(false);
+                    {
+                        Reasoning = thought.Length > 0 ? thought : null,
+                        // What the endpoint searched for this answer, on the answer itself: the reply's text is
+                        // what it produced, and the searches are where it came from. Kept off the wire on purpose
+                        // (measured — replaying it empties the message on one bridge and drops it on the other).
+                        WebSearch = run.StoredSearches(),
+                    }))).ConfigureAwait(false);
                 // A reply that came back with thinking under it is the strongest evidence there is that this
                 // model can think at this tier — it was asked, and it answered.
                 if (thought.Length > 0)
@@ -3923,9 +3949,23 @@ public sealed class ChatWorkspace : IDisposable
         // session that a `set_workspace` in this very segment may already have moved.
         var scope = ScopeFor(conversationId);
         var tools = ChatTools.CreateFor(mode, scope);
+        // Whether this endpoint gets told it may search for itself. The table is four facts and one answer, so the
+        // reason a session has no search is something the audit can state instead of something a person infers from
+        // the absence of a line. Nothing is appended in the common case: the declaration ships empty for every
+        // provider, because honouring it is per-gateway and only a real request can say (see WebSearchHosted).
+        var search = WebSearchHosted.Decide(choice.Provider.ServerTools,
+            ChatClientFactory.ProtocolFor(choice.Provider, modelName), mode,
+            PreferencesProvider?.Invoke().AllowOutboundWebFetch == true);
+        if (search.Verdict == WebSearchHostedVerdict.On)
+            tools = [.. tools, new HostedWebSearchTool()];
+        else if (ProviderServerTools.DeclaresWebSearch(choice.Provider.ServerTools))
+            Audit(conversationId, $"Hosted search not offered: {WebSearchHosted.Explain(search)}");
         // What this mode's declarations cost is remembered for the meter: building the tools is the only place
         // that knows, and the ring redraws on every keystroke, so it must not pay for the reflection again.
-        // The set of tools per mode is static, so one figure per mode is the truth rather than a stale guess.
+        // The figure is per mode, and a hosted marker is the one thing that makes two providers on the same mode
+        // cost differently. It is kept that way on purpose: the marker serializes to `{"type":"web_search"}` — a
+        // handful of tokens against a function tool's schema — so the number is at most that far off, and off in
+        // the direction of the meter reading the declaration as slightly cheaper than the request that carries it.
         _schemaTokensByMode[mode] = ChatPipeline.ToolSchemaTokens(tools);
 
         // The trailing user turn is part of the history; the pipeline sends it as the last message.
@@ -4083,6 +4123,18 @@ public sealed class ChatWorkspace : IDisposable
             // The measurement lands while the reply is still streaming, which is the point: the ring the person
             // is watching has to be reading the model's numbers before they decide whether to keep typing.
             onUsage: report => NoteContextUsage(run.ConversationId, request.ModelName, report),
+            // A search the endpoint ran for itself. Nothing here is waited on, gated, or answered — the fact is
+            // folded into the run so the row under the bubble can show it while the reply streams, and so the
+            // reply's own turn carries it afterwards. The repaint is the whole UI cost: the bubble reads the run
+            // when it draws, so unlike a tool call there is no row of its own to keep in step.
+            onServerSearch: notice =>
+            {
+                run.RecordSearch(notice);
+                // The status line only — no repaint of the flow. The finished fact reaches the transcript with the
+                // reply itself, and a whole-list reload on every search event would be the expensive way to draw
+                // one label.
+                RaiseOnUi(() => ServerSearchChanged?.Invoke(run.ConversationId, notice));
+            },
             cancellationToken: run.Token);
     }
 

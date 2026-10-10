@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AxmolHub.Core;
 
 namespace AxmolHub;
 
@@ -67,6 +68,7 @@ internal sealed class ConversationRun : IDisposable
     private string? _steerContext;
     private IReadOnlyList<byte[]>? _steerPictures;
     private readonly List<string> _toolOutcomes = [];
+    private readonly List<ServerSearchNotice> _searches = [];
     private int _paintQueued;
     private int _compactionRequested;
     private int _wakesUsed;
@@ -338,6 +340,63 @@ internal sealed class ConversationRun : IDisposable
     internal IReadOnlyList<string> ToolOutcomes
     {
         get { lock (_gate) return [.. _toolOutcomes]; }
+    }
+
+    /// <summary>An endpoint-side search this answer reported, folded into the one entry for its call id.
+    ///
+    /// <para>The bridge sends the same search twice — a call item that carries the queries and may arrive before
+    /// the endpoint has any, then a result item that carries the addresses — and a transcript that drew two rows
+    /// for one search would read like the model looked twice. Merging by <see cref="ServerSearchNotice.CallId"/>
+    /// keeps the pair as one fact. An unnamed notice is never merged with another: two searches that both failed
+    /// to say which they were are two searches, and collapsing them would invent a query for one of them.</para>
+    ///
+    /// <para>A start with nothing in it is still kept, because that is what lets the row say "searching" while
+    /// the endpoint works; <see cref="StoredSearches"/> drops it again before the turn is saved, so a search that
+    /// never produced a query or an address leaves no trace in the conversation file.</para></summary>
+    internal void RecordSearch(ServerSearchNotice notice)
+    {
+        lock (_gate)
+        {
+            var index = notice.CallId.Length > 0
+                ? _searches.FindIndex(existing => string.Equals(existing.CallId, notice.CallId, StringComparison.Ordinal))
+                : -1;
+            if (index < 0)
+            {
+                if (!notice.IsEmpty || notice.Started) _searches.Add(notice);
+                return;
+            }
+
+            var existing = _searches[index];
+            _searches[index] = existing with
+            {
+                Queries = Joined(existing.Queries, notice.Queries),
+                Sources = Joined(existing.Sources, notice.Sources),
+                Started = notice.Started || existing.Started && notice.Queries.Count == 0,
+            };
+        }
+    }
+
+    /// <summary>The searches as the run holds them, oldest first. Read on the UI thread while the answer streams
+    /// (the row under the bubble) and once more when the reply is recorded.</summary>
+    internal ServerSearchLog Searches
+    {
+        get { lock (_gate) return new ServerSearchLog([.. _searches]); }
+    }
+
+    /// <summary>The stored line for the turn this answer becomes, or null when the endpoint searched nothing worth
+    /// recording. The empty case is null rather than an empty document because a reload has to keep "this provider
+    /// searched and reported nothing" apart from "this reply never searched".</summary>
+    internal string? StoredSearches()
+    {
+        lock (_gate) return new ServerSearchLog([.. _searches]).ToStored();
+    }
+
+    private static IReadOnlyList<string> Joined(IReadOnlyList<string>? first, IReadOnlyList<string>? second)
+    {
+        var joined = new List<string>();
+        foreach (var value in (first ?? []).Concat(second ?? []))
+            if (!joined.Contains(value, StringComparer.Ordinal)) joined.Add(value);
+        return joined;
     }
 
     /// <summary>How many calls this answer has already finished. The count lives here because a bubble rebuilt

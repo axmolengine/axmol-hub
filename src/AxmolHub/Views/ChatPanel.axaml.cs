@@ -175,6 +175,14 @@ public partial class ChatPanel : UserControl
         {
             if (_live is { } live && live.Run.ConversationId == conversationId) RefreshLive(live);
         };
+        // A search the endpoint ran for itself: no card, no call row, nothing the person can act on — so the one
+        // status line the bubble already has is where the fact belongs. Same session guard as the tool row above,
+        // for the same reason: a reply running out of sight must not rewrite the line of the one on screen.
+        _chat.ServerSearchChanged += (conversationId, notice) =>
+        {
+            if (_live is not { } live || live.Run.ConversationId != conversationId) return;
+            live.Status.Text = SearchActivityText(notice);
+        };
         _chat.RunsChanged += conversationId =>
         {
             if (conversationId == _chat.ViewedConversationId) RenderMessages();
@@ -1602,6 +1610,113 @@ public partial class ChatPanel : UserControl
             tool);
     }
 
+    /// <summary>The bubble's status line while the endpoint is searching on its own. A start event arrives with no
+    /// query in it — that is the whole meaning of "in progress" on this wire — so the line says only that it is
+    /// looking, and the first query replaces it when the service reports one.</summary>
+    private static string SearchActivityText(ServerSearchNotice notice)
+    {
+        var queries = notice.Queries;
+        if (queries.Count == 0) return HubStrings.Get("ActivityRowWebSearching");
+        var first = queries[0];
+        return string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ActivityRowWebSearched"),
+            first.Length <= 48 ? first : first[..48] + "…");
+    }
+
+    /// <summary>
+    /// Where the answer came from, under the reply that used it. One quiet line: 「来源」 and as many hosts as the
+    /// line can afford, each opening in the browser, the rest folded into a +N whose tooltip carries the whole list.
+    ///
+    /// <para>It sits with the answer rather than inside the collapsed action group because a citation is not an
+    /// action: the person reads the sentence, then decides whether to check it, and making that require opening a
+    /// fold they had to notice first is how a client teaches people not to read sources. The queries go in the
+    /// line's tooltip — the interesting half of "what did it do" is the address it ended up trusting.</para>
+    ///
+    /// <para><b>Why a character budget rather than "four and done":</b> this line shares the chat column with the
+    /// answer above it, and the column is as narrow as the 560px floor an open inspector leaves. Four chips of long
+    /// hostnames is a row wider than that, and the charter is that a surface clips — a clipped source is a source
+    /// nobody can click. So the line spends <see cref="SourceChipBudget"/> characters of label, always at least one
+    /// chip, never more than four, and everything it cannot afford folds into the +N. Nothing is lost: the fold's
+    /// tooltip lists the remaining addresses in the order the endpoint reported them.</para>
+    /// </summary>
+    private Control BuildSearchSources(ServerSearchLog searches)
+    {
+        const int SourceChipBudget = 64;
+        const int SourceChipLimit = 4;
+        var line = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+        };
+        line.Children.Add(new TextBlock
+        {
+            Text = HubStrings.Get("MessageSources"),
+            Classes = { "muted" },
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var sources = searches.Sources();
+        var shown = 0;
+        var used = 0;
+        while (shown < sources.Count && shown < SourceChipLimit
+               && (shown == 0 || used + HostOf(sources[shown]).Length + 2 <= SourceChipBudget))
+        {
+            var address = sources[shown];
+            var host = HostOf(address);
+            var chip = new Border
+            {
+                // file-chip for the look, source-chip so a check can tell these from the other chips in the same
+                // panel — the run_command preview and the diff counters share the styling and nothing else.
+                Classes = { "file-chip", "source-chip" },
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Child = new TextBlock { Text = host, FontSize = 12 },
+            };
+            ToolTip.SetTip(chip, address);
+            // Through the workspace's opener rather than UrlLauncher directly: the same seam the rest of the
+            // browser-bound traffic uses, so a self-check can count what a click would have opened without
+            // opening anything.
+            var target = address;
+            chip.PointerPressed += (_, _) => _chat.BrowserOpener(target);
+            line.Children.Add(chip);
+            used += host.Length + 2;
+            shown++;
+        }
+
+        if (sources.Count > shown)
+        {
+            var rest = new TextBlock
+            {
+                Text = "+" + (sources.Count - shown),
+                Classes = { "muted", "source-fold" },
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            ToolTip.SetTip(rest, string.Join(Environment.NewLine, sources.Skip(shown)));
+            line.Children.Add(rest);
+        }
+
+        var queries = searches.Queries();
+        if (queries.Count > 0)
+            ToolTip.SetTip(line, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("MessageSearchedFor"), string.Join(" · ", queries)));
+        return line;
+    }
+
+    /// <summary>The label a source chip gets: the host, plus its path when the path is short enough to be worth
+    /// the room. It is a label, not a URL — the full address lives in the tooltip and in what a click opens — so
+    /// an over-long one is cut rather than allowed to push the rest of the line off the column.</summary>
+    private static string HostOf(string address)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var target)) return Shorten(address);
+        var path = target.AbsolutePath.Trim('/');
+        return Shorten(path.Length > 0 && path.Length <= 24 ? $"{target.Host}/{path}" : target.Host);
+    }
+
+    /// <summary>The one place a chip's text is measured, so the line's budget and the chip's own cap cannot drift
+    /// into two different notions of how wide a source is allowed to be.</summary>
+    private static string Shorten(string label) => label.Length <= 34 ? label : label[..33] + "…";
+
     // ───────────────────────── Messages ─────────────────────────
 
     private void RenderMessages()
@@ -1797,6 +1912,13 @@ public partial class ChatPanel : UserControl
         // assistant's own words carry Markdown worth rendering.
         if (!fromUser && markdown && turn.Role != ChatRoles.Tool && turn.Text.Length > 0)
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
+
+        // Added after the Markdown pass rather than before it, because <see cref="MarkdownMessageRenderer.RenderInto"/>
+        // clears the panel it renders into: a line laid down first is not underneath the answer, it is gone. This is
+        // also the order the person reads — the reply, then where it came from, then any record of a decision.
+        if (!fromUser && ServerSearchLog.Read(turn.WebSearch) is { IsEmpty: false } searches)
+            body.Children.Add(BuildSearchSources(searches));
+
         if (approvalSurface is not null) body.Children.Add(approvalSurface);
     }
 
@@ -2111,7 +2233,9 @@ public partial class ChatPanel : UserControl
             var oneLine = command.Replace('\r', ' ').Replace('\n', ' ').Trim();
             var chip = new Border
             {
-                Classes = { "file-chip" },
+                // file-chip for the look, source-chip so a check can tell these from the other chips in the same
+                // panel — the run_command preview and the diff counters share the styling and nothing else.
+                Classes = { "file-chip", "source-chip" },
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Child = new TextBlock { Text = oneLine.Length > 60 ? oneLine[..60] + "…" : oneLine },
             };
@@ -3139,6 +3263,41 @@ public partial class ChatPanel : UserControl
             .Select(grid => grid.GetLogicalDescendants().OfType<TextBlock>()
                 .FirstOrDefault(text => text.Classes.Contains("activity-row-text"))?.Text ?? "")
             .ToArray();
+
+    /// <summary>The address chips drawn under a reply that the endpoint searched for, in document order. Empty
+    /// unless a search was reported — which is what makes the negative case assertable: an answer nobody looked
+    /// anything up for must not grow a source line.</summary>
+    internal string[] SearchChipsForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Border>()
+            .Where(border => border.Classes.Contains("source-chip"))
+            .Select(border => border.GetLogicalDescendants().OfType<TextBlock>().FirstOrDefault()?.Text ?? "")
+            .ToArray();
+
+    /// <summary>The full addresses behind those chips, in the same order — the chip shows a host and the tooltip
+    /// carries the URL, and a check has to be able to tell "shows the host" from "sent the wrong address".</summary>
+    internal string[] SearchChipTargetsForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<Border>()
+            .Where(border => border.Classes.Contains("source-chip"))
+            .Select(border => ToolTip.GetTip(border) as string ?? "")
+            .ToArray();
+
+    /// <summary>The queries the reply reports, from the tooltip on its source line — the part of the record that
+    /// is deliberately one hover away rather than a paragraph over the answer.</summary>
+    internal string[] SearchTooltipsForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<StackPanel>()
+            .Where(panel => panel.GetLogicalChildren().OfType<TextBlock>()
+                .Any(text => text.Classes.Contains("muted")
+                             && text.Text == HubStrings.Get("MessageSources")))
+            .Select(panel => ToolTip.GetTip(panel) as string ?? "")
+            .ToArray();
+
+    /// <summary>The addresses the source line could not afford, read off its 「+N」 fold's tooltip. A check that
+    /// wants to prove folding loses nothing has to read the folded list rather than count chips and hope.</summary>
+    internal string SearchOverflowTipForCheck
+        => MessageFlow.GetLogicalDescendants().OfType<TextBlock>()
+            .Where(text => text.Classes.Contains("source-fold"))
+            .Select(text => ToolTip.GetTip(text) as string ?? "")
+            .FirstOrDefault() ?? "";
 
     /// <summary>How many buttons live inside action rows — must stay zero: a tool exchange is not a readable
     /// message, and acting on one half of a call/result pair orphans the other, so the folded row carries none.</summary>

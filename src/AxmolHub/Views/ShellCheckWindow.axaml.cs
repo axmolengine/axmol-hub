@@ -3387,6 +3387,40 @@ public partial class ShellCheckWindow : Window
             ToolName = "web_fetch",
             Arguments = new Dictionary<string, object?> { ["url"] = "https://example.test/manual/build" },
         };
+        // Two sessions for the endpoint-side search, because the two states a search reports in are different
+        // claims: a start that says only "looking" (no query exists yet) and a report that names what it looked
+        // for. Each fixture holds its stream open on a gate so the bubble's label is read while that is the only
+        // thing that has happened — a client that answers instantly can only ever show the end state, which is
+        // already asserted from the stored turn.
+        var searchSession = chat.StartConversation();
+        var searchedSession = chat.StartConversation();
+        var searchGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searchedGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searchStartReached = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searchedStartReached = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searchClient = new ScriptedChatClient(["这页写的是这样。"], gate: searchGate.Task,
+            searchStartReached: searchStartReached,
+            searchStart: [new Microsoft.Extensions.AI.WebSearchToolCallContent("ws-live")],
+            searchEnd:
+            [
+                new Microsoft.Extensions.AI.WebSearchToolCallContent("ws-live")
+                { Queries = ["axmol 3.1 发布了什么"] },
+                new Microsoft.Extensions.AI.WebSearchToolResultContent("ws-live")
+                {
+                    Outputs =
+                    [
+                        new Microsoft.Extensions.AI.UriContent("https://axmol.dev/blog"),
+                        new Microsoft.Extensions.AI.UriContent("https://github.com/axmolengine/axmol/releases"),
+                    ],
+                },
+            ]);
+        var searchedClient = new ScriptedChatClient(["答案来了。"], gate: searchedGate.Task,
+            searchStartReached: searchedStartReached,
+            searchStart:
+            [
+                new Microsoft.Extensions.AI.WebSearchToolCallContent("ws-named")
+                { Queries = ["lua 5.4 changelog"] },
+            ]);
         // The transport the fetch scenario runs on, and what it was asked for. Read afterwards by the assertion
         // that the production bridge really built the request — an injected HttpClient is the standing seam for
         // exactly this question (ModelListHttp, OAuthHttp), and a fetch that silently went nowhere would otherwise
@@ -3410,6 +3444,8 @@ public partial class ShellCheckWindow : Window
                 var id when id == askRunSession.Id => askRunClient,
                 var id when id == movedSession.Id => movedClient,
                 var id when id == fetchSession.Id => fetchClient,
+                var id when id == searchSession.Id => searchClient,
+                var id when id == searchedSession.Id => searchedClient,
                 var id when id == grantSession.Id => grantClient,
                 var id when id == peerSession.Id => peerClient,
                 var id when id == screenSession.Id => screenClient,
@@ -3451,7 +3487,7 @@ public partial class ShellCheckWindow : Window
             batchClient.Thinking = [batchThinking];
             foreach (var session in new[] { readSession, parkSession, denySession, supersededSession, restartSession,
                     badgeSession, batchSession, autoRunSession, askRunSession, movedSession, grantSession, peerSession,
-                    fetchSession })
+                    fetchSession, searchSession, searchedSession })
                 chat.SetWorkspaceRoot(session.Id, workspace);
 
             // ── what the mode answers are, in priority order ──
@@ -3867,6 +3903,143 @@ public partial class ShellCheckWindow : Window
             // from a fetch that simply never happened.
             Check(FetchRequests() == "GET https://example.test/manual/build",
                 "真的发出去的是那一条请求，主机与路径都没被改写（实际 " + FetchRequests() + "）");
+
+            // ── 服务端自己跑的搜索：一行状态、一段转录、一行来源 ──
+            // None of this is a tool call. There is no card to approve, no sandbox to widen and no result turn to
+            // write — the endpoint searched, said what it searched for, and the answer arrived anyway. What the
+            // suite can pin is that Hub neither invents the fact nor loses it: the live line while it is the only
+            // thing that happened, the stored record after, and the source chips under the reply that used them.
+            // Offered by Hub, not merely reported by the endpoint: the provider object the request is about to use
+            // gets the declaration, so the tool list the pipeline hands over is the table's answer rather than a
+            // coincidence of the fixture. Restored below, because ./data is the repository's own data root.
+            var wireProvider = chat.ModelFor(searchSession.Id)?.Provider
+                               ?? throw new Exception("The search fixture has no provider to declare on.");
+            wireProvider.ServerTools = [ProviderServerTools.WebSearch];
+            chat.OpenConversation(searchSession.Id);
+            chat.TryEnqueueSend(searchSession.Id, "3.1 出了什么", null, out _);
+            // Signalled first, then looked: the fixture says when the start event left the stream, and the wait
+            // after it is only the dispatcher hop that carries it onto the label — not a guess about timing.
+            await Task.WhenAny(searchStartReached.Task, Task.Delay(5000));
+            var sawSearching = await WaitForConditionAsync(() =>
+                panel.ChatActivityTextForCheck == HubStrings.Get("ActivityRowWebSearching"));
+            Check(sawSearching,
+                "搜索刚起步、查询还没回来时，气泡那一行说的是「正在联网搜索」而不是替它编一个（实际「"
+                + panel.ChatActivityTextForCheck + "」）");
+            Check(panel.SearchChipsForCheck.Length == 0,
+                "结果还没回来就没有来源可写，这一行不该提前长出 chips（实际 " + panel.SearchChipsForCheck.Length + " 个）");
+            searchGate.TrySetResult(true);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            var searchedTurn = searchSession.Messages.LastOrDefault(turn =>
+                turn.Role == ChatRoles.Assistant && turn.WebSearch is { Length: > 0 });
+            var searchedLog = ServerSearchLog.Read(searchedTurn?.WebSearch);
+            // One entry, not two: the same search arrives as a call item and then a result item, and an append
+            // rather than a merge would leave the reply claiming two lookups with the second one citing alone.
+            Check(searchedLog.Entries.Count == 1
+                  && searchedLog.Queries().SequenceEqual(["axmol 3.1 发布了什么"], StringComparer.Ordinal)
+                  && searchedLog.Sources().SequenceEqual(
+                      ["https://axmol.dev/blog", "https://github.com/axmolengine/axmol/releases"], StringComparer.Ordinal),
+                "回复把服务端自己查的留在转录上：查询一条、来源两条，顺序就是它报上来的顺序（实际 "
+                + (searchedTurn?.WebSearch ?? "没有") + "）");
+            // The chip shows a host and, when a path keeps it short, the path too — a full URL in a chip is a line
+            // of chrome wider than the answer it stands under. The tooltip carries the address that was clicked.
+            Check(panel.SearchChipsForCheck.SequenceEqual(["axmol.dev/blog", "github.com"], StringComparer.Ordinal)
+                  && panel.SearchChipTargetsForCheck.SequenceEqual(
+                      ["https://axmol.dev/blog", "https://github.com/axmolengine/axmol/releases"], StringComparer.Ordinal),
+                "来源那一行只放得下主机（带一段短路径），完整地址留在 tooltip 与点击目标里（实际 "
+                + string.Join(" / ", panel.SearchChipsForCheck) + "）");
+            Check(panel.SearchTooltipsForCheck.Any(tip => tip.Contains("axmol 3.1 发布了什么", StringComparison.Ordinal)),
+                "查询没有被丢掉也没被摊成一段正文：它在来源那行的 tooltip 里，一次 hover 就读得到（实际 "
+                + string.Join(" | ", panel.SearchTooltipsForCheck) + "）");
+            var offered = searchClient.LastOptions?.Tools;
+            Check(offered is not null
+                  && offered.Any(tool => tool is Microsoft.Extensions.AI.HostedWebSearchTool
+                                         && tool.Name == ProviderServerTools.WebSearch)
+                  && offered.Any(tool => tool.Name == "web_fetch"),
+                "声明了 serverTools 的 provider，那一次请求的工具列表里真的多出一条 web_search——它不是函数工具，"
+                + "句体在服务商那边（实际 " + (offered is null ? "无" : string.Join(",", offered.Select(t => t.Name))) + "）");
+
+            // A search that named its query but read nothing back: the record keeps the query, and the reply grows
+            // no chips — an answer with nothing behind it has to look like that rather than like a sourced answer.
+            chat.OpenConversation(searchedSession.Id);
+            chat.TryEnqueueSend(searchedSession.Id, "lua 的变更日志", null, out _);
+            await Task.WhenAny(searchedStartReached.Task, Task.Delay(5000));
+            var sawNamedSearch = await WaitForConditionAsync(() =>
+                panel.ChatActivityTextForCheck == string.Format(CultureInfo.CurrentCulture,
+                    HubStrings.Get("ActivityRowWebSearched"), "lua 5.4 changelog"));
+            Check(sawNamedSearch,
+                "查询已经回来、正文还没开始流时，那一行换成它真的搜过的那句（实际「"
+                + panel.ChatActivityTextForCheck + "」）");
+            searchedGate.TrySetResult(true);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            var quietTurn = searchedSession.Messages.LastOrDefault(turn => turn.WebSearch is { Length: > 0 });
+            Check(ServerSearchLog.Read(quietTurn?.WebSearch).Sources().Count == 0
+                  && panel.SearchChipsForCheck.Length == 0,
+                "只报了查询、没报来源的搜索记下来但不编造来源（实际 "
+                + (quietTurn?.WebSearch ?? "没有") + "）");
+
+            // And the negative control in the same panel: an answer nobody looked anything up for grows no line at
+            // all, so the two above cannot be passing because the row is always there.
+            // The mode half of the table, measured on the request rather than on the function: ask sends no tools
+            // at all, so a declaration has nowhere to ride. Without this cell, "the table refuses in ask mode" and
+            // "the wiring never ran" look identical from the outside.
+            chat.OpenConversation(searchedSession.Id);
+            chat.SelectMode(ChatModes.Ask);
+            wireProvider.ServerTools = [ProviderServerTools.WebSearch];
+            chat.TryEnqueueSend(searchedSession.Id, "问一句就好", null, out _);
+            await WaitForIdleAsync(chat);
+            Check(searchedClient.LastOptions?.Tools is not { Count: > 0 },
+                "「只问不答」档下那一次请求根本不带工具列表，声明也就无处可挂（实际 "
+                + (searchedClient.LastOptions?.Tools is { } asked ? string.Join(",", asked.Select(t => t.Name)) : "无") + "）");
+            chat.SelectMode(ChatModes.Agent);
+            wireProvider.ServerTools = [];
+
+            chat.OpenConversation(readSession.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.SearchChipsForCheck.Length == 0 && panel.SearchTooltipsForCheck.Length == 0,
+                "没搜过的回复下面不出现来源行（实际 chips " + panel.SearchChipsForCheck.Length
+                + "、tooltip " + panel.SearchTooltipsForCheck.Length + "）");
+
+            // The line is allowed to be poor. A chat column at the 560px floor cannot hold four long hostnames, and
+            // a citation that paints past the edge is a citation nobody can click — so what is asserted here is not
+            // "four, then a +N" but that the row spends a budget and that folding only hides, never loses: the
+            // addresses the chips could not afford have to still be listed, in the order the endpoint gave them.
+            // The first one is a host longer than any chip may show, because the first chip is the one the budget
+            // always affords — the per-chip cap is only observable on it.
+            var crowded = chat.StartConversation();
+            var crowdedSources = new[]
+            {
+                "https://axmol-documentation-mirror.example-hosting-services.com",
+                "https://kotlinlang.org/docs/reference",
+                "https://docs.aws.amazon.com/lambda/latest",
+                "https://en.cppreference.com/w/cpp/header/memory",
+                "https://lua.org/manual/readme.html",
+            };
+            chat.SeedTurnForCheck(crowded.Id, "这几个都查一下");
+            chat.SeedSearchReplyForCheck(crowded.Id, "五个来源。", new ServerSearchLog([
+                new ServerSearchNotice("ws-a", ["第一个查询"], [crowdedSources[0], crowdedSources[1]], false),
+                new ServerSearchNotice("ws-b", ["第二个查询"], [crowdedSources[2]], false),
+                new ServerSearchNotice("ws-c", ["第三个查询"], [crowdedSources[3], crowdedSources[4]], false),
+            ]));
+            chat.OpenConversation(crowded.Id);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            var crowdedLabels = panel.SearchChipsForCheck;
+            Check(crowdedLabels.Length is > 0 && crowdedLabels.All(label => label.Length <= 34)
+                  && crowdedLabels.Sum(label => label.Length) <= 64 && crowdedLabels.Length < crowdedSources.Length,
+                "五条来源挤不进这一行：每条胶囊截到 34 字，整行只花 64 字的额度，剩下的让给 +N（实际 "
+                + crowdedLabels.Length + " 条、共 " + crowdedLabels.Sum(label => label.Length) + " 字）");
+            var crowdedFold = panel.SearchOverflowTipForCheck
+                .Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+            Check(panel.SearchChipTargetsForCheck.Concat(crowdedFold).SequenceEqual(crowdedSources, StringComparer.Ordinal)
+                  && crowdedFold.Length == crowdedSources.Length - panel.SearchChipTargetsForCheck.Length
+                  && crowdedFold.Length > 0,
+                "折叠只是收起来，不是丢掉：+N 的 tooltip 按原顺序补齐剩下的地址，合起来正好是那五条（实际折叠 "
+                + crowdedFold.Length + " 条）");
 
             // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
             // because a decision made after a restart is made against the file, not against memory.
@@ -4434,6 +4607,10 @@ public partial class ShellCheckWindow : Window
         }
         finally
         {
+            // Released before anything else: a scenario that threw while one of these streams was parked would
+            // otherwise leave a run that never ends, and the suite would report a hang rather than the failure.
+            searchGate.TrySetResult(true);
+            searchedGate.TrySetResult(true);
             reopened?.Dispose();
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.WebFetchHttp = null;
@@ -4441,7 +4618,8 @@ public partial class ShellCheckWindow : Window
             chat.IdleTimeout = savedIdleTimeout;
             foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id,
                     restartSession.Id, badgeSession.Id, batchSession.Id, autoRunSession.Id, askRunSession.Id,
-                    movedSession.Id, grantSession.Id, peerSession.Id, screenSession.Id, fetchSession.Id })
+                    movedSession.Id, grantSession.Id, peerSession.Id, screenSession.Id, fetchSession.Id,
+                    searchSession.Id, searchedSession.Id })
                 chat.DeleteConversation(id);
             await WaitForIdleAsync(chat);
             Check(chat.RunningCount == 0
@@ -4477,6 +4655,21 @@ public partial class ShellCheckWindow : Window
         {
             Dispatcher.UIThread.RunJobs();
             if (chat.RunFor(conversationId)?.Token.IsCancellationRequested == true) return true;
+            await Task.Delay(2);
+        }
+
+        return false;
+    }
+
+    /// <summary>Waits for a state a gated stream is already holding. The fixtures park on a task rather than on a
+    /// clock, so this is not "wait and hope it happened" — the condition either becomes true while the stream is
+    /// parked or it never will, and the budget is only how long the suite is willing to look.</summary>
+    private static async Task<bool> WaitForConditionAsync(Func<bool> condition)
+    {
+        for (var wait = 0; wait < 500; wait++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (condition()) return true;
             await Task.Delay(2);
         }
 
@@ -6954,7 +7147,14 @@ public partial class ShellCheckWindow : Window
         Task? afterFirstChunkGate = null,
         System.Threading.Tasks.TaskCompletionSource<bool>? firstChunkReached = null,
         Exception? exception = null,
-        (long Input, long Output, long Reasoning, long Cached)[]? usage = null) : Microsoft.Extensions.AI.IChatClient
+        (long Input, long Output, long Reasoning, long Cached)[]? usage = null,
+        // The two halves of a hosted search, in the shape the bridge hands them over: a start that may carry
+        // nothing yet, and a finish that carries the queries and the addresses. Yielded around the gate on
+        // purpose — the point of this fixture is the state of the bubble <i>while</i> the search is the only thing
+        // that has happened, which a client that answers instantly can never show.
+        IList<Microsoft.Extensions.AI.AIContent>? searchStart = null,
+        IList<Microsoft.Extensions.AI.AIContent>? searchEnd = null,
+        System.Threading.Tasks.TaskCompletionSource<bool>? searchStartReached = null) : Microsoft.Extensions.AI.IChatClient
     {
         /// <summary>The options of the request that was just made, so a check can read what would have gone on
         /// the wire. The scripted client answers instead of a gateway, and the field a gateway would have been
@@ -6978,12 +7178,19 @@ public partial class ShellCheckWindow : Window
         {
             LastOptions = options;
             LastMessages = messages.ToList();
+            if (searchStart is { Count: > 0 } start)
+            {
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, start);
+                searchStartReached?.TrySetResult(true);
+            }
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
             // composer button can be asserted instead of only its end state. The wait is cancellation-aware:
             // a real stream dies when its token is cancelled, and "stop pressed while parked mid-reply" is
             // one of the paths a check has to be able to take.
             if (gate is not null) await gate.WaitAsync(cancellationToken);
             if (exception is not null) throw exception;
+            if (searchEnd is { Count: > 0 } end)
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, end);
             var firstChunk = true;
             foreach (var chunk in chunks)
             {

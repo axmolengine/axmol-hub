@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（911 条断言）
+# 外壳、本地化与数据根切换的自检（923 条断言）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（46 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-theme ./tmp/theme.txt
@@ -183,19 +183,21 @@ dotnet run --project tests/AxmolHub.Checks -c Release -- ./artifacts/checks --ch
 
 > 注：此前 README 写"112 项"，与 `hub-development-plan.md` §3 与 `ci.md` §3 的 105 对不上，是不同时间点用不同数法留下的。现已统一为上面的分解。
 
-### AI 助手的十一组检查
+### AI 助手的十二组检查
 
-助手层**不需要引擎、不需要网络、不需要 API key**：模型那一侧经 `ChatWorkspace.ClientOverride` 注入一个脚本化的 `IChatClient`，出网那一侧经 `ChatWorkspace.WebFetchHttp` 注入一个从内存里答复的 `HttpMessageHandler`（`--verify-shell` 里 `web_fetch` 走的就是它，自检期间没有一个字节离开机器），跑的是真的 Core/Agent 代码。所以这十一组在任何机器上都能单独跑，也是不需要工具链的那部分 AI 验收；界面那一半由上面的 `--verify-shell` 负责（同一套代码的活对象）。这句话只描述自检，不描述产品：真正运行的 Hub 会经这两个缝之外的一条出网，验收断言里出现的"零网络"是桩替出来的结果，不是发布的口径 —— 发布口径在 README 的 Privacy policy 一节。
+助手层**不需要引擎、不需要网络、不需要 API key**：模型那一侧经 `ChatWorkspace.ClientOverride` 注入一个脚本化的 `IChatClient`，出网那一侧经 `ChatWorkspace.WebFetchHttp` 注入一个从内存里答复的 `HttpMessageHandler`（`--verify-shell` 里 `web_fetch` 走的就是它），托管工具的线形状那一侧经 `ChatClientFactory` 的 transport 缝注入同一个记录用的 handler，地址写 `127.0.0.1`（`--check-ai-web-search` 读的正是它序列化出去的字节）——自检期间没有一个字节离开机器，跑的是真的 Core/Agent 代码。所以这十二组在任何机器上都能单独跑，也是不需要工具链的那部分 AI 验收；界面那一半由上面的 `--verify-shell` 负责（同一套代码的活对象）。这句话只描述自检，不描述产品：真正运行的 Hub 会经这两个缝之外的一条出网，验收断言里出现的"零网络"是桩替出来的结果，不是发布的口径 —— 发布口径在 README 的 Privacy policy 一节。
 
 ```powershell
-foreach ($g in 'providers','sessions','context','workspace','tool-policy','memory','tools','cross-session','images','routing','copilot') {
+foreach ($g in 'providers','sessions','context','workspace','tool-policy','memory','tools','cross-session','images','routing','copilot','web-search') {
   dotnet run --project tests/AxmolHub.Checks -- "--check-ai-$g"
 }
 ```
 
-每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-10 实测：33 / 36 / 20 / 6 / 7 / 5 / 19 / 41 / 7 / 1 / 55 = **230 条**。
+每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-10 实测（出网第一期 + 托管搜索第二期 2a 之后）：33 / 36 / 20 / 6 / 7 / 5 / 19 / 41 / 7 / 1 / 55 / 11 = **241 条**。
 
 **图片有四条入口，收到同一套准入里**：composer 的「+ → 添加图片…」、Ctrl+V 粘贴截图、把文件拖到输入框上，以及模型自己调 `capture_screen`。准入只看**文件头**（PNG / JPEG / GIF / WebP），扩展名不算数；单张上限 8 MiB、一条消息最多 4 张，**按大小先拒再读字节**，所以一次拖进一整文件夹的原图也不会先把窗口卡住。四条入口的图都落 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），并在消息边界以 user 角色发出去 —— `tool` 结果在 OpenAI 协议里带不了图。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，`capture_screen` 会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
+
+**服务端自己跑的搜索（`web_search`）出厂时谁都没声明**：它不是 Hub 的工具 —— 没有句体、没有沙箱、没有审批卡，请求只是递一句「你可以自己搜」，什么时候真搜由服务商在生成中途决定。唯一的入口是 `ai/providers.json`（或内置清单）里那份 `serverTools`，写 `["web_search"]` 就是声明、删掉就没有，翻它不需要重新构建。`--check-ai-web-search` 能证的是**声明落在哪条线的哪个字段**（chat 线写顶层 `web_search_options`，responses 线写 `tools[]` 里一条 `{"type":"web_search"}`；两条都在 127.0.0.1 上把桥序列化出去的字节读回来比，且 needle 由 Core 的预测推导），证不了**某个网关会不会真去搜** —— 那只有一次真人登录加一次真请求能定，所以出厂全空并由断言钉住。它共用「允许助手抓取网页」这一个开关：关掉它连声明都不发，开着它则**没有任何审批卡拦得住一次服务端搜索**。搜到的东西记在回复那一轮上（`ChatTurn.WebSearch`）**只记不回放**，因为实测把带搜索项的历史喂回两条桥，一条把那条 assistant 消息序列化成空 `content`（正文一起没了），另一条干脆把它从 `input` 里丢掉，两者都不报错。回复下面那行来源 chips 也归 `--verify-shell` 管：整行只花 64 字的额度、每条胶囊 34 字封顶，放不下的折进 `+N` 且 tooltip 里按原顺序一条不丢 —— 判据是 inspector 开着时聊天列只剩 560px，四条长主机画出去就是 charter 说的「溢出而不是裁切」。
 
 **助手页的交互也有断言**，因为这一类 bug 在编译期完全静默：空状态的四条建议 chip 存在、点一条只把话填进输入框（**不替人按下发送**）；拖文件到输入框上会亮起 accent 环、拖开或落下都收回，非文件的拖拽不亮；消息与草稿里的缩略图点得开，预览是**面板内的覆盖层而不是 Popup**（Popup 有自己的顶层，`--smoke-pages` 与像素判据都看不见它），打开与关闭都用帧里该图独有的两个恒定通道计数来证明真的画上了；Esc 先收预览、再停正在写的回复，空闲时按 Esc 什么都不做；↑ 在本轮窗口已发送的话里往回走（被引导吞掉的草稿也算），框里有字时让位给光标；发送后键盘回到输入框。滚动一侧：长回复写完停在最后一条、提示行活过一次整段重画（比对行实例，"还在"与"从没被清掉"是两件事）、切会话落在最新一条而不是继承上一处的读数。视觉一侧：纯文本与 markdown 正文同字号（只有最近 40 条走 markdown，否则消息会随滚动换字号），关闭叉号与代码块都用 `Hub.Font.Ui` / `Hub.Font.Mono` 那一份栈，浅色变体下第一次比较"实际会贴在一起"的表面配对（气泡 vs 页面、输入框 vs 页面、胶囊 vs 框底）。
 

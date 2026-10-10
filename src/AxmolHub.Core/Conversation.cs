@@ -139,6 +139,20 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// (<see cref="ChatPipeline.ToChatMessage"/>) and never stored.</summary>
     public string? InjectedFrom { get; init; }
 
+    /// <summary>What the endpoint searched for itself on this reply, when it offers hosted search: the queries and
+    /// the addresses it read, as one compact JSON line written and read by
+    /// <see cref="ServerSearchNotice"/>. Nullable for the standing reason — a conversation written before server-side
+    /// tools existed has no such key and still has to load.
+    ///
+    /// <para><b>Recorded, never replayed.</b> The request boundary does not read this field, and that is measured
+    /// rather than a gap nobody got around to closing: feeding an assistant message that carries a search item back
+    /// through either bridge this build uses loses it silently — on <c>chat/completions</c> the message comes out as
+    /// an empty <c>content</c> string (the item <i>and</i> the answer's text both go), on <c>responses</c> the message
+    /// vanishes from <c>input</c> — and neither throws. Replaying it would corrupt the history rather than remind the
+    /// model, so the fact stays on the transcript this app shows and saves, and the conversation state that has to
+    /// remember a search belongs to the service that ran it.</para></summary>
+    public string? WebSearch { get; init; }
+
     /// <summary>Images the user attached to this turn, in the order they were added, each one named by the file
     /// the session's image directory holds it under. The default is empty rather than null because a conversation
     /// written before attachments existed has no such property and still has to load.</summary>

@@ -289,6 +289,21 @@ public sealed class AiProviderEntry
     /// "no family semantics", which is every provider shipping today except the ones that opt in.</para>
     /// </summary>
     public string? RequestSemantics { get; set; }
+
+    /// <summary>
+    /// Tools this provider runs <b>inside its own service</b> when the request offers them — today only
+    /// <see cref="ProviderServerTools.WebSearch"/>. Not a Hub tool: no body, no sandbox, no approval card, and the
+    /// endpoint decides mid-reply when to use it.
+    ///
+    /// <para><b>Empty everywhere in the shipped manifest, and that is a measured choice rather than an omission.</b>
+    /// Both bridges this build uses do carry the declaration (chat writes <c>web_search_options</c>, responses
+    /// writes a <c>{"type":"web_search"}</c> tool entry — asserted against the serialized body, not inferred from
+    /// a symbol name), so the request shape is safe. What is not known per gateway is whether it <i>acts</i> on
+    /// the field, ignores it, or answers 400 to it. Only one real request to the user's own endpoint can tell, so
+    /// the declaration is opt-in by data: a preset author can turn it on here, and a user can turn it on for their
+    /// own provider in <c>ai/providers.json</c> and try it with <c>--check-websearch</c> without a build.</para>
+    /// </summary>
+    public List<string> ServerTools { get; set; } = [];
     /// <summary>Model IDs to enable by default only when they are present in the fetched catalog.</summary>
     public List<string> DefaultEnabledModels { get; set; } = [];
     /// <summary>Explicit capabilities for models whose reasoning support is known.</summary>
@@ -481,6 +496,7 @@ public static class AiProviderManifest
                 // call must not hold a reference into a document that gets re-read.
                 ExtraHeaders = new Dictionary<string, string>(entry.ExtraHeaders, StringComparer.OrdinalIgnoreCase),
                 RequestSemantics = entry.RequestSemantics,
+                ServerTools = [.. entry.ServerTools],
                 Affiliate = entry.Affiliate,
                 ReferralUrl = entry.ReferralUrl,
                 AuthMethods = [.. entry.EffectiveAuthMethods],
