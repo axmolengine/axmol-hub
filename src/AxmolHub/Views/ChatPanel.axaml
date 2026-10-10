@@ -1153,8 +1153,9 @@
     </Grid>
 
     <!-- Composer: centered to the same column. Row 0 is the steer-confirm strip — a second tap stands between
-         Enter and a steer, because a steer cancels the segment being generated. Row 2 is the workspace
-         picker's slot — outside the frame on purpose, and collapsed to nothing once the chat has started.
+         Enter and a steer, because a steer is the routing table's strongest signal and worth reading once before
+         it is said. Nothing is cancelled either way: the sentence waits for the step in flight. Row 2 is the
+         workspace picker's slot — outside the frame on purpose, and collapsed to nothing once the chat has started.
          Inside the frame, ComposerContent and DecisionHost share one cell: the host is declared second and
          paints over the content, so covering the composer never moves it. -->
     <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto">

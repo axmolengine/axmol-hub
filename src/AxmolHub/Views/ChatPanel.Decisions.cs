@@ -841,7 +841,7 @@ public partial class ChatPanel
         => SteerConfirmHost.GetLogicalDescendants().OfType<TextBlock>()
             .FirstOrDefault(block => block.Classes.Contains("steer-confirm-text"))?.Text ?? "";
 
-    /// <summary>The commit button's own label: 「插话」 while it interrupts a reply, 「发送」 once the reply has
+    /// <summary>The commit button's own label: 「引导回复」 while a reply is running, 「发送」 once the reply has
     /// finished and the same tap is an ordinary send.</summary>
     internal string SteerConfirmCommitLabelForCheck
         => SteerConfirmHost.GetLogicalDescendants().OfType<Button>()

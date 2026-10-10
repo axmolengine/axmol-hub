@@ -2451,7 +2451,7 @@ public partial class ShellCheckWindow : Window
             Check(panel.SteerConfirmVisibleForCheck
                   && panel.SteerConfirmTextForCheck == "半路改的主意"
                   && panel.IsStreamingForCheck,
-                "回复进行中再按一次发送只是把这句摆到确认条上，还没有真的插话（实际「"
+                "回复进行中再按一次发送只是把这句摆到确认条上，还没有真的引导出去（实际「"
                 + panel.SteerConfirmTextForCheck + "」）");
             panel.ClickSteerCommitForCheck();
             steerHold.SetResult(true);
@@ -3120,7 +3120,7 @@ public partial class ShellCheckWindow : Window
             Check(panel.SteerConfirmVisibleForCheck
                   && panel.SteerConfirmTextForCheck == "半路改的主意"
                   && panel.InputTextForCheck.Length == 0,
-                "回复进行中第一次回车只是把草稿摆上确认条、输入框随之清空，还没有真的插话（条上「"
+                "回复进行中第一次回车只是把草稿摆上确认条、输入框随之清空，还没有真的引导出去（条上「"
                 + panel.SteerConfirmTextForCheck + "」，框里「" + panel.InputTextForCheck + "」）");
 
             panel.ClickSteerEditForCheck();
