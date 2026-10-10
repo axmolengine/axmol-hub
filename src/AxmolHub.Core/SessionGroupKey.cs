@@ -17,7 +17,7 @@ namespace AxmolHub.Core;
 public static class SessionGroupKey
 {
     /// <summary>
-    /// Sessions that were never pointed at a directory — plain chats, which the list labels "Chats" (对话). The key
+    /// Sessions that were never pointed at a directory — plain chats, which the list labels "Chats". The key
     /// says <c>recent</c> and the label does not, and that is deliberate: this string is also the identity a saved
     /// collapse preference is filed under, so renaming it would orphan what the user already chose.
     /// </summary>

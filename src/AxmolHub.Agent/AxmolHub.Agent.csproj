@@ -1,19 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- 与 Core / Cli 的 net8.0 对齐，不升 TFM。 -->
+    <!-- Aligned with Core / Cli on net8.0; the TFM is not upgraded. -->
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Version 见仓库根的 Directory.Build.props：五个项目共用一个产品版本。 -->
-    <!-- RestorePackagesWithLockFile 继承根 props 的 true：本项目是仓库第二个引入
-         PackageReference 的项目（第一个是 App），锁文件须跟踪。 -->
+    <!-- Version: see Directory.Build.props at the repo root — the five projects share one product version. -->
+    <!-- RestorePackagesWithLockFile inherits true from the root props: this is the repo's second
+         project to introduce a PackageReference (the first is App), so the lock file must be tracked. -->
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
-    <!-- AI 能力层依赖只进 Agent：Core / Cli 保持零依赖、可离线冷构建。 -->
+    <!-- AI capability-layer dependencies go into Agent only: Core / Cli stay dependency-free and can cold-build offline. -->
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.10.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
-    <!-- Windows 专属（DPAPI）；macOS Keychain / Linux Secret Service 走 P/Invoke，无需包。 -->
+    <!-- Windows-specific (DPAPI); macOS Keychain / Linux Secret Service use P/Invoke and need no package. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
   </ItemGroup>
 </Project>

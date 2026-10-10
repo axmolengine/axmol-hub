@@ -25,16 +25,17 @@ namespace AxmolHub;
 /// <summary>
 /// P3's verification tool window: lays out every style under Theme/ on a single surface for
 /// three-platform visual comparison.
-/// The captions are Chinese only, because this is a development artifact rather than a product UI
-/// (the product UI is migrated in P5).
+/// This is a development artifact rather than a product UI (the product UI is migrated in P5), so
+/// the captions are plain literals instead of localized copy. The assertion names stay Chinese:
+/// they are what the verify-theme report prints.
 /// </summary>
 public partial class ControlGalleryWindow : Window
 {
     private static readonly GalleryProject[] SampleProjects =
     {
-        new("HelloAxmol", "2.11.5", "已成功", "2026-10-02 15:04"),
-        new("MoonRider", "2.11.5", "已失败", "2026-10-01 22:11"),
-        new("TileForge", "2.11.5", "未构建", "2026-09-28 09:37"),
+        new("HelloAxmol", "2.11.5", "Succeeded", "2026-10-02 15:04"),
+        new("MoonRider", "2.11.5", "Failed", "2026-10-01 22:11"),
+        new("TileForge", "2.11.5", "Not built", "2026-09-28 09:37"),
     };
 
     public ControlGalleryWindow()

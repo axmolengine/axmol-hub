@@ -222,9 +222,11 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         Check(panel.ModelChoiceCount == 1,
             "模型选择器排除未鉴权 provider，只列出可用模型（实际 " + panel.ModelChoiceCount + " 项）");
-        // 语义在这一轮翻了面：从前「元数据没写」被当成「这个模型不能思考」，于是推理档在默认网关的 205 个
-        // 模型上永远点不开——档位菜单要出现得有证据，而证据只有发出去才拿得到。现在未知照样问得出去，
-        // 但 EffortsFor 仍然是空的：可以问，不等于替它编一档。
+        // The semantics flipped this round: previously "metadata absent" was taken as "this model cannot
+        // reason", so the reasoning picker could never open for the default gateway's 205 models — the tier
+        // menu needs evidence to appear at all, and the evidence only comes back from a sent request. Now an
+        // unknown model is still askable, but EffortsFor stays empty: being allowed to ask is not a license
+        // to invent a tier for it.
         Check(panel.SelectModelForCheck(checkProvider!.Id, checkModel)
               && panel.SelectedModelText.Contains(checkModel, StringComparison.Ordinal)
               && panel.ReasoningPickerEnabledForCheck
@@ -249,7 +251,7 @@ public partial class ShellCheckWindow : Window
               && !expectedChip.Contains("Auto", StringComparison.Ordinal),
             "没手选过档位时芯片读「默认」而不是「自动」（实际「" + panel.ReasoningChipTextForCheck + "」）");
 
-        // ── 自动路由：会话级开关、芯片文案、手动选择要能夺回来 ──
+        // ── Auto routing: the per-session switch, the chip wording, and that a manual pick can take over ──
         // Routing spends the user's money per request, so the switch is asserted where it is read (the chip),
         // where it lands (the session file), and where it must lose (a hand pick).
         var routeSession = shell.Chat.ActiveConversation ?? shell.Chat.StartConversation();
@@ -1062,7 +1064,7 @@ public partial class ShellCheckWindow : Window
                 : "没有找到提示行") + "）");
         panel.Reload();
 
-        // ── 开着路由真发一次 ──
+        // ── Actually send once with routing switched on ──
         // This model declares only low/high, so whatever the table computes has to be walked down to a tier the
         // gateway can actually receive — sending "xhigh" to a two-tier model fails the request rather than
         // strengthening it. The same send proves the route is readable afterwards (the chip's tooltip and the
@@ -1112,14 +1114,18 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 侧栏的会话分组：工作目录在前、没有目录的对话排在最后的「对话」、归档的沉到底部；分组可折叠；
-    /// 目录被搬走时整组改路径。
+    /// Sidebar conversation grouping: workspaces first, conversations without one last under the
+    /// 「对话」 heading, archived ones sunk to the bottom; groups are collapsible; when a directory is
+    /// moved the whole group is re-pointed.
     ///
-    /// 夹具用两个真实存在的目录加一个<b>从不创建</b>的目录。第三个夹具是这条特性存在的原因，也是最容易被
-    /// 写歪的地方：一个只在目录存在时才成立的分组，恰好会在用户最需要改路径的那一刻什么都不显示。
+    /// The fixtures use two directories that really exist plus one that is <b>never created</b>. That
+    /// third fixture is both the reason the feature exists and the easiest place to get it wrong: a
+    /// group that only materializes while the directory exists shows nothing at exactly the moment the
+    /// user most needs to re-point the path.
     ///
-    /// 分组标题右侧的 ＋ 也在这里验：它把新会话的归属写成被点的那条目录，所以「在搬走的目录上点 ＋」这一条
-    /// 用的是同一个从不创建的夹具——拦下来才是 bug。
+    /// The ＋ at the right of a group header is verified here too: it stamps the new session's home as
+    /// the directory whose header was clicked, so the "click ＋ on the moved-away directory" case uses
+    /// the same never-created fixture — blocking it would be the bug.
     /// </summary>
     private void CheckWorkspaceGroups(string scratchRoot, MainWindow shell)
     {
@@ -1131,15 +1137,17 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        // 工作区夹具必须落在数据根之外：Hub 自己的数据目录是助手永远不能写进去的地方
-        // （WorkspacePaths.IsProtected），把"某个项目"摆在数据根里，改路径的闸门会把它当成受保护位置拒掉，
-        // 于是这条断言测的就不再是路径，而是另一个规矩。
+        // The workspace fixtures must land outside the data root: Hub's own data directory is a place the
+        // assistant can never write into (WorkspacePaths.IsProtected). Parking "some project" inside the data
+        // root would make the re-path gate refuse it as a protected location, and the assertion would then
+        // test a different rule instead of the path.
         var workspaceBase = ScratchDirectory.Resolve("shell-check-workspaces", Guid.NewGuid().ToString("N"));
         string Full(string relative) => System.IO.Path.Combine(workspaceBase, relative);
         Directory.CreateDirectory(workspaceBase);
 
-        // 分组顺序才是这里的断言对象，所以列表必须先腾空：助手那一组留下的会话自己就是一个分组，
-        // 它会替“顺序错了”回答，让第一条断言永远看不出问题。
+        // Group ordering is what this asserts, so the list must be emptied first: a session left over from
+        // the assistant group is itself a group, and it would answer on behalf of "the order is wrong",
+        // keeping the first assertion forever blind to the problem.
         foreach (var leftover in chat.Conversations.Select(summary => summary.Id).ToArray())
         {
             chat.DeleteConversation(leftover);
@@ -1210,8 +1218,10 @@ public partial class ShellCheckWindow : Window
               && tags[4] == SessionGroupKey.Recent,
             "所有工作区分组都挂在「工作区」根节点下，没有目录的对话作为同级的「对话」排在后面（实际顺序："
             + string.Join(" / ", tags) + "）");
-        // 文案与键是两回事：这一组的标题改叫「对话」，但它在折叠偏好里仍然登记为 recent，改字符串等于把用户
-        // 记下的那份偏好变成孤儿。中英文各读一次，因为只断中文的话，英文那份写错也没人知道。
+        // Label and key are two different things: the group's title is now 「对话」, but it is still registered
+        // as recent in the collapse preferences — changing that string would orphan the preference the user
+        // recorded. Read once per language, because asserting only the Chinese half would leave a typo in the
+        // English one unnoticed.
         Check(sidebar.GroupHeaderText.Contains(HubTexts.Get("GroupChats", HubStrings.Language), StringComparison.Ordinal)
               && !sidebar.GroupHeaderText.Contains("最近聊天", StringComparison.Ordinal)
               && HubTexts.Get("GroupChats", HubTexts.ChineseLanguage) == "对话"
@@ -1235,7 +1245,7 @@ public partial class ShellCheckWindow : Window
             "「对话」不是一条目录，因此没有可编辑的路径（实际 " 
             + sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Recent).Length + " 项）");
 
-        // ── 折叠根节点：整段工作区一起收，同级不受影响 ──
+        // ── Collapsing the root node: the whole workspace section folds, siblings unaffected ──
         var allRows = sidebar.SessionRowCountForCheck;
         var plainRows = sidebar.GroupRowIdsForCheck(SessionGroupKey.Recent).Length;
         Check(plainRows > 0 && allRows > plainRows && !sidebar.GroupCollapsedForCheck(SessionGroupKey.Workspaces),
@@ -1253,7 +1263,7 @@ public partial class ShellCheckWindow : Window
               && sidebar.GroupHeaderTagsForCheck().Length == 5,
             "再点一次根节点，工作区分组和它们的会话都回来");
 
-        // ── 折叠 ──
+        // ── Collapse ──
         var rowsBefore = sidebar.SessionRowCountForCheck;
         var groupRows = sidebar.GroupRowIdsForCheck(keyA).Length;
         Check(sidebar.ToggleGroupForCheck(keyA) && sidebar.GroupCollapsedForCheck(keyA),
@@ -1271,7 +1281,8 @@ public partial class ShellCheckWindow : Window
             ScratchDirectory.Resolve("group-fold"), "folded.png");
         var foldedFrame = sidebar.CaptureGroupHeaderForCheck(keyA, foldedShot);
 
-        // 重绘与重启都得保住折叠状态：会话改名会触发整表重建，而设置文件是重启后唯一的凭据。
+        // Both repaint and restart must keep the folded state: renaming a session triggers a full list
+        // rebuild, and the settings file is the only credential after a restart.
         sidebar.RenameConversationForCheck(aOne.Id, "改名后的 A");
         Check(sidebar.GroupCollapsedForCheck(keyA) && sidebar.SessionRowCountForCheck == rowsBefore - groupRows,
             "改名触发整表重绘后折叠状态保持（实际行数 " + sidebar.SessionRowCountForCheck + "）");
@@ -1293,7 +1304,7 @@ public partial class ShellCheckWindow : Window
             + foldedFrame?.Width + "x" + foldedFrame?.Height + " / " + expandedFrame?.Width + "x"
             + expandedFrame?.Height + "，不同的字节 " + changed + "）");
 
-        // ── 置顶不再单独成组 ──
+        // ── Pinned sessions no longer form their own group ──
         chat.SetPinned(aUpper.Id, true);
         sidebar.Reload();
         shell.UpdateLayout();
@@ -1310,7 +1321,7 @@ public partial class ShellCheckWindow : Window
         chat.SetPinned(aUpper.Id, false);
         sidebar.Reload();
 
-        // ── 归档：单条 ──
+        // ── Archive: a single conversation ──
         Check(sidebar.SessionHasArchiveMenu(bOne.Id),
             "会话操作菜单提供归档（实际菜单：" + string.Join(" / ", sidebar.SessionMenuTitlesForCheck(bOne.Id)) + "）");
         var liveBefore = sidebar.ConversationCount;
@@ -1335,7 +1346,7 @@ public partial class ShellCheckWindow : Window
               && !sidebar.GroupHeaderTagsForCheck().Contains(SessionGroupKey.Archived),
             "恢复归档对话把它带回原来的工作区分组，归档分组随之消失");
 
-        // ── 归档：整个工作区 ──
+        // ── Archive: a whole workspace ──
         Check(sidebar.ArchiveWorkspaceForCheck(workspaceA, archived: true) == 2
               && !sidebar.GroupHeaderTagsForCheck().Contains(keyA)
               && sidebar.ConversationCount == liveBefore - 2,
@@ -1348,7 +1359,7 @@ public partial class ShellCheckWindow : Window
               && sidebar.ConversationCount == 5,
             "全部恢复把整组对话带回原来的工作区分组（实际 " + sidebar.ConversationCount + " 项）");
 
-        // ── 编辑路径：整组改指向 ──
+        // ── Edit path: the whole group is re-pointed ──
         var refusal = sidebar.RepointWorkspaceForCheck(movedAway, Full("nowhere-at-all"));
         Check(refusal.Moved == 0 && refusal.Verdict == WorkspacePathVerdict.MissingWorkspace
               && sidebar.GroupOfForCheck(movedOne.Id) == keyMoved,
@@ -1366,16 +1377,19 @@ public partial class ShellCheckWindow : Window
               && sidebar.ConversationCount == 5,
             "改路径不碰没有工作目录的对话（实际 " + sidebar.ConversationCount + " 项）");
 
-        // 分组菜单不能借用会话行的类名：列表靠那个类名数“每行都有操作菜单”，多算一次就是一次假通过。
+        // The group menu must not borrow the session row's style class: the list counts "every row has an
+        // actions menu" by that class name, so one extra count is one false pass.
         Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
               && sidebar.SessionRowCountForCheck == 5,
             "分组菜单不计入会话行的操作菜单数（实际菜单 " + sidebar.SessionMenuCount
             + " / 行 " + sidebar.SessionRowCountForCheck + "）");
 
-        // ── 分组标题上的 ＋：在谁的名字下面点，新建的会话就属于谁 ──
-        // 归属本来就是从会话的工作目录派生出来的，所以这里不需要任何新状态，要验的只有一件事：＋ 把目录写进了
-        // 那条新会话。空会话按既有规矩不占列表行，所以“落进分组”这一步要等它发出第一条消息才看得见。
-        // 断言失败时也要能打印出实际目录，所以这里读的是“没有就算了”的形状，而不是让一次空引用把整段带走。
+        // ── The ＋ on a group header: whoever's name you click under owns the new session ──
+        // Belonging is derived from the session's working directory anyway, so no new state is needed here;
+        // the only thing to verify is that ＋ wrote the directory into that new session. By the existing rule
+        // an empty session takes no list row, so the "lands in the group" step is only visible after it sends
+        // its first message. The actual directory must still be printable when an assertion fails, so this
+        // reads a "absent is fine" shape rather than letting one null reference take the whole section down.
         string RootOf(string? id) => id is null ? "（没有建出来）" : chat.WorkspaceRootFor(id) ?? "（无目录）";
 
         var groupAFirst = sidebar.NewSessionFromGroupForCheck(keyA);
@@ -1387,8 +1401,9 @@ public partial class ShellCheckWindow : Window
             + "，提示 " + sidebar.GroupNewTipForCheck(keyA) + "）");
         Check(sidebar.GroupNewIsRightmostForCheck(keyA) && sidebar.GroupNewIsRightmostForCheck(SessionGroupKey.Recent),
             "那个 ＋ 在分组标题的最右一格，⋯ 在它左边（不是靠像素比出来的，读的是列号）");
-        // 静止时它必须是不显形的（hover 才浮出来，见界面章程「次要东西等到指针到来」）。这一条只能读对象图：
-        // 截图里它本来就是隐形的，像素既证明不了显形，也证明不了没显形。
+        // At rest it must be invisible (it surfaces on hover — see the UI charter's "secondary things wait
+        // for the pointer"). This one can only be read from the object graph: in a screenshot it is invisible
+        // by nature, and pixels can prove neither that it shows nor that it does not.
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(sidebar.GroupNewOpacityForCheck(SessionGroupKey.Workspaces) == 0
@@ -1400,8 +1415,9 @@ public partial class ShellCheckWindow : Window
         Check(groupAFirst is { Length: > 0 } && sidebar.NewSessionFromGroupForCheck(keyA) == groupAFirst
               && sidebar.ConversationCount == liveAfterFirst,
             "连着点两次 ＋ 还是同一条空会话，列表没有堆草稿（实际 " + sidebar.ConversationCount + " 项）");
-        // 建不出来就不喂消息：SeedTurnForCheck 走的是字典查找，拿 null 当键会当场抛，
-        // 一条断言失败不该把后面几十条一起带走——反向对照正是从这里发现这一点的。
+        // If it could not be created, don't feed it a message: SeedTurnForCheck does a dictionary lookup and
+        // a null key throws on the spot — one failed assertion must not take the dozens after it down with it,
+        // and the negative control is exactly where this was discovered.
         if (groupAFirst is { Length: > 0 }) chat.SeedTurnForCheck(groupAFirst, "A 项目二");
         sidebar.Reload();
         Check(sidebar.GroupOfForCheck(groupAFirst ?? "") == keyA
@@ -1419,8 +1435,9 @@ public partial class ShellCheckWindow : Window
         Check(sidebar.GroupOfForCheck(fromChats ?? "") == SessionGroupKey.Recent,
             "它发出第一条消息后归在「对话」分组里，而不是某个目录下面");
 
-        // 目录已经不存在的分组也照样给 ＋，而且不拦：那条目录正是用户自己搬走的，＋ 建出来的会话先绑在旧位置上，
-        // 改路径的入口就在同一个分组的 ⋯ 里。拒掉的话，眼前什么入口都没有。
+        // A group whose directory is gone still gets a ＋, and nothing blocks it: that directory is exactly
+        // what the user moved away, so the session ＋ creates first binds to the old location, and the
+        // re-path entry sits in the same group's ⋯. Refusing here would leave no entry point on screen.
         var goneOne = Seeded(movedAway, "又搬走一次");
         sidebar.Reload();
         var fromGone = sidebar.NewSessionFromGroupForCheck(keyMoved);
@@ -1444,8 +1461,9 @@ public partial class ShellCheckWindow : Window
         chat.SetArchived(plainOne.Id, false);
         sidebar.Reload();
 
-        // ＋ 有自己的类名，所以它既不会被当成组的第三项菜单（那是读 ⋯ 的 Tag 得来的），也不会混进行操作菜单的
-        // 计数里 —— 行计数看的是每行都有菜单，多算少算都是一次假通过。
+        // ＋ has its own style class, so it is neither mistaken for the group's third menu item (that comes
+        // from reading the ⋯'s Tag) nor mixed into the actions-menu count — the row count expects a menu on
+        // every row, and counting one too many or too few is a false pass.
         Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
               && sidebar.SessionRowCountForCheck == 8
               && sidebar.GroupMenuTitlesForCheck(keyA).Length == 2,
@@ -1754,7 +1772,8 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// spawn_session 走一遍真发：开关关着时一条会话都不许创建，开着时一次回答只能创建一个。
+    /// spawn_session walked through as a real send: with the switch off not a single session may be created,
+    /// with it on one answer may create exactly one.
     /// The child answers through its own scripted client, so the parent's slot, the child's slot and the refusal
     /// of the second call are the app's real machinery rather than a unit test of the table — and everything still
     /// runs with no key and no network.
@@ -1827,7 +1846,7 @@ public partial class ShellCheckWindow : Window
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
-    /// 空状态的建议 chip：欢迎语承诺的「可以做什么」必须真的能点。
+    /// Empty-state suggestion chips: the 「可以做什么」 promised by the welcome text must really be clickable.
     ///
     /// The charter promises a centred greeting *with suggestion chips*, and the text table has carried the
     /// "建议问题" keys since the Copilot-style redesign — so the thing at risk here was an empty state that only
@@ -1922,7 +1941,8 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 拖放的回应与图片的放大：递图这条路要看得见，收到的图要读得清。
+    /// Drag-and-drop feedback and picture zooming: the path for handing a picture over must be visible,
+    /// and a received picture must be readable.
     ///
     /// The drag ring and the preview are both things that only exist while somebody is looking, which is exactly
     /// why they go untested and stay broken. The group drives the real DragOver / DragLeave / Drop events and the
@@ -1943,7 +1963,7 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         try
         {
-            // ── 拖进来时要有人应答 ──
+            // ── Something must answer when a drag comes in ──
             // Both directions are the cell: a page that never lights up is a target nobody finds, and one that
             // lights up for a drag it cannot use is a lie about what will happen on release.
             var droppedFile = await shell.StorageProvider.TryGetFileFromPathAsync(png);
@@ -1966,7 +1986,7 @@ public partial class ShellCheckWindow : Window
             Check(!panel.ComposerDragOverForCheck && panel.PendingPictureCountForCheck == 1,
                 "落下之后环也收回，图进了草稿（实际 " + panel.PendingPictureCountForCheck + " 张）");
 
-            // ── 输入框自己说清图从哪来 ──
+            // ── The composer itself says where pictures come from ──
             // Asserted against the text table rather than a literal, and in both languages, because the hint is
             // worth nothing on the side the person is not reading.
             var hintChinese = HubTexts.Get("InputPlaceholder", HubTexts.ChineseLanguage);
@@ -1979,7 +1999,7 @@ public partial class ShellCheckWindow : Window
                 "输入框提示在两种语言里都写明截图可以粘贴或拖进来（实际「"
                 + panel.ComposerPlaceholderForCheck + "」）");
 
-            // ── 发出去的图要能放大看 ──
+            // ── A sent picture must be zoomable ──
             panel.SetInputForCheck("看这张");
             await panel.SendComposerForCheck();
             await panel.WaitForRunToFinishForCheck();
@@ -2010,7 +2030,7 @@ public partial class ShellCheckWindow : Window
             shell.ClickPictureViewerButtonForCheck(1);
             Check(!shell.PictureViewerOpenForCheck, "查看器上的 × 也关得住（与 Esc 是同一条路，不是同一个按钮）");
 
-            // ── 还没发出去的草稿也要能看 ──
+            // ── An unsent draft must be viewable too ──
             panel.AddImageForCheck(png);
             panel.ClickPendingPictureForCheck(0);
             var draft = shell.PictureViewerSizeForCheck;
@@ -2088,7 +2108,7 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 组合框的键盘：Esc 停得下来，Up 找得回来，发完还在原地。
+    /// Composer keyboard: Esc can stop, Up can recall, and focus stays put after a send.
     ///
     /// Three keys that a person reaches for without thinking, and each one is a decision about whose key it is:
     /// Escape belongs to the preview while the preview is on screen and to the running reply after that, Up belongs
@@ -2109,7 +2129,7 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         try
         {
-            // ── 发出去的话，Up 还能找回来 ──
+            // ── What was sent can still be recalled with Up ──
             // The queue is the window's, not this conversation's — a draft lost to a steer has to be reachable
             // even when the conversation it belonged to was created by that very send — so the newest two are
             // read off the tail rather than counted, because the queue is capped.
@@ -2148,7 +2168,7 @@ public partial class ShellCheckWindow : Window
             Check(panel.InputTextForCheck == "第二句问话",
                 "清空之后 Up 重新从最近一句开始（实际「" + panel.InputTextForCheck + "」）");
 
-            // ── 按下发送后，键盘还留在输入框里 ──
+            // ── After pressing send, the keyboard stays in the composer ──
             // Focus is moved away first, and the move is asserted: the box already holds the keyboard, so without
             // taking it away a handler that never gave it back would pass this cell standing still.
             panel.SetInputForCheck("发完这句");
@@ -2164,7 +2184,7 @@ public partial class ShellCheckWindow : Window
                 "按下发送后焦点回到输入框：接下来通常还要接着说");
             await panel.WaitForRunToFinishForCheck();
 
-            // ── Esc：先关查看器，再停回复 ──
+            // ── Esc: close the viewer first, then stop the reply ──
             panel.AddImageForCheck(png);
             panel.ClickPendingPictureForCheck(0);
             Check(shell.PictureViewerOpenForCheck, "夹具：查看器开着，图也还在草稿里");
@@ -2183,7 +2203,7 @@ public partial class ShellCheckWindow : Window
             hold.SetResult(true);
             await panel.WaitForRunToFinishForCheck();
 
-            // ── 空闲时的 Esc 什么都不该做 ──
+            // ── Esc while idle must do nothing ──
             var idleTurns = chat.StoredCopyForCheck(session.Id)?.Messages.Count ?? 0;
             panel.SetInputForCheck("留着别动");
             panel.PressEscapeForCheck();
@@ -2192,7 +2212,7 @@ public partial class ShellCheckWindow : Window
                 "没有回复在跑时按 Esc 不吞字、也不动会话（实际「" + panel.InputTextForCheck + "」）");
             panel.SetInputForCheck("");
 
-            // ── 半路引导进去的那句也在历史里 ──
+            // ── The sentence steered in mid-run is in the history too ──
             var steerHold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             chat.ClientOverride = (_, _) => new ScriptedChatClient(["引导之后答的"], gate: steerHold.Task);
             panel.SetInputForCheck("把这条停住");
@@ -2226,7 +2246,7 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 字号：同一条消息不能因为滚得远了就换一个字号。
+    /// Font size: one message must not switch fonts just because it scrolled out of the recent window.
     ///
     /// Only the last forty turns are rendered as Markdown, and the plain path used to fall back to the theme's
     /// default 14 while the Markdown layer says 13 — so a message visibly changed font as it scrolled away. The
@@ -2276,7 +2296,7 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 滚动：跟着回复走，停在人放下的地方，切回去落在最新一条。
+    /// Scrolling: follow the reply, stop where the person let go, and land on the newest line when switching back.
     ///
     /// Three things a person feels and no cell used to measure: a long answer that stops scrolling partway
     /// through, a warning that vanishes when the transcript repaints, and a session that reopens wherever the
@@ -2299,7 +2319,7 @@ public partial class ShellCheckWindow : Window
         Dispatcher.UIThread.RunJobs();
         try
         {
-            // ── 一条长回答要跟着写完 ──
+            // ── A long answer must be followed all the way to the end ──
             panel.SetInputForCheck("给我一屏以上");
             await panel.SendComposerForCheck();
             await panel.WaitForRunToFinishForCheck();
@@ -2308,7 +2328,7 @@ public partial class ShellCheckWindow : Window
             Check(panel.ViewAtBottomForCheck && !panel.ScrollToBottomVisible,
                 "长回复写完之后视图停在最后一条，也不需要那个回底板的按钮");
 
-            // ── 提示行活过一次重建 ──
+            // ── A notice line survives one rebuild ──
             panel.AppendNoticeForCheck("这条提示要在重建之后还在");
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
@@ -2335,7 +2355,7 @@ public partial class ShellCheckWindow : Window
             Check(!panel.NoticeVisibleForCheck,
                 "人开口之后上一条提示就退场：旧警告回答不了新问题");
 
-            // ── 切走再切回来 ──
+            // ── Switch away and back ──
             // The notice belongs to the session that produced it, and a session reopens on its newest line: the
             // reading position is the viewer's rather than the conversation's, so both have to be decided here
             // rather than inherited from wherever the last one happened to be left.
@@ -2370,7 +2390,7 @@ public partial class ShellCheckWindow : Window
                 "切到一个长会话时落在最新一条，而不是继承上一处的读数");
             chat.DeleteConversation(other.Id);
 
-            // ── 附件行把窗口压矮，不算人离开了底部 ──
+            // ── An attachment row shrinking the viewport is not the person leaving the bottom ──
             chat.OpenConversation(session.Id);
             panel.Reload();
             shell.UpdateLayout();
@@ -2392,7 +2412,8 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 聊天编排：一段机器活动折成一个可折叠组，思考态由按相位变形的指示器承担。
+    /// Chat orchestration: a stretch of machine activity folds into one collapsible group, and the thinking
+    /// state is carried by an indicator that morphs per phase.
     ///
     /// The grouping and the glyph are the two things that only exist while a run is in flight or just finished,
     /// which is exactly why they rot silently. The group is read off the rendered transcript (count, head
@@ -2587,7 +2608,8 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 右侧审阅面板与插话二次确认：一个是看计划/diff 的地方，一个是「先别急着插话」的那一下。
+    /// The right-hand review panel and the steer's second confirm: one is where plans/diffs are read, the other
+    /// is the "hold on, don't interrupt yet" moment.
     ///
     /// The inspector is asserted two ways: its column mechanics on the real shell (opens, follows the assistant
     /// page off-screen, closes, clamps its width), and its content on a panel fed a fixture snapshot directly —
@@ -2686,7 +2708,7 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 图片入料：一个人递进来的三条路，和一条消息最多能带几张。
+    /// Picture intake: the three routes a person can hand one in, and the cap on how many one message may carry.
     ///
     /// The three entrances (menu, paste, drop) all end in the same admission, so the group drives it through the
     /// hook a picker would hand back and asserts the parts that are silently wrong when they break: a chip that
@@ -2779,7 +2801,7 @@ public partial class ShellCheckWindow : Window
             Check(!System.IO.Directory.Exists(directory),
                 "删掉会话时它的图片目录一起没了，不会留下谁也找不回的截图");
 
-            // ── 粘进来、拖进来：两条入口都真的走一遍 ──
+            // ── Paste it in, drop it in: both entrances really walked once ──
             // The system clipboard is the one thing a self-check must not overwrite, so the payload is handed to the
             // paste path directly, and the drop is raised as its real routed event on the real composer with a
             // storage item the platform itself produced. What is asserted is the decision made once the payload is
@@ -3914,7 +3936,7 @@ public partial class ShellCheckWindow : Window
             Check(FetchRequests() == "GET https://example.test/manual/build",
                 "真的发出去的是那一条请求，主机与路径都没被改写（实际 " + FetchRequests() + "）");
 
-            // ── 服务端自己跑的搜索：一行状态、一段转录、一行来源 ──
+            // ── A search the server runs itself: one status line, one transcript, one sources line ──
             // None of this is a tool call. There is no card to approve, no sandbox to widen and no result turn to
             // write — the endpoint searched, said what it searched for, and the answer arrived anyway. What the
             // suite can pin is that Hub neither invents the fact nor loses it: the live line while it is the only
@@ -4373,10 +4395,11 @@ public partial class ShellCheckWindow : Window
             Check(chat.RunFor(restartSession.Id) is null,
                 "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
 
-            // ── 一次响应里两个调用，其中一个在等批准 ──
-            // 网关不在乎请求里那句「一次只要一个调用」，一次返回两个；其中一个要批准时循环照跑另一个。挂起的那条
-            // 于是被后面的 turn 挤离中心，批准之后再把它的答案接到末尾 —— provider 就为这个把整段拒收，而这个
-            // 会话此后每次重发都是同一个 400。这一段跑的就是那个真实形状。
+            // ── Two tool calls in one response, one of them waiting on approval ──
+            // The gateway ignores the request's "one call at a time" and returns two; when one needs approval the
+            // loop runs the other regardless. The parked call then gets pushed off-centre by later turns and its
+            // answer is appended after approval — the provider rejects the whole transcript for exactly this, and
+            // every later resubmission of this session hits the same 400. This cell runs that real shape.
             chat.SetApprovalMode(batchSession.Id, ToolApprovalModes.Ask);
             chat.OpenConversation(batchSession.Id);
             chat.TryEnqueueSend(batchSession.Id, "改一下再读一遍", null, out _);
@@ -4406,9 +4429,11 @@ public partial class ShellCheckWindow : Window
                 "配对修好后回复照样接上、运行位让出（而不是停在一次注定被拒的请求上）");
 
             // ── one response's thinking belongs to every call it asked for ──
-            // 思考型网关会把「本轮想过什么」当成那条 assistant 消息的一部分：重放时缺了它，整段请求就被拒收
-            // （reasoning_content must be passed back）。一次响应可以带好几个调用，而它们共用同一块思考 —— 早先
-            // 每条调用各取「此刻缓冲区里剩的东西」，第二条起就都是空的。这里要的是两条都拿到同一块。
+            // A reasoning gateway treats "what this turn thought" as part of that assistant message: replay it
+            // without the thinking and the whole request is rejected (reasoning_content must be passed back). One
+            // response may carry several calls sharing a single thinking block — earlier each call took "whatever
+            // is left in the buffer right now", so every call after the first got nothing. What is needed here is
+            // for both calls to receive the same block.
             var batchThoughts = afterBatch!.Messages
                 .Where(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId is { Length: > 0 })
                 .Select(turn => turn.Reasoning).ToArray();
@@ -4416,8 +4441,10 @@ public partial class ShellCheckWindow : Window
                 "一次响应的思考跟着它的每一条调用落库（实际 "
                 + string.Join(" / ", batchThoughts.Select(said => said is { Length: > 0 } thought
                     ? thought.Length + " 字" : "无")) + "）");
-            // 上面几条证明不了答案是自己走到调用旁边的 —— 发送前的重排会在注定被拒的请求之前把转录救回来，
-            // 所以两处修复任一处生效都能过。审计行把「没写坏」和「写坏了又被救」分开：这一条要的是前者。
+            // The cells above cannot prove the answer walked to its call on its own — the pre-send reorder
+            // rescues the transcript before the doomed request, so either of the two fixes passing would satisfy
+            // them. The audit line separates "not written wrong" from "written wrong then rescued": this cell
+            // wants the former.
             var batchAudit = System.IO.File.ReadAllLines(shell.Workspace.Log.FilePath);
             Check(!batchAudit.Any(line => line.Contains("Repaired tool pairing", StringComparison.Ordinal)
                       && line.Contains(batchSession.Title, StringComparison.Ordinal)),
@@ -4791,9 +4818,10 @@ public partial class ShellCheckWindow : Window
                 "第二次运行追加到同一天的日志，第一次的记录仍在（实际 "
                 + twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) + " 段）");
 
-            // 抖动保护：窗口小到连"系统提示 + 工具声明 + 最新一轮"这块地板都放不下时，压缩再多档也不会到
-            // target。三次额度是给这种情况设的，硬顶让它提前结束；停下来那一次必须在审计里说清为什么，否则
-            // 用户只看到圆环一直满着，却不知道 Hub 已经不再自己动手了。
+            // Anti-thrash: when the window is too small to fit even the floor of "system prompt + tool
+            // declarations + newest turn", no number of compression tiers will reach the target. The three-pass
+            // budget exists for this case and the hard stop ends it early; the stopping pass must say why in the
+            // audit, or the user only sees a ring that stays full without knowing the Hub has stopped acting.
             var stuckAudits = new List<string>();
             var savedAuditWrite = chat.AuditWrite;
             chat.AuditWrite = line => stuckAudits.Add(line);
@@ -4851,12 +4879,15 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 超限拒信即学即重试：网关回一句「maximum context length is 4096」时，这个数字同时是这次请求失败的原因
-    /// 和这个模型窗口的第一手证词。Hub 记下它、压缩一次、把这一轮重发一遍 —— 一条拒信不该让用户去按第二次发送。
+    /// Learn-and-retry on the over-limit rejection: when the gateway answers "maximum context length is 4096",
+    /// that number is both why this request failed and first-hand testimony of the model's window. Hub records
+    /// it, compresses once, and resends this turn — one rejection should not make the user press send twice.
     ///
-    /// 夹具先铺 10 条长对话，为的是让「压缩」这一层真的发生：只发一条消息的会话没有可归档的前缀，那样这条断言
-    /// 就只剩下重试，而重试本身并不解决超限。三次请求的编号就是这条链的形状：第 1 次被拒，第 2 次是摘要，
-    /// 第 3 次才是重发。反面夹具同样要紧：401 不是窗口满，为它压缩、重试、或者照着它学一个窗口，三样都是错的。
+    /// The fixture lays down 10 long exchanges first so the compression layer genuinely fires: a session with a
+    /// single message has no archivable prefix, and then this assertion would be nothing but a retry, while a
+    /// retry alone does not solve the overflow. The numbering of the three requests is the shape of the chain:
+    /// #1 is rejected, #2 is the summarization, #3 is the resend. The negative fixture matters just as much:
+    /// 401 is not a full window — compressing for it, retrying for it, or learning a window from it are all wrong.
     /// </summary>
     private async Task CheckOverflowRecoveryAsync(MainWindow shell, ChatPanel panel, string model)
     {
@@ -4916,7 +4947,8 @@ public partial class ShellCheckWindow : Window
                 + string.Join(" / ", audits.Where(line =>
                     line.Contains("overflow", StringComparison.OrdinalIgnoreCase))) + "）");
 
-            // 反面夹具：钥匙不对。它既不该被当成窗口满，也不该学出一个窗口来。
+            // Negative fixture: the wrong key. It must not be treated as a full window, and no window may be
+            // learned from it.
             var negativeProvider = chat.AddProvider("Overflow negative local", "http://localhost:11436/v1", model, null);
             var negativeSession = chat.StartConversation(negativeProvider!.Id);
             chat.SelectChatModel(negativeProvider.Id, model);
@@ -4951,12 +4983,16 @@ public partial class ShellCheckWindow : Window
     }
 
     /// <summary>
-    /// 用量读回：请求要问网关要这个数，拿到之后它既当读数的下限，也当分母的修正。
+    /// Usage read-back: the request must ask the gateway for this number, and once received it serves both as
+    /// the floor of the reading and as the correction of the denominator.
     ///
-    /// 三条各自独立的证据，一条比一条难伪造。第一条形在<strong>出站请求</strong>里 —— 不要求用量就没有最后那个
-    /// chunk，而这一条只有读请求本体才证得了。第二条是「实测赢过估算」：夹具报 48000，而这条会话自己按字符估
-    /// 只有几十，圆环读的是那个 48000。第三条是封顶：单次读数最多把尺度挪 4×，否则一个瞎报的网关能把窗口压成
-    /// 一条缝。反面夹具照旧 —— 从不报用量的会话必须继续用估算，而不是读出一个 0。
+    /// Three independent pieces of evidence, each harder to fake than the last. The first lives in the
+    /// <strong>outbound request</strong> — without the usage requirement the final chunk never arrives, and only
+    /// reading the request body can prove this. The second is "measured beats estimated": the fixture reports
+    /// 48000 while this session's own character-based estimate is only tens, and the ring reads the 48000. The
+    /// third is the cap: a single reading may shift the scale by at most 4×, otherwise a gateway reporting
+    /// nonsense could squeeze the window into a sliver. The negative fixture stays — a session that never
+    /// reports usage must keep using the estimate rather than reading out a 0.
     /// </summary>
     private async Task CheckUsageReadBackAsync(MainWindow shell, ChatPanel panel, string model)
     {
@@ -5244,8 +5280,10 @@ public partial class ShellCheckWindow : Window
                     StringComparer.Ordinal),
                 "绑定之后菜单多出「清除」一行（实际 " + string.Join(" / ", panel.WorkspaceMenuTitlesForCheck) + "）");
 
-            // 附件按「模型装得下多少」封顶，而不只是按磁盘字节数：160 KiB 的中文是几万 token，从前的小窗口里
-            // 截断器会把整条附件连同它的问题一起丢掉 —— 人递上来的东西，反而成了本轮消失的那一段。
+            // Attachments are capped by "how much the model's window can hold", not just by on-disk bytes:
+            // 160 KiB of Chinese is tens of thousands of tokens, and with the old small windows the truncator
+            // dropped the whole attachment along with its question — the thing a person handed in became the
+            // segment that vanished from this turn.
             var attachRoot = Path.Combine(ScratchDirectory.Resolve("attachment-ceiling"),
                 Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(attachRoot);
@@ -5920,10 +5958,11 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.RemoveProvider(customLocal?.Id ?? ""), "移除这条断言用的自定义 provider");
         settings.RefreshProviderGroupsForCheck();
 
-        // ── 密钥后端的诚实披露 ──
-        // 三档后端各自防住的东西不一样（DPAPI 绑登录用户、文件档靠 0600 的数据密钥、密钥环交给守护进程），
-        // 「已安全保存」这句话必须能落到具体一档。规则与宿主无关，所以这里既断言本机页面此刻的样子，也用同一个
-        // 渲染函数把本机不是的那两档一并断到。
+        // ── Honest disclosure of the key backend ──
+        // The three backend tiers guard against different things (DPAPI binds the logged-in user, the file
+        // vault relies on a 0600 data key, the keyring defers to a daemon), so the claim "safely stored" must
+        // resolve to a concrete tier. The rule is host-independent, so this asserts both what this machine's
+        // page looks like right now and, through the same render function, the two tiers this machine is not.
         Check(shell.Chat.CanStoreSecrets,
             "本机可以保存密钥，鉴权闸门不再拦（Windows 走 DPAPI，Linux 走本机加密文件）");
         Check(settings.SecretBackendLineShown == (shell.Chat.SecretBackend.Kind == SecretStoreKind.EncryptedFile),
@@ -6206,7 +6245,7 @@ public partial class ShellCheckWindow : Window
               && settings.ProviderGroupForId("orcarouter") is { IsLinked: false },
             "移除凭据后该 provider 回到未鉴权（实际 " + CountCredentials(shell.Chat, "orcarouter") + " 份）");
 
-        // ── GitHub Copilot：设备码登录，从清单声明到窗口上的那串代码 ──
+        // ── GitHub Copilot: device-code login, from the manifest declaration to the code shown in the window ──
         //
         // The loopback flow above cannot be run to a landing from a harness: it ends when the wait expires, and
         // the assertion only proves a refusal was reported. A device code is the opposite shape — every request
@@ -6231,7 +6270,8 @@ public partial class ShellCheckWindow : Window
               && freshCopilot.AuthButtonText == HubStrings.Get("Authenticate"),
             "刚采纳的 copilot 分组以未鉴权出现，动作写着「鉴权」");
 
-        // 先在「用户在设备上拒绝了」这一支上走一遍：窗口要建出来，凭据一份都不许留。
+        // Walk the "user denied it on the device" branch first: the window must still be built, and not a
+        // single credential may be left behind.
         var refused = new DeviceCodeProbeHandler(
             """{"error":"access_denied","error_description":"the end user skipped the consent screen"}""");
         settings.UseOAuthHandlerForCheck(refused);
@@ -6241,8 +6281,8 @@ public partial class ShellCheckWindow : Window
         Check(refusedWindow is not null, "设备码登录把授权窗口建了出来（实际 " + (refusedWindow is null ? "没有" : "有") + "）");
         Check(refusedWindow?.CodeForCheck == DeviceCodeProbeHandler.UserCode,
             "窗口上的代码就是服务端返回的那一串（实际「" + refusedWindow?.CodeForCheck + "」）");
-        // 屏上保持服务端原样是为了和浏览器里那一页对得上，复制出去的是去掉分隔符的那一份 —— 粘贴时多一个
-        // '-' 是没人会注意到的那种失败。
+        // Keeping the server's raw form on screen matches the page in the browser; what gets copied out is the
+        // separator-stripped form — one stray '-' on paste is the kind of failure nobody would notice.
         Check(refusedWindow?.CopyTextForCheck == "ABCD1234"
               && refusedWindow?.CodeForCheck == "ABCD-1234",
             "复制的代码不含中间的分隔符，而屏上仍是原样（实际复制「" + refusedWindow?.CopyTextForCheck + "」）");
@@ -6273,7 +6313,8 @@ public partial class ShellCheckWindow : Window
         Check(settings.StatusLineText.StartsWith(HubStrings.Get("AuthOAuthFailed"), StringComparison.Ordinal),
             "被拒绝时状态行说清是没登录成功，而不是停在等待中（实际「" + settings.StatusLineText + "」）");
 
-        // 关掉窗口就是取消。这一支必须在轮询还活着的时候动手，所以流程发起来、泵几下、再关窗收尸。
+        // Closing the window means cancelling. This branch must fire while the polling is still alive, so the
+        // flow is started, the dispatcher pumped a few times, and only then is the window closed and reaped.
         var waiting = new DeviceCodeProbeHandler("""{"error":"authorization_pending"}""");
         settings.UseOAuthHandlerForCheck(waiting);
         var pending = settings.RunDeviceCodeFlowForCheck("github-copilot");
@@ -6289,7 +6330,8 @@ public partial class ShellCheckWindow : Window
               && waiting.Requests.Any(entry => entry.Contains("device_code", StringComparison.Ordinal)),
             "轮询真的开始了，而且带着取码时拿到的 device_code（实际 " + waiting.Requests.Count + " 个请求）");
 
-        // 批准的那一次：同一个流程，服务端这次给了 token，于是凭据与模型清单一起落地。
+        // The approved run: same flow, but this time the server hands back a token, so the credential and the
+        // model list land together.
         var approved = new DeviceCodeProbeHandler(
             """{"access_token":"ghu-copilot-probe","token_type":"bearer","scope":"read:user"}""");
         var catalog = new ModelListProbeHandler(
@@ -6331,8 +6373,9 @@ public partial class ShellCheckWindow : Window
         Check(settings.ProviderGroupForId("github-copilot") is null, "移除后分组从页面消失");
         if (priorCopilot?.Secret is { Length: > 0 } realToken)
         {
-            // 归还这次运行之前真实存在的那次登录。脚本令牌只是断言用的道具，真人那份才是这台机器上唯一
-            // 有价值的凭据——一次自测不该把它弄丢。
+            // Restore the login that really existed before this run. The scripted token is only an assertion
+            // prop; the human's login is the single valuable credential on this machine — a self-check must
+            // not lose it.
             shell.Chat.AddPreset("github-copilot");
             shell.Chat.AddOAuthCredential(
                 "github-copilot", priorCopilot.AccountId, priorCopilot.Scope, realToken);
@@ -6363,7 +6406,7 @@ public partial class ShellCheckWindow : Window
         Check(shell.Chat.DisconnectProvider("deepseek") == false,
             "对未鉴权的 provider 再次断开是空操作，返回 false 而不是假装成功");
 
-        // ── 「有凭据记录、没有密钥」不能让设置页说已鉴权而会话发不出去 ──
+        // ── A "credential record with no key" must not leave the page claiming 已鉴权 while the session cannot send ──
         // The composer offers a provider when it holds a credential; the client factory refuses to build a client
         // unless that credential holds a secret. Two rules with a state between them: a record whose secret is not
         // there — a blank submit in the dialog, or a stored entry that no longer resolves — leaves the row saying
@@ -6452,8 +6495,9 @@ public partial class ShellCheckWindow : Window
         Check(ModelList.Parse(System.Text.Encoding.UTF8.GetBytes(
                 """{"object":"list","data":[{"id":"m","owned_by":"me","permission":[],"extra":{"x":1}}]}""")) is ["m"],
             "只读 data[].id，多余字段不影响解析");
-        // 存档里写着 null 的内置预设，不再把 manifest 声明的窗口抹掉。这条链以前是「所有模型都按 8192 跑」
-        // 的根因：文件里存着 null，载入时不回填清单值，于是每一处 ?? 8192 都落到那个 2023 年的数字上。
+        // A built-in preset storing null in the archive no longer wipes the manifest-declared window. This
+        // chain was the root cause of "every model runs at 8192": the file stored null, load never backfilled
+        // the manifest value, and every `?? 8192` fell through to that 2023-era number.
         var presetProvider = shell.Chat.Providers.FirstOrDefault(
             candidate => candidate.Id == "orcarouter");
         Check(presetProvider?.MaxContextTokens == 128000,
@@ -7264,17 +7308,20 @@ public partial class ShellCheckWindow : Window
         var button = NamedDescendant<Button>(page, "InstallPwshButton");
         Check(card is not null && line is not null && button is not null,
             "工具链页底部有主机 PowerShell 卡（状态行 + 一个动作按钮），不是「尚未支持」的说明文字");
-        // 上一条已经把"控件不见了"记成 FAIL；这里停手只是为了不再拿 null 往下崩，把后面的断言留成没跑而不是误报。
+        // The cell above already recorded the missing controls as a FAIL; stopping here only avoids crashing
+        // on a null further down — later assertions stay un-run rather than mis-reported.
         if (card is null || line is null || button is null)
         {
             return;
         }
 
-        // 这张卡必须在滚动区之外 —— 这是它存在的理由，也是最容易被一次布局改动悄悄毁掉的性质。
+        // This card must sit outside the scroll area — that is its reason to exist, and the property a layout
+        // edit can most quietly destroy.
         Check(!card.GetVisualAncestors().Any(a => a is ScrollViewer),
             "PowerShell 卡不在 ScrollViewer 里（滚动区里的前置条件会被滚得看不见）");
 
-        // 加一行卡就意味着改 RowDefinitions。老卡片被挤掉或被裁掉，是这次改动最现实的回归。
+        // Adding a card row means editing RowDefinitions. An old card squeezed out or clipped is the most
+        // realistic regression from that change.
         Check(card.Parent is Grid { RowDefinitions.Count: 5 },
             "工具链页的根网格现在是 5 行（实际 " + (card.Parent as Grid)?.RowDefinitions.Count + "）");
         Check(Grid.GetRow(card) == 3, "PowerShell 卡占第 3 行（实际 " + Grid.GetRow(card) + "）");
@@ -7283,8 +7330,9 @@ public partial class ShellCheckWindow : Window
         Check(setup is not null && setupCard is not null && Grid.GetRow(setupCard) == 4,
             "「运行引擎 setup.ps1」那条卡被挤到第 4 行，仍然在页面上（没被新卡顶掉）");
 
-        // 四种状态逐个注入：文案、按钮可见性必须与 HostShellStatus 的判定一致。
-        // 少写一个分支的 enum 只会在这里暴露 —— 真机上通常只有一种状态是可到达的。
+        // Inject each of the four states in turn: the copy and the button's visibility must agree with
+        // HostShellStatus's verdict. An enum switch missing a branch only ever shows up here — on a real
+        // machine usually just one state is reachable.
         foreach (var (state, executable, version) in new (HostShellState State, string? Path, string? Version)[]
                  {
                      (HostShellState.Ready, "/usr/local/bin/pwsh", "7.6.6"),
@@ -7309,13 +7357,15 @@ public partial class ShellCheckWindow : Window
                 $"「{state}」时按钮{(state == HostShellState.Ready ? "隐藏（已就绪不该再推销安装）" : "可见")}（实际 IsVisible={button.IsVisible}）");
         }
 
-        // 交给终端之后，同一个按钮换身份：此刻 Hub 手上没有可取消的东西，能做的只有重新探测。
+        // After the hand-off to the terminal the same button changes identity: Hub holds nothing cancellable
+        // at that point, so all it can offer is a re-probe.
         page.SetHostShellForCheck(new HostShellStatus(HostShellState.Missing), awaitingTerminal: true);
         Dispatcher.UIThread.RunJobs();
         Check(Equals(button!.Content, HubTexts.Get("Verify", HubStrings.Language)),
             "终端转交期间按钮变成「重新检测」，复用已有文案键而不是再造一个（实际「" + button.Content + "」）");
-        // `more` 在这个壳里是一句承诺：点了会先弹确认框。重新检测不弹，所以承诺必须收回去 ——
-        // 这类"图标还在但行为变了"的错位，只有把类和文案放在一起断言才拦得住。
+        // `more` is a promise in this shell: clicking it pops a confirmation first. Re-check does not pop one,
+        // so the promise must be withdrawn — this "icon still there but behavior changed" mismatch can only be
+        // caught by asserting the class and the label together.
         Check(!button!.Classes.Contains("more"),
             "变成「重新检测」时摘掉 more 类（它还弹确认框的话就是在撒谎）");
 
@@ -7557,8 +7607,9 @@ public partial class ShellCheckWindow : Window
             + WindowsToastInterop.ToastNotificationManagerStaticsInterface + " / "
             + WindowsToastInterop.ToastNotifierInterface + "）");
 
-        // 负控：五个 IID 两两不同，且都不等于任何"看起来像"的手滑值 —— 记忆里的
-        // IToastNotificationManagerStatics 是 50F103EE-…（真值是 50AC103F-…），只对前两位足以骗过眼睛。
+        // Negative control: the five IIDs are pairwise distinct and none equals any plausible
+        // near-miss typo — the remembered IToastNotificationManagerStatics was 50F103EE-… (true value
+        // 50AC103F-…), enough to fool the eye when only the leading digits are glanced at.
         Check(WindowsToastInterop.XmlDocumentInterface != WindowsToastInterop.XmlDocumentIoInterface
               && WindowsToastInterop.ToastNotifierInterface != WindowsToastInterop.ToastNotificationFactoryInterface
               && WindowsToastInterop.ToastNotificationManagerStaticsInterface
@@ -7744,9 +7795,10 @@ public partial class ShellCheckWindow : Window
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        // 断言的是"窗口带上了图标"，不是"图标画对了"：Linux 的任务栏与 alt-Tab 读 _NET_WM_ICON，
-        // 而它只在 Window.Icon 有值时才写（Avalonia 的 X11 实现在没图标时是 XDeleteProperty）。
-        // 像素对不对不在这里证明 —— 桌面入口与图标主题那条链路由 --check-linux-integration 负责。
+        // What is asserted is "the window carries an icon", not "the icon paints right": Linux taskbars and
+        // alt-Tab read _NET_WM_ICON, which is only written when Window.Icon has a value (Avalonia's X11 backend
+        // calls XDeleteProperty when there is none). Pixel correctness is not proven here — the desktop-entry
+        // and icon-theme chain is covered by --check-linux-integration.
         Check(shell.Icon is not null, "外壳窗口带着应用图标（Linux 任务栏与 alt-Tab 依赖 _NET_WM_ICON）");
 
         // Page keys are deliberately separate from **copy keys**: the engines page's page key is Engines, while its navigation copy key is Installs

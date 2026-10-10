@@ -2,19 +2,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="AxmolHub.FoundationCheckWindow"
         Width="560" Height="320"
-        Title="Axmol Hub — P4 基础件自检">
+        Title="Axmol Hub — P4 foundation checks">
 
   <!-- Same role as the control gallery: a development artifact, not part of shipping UI. It does two
        things — runs the foundation assertions, and gets actually screenshotted once (the "screenshot is
        non-blank" criterion must be verified against a real image, otherwise the criterion itself has no evidence). -->
   <StackPanel Margin="28" Spacing="10">
-    <TextBlock FontSize="18" FontWeight="SemiBold" Text="P4 基础件自检" />
+    <TextBlock FontSize="18" FontWeight="SemiBold" Text="P4 foundation checks" />
     <TextBlock Classes="muted"
-               Text="替 8 处 MessageBox 的 HubDialog、异步化的 StorageProvider 包装、以及带非空白判据的 --smoke。这三个是 P5 逐窗口迁移要反复用的东西，所以先单独验一遍。" />
+               Text="HubDialog replacing 8 MessageBox calls, the async StorageProvider wrapper, and --smoke with its non-blank criterion. P5 reuses all three while migrating window by window, so they are verified on their own first." />
     <Border Classes="card" Name="ProbeCard">
       <StackPanel Spacing="6">
         <TextBlock Text="HubDialog · Pickers · SmokeCapture" />
-        <TextBlock Classes="muted" Text="断言结果写到 --verify-foundation 指定的报告路径，并按失败数决定退出码。" />
+        <TextBlock Classes="muted" Text="Assertion results are written to the report path given to --verify-foundation, and the exit code is the failure count." />
       </StackPanel>
     </Border>
   </StackPanel>

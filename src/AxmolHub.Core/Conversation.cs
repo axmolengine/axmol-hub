@@ -54,7 +54,7 @@ public static class ChatReasoningEfforts
 ///
 /// Two values and a manual default, because "auto" spending money nobody agreed to spend is the failure mode of
 /// every assistant that routed silently. The word is also unambiguous now that the neutral reasoning tier is
-/// called <see cref="ChatReasoningEfforts.Default"/>: in this app 「自动」 means this and nothing else — the
+/// called <see cref="ChatReasoningEfforts.Default"/>: in this app "Auto" means this and nothing else — the
 /// gateway's model id <c>orcarouter/auto</c> is a model name, not a setting.
 /// </summary>
 public static class ChatRouting
@@ -105,7 +105,7 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// reply: the answer is what the person asked for, and a wall of chain-of-thought beneath every message is a
     /// different product decision than a wire field a gateway requires. A turn that <i>only</i> thought (reasoning
     /// present, <see cref="Text"/> empty) is still an activity turn, so the transcript folds it into the collapsed
-    /// "已思考 Ns" group with the tool calls around it rather than printing it inline — reachable on purpose, never
+    /// "Thought for Ns" group with the tool calls around it rather than printing it inline — reachable on purpose, never
     /// in the way by default.</summary>
     public string? Reasoning { get; init; }
 

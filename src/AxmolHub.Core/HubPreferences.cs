@@ -5,7 +5,7 @@ public sealed class HubPreferences
     /// <summary>Cold-start language: the value used when there is no settings file, defined in a single place by <see cref="HubTexts.DefaultLanguage"/> (English).</summary>
     public string Language { get; set; } = HubTexts.DefaultLanguage;
 
-    /// <summary>界面主题：跟随系统 / 浅色 / 深色，取值见 <see cref="HubTheme"/>。</summary>
+    /// <summary>UI theme: follow system / light / dark; see <see cref="HubTheme"/> for the values.</summary>
     public string Theme { get; set; } = HubTheme.DefaultTheme;
 
     public string? DataRoot { get; set; }
@@ -42,7 +42,7 @@ public sealed class HubPreferences
 
     /// <summary>
     /// Tools the user told Hub to stop asking about, for <b>every</b> session: the app-wide half of the grant a
-    /// card's 「总是允许」 writes, kept beside the default mode because both are answers to "how much do I let this
+    /// card's "Always allow" writes, kept beside the default mode because both are answers to "how much do I let this
     /// assistant do without me". A session still has its own shorter list
     /// (<see cref="Conversation.AutoApprovedTools"/>); the gate reads the union. Names are the wire spelling
     /// (<c>run_command</c>), and a grant buys nothing on the tier that reaches past the sandbox — see
@@ -50,26 +50,27 @@ public sealed class HubPreferences
     /// </summary>
     public List<string> TrustedTools { get; set; } = [];
 
-    /// <summary>左侧导航/会话侧栏展开时的宽度（px），范围 240–420；由侧栏拖拽手柄调整。</summary>
+    /// <summary>Expanded width of the left navigation/session sidebar in px, range 240–420; adjusted by the sidebar's drag handle.</summary>
     public double SidebarWidth { get; set; } = 300;
 
-    /// <summary>侧栏是否处于收起状态；由 ☰ 按钮或拖拽到阈值以下切换。</summary>
+    /// <summary>Whether the sidebar is collapsed; toggled by the ☰ button or by dragging it below the threshold.</summary>
     public bool SidebarCollapsed { get; set; }
 
-    /// <summary>右侧审阅面板展开时的宽度（px），范围 300–520；由面板左缘的拖拽手柄调整，使用时再夹取，
-    /// 所以设置文件里一个越界的旧值只会读到被夹过的结果。</summary>
+    /// <summary>Expanded width of the right-hand review panel in px, range 300–520; adjusted by the drag handle on the panel's left edge and
+    /// clamped again when it is read, so an out-of-range old value in the settings file only ever yields a clamped result.</summary>
     public double InspectorWidth { get; set; } = 360;
 
-    /// <summary>右侧审阅面板是否处于打开状态。只存"打开与否"，不存看的是哪一页——看哪一页是瞬时决定，
-    /// 存下来反而会在会话没有计划时打开一个空标签。</summary>
+    /// <summary>Whether the right-hand review panel is open. Only "open or not" is stored, never which tab is showing — which tab is a momentary
+    /// decision, and persisting it would open an empty tab for a session that has no plan.</summary>
     public bool InspectorOpen { get; set; }
 
     /// <summary>
-    /// 会话侧栏各分组展开还是折起，键取自 <see cref="SessionGroupKey"/>（<c>ws:&lt;目录&gt;</c> / <c>workspaces</c> /
-    /// <c>recent</c> / <c>archived</c>），值为<b>用户的明确选择</b>。字典而不是布尔列表，是因为默认并不统一：工作区
-    /// 和「对话」默认展开，已归档默认折起，而「折起的那条我打开了」和「这条我根本没动过」必须是两回事。文案改了
-    /// 键不改——<c>recent</c> 同时是用户记下的折叠偏好，换字符串就是把那份偏好变成孤儿。分组是会话派生出来的，今天有
-    /// 明天可能就没了，所以认不出的键只是渲染不到，不必清理——留着也不会挡路。
+    /// Whether each group in the session sidebar is expanded or collapsed. Keys come from <see cref="SessionGroupKey"/> (<c>ws:&lt;directory&gt;</c> / <c>workspaces</c> /
+    /// <c>recent</c> / <c>archived</c>); the value is <b>the user's explicit choice</b>. A dictionary rather than a list of booleans because the
+    /// defaults are not uniform: workspaces and "Chats" start expanded, "Archived" starts collapsed, and "I opened this collapsed one" has to stay
+    /// distinguishable from "I never touched this one". The copy changes but the keys do not — <c>recent</c> doubles as the stored collapse
+    /// preference, so renaming the string would orphan that preference. Groups are derived from sessions and may exist today and be gone tomorrow,
+    /// so an unrecognised key simply never renders; no cleanup is needed and leaving it costs nothing.
     /// </summary>
     public Dictionary<string, bool> SidebarGroupExpanded { get; set; } = [];
 

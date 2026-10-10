@@ -21,17 +21,19 @@ namespace AxmolHub;
 /// <c>IID_ITaskbarList3</c> once did.</para></summary>
 internal static class WindowsToastInterop
 {
-    // 各 ABI 接口的 IID。来源是 tmp/winrt-probe 反射自投影程序集的实测值（CsWinRT 的 Type.GUID 就是
-    // WinRT 的 IID），不是记忆值 —— 记忆里的 IToastNotificationManagerStatics 是错的。
+    // The IIDs of the ABI interfaces. Taken from measured values reflected out of the projection
+    // assemblies by tmp/winrt-probe (CsWinRT's Type.GUID is exactly the WinRT IID), not from memory —
+    // the remembered IToastNotificationManagerStatics was wrong.
     internal static readonly Guid XmlDocumentInterface = new("f7f3a506-1e87-42d6-bcfb-b8c809fa5494");
     internal static readonly Guid XmlDocumentIoInterface = new("6cd0e74e-ee65-4489-9ebf-ca43e87ba637");
     internal static readonly Guid ToastNotificationFactoryInterface = new("04124b20-82c6-4229-b109-fd9ed4662b53");
     internal static readonly Guid ToastNotificationManagerStaticsInterface = new("50ac103f-d235-4598-bbef-98fe4d1a3ad4");
     internal static readonly Guid ToastNotifierInterface = new("75927b93-03f3-41ec-91d3-6e5bac1b38e7");
 
-    /// <summary>WinRT 接口的前 6 槽是 IUnknown（0 QueryInterface / 1 AddRef / 2 Release）与 IInspectable
-    /// （3 GetIids / 4 GetRuntimeClassName / 5 GetTrustLevel），业务方法从槽 6 起，顺序即 IDL 声明顺序。
-    /// 槽号具名而不是写裸数字：badge 那边一个写错的字面量曾让红点在整个会话里静默失效。</summary>
+    /// <summary>The first 6 slots of every WinRT interface are IUnknown (0 QueryInterface / 1 AddRef /
+    /// 2 Release) plus IInspectable (3 GetIids / 4 GetRuntimeClassName / 5 GetTrustLevel); business methods
+    /// start at slot 6 in IDL declaration order. Slots are named constants rather than bare numbers: one
+    /// mistyped literal on the badge side once left the red dot silently broken for an entire session.</summary>
     private const int QueryInterfaceSlot = 0;
     private const int LoadXmlSlot = 6;
     private const int CreateToastNotificationSlot = 6;
@@ -67,8 +69,9 @@ internal static class WindowsToastInterop
             toastClass = HString.Create(ToastNotificationClass);
             managerClass = HString.Create(ToastNotificationManagerClass);
 
-            // RoActivateInstance 交回的是 IInspectable*，不是默认接口：LoadXml 要 IXmlDocumentIO、
-            // 工厂要 IXmlDocument，两个都得自己 QI 出来，否则是拿 IInspectable 的 vtable 越界调用。
+            // RoActivateInstance hands back an IInspectable*, not the default interface: LoadXml needs
+            // IXmlDocumentIO and the factory needs IXmlDocument, so both must be QI'd out explicitly —
+            // otherwise we would index past IInspectable's vtable.
             step = "RoActivateInstance(XmlDocument)";
             hr = RoActivateInstance(xmlClass.Value, out xmlInspectable);
             if (hr != 0) return false;
@@ -214,7 +217,7 @@ internal static class WindowsToastInterop
         if (instance != IntPtr.Zero) Marshal.Release(instance);
     }
 
-    /// <summary>槽 0，每个接口都有。</summary>
+    /// <summary>Slot 0, present on every interface.</summary>
     private static int QueryInterface(IntPtr instance, Guid interfaceId, out IntPtr target)
     {
         var id = interfaceId;
@@ -242,9 +245,11 @@ internal static class WindowsToastInterop
     private static IntPtr Slot(IntPtr instance, int slot)
         => Marshal.ReadIntPtr(Marshal.ReadIntPtr(instance), slot * IntPtr.Size);
 
-    /// <summary>进入 WinRT 单元，并只在自己真的初始化了它时才退出。托管线程多半已经被 CLR 初始化过
-    /// （实测 <c>RoInitialize(MTA)</c> 返回 <c>S_FALSE</c>），那时调用 <c>RoUninitialize</c> 会把别人的单元拆掉；
-    /// UI 线程是 STA，则得到 <c>RPC_E_CHANGED_MODE</c> —— 两种都按"已初始化、继续用"处理。</summary>
+    /// <summary>Enters the WinRT apartment and only leaves it if we genuinely initialized it. A managed
+    /// thread is usually already initialized by the CLR (measured: <c>RoInitialize(MTA)</c> returns
+    /// <c>S_FALSE</c>), and calling <c>RoUninitialize</c> then would tear down somebody else's apartment;
+    /// the UI thread is STA, which yields <c>RPC_E_CHANGED_MODE</c> — both cases are treated as
+    /// "already initialized, keep going".</summary>
     private readonly struct RoApartment : IDisposable
     {
         private readonly bool _owned;

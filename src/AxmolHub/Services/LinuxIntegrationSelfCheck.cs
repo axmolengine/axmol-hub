@@ -108,7 +108,7 @@ internal static class LinuxIntegrationSelfCheck
 
     private static string? Get(Dictionary<string, string>? keys, string name) => keys is not null && keys.TryGetValue(name, out var value) ? value : null;
 
-    // Exec 的形态是 "<exe>" %u：先剥掉尾部的参数，再要求整体被引号包住。
+    // Exec has the shape "<exe>" %u: first strip the trailing arguments, then require the rest to be fully quoted.
     private static string? UnquotedExecutable(string? value)
     {
         if (value is null) return null;

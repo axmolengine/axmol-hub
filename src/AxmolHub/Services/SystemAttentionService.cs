@@ -29,9 +29,11 @@ internal readonly record struct AttentionVisibility(bool WindowVisible, bool Ass
 internal sealed class SystemAttentionService : IDisposable
 {
     /// <summary>
-    /// Windows 的通知身份：系统按它归并 toast、并存放用户对本应用的推送授权。它跟着程序集改名
-    /// （AxmolHub.App → AxmolHub）走了一次，代价是 Windows 把 Hub 当新发送者，用户已有的通知
-    /// 开关与历史归零一次；after-install 钩子会重新给 Axmol Hub.lnk 打戳，所以投递本身不断。
+    /// The Windows notification identity: the system groups toasts by it and stores the user's
+    /// per-application push consent here. It changed once with the assembly rename
+    /// (AxmolHub.App → AxmolHub), at the cost of Windows treating Hub as a new sender and zeroing users'
+    /// existing notification toggles and history once; the after-install hook re-stamps Axmol Hub.lnk,
+    /// so delivery itself never breaks.
     /// </summary>
     internal const string WindowsAppUserModelId = "AxmolHub";
     private readonly CancellationTokenSource _shutdown = new();

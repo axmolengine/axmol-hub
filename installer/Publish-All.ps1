@@ -1,11 +1,11 @@
-# 把一个 tag 下所有平台的产物合并上传到同一个 GitHub Release。
-# 与 Publish.ps1 -Stage Upload（单 runtime）互补：本脚本是 dist 阶段的编排层，
-# 从 release-build 拉下来的产物目录里，按平台逐一裁剪 feed 并收集上传清单，
-# 最后 `gh release create/upload` 一次完成，再回读资产清单校验。
-# 用法（CI 里由 dist.yml 调用）：
+# Merge and upload all platforms' artifacts under one tag into the same GitHub Release.
+# Complementary to Publish.ps1 -Stage Upload (single runtime): this script is the dist stage's orchestration layer —
+# from the artifact directory pulled off release-build, it trims each platform's feed one by one and collects the upload list,
+# then finishes with a single `gh release create/upload` pass, and reads the asset list back to verify.
+# Usage (invoked by dist.yml in CI):
 #   ./installer/Publish-All.ps1 -Version 0.2.1 -ArtifactDir ./downloaded `
 #     -TargetCommit <sha> -NotesFile ./release-notes.md
-# 其中 ArtifactDir 下每个平台一个子目录，文件名与 build.yml 的 upload 一致。
+# Each platform has its own subdirectory under ArtifactDir, with file names matching build.yml's upload.
 param(
     [string]$Version,
     [string]$RepoUrl = 'https://github.com/axmolengine/axmol-hub',
@@ -40,8 +40,8 @@ $taskTag = "v$Version"
 $taskIsPrerelease = $Prerelease -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskSlug = ($RepoUrl -replace '^https?://[^/]+/', '') -replace '\.git$', ''
 
-# 平台 → (channel=完整 RID, 安装包后缀, 产物目录)。channel 用 RID 是为了让 feed 名
-# releases.<rid>.json 天然唯一（osx-arm64/osx-x64 不再撞名），且等于客户端查找的 releases.<channel>.json。
+# Platform -> (channel=full RID, installer suffix, artifact directory). channel uses the RID so the feed name
+# releases.<rid>.json is naturally unique (osx-arm64/osx-x64 no longer collide) and equals the releases.<channel>.json the client looks up.
 $taskPlatforms = @(
     @{ Channel = 'win-x64';    Suffix = '.exe';      Dir = 'win-x64' },
     @{ Channel = 'osx-arm64';  Suffix = '.pkg';      Dir = 'osx-arm64' },
@@ -57,7 +57,7 @@ foreach ($taskPlat in $taskPlatforms) {
         continue
     }
 
-    # 安装包 + 摘要：一个 tag 下同 channel 的多个架构（osx-arm64/osx-x64）文件名带完整 runtime，不冲突。
+    # Installer + checksum: same-channel multi-arch builds under one tag (osx-arm64/osx-x64) don't clash, their file names carry the full runtime.
     $taskSetup = Get-HubAssetName -AssetPrefix $taskAssetPrefix -Version $Version -Runtime $taskPlat.Dir -Extension $taskPlat.Suffix -ReleaseAssetNames
     $taskSetupPath = Join-Path $taskDir $taskSetup
     $taskFeed = Join-Path $taskDir "releases.$($taskPlat.Channel).json"
@@ -69,7 +69,7 @@ foreach ($taskPlat in $taskPlatforms) {
         throw "Missing release feed $taskFeed for $($taskPlat.Dir)."
     }
 
-    # 裁剪 feed 只留本版条目（理由见 Publish.ps1 -Stage Upload 的同一段注释）。
+    # Trim the feed to this version's entries only (rationale: see the matching comment in Publish.ps1 -Stage Upload).
     $taskParsed = Get-Content -Raw -LiteralPath $taskFeed | ConvertFrom-Json
     $taskKept = @($taskParsed.Assets | Where-Object { $_.Version -eq $Version })
     if (-not $taskKept) { throw "The release feed for $($taskPlat.Dir) has no entry for version $Version." }
@@ -77,12 +77,12 @@ foreach ($taskPlat in $taskPlatforms) {
     $taskUpload += $taskSetupPath
     $taskUpload += ($taskSetupPath + '.sha256')
 
-    # vpk 的 nupkg 名 = {packId}-{version}[-{channel}]-{full|delta}.nupkg；channel 段**仅当
-    # os==Windows 且 channel 恰等于平台默认值 "win" 时才省略**（Velopack DefaultName.GetSuggestedReleaseName）。
-    # 我们用 channel=rid（win-x64/osx-arm64/…），它不是 "win"，故**四个平台（含 win）都带 -<rid>- 段**。
-    # 按带后缀名找，找不到再退回无后缀名兜底。
-    # 改名目的：与安装包统一成 axmol-hub-<ver>-<rid>-<full|delta>.nupkg（前缀见 $taskAssetPrefix）。
-    # 改完必须同步修 feed 里引用的 FileName/URL，否则客户端按 feed 找 nupkg 会 404。
+    # vpk's nupkg name = {packId}-{version}[-{channel}]-{full|delta}.nupkg; the channel segment is omitted **only when
+    # os==Windows and channel is exactly the platform default "win"** (Velopack DefaultName.GetSuggestedReleaseName).
+    # We use channel=rid (win-x64/osx-arm64/...), which is not "win", so **all four platforms (win included) carry a -<rid>- segment**.
+    # Try the suffixed name first; if not found, fall back to the unsuffixed name.
+    # Renaming purpose: unify with the installer as axmol-hub-<ver>-<rid>-<full|delta>.nupkg (prefix: see $taskAssetPrefix).
+    # After renaming, the FileName/URL referenced in the feed must be fixed in sync, otherwise the client 404s looking up the nupkg via the feed.
     foreach ($taskNupkg in @('full', 'delta')) {
         $taskCandidates = @(
             (Join-Path $taskDir "$taskPackId-$Version-$($taskPlat.Channel)-$taskNupkg.nupkg"),
@@ -104,14 +104,14 @@ foreach ($taskPlat in $taskPlatforms) {
         }
     }
 
-    # 写回修好的 feed（feed 名 = releases.<channel>.json = releases.<rid>.json），随安装包一起上传。
+    # Write the fixed feed back (feed name = releases.<channel>.json = releases.<rid>.json), uploaded together with the installer.
     Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
     $taskUpload += $taskFeed
 }
 
 if (-not $taskUpload) { throw 'No assets collected for upload; is ArtifactDir populated?' }
 
-# 上传前逐件确认文件存在。
+# Confirm every file exists before uploading.
 foreach ($taskFile in $taskUpload) {
     if (-not (Test-Path -LiteralPath $taskFile)) { throw "Missing release asset: $taskFile" }
 }
@@ -145,7 +145,7 @@ Set-GitHubReleasePrerelease -RepoSlug $taskSlug -Tag $taskTag -Prerelease $taskI
 & gh release upload $taskTag --repo $taskSlug --clobber $taskUpload
 if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with $LASTEXITCODE." }
 
-# 回读资产清单，确认每一件都真的在（这是唯一能证明更新源可用的检查）。
+# Read the asset list back and confirm every item really landed (the only check that proves the update source is usable).
 $taskAssets = @((& gh release view $taskTag --repo $taskSlug --json assets | ConvertFrom-Json).assets | ForEach-Object { $_.name })
 foreach ($taskFile in $taskUpload) {
     $taskName = [System.IO.Path]::GetFileName($taskFile)

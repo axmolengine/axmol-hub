@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
-# 版本单一来源 = 仓库根的 Directory.Build.props，与 Build.ps1 同源。
+# Single source of the version: Directory.Build.props at the repo root, same as Build.ps1.
 if (-not $Version) {
     [xml]$taskProduct = Get-Content -LiteralPath "$taskRoot/Directory.Build.props"
     $Version = @($taskProduct.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
@@ -15,14 +15,14 @@ if (-not $Version) { throw 'Version was not supplied and could not be read from 
 $taskParts = $Version.Split('.')
 $taskUpgraded = '{0}.{1}.{2}' -f $taskParts[0], $taskParts[1], ([int]$taskParts[2] + 1)
 
-# 验收包一律用一次性身份与一次性输出目录：releases.<channel>.json 是单一索引，
-# 用另一个 packId 重新打包会把它覆盖成验收包内容。
+# Validation packages always use a throwaway identity and a throwaway output directory:
+# releases.<channel>.json is a single index, and repacking under another packId would overwrite it with the validation content.
 $taskRun = [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $taskWork = Join-Path $taskRoot "artifacts/install-checks/$taskRun"
 New-Item -ItemType Directory -Force -Path $taskWork | Out-Null
 $taskPackId = $taskManifest.packId
-# 标题与 installer/Build.ps1 的 --packTitle 默认值同源（'Axmol Hub'）：
-# 它同时决定安装器版本资源（ProductName/FileDescription）、快捷方式名和安装根启动器 stub 名。
+# The title shares its source with the --packTitle default in installer/Build.ps1 ('Axmol Hub'):
+# it simultaneously drives the installer version resources (ProductName/FileDescription), the shortcut names, and the install-root launcher stub name.
 $taskTitle = 'Axmol Hub'
 if ($Isolated) {
     $taskPackId = $taskManifest.packId + '.Validation.' + $taskRun
@@ -32,9 +32,9 @@ $taskInstall = Join-Path $taskWork 'Hub 中文'
 $taskData = Join-Path $taskWork 'user data/HubData'
 $taskSettings = Join-Path $taskWork 'user data/hub-settings.json'
 $taskStub = Join-Path $taskInstall ($taskTitle + '.exe')
-# Windows 包内主程序名，与 Build.ps1 里 --mainExe 的 win 分支同值；改名时两处一起动。
+# Main executable name inside the Windows package; same value as the win branch of --mainExe in Build.ps1; rename both places together.
 $taskMainExe = 'AxmolHub.exe'
-# vpk 按 --packTitle 命名快捷方式（桌面 + 开始菜单各一个，同名）。
+# vpk names the shortcuts after --packTitle (one on the desktop + one in the Start menu, same name).
 $taskShortcutName = $taskTitle + '.lnk'
 $taskStartMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) $taskShortcutName
 $taskDesktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $taskShortcutName
@@ -76,8 +76,8 @@ try {
         # installer executable in this version's isolated output directory.
         $taskSetup = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.exe')
         if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput, found $($taskSetup.Count)." }
-        # 安装器（Setup）的版本资源必须显示品牌名：vpk 从 --packTitle 写入 ProductName / FileDescription。
-        # 本地调试名固定为 AxmolHub.exe，但属性页里必须是没有去掉空格的 'Axmol Hub'。
+        # The installer (Setup) version resources must show the brand name: vpk writes ProductName / FileDescription from --packTitle.
+        # The local debug name is fixed as AxmolHub.exe, but the properties page must read 'Axmol Hub' with the space kept.
         $taskSetupInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($taskSetup[0].FullName)
         if ($taskSetupInfo.ProductName -ne $taskTitle) {
             throw "Installer ProductName mismatch: $($taskSetupInfo.ProductName)"
@@ -88,12 +88,12 @@ try {
         $taskReleases[$taskVersion] = $taskSetup[0].FullName
     }
 
-    # 1. 静默安装（Velopack 的 Setup.exe 是一键安装，没有向导，--installto 覆盖安装目录）。
+    # 1. Silent install (Velopack's Setup.exe is one-click, no wizard; --installto overrides the install directory).
     $taskInstallProcess = Start-Process -FilePath $taskReleases[$Version] -ArgumentList @('-s', '-t', (Quote $taskInstall)) -WindowStyle Hidden -Wait -PassThru
     if ($taskInstallProcess.ExitCode -ne 0) { throw "Install failed: $($taskInstallProcess.ExitCode)" }
     $taskInstalled = $true
 
-    # 2. 安装载荷完整：Velopack 把应用放在 current\ 下，外层是稳定路径的启动 stub。
+    # 2. Installed payload is complete: Velopack puts the app under current\, the outer layer is the stable-path launch stub.
     $taskCurrent = Join-Path $taskInstall 'current'
     foreach ($taskFile in @($taskMainExe, 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/recipe-manifest.json', 'manifests/android-gradle-verification.xml')) {
@@ -103,7 +103,7 @@ try {
     if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
     $taskMuiCachePath = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
     $taskMuiCacheInstalledEntry = Join-Path $taskCurrent "$taskMainExe.FriendlyAppName"
-    # 安装根下的稳定启动器现在是 'Axmol Hub.exe'；'AxmolHub.exe' 是 ≤0.8.7 的旧名。两者都要清。
+    # The stable launcher under the install root is now 'Axmol Hub.exe'; 'AxmolHub.exe' is the name from 0.8.7 and earlier. Both must be cleaned.
     $taskMuiCacheStableEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
     $taskMuiCacheLegacyEntry = Join-Path $taskInstall 'AxmolHub.exe.FriendlyAppName'
     $taskMuiCacheSameDirectoryOtherAppEntry = Join-Path $taskCurrent 'OtherApp.exe.FriendlyAppName'
@@ -155,7 +155,7 @@ try {
         Remove-ItemProperty -LiteralPath $taskMuiCachePath -Name $taskMuiCacheOtherEntry -ErrorAction SilentlyContinue
     }
     if (-not (Test-Path -LiteralPath $taskStub)) { throw 'Missing install-directory stub executable.' }
-    # 安装后桌面与开始菜单都应有品牌化快捷方式（vpk 按 --packTitle 命名，名里保留空格）。
+    # After install, both the desktop and the Start menu must have the branded shortcut (vpk names it after --packTitle, space kept in the name).
     if (-not (Test-Path -LiteralPath $taskStartMenuShortcut)) { throw "Install did not create the Start menu shortcut: $taskShortcutName" }
     if (-not (Test-Path -LiteralPath $taskDesktopShortcut)) { throw "Install did not create the desktop shortcut: $taskShortcutName" }
     $taskProtocolCommand = (Get-Item -LiteralPath (Join-Path $taskProtocolRegistryPath 'shell\open\command')).GetValue('')
@@ -168,12 +168,12 @@ try {
         throw "Main executable ProductName mismatch: $($taskMainVersion.ProductName)"
     }
 
-    # 3. 自包含版能启动：用 stub 启动，且数据根与设置都指向验收工作区。
+    # 3. The self-contained build starts: launch via the stub, with data root and settings both pointed at the validation workspace.
     $taskImage = Join-Path $taskWork 'installed-hub.png'
     $taskSmoke = Start-Process -FilePath $taskStub -ArgumentList @('--data-root', (Quote $taskData), '--preferences', (Quote $taskSettings), '--smoke', (Quote $taskImage)) -WindowStyle Hidden -Wait -PassThru
     if ($taskSmoke.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $taskImage)) { throw 'Installed self-contained Hub did not start.' }
 
-    # 4. 升级：用户数据必须留在安装目录之外，因为 Velopack 会整体替换 current\。
+    # 4. Upgrade: user data must stay outside the install directory, because Velopack replaces current\ wholesale.
     Set-Content -LiteralPath $taskSettings -Encoding UTF8 -Value '{"Language":"en-US"}'
     New-Item -ItemType Directory -Force -Path $taskData | Out-Null
     Set-Content -LiteralPath (Join-Path $taskData 'keep-user-data.txt') -Value 'preserve'
@@ -184,12 +184,12 @@ try {
     if ((Get-Content -Raw -LiteralPath $taskSettings | ConvertFrom-Json).Language -ne 'en-US') { throw 'Upgrade overwrote user settings.' }
     if (-not (Test-Path -LiteralPath (Join-Path $taskData 'keep-user-data.txt'))) { throw 'Upgrade removed user data.' }
 
-    # 5. 卸载：安装载荷与注册项必须消失。
+    # 5. Uninstall: the installed payload and the registrations must be gone.
     $taskUninstall = Start-Process -FilePath (Join-Path $taskInstall 'Update.exe') -ArgumentList @('uninstall', '-s') -WindowStyle Hidden -Wait -PassThru
     if ($taskUninstall.ExitCode -ne 0) { throw "Uninstall failed: $($taskUninstall.ExitCode)" }
     $taskInstalled = $false
 
-    # Velopack 无法删除正在运行的 Update.exe 自身，目录由一条延迟的 rmdir 收尾，因此轮询。
+    # Velopack cannot delete the running Update.exe itself; the directory is finished off by a delayed rmdir, so poll.
     $taskDeadline = (Get-Date).AddSeconds(30)
     while ((Test-Path -LiteralPath $taskCurrent) -and (Get-Date) -lt $taskDeadline) { Start-Sleep -Milliseconds 500 }
     if (Test-Path -LiteralPath $taskCurrent) { throw 'Uninstall left the application payload in place.' }
@@ -200,7 +200,7 @@ try {
     if (Test-Path -LiteralPath $taskProtocolRegistryPath) { throw 'Uninstall left the axmolhub URI registration in place.' }
     $taskResidual = Test-Path -LiteralPath $taskInstall
 
-    # 6. 卸载必须保留用户数据与设置（引擎与工具链是 GB 级的，不能随卸载丢掉）。
+    # 6. Uninstall must preserve user data and settings (engines and toolchains are GB-scale and must not go away with the uninstall).
     if (-not (Test-Path -LiteralPath (Join-Path $taskData 'keep-user-data.txt'))) { throw 'Uninstall removed user data.' }
     if (-not (Test-Path -LiteralPath $taskSettings)) { throw 'Uninstall removed user settings.' }
 

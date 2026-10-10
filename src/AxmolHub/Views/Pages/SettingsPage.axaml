@@ -132,22 +132,28 @@
             <ComboBoxItem Tag="full" />
           </ComboBox>
 
-          <!-- 卡片上点过的「以后都不问」在这一栏看得见，也在这里收得回去。列表在代码里建：每行都要带着自己的
-               工具名去撤销，跟 ProviderGroupList 是同一个理由。 -->
+          <!-- The 「以后都不问」 choices clicked on cards are visible in this section, and revocable here too.
+               The list is built in code: every row must carry its own tool name for revocation — the same
+               reason as ProviderGroupList. -->
           <TextBlock Text="{DynamicResource TrustedToolsTitle}" FontSize="13" FontWeight="SemiBold" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource TrustedToolsHint}" />
           <StackPanel x:Name="TrustedToolList" Spacing="4" />
           <Button x:Name="RevokeAllTrustedToolsButton" Classes="quiet" HorizontalAlignment="Left"
                   Content="{DynamicResource RevokeAllTrustedTools}" />
 
-          <!-- 派生子会话单独一个开关，不并进上面那三个档位：审批模式管的是「一次动作要不要问」，而这个管的是
-               「助手能不能自己再开一条会话花钱」。默认关，且关掉之后工具自己会说明去哪儿开，而不是让模型重试。 -->
+          <!-- Sub-session spawning gets its own switch rather than folding into the three tiers above: the
+               approval mode governs "should one action ask first", while this governs "may the assistant open
+               another session and spend money on its own". Default off, and with it off the tool itself says
+               where to turn it on instead of letting the model retry. -->
           <CheckBox x:Name="SpawnCheck" Content="{DynamicResource AllowSpawnSessions}" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowSpawnSessionsHint}" />
 
-          <!-- 出网开关和上面那个一样不是审批档位，档位管「这次要不要问」，这个管「这台机器允不允许被读」。
-               默认开：抓一个用户或模型点名的网页是这一类助手的基本动作，默认关等于这功能对没找到设置的人不存在。
-               真正的闸是 WebFetch 的地址策略（只放 https、公网主机、重定向不许跨出去）加上 ask 档的那张卡。 -->
+          <!-- The outbound-network switch, like the one above, is not an approval tier either: tiers decide
+               "should this one ask", this decides "is this machine allowed to be read". Default on: fetching
+               a page named by the user or the model is a baseline action for this kind of assistant, and
+               defaulting off would make the feature nonexistent for anyone who never finds the setting.
+               The real gate is WebFetch's address policy (https only, public hosts, redirects may not escape)
+               plus the ask tier's card. -->
           <CheckBox x:Name="WebFetchCheck" Content="{DynamicResource AllowWebFetch}" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebFetchHint}" />
         </StackPanel>

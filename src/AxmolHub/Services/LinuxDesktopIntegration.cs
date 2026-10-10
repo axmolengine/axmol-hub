@@ -19,8 +19,9 @@ namespace AxmolHub;
 internal static class LinuxDesktopIntegration
 {
     /// <summary>
-    /// hicolor 桶 → 取哪一档资源。桶名必须等于图片的真实尺寸：图标主题按桶挑图，把 256 的字节放进
-    /// 512x512 桶会让主题在需要 512 时拿到一张被放大过的小图，而 `scalable` 桶是留给 SVG 的。
+    /// hicolor bucket → which asset size to take. The bucket name must equal the image's real size: icon
+    /// themes pick images per bucket, so putting the 256 bytes into a 512x512 bucket hands the theme an
+    /// upscaled small image when it needs 512, and the `scalable` bucket is reserved for SVGs.
     /// </summary>
     private static readonly (int Bucket, int Asset)[] IconBuckets = [(256, 256), (512, 512)];
 
@@ -66,9 +67,10 @@ internal static class LinuxDesktopIntegration
     /// </summary>
     internal static void RefreshCaches(string dataHome, string applicationsDirectory, Action<string>? diagnostic)
     {
-        // hicolor 是 freedesktop 的兜底主题，按目录约定直接查，没有 index.theme 也就没有缓存可刷 ——
-        // gtk-update-icon-cache 在那里必然报 "No theme index file"（本机实测）。所以只在主题目录真的
-        // 带 index.theme 时才调它，否则每次启动都往日志里灌一行注定的失败。
+        // hicolor is freedesktop's fallback theme, looked up straight by directory convention — no
+        // index.theme, hence no cache to refresh: gtk-update-icon-cache necessarily reports "No theme index
+        // file" there (measured on this machine). So only invoke it when the theme directory really has an
+        // index.theme, otherwise every start would pump one guaranteed failure line into the log.
         var themeDirectory = Path.Combine(dataHome, "icons", "hicolor");
         if (File.Exists(Path.Combine(themeDirectory, "index.theme")))
         {

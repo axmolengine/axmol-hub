@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <!-- Windows 专用清单，由 SDK 通过 ApplicationManifest 属性嵌入；非 Windows 构建时被忽略。
-       不要删除：缺了它会影响窗口透明与嵌入控件的表现。 -->
+  <!-- Windows-only manifest, embedded by the SDK via the ApplicationManifest property; ignored on non-Windows builds.
+       Do not delete: without it, window transparency and embedded control behavior degrade. -->
   <assemblyIdentity version="1.0.0.0" name="AxmolHub"/>
 
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
-      <!-- Windows 10 及更高版本 -->
+      <!-- Windows 10 and later -->
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
     </application>
   </compatibility>

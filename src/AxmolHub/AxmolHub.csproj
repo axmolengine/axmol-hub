@@ -1,73 +1,88 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- WinExe 只是 Windows 下不弹控制台；在 macOS / Linux 上就是普通可执行文件。 -->
+    <!-- WinExe only suppresses the console window on Windows; on macOS / Linux it is a plain executable. -->
     <OutputType>WinExe</OutputType>
-    <!-- 刻意不加 -windows：这个项目要在三平台构建。Avalonia 12.1.3 的 lib/ 同时提供 net8.0 与 net10.0，
-         与 Core / Cli 的 net8.0 对齐即可，不需要升 TFM。
-         2026-10-09 曾经为进程内 WinRT toast 升到 net8.0-windows10.0.19041.0，当天实测后回退，两条理由：
-         ① 带 Windows 平台的 TFM 会让 NuGet 从 osx 依赖图里静默剪掉 HarfBuzzSharp.NativeAssets.macOS，
-            `dotnet publish -r osx-arm64` 的产物里没有 libHarfBuzzSharp.dylib（同一命令在 fae2bd8 上有）；
-            Skia / Avalonia.Native 的原生库没被剪，所以只有文字整形这一项无声消失，补一条显式 pin 才能保住，
-            而"每次升级都要重新数一遍原生资产"正是这次踩到的那类静默回归。
-         ② 曾经用「那段 PowerShell 脚本能加载 WinRT 类型」来支持换回外挂进程，2026-10-10 实测推翻：
-            这台机器（Windows 11 26300）的 Windows PowerShell 5.1 **整体失去 ContentType=WindowsRuntime
-            类型解析能力** —— ToastNotificationManager / XmlDocument / StorageFile 全失败，连
-            [Windows.Foundation.Uri, Windows.Foundation, ContentType=WindowsRuntime] 都失败
-            （有阳性对照证明脚本确实执行；System32\WinMetadata 的 winmd 与 GAC 里的
-            System.Runtime.WindowsRuntime 都在，所以不是缺文件）。真实事件日志里那条
-            `Windows toast helper failed ... Unable to find type [...]` 就是它，逐条通知如此。
-            结论：外挂脚本这条路在本机没有任何写法能通，而①仍然是真的，所以两条都不能要 ——
-            toast 改为**进程内手写 WinRT ABI 互操作**（RoGetActivationFactory + vtable，
-            见 Services/WindowsToastInterop.cs，零依赖、不动 TFM、不动依赖图），
-            IID 与槽位由 tmp/winrt-probe 探针实测（RESULT=OK），并由 verify-shell 自检钉住。 -->
+    <!-- Deliberately no -windows suffix: this project must build on all three platforms. Avalonia 12.1.3's
+         lib/ ships both net8.0 and net10.0, so aligning with Core / Cli on net8.0 is enough — no TFM bump.
+         On 2026-10-09 we did bump to net8.0-windows10.0.19041.0 for in-process WinRT toasts, and reverted it
+         the same day after measuring, for two reasons:
+         ① a Windows-platform TFM makes NuGet silently drop HarfBuzzSharp.NativeAssets.macOS from the osx
+            dependency graph, so `dotnet publish -r osx-arm64` produces no libHarfBuzzSharp.dylib (the same
+            command does on fae2bd8); Skia / Avalonia.Native natives survive, so only text shaping vanishes
+            without a sound — an explicit pin is the only thing that keeps it — and "re-count the native
+            assets on every upgrade" is exactly the class of silent regression we just walked into.
+         ② The claim "that PowerShell script can load WinRT types", used to argue for going back to an
+            out-of-process helper, was disproven by measurement on 2026-10-10: Windows PowerShell 5.1 on
+            this machine (Windows 11 26300) has **lost ContentType=WindowsRuntime type resolution
+            entirely** — ToastNotificationManager / XmlDocument / StorageFile all fail, even
+            [Windows.Foundation.Uri, Windows.Foundation, ContentType=WindowsRuntime] fails
+            (a positive control proved the script really ran; both the winmd files in
+            System32\WinMetadata and System.Runtime.WindowsRuntime in the GAC are present, so nothing is
+            missing). That entry in the real event log, `Windows toast helper failed ... Unable to find
+            type [...]`, is precisely this, for every single notification.
+            Conclusion: the out-of-process script route cannot be made to work on this machine in any form,
+            and ① is still true, so neither option survives — toasts moved to an **in-process hand-written
+            WinRT ABI interop** (RoGetActivationFactory + vtable, see Services/WindowsToastInterop.cs;
+            zero dependencies, TFM untouched, dependency graph untouched). The IIDs and vtable slots were
+            measured by the tmp/winrt-probe probe (RESULT=OK) and are pinned by the verify-shell self-check. -->
     <TargetFramework>net8.0</TargetFramework>
-    <!-- 名字的历史：AxmolHub.App.Avalonia（与 WPF 版并存期）→ AxmolHub.App（P6 删掉 WPF 版后
-         去掉 .Avalonia，那次是纯重命名，namespace / x:Class / avares 一律没动）→ AxmolHub
-         （2026-10-08）。留 `.App` 的理由在 P6 就没了，而它一直在付出真实代价：程序集名同时决定
-         三处彼此牵连的身份 —— Linux 窗口类（Avalonia 取 entry assembly 名做 WM_CLASS 默认值）、
-         avares:// 的资源权威、以及 vpk 打包参数 mainExe 的取值 —— 而发行身份是 packId `Axmol.Hub`、
-         桌面入口是 kebab 的 `axmol-hub`，四个名字互不相等，图标匹配就一直是错的。
-         这次连同 namespace / x:Class / avares 一起改，是因为程序集名本身变了：
-         avares:// 按程序集名寻址，漏一处不是显示问题，是 AvaloniaXamlLoader.Load 启动即抛。
-         AssemblyName 不显式声明：项目名已是 AxmolHub，它就是默认值，
-         多写一份只会在将来改名时变成第二处要同步的地方。 -->
+    <!-- Name history: AxmolHub.App.Avalonia (coexistence period with the WPF version) → AxmolHub.App
+         (.Avalonia dropped in P6 after the WPF version was deleted — that was a pure rename, namespace /
+         x:Class / avares untouched) → AxmolHub (2026-10-08). The reason for keeping `.App` disappeared at
+         P6, yet it kept costing real damage: the assembly name simultaneously decides three interlinked
+         identities — the Linux window class (Avalonia uses the entry assembly name as the WM_CLASS
+         default), the avares:// resource authority, and the value of vpk's mainExe pack argument — while
+         the release identity is packId `Axmol.Hub` and the desktop entry is the kebab-case `axmol-hub`;
+         with four names that never match, icon lookup was always wrong. This time namespace / x:Class /
+         avares were changed along with it, because the assembly name itself changed: avares:// addresses
+         by assembly name, so missing one spot is not a display problem — AvaloniaXamlLoader.Load throws
+         at startup. AssemblyName is not declared explicitly: the project is already named AxmolHub, so
+         that is the default, and writing it a second time would only create a second place to keep in
+         sync at the next rename. -->
     <AssemblyTitle>Axmol Hub</AssemblyTitle>
     <Product>Axmol Hub</Product>
     <FileDescription>Axmol Hub</FileDescription>
     <Description>Axmol Hub</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Version 见仓库根的 Directory.Build.props：四个项目共用一个产品版本。 -->
-    <!-- Windows 下的 DPI / 透明窗口行为依赖这个清单；非 Windows 构建时该属性被 SDK 忽略。 -->
+    <!-- Version lives in Directory.Build.props at the repo root: all four projects share one product version. -->
+    <!-- Windows DPI / transparent-window behavior depends on this manifest; the SDK ignores the property on non-Windows builds. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- 与 build.yml 的**打包**矩阵一致（package-win-x64 / -osx-arm64 / -osx-x64 / -linux-x64
-         四个 job，与 installer/Publish-All.ps1 的平台表同源）。理由同 AxmolHub.Cli.csproj：
-         锁文件要 RID 完整才稳定 —— 漏掉一个 RID，那份（被跟踪的）锁文件就在对应平台上少一段
-         原生资产。2026-10-04 补上原先漏掉的 osx-x64；同日把注释里的 `ci.yml` 改成 `build.yml`
-         （前者已不存在），并把"三平台矩阵"写清楚：那是 verify 矩阵，打包是四个。 -->
+    <!-- Matches build.yml's **packaging** matrix (four jobs: package-win-x64 / -osx-arm64 / -osx-x64 /
+         -linux-x64, same source as the platform table in installer/Publish-All.ps1). Same rationale as
+         AxmolHub.Cli.csproj: lock files are only stable when the RID set is complete — miss one RID and
+         that (tracked) lock file loses a native-asset section on that platform. Added the previously
+         missing osx-x64 on 2026-10-04; same day corrected `ci.yml` to `build.yml` in this comment (the
+         former no longer exists) and spelled out the "three-platform matrix": that is the verify matrix,
+         packaging is four. -->
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <DefineConstants Condition="'$(HubIsPrereleaseBuild)' == 'true'">$(DefineConstants);HUB_PRERELEASE_BUILD</DefineConstants>
-    <!-- P6 起接管发行：图标随项目走（原先在 WPF 项目里，跨项目引用正是 P1 拆掉的那类耦合）。 -->
+    <!-- Owns releases from P6 on: the icon travels with the project (it used to live in the WPF project,
+         and that cross-project reference was exactly the kind of coupling P1 removed). -->
     <ApplicationIcon>Assets/hub-icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <!-- 仓库仅有的 NuGet 依赖全部集中在这里：Avalonia 一组 + Velopack（P6 从 WPF 项目搬过来，
-         依赖集合没有变，只是换了宿主项目）。Core 与 Cli 仍保持零依赖、可离线构建。 -->
+    <!-- Every NuGet dependency in the repo lives here: the Avalonia group + Velopack (moved from the WPF
+         project in P6 — the dependency set did not change, only its host project). Core and Cli stay
+         zero-dependency and offline-buildable. -->
     <PackageReference Include="Markdown.Avalonia" Version="12.0.0-a3" />
     <PackageReference Include="Markdig" Version="0.40.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Avalonia" Version="12.1.3" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
-    <!-- DataGrid 不在 Avalonia 核心里，必须单独引。这是 spike #2 的结论：
-         选包而不是 12.1 新增的内置 TableView —— WPF 版有 35 处 DataGrid 引用
-         （列定义 + 单元格模板），DataGrid 的 API 面与它最接近，P5 迁移才是机械替换。
-         注意这个包比核心慢一个补丁版本（12.1.2 vs 12.1.3），依赖约束是 >=，照常解析。 -->
+    <!-- DataGrid is not in Avalonia core and must be referenced separately. This is the conclusion of
+         spike #2: pick the package over the built-in TableView added in 12.1 — the WPF version has 35
+         DataGrid references (column definitions + cell templates), and DataGrid's API surface is the
+         closest match, which keeps the P5 migration a mechanical replacement. Note this package trails
+         core by one patch version (12.1.2 vs 12.1.3); the dependency constraint is >=, so it resolves
+         normally. -->
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
-    <!-- Avalonia.Fonts.Inter 刻意不加：Inter 不含 CJK 字形，而 Hub 的界面是中文优先，
-         字体选型属于 P3，在此处引入只会把错误默认值固化下来。 -->
-    <!-- 开发期的可视化树调试器。官方模板的写法：Release 下整包不参与编译。
-         注意 12.x 的包名是 AvaloniaUI.DiagnosticsSupport，Avalonia.Diagnostics 停在 11.3.22，12.x 一个都没发。 -->
+    <!-- Avalonia.Fonts.Inter deliberately not added: Inter has no CJK glyphs and Hub's UI is Chinese-first;
+         font selection belongs to P3, so pulling it in here would only bake in the wrong default. -->
+    <!-- Dev-time visual-tree debugger. Written as the official template prescribes: excluded from compilation
+         entirely under Release. Note the 12.x package is AvaloniaUI.DiagnosticsSupport; Avalonia.Diagnostics
+         stopped at 11.3.22 and never shipped a 12.x release. -->
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
@@ -79,7 +94,8 @@
          Agent's own NuGet dependencies (Microsoft.Extensions.AI, .OpenAI, ProtectedData) flow through
          transitively, which is why App gains them without repeating them above. -->
     <ProjectReference Include="../AxmolHub.Agent/AxmolHub.Agent.csproj" />
-    <!-- 内容清单与原 WPF 版逐行对齐；图标资源已在 P6 搬过来（见上面的 ApplicationIcon）。 -->
+    <!-- Content list aligned line-for-line with the original WPF version; icon assets were moved in P6
+         (see the ApplicationIcon above). -->
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*.txt" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
@@ -87,15 +103,19 @@
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets/Cpp.xshd" />
-    <!-- 图标各走各的通道：.ico 由上面的 ApplicationIcon 编进 Windows exe；.icns 是 macOS 的 bundle
-         图标；hub-icon-512.png 是 vpk 的 icon 参数（它成为 .DirIcon 与 AppDir 里的 hicolor 图标）。
-         256 与 512 两档还要被**运行时的自己**读一次：256 做窗口图标（X11 的 _NET_WM_ICON 传原始
-         ARGB32，1254 原图约 6 MB 的 X property 不可接受），两档分别铺进 hicolor 的 256x256 与
-         512x512 桶（桶名必须等于图片真实尺寸，否则主题按桶挑图会挑错）。
-         它们走 Content 而不是 avares://，理由与 manifests/*.json、Core/Scripts/*.ps1 同一条：
-         被代码而非 XAML 读的数据文件随输出目录走。这还让 Linux 桌面集成不依赖 Avalonia 已初始化 ——
-         Linux 集成自检正是靠这点在无显示服务器上断言图标真的铺得下去（见 LinuxIntegrationSelfCheck）。
-         仍未写 Resource / None —— 与 SDK 的隐式 None 包含重复（NETSDK1022）。 -->
+    <!-- Each icon travels its own channel: .ico is compiled into the Windows exe by the ApplicationIcon
+         above; .icns is the macOS bundle icon; hub-icon-512.png is vpk's icon argument (it becomes the
+         .DirIcon and the hicolor icon inside AppDir). The 256 and 512 sizes are also read once more by
+         the runtime itself: 256 serves as the window icon (X11's _NET_WM_ICON carries raw ARGB32, so an
+         X property of ~6 MB from the 1254 original is unacceptable), and both sizes are planted into
+         hicolor's 256x256 and 512x512 buckets respectively (the bucket name must equal the image's real
+         size, or a theme picking images per bucket picks the wrong one). They ride as Content rather
+         than avares:// for the same reason as manifests/*.json and Core/Scripts/*.ps1: data files read
+         by code rather than XAML follow the output directory. This also keeps Linux desktop integration
+         independent of Avalonia being initialized — the Linux integration self-check relies on exactly
+         this to assert, on a headless server, that the icons really do get planted (see
+         LinuxIntegrationSelfCheck). Still deliberately not marked Resource / None — that would duplicate
+         the SDK's implicit None inclusion (NETSDK1022). -->
     <Content Include="Assets/hub-icon-256.png" Link="Assets/hub-icon-256.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets/hub-icon-512.png" Link="Assets/hub-icon-512.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

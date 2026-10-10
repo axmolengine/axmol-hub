@@ -13,7 +13,7 @@ using Microsoft.Extensions.AI;
 var root = Path.GetFullPath(args.Length > 0 && !args[0].StartsWith("--") ? args[0] : "artifacts/checks");
 Directory.CreateDirectory(root);
 
-// 构建已委派给引擎 cmdline；Checks 里的 ProjectService 共用仓库内的包装脚本。
+// Build has been delegated to the engine cmdline; the ProjectService in Checks shares the in-repo wrapper script.
 EngineCommandLine EngineCli(ProcessRunner runner) => new(runner, Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1"));
 if (args.Contains("--check-ai-providers"))
 {
@@ -435,8 +435,9 @@ if (args.Contains("--check-ai-providers"))
     Console.WriteLine("PASS: key validation is opt-in per provider and fails open when undeclared.");
     return;
 }
-// Copilot：设备码登录的清单形状、轮询算术，以及 /models 能力清单的解析。
-// 样本是 2026-10-09 真实抓包裁剪出来的 7 条（见 local/copilot-oauth-probe.md），字段名与取值都不是编的。
+// Copilot: the manifest shapes of device-code sign-in, the polling arithmetic, and parsing of the
+// /models capability catalog. The samples are 7 entries trimmed from a real capture on 2026-10-09
+// (see local/copilot-oauth-probe.md); neither the field names nor the values are invented.
 if (args.Contains("--check-ai-copilot"))
 {
     void Assert(bool condition, string name)
@@ -640,11 +641,12 @@ if (args.Contains("--check-ai-copilot"))
     Assert(new ModelCapabilities().Protocol == ModelProtocols.Chat,
         "a provider that publishes nothing about protocols stays on chat");
 
-    // 目录的另一种真实形状，2026-10-09 从 GitHub 手里抓下来的：一台它不认识的 OAuth 应用（我们的设备码）拿到的
-    // 清单里没有 gpt-5，八行全是 model_picker_enabled:false，而旧行的 limits 下面根本没有 vision 子对象。
-    // 下面是一个裁剪到三行的同形状版本。少一个 ValueKind 判断，对 Undefined 的 JsonElement 调 TryGetProperty
-    // 就抛 InvalidOperationException，设置页于是把一个 HTTP 200 的真目录报成「Operation not valid」——
-    // 请求形状无罪，解析器有罪。
+    // Another real shape of the catalog, captured from GitHub on 2026-10-09: the list an OAuth app it does not
+    // recognise (our device code) receives has no gpt-5, all eight rows are model_picker_enabled:false, and the
+    // older rows have no vision sub-object under limits at all. What follows is the same shape trimmed to three
+    // rows. Miss one ValueKind check and calling TryGetProperty on an Undefined JsonElement throws
+    // InvalidOperationException, so the settings page reports a genuine HTTP 200 catalog as "Operation not valid"
+    // — the request shape is innocent, the parser is guilty.
     var reduced = GithubCopilotModelsSource.Parse(Encoding.UTF8.GetBytes("""
         {"data":[
          {"id":"gpt-4o-mini","object":"model","name":"GPT-4o mini","vendor":"OpenAI",
@@ -1652,8 +1654,9 @@ if (args.Contains("--check-ai-memory"))
     if (!rendered.Contains("…(+")) throw new Exception("An index that dropped entries did not say how many.");
     if (!File.ReadAllText(Path.Combine(manyRoot, MemoryStore.IndexFile)).Contains("…(+"))
         throw new Exception("The block written into the shared index is not the truncated one.");
-    // ── 工作区章程：AGENTS.md 读作指令层，且严格只读 ──
-    // 注入的是这一层，所以它必须在 Checks 里断言得到 —— 放 App 就等于放进一个断言不到的地方。
+    // ── Workspace charter: AGENTS.md is read as the instruction layer, and strictly read-only ──
+    // This is the layer that gets injected, so it must be assertable from Checks — putting it in App would place it
+    // where no assertion reaches.
     var charterDir = Path.Combine(memoryRoot, "charter");
     Directory.CreateDirectory(charterDir);
     if (MemoryStore.ReadProjectCharterSection(charterDir).Length != 0)
@@ -1665,8 +1668,9 @@ if (args.Contains("--check-ai-memory"))
     var charter = MemoryStore.ReadProjectCharterSection(charterDir);
     if (!charter.Contains("1kiss.ps1") || !charter.Contains("type: 前缀"))
         throw new Exception($"The charter did not reach the model intact:{Environment.NewLine}{charter}");
-    // 两条 framing 不能合并：章程是指令，记忆索引是不可信参考。而章程不授予任何东西 —— 这条反控是
-    // 「让闸门去读章程文本」，那样这句拒绝就不成立了。
+    // The two framings must not be merged: the charter is instructions, the memory index is untrusted reference.
+    // And the charter grants nothing — this counter-check is "letting the gate read the charter text", without
+    // which this refusal would no longer hold.
     if (!charter.Contains("grants nothing", StringComparison.OrdinalIgnoreCase))
         throw new Exception("The charter section no longer says it cannot open a gate.");
     if (File.ReadAllText(Path.Combine(charterDir, "AGENTS.md")) != charterText)
@@ -1697,7 +1701,7 @@ if (args.Contains("--check-ai-memory"))
     if (carried > MemoryStore.MaxCharterCharacters)
         throw new Exception($"The charter cap is not a cap: {carried} of the file's characters were injected.");
 
-    // ── 旧索引名的退役：只删 Hub 自己生成的那一份 ──
+    // ── Retiring the old index name: only the copy Hub generated itself is deleted ──
     const string legacyName = "AXHUB.md";
     if (!MemoryStore.LegacyIndexFiles.Contains(legacyName))
         throw new Exception($"{legacyName} is off the retired-name list, so an upgraded install would keep a stray index forever.");
@@ -1895,7 +1899,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"The capped result lost its head, its tail, or its marker ({cappedResult.Length} characters).");
     if (ToolResultCap.Apply("short", 8192) != "short") throw new Exception("A result inside the cap was rewritten.");
 
-    // ── 中文按真实体积计价，英文的数字一个都不动 ──
+    // ── Chinese is priced by its real byte weight, and not one English number moves ──
     // The ASCII half of this is the compatibility anchor for every other number in this file: the trimmer's
     // budget figures, the cap arithmetic above, the shell fixtures that count characters. If it moves, the
     // estimate is not merely different — every assertion standing on it is silently re-calibrated.
@@ -1934,7 +1938,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"A Chinese result was capped in characters, not tokens ({wideCapped.Length} characters, {TokenWeighing.Units(wideCapped)} units).");
     Console.WriteLine("PASS: one tool result is capped in tokens for Chinese too, not in characters.");
 
-    // ── 工具的声明本身也要花窗口 ──
+    // ── A tool's declaration itself also spends window ──
     // Every declaration (name, description, JSON schema) rides on every later request while the mode offers
     // the tool, and it was priced by nothing: the category the other clients call "System Tools" / "Tools"
     // simply did not exist in Hub's arithmetic.
@@ -1953,7 +1957,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A mode whose schemas outgrow its window would be left with no room at all.");
     Console.WriteLine("PASS: a mode's tool declarations are priced against the window they share with the conversation.");
 
-    // ── 窗口从模型自己报的元数据里读，不是从手抄的表里猜 ──
+    // ── The window is read from the metadata the model reports itself, not guessed from a hand-copied table ──
     var catalogJson = """
     {"data":[
       {"id":"vendor/with-window","context_length":1000000,
@@ -2030,7 +2034,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("An unlisted modality was treated as supported (or a listed refusal as silence).");
     Console.WriteLine("PASS: a model that never said what it accepts still accepts a picture.");
 
-    // ── 拒信里的数字才是模型的窗口，但只有拒信才算 ──
+    // ── The number in a refusal is the model's window, but only a refusal counts ──
     // A gateway that has never described its models still states the window in the one message where it has to
     // be honest. The reading has to survive the phrasings in the wild, where the size of the prompt that just
     // failed sits in the same sentence as the limit: mistaking one for the other shrinks the conversation to
@@ -2076,7 +2080,7 @@ if (args.Contains("--check-ai-context"))
                             + $" ({afterLearning.Tokens}, {afterLearning.Source}).");
     Console.WriteLine("PASS: an overflow refusal names the window it violated, and that number is what the next request is measured against.");
 
-    // ── 模型报的数才是测量，估算只是猜测 ──
+    // ── Only the number the model reports is a measurement; an estimate is just a guess ──
     // One send in agent mode is up to seventeen HTTP requests, because the tool loop re-sends the growing
     // transcript every time. Only the largest of those inputs ever held the whole window, while every output is
     // separate money: summing the inputs would report a seventeen-fold window and drive the meter backwards, and
@@ -2124,7 +2128,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception($"A 4× calibration left {fourTimes.Tokens} instead of a quarter of the window.");
     Console.WriteLine("PASS: the model's own token report is the measurement, merged as a window and used as the denominator.");
 
-    // ── 压缩分两档，便宜的那档先跑 ──
+    // ── Compaction has two tiers, and the cheap one runs first ──
     // The rule used to be "half the raw window, then ask the model to summarize". Half of a hosted window is a
     // lot of transcript, and the one tier that costs nothing was never tried. The thresholds are therefore stated
     // against the room — the window minus the answer's share — and the tiers are ordered by what they cost.
@@ -2190,7 +2194,7 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A transcript full of tool output reported nothing to reclaim.");
     Console.WriteLine("PASS: tier one clears the older tool results in place, keeps every call paired, and never asks the model.");
 
-    // ── 圆环的每一行相加，就是它报出的那个总数 ──
+    // ── The rows of the ring added together are exactly the total it reports ──
     // The meter used to be one number nobody could take apart, so a piece that never made it into the total was
     // invisible — which is precisely how the tool declarations went unpriced while riding on every request. These
     // rows are the fix, and the identity is the assertion that keeps it: the categories must add up to the same
@@ -2276,10 +2280,12 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A tool call's arguments were not charged against the budget.");
     Console.WriteLine("PASS: one tool result cannot push the conversation out of the window.");
 
-    // ── 一次响应里的多个调用，其中一个在等审批 ──
-    // 网关会把同一次响应的多个调用编号成 call_00_ / call_01_，Hub 一条调用存一个 turn。只要其中一个被审批
-    // 挂起，它的结果就不该再紧跟自己 —— provider 会整段拒收，而这个会话此后每一次重发都是同一个 400。
-    // 下面的 fixture 就是那份落盘转录的形状，判定用的是独立重数，不是被测函数自己。
+    // ── Several calls in one response, one of them waiting on approval ──
+    // The gateway numbers the multiple calls of the same response as call_00_ / call_01_, and Hub stores one turn
+    // per call. Once any one of them is parked on approval, its result must no longer sit directly after itself —
+    // the provider rejects the whole array, and every later resend from this session hits the same 400. The
+    // fixture below is exactly the shape of that on-disk transcript, and the verdict is counted independently,
+    // not taken from the function under test.
     static bool EveryCallAnsweredBesideItself(IReadOnlyList<ChatMessage> messages)
     {
         for (var i = 0; i < messages.Count; i++)
@@ -2301,7 +2307,7 @@ if (args.Contains("--check-ai-context"))
     if (!waiting.HasUnansweredToolCall())
         throw new Exception("A call still waiting on its own card read as answered, so the resumed request went out doomed.");
 
-    // 批准之后结果该落在哪：紧跟它回答的那条调用，而不是转录末尾。
+    // Where a result belongs once approved: right after the call it answers, not at the end of the transcript.
     var ordered = new Conversation { Id = "ordered", ProviderId = "deepseek", ModelName = "test" };
     ordered.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
     ordered.Append(ChatTurn.FunctionCall("call_01_ls", "list_directory", "{}"));
@@ -2315,11 +2321,11 @@ if (args.Contains("--check-ai-context"))
     if (ordered.Messages.Count != 4 || ordered.Messages[0].ToolCallId != "call_00_run"
         || ordered.Messages[2].ToolCallId != "call_01_ls")
         throw new Exception("Recording a result beside its call disturbed the turns around it.");
-    // 已经配对的不该动：否则每次请求都重写一遍文件，而什么都没修。
+    // Already-paired entries must not be touched: otherwise every request rewrites the file while fixing nothing.
     if (ordered.RepairToolCallOrdering() != 0)
         throw new Exception("Repair shifted a transcript that was already paired correctly.");
 
-    // 已经写坏的转录：追加到末尾的那条结果，就是线上被拒收的原因。
+    // An already-broken transcript: the result appended at the very end is what got rejected on the wire.
     var parked = new Conversation { Id = "parked", ProviderId = "deepseek", ModelName = "test" };
     parked.Append(ChatTurn.User("新建一个基于 cmake 的计算器"));
     parked.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
@@ -2328,12 +2334,13 @@ if (args.Contains("--check-ai-context"))
     parked.Append(ChatTurn.FunctionResult("call_00_run", "shell: exit 0"));
     if (EveryCallAnsweredBesideItself(ChatPipeline.ToChatMessages(parked.Messages)))
         throw new Exception("The fixture no longer reproduces the rejected order, so it proves nothing.");
-    // 存在性判断看不见顺序问题 —— 正是它没能挡住这个 400 的原因，所以把它钉在这里。
+    // An existence check cannot see ordering problems — precisely why it failed to block this 400, so pin it here.
     if (parked.CloseUnansweredToolCalls("superseded") != 0)
         throw new Exception("The existence-based repair claimed to fix a transcript it cannot see.");
     if (parked.FirstMispairedToolCallId() != "call_00_run")
         throw new Exception($"The adjacency check blamed the wrong call ({parked.FirstMispairedToolCallId()}).");
-    // 一份转录里搬一条结果，报的就是 1 —— 报成"被扰动的位置数"会让审计行读起来像丢了轮次。
+    // Moving one result within a transcript reports 1 — reporting it as "positions disturbed" would make the audit
+    // line read as though turns were lost.
     if (parked.RepairToolCallOrdering() != 1)
         throw new Exception($"Repairing one misplaced result reported {parked.RepairToolCallOrdering()} moved.");
     if (parked.FirstMispairedToolCallId() is not null
@@ -2342,7 +2349,8 @@ if (args.Contains("--check-ai-context"))
     if (parked.Messages.Count != 5 || parked.RepairToolCallOrdering() != 0)
         throw new Exception("Repair invented a turn, or is not idempotent.");
 
-    // 只重排，不新增也不删除：没有结果的调用仍然是没有结果，那是一个人还欠着的决定，不是要改写的错误。
+    // Reorder only, never add or drop: a call without a result still has no result — that is a decision a person
+    // still owes, not an error to be rewritten.
     var owed = new Conversation { Id = "owed", ProviderId = "deepseek", ModelName = "test" };
     owed.Append(ChatTurn.User("问题"));
     owed.Append(ChatTurn.FunctionCall("call_00_run", "run_command", "{}"));
@@ -2350,7 +2358,8 @@ if (args.Contains("--check-ai-context"))
     owed.RepairToolCallOrdering();
     if (owed.Messages.Count != 3 || !owed.HasUnansweredToolCall())
         throw new Exception("Repair closed or dropped a call that is still owed a decision.");
-    // 没有对应调用的结果留在原地：删掉它是改写历史，不在重排的职权里。
+    // A result with no matching call stays where it is: deleting it would rewrite history, which is outside the
+    // reorderer's authority.
     var orphan = new Conversation { Id = "orphan", ProviderId = "deepseek", ModelName = "test" };
     orphan.Append(ChatTurn.FunctionResult("call_gone", "答案"));
     orphan.Append(ChatTurn.User("新问题"));
@@ -2358,10 +2367,12 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("Repair touched a result whose call is gone.");
     Console.WriteLine("PASS: a tool result is read beside the call it answers, and a misplaced one is repaired before sending.");
 
-    // ── 思考模型 + 工具调用：reasoning_content 要原样带回去 ──
-    // DeepSeek 的规矩是：普通多轮里 reasoning_content 可以不回传（它忽略），但一旦给了工具，后续每个请求都必须
-    // 把每条 assistant 当初的思考带回去，缺了就整段 400。连接器在 chat/completions 的写路径上根本没有这个字段
-    // （实测：TextReasoningContent 被静默丢弃，不抛），所以 Hub 自己带 —— 这里验的就是那条带回去的路。
+    // ── Reasoning models + tool calls: reasoning_content must be carried back verbatim ──
+    // DeepSeek's rule: in ordinary multi-turn chat reasoning_content may be left out (it ignores it), but once
+    // tools have been given, every later request must carry back the reasoning each assistant turn originally
+    // produced, or the whole request gets a 400. The connector has no such field on the chat/completions write
+    // path (measured: TextReasoningContent is dropped silently, no throw), so Hub carries it itself — and what is
+    // verified here is that carry-back path.
     var thoughtBody = """
         {"messages":[{"role":"user","content":"问题"},{"role":"assistant","content":"我先看下。",
         "tool_calls":[{"id":"call_00_a","type":"function","function":{"name":"run_command","arguments":"{}"}}]},
@@ -2401,26 +2412,29 @@ if (args.Contains("--check-ai-context"))
         || replayedMessages[5].TryGetProperty("reasoning_content", out _)
         || replayedMessages[6].TryGetProperty("reasoning_content", out _))
         throw new Exception("A user or tool message was given a chain of thought it never had.");
-    // 中文思考被 \uXXXX 转义的话，每一轮都要为同一句话多付几倍字节，而它本来只是被要求原样带回去。
+    // If the Chinese reasoning came back \uXXXX-escaped, every turn pays several times the bytes for the same
+    // sentence — when all it was asked to do was carry it back verbatim.
     if (replayed.Contains("\\u"))
         throw new Exception("The replayed thinking was escaped, inflating every later request that carries it.");
     if (!replayed.Contains("tool_calls") || !replayed.Contains("call_00_a"))
         throw new Exception("The rewrite dropped the tool call it was only supposed to annotate.");
 
-    // 没思考过的对话一个字也不该添：不是每家兼容网关都允许未知字段，而给一轮没想过的话编一条思考更是假话。
+    // A conversation that never reasoned must not gain a single field: not every compatible gateway allows unknown
+    // fields, and inventing reasoning for a turn that did none is a fabrication.
     var silent = new ReasoningTable();
     silent.Observe(ChatPipeline.ToChatMessages([ChatTurn.User("问题"), ChatTurn.Assistant("答")]));
     if (!silent.IsEmpty || ReasoningReplayPolicy.TryInject(thoughtBody, silent, out _))
         throw new Exception("A conversation that never thought still had a chain of thought invented for it.");
 
-    // 同一个会话里两条一模一样的回答，各自拿回自己那条思考 —— 按顺序消耗，不是按文本查一个常驻值。
+    // Two identical answers in the same session each get their own reasoning back — consumed in order, not looked
+    // up by text against one standing value.
     var twice = new ReasoningTable();
     twice.Observe(ChatPipeline.ToChatMessages(
         [ChatTurn.Assistant("好的", "第一次的想法"), ChatTurn.Assistant("好的", "第二次的想法")]));
     if (twice.TakeFor(null, "好的") != "第一次的想法" || twice.TakeFor(null, "好的") != "第二次的想法")
         throw new Exception("Two identical answers were handed the same thinking.");
 
-    // 载体：思考搭在它所属的那条 assistant 消息上，且不让一条消息变成两条。
+    // Carrier: the reasoning rides on the assistant message it belongs to, without turning one message into two.
     var carried = ChatPipeline.ToChatMessages(
     [
         ChatTurn.FunctionCall("c1", "run_command", "{}", "先看。", "想了"),
@@ -2434,7 +2448,8 @@ if (args.Contains("--check-ai-context"))
     if (carried[2].Contents.OfType<TextReasoningContent>().Single().Text != "又想了")
         throw new Exception("A plain answer's thinking never reached the message list.");
 
-    // 落盘与预算：旧会话文件没有这个属性也要照样加载，而思考的字节要算进窗口 —— 它此后每个请求都要重发。
+    // Persistence and budget: an old session file loads unchanged without this property, and the reasoning bytes
+    // count against the window — they are resent on every later request.
     if (JsonSerializer.Deserialize<ChatTurn>(JsonSerializer.Serialize(ChatTurn.Assistant("答", "想了很久")))?.Reasoning
         != "想了很久")
         throw new Exception("The thinking did not survive a save.");
@@ -2447,9 +2462,11 @@ if (args.Contains("--check-ai-context"))
         throw new Exception("A turn whose only weight is its thinking counted as free.");
     Console.WriteLine("PASS: a thinking model's reasoning goes back out on the message that produced it, and only there.");
 
-    // ── 一次响应里的多个调用：那份思考要跟着每一条 ──
-    // 模型一次响应里可以要好几个工具，却只思考一次；那一次响应在转录里被拆成几条 assistant 消息，每条都是那次
-    // 思考的产物。网关重放时要的就是每一条都带上它，早先只有最先流到的那条拿到，其余是空的，请求于是又被拒回去。
+    // ── Several calls in one response: that one reasoning payload must ride with every one of them ──
+    // The model can ask for several tools in a single response while thinking only once; that response is split
+    // into several assistant messages in the transcript, each one a product of that single thought. On replay the
+    // gateway wants each of them to carry it — earlier only the first message to stream out got it, the rest were
+    // empty, and the request was refused again.
     var batchBody = """
         {"messages":[{"role":"user","content":"问题"},
         {"role":"assistant","tool_calls":[{"id":"call_00_x","type":"function","function":{"name":"run_command","arguments":"{}"}}]},
@@ -3143,7 +3160,7 @@ if (args.Contains("--check-ai-tools"))
     if (!(await tools.SetWorkspace(workspace)).Contains("Workspace set to") || appliedRoot != Path.GetFullPath(workspace))
         throw new Exception("A valid directory was not handed to the caller to persist.");
 
-    // ── set_workspace 的档位：谁挑的这个目录，决定它要不要问 ──
+    // ── set_workspace tiers: who picked this directory decides whether it has to ask ──
     // The table that turns this into a ToolRisk lives in the app, but the rule it reads is Core's, so it is
     // asserted here where no window is involved. The three answers are three answers to one question — has a
     // person already agreed to this directory? — and a path this build cannot read falls to the strictest of them
@@ -3196,7 +3213,7 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception("The memory tools accepted a bad scope, a charter name, a traversing name or a missing workspace.");
     Console.WriteLine("PASS: the memory tools write both scopes, append, and refuse a bad name or scope.");
 
-    // ── 只读的四处查看：同一套沙箱，但不经 shell、不要审批 ──
+    // ── Read-only look-around: the same sandbox, but through no shell and needing no approval ──
     // search_text / list_directory / find_files exist so that looking around costs the model nothing. Without
     // them every `ls` and every grep is a run_command — and run_command asks for a person's approval in the
     // ask and auto tiers, which turns exploration into a stack of cards.
@@ -3365,7 +3382,7 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception($"search_text did not bind the parameter names its schema advertises ({boundSearch}).");
     Console.WriteLine("PASS: all eleven tools bind, and the schema names are the names a call is accepted by.");
 
-    // ── capture_screen：目标匹配、黑帧不发、正常帧落到会话目录 ──
+    // ── capture_screen: target matching, black frames not sent, normal frames landing in the session directory ──
     // The tool's every branch is asserted against a host that draws nothing, because the decision — which window,
     // is this frame worth sending, where do the bytes go — is Core's, and only the pixels are the host's.
     if (!bound["capture_screen"].JsonSchema.GetRawText().Contains("fullscreen", StringComparison.Ordinal)
@@ -3464,7 +3481,7 @@ if (args.Contains("--check-ai-tools"))
         throw new Exception($"The frame Hub stored is not the one the turn names: {landed.Single()}");
     Console.WriteLine("PASS: capture_screen refuses an ambiguous target, refuses a blank frame, and stores only a frame worth sending.");
 
-    // ── web_fetch：一条都不出网的出网工具 ──
+    // ── web_fetch: the network tool that never makes a single real request here ──
     // Every branch of a page fetch is a decision over a response somebody hands back, so the host here is a
     // delegate with a script. The one thing no cell below can prove is that a real server answers — that hop is
     // human-run, the same as the image channel's, and --check-webfetch is the procedure written for it.
@@ -3655,11 +3672,13 @@ if (args.Contains("--check-ai-tools"))
 }
 if (args.Contains("--check-ai-web-search"))
 {
-    // ── 服务端自己跑的搜索：判决表、两条线上的字节、转录留下而线上不留 ──
-    // 一条真网络请求都没有：两台桥都被一个记录用的 handler 在 127.0.0.1 上答复。这里的断言读的是
-    // **序列化出去的字节**，不是 Hub 打算发什么——托管工具的声明正是发错字段也不会有人说的东西，
-    // 而 Core 那张表预测的字段名与桥真正写的字段名必须同源，否则「我们声明了」和「网关收到了」会
-    // 变成两条可以各自说谎的断言。
+    // ── Server-side search of its own: the verdict table, the bytes on both wires, kept in the transcript but not
+    //    on the wire ──
+    // Not one real network request: both bridges are answered on 127.0.0.1 by a recording handler. The assertions
+    // here read the **bytes that were serialised out**, not what Hub intended to send — a hosted tool's declaration
+    // is exactly the thing nobody notices when it sends the wrong field, and the field names Core's table predicts
+    // must share one source with the names the bridge actually writes, otherwise "what we declared" and "what the
+    // gateway received" would become two assertions that can each lie.
     var declared = new List<string> { ProviderServerTools.WebSearch };
 
     var chatOn = WebSearchHosted.Decide(declared, ModelProtocols.Chat, ChatModes.Agent, true);
@@ -4475,7 +4494,7 @@ if (args.Contains("--check-ai-cross-session"))
         throw new Exception($"read_session did not accept its own limit parameter: {wireRead}");
     Console.WriteLine("PASS: the three cross-session tools bind, and the schema names are the names a call is accepted by.");
 
-    // ── spawn_session：派生一个子会话，四条护栏全是纯函数 ──
+    // ── spawn_session: derive a child session, with all four guardrails as pure functions ──
     // The point of a child session is context isolation, not parallelism: one reader sent over a huge file and
     // five lines taken back is cheaper than reading the file into the parent. Every limit here exists because the
     // other half of that is a model call nobody clicked — so the switch ships off, the depth stops at one, one
@@ -4688,7 +4707,8 @@ if (args.Contains("--check-ai-images"))
         || store.ReadImage(album.Id, "") is not null)
         throw new Exception("An attachment name outside the session's directory was resolved anyway.");
 
-    // ── 认头不认扩展名：四种能发的格式，和两个最像它们的非图像 ──
+    // ── Recognise the header, not the extension: the four sendable formats, and two non-images that most resemble
+    //    them ──
     if (ChatImageFormat.Identify(gif) != ChatImageFormat.Gif || ChatImageFormat.Identify(webp) != ChatImageFormat.WebP
         || ChatImageFormat.Identify(wave) is not null || ChatImageFormat.Identify(prose) is not null
         || ChatImageFormat.Identify([1, 2]) is not null || ChatImageFormat.Identify(null) is not null)
@@ -4755,7 +4775,7 @@ if (args.Contains("--check-ai-images"))
                                 + $"{ChatImageFormat.Admit(bytes, already)} instead of {expected}.");
     Console.WriteLine("PASS: an image is admitted by its header, its size, and how many the message already carries.");
 
-    // ── 接线形状：图片是问题所在那条用户消息上的 DataContent ──
+    // ── Wiring shape: the image is DataContent on the user message that carries the question ──
     // chat/completions carries an image on a user message and not on a tool result, and Microsoft.Extensions.AI
     // 10.10 has no ImageContent type at all: an image is a DataContent whose media type says image/*. The scripted
     // client is the only zero-network way to see the contents list the bridge is handed, so the shape is asserted
@@ -4808,7 +4828,8 @@ if (args.Contains("--check-ai-images"))
         throw new Exception("A text-only turn stopped arriving as one text part.");
     Console.WriteLine("PASS: an attachment rides its own question as a data URL, and a lost one says so in the text.");
 
-    // ── 边界回图：tool 角色的结果带不动图片，就让它紧跟一条 user ──
+    // ── Returning an image at the boundary: a tool-role result cannot carry an image, so follow it with a user
+    //    message ──
     // A frame the assistant captured itself is recorded on the result turn, and a `tool` message cannot carry
     // image content, so the picture leaves as its own user-role message right after the result that names it.
     // The injection has to be visible in the message list: ToChatMessage's tool branch never reads Images at all,
@@ -4833,7 +4854,7 @@ if (args.Contains("--check-ai-images"))
         throw new Exception("A tool result with no attachment gained a message of its own.");
     Console.WriteLine("PASS: a captured frame reaches the model as a user message beside the result that names it.");
 
-    // ── 入料口：一个人递进来的文件，先按规则读，再按规则存 ──
+    // ── Intake: a file a person hands in is first read by the rules, then stored by the rules ──
     // The composer's three entrances all end in the same two calls, so the rules they share are asserted here
     // rather than through a UI that cannot be automated: a file is measured before it is read, a picture is
     // stored only once it can be sent, and a refusal writes nothing at all.
@@ -4915,7 +4936,7 @@ if (args.Contains("--check-ai-images"))
         throw new Exception("A picture-only message whose bytes are gone says nothing about it.");
     Console.WriteLine("PASS: a picture sent without a question carries the pictures and no empty text part.");
 
-    // ── 预算：图片要计费，抹除时丢图留话 ──
+    // ── Budget: images are billed, and erasure drops the image but keeps the text ──
     // A turn whose text is one character is the cheap turn only if nobody priced the picture riding on it, and
     // both estimators count characters — so an unpriced attachment reads as free to the window and as free to the
     // loop guard, which is how a request the trimmer was supposed to keep legal goes over the limit anyway. The
@@ -4982,7 +5003,7 @@ if (args.Contains("--check-ai-images"))
 }
 if (args.Contains("--check-ai-routing"))
 {
-    // ── 自动路由：任务强度到推理档的决策表，全格断言 ──
+    // ── Auto routing: the decision table from task intensity to reasoning tier, every cell asserted ──
     // Routing spends someone else's money, so every cell is written out here rather than sampled: the tier a
     // request gets has to be readable off this table by whoever is holding the bill, and a cell nobody enumerated
     // is the cell that quietly escalates every session in a mode nobody reviewed.
@@ -5166,7 +5187,8 @@ if (args.Contains("--prepare-release-check"))
         passwords.Environment(environmentEntry), sensitiveValues: passwords.SensitiveValues);
     if (probe.Output.Contains(passwords.StorePassword) || probe.Error.Contains(passwords.KeyPassword) || messagesEntry.Any(line => line.Contains(passwords.StorePassword) || line.Contains(passwords.KeyPassword))
         || File.ReadAllText(AndroidReleaseSettings.PathFor(entry)).Contains(passwords.StorePassword)) throw new Exception("Signing secret escaped redaction.");
-    // 仅此维护者验收路径写入一次性测试凭据；产品从不保存密码，文件位于忽略的 artifacts 资料库。
+    // Only this maintainer acceptance path writes a throwaway test credential; the product never stores a password,
+    // and the file lives in the ignored artifacts store.
     StateStore.WriteJson(Path.Combine(root, "cache/android/release-check-passwords.json"), new { passwords.StorePassword, passwords.KeyPassword });
     Console.WriteLine("PASS: New release key, private-key unlock, certificate SHA256, non-secret config persistence and stdout/stderr redaction. Certificate: " + certificate);
     return;
@@ -5194,23 +5216,25 @@ if (args.Contains("--check-android-verification"))
     finally { File.WriteAllText(file, original); }
     return;
 }
-// `--prepare-android-verification` 已随构建委派退役：它用 Hub 自己的 gradle 编排重新生成
-// `manifests/android-gradle-verification.xml`（依赖 Hub 托管的 JDK/gradle 与工程 staging）。
-// 构建现在由引擎完成，该清单只能由引擎的 Android 流程重新产出。
+// `--prepare-android-verification` retired along with the build delegation: it regenerated
+// `manifests/android-gradle-verification.xml` using Hub's own gradle orchestration (depending on Hub-managed
+// JDK/gradle and project staging). The build is now done by the engine, so that manifest can only be re-produced
+// by the engine's Android flow.
 if (args.Contains("--prepare-packaging"))
 {
     var manifest = PackageManifest.Read(Path.GetFullPath("installer/packaging-manifest.json")).Packages.Single();
     using var clientEntry = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     var runnerEntry = new ProcessRunner(Console.WriteLine);
-    // DownloadManager 只有在摘要对得上时才返回路径，所以下面装的是已校验内容。
+    // DownloadManager only returns a path when the digest matches, so what is installed below is verified content.
     var archive = await new DownloadManager(clientEntry, Console.WriteLine).DownloadAsync(new Uri(manifest.Url), manifest.Sha256, Path.Combine(root, "cache"));
-    // NuGet 文件夹源要求 <id>.<version>.nupkg 这个命名，缓存里的名字是摘要。
+    // A NuGet folder source requires the <id>.<version>.nupkg naming, while the cache names files by digest.
     var feed = Path.Combine(root, "feed");
     Directory.CreateDirectory(feed);
     var package = Path.Combine(feed, manifest.Id + "." + manifest.Version + ".nupkg");
     File.Copy(archive, package, overwrite: true);
     var destination = Path.Combine(root, "vpk");
-    // dotnet tool install 遇到已存在的工具会直接报错，先清掉让准备步骤可重复执行。
+    // dotnet tool install errors out when the tool already exists, so clear it first to keep the prepare step
+    // repeatable.
     if (Directory.Exists(destination)) Directory.Delete(destination, true);
     var install = await runnerEntry.RunAsync("dotnet", ["tool", "install", manifest.Id, "--tool-path", destination, "--version", manifest.Version, "--add-source", feed], root);
     var tool = Path.Combine(destination, OperatingSystem.IsWindows() ? "vpk.exe" : "vpk");
@@ -5250,8 +5274,9 @@ if (args.Contains("--build-game") || args.Contains("--run-game"))
     }
     return;
 }
-// `--prepare-windows` / `--install-msvc`（下载并安装托管 MSVC / Windows SDK）已随工具链自持退役：
-// 环境准备现在就是跑引擎自己的 setup.ps1，见下面的 --install-tools。
+// `--prepare-windows` / `--install-msvc` (download and install the managed MSVC / Windows SDK) retired with
+// toolchain self-hosting: preparing the environment now means running the engine's own setup.ps1, see
+// --install-tools below.
 if (args.Contains("--install-tools"))
 {
     var hub = new StateStore(root).Load();
@@ -5267,8 +5292,8 @@ if (args.Contains("--install-tools"))
 if (args.Contains("--install-engine"))
 {
     using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-    // 清单现在列出多个版本，所以这里不能再 Single()；`--engine-version <v>` 可指定，
-    // 不给就取最新 LTS —— 与界面「安装」按钮的默认语义一致。
+    // The manifest now lists multiple versions, so Single() is no longer allowed here; `--engine-version <v>` can
+    // select one, and without it the newest LTS is taken — the same default semantics as the UI's Install button.
     var releases = new EngineReleases(root, Path.GetFullPath("manifests"));
     var requested = Array.IndexOf(args, "--engine-version");
     var release = requested >= 0 && requested + 1 < args.Length
@@ -5299,8 +5324,8 @@ async Task Reject<T>(Func<Task> action, string name) where T : Exception
 }
 
 // ---------------------------------------------------------------------------
-// 下载契约：原子落盘、缓存复用、坏哈希拒绝、断点续传、流式 SHA-256。
-// 自带 return、主机无关、不联网（FixtureHandler 注入），可在 CI 上跑。
+// Download contract: atomic landing, cache reuse, bad-hash rejection, resume, streaming SHA-256.
+// Self-contained return, host-independent, no network (FixtureHandler injected), so it runs in CI.
 // ---------------------------------------------------------------------------
 if (args.Contains("--check-download"))
 {
@@ -5319,7 +5344,8 @@ if (args.Contains("--check-download"))
     Check(!Directory.EnumerateFiles(downloadCache, "*.partial").Any() && !File.Exists(Path.Combine(downloadCache, new string('0', 64) + ".zip")), "Failed downloads leave no installed/cache artifact");
     await Reject<ArgumentException>(() => downloadManager.DownloadAsync(new Uri("http://fixture.test/file.zip"), downloadSha, downloadCache), "HTTP package rejected");
 
-    // 断点续传：第一次响应在传输中途截断，重试时用 Range 从断点续传，最终 sha256 正确。
+    // Resume: the first response is truncated mid-transfer, the retry uses Range to continue from the breakpoint,
+    // and the final sha256 is correct.
     var resumeBytes = Encoding.UTF8.GetBytes("resumable download fixture with enough bytes to split across two requests");
     var resumeSha = Convert.ToHexString(SHA256.HashData(resumeBytes));
     var resumeCache = Path.Combine(root, "cache-resume-" + Guid.NewGuid().ToString("N"));
@@ -5330,7 +5356,7 @@ if (args.Contains("--check-download"))
     Check(File.ReadAllBytes(resumeFile).SequenceEqual(resumeBytes), "Interrupted download resumes from the breakpoint and verifies the whole-file hash");
     Check(resumeHandler.Requests >= 2 && resumeHandler.SawRange, "Resume issues a Range request after interruption");
 
-    // 服务器不支持 Range（返回 200）：从 0 重写，正确落盘。
+    // The server does not support Range (returns 200): rewrite from 0 and land the file correctly.
     var noRangeBytes = Encoding.UTF8.GetBytes("server ignores range and returns the full body");
     var noRangeSha = Convert.ToHexString(SHA256.HashData(noRangeBytes));
     var noRangeCache = Path.Combine(root, "cache-norange-" + Guid.NewGuid().ToString("N"));
@@ -5340,7 +5366,7 @@ if (args.Contains("--check-download"))
     var noRangeFile = await noRangeDownloads.DownloadAsync(new Uri("https://fixture.test/norange.zip"), noRangeSha, noRangeCache);
     Check(File.ReadAllBytes(noRangeFile).SequenceEqual(noRangeBytes), "Server without Range support falls back to a clean full download");
 
-    // 坏 partial（续传后 sha256 不匹配）→ 删除重下 → 正确。
+    // A bad partial (sha256 mismatch after resuming) → delete and re-download → correct.
     var corruptBytes = Encoding.UTF8.GetBytes("corrupted resume content that will not match its digest");
     var corruptSha = Convert.ToHexString(SHA256.HashData(corruptBytes));
     var corruptCache = Path.Combine(root, "cache-corrupt-" + Guid.NewGuid().ToString("N"));
@@ -5358,15 +5384,18 @@ if (args.Contains("--check-download"))
 }
 
 // ---------------------------------------------------------------------------
-// 主机 PowerShell 7：探测的判定规则 + 三条安装路径的决策。自带 return、不联网（FixtureHandler 注入）、
-// 不起子进程、不改宿主机 —— 因此 CI 能跑。"真装一次"会改整机，属于 OpsCheck 里被跳过的那一类，
-// 这里的断言只保证**判定**是对的：往宿主机上装东西的那只手，必须先能被离线证明不猜。
+// Host PowerShell 7: the probe's decision rules plus the decisions of the three install paths. Self-contained
+// return, no network (FixtureHandler injected), no child processes, no changes to the host — so CI can run it.
+// A "real install once" would change the whole machine, the category OpsCheck skips; the assertions here only
+// guarantee the **verdict** is right: the hand that installs onto the host must first be provable offline as
+// never guessing.
 // ---------------------------------------------------------------------------
 if (args.Contains("--check-host-shell"))
 {
-    // 官方 hashes.sha256 实测是 UTF-16LE（BOM FF FE）、行格式 `<64hex> *<文件名>`，
-    // 并且 Windows 资产名首字母大写、osx/linux 的小写。按 UTF-8 读会得到每字符夹一个 NUL 的串，
-    // 正则一行都匹配不上，表现是"永远说校验文件里没有这一条"。所以下面两种编码都要过。
+    // The official hashes.sha256 measures out as UTF-16LE (BOM FF FE) with line format `<64hex> *<file name>`,
+    // and Windows asset names are capitalised while osx/linux ones are lower-case. Read it as UTF-8 you get a
+    // string with a NUL between every character, the regex matches no line at all, and the symptom is "this entry
+    // is never in the checksum file". So both encodings have to pass below.
     var msiDigest = "958838ff55091e1c8705d89efed0cc7e8245a3a6ef6c0ccfae20015227108ad8";
     var zipDigest = "02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860";
     var osxDigest = "64950d0f9a11f890c57199ec5e0f340f8f5fe2bbc9df43c35aed66e3d16d76bb";
@@ -5393,8 +5422,9 @@ if (args.Contains("--check-host-shell"))
     Check(HostPowerShellInstaller.ParseHashes(utf16, $"PowerShell-{version}-WIN-X64.MSI") == msiDigest,
         "Asset matching ignores case, so Hub's spelling cannot fail on capitalization alone");
 
-    // 用户交代的 macOS/Linux 入口就是那一条命令，Hub 只负责在有 TTY 的地方执行它。
-    // 任何"顺手改写"（换 curl 参数、去掉外层 bash -c、加 -y）都算换了一条命令。
+    // The macOS/Linux entrance the user specified is that one command; Hub's only job is to run it where a TTY
+    // exists. Any "while-we're-here rewrite" (different curl arguments, dropping the outer bash -c, adding -y)
+    // counts as replacing the command.
     Check(HostPowerShellInstaller.BootstrapCommand ==
           "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/axmolengine/axmol/dev/1k/pwshi.sh)\"",
         "The bootstrap command is the engine's own, character for character");
@@ -5409,8 +5439,8 @@ if (args.Contains("--check-host-shell"))
                "--accept-package-agreements", "--silent", "--disable-interactivity"]),
         "The winget argument list is unchanged; --disable-interactivity is required because Hub's child has no console");
 
-    // 探测：不 spawn、不出网，且每条状态的含义自洽。200ms 的预算是给将来的守卫 ——
-    // 谁把 `pwsh --version` 塞进这条路径，页面每次刷新就要多起一个进程。
+    // Probe: no spawn, no network, and every status means something self-consistent. The 200ms budget is a guard
+    // for the future — whoever slips `pwsh --version` into this path adds one process per page refresh.
     var probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
     var hostShell = HostPowerShell.Probe();
     var probeElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart);
@@ -5458,7 +5488,7 @@ if (args.Contains("--check-host-shell"))
     Check(await HostPowerShell.ProbeVersionAsync(shellRunner, new HostShellStatus(HostShellState.Missing)) == new HostShellStatus(HostShellState.Missing),
         "没有可执行文件时这一步直接返回，不去起一个必然失败的进程");
 
-    // 终端选择：注入一个假的 PATH，所以这一条在任何宿主上都能跑。
+    // Terminal choice: a fake PATH is injected, so this case runs on any host.
     Check(HostPowerShellInstaller.TerminalLaunch("/tmp/install-pwsh.sh", _ => null) is null,
         "With no terminal at all this returns null so the UI can hand the command back, instead of throwing a fake install failure");
     if (OperatingSystem.IsMacOS())
@@ -5498,12 +5528,14 @@ if (args.Contains("--check-host-shell"))
             "Windows plans winget when it is on PATH and the official MSI when it is not (this host: " + (planned ? "winget present" : "no winget") + ")");
     }
 
-    // 官方包解析：一切失败进 Problems，不抛异常（离线/限流/被墙是常态），并且**没有摘要就不给 URL** ——
-    // DownloadManager 硬要求 HTTPS+SHA-256，这里绝不能为它开一个"无摘要下载"的口子。
+    // Official package resolution: every failure lands in Problems instead of throwing (offline / rate-limited /
+    // blocked is the normal case), and **no digest means no URL** — DownloadManager hard-requires HTTPS+SHA-256,
+    // so this must never open a "download without a digest" hole for it.
     using (var hashesOnly = new HttpClient(new FixtureHandler(utf16)))
     {
-        // 单一夹具：API 请求拿到的也是这份 UTF-16 文本 → JSON 解析失败 → 落回内置版本，
-        // 而 hashes 请求拿到的还是它 → 摘要能解出来。正好把"API 不可用也要能装"这条路径跑通。
+        // A single fixture: the API request also receives this UTF-16 text → JSON parsing fails → falls back to the
+        // built-in version, while the hashes request still receives it → the digests do resolve. That exercises
+        // exactly the "must still be installable when the API is unavailable" path.
         var package = await HostPowerShellInstaller.ResolveWindowsPackageAsync(hashesOnly, "x64");
         Check(package.Version == version, "Falls back to the built-in version " + version + " when the GitHub API cannot be reached (same pin as pwshi.sh)");
         Check(package.Usable && package.MsiUrl!.EndsWith(msiAsset, StringComparison.Ordinal),
@@ -5532,8 +5564,8 @@ if (args.Contains("--check-host-shell"))
 }
 
 // ---------------------------------------------------------------------------
-// 只读地把"这台机器上要怎么装"算出来打印一遍：不下载、不提权、不写任何东西。
-// 它需要联网，所以和 --install-tools 一样只在开发机上跑，CI 不跑。
+// Compute and print, read-only, how installing would work on this machine: no downloads, no elevation, nothing
+// written at all. It needs the network, so like --install-tools it only runs on a dev machine, never in CI.
 // ---------------------------------------------------------------------------
 if (args.Contains("--pwsh-release-report"))
 {
@@ -5568,9 +5600,9 @@ if (args.Contains("--pwsh-release-report"))
 }
 
 // ---------------------------------------------------------------------------
-// 工具版本真源 + 引擎树工具链探测。自带 return、主机无关、不联网、不安装 ——
-// 因此可以在 CI 上对一棵真实引擎树跑。真源是引擎自带 1k/build.profiles，
-// 落点是官方 setup.ps1 的 tools/external。
+// Tool version source of truth + toolchain probe of the engine tree. Self-contained return, host-independent, no
+// network, no installation — so it can run in CI against a real engine tree. The source of truth is the engine's own
+// 1k/build.profiles, and the landing spot is tools/external from the official setup.ps1.
 // ---------------------------------------------------------------------------
 if (args.Contains("--check-build-profiles"))
 {
@@ -5587,7 +5619,8 @@ if (args.Contains("--check-build-profiles"))
     foreach (var key in new[] { "axslcc", "cmake", "ninja", "vs", "llvm", "jdk", "cmdlinetools", "ndk", "target_sdk", "min_sdk", "gradle", "agp", "buildtools", "emsdk" })
         Check(probeProfile.Get(key) is { Length: > 0 }, $"build.profiles defines '{key}'");
 
-    // 版本真源必须**随引擎版本走**：这是 Hub 不再自持版本的核心理由。
+    // The version source of truth must **track the engine version**: that is the core reason Hub no longer carries
+    // its own versions.
     var probePinned = probeEngine.Version.StartsWith("3.") ? (Ndk: "r27d", TargetSdk: "37") : (Ndk: "r23d", TargetSdk: "36");
     Check(probeProfile.Ndk == probePinned.Ndk, $"Axmol {probeEngine.Version} pins NDK {probePinned.Ndk} (read {probeProfile.Ndk})");
     Check(probeProfile.TargetSdk == probePinned.TargetSdk, $"Axmol {probeEngine.Version} pins target_sdk {probePinned.TargetSdk} (read {probeProfile.TargetSdk})");
@@ -5595,24 +5628,26 @@ if (args.Contains("--check-build-profiles"))
     var probeToolRoot = EngineToolchain.ToolRoot(probeEngine);
     Check(probeToolRoot.StartsWith(probeRoot, StringComparison.OrdinalIgnoreCase) && probeToolRoot.Contains("tools"), "Tool detection targets the engine tree (setup.ps1 tools/external), not a Hub data-root");
 
-    // ---- 版本要求语义：必须与 1kiss 的 find_prog 一致（Hub 说"就绪"= 引擎不会再去装一份）----
-    // `x~y+`：以 '+' 结尾时引擎让**区间上界失效**，退化成 >= x。照抄，不"顺手修正"。
+    // ---- Version-requirement semantics: must match 1kiss's find_prog (Hub saying "ready" = the engine will not go
+    //      and install another copy) ----
+    // `x~y+`: when it ends with '+' the engine **neutralises the interval's upper bound**, degrading to >= x.
+    // Copy that exactly, no "fix it while we're here".
     var rangeWithPlus = ToolRequirement.Parse("4.2.0~4.4.3+");
     Check(rangeWithPlus.Satisfies("4.3.2") && rangeWithPlus.Satisfies("9.9.9") && !rangeWithPlus.Satisfies("4.1.9"),
         "A requirement ending in '+' degrades to a lower bound (the engine drops the range's upper bound)");
-    // `x~y`（不带 +）：真正的闭区间。
+    // `x~y` (no +): a genuinely closed interval.
     var closedRange = ToolRequirement.Parse("17.0.10~17.0.20.1+".Replace("+", string.Empty));
     Check(closedRange.Satisfies("17.0.15") && closedRange.Satisfies("17.0.20") && !closedRange.Satisfies("17.0.21"),
         "A range without '+' is a closed interval");
-    // `x.y.*`：通配（引擎用 PowerShell 的 -like）。
+    // `x.y.*`: wildcard (the engine uses PowerShell's -like).
     var wildcard = ToolRequirement.Parse("5.5.1.*");
     Check(wildcard.Satisfies("5.5.1.6542") && !wildcard.Satisfies("6.14.0.1"),
         "A wildcard requirement matches by prefix and rejects a newer major");
-    // 纯版本号是**字符串相等**，不是数值相等。
+    // A bare version number means **string equality**, not numeric equality.
     var exact = ToolRequirement.Parse("22.0");
     Check(exact.Satisfies("22.0") && !exact.Satisfies("22.0.0") && !exact.Satisfies("9.0"),
         "A bare version requires exact string equality (22.0 does not accept 22.0.0)");
-    // `17.9+`：单段下限，VS 的 4 段版本要能比。
+    // `17.9+`: a single-segment lower bound; VS's 4-segment versions must compare against it.
     var lowerBound = ToolRequirement.Parse("17.9+");
     Check(lowerBound.Satisfies("18.10.12224.181") && !lowerBound.Satisfies("17.8.0"),
         "A lower bound compares numeric segments (17.9+ accepts 18.10.x, rejects 17.8)");
@@ -5627,14 +5662,15 @@ if (args.Contains("--check-build-profiles"))
     Check(probeRows.All(row => row.Details.Length > 0), "Every probed component carries a status description");
     Check(probeRows.Where(row => row.Status == ComponentStatus.Installed).All(row => row.Executable is not null),
         "Reported installed components point at the executable that will actually be used");
-    // axslcc 在引擎里是 -mode BOTH（引擎树优先），而这棵树的 axslcc 版本恰好满足要求；
-    // 所以它必须解析到引擎树内 —— 这条能证明"查找顺序"不是想当然写的。
+    // axslcc is -mode BOTH in the engine (engine tree first), and this tree's axslcc version happens to satisfy the
+    // requirement; so it must resolve inside the engine tree — this is what proves the "lookup order" was not
+    // written on a hunch.
     var axslcc = probeRows.Single(row => row.Name == "Axmol shader compiler");
     Check(axslcc.Status != ComponentStatus.Installed
           || axslcc.Executable!.StartsWith(probeToolRoot, StringComparison.OrdinalIgnoreCase),
         "Engine-first tools resolve inside the engine tree (axslcc uses -mode BOTH)");
-    // NDK 代号 → revision 前两段：r27d → 27.3（major 取全部数字、minor = 字母 - 'a'）。
-    // 这是引擎 setup_android_sdk 里最容易抄错的位运算，单独钉住。
+    // NDK code name → the first two revision parts: r27d → 27.3 (major takes all the digits, minor = letter - 'a').
+    // This is the bit arithmetic in the engine's setup_android_sdk that is easiest to copy wrong, so pin it alone.
     Check(EngineToolchain.NdkRevisionFor("r27d") == "27.3" && EngineToolchain.NdkRevisionFor("r23d") == "23.3"
           && EngineToolchain.NdkRevisionFor("r25") == "25.0" && EngineToolchain.NdkRevisionFor("r27") == "27.0",
         "NDK codenames map to the revision prefix the engine compares (r27d -> 27.3)");
@@ -5646,11 +5682,12 @@ if (args.Contains("--check-build-profiles"))
 }
 
 // ---------------------------------------------------------------------------
-// 预编译引擎库（Windows 目标）。自带 return、主机无关 —— 全部用夹具，
-// 不需要真实引擎、不需要 Windows，所以可以进 CI。
+// Prebuilt engine libraries (Windows targets). Self-contained return, host-independent — everything runs on
+// fixtures, so no real engine and no Windows is required, which is why this can go into CI.
 //
-// 这里守的是**引擎那边不会报错**的那些性质：AX_PREBUILT_DIR 指向的目录不合格时，
-// 引擎会静默退回源码构建（AXGameEngineSetup.cmake:22），所以「能不能用」必须 Hub 判准。
+// What is guarded here are the properties **the engine never errors about**: when the directory AX_PREBUILT_DIR
+// points at does not qualify, the engine silently falls back to a source build (AXGameEngineSetup.cmake:22), so
+// "is it usable" has to be judged correctly by Hub.
 // ---------------------------------------------------------------------------
 if (args.Contains("--check-prebuilt"))
 {
@@ -5665,11 +5702,13 @@ if (args.Contains("--check-prebuilt"))
     var windowsTarget = BuildTargets.Get("windows-x64");
     var fixtureProject = new ProjectEntry { Name = "game", Path = projectPath, Platform = "windows-x64", Configuration = "Debug", Version = "2.11.5" };
 
-    // 造一个「内容完整」的引擎构建目录：CMakeCache.txt + lib/<配置> + bin/<配置> + runtime/axslc + freetype 头。
+    // Build a "content-complete" engine build directory: CMakeCache.txt + lib/<configuration> + bin/<configuration>
+    // + runtime/axslc + freetype headers.
     var buildDirectory = Path.Combine(enginePath, "build");
 
-    /// 干净重来：每次都从零造，否则上一步留下的文件会让下一步的断言假绿
-    /// （例如「没有着色器」那一步会被上一步造出来的着色器文件救回来）。
+    /// Start clean: build everything from scratch each time, otherwise files left by the previous step make the
+    /// next assertion falsely green (e.g. the "no shaders" step would be rescued by shader files an earlier step
+    /// created).
     void CompleteBuild(string configuration)
     {
         if (Directory.Exists(buildDirectory)) Directory.Delete(buildDirectory, recursive: true);
@@ -5696,54 +5735,59 @@ if (args.Contains("--check-prebuilt"))
 
     var token = ProjectService.EngineInstallationToken(fixtureEngine);
 
-    // 1) 还没构建过 —— 最常见的初始状态。
+    // 1) Never built yet — the most common initial state.
     Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState).Status == PrebuiltStatus.NotBuilt,
         "Without a build record the prebuilt libraries are reported as not built");
 
-    // 2) 内容完整 + 记录匹配 → Ready，且相对路径是引擎根下的干净路径（正斜杠）。
+    // 2) Content complete + record matches → Ready, and the relative path is a clean path under the engine root
+    //    (forward slashes).
     CompleteBuild("Debug");
     SaveRecord("windows-x64", "Debug", token);
     var ready = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState);
     Check(ready.Usable && ready.RelativeDirectory == "build" && !ready.RelativeDirectory!.Contains('\\'),
         "A complete engine build is reported ready with an engine-root-relative path (build)");
 
-    // 3) 只有 Debug 库却要 Release：报出**实际存在哪些配置**，而不是只说"缺"。
+    // 3) Only Debug libraries but Release was asked for: report **which configurations actually exist**, instead of
+    //    just saying "missing".
     var missingConfiguration = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState);
     Check(missingConfiguration.Status == PrebuiltStatus.ConfigurationMissing && missingConfiguration.Detail.Contains("Debug"),
         "A missing configuration reports the configurations the engine build actually has");
 
-    // 4) 内容不全（没有预编译着色器）→ 不算就绪。
+    // 4) Incomplete content (no prebuilt shaders) → not ready.
     CompleteBuild("Release");
     File.Delete(Path.Combine(buildDirectory, "runtime", "axslc", "positionTextureColor_vs"));
     Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.MissingContents,
         "An engine build without runtime/axslc is not accepted as prebuilt");
 
-    // 5) 引擎被重装/修复过 → 记录失效，不能拿旧产物当真。
+    // 5) The engine was reinstalled/repaired → the record is void, old artifacts must not be taken on trust.
     CompleteBuild("Release");
     SaveRecord("windows-x64", "Release", "token-from-an-older-installation");
     Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.EngineChanged,
         "A record from an older engine installation is refused");
 
-    // 6) 记录里的目标与请求的不一致 → 拒绝（目录名本身判断不出平台，只认记录）。
+    // 6) The target recorded differs from the one requested → refuse (the directory name alone says nothing about
+    //    the platform; only the record is trusted).
     SaveRecord("windows-arm64", "Release", token);
     Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.TargetMismatch,
         "A record built for another target is refused");
 
-    // 7) 平台闸门：预编译库只对 Windows 目标成立（引擎也只认 WIN32/LINUX）。
+    // 7) Platform gate: prebuilt libraries only hold for Windows targets (the engine itself only accepts
+    //    WIN32/LINUX).
     SaveRecord("windows-x64", "Release", token);
     Check(!EnginePrebuilt.Supported(BuildTargets.Get("android-arm64"))
           && EnginePrebuilt.Inspect(fixtureEngine, BuildTargets.Get("android-arm64"), "Release", prebuiltState).Status == PrebuiltStatus.PlatformUnsupported,
         "Non-Windows targets are refused before reading the disk");
 
-    // 8) 每项目选项的存取（写项目目录内的独立 JSON，不动 .axmol-hub.json）。
+    // 8) Per-project option storage (a separate JSON inside the project directory; .axmol-hub.json is untouched).
     new PrebuiltSettings { Enabled = true }.Save(fixtureProject);
     Check(PrebuiltSettings.Load(fixtureProject)?.Enabled == true
           && File.Exists(Path.Combine(projectPath, ".axmol-hub.prebuilt.json"))
           && !File.Exists(Path.Combine(projectPath, ".axmol-hub.json")),
         "Prebuilt settings persist in the project directory without touching the project metadata");
 
-    // 9) 开关打开且就绪 → 交给 CMake 的就是引擎根的相对路径；否则**明确失败**而不是静默退回源码构建。
-    //    夹具项目是 Debug，所以这里要让引擎那一份也回到 Debug 才算就绪。
+    // 9) Switch on and ready → what is handed to CMake is the relative path under the engine root; otherwise
+    //    **fail explicitly** rather than silently falling back to a source build.
+    //    The fixture project is Debug, so here the engine's own copy must also be back on Debug to count as ready.
     CompleteBuild("Debug");
     SaveRecord("windows-x64", "Debug", token);
     var options = ProjectBuildOptions.CmakeOptions(fixtureProject, fixtureEngine, windowsTarget, prepareFiles: false, prebuiltState);
@@ -5758,14 +5802,15 @@ if (args.Contains("--check-prebuilt"))
 }
 
 // ---------------------------------------------------------------------------
-// CLI --json 契约（文档：docs/cli-json-contract.md）。这是**端到端**检查：真起 CLI 进程，
-// 只认 stdout。纯形状断言永远证明不了"stdout 里恰好只有一份 JSON" —— help 那次真错
-// （help 文本打头、后面跟着信封）就是这么漏过去的。所以核心断言是"整段 stdout 必须被
-// JsonDocument.Parse 吃下"，多一个字符都不行。解析在进程内做，不依赖 jq/python，
-// 三个平台行为一致。
+// CLI --json contract (docs: docs/cli-json-contract.md). This is an **end-to-end** check: it really starts the CLI
+// process and trusts only stdout. Pure shape assertions can never prove "stdout holds exactly one JSON document" —
+// that is how the real help bug slipped through (help text first, the envelope behind it). So the core assertion is
+// "the whole stdout must be consumed by JsonDocument.Parse", not one character more. Parsing happens in-process,
+// with no jq/python dependency, so behaviour is identical on all three platforms.
 //
-// 放在主流程之前、自带 return：契约检查不需要真实引擎与工具链，因此必须能在
-// 干净的 CI 机器上单独跑（主流程恰恰需要真实引擎树，CI 目前跑不了）。
+// Placed before the main flow, with its own return: the contract check needs no real engine and no toolchain, so it
+// must run on its own on a clean CI machine (the main flow, by contrast, needs a real engine tree, which CI cannot
+// run today).
 // ---------------------------------------------------------------------------
 if (args.Contains("--check-cli-json"))
 {
@@ -5775,7 +5820,8 @@ if (args.Contains("--check-cli-json"))
     var cliPath = Path.GetFullPath(args[cliIndex + 1]);
     if (!File.Exists(cliPath)) throw new FileNotFoundException("Build src/AxmolHub.Cli first: the CLI artifact does not exist.", cliPath);
 
-    // 框架依赖产物是 dll，要借 dotnet 起；自包含产物本身就是宿主可执行文件。
+    // A framework-dependent build is a dll and needs dotnet to start; a self-contained build is itself the host
+    // executable.
     var executable = Path.GetExtension(cliPath).Equals(".dll", StringComparison.OrdinalIgnoreCase) ? "dotnet" : cliPath;
     string[] leading = executable == "dotnet" ? [cliPath] : [];
     var workspace = Path.GetFullPath(".");
@@ -5792,7 +5838,7 @@ if (args.Contains("--check-cli-json"))
         return (result.ExitCode, result.Output, result.Error);
     }
 
-    // 解析失败时把 stdout 原文倒出来再失败，否则只剩一句无信息量的 FAILED。
+    // When parsing fails, dump stdout verbatim before failing; otherwise nothing is left but a contentless FAILED.
     JsonDocument? Parse(string output)
     {
         try { return JsonDocument.Parse(output); }
@@ -5804,7 +5850,8 @@ if (args.Contains("--check-cli-json"))
         }
     }
 
-    // 失败时把子进程的完整 transcript 倒出来；成功时保持安静（否则 14 行 JSON 会被抄两遍）。
+    // On failure dump the child process's full transcript; stay quiet on success (otherwise the 14 JSON lines are
+    // transcribed twice).
     void Judge(bool condition, string name)
     {
         if (condition) { Check(true, name); return; }
@@ -5815,8 +5862,9 @@ if (args.Contains("--check-cli-json"))
 
     bool Has(JsonElement parent, params string[] names) => names.All(name => parent.TryGetProperty(name, out _));
 
-    // 递归确认没有 PascalCase 属性名。命名策略一旦退回 System.Text.Json 的默认值，
-    // 整个契约就和文档对不上了 —— 而那只会在消费方那边炸，不会在这里炸。
+    // Walk recursively to confirm no property name is PascalCase. If the naming policy ever falls back to
+    // System.Text.Json's default, the whole contract stops matching the docs — and that blows up on the consumer
+    // side only, never here.
     bool CamelCaseOnly(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
@@ -5836,7 +5884,7 @@ if (args.Contains("--check-cli-json"))
         return true;
     }
 
-    // ---- 1) 成功路径 ----
+    // ---- 1) success path ----
     var targets = await Invoke(["targets", "--json"]);
     var targetsDocument = Parse(targets.Output);
     Judge(targets.Code == 0, "targets --json exits 0");
@@ -5861,11 +5909,12 @@ if (args.Contains("--check-cli-json"))
         }
     }
 
-    // --json 是全局标志：放在动词前面必须和放在后面逐字节相同。
+    // --json is a global flag: placed before the verb it must be byte-for-byte identical to placing it after.
     var flagFirst = await Invoke(["--json", "targets"]);
     Judge(flagFirst.Code == 0 && flagFirst.Output == targets.Output, "--json is position independent");
 
-    // ---- 2) help：这里曾真的漏过（help 文本打头 + 信封，stdout 整段不可解析） ----
+    // ---- 2) help: a bug really did slip through here once (help text first + the envelope after it,
+    //         leaving stdout unparseable as a whole) ----
     var helpJson = await Invoke(["help", "--json"]);
     var helpDocument = Parse(helpJson.Output);
     Judge(helpJson.Code == 0 && helpDocument is not null, "help --json writes exactly one parseable JSON document to stdout");
@@ -5879,12 +5928,12 @@ if (args.Contains("--check-cli-json"))
         }
     }
 
-    // ---- 3) 不带 --json 时人读输出必须原样不动 ----
+    // ---- 3) without --json the human-readable output must stay exactly as it is ----
     var human = await Invoke(["targets"]);
     Judge(human.Code == 0 && !human.Output.TrimStart().StartsWith('{') && human.Output.Contains("current="),
         "without --json the human layout is untouched");
 
-    // ---- 4) 失败也必须给 JSON：消费方不该被迫去解析 stderr ----
+    // ---- 4) failure must also yield JSON: consumers should never be forced to parse stderr ----
     var failure = await Invoke(["select", Path.Combine(scratch, "data"), Path.Combine(scratch, "not-a-project"), "windows-x64", "--json"]);
     var failureDocument = Parse(failure.Output);
     Judge(failure.Code == 1, "a failing command keeps its process exit code");
@@ -5905,7 +5954,8 @@ if (args.Contains("--check-cli-json"))
     }
     Judge(failure.Error.Length > 0, "the human diagnostic still goes to stderr rather than stdout");
 
-    // ---- 5) verify 是刻意的例外：ok:false + exitCode:2 但 data 仍要在（"组件缺失"是数据不是异常）----
+    // ---- 5) verify is a deliberate exception: ok:false + exitCode:2, but data must still be there
+    //         ("missing components" is data, not an exception) ----
     var verify = await Invoke(["verify", Path.Combine(scratch, "clean-root"), "windows-x64", "--json"]);
     var verifyDocument = Parse(verify.Output);
     Judge(verify.Code == 2, "verify exits 2 when components are missing");
@@ -5926,7 +5976,7 @@ if (args.Contains("--check-cli-json"))
         }
     }
 
-    // ---- 6) 未知动词 ----
+    // ---- 6) unknown verb ----
     var unknown = await Invoke(["nonsense", "--json"]);
     var unknownDocument = Parse(unknown.Output);
     Judge(unknown.Code == 1 && unknownDocument is not null, "an unknown verb also fails in JSON");
@@ -5940,7 +5990,7 @@ if (args.Contains("--check-cli-json"))
         }
     }
 
-    // ---- 7) 载荷编码本身（进程内，不依赖上面任何一次调用） ----
+    // ---- 7) the payload encoding itself (in-process, independent of every call above) ----
     using (var bare = JsonDocument.Parse(CliContract.Encode("noop", true, 0)))
     {
         var members = bare.RootElement.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal);
@@ -5980,8 +6030,8 @@ using (var cancellation = new CancellationTokenSource(300))
 var engineRoot = args.Length > 1 ? Path.GetFullPath(args[1]) : Path.GetFullPath("../axmol-2.11.5");
 var engine = StateStore.ValidateEngine(engineRoot);
 Directory.CreateDirectory(Path.Combine(root, "tools"));
-// 工具链真源已从「Hub 的 data-root/tools」换成**引擎树**：
-// 期望版本来自 <engine>/1k/build.profiles，落点是官方 setup.ps1 的 <engine>/tools/external。
+// The toolchain's source of truth has moved from "Hub's data-root/tools" to the **engine tree**: expected versions
+// come from <engine>/1k/build.profiles, and the landing spot is <engine>/tools/external from the official setup.ps1.
 var managedTools = Path.GetFullPath(Path.Combine(root, "tools"));
 var engineTools = EngineToolchain.ToolRoot(engine);
 Check(engineTools == Path.Combine(engine.Path, "tools", "external") && !engineTools.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase),
@@ -5994,7 +6044,8 @@ Check(engineComponents.All(c => c.Details.Length > 0) && engineComponents.Any(c 
 var profile = BuildProfile.Load(engine.Path);
 Check(profile.Cmake is { Length: > 0 } && profile.Ndk is { Length: > 0 } && profile.TargetSdk is { Length: > 0 },
     "Engine build profile supplies the expected tool versions (source of truth)");
-// 辅助环境（Hub 直调 adb/keytool/emrun 时用）必须以引擎树为根，且不得再指向 Hub 的 tools 目录。
+// The auxiliary environment (used when Hub calls adb/keytool/emrun directly) must be rooted at the engine tree and
+// must no longer point at Hub's tools directory.
 var auxiliary = new PlatformBuildService(runner).CreateEnvironment(engine, BuildTargets.Get("wasm32"));
 Check(auxiliary["AX_ROOT"] == engine.Path && auxiliary["EMSDK"] == Path.Combine(engineTools, "emsdk")
     && auxiliary["PATH"].Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
@@ -6009,8 +6060,9 @@ var parent = Path.Combine(root, "projects " + Guid.NewGuid().ToString("N"));
 var project = await service.CreateAsync("HelloAxmol", parent, engine);
 Check(File.Exists(Path.Combine(project.Path, "Source/AppDelegate.cpp")) && StateStore.ReadProject(project.Path).Version == engine.Version, "Real official CLI creates project and exact version lock");
 Check(StateStore.ReadProject(project.Path).ProjectType == "cpp", "Default creation uses the official C++ template");
-// 引擎从带 .git 的源码树创建工程时，engine_version 会带上短提交号（axmol.ps1 追加 -<hash>）。
-// 提交号不含兼容性信息，Hub 接受它并归一化到 x.y.z；但预发布标签仍然被拒 —— 精确版本纪律不放宽。
+// When the engine creates a project from a source tree that has .git, engine_version carries the short commit hash
+// (axmol.ps1 appends -<hash>). The hash holds no compatibility information, so Hub accepts it and normalises to
+// x.y.z; pre-release tags are still refused — the exact-version discipline is not relaxed.
 {
     var versionRoot = Path.Combine(root, "project-version-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(versionRoot);
@@ -6064,8 +6116,9 @@ preferencesStore.Save(preferences);
 Check(preferencesStore.Load().Language == "en-US", "Unknown language falls back to the default (English)");
 Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable, "Unknown update channel falls back to Stable");
 Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
-// 构建目录已由引擎决定（不再是 Hub 的 build-hub*），所以断言的是**发现规则**：
-// 引擎在工程里生成的 run 脚本写着 BUILD_DIR，那是权威来源；没有它才扫描 build*。
+// The build directory is now decided by the engine (no longer Hub's build-hub*), so what is asserted here is the
+// **discovery rule**: the run script the engine generates inside the project spells out BUILD_DIR, which is the
+// authoritative source; only without it do we scan build*.
 var buildFixture = Path.Combine(root, "engine-layout-" + Guid.NewGuid().ToString("N"));
 var layoutProject = new ProjectEntry { Name = "Fixture", Path = buildFixture, Platform = "windows-x64", Configuration = "Debug" };
 var scannedBuild = Path.Combine(buildFixture, "build_win32_x64");
@@ -6088,7 +6141,8 @@ var badZip = Path.Combine(root, Guid.NewGuid() + ".zip");
 using (var zip = ZipFile.Open(badZip, ZipArchiveMode.Create)) zip.CreateEntry("../escape.txt");
 await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.ExtractSafely(badZip, Path.Combine(root, "extracted"))), "ZIP traversal rejected");
 
-// SDK 完整性判定已交还引擎（它在 CMake 配置阶段校验），Hub 不再自己拼装/校验一份 SDK。
+// Deciding SDK integrity is back with the engine (it validates during the CMake configure step); Hub no longer
+// assembles or verifies an SDK of its own.
 var cancelledScript = Path.Combine(root, "must-not-start.ps1");
 var startedMarker = Path.Combine(root, "unexpected-start.txt");
 File.WriteAllText(cancelledScript, "param([string]$Marker)\nSet-Content -LiteralPath $Marker -Value started");
@@ -6133,7 +6187,7 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     var entry = new ProjectEntry { Name = "Fixture", Path = platformRoot, Version = "2.11.5", Channel = "official-lts", BuildStatus = "Succeeded" };
     StateStore.LockProject(entry);
     var directories = new HashSet<string>();
-    // 遍历全部目标需要一个 v3 引擎（v3 才含 arm64/wasm64 等专属目标）。
+    // Walking every target needs a v3 engine (only v3 carries its exclusive targets, arm64/wasm64 included).
     entry.Version = "3.0.0";
     StateStore.LockProject(entry);
     foreach (var target in BuildTargets.All)
@@ -6141,15 +6195,15 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
         BuildTargets.Select(entry, target.Id);
         Check(StateStore.ReadProject(platformRoot).Platform == target.Id && directories.Add(BuildTargets.BuildDirectory(entry)), "Target persists and build directory is isolated: " + target.Id);
     }
-    // v2 引擎不得选中 v3 专属目标（win32 arm64 / linux arm64 / wasm64）。
+    // A v2 engine must not select a v3-only target (win32 arm64 / linux arm64 / wasm64).
     entry.Version = "2.11.5";
     StateStore.LockProject(entry);
     await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "windows-arm64")), "A v2 engine cannot target Windows ARM64");
     await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "linux-arm64")), "A v2 engine cannot target Linux ARM64");
     await Reject<PlatformNotSupportedException>(() => Task.Run(() => BuildTargets.Select(entry, "wasm64")), "A v2 engine cannot target wasm64");
 
-    // 交叉编译与运行规则（用户 2026-10-03）：Windows 可交叉编译 arm64 但运行需 arm64 宿主；
-    // Linux 不支持交叉编译，v3 的 linux arm64 只能在 arm64 机器上构建。
+    // Cross-compile and run rules (user, 2026-10-03): Windows may cross-compile arm64 but running it needs an
+    // arm64 host; Linux supports no cross-compiling, so v3's linux arm64 builds only on an arm64 machine.
     Check(BuildTargets.Get("windows-arm64").CanCrossBuild("x64") && !BuildTargets.Get("windows-arm64").CanRunLocally("x64")
         && BuildTargets.Get("windows-arm64").CanRunLocally("arm64"),
         "Windows ARM64 cross-compiles on x64 but only runs on an arm64 host");
@@ -6211,14 +6265,15 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     entry.Platform = "wasm32";
     var wasmEngine = new EngineEntry("2.11.5", platformRoot);
     var wasmEnvironment = platformService.CreateEnvironment(wasmEngine, BuildTargets.Get(entry.Platform));
-    // 工具链已交还引擎：辅助环境以**引擎树**为根（<engine>/tools/external），不再指向 Hub 的 data-root/tools。
+    // The toolchain is back with the engine: the auxiliary environment is rooted in the **engine tree**
+    // (<engine>/tools/external) and no longer points at Hub's data-root/tools.
     var wasmTools = EngineToolchain.ToolRoot(wasmEngine);
     var hubTools = Path.GetFullPath(Path.Combine(root, "tools"));
     var wasmPath = wasmEnvironment["PATH"].Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
     Check(wasmEnvironment["AX_ROOT"] == platformRoot && wasmEnvironment["EMSDK"] == Path.Combine(wasmTools, "emsdk")
         && wasmPath.All(part => !part.StartsWith(hubTools, StringComparison.OrdinalIgnoreCase)),
         "Auxiliary environment is rooted at the engine tree instead of a Hub-managed tools root");
-    // 产物候选按目标族收窄：Windows 的 .exe 不能满足 WebAssembly 的构建。
+    // Artifact candidates are narrowed by target family: a Windows .exe cannot satisfy a WebAssembly build.
     var wasmNoise = Path.Combine(platformRoot, "build_wasm");
     Directory.CreateDirectory(Path.Combine(wasmNoise, "bin", "Fixture"));
     File.WriteAllText(Path.Combine(wasmNoise, "bin", "Fixture", "Fixture.exe"), "wrong-target");
@@ -6228,8 +6283,9 @@ Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/to
     Check(concurrentStore.Load().Projects.Count == 8, "Concurrent CLI project updates preserve other projects");
 }
 {
-    // 打包配方的版本验证边界来自清单（recipe-manifest.json），不是代码里的字面量：
-    // 同一个配方在已声明与未声明的版本上必须给出相反结论。
+    // The packaging recipe's version-verification boundary comes from the manifest (recipe-manifest.json),
+    // not from a literal in code: the same recipe must reach opposite verdicts on a declared and an
+    // undeclared engine version.
     PackagingRecipes.RequireVerified(engine, PackagingRecipes.AndroidPackaging);
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine with { Version = "99.0.0" }, PackagingRecipes.AndroidPackaging)), "Unverified engine version cannot borrow another version packaging recipe");
     await Reject<InvalidOperationException>(() => Task.Run(() => PackagingRecipes.RequireVerified(engine, "recipe-that-is-not-declared")), "Recipe not declared for the engine version is refused");

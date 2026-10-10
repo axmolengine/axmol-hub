@@ -26,7 +26,7 @@ public enum ToolRisk
     /// outbound switch, neither of which an approval mode can relax.</para>
     ///
     /// <para>Also said plainly because it is a real coarseness: a grant on this tier
-    /// (<see cref="HubPreferences.TrustedTools"/>, and the card's 「总是允许」) is kept per <b>tool</b>, not per host,
+    /// (<see cref="HubPreferences.TrustedTools"/>, and the card's "Always allow") is kept per <b>tool</b>, not per host,
     /// so trusting <c>web_fetch</c> once stops every future page from asking. Per-host grants would need the trust
     /// list to carry something other than a wire name — <see cref="ToolTrust"/> matches names exactly, so a
     /// <c>web_fetch:example.com</c> entry matches nothing — and that is a change to the trust shape, not a string to
@@ -50,15 +50,15 @@ public enum ToolRisk
 /// </summary>
 public static class ToolApprovalModes
 {
-    /// <summary>询问审批 — the default, and the fallback for anything unrecognized.</summary>
+    /// <summary>Ask for approval — the default, and the fallback for anything unrecognized.</summary>
     public const string Ask = "ask";
 
-    /// <summary>自动审批 — the session's sandbox is trusted: a write inside it and a command run inside it both go
+    /// <summary>Auto-approve — the session's sandbox is trusted: a write inside it and a command run inside it both go
     /// through. Anything that reaches past it still asks — the screen, another session, a directory nobody chose,
     /// a tool name this build does not know.</summary>
     public const string Auto = "auto";
 
-    /// <summary>完全访问 — nothing asks. The workspace guard still runs inside each tool, because approving
+    /// <summary>Full access — nothing asks. The workspace guard still runs inside each tool, because approving
     /// is not the same as trusting.</summary>
     public const string Full = "full";
 

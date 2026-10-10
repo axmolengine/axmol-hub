@@ -8,9 +8,10 @@ internal static class WindowsMuiCache
     private const string RegistryPath = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
 
     /// <summary>
-    /// 主程序在 <c>current\</c> 里用过的**全部**名字。MuiCache 的键是绝对路径，改名前的安装留下的
-    /// 条目只有按旧名才删得掉，所以这里不是"当前名"而是"历史名集合"：改名（AxmolHub.App.exe →
-    /// AxmolHub.exe）时旧名必须留着，删掉就等于让清理静默失效。
+    /// **All** names the main executable has ever used under <c>current\</c>. MuiCache keys are absolute
+    /// paths, and entries left by a pre-rename install can only be deleted under the old name, so this is
+    /// a historical-name set rather than "the current name": the old names (AxmolHub.App.exe →
+    /// AxmolHub.exe) must stay, and removing them would silently disable the cleanup.
     /// </summary>
     private static readonly string[] MainExecutableNames =
     [

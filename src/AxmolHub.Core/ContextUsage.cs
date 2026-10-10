@@ -3,8 +3,8 @@ namespace AxmolHub.Core;
 /// <summary>
 /// A heading of the context meter: one kind of thing the next request carries.
 ///
-/// <para>These are the things a person can act on. "工具声明" says the models' function signatures are eating the
-/// window; "回复预留" says the answer's share is; "消息" says the conversation is, and only that one is what
+/// <para>These are the things a person can act on. "Tool schemas" says the models' function signatures are eating the
+/// window; "Held for the reply" says the answer's share is; "Messages" says the conversation is, and only that one is what
 /// compaction can shrink. A heading nobody can act on is decoration, which is why there is no row for MCP servers,
 /// subagents or skills — this application has none, and a category that is always zero teaches a person to skip
 /// the column.</para>

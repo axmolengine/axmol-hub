@@ -72,7 +72,26 @@ Do not add `Co-authored-by` trailers to commit messages.
 
 - **No long-winded commit bodies.** The commit message body must not be a long essay — keep it short.
 - **English only, title and body.** Commit messages are pure English; the entire history is. Chinese
-  belongs in code comments and in the docs, where it is the norm — not in a commit message.
+  belongs in the docs and in the display text a test asserts on — never in a commit message.
+
+## Comment language
+
+**Code comments are English, everywhere.** `.cs`, `.csproj`, `.axaml`, `.ps1`, `.props`, `.manifest` —
+`//`, `///`, `#`, `<!-- -->` prose is English. This is not cosmetic: terminal windows and CI logs may
+open on a host with no CJK font, and a comment that survives there is the one that gets read six
+months from now. Write the language into the file from its path before the first comment, not after
+a review pass.
+
+Chinese stays where it is *data*, not prose:
+
+- The zh column of the UI-string table (`HubTexts.cs`) — that is shipped product copy.
+- Assertion names that a check report prints or a test matches on (the `--verify-shell` check names).
+- Expected values in tests when the expected value **is** a Chinese UI string, and non-ASCII test
+  fixtures (an install path, a file name) that exist to prove the code handles them.
+- A quoted label inside an English comment: write `the "AI 助手" nav item` verbatim rather than
+  translating the label — the comment refers to what is displayed.
+
+Anything a terminal renders — an echo line, a sudo prompt helper — is English for the same reason.
 
 A release is cut by a commit titled `Version x.y.z` (also `Version x.y.z-beta` or
 `Version x.y.z (Preview)`). Its **only** change is the version in `Directory.Build.props` — it is the

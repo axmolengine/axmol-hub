@@ -1,16 +1,18 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// Hub 界面文案的**单一定义**。
+/// The **single definition** of Hub's UI copy.
 ///
-/// 为什么在 Core 而不是某个 App：迁移期 WPF 版与 Avalonia 版**同时存在**（P6 才删 WPF），
-/// 而两侧都要本地化。把 190 条键值复制成两份，等于让中文/英文在迁移期间静默分叉 ——
-/// 恰恰是迁移期最容易顺手改文案。这与 ADR-0001 对"工具只定义一次"的要求是同一条道理：
-/// 数据放 Core，各客户端只留一层薄适配（WPF 写 Application.Resources，
-/// Avalonia 写 Avalonia 资源字典），任何一侧都不再拥有文案本身。
+/// Why it lives in Core rather than in one app: during the migration the WPF and Avalonia builds
+/// **coexisted** (WPF was only removed at P6), and both sides needed localising. Copying the 190 key/value
+/// pairs into two files would let Chinese/English silently fork during the migration — precisely the period
+/// when tweaking copy is most tempting. Same reasoning as ADR-0001's "define a tool once": the data goes in
+/// Core and each client keeps only a thin adapter (WPF writes Application.Resources, Avalonia writes an
+/// Avalonia resource dictionary); neither side owns the copy itself.
 ///
-/// 这里**只有数据与查表**，不含任何 UI 框架类型，因此 Core 的零依赖、可离线冷构建
-/// 性质不受影响。文案与界面框架无关，界面框架只决定"怎么送进资源字典"。
+/// This holds **only data and lookups**, with no UI framework types, so Core's zero-dependency,
+/// offline cold-build properties are unaffected. The copy is framework-agnostic; the framework only
+/// decides "how it gets fed into a resource dictionary".
 /// </summary>
 public static class HubTexts
 {
@@ -18,30 +20,32 @@ public static class HubTexts
     public const string EnglishLanguage = "en-US";
 
     /// <summary>
-    /// 没有设置、或设置里是一个不认识的值时使用的语言。
+    /// The language used when nothing is set, or the settings hold an unrecognised value.
     ///
-    /// **2026-10-03 由 <c>zh-CN</c> 改为 <c>en-US</c>**：起步语言是中文时，
-    /// 在没装 CJK 字体的 Linux（最小化安装的 Ubuntu 默认如此）上整片界面会显示成空白/方块，
-    /// 用户连"去设置里换成英文"都做不到 —— 设置页的语言下拉里那一项本身就是中文。
-    /// 英文在任何系统上都能显示，所以拿它当冷启动的兜底。
+    /// **Changed from <c>zh-CN</c> to <c>en-US</c> on 2026-10-03**: when the starting language is Chinese,
+    /// a Linux without CJK fonts (the default on a minimal Ubuntu install) renders the whole interface as
+    /// blanks/boxes, and the user cannot even "switch to English in Settings" — the entry in the language
+    /// dropdown on the Settings page is itself written in Chinese.
+    /// English displays on every system, so it is the cold-start fallback.
     ///
-    /// 注意它**不等于"中文"**。判断"当前是不是中文"要用 <see cref="ChineseLanguage"/>：
-    /// 这两个常量以前是同一个值，混用无所谓；现在值不同了，混用会让中文界面上出现英文硬编码文案。
+    /// Note that it is **not the same as "Chinese"**. To test "is the current language Chinese" use
+    /// <see cref="ChineseLanguage"/>: these two constants used to hold the same value, so mixing them did
+    /// not matter; now their values differ, and mixing them puts hard-coded English copy on a Chinese interface.
     /// </summary>
     public const string DefaultLanguage = EnglishLanguage;
 
-    /// <summary>未知语言一律回落到 <see cref="DefaultLanguage"/>，而不是抛异常：语言来自设置文件，属于用户数据。</summary>
+    /// <summary>Unknown languages fall back to <see cref="DefaultLanguage"/> rather than throwing: the language comes from the settings file, i.e. user data.</summary>
     public static string Normalize(string? language)
         => language == ChineseLanguage ? ChineseLanguage : DefaultLanguage;
 
     public static bool IsSupported(string? language) => language is ChineseLanguage or EnglishLanguage;
 
-    /// <summary>键不存在时返回键本身，与 WPF 版既有行为一致（缺失文案会显式暴露，而不是显示空白）。</summary>
+    /// <summary>Returns the key itself when the key is missing, matching the WPF build's existing behaviour (absent copy is surfaced explicitly instead of rendering blank).</summary>
     public static string Get(string key, string? language) => Values.TryGetValue(key, out var value)
         ? (Normalize(language) == ChineseLanguage ? value.Chinese : value.English)
         : key;
 
-    /// <summary>全部键。适配层靠它把文案灌进各自的资源字典。</summary>
+    /// <summary>All keys. The adapter layers use it to pour the copy into their own resource dictionaries.</summary>
     public static IReadOnlyCollection<string> Keys => Values.Keys;
 
     private static readonly Dictionary<string, (string Chinese, string English)> Values = new()
@@ -108,8 +112,8 @@ public static class HubTexts
         ["EnginesCount"] = ("已安装引擎", "Installed engines"),
         ["Platform"] = ("目标平台", "Target platform"),
         ["EnginesHint"] = ("版本独立安装，项目始终锁定自己的引擎。", "Separate installations. Each project keeps its engine version."),
-        // 刻意不写死版本号：清单里现在有六个版本，按钮上印"安装 2.11.5"会在
-        // 清单变更后变成一句假话，而它旁边就是版本选择器。
+        // The version number is deliberately not hard-coded: the manifest now carries six versions, and a button
+        // reading "Install 2.11.5" would become a false statement after a manifest change — with the version picker right beside it.
         ["InstallOfficial"] = ("安装官方引擎", "Install official engine"),
         ["ChooseEngineVersion"] = ("选择引擎版本", "Choose engine version"),
         ["EngineVersionHint"] = ("每个版本独立安装到 Hub 数据目录，项目始终锁定创建时的版本。", "Each version installs independently into Hub storage. Projects keep the version they were created with."),
@@ -244,8 +248,8 @@ public static class HubTexts
         ["CopyCode"] = ("复制代码", "Copy code"),
         ["OpenLogs"] = ("打开日志", "Open logs"),
         ["Cancel"] = ("取消", "Cancel"),
-        // 对话框按钮。以前这三条在 HubDialog 里是**写死的中文**，于是英文界面里点开任何弹窗，
-        // 按钮都是中文 —— 而"缺中文字体"那条提示恰恰要靠这个按钮收尾（见 CjkFontNotice）。
+        // Dialog buttons. These three used to be **hard-coded Chinese** inside HubDialog, so opening any dialog in
+        // the English UI gave Chinese buttons — and the "missing CJK font" notice is closed by exactly this button (see CjkFontNotice).
         ["Ok"] = ("确定", "OK"),
         ["Yes"] = ("是", "Yes"),
         ["No"] = ("否", "No"),
@@ -333,7 +337,7 @@ public static class HubTexts
         ["Choose devenv.exe"] = ("请选择 devenv.exe。", "Choose devenv.exe."),
         ["Choose Code.exe"] = ("请选择 Code.exe。", "Choose Code.exe."),
         ["StartupFailed"] = ("Axmol Hub 启动失败", "Axmol Hub failed to start"),
-        // 更新检查（Velopack 自更新）。"检查更新"按钮在设置页，启动时也会自动静默检查一次。
+        // Update check (Velopack self-update). The "Check for updates" button lives on the Settings page; startup also runs one silent check.
         ["Updates"] = ("软件更新", "Software update"),
         ["UpdatesHint"] = ("检查 Axmol Hub 的新版本。只有安装版才会自动更新。", "Check for a new version of Axmol Hub. Only installed copies update automatically."),
         ["UpdateChannel"] = ("更新通道", "Update channel"),
@@ -346,8 +350,8 @@ public static class HubTexts
         ["UpdateUpToDate"] = ("已是最新版本。", "You're up to date."),
         ["UpdateNotInstalled"] = ("当前是开发版或便携版，无法自动更新。", "This is a development or portable copy, so it can't update itself."),
         ["UpdateFailed"] = ("检查更新失败，请稍后重试。", "Couldn't check for updates. Try again later."),
-        // 「有可用更新」不用弹窗，只在设置页导航项上点一个红点（见 Hub.NotificationDot）；红点只负责
-        // 「去看设置」，版本号、下载进度与操作都在设置页的更新卡片里。
+        // "Update available" does not use a dialog: it lights a red dot on the Settings nav item (see Hub.NotificationDot). The dot's
+        // only job is "go look at Settings"; the version number, the download progress and the actions all live in the update card on that page.
         ["UpdateDotTooltip"] = ("有可用更新", "Update available"),
         ["UpdateCheckHint"] = ("点「检查更新」查看是否有新版本。", "Click \"Check for updates\" to see if a newer version exists."),
         ["AutoDownloadUpdates"] = ("自动下载更新", "Auto-download updates"),
@@ -359,8 +363,9 @@ public static class HubTexts
             + "large file costs a few lines here instead of the whole file. Each one is a model call, and there "
             + "are three answer slots in total, so this ships off. One answer spawns at most one helper, and a "
             + "helper cannot spawn further."),
-        // 出网开关与上面那个的差别是默认值：抓一个被点名的网页是这类助手的基本动作，默认关等于这功能对没找到
-        // 设置的人不存在。所以文案要说清「开」才是缺省，以及关掉之后拒绝的是哪一类动作。
+        // The outbound switch differs from the one above in its default: fetching a page the user named is a basic action of this kind
+        // of assistant, so shipping it closed makes the feature nonexistent for anyone who never finds the setting. The copy therefore
+        // has to say that "on" is the default, and which class of action a switch-off refuses.
         ["AllowWebFetch"] = ("允许助手抓取网页", "Let the assistant read web pages"),
         ["AllowWebFetchHint"] = (
             "默认开启。抓取只走 https、只允许公网主机，重定向不许跨出 https，一次最多读 1 MiB；把脚本、样式和导航"
@@ -375,23 +380,24 @@ public static class HubTexts
             + "a search of its own; that kind of search runs inside the service, and no approval card can stop one "
             + "mid-reply."),
         ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
-        // 下载中 / 已就绪 / 下载失败三态的状态行都要带版本号：一旦开始下载，"发现新版本 x.y.z"
-        // 就被进度文案顶掉了，用户再也看不到自己要升到哪一版。{0} 是版本号，拼在状态文案前面。
+        // The status line of all three states — downloading / ready / download failed — has to carry the version number: once a download
+        // starts, "Version x.y.z is available" is pushed out by the progress copy and the user can no longer see which version they are moving to.
+        // {0} is the version number, prefixed to the status text.
         ["UpdateVersionPrefix"] = ("新版本 {0} · ", "Version {0} · "),
-        // 红点提示带版本。无版本（还没检查过）时仍用上面的 UpdateDotTooltip。
+        // The red-dot tooltip carries the version. When there is none (nothing checked yet) the UpdateDotTooltip above is still used.
         ["UpdateDotTooltipVersion"] = ("有可用更新：{0}", "Update available: {0}"),
         ["DownloadAndRestart"] = ("下载并重启", "Download & restart"),
         ["UpdateDownloading"] = ("正在下载更新… {0}%", "Downloading update… {0}%"),
-        // 进度条/状态行的悬停提示。{0} 是已格式化好的速率（"2.4 MB/s"），单位不随语言变化。
+        // Hover tooltip for the progress bar / status line. {0} is an already-formatted rate ("2.4 MB/s"); the unit does not vary with the language.
         ["UpdateDownloadSpeed"] = ("下载速度：{0}", "Download speed: {0}"),
         ["UpdateReadyToRestart"] = ("更新已就绪，重启完成更新。", "Update ready — restart to finish."),
-        // 两个动作按钮的悬停提示也报版本号：状态行说"已就绪"，按钮说"要装的是哪一版"。
+        // The two action buttons' tooltips name the version too: the status line says "ready", the button says "which version is being installed".
         ["UpdateDownloadActionTip"] = ("下载 {0} 并重启", "Download {0} and restart"),
         ["UpdateRestartActionTip"] = ("重启并安装 {0}", "Restart and install {0}"),
         ["RestartNow"] = ("立即重启", "Restart now"),
-        // 故意不带 {0}：后面要拼的是异常原文，可能含花括号，string.Format 会抛 FormatException。
+        // Deliberately without {0}: what gets appended after it is the raw exception text, which may contain braces, and string.Format would throw a FormatException.
         ["UpdateDownloadFailed"] = ("更新下载失败：", "Couldn't download the update: "),
-        // 内置 AI 助手。协议基线是 OpenAI 兼容，首期 provider = OrcaRouter + 自定义。
+        // Built-in AI assistant. The protocol baseline is OpenAI-compatible; the first phase's providers = OrcaRouter + custom.
         ["Assistant"] = ("AI 助手", "AI assistant"),
         ["AssistantHint"] = ("向助手提问 Axmol 相关问题。模型由你配置的 provider 提供。", "Ask the assistant about Axmol. Answers come from the provider you configure."),
         ["AssistantEmpty"] = ("开始新的对话。", "Start a new conversation."),
@@ -423,15 +429,15 @@ public static class HubTexts
         ["ChatReasoningXHigh"] = ("推理：超高", "Reasoning: Extra high"),
         ["ChatReasoningMax"] = ("推理：最大", "Reasoning: Max"),
         ["ChatReasoningUltra"] = ("推理：极致", "Reasoning: Ultra"),
-        // 谁在替这次请求选档位。措辞刻意避开单写「自动」：那个词在本应用里还可能是网关的模型 id
-        // orcarouter/auto，而芯片上的「自动路由」必须是唯一一个意思。
+        // Who picks the tier for this request. The wording deliberately avoids a bare "Auto": in this app that word can also be the
+        // gateway's model id orcarouter/auto, while "Auto routing" on the chip has to carry exactly one meaning.
         ["ChatRoutingMenu"] = ("档位由谁决定", "Who picks the tier"),
         ["ChatRoutingManual"] = ("我手动选", "I pick manually"),
         ["ChatRoutingAuto"] = ("自动（按任务强度）", "Auto (by task strength)"),
         ["ChatRoutingAutoChip"] = ("自动路由", "Auto routing"),
         ["ChatContextEstimateFormat"] = ("预计上下文：{0} / {1} tokens（{2}%），仅为本地估算", "Estimated context: {0} / {1} tokens ({2}%), local estimate only"),
         // The other reading of the same ring: the model itself said what the last request cost, so the number is
-        // no longer a guess. Two keys because two different claims, and "预计" over a measured figure is a lie.
+        // no longer a guess. Two keys because two different claims, and "Estimated" over a measured figure is a lie.
         ["ChatContextReportedFormat"] = ("上下文：{0} / {1} tokens（{2}%），上次请求实测", "Context: {0} / {1} tokens ({2}%), measured from the last request"),
         ["ChatContextEstimateHint"] = ("按字符数估算，实际 token 用量可能不同。", "Estimated from text length; actual token usage may differ."),
         ["ChatContextWindow"] = ("上下文窗口", "Context window"),
@@ -513,23 +519,23 @@ public static class HubTexts
         ["ChatToolRunningFormat"] = ("正在读取{0}", "Reading {0}"),
         ["ChatToolCompletedFormat"] = ("已读取{0}，正在继续", "Read {0}; continuing"),
         ["Provider"] = ("模型提供商", "Provider"),
-        // 设置页中 AI 模型 provider 管理卡片的标题与说明。
+        // Title and description of the AI model provider management card on the Settings page.
         ["ModelProviders"] = ("AI 模型提供商", "AI Model providers"),
         ["ModelProvidersHint"] = ("助手使用的模型接口。「添加提供商」可从内置预设中挑选（OrcaRouter、OpenAI、DeepSeek、Ollama…），已配置的提供商在此管理密钥与模型；助手页只负责选择用哪一个。", "The endpoints the assistant can use. \"Add provider\" picks from built-in presets (OrcaRouter, OpenAI, DeepSeek, Ollama …); keys and models for the ones you configured are managed here, while the assistant page only chooses between them."),
-        // 助手页模型提示，{0} = 提供商名称，{1} = 模型名称。
+        // Model hint on the assistant page; {0} = provider name, {1} = model name.
         ["ActiveModelFormat"] = ("当前模型：{0} · {1}", "Current model: {0} · {1}"),
         ["NoProvider"] = ("尚未配置模型提供商。", "No model provider is configured yet."),
         ["ApiKey"] = ("API 密钥", "API key"),
-        // 措辞只声明两档后端都成立的事实。「保存在操作系统的凭据存储中」在 Linux 的文件档上是错的，
-        // 而后端那一行（AuthSecretBackendFile）负责把「这次到底存在哪」说清楚。
+        // The wording states only what is true on both backend tiers. "Stored in the operating system's credential store" is wrong on the
+        // Linux file backend, and the backend line (AuthSecretBackendFile) is what makes "where this key actually went" clear.
         ["ApiKeyHint"] = ("密钥只保存在本机，不会写入配置文件或日志。", "The key stays on this machine and is never written to config files or logs."),
         ["ApiKeyPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥（Windows 使用 DPAPI，Linux 使用本机加密文件；macOS 的 Keychain 待补）。", "Secure key storage is not available on this platform (Windows uses DPAPI, Linux uses an encrypted local file; the macOS Keychain backend is pending)."),
-        // 后端披露：三档防住的东西不同，一句笼统的「已安全保存」会把差异抹掉，所以由存储自己报是哪一档。
+        // Backend disclosure: the three tiers guard against different things, and one blanket "safely stored" would flatten the difference, so the store itself reports which tier it is.
         ["AuthSecretBackendFile"] = ("此平台的密钥保存在本机加密文件中（数据密钥在用户配置目录，权限 600），而非系统凭据存储。", "On this platform keys are kept in an encrypted local file (data key in your profile directory, mode 600) rather than the OS credential store."),
         ["AuthSecretBackendDegraded"] = ("已存储的密钥有无法读取的项，重新输入即可覆盖：", "A stored key could not be read; entering it again replaces it: "),
         ["AuthNoBrowserLink"] = ("无法打开浏览器，请手动访问：", "No browser could be opened. Visit this link by hand: "),
         ["SaveApiKey"] = ("保存密钥", "Save key"),
-        // affiliate 披露：OrcaRouter 参与 OSS 计划，通过本项目的推荐链接注册，Simdsoft 可获得分成，所得收入全部用于 Axmol 引擎及相关工具的研发（见规划 D5）。
+        // Affiliate disclosure: OrcaRouter takes part in the OSS programme; registering through this project's referral link lets Simdsoft earn a commission, and all of that income funds development of the Axmol engine and its tooling (see planning D5).
         ["AffiliateDisclosure"] = ("通过本项目的推荐链接注册 {0}，Simdsoft 可获得分成，所得收入将全部用于 Axmol 引擎及相关工具的研发。", "Signing up for {0} through this project's referral link earns Simdsoft a commission, all of which goes toward developing the Axmol engine and its tooling."),
         ["ViewReferral"] = ("了解详情", "Learn more"),
         ["ChatFailed"] = ("助手请求失败：", "Assistant request failed: "),
@@ -551,7 +557,7 @@ public static class HubTexts
         ["ChatPeerOriginGone"] = ("来自一个已删除的会话", "From a session that no longer exists"),
         ["ConversationQueuedTip"] = ("另一个会话给它发了话，正等待空闲的回答位。", "Another session sent it something to answer; it starts when an answer slot frees."),
         // The badge itself is a glyph with no number — a session can owe exactly one decision at a time — so the
-        // count lives here, where it can say 「两个」 if a later build ever can park two.
+        // count lives here, where it can say "two" if a later build ever can park two.
         ["PendingApprovalsTip"] = ("有 {0} 个操作在等你批准。", "{0} action(s) in this session are waiting for you."),
         ["PendingApprovalSessionsFormat"] = ("{0} 个会话等待审批", "{0} session(s) awaiting approval"),
         // The decision was already made, or a newer message took the call away while the question was on screen.
@@ -669,11 +675,11 @@ public static class HubTexts
         ["ActivityRowGeneric"] = ("调用 {0}", "call {0}"),
         // A search the endpoint ran for itself, drawn as one live status line. It has no card and no result turn,
         // so this is the only place the person learns the answer came from outside — and "searching" is a state of
-        // its own here rather than a variation of 「搜索 xxx」, because the queries often are not known yet: the
+        // its own here rather than a variation of "search xxx", because the queries often are not known yet: the
         // start event arrives with nothing in it.
         ["ActivityRowWebSearching"] = ("正在联网搜索…", "searching the web…"),
         ["ActivityRowWebSearched"] = ("联网搜索：{0}", "searched the web for {0}"),
-        // Under the reply, the addresses it read. Named 「来源」 rather than 「参考」 because a model that searched
+        // Under the reply, the addresses it read. Named "Sources" rather than "References" because a model that searched
         // and cited nothing has to read as unread, and a softer word would let that pass for an answer.
         ["MessageSources"] = ("来源", "Sources"),
         ["MessageSearchedFor"] = ("它自己查了：{0}", "it searched for: {0}"),
@@ -732,7 +738,7 @@ public static class HubTexts
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),
         ["You"] = ("你", "You"),
-        // 消息级操作（气泡 hover 时出现的操作条）。
+        // Message-level actions (the action bar that appears when a bubble is hovered).
         ["CopyMessage"] = ("复制", "Copy"),
         // The tooltip is now the only place that warns editing drops the rest of the conversation: the
         // confirm dialog it used to precede went away when editing moved inline.
@@ -751,18 +757,18 @@ public static class HubTexts
         ["MessageTimeHoursAgo"] = ("{0} 小时前", "{0}h ago"),
         ["MessageTimeDaysAgo"] = ("{0} 天前", "{0}d ago"),
         ["ScrollToBottom"] = ("回到底部", "Scroll to bottom"),
-        // 会话管理（左侧会话列表）。
+        // Session management (the session list in the left column).
         ["RenameConversation"] = ("重命名", "Rename"),
         ["RenameConversationTitle"] = ("重命名对话", "Rename conversation"),
         ["PinConversation"] = ("置顶", "Pin"),
         ["UnpinConversation"] = ("取消置顶", "Unpin"),
-        // 会话分组：工作区在前，没有工作目录的对话统一归到末尾的「对话」，归档的沉在最后。时间分桶让位于
-        // 目录分组——同一个项目的对话散在「今天」「更早」里，就不是一个项目了。
+        // Session grouping: workspaces first, conversations with no working directory all go to the trailing "Chats" group, archived ones sink to the very bottom.
+        // Time buckets gave way to directory grouping — conversations of one project scattered over "Today" and "Earlier" no longer read as one project.
         ["GroupWorkspaces"] = ("工作区", "Workspace"),
         ["GroupChats"] = ("对话", "Chats"),
         ["GroupArchived"] = ("已归档", "Archived"),
         ["ToggleGroup"] = ("展开或折叠这一组", "Expand or collapse this group"),
-        // 分组标题右侧的 ＋：工作区根节点先选目录，其余组按组自身的语义新建会话或对话。
+        // The "+" at the right of a group header: the workspace root node picks a directory first, the other groups create a session or a chat per what that group means.
         ["GroupNewSessionTip"] = ("新建会话", "New session"),
         ["GroupNewChatTip"] = ("新建对话", "New chat"),
         ["GroupNewWorkspaceTip"] = ("新建工作区", "New workspace"),
@@ -778,7 +784,7 @@ public static class HubTexts
 
         ["WorkspaceMovedFormat"] = ("「{0}」的 {1} 个对话已改用：{2}",
             "{1} conversations in “{0}” now work in: {2}"),
-        // provider 管理（custom provider = 用户自带 endpoint，接入本地模型的主要途径）。
+        // Provider management (a custom provider = an endpoint the user brings; the main way to attach a local model).
         ["AddProvider"] = ("添加提供商", "Add provider"),
         ["EditProvider"] = ("编辑提供商", "Edit provider"),
         ["RemoveProvider"] = ("移除提供商", "Remove provider"),
@@ -799,14 +805,14 @@ public static class HubTexts
         ["ProviderRemoved"] = ("已移除提供商。", "Provider removed."),
         ["ProviderBuiltInLockedHint"] = ("内置提供商的接口地址与名称由清单固定，可修改模型和密钥。", "A built-in provider's base URL and name come from the manifest; its model and key can be changed."),
         ["RemoveProviderConfirm"] = ("移除后该提供商的密钥也会删除，且无法恢复。", "Removing it also deletes its stored API key. This cannot be undone."),
-        // provider 预设选择器（对齐 GitHub Copilot 的「列表 + 可搜索添加」交互）。
+        // Provider preset picker (aligned with GitHub Copilot's "list + searchable add" interaction).
         ["ProviderPickerHint"] = ("选择要接入的模型提供商。可搜索名称或说明；接入清单外的私有接口请选「自定义接口」。", "Pick a model provider to add. Search by name or description; for a private endpoint that isn't listed, choose \"Custom endpoint\"."),
         ["ProviderSearchHint"] = ("搜索提供商", "Search providers"),
         ["ProviderSearchNoMatch"] = ("没有匹配的提供商。试试更短的关键词，或选择「自定义接口」。", "No matching provider. Try a shorter term, or choose \"Custom endpoint\"."),
         ["ProviderCustomRow"] = ("自定义接口", "Custom endpoint"),
         ["ProviderCustomRowHint"] = ("手动填写 OpenAI 兼容的接口地址与模型，适用于自建网关或局域网内的本地模型。", "Enter an OpenAI-compatible base URL and model by hand — for a self-hosted gateway or a local model on another machine."),
         ["ProviderAlreadyAdded"] = ("该提供商已在列表中。", "That provider is already in the list."),
-        // 认证方式与账号（一份凭据 = 一个账号，不分来源）。
+        // Sign-in method and accounts (one credential = one account, whatever its source).
         ["AuthMethod"] = ("认证方式", "Sign-in method"),
         ["AuthMethodApiKey"] = ("API 密钥", "API key"),
         ["AuthMethodOAuth"] = ("浏览器登录", "Sign in with browser"),
@@ -821,14 +827,14 @@ public static class HubTexts
         ["AuthOAuthScopeRejected"] = ("授权返回的权限范围比请求的更宽（{0}），已拒绝该密钥。请在授权页面仅勾选接口访问权限。", "The granted scope ({0}) is wider than the one requested, so the key was refused. On the consent page, grant API access only."),
         ["AuthOAuthNoBrowser"] = ("无法自动打开浏览器，请手动访问下面的地址：", "Could not open a browser automatically; open this address by hand:"),
         ["AuthOAuthPlatformUnsupported"] = ("当前平台尚不支持安全保存密钥，无法完成登录。", "Secure key storage is not available on this platform yet, so sign-in cannot complete."),
-        // 设备码登录（RFC 8628）：验证码在别的设备上输入，所以这里的说明不提浏览器在哪台机器上。
-        // 地址只出现一次——提示语里不再重复一遍，它是下面那一行可点击的文本。
+        // Device-code sign-in (RFC 8628): the code is typed on a different device, so these instructions never say which machine the browser is on.
+        // The address appears once only — the hint text does not repeat it; it is the clickable line below.
         ["AuthDeviceTitle"] = ("在浏览器中登录", "Sign in from your browser"),
         ["AuthDeviceHint"] = ("在任意设备的浏览器打开下面的地址，然后输入验证码。", "Open the address below in a browser on any device, then enter the code."),
         ["AuthDeviceWaiting"] = ("等待授权完成…关闭此窗口即取消。", "Waiting for you to approve… closing this window cancels."),
         ["AuthDeviceCopy"] = ("复制验证码", "Copy the code"),
         ["AuthDeviceCopied"] = ("验证码已复制，粘贴到授权页即可。", "Code copied — paste it into the browser."),
-        // 两种登录入口同时出现时，中间的分隔文案。
+        // The separator copy between the two sign-in entries when both are shown.
         ["AuthOrSeparator"] = ("或", "or"),
         // "Active" survives the account list's removal because the *model* rows reuse it to mark the model in
         // use. The key kept its old name rather than being renamed to ModelActive: HubTexts is bilingual data,
@@ -837,7 +843,7 @@ public static class HubTexts
         ["Affiliate"] = ("推荐", "Referral"),
         ["Add"] = ("添加", "Add"),
         ["Save"] = ("保存", "Save"),
-        // 分组列表（每个已配置的 provider 各成一组、全部展开）与其中的模型子列表。
+        // The grouped list (each configured provider its own group, all expanded) and the model sub-list inside it.
         ["ProviderInUse"] = ("当前", "Current"),
         ["ProviderBuiltInTag"] = ("内置", "Built-in"),
         ["ProviderCustomTag"] = ("自定义", "Custom"),
@@ -848,9 +854,9 @@ public static class HubTexts
         ["AddModel"] = ("添加模型", "Add model"),
         ["RefreshModels"] = ("刷新", "Refresh"),
         ["RefreshModelsHint"] = ("从提供商重新拉取可用模型列表。", "Fetch the available model list from the provider again."),
-        // 拉取结果。三种结局分开写而不是一句话带过：「问到了但一个都没有」和「压根没问到」在用户那里是
-        // 完全不同的两件事——前者要去检查账号权限或本地服务，后者要检查网络，合写成一句就等于没告诉
-        // 用户该做什么。
+        // Fetch outcomes, written as three separate endings rather than one catch-all sentence: "asked and got none" and "never reached the
+        // provider" are two completely different things for the user — the first means checking account permissions or the local service, the
+        // second means checking the network; merged into one sentence they tell the user nothing to do.
         ["ModelsRefreshing"] = ("正在拉取模型列表…", "Fetching the model list…"),
         ["ModelsFetched"] = ("已拉取 {0} 个模型。", "Fetched {0} models."),
         ["ModelsFetchedEmpty"] = ("该提供商没有返回任何模型。", "The provider returned no models."),
@@ -894,10 +900,10 @@ public static class HubTexts
         ["CloseModelCatalog"] = ("关闭", "Close"),
         ["NoEnabledModels"] = ("尚未启用模型。浏览模型目录，或手动添加模型。", "No models enabled. Browse the catalog or add a model manually."),
         ["NoModels"] = ("尚未添加模型。", "No models added yet."),
-        // 鉴权状态与断开。对勾 = 该 provider 已鉴权（有一份凭据，不分来源）。术语统一用「鉴权 / 链接」。
+        // Authentication state and disconnecting. The checkmark = this provider is authenticated (it holds one credential, whatever its source). Terminology is unified on "authenticate / link".
         //
-        // 这些文案在「一个 provider 一份凭据」之后改过一次：原来写的是「全部账号」，那是多账号模型留下的
-        // 说法，现在一个 provider 只有一份凭据，说「全部」反而会让用户以为还有别的要清。
+        // These strings were revised once after "one credential per provider": they used to say "all accounts", a leftover of the
+        // multi-account model. A provider now holds a single credential, so saying "all" would make users think something else still needs clearing.
         ["ProviderConnected"] = ("已鉴权", "Authenticated"),
         ["ProviderNotConnected"] = ("未鉴权", "Not authenticated"),
         ["DisconnectProviderConfirm"] = ("将删除该提供商在本机保存的密钥，提供商本身保留，可随时重新鉴权。此操作无法恢复。", "Deletes the key saved for this provider on this machine. The provider itself stays and can be reauthenticated at any time. This cannot be undone."),
@@ -905,14 +911,14 @@ public static class HubTexts
         ["ProviderNothingToDisconnect"] = ("该提供商没有已保存的密钥。", "This provider has no saved key."),
         ["ProviderPinnedHint"] = ("默认提供商不能移除（移除后会在下次启动时自动恢复）；可以断开鉴权清除本地密钥。", "The default provider can't be removed — it would be restored on the next launch. You can disconnect it to clear local keys."),
 
-        // 折叠态下那一行摘要。只剩模型数：账号数在一对一之后恒为 0 或 1，而「1 个账号」是个没有信息量的
-        // 数字——连接状态由名称旁边的对勾说，不需要文字再说一遍。
+        // The summary line in the collapsed state. Only the model count is left: after the one-to-one change the account count is always 0 or 1,
+        // and "1 account" is a number with no information in it — the connection state is told by the checkmark next to the name, no need for words to repeat it.
         ["SummaryModelCount"] = ("{0} 个已配置模型", "{0} configured models"),
         ["SummaryModelCountOne"] = ("1 个已配置模型", "1 configured model"),
 
-        // ── 鉴权对话框 ──
-        // 列表里只有一个按钮：未鉴权时叫「鉴权」，已鉴权时叫「断开鉴权」。真正的输入发生在对话框里，
-        // 所以列表页永远看不到输入框。
+        // ── The authentication dialog ──
+        // The list carries a single button: it reads "Authenticate" when the provider is not authenticated and "Disconnect" when it is. The real
+        // input happens inside the dialog, so the list page never shows a text field.
         ["Authenticate"] = ("鉴权", "Authenticate"),
         ["DisconnectProvider"] = ("断开鉴权", "Disconnect"),
         ["AuthDialogTitle"] = ("鉴权 {0}", "Authenticate {0}"),
@@ -926,19 +932,19 @@ public static class HubTexts
         ["AuthKeyStepHintNoCheck"] = ("密钥只保存在本机。", "The key is stored on this machine only."),
         ["AuthKeyChecking"] = ("正在校验…", "Checking…"),
         ["AuthKeyRejected"] = ("{0} 拒绝了该密钥，请检查后重试。", "{0} rejected this key. Check it and try again."),
-        // 校验请求本身失败（离线 / 端点不可达）时**照常保存**：把「问不到」说成「密钥无效」会让用户在
-        // 酒店 Wi-Fi 上怎么也连不上。这个区分与 KeyCheckOutcome 的四态是一一对应的。
+        // When the verification request itself fails (offline / endpoint unreachable) the key **is still saved**: calling "could not ask"
+        // "key invalid" would leave a user on hotel Wi-Fi unable to connect no matter what they try. This distinction maps one-to-one onto the four states of KeyCheckOutcome.
         ["AuthKeyUnreachable"] = ("无法向 {0} 校验该密钥（网络或端点不可用），将直接保存。", "Could not check the key with {0} (network or endpoint unavailable); saving it as typed."),
         ["AuthKeyAccepted"] = ("密钥有效。", "The key is valid."),
         ["AuthDone"] = ("鉴权成功。", "Authenticated."),
         ["AuthDialogCancelled"] = ("已取消鉴权。", "Authentication cancelled."),
         ["AuthSecretsUnsupported"] = ("当前平台没有可用的密钥存储，无法保存鉴权信息。", "This platform has no secret store available, so authentication cannot be saved."),
 
-        // 移除 provider 时的自动断开。确认框必须说明凭据会一起没了，否则「移除」看起来只影响列表。
+        // Automatic disconnect when a provider is removed. The confirmation has to say the credentials go with it, otherwise "remove" looks like it only affects the list.
         ["RemoveProviderWithCredentials"] = ("将同时删除该提供商在本机保存的 {0} 个账号与密钥。此操作无法恢复。", "Also deletes the {0} account(s) and key(s) saved for this provider on this machine. This cannot be undone."),
         ["RemoveProviderIconHint"] = ("移除该提供商", "Remove this provider"),
 
-        // Copilot 化改版：侧栏折叠、空状态欢迎语与建议问题、模型切换通知。
+        // The Copilot-style redesign: sidebar collapse, the empty-state greeting and suggestion chips, the model-changed notification.
         ["SidebarToggleTip"] = ("显示或隐藏导航栏", "Show or hide the navigation bar"),
         ["BottomMenuTip"] = ("设置与外观", "Settings and appearance"),
         ["SearchConversationsTip"] = ("搜索对话", "Search conversations"),

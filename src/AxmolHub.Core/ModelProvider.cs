@@ -223,7 +223,7 @@ public sealed class ModelProvider
     /// <para>The distinction between <see cref="Credential"/> and this is the whole point. A credential is a
     /// <i>record</i>; the secret lives in the OS store and is rehydrated at load — and it can be absent: a submit
     /// with the key field left blank, or a stored entry that no longer decrypts. Judging readiness by the record
-    /// alone produced a provider that settings called 已鉴权, that the composer was happy to offer, and that then
+    /// alone produced a provider that settings called "Authenticated", that the composer was happy to offer, and that then
     /// failed every send with "not authenticated yet" — three screens disagreeing about one state.</para>
     ///
     /// <para>A keyless endpoint is ready without a credential, and stays ready: that is what makes a local Ollama

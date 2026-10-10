@@ -28,7 +28,7 @@ if (-not $Version) { throw 'Version was not supplied and could not be read from 
 $taskIsPrerelease = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 
 if (-not $Channel) {
-    # 与 Build.ps1 保持一致：channel = 完整 RID，feed 名 releases.<rid>.json 即客户端查找名。
+    # Keep consistent with Build.ps1: channel = full RID, the feed name releases.<rid>.json is exactly what the client looks up.
     $Channel = $Runtime
 }
 
@@ -91,18 +91,18 @@ if ($Stage -in @('All', 'Upload')) {
         'osx-*' { '.pkg' }
         default { '.AppImage' }
     }
-    # 名字规则与 Build.ps1 同源（AssetNames.ps1）。Upload 阶段面对的是发布名：Build 阶段就是带
-    # -ReleaseAssetNames 打的包，Linux 那份不带版本段。
+    # The name rule is shared with Build.ps1 (AssetNames.ps1). The Upload stage faces release names: the Build stage packs
+    # with -ReleaseAssetNames, so the Linux asset carries no version segment.
     $taskSetup = Get-HubAssetName -AssetPrefix $taskAssetPrefix -Version $Version -Runtime $Runtime -Extension $taskSuffix -ReleaseAssetNames
     $taskUpload = @(
         (Join-Path $taskOutput $taskSetup),
         (Join-Path $taskOutput ($taskSetup + '.sha256'))
     )
 
-    # nupkg：vpk 原名 = {packId}-{version}[-{channel}]-{full|delta}.nupkg，channel 段**只在
-    # os==Windows 且 channel=="win" 时省略**（Velopack DefaultName.GetSuggestedReleaseName）。这里用
-    # channel=RID，故四个平台一律带 -<rid>- 段。上传时改名为与安装包同源的小写连字符
-    # axmol-hub-<version>-<runtime>-<type>.nupkg，并同步改 feed 的 FileName，否则客户端按 feed 找包 404。
+    # nupkg: vpk's native name = {packId}-{version}[-{channel}]-{full|delta}.nupkg; the channel segment is omitted **only when
+    # os==Windows and channel=="win"** (Velopack DefaultName.GetSuggestedReleaseName). Here we use channel=RID, so all four
+    # platforms always carry a -<rid>- segment. On upload it is renamed to the lowercase hyphenated form sharing the
+    # installer's source, axmol-hub-<version>-<runtime>-<type>.nupkg, and the feed's FileName is updated in lockstep, otherwise the client 404s looking up the package via the feed.
     foreach ($taskNupkg in @('full', 'delta')) {
         $taskCandidates = @(
             (Join-Path $taskOutput "$taskPackId-$Version-$Channel-$taskNupkg.nupkg"),
@@ -124,7 +124,7 @@ if ($Stage -in @('All', 'Upload')) {
         }
     }
 
-    # 写回裁剪 + 改名后的 feed（feed 名 = releases.<channel>.json = releases.<rid>.json）。
+    # Write back the trimmed + renamed feed (feed name = releases.<channel>.json = releases.<rid>.json).
     Set-Content -LiteralPath $taskFeed -Encoding UTF8 -Value ([pscustomobject]@{ Assets = @($taskKept) } | ConvertTo-Json -Depth 6)
     $taskUpload += $taskFeed
 

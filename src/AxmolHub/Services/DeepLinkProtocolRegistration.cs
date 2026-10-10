@@ -9,8 +9,9 @@ namespace AxmolHub;
 internal static class DeepLinkProtocolRegistration
 {
     private const string Scheme = "axmolhub";
-    // Velopack 按 --packTitle（'Axmol Hub'）原生创建快捷方式，桌面与开始菜单都叫这个名，
-    // 不需要安装后再改名 —— 改名反而会让 Velopack 卸载时找不到自己创建的快捷方式。
+    // Velopack natively creates the shortcut from --packTitle ('Axmol Hub'), so the desktop and Start menu
+    // both carry that name; no post-install rename is needed — renaming would in fact leave Velopack unable
+    // to find the shortcut it created when uninstalling.
     private const string BrandedShortcutName = "Axmol Hub.lnk";
 
     public static void Register(Action<string>? diagnostic = null)
@@ -65,8 +66,9 @@ internal static class DeepLinkProtocolRegistration
     {
         var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var installRoot = Directory.GetParent(appDirectory);
-        // Velopack 的稳定启动器名随 --packTitle 走（现在是 'Axmol Hub.exe'）；从 ≤0.8.7 升级上来的
-        // 安装仍有旧的 'AxmolHub.exe'，两个名字都试一遍，最后退回到安装根下唯一的非 Update.exe。
+        // Velopack's stable launcher name follows --packTitle (now 'Axmol Hub.exe'); installs upgraded from
+        // ≤0.8.7 still carry the old 'AxmolHub.exe', so try both names and finally fall back to the single
+        // non-Update.exe under the install root.
         if (installRoot is not null)
         {
             foreach (var name in new[] { "Axmol Hub.exe", "AxmolHub.exe" })
@@ -213,8 +215,9 @@ internal static class DeepLinkProtocolRegistration
         var desktopFile = Path.Combine(applications, LinuxDesktopIdentity.DesktopFile);
         var quotedExecutable = "\"" + EscapeDesktopArgument(executable) + "\"";
 
-        // 图标先落盘、桌面入口后写：Icon= 指向一个还没铺进主题的名字时，桌面环境会直接回退到通用
-        // 图标，那就又是"看着像没修"。铺不成就这一轮不写 Icon=，深链契约本身不受影响。
+        // Icons land on disk first, the desktop entry is written after: when Icon= points at a name not yet
+        // planted into the theme, the desktop environment falls back straight to the generic icon — back to
+        // "looks unfixed". If planting fails, skip Icon= this round; the deep-link contract itself is intact.
         var hasIcon = LinuxDesktopIntegration.InstallIcons(dataHome, diagnostic);
         var contents = "[Desktop Entry]\n"
                        + "Type=Application\n"
@@ -225,15 +228,17 @@ internal static class DeepLinkProtocolRegistration
                        + "Terminal=false\n"
                        + "Categories=Development;Utility;\n"
                        + "Keywords=axmol;engine;game;develop;\n"
-                       // 窗口类与桌面入口文件名同名，是 GNOME/KDE 把运行中的窗口认给这个入口的依据
-                       // （图标就从这条匹配里来）。窗口侧由 Program.BuildAvaloniaApp 的
-                       // X11PlatformOptions.WmClass 钉成同一个值，两边必须一起看。
+                       // The window class matching the desktop-entry filename is how GNOME/KDE attribute a
+                       // running window to this entry (and the icon comes from that match). The window side is
+                       // pinned to the same value by X11PlatformOptions.WmClass in Program.BuildAvaloniaApp —
+                       // both sides must be read together.
                        + "StartupWMClass=" + LinuxDesktopIdentity.Id + "\n"
                        + "MimeType=x-scheme-handler/" + Scheme + ";\n";
         LinuxDesktopIntegration.WriteIfChanged(desktopFile, new UTF8Encoding(false).GetBytes(contents));
 
-        // 三个刷新工具都是宿主可选依赖（见 LinuxDesktopIntegration），放在 xdg-mime 之前跑：
-        // xdg-mime 失败会抛出，那时缓存已经跟上刚写入的文件了。
+        // All three refresh tools are optional host dependencies (see LinuxDesktopIntegration); run them
+        // before xdg-mime: xdg-mime throws on failure, and by then the caches have already caught up with
+        // the freshly written files.
         LinuxDesktopIntegration.RefreshCaches(dataHome, applications, diagnostic);
 
         using var update = Process.Start(new ProcessStartInfo("xdg-mime", $"default {LinuxDesktopIdentity.DesktopFile} x-scheme-handler/{Scheme}")

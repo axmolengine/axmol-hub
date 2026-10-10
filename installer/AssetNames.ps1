@@ -14,15 +14,15 @@ function Get-HubAssetName {
     # Keep public download names stable when the private Velopack installation identity changes.
     $prefix = $AssetPrefix
 
-    # Linux 的 AppImage 不是安装器，是用户留在盘上反复运行的那个文件：名字必须跨版本不变，
-    # 否则每次发布都要重发链接、书签和脚本。本地调试产物也用同一个名字 —— artifacts/ 是
-    # gitignore 的临时区，覆盖没有代价。版本可以从标题栏（Axmol Hub v0.8.3）、桌面入口的
-    # X-AppImage-Version 与随包的 .sha256 三处任一处确认。
+    # Linux's AppImage is not an installer, it is the file users keep on disk and run repeatedly: the name must stay constant across
+    # versions, otherwise every release would mean re-issuing links, bookmarks and scripts. Local debug output uses the same name — artifacts/ is
+    # a gitignored scratch area, overwriting costs nothing. The version can be confirmed in any of three places: the title bar (Axmol Hub v0.8.3), the desktop
+    # entry's X-AppImage-Version, and the bundled .sha256.
     if ($Runtime -like 'linux-*') { return "$prefix-$Runtime$Extension" }
 
     # The Windows setup artifact has a stable local name independent of the package title.
     if ($Runtime -like 'win-*' -and -not $ReleaseAssetNames) { return 'AxmolHub.exe' }
 
-    # Windows / macOS 是装完即弃的安装器：版本段帮人确认下到的到底是哪一版，保留。
+    # Windows / macOS installers are discard-after-install packages: the version segment helps people confirm which version they downloaded, keep it.
     return "$prefix-$Version-$Runtime$Extension"
 }

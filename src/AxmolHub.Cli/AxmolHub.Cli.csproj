@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
-    <!-- Version 见仓库根的 Directory.Build.props：五个项目共用一个产品版本。 -->
+    <!-- Version: see Directory.Build.props at the repo root — the five projects share one product version. -->
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <!-- 与 installer/Build-Hosts.ps1 的宿主集合一致：四个 RID 都在那里用 -r 显式发布。
-         保留它是为了让"本项目的发布宿主全集"有一个可读的声明点；新增/变更发布宿主时同步这里。 -->
+    <!-- Consistent with the host set in installer/Build-Hosts.ps1: all four RIDs are published there
+         explicitly with -r. Keeping this gives "the full set of publish hosts for this project" one
+         readable declaration point; sync it whenever a publish host is added or changed. -->
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
-    <!-- 本项目没有 PackageReference，锁文件钉不住任何东西，退出 packages.lock.json 跟踪
-         （细则见仓库根 Directory.Build.props）。**加第一个 PackageReference 时删掉这一行。** -->
+    <!-- This project has no PackageReference, so a lock file could pin nothing; it opts out of
+         packages.lock.json tracking (details in the repo-root Directory.Build.props).
+         **Delete this line when the first PackageReference is added.** -->
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
@@ -15,7 +17,7 @@
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*.txt" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />
-    <!-- 见 AxmolHub.csproj：脚本归属 Core，Cli 只是把它复制到自己的输出目录。 -->
+    <!-- See AxmolHub.csproj: the scripts belong to Core, Cli merely copies them into its own output directory. -->
     <Content Include="../AxmolHub.Core/Scripts/*.ps1" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
