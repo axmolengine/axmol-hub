@@ -100,6 +100,14 @@
   <!-- A panel with a divider = sidebar toggle, matching the shape GitHub Copilot Desktop uses. Stroked. -->
   <StreamGeometry x:Key="Hub.Icon.Panel">M4.5 5H19.5V19H4.5 Z M10 5V19</StreamGeometry>
 
+  <!-- The inspector column's expand/restore pair. Two arrows on the same diagonal, a gap between their tips so
+       the two glyphs stay distinguishable at 14px where a merged centre reads as one blob: expand puts the
+       arrowhead on the outer corner (it points out, at the window edge), restore puts it on the inner end (it
+       points back at the centre). Stroked, and square-bounded (4.5–19.5 on both axes) for the same reason Send
+       is — Stretch="Uniform" leaves any leftover axis as slack, which pushes a lopsided glyph off centre. -->
+  <StreamGeometry x:Key="Hub.Icon.Expand">M13.5 4.5H19.5V10.5 M19.5 4.5L12.5 11.5 M10.5 19.5H4.5V13.5 M4.5 19.5L11.5 12.5</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Restore">M12.5 5.5V11.5H18.5 M12.5 11.5L19.5 4.5 M11.5 18.5V12.5H5.5 M11.5 12.5L4.5 19.5</StreamGeometry>
+
   <!-- A magnifier = search. Stroked. -->
   <StreamGeometry x:Key="Hub.Icon.Search">M10.7 10.7 m-5.4 0 a5.4 5.4 0 1 0 10.8 0 a5.4 5.4 0 1 0 -10.8 0 M14.8 14.8 L20 20</StreamGeometry>
 

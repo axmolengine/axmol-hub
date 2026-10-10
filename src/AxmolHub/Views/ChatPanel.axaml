@@ -246,6 +246,56 @@
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
+    <!-- A plan in the transcript is one bordered card naming the document, not the document itself: a row that
+         ran to screens pushed the conversation out of view to display something read once, in one sitting. The
+         frame is Hub.Border for the reason the approval card above gives — Hub.BorderSubtle equals the raised
+         surface in dark, and a frame drawn with it is invisible. It hugs its content, and caps at the approval
+         card's width so an open inspector can never push it past the chat column's floor. No MinHeight: the
+         theme's 34 would turn a quiet line into a plate. -->
+    <Style Selector="Button.plan-card">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Margin" Value="0,4,0,0" />
+      <Setter Property="MaxWidth" Value="560" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="ClipToBounds" Value="True" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.plan-card:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <Style Selector="Path.plan-card-icon">
+      <Setter Property="Width" Value="13" />
+      <Setter Property="Height" Value="13" />
+      <Setter Property="Stretch" Value="Uniform" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="StrokeThickness" Value="1.6" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,7,0" />
+    </Style>
+    <Style Selector="TextBlock.plan-card-label">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0,0,7,0" />
+    </Style>
+    <!-- The title is the secondary run and trims rather than wrapping: the card is one line, and the whole
+         title is in its tooltip. -->
+    <Style Selector="TextBlock.plan-card-title">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
     <!-- The one exit a write has. It stays visible instead of waiting for a hover, because an undo nobody can
          find is a mistake that cannot be fixed — and because the row it rides on is otherwise muted text with
          nothing clickable on it at all. Accent colour, no plate: the action is small on purpose. -->

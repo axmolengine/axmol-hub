@@ -40,13 +40,20 @@ public partial class ChatPanel
 
     private SteerDraft? _steerDraft;
 
-    /// <summary>Set by the shell once the inspector exists; until then 「查看计划」 scrolls the plan's own row
-    /// into view instead. Same affordance, honest fallback, no second surface.</summary>
-    internal Func<string, bool>? OpenInspector { get; set; }
+    /// <summary>Set by the shell: how the panel asks for the inspector column, on a tab ("plan" or "changes")
+    /// and for one specific plan turn (-1 for the newest). The plan's body lives nowhere else in the UI once the
+    /// transcript row is a card, so this is the entrance — which is why the card hands over the index of the plan
+    /// it names rather than letting the pane show a newer one under an older title.</summary>
+    internal Func<string, int, bool>? OpenInspector { get; set; }
 
     /// <summary>Set by the shell: how the panel asks the inspector column to hide. The panel builds the pane's
     /// content but never owns whether the column is up — that is the shell's, gated on the page.</summary>
     internal Action? CloseInspector { get; set; }
+
+    /// <summary>Set by the shell: how the pane asks the column to cover the whole window, and to go back. The
+    /// same division as <see cref="CloseInspector"/> — the panel knows a tap happened, only the shell knows
+    /// whether that means a wider column, an overlay, or nothing at all on this page.</summary>
+    internal Action? ToggleInspectorExpanded { get; set; }
 
     /// <summary>The one inspector pane, kept for the window's life so switching tabs or conversations does not
     /// rebuild it and lose which file a person had expanded.</summary>
@@ -54,20 +61,22 @@ public partial class ChatPanel
 
     /// <summary>
     /// Builds (once) and refreshes the inspector's content for the conversation on screen, landing on
-    /// <paramref name="tab"/>. The pane is fed a snapshot rather than reaching into the workspace: the plan text
-    /// is the newest plan turn's own markdown, and each file's diff is resolved lazily through
+    /// <paramref name="tab"/> and showing the plan <paramref name="turnIndex"/> names, or the newest one at -1.
+    /// The pane is fed a snapshot rather than reaching into the workspace: the plan text
+    /// is a plan turn's own markdown, and each file's diff is resolved lazily through
     /// <see cref="ChatWorkspace.DiffForChange"/> so a list of twelve writes reads no file until one is opened.
     /// </summary>
-    internal Control? BuildInspectorContent(string tab)
+    internal Control? BuildInspectorContent(string tab, int turnIndex)
     {
         var conversation = _chat?.ActiveConversation;
         if (_inspector is null)
         {
             _inspector = new InspectorPanel();
             _inspector.CloseRequested += () => CloseInspector?.Invoke();
+            _inspector.ExpandRequested += () => ToggleInspectorExpanded?.Invoke();
         }
 
-        var planText = LatestPlanText(conversation);
+        var planText = PlanTextFor(conversation, turnIndex);
         var changes = ChatChanges.Of(conversation);
         var conversationId = conversation?.Id ?? "";
         _inspector.Reload(
@@ -80,8 +89,26 @@ public partial class ChatPanel
         return _inspector;
     }
 
+    /// <summary>The markdown of one plan: the turn the caller pointed at when that turn is still a plan of this
+    /// conversation, otherwise the newest plan it holds. The fallback is what a stale pointer degrades to — a
+    /// message deleted or regenerated since the card was drawn should move the pane to the plan that is really
+    /// there, not leave it showing nothing.</summary>
+    private static string? PlanTextFor(Conversation? conversation, int turnIndex)
+    {
+        if (conversation is null) return null;
+        if (turnIndex >= 0 && turnIndex < conversation.Messages.Count
+            && conversation.Messages[turnIndex] is { Role: ChatRoles.Assistant, PlanApprovalState: { Length: > 0 } } chosen
+            && chosen.Text is { Length: > 0 } chosenText)
+        {
+            return chosenText;
+        }
+
+        return LatestPlanText(conversation);
+    }
+
     /// <summary>The markdown of the newest plan this conversation produced — the pending one if a plan is
-    /// waiting, otherwise the last one it answered, so 「查看计划」 still shows something after approval.</summary>
+    /// waiting, otherwise the last one it answered, so the card and 「查看计划」 still show something after
+    /// approval.</summary>
     private static string? LatestPlanText(Conversation? conversation)
     {
         if (conversation is null) return null;
@@ -344,11 +371,10 @@ public partial class ChatPanel
         var openLabel = new TextBlock { Text = HubStrings.Get("ChatPlanReviewOpen") + " ↗" };
         openLabel.Bind(TextBlock.FontFamilyProperty, new DynamicResourceExtension("Hub.Font.Ui"));
         open.Content = openLabel;
-        open.Click += (_, _) =>
-        {
-            if (OpenInspector?.Invoke("plan") == true) return;
-            ScrollToPlanTurn(turnIndex);
-        };
+        // The one invitation to go and read it. The transcript's card opens the same pane, but this row is where
+        // the decision is being asked and the card may already be scrolled out of sight — and it carries the
+        // index of the plan under review, so the two entrances can never disagree about which plan they show.
+        open.Click += (_, _) => OpenInspector?.Invoke("plan", turnIndex);
         Grid.SetColumn(open, 1);
         header.Children.Add(open);
         host.Children.Add(header);
@@ -516,24 +542,112 @@ public partial class ChatPanel
         RefreshComposerChoices();
     }
 
-    /// <summary>The transcript's signpost for a plan still owed. The plan's own row keeps rendering its
-    /// Markdown in the flow — this line only says where the decision is.</summary>
-    private static Control BuildPlanPendingLine(ChatTurn turn)
+    /// <summary>
+    /// The transcript's whole presence for a plan: one bordered card naming the plan and where it stands, and
+    /// none of its body. A plan runs to screens, and its row used to run with it — the conversation got pushed
+    /// out of view to display a document that is read once, in one sitting, somewhere with room to scroll. The
+    /// body stays on the turn and still goes to the provider unchanged, and the row's own copy action still hands
+    /// it over in full; this is a decision about painting, not about what was said.
+    ///
+    /// One card carries the disposition instead of a card plus a record line, because after a decision the two
+    /// would be the same sentence twice. It is a button rather than a border: it has to take Enter and be
+    /// reachable by Tab, and a check has to be able to press it through its own
+    /// <see cref="Button.ClickEvent"/>.
+    /// </summary>
+    private Control BuildPlanCard(ChatTurn turn, int turnIndex)
     {
-        var line = new Border { Classes = { "approval-pending-line" } };
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-        row.Children.Add(new Path { Data = ThemeGeometry("Hub.Icon.Chevron") });
-        row.Children.Add(new TextBlock { Text = HubStrings.Get("ChatPlanWaitingLine") });
+        var stateKey = PlanCardStateKey(turn.PlanApprovalState ?? PlanApprovalStates.Pending);
+        var title = PlanTitleOf(turn.Text);
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*") };
+        row.Children.Add(new Path { Classes = { "plan-card-icon" }, Data = ThemeGeometry("Hub.Icon.ChatModePlan") });
+        row.Children.Add(new TextBlock { Classes = { "plan-card-label" }, Text = HubStrings.Get(stateKey) });
         Grid.SetColumn(row.Children[1], 1);
-        line.Child = row;
-        return line;
+        row.Children.Add(new TextBlock { Classes = { "plan-card-title" }, Text = title });
+        Grid.SetColumn(row.Children[2], 2);
+
+        var card = new Button
+        {
+            Name = "PlanCard",
+            Classes = { "plan-card" },
+            Tag = stateKey,
+            Content = row,
+        };
+        // The title is trimmed on the card, so the tooltip is where the whole of it lives — and it says no more
+        // than that. The card's affordance is a hand cursor and a brightening frame; a "click to open" line would
+        // be the charter's second telling, since 「查看计划」 in the composer is the one place that invites.
+        ToolTip.SetTip(card, title);
+        card.Click += (_, _) => OpenInspector?.Invoke("plan", turnIndex);
+        return card;
     }
 
-    private void ScrollToPlanTurn(int turnIndex)
+    private static string PlanCardStateKey(string state) => state switch
     {
-        // Rows are laid down in visible-turn order; the plan's row is the one whose stored index matches.
-        var rows = MessageFlow.Children;
-        if (turnIndex >= 0 && turnIndex < rows.Count) rows[turnIndex].BringIntoView();
+        PlanApprovalStates.Pending => "ChatPlanPending",
+        PlanApprovalStates.Approved => "ChatPlanApproved",
+        PlanApprovalStates.RevisionRequested => "ChatPlanRevisionRequested",
+        _ => "ChatPlanRejected",
+    };
+
+    private static readonly System.Text.RegularExpressions.Regex PlanHeadingPattern = new(
+        @"^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$",
+        System.Text.RegularExpressions.RegexOptions.Compiled
+        | System.Text.RegularExpressions.RegexOptions.Multiline);
+    private static readonly System.Text.RegularExpressions.Regex PlanListMarkerPattern = new(
+        @"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex PlanQuoteMarkerPattern = new(
+        @"^[ \t]>+[ \t]?", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex PlanFencePattern = new(
+        @"^[ \t]*(?:```|~~~)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Inline markdown that is not part of a title's wording: a link's target, and paired emphasis
+    /// marks. Matched in pairs rather than deleting every <c>*</c> and <c>_</c>, so a name like
+    /// <c>axslcc_parse_file</c> keeps its underscores instead of becoming one long word.</summary>
+    private static readonly (System.Text.RegularExpressions.Regex Pattern, string Replacement)[] PlanInlineMarks =
+    {
+        (new(@"\[([^\]]*)\]\([^)]*\)", System.Text.RegularExpressions.RegexOptions.Compiled), "$1"),
+        (new(@"\*\*(.+?)\*\*", System.Text.RegularExpressions.RegexOptions.Compiled), "$1"),
+        (new(@"__(.+?)__", System.Text.RegularExpressions.RegexOptions.Compiled), "$1"),
+        (new(@"~~(.+?)~~", System.Text.RegularExpressions.RegexOptions.Compiled), "$1"),
+        (new(@"[*_`](.+?)[*_`]", System.Text.RegularExpressions.RegexOptions.Compiled), "$1"),
+    };
+
+    /// <summary>How much of a title is worth a glance. The card trims at its own width anyway; this cap is what
+    /// stops a model that titled a plan with a paragraph from producing a card that is nothing but title.</summary>
+    private const int PlanTitleCharacters = 80;
+
+    /// <summary>The plan's own heading when it has one, its first real line when it does not, and a named
+    /// fallback when there is nothing to name. A plan is written by a model, so none of the three can be
+    /// assumed: it may open with a heading, with a preamble, or with a fenced block.</summary>
+    private static string PlanTitleOf(string markdown)
+    {
+        var heading = PlanHeadingPattern.Match(markdown);
+        var raw = heading.Success ? heading.Groups[1].Value : FirstPlanProseLine(markdown);
+        foreach (var (pattern, replacement) in PlanInlineMarks) raw = pattern.Replace(raw, replacement);
+        raw = raw.Trim();
+        if (raw.Length == 0) return HubStrings.Get("ChatPlanCardUntitled");
+        return raw.Length <= PlanTitleCharacters
+            ? raw
+            : raw[..PlanTitleCharacters].TrimEnd() + "…";
+    }
+
+    private static string FirstPlanProseLine(string markdown)
+    {
+        var insideFence = false;
+        foreach (var line in markdown.Split('\n'))
+        {
+            // A fenced block's opening line is the fence and its body is code: neither is a title, and the fence
+            // has to be tracked rather than skipped so everything inside it stays out of the running too.
+            if (PlanFencePattern.IsMatch(line))
+            {
+                insideFence = !insideFence;
+                continue;
+            }
+            if (insideFence) continue;
+
+            var text = PlanListMarkerPattern.Replace(PlanQuoteMarkerPattern.Replace(line.Trim(), ""), "").Trim();
+            if (text.Length > 0 && !text.StartsWith("---", StringComparison.Ordinal)) return text;
+        }
+        return "";
     }
 
     // ── the steer-confirm strip ──

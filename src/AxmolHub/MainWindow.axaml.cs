@@ -299,8 +299,9 @@ public partial class MainWindow : Window
         // window-level viewer (it fills the window, not the chat column), and the plan/diff review opens in the
         // inspector column beside the page.
         panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
-        panel.OpenInspector = OpenInspector;
+        panel.OpenInspector = (tab, turnIndex) => OpenInspector(tab, turnIndex);
         panel.CloseInspector = CloseInspector;
+        panel.ToggleInspectorExpanded = ToggleInspectorExpanded;
         return panel;
     }
 
@@ -563,6 +564,9 @@ public partial class MainWindow : Window
         _chat = new ChatWorkspace(next.Store.Root);
         WireChatSeams();
         WireChatRuns();
+        // The pane may be living in the window-wide overlay, and it belongs to the panel about to be dropped:
+        // left there, a dead workspace's plan would keep covering a page that can no longer produce one.
+        RestoreInspector();
         _chatPanel = null;
 
         // The conversation sidebar holds the old workspace; rebuild it for the new one.

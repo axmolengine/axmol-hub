@@ -275,11 +275,14 @@
     </Style>
   </Window.Styles>
 
-  <!-- Two layers: the shell (sidebar, page, inspector) and, above it, the window-level picture viewer. The
-       viewer is a sibling of the whole shell rather than a column-spanning child of it, so the inspector
-       column coming and going cannot change what the viewer covers — and it stays inside this window, which
-       is what keeps it photographable by the shell self-check (a Popup would be its own top-level). -->
-  <Grid>
+  <!-- Three layers: the shell (sidebar, page, inspector column), above it the inspector's window-wide overlay,
+       and above that the picture viewer. The two overlays are siblings of the whole shell rather than
+       column-spanning children of it, so the inspector column coming and going cannot change what they cover —
+       and they stay inside this window, which is what keeps them photographable by the shell self-check (a Popup
+       would be its own top-level). Nothing in this app sets ZIndex: document order is the entire stacking
+       contract, and the order of these three is asserted, because an overlay placed in the wrong slot covers
+       the shell just as well and only loses to the wrong thing. -->
+  <Grid x:Name="ClientRoot">
   <Grid x:Name="ShellRoot" ColumnDefinitions="Auto,*,Auto">
 
     <!-- ==================== Sidebar ==================== -->
@@ -407,8 +410,9 @@
     <!-- ==================== Content ==================== -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
 
-      <!-- Top bar: sidebar toggle + current page title. -->
-      <Grid Grid.Row="0" Height="42" Margin="18,2,18,0"
+      <!-- Top bar: sidebar toggle + current page title. Named because the expanded inspector asserts that it
+           covers this, the sidebar and the page — the whole client area and not merely a wide pane. -->
+      <Grid x:Name="TopBar" Grid.Row="0" Height="42" Margin="18,2,18,0"
             ColumnDefinitions="Auto,*">
         <Button x:Name="SidebarToggle" Grid.Column="0" Classes="icon-ghost">
           <Path Classes="stroked" Data="{StaticResource Hub.Icon.Panel}"
@@ -493,6 +497,20 @@
       </Border>
     </Grid>
 
+  </Grid>
+
+  <!-- ==================== The inspector, expanded ====================
+       The same pane the column hosts, lifted over the whole client area: the column is clamped to 520 so the
+       chat column keeps its floor, which is the right room for a diff and the wrong room for a plan read end to
+       end. Only the pane moves here, never the column's Border, so the width a person dragged to is still there
+       when the surface comes back. The same background as the column's own Border, so the pane does not change
+       colour the moment it is lifted: it is the same object, given room, not a different surface. Opaque rather
+       than a scrim, because this is a document being read and not a modal that has interrupted something — and
+       what it covers is still there underneath when it goes. -->
+  <Grid x:Name="InspectorExpandHost" IsVisible="False">
+    <Border x:Name="InspectorExpandSurface" Background="{DynamicResource Hub.SurfaceAlt}" ClipToBounds="True">
+      <ContentControl x:Name="InspectorExpandContent" />
+    </Border>
   </Grid>
 
   <!-- ==================== Picture viewer ====================

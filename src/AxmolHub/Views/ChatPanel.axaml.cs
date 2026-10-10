@@ -310,10 +310,10 @@ public partial class ChatPanel : UserControl
         DragDrop.AddDropHandler(ComposerFrame, OnComposerDrop);
 
         // Escape answers the thing on top, and the order is written in exactly one place per layer: the window
-        // closes its picture viewer first (that handler lives in MainWindow, above this one), then a decision
-        // covering the composer is answered, then a steer waiting for its second tap goes back to being a
-        // draft, and only then does Escape mean "stop the reply". Tunnel, so this runs before the composer's
-        // own key handling gets a turn.
+        // closes its picture viewer first, then puts an expanded inspector back in its column (both of those
+        // handlers live in MainWindow, above this one), then a decision covering the composer is answered, then
+        // a steer waiting for its second tap goes back to being a draft, and only then does Escape mean "stop
+        // the reply". Tunnel, so this runs before the composer's own key handling gets a turn.
         AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
             if (e.Key != Key.Escape) return;
@@ -1868,8 +1868,12 @@ public partial class ChatPanel : UserControl
         // or a compiler's stderr, and painting it in the assistant's own face makes the transcript read as though
         // the model had recited it — which is exactly what a person cannot un-see. One quiet line says what
         // arrived; the payload itself stays one hover away.
+        // A plan is the other case where a row's text is a document rather than a reply, and it is suppressed the
+        // same way the tool payload is. The card built below stands in for it and names it; the turn keeps its
+        // text, so the provider still gets the plan verbatim and this row's copy action still hands over all of it.
+        var isPlanTurn = turn.PlanApprovalState is { Length: > 0 };
         if (turn.Role == ChatRoles.Tool) body.Children.Add(ToolResultLine(toolName, turn));
-        else body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = turn.Text });
+        else if (!isPlanTurn) body.Children.Add(new TextBlock { Classes = { "turn-text" }, Text = turn.Text });
 
         // What the person attached is shown from the file Hub kept, not from anything this view remembers: the
         // transcript is the only copy of "this message had a picture in it", and a row rebuilt after a restart
@@ -1893,12 +1897,7 @@ public partial class ChatPanel : UserControl
             else if (turn.ApprovalState is { Length: > 0 } || turn.UndoName is { Length: > 0 })
                 approvalSurface = BuildCallRecord(conversationId, callId, turn);
         }
-        if (turn.PlanApprovalState is { Length: > 0 })
-        {
-            approvalSurface = turn.PlanApprovalState == PlanApprovalStates.Pending
-                ? BuildPlanPendingLine(turn)
-                : BuildPlanApprovalRecord(turn.PlanApprovalState);
-        }
+        if (isPlanTurn) approvalSurface = BuildPlanCard(turn, index);
 
         // A function-call or tool-result turn gets no action bar: it is not a readable message, and acting on
         // half of a call/result pair orphans the other half (the pipeline sends them to the provider as one
@@ -1909,8 +1908,8 @@ public partial class ChatPanel : UserControl
         _renderedCount++;
 
         // User text is plain by nature, and a tool payload is now a quiet line rather than a bubble; only the
-        // assistant's own words carry Markdown worth rendering.
-        if (!fromUser && markdown && turn.Role != ChatRoles.Tool && turn.Text.Length > 0)
+        // assistant's own words carry Markdown worth rendering — and a plan's words do not render here at all.
+        if (!fromUser && markdown && !isPlanTurn && turn.Role != ChatRoles.Tool && turn.Text.Length > 0)
             MarkdownMessageRenderer.RenderInto(body, turn.Text);
 
         // Added after the Markdown pass rather than before it, because <see cref="MarkdownMessageRenderer.RenderInto"/>
@@ -2352,22 +2351,6 @@ public partial class ChatPanel : UserControl
     /// <summary>How much of a result's first line is worth a glance. Long enough to read a path or a status,
     /// short enough that the line stays one line at the chat column's width.</summary>
     private const int ResultLineCharacters = 120;
-
-    private static Control BuildPlanApprovalRecord(string state)
-    {
-        var key = state switch
-        {
-            PlanApprovalStates.Approved => "ChatPlanApproved",
-            PlanApprovalStates.RevisionRequested => "ChatPlanRevisionRequested",
-            PlanApprovalStates.Rejected => "ChatPlanRejected",
-            _ => "ChatPlanRejected",
-        };
-        return new Border
-        {
-            Classes = { "approval-record", "plan-approval-record" },
-            Child = new TextBlock { Classes = { "approval-record-text" }, Text = HubStrings.Get(key) },
-        };
-    }
 
     private static void AddApprovalDetail(StackPanel card, string labelKey, string? value)
     {
@@ -3569,6 +3552,46 @@ public partial class ChatPanel : UserControl
             .SelectMany(row => row.GetLogicalDescendants().OfType<MarkdownScrollViewer>())
             .FirstOrDefault(viewer => (viewer.Tag as string)?.Contains("Reviewed plan", StringComparison.Ordinal) == true)
             is { IsVisible: true, Bounds: { Width: > 0, Height: > 0 } };
+
+    // ── the plan's card in the transcript ──
+
+    private IEnumerable<Button> PlanCards
+        => MessageRows.SelectMany(row => row.GetLogicalDescendants().OfType<Button>())
+            .Where(card => card.Classes.Contains("plan-card"));
+
+    internal int PlanCardCountForCheck => PlanCards.Count();
+
+    /// <summary>What each card actually reads, in transcript order: the label and the title, joined. The glyph is
+    /// a Path and carries no text, so this string is the whole of what a person sees on the card.</summary>
+    internal string[] PlanCardTextsForCheck
+        => PlanCards.Select(card => string.Join(" · ", card.GetLogicalDescendants().OfType<TextBlock>()
+            .Select(block => block.Text ?? "").Where(text => text.Length > 0))).ToArray();
+
+    internal string[] PlanCardStateKeysForCheck
+        => PlanCards.Select(card => card.Tag as string ?? "").ToArray();
+
+    /// <summary>The negative half, and the point of the card: a plan row that still paints its body — as
+    /// rendered Markdown, or as the plain block the Markdown pass replaces — is the transcript back to one
+    /// document per message. Whether the body survives at all is not this assertion's business and is already
+    /// pinned where the stored turn text and the approved instruction are compared.</summary>
+    internal bool PlanBodiesSuppressedForCheck
+        => MessageRows
+            .Where(row => row.GetLogicalDescendants().OfType<Button>()
+                .Any(card => card.Classes.Contains("plan-card")))
+            .All(row => !row.GetLogicalDescendants().OfType<MarkdownScrollViewer>().Any()
+                         && !row.GetLogicalDescendants().OfType<TextBlock>()
+                             .Any(text => text.Classes.Contains("turn-text")));
+
+    /// <summary>Whether a card is drawn rather than merely in the tree: a zero-bounds card passes a count and is
+    /// still invisible.</summary>
+    internal bool PlanCardOnScreenForCheck(int index)
+        => PlanCards.ElementAtOrDefault(index) is { IsVisible: true } card && card.Bounds is { Width: > 0, Height: > 0 };
+
+    /// <summary>Presses the nth card (transcript order) through its own Click, so a check drives the wiring from
+    /// the card into the shell's inspector instead of calling the shell and proving nothing.</summary>
+    internal void ClickPlanCardForCheck(int index)
+        => PlanCards.ElementAtOrDefault(index)
+            ?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>The plan review's two lettered choices, in the order offered: A approves, B asks for a revision.
     /// There is deliberately no third "exit plan mode" row — the owner removed it, and the workspace has no such

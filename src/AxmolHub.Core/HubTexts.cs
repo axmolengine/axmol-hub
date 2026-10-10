@@ -575,9 +575,13 @@ public static class HubTexts
         ["ChatPlanRevise"] = ("退回修改", "Request revision"),
         ["ChatPlanReject"] = ("拒绝计划", "Reject plan"),
         ["ChatPlanRevisionPrompt"] = ("请按以下反馈修改计划：", "Revise the plan with this feedback:"),
+        // The four wordings of the transcript's plan card. Each is a whole phrase naming both the thing and its
+        // state, because the card says it once; the plan's title rides beside it.
+        ["ChatPlanPending"] = ("计划待你审阅", "Plan awaiting your review"),
         ["ChatPlanApproved"] = ("计划已批准", "Plan approved"),
-        ["ChatPlanRevisionRequested"] = ("已要求修改计划", "Plan revision requested"),
+        ["ChatPlanRevisionRequested"] = ("计划已要求修改", "Plan revision requested"),
         ["ChatPlanRejected"] = ("计划已拒绝", "Plan rejected"),
+        ["ChatPlanCardUntitled"] = ("无标题计划", "Untitled plan"),
         ["ChatPlanAwaitingApproval"] = ("请先处理待确认的计划，再继续发送消息。", "Resolve the pending plan before sending another message."),
         ["ChatPlanNotificationTitle"] = ("计划等待确认", "Plan awaiting approval"),
         ["ChatPlanNotificationBody"] = ("会话「{0}」中的计划需要你的决定。", "A plan in 「{0}」 needs your decision."),
@@ -622,7 +626,6 @@ public static class HubTexts
         ["ChatPlanOptionApprove"] = ("批准并开始实施", "Approve and start implementing"),
         ["ChatPlanOptionRevise"] = ("我要修改计划", "Suggest changes to the plan"),
         ["ChatPlanFeedbackPlaceholder"] = ("说说计划要改哪里…", "Tell me what to change…"),
-        ["ChatPlanWaitingLine"] = ("计划等你审阅，决定在输入区", "The plan is waiting for you in the composer"),
         // ── Steering needs a second tap ──
         // A steer cancels the segment being generated and is the routing table's strongest signal, so the first
         // Enter only shows what would be sent. The consequence lives in the tooltip rather than as a second
@@ -656,7 +659,10 @@ public static class HubTexts
         ["InspectorDiffRefusedLine"] = ("没有改动", "No change"),
         ["InspectorAddedFormat"] = ("+{0}", "+{0}"),
         ["InspectorRemovedFormat"] = ("−{0}", "−{0}"),
-        ["InspectorExpandHint"] = ("展开看 diff", "Expand to see the diff"),
+        // The column's two states. The restore wording names Esc because the key is the only other way out of a
+        // surface that has just covered the window, and a keyboard exit nobody announces is not a keyboard exit.
+        ["InspectorExpand"] = ("撑开面板到整个窗口", "Expand the panel to the whole window"),
+        ["InspectorRestore"] = ("还原成右边那一列（Esc）", "Back to the right-hand column (Esc)"),
         // ── A run's activity, folded into one collapsible group ──
         ["ActivityGroupToolCountFormat"] = ("执行工具 {0} 次", "{0} tool call(s)"),
         // The collapsed head reads as a full-width sentence naming the first action, so a tools-only turn is a

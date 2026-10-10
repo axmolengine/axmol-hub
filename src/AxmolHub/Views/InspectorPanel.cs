@@ -4,9 +4,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
+using Markdown.Avalonia;
 using AxmolHub.Core;
 using Path = Avalonia.Controls.Shapes.Path;
 
@@ -27,12 +29,19 @@ internal sealed class InspectorPanel : UserControl
     /// column hides is the shell's call, and only the shell knows the page it is on.</summary>
     public event Action? CloseRequested;
 
+    /// <summary>Raised by the expand arrow in the header. The same division as <see cref="CloseRequested"/>:
+    /// the pane asks, the shell decides whether that means an overlay over the window or nothing on this page.</summary>
+    public event Action? ExpandRequested;
+
     private readonly Button _planTab;
     private readonly Button _changesTab;
+    private readonly Button _expandButton;
+    private readonly Path _expandIcon;
     private readonly ContentControl _planHost;
     private readonly ScrollViewer _changesScroll;
     private readonly StackPanel _changesList;
     private readonly Grid _body;
+    private bool _expanded;
 
     public InspectorPanel()
     {
@@ -40,9 +49,9 @@ internal sealed class InspectorPanel : UserControl
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
 
-        // ── Header: two tabs and a close. The tabs are the only navigation, so they read as text buttons whose
-        //    selected one carries an underline plate rather than as a chrome-heavy TabControl. ──
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(12, 10, 8, 8) };
+        // ── Header: two tabs, and the two ways out. The tabs are the only navigation, so they read as text
+        //    buttons whose selected one carries an underline plate rather than as a chrome-heavy TabControl. ──
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto"), Margin = new Thickness(12, 10, 8, 8) };
         _planTab = TabButton("InspectorTabPlan");
         _changesTab = TabButton("InspectorTabChanges");
         _planTab.Click += (_, _) => SelectTab(plan: true);
@@ -52,22 +61,19 @@ internal sealed class InspectorPanel : UserControl
         _changesTab.Margin = new Thickness(6, 0, 0, 0);
         header.Children.Add(_changesTab);
 
-        var close = new Button { Classes = { "viewer-action" }, Tag = "InspectorClose" };
-        var closeIcon = new Path
-        {
-            Width = 13,
-            Height = 13,
-            Stretch = Stretch.Uniform,
-            Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round,
-        };
-        closeIcon.Bind(Path.DataProperty, new DynamicResourceExtension("Hub.Icon.Close"));
-        closeIcon.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-        close.Content = closeIcon;
-        ToolTip.SetTip(close, HubStrings.Get("InspectorClose"));
+        // The column is clamped to 520 because the chat column has a floor to keep, which is the right room for a
+        // diff and the wrong room for a plan a person has to read end to end. So the pane can be lifted out of the
+        // column and given the window.
+        _expandButton = ActionButton("InspectorExpand", "Hub.Icon.Expand");
+        _expandButton.Name = "InspectorExpandButton";
+        _expandIcon = (Path)_expandButton.Content!;
+        _expandButton.Click += (_, _) => ExpandRequested?.Invoke();
+        Grid.SetColumn(_expandButton, 3);
+        header.Children.Add(_expandButton);
+
+        var close = ActionButton("InspectorClose", "Hub.Icon.Close");
         close.Click += (_, _) => CloseRequested?.Invoke();
-        Grid.SetColumn(close, 3);
+        Grid.SetColumn(close, 4);
         header.Children.Add(close);
         root.Children.Add(header);
 
@@ -99,6 +105,44 @@ internal sealed class InspectorPanel : UserControl
     {
         var button = new Button { Classes = { "inspector-tab" }, Content = HubStrings.Get(textKey), Tag = textKey };
         return button;
+    }
+
+    /// <summary>The header's two glyph buttons. Stroked rather than filled like the picture viewer's row, so the
+    /// × and the expand arrow weigh the same as each other and less than the tabs beside them.</summary>
+    private static Button ActionButton(string textKey, string geometryKey)
+    {
+        var icon = new Path
+        {
+            Width = 13,
+            Height = 13,
+            Stretch = Stretch.Uniform,
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round,
+        };
+        icon.Bind(Path.DataProperty, new DynamicResourceExtension(geometryKey));
+        icon.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+
+        var button = new Button { Classes = { "viewer-action" }, Tag = textKey, Content = icon };
+        ToolTip.SetTip(button, HubStrings.Get(textKey));
+        return button;
+    }
+
+    /// <summary>Told by the shell which of its two homes the pane is in, because the two are not the same
+    /// reading. The arrow has to point back the way it came once it has been followed, and a plan laid across a
+    /// whole window needs the chat column's line length rather than the window's — a document that runs 1200px
+    /// per line is not faster to read, it is a scan for the end of each sentence. The diff keeps every pixel:
+    /// side-by-side changes are exactly what the room is for.</summary>
+    public void SetExpanded(bool expanded)
+    {
+        _expanded = expanded;
+        var key = expanded ? "InspectorRestore" : "InspectorExpand";
+        _expandIcon.Bind(Path.DataProperty, new DynamicResourceExtension(
+            expanded ? "Hub.Icon.Restore" : "Hub.Icon.Expand"));
+        _expandButton.Tag = key;
+        ToolTip.SetTip(_expandButton, HubStrings.Get(key));
+        _planHost.MaxWidth = expanded ? HubMetrics.ColumnMaxWidth : double.PositiveInfinity;
+        _planHost.HorizontalAlignment = expanded ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
     }
 
     private void SelectTab(bool plan)
@@ -303,6 +347,29 @@ internal sealed class InspectorPanel : UserControl
 
     internal bool PlanTabVisibleForCheck => _planHost.IsVisible;
     internal bool ChangesTabVisibleForCheck => _changesScroll.IsVisible;
+
+    /// <summary>The markdown the plan tab is holding, read off the rendered viewer's own <c>Tag</c>. A check can
+    /// therefore prove *which* plan a card click landed on, not merely that some plan is on screen.</summary>
+    internal string PlanMarkdownForCheck
+        => _planHost.Content is MarkdownScrollViewer viewer ? viewer.Tag as string ?? "" : "";
+
+    internal bool ExpandedForCheck => _expanded;
+    internal string ExpandButtonTagForCheck => _expandButton.Tag as string ?? "";
+    internal double PlanHostMaxWidthForCheck => _planHost.MaxWidth;
+
+    /// <summary>Which arrow is actually painted. The tag says which tooltip is wired; this says whether the
+    /// rebind that swaps the glyph took effect — a swap that reached only the text would leave a button pointing
+    /// the wrong way out of a surface that has just covered the whole window.</summary>
+    internal bool ExpandGlyphIsForCheck(string geometryKey)
+        => Application.Current?.TryGetResource(geometryKey, null, out var value) == true
+           && value is Geometry geometry
+           && ReferenceEquals(_expandIcon.Data, geometry);
+
+    /// <summary>Presses the header's own arrow, so a check drives the wiring rather than the shell method the
+    /// arrow happens to end up calling.</summary>
+    internal void ClickExpandForCheck()
+        => _expandButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
     internal int ChangeRowCountForCheck => _changesList.Children.Count;
     internal string FirstChangePathForCheck
         => _changesList.Children.Count > 0

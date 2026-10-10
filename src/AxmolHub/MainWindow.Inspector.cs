@@ -37,6 +37,12 @@ public partial class MainWindow
     /// on the current page — the inspector belongs to the assistant, and follows it off-screen.</summary>
     private bool _inspectorOpen;
 
+    /// <summary>Whether the pane is currently lifted out of the column and over the whole client area. Transient
+    /// by design and deliberately not persisted: it is a way of reading one document, not a statement about how
+    /// the person wants the app laid out tomorrow, and a restored window that opens on a full-screen plan with
+    /// no chat in sight is a window that has to be escaped out of before anything can be said.</summary>
+    private bool _inspectorExpanded;
+
     /// <summary>Wires the inspector grip and applies the persisted width/open state. Called once from the
     /// constructor after <c>InitializeComponent</c>, beside <see cref="InitializeSidebar"/>.</summary>
     private void InitializeInspector()
@@ -50,17 +56,38 @@ public partial class MainWindow
             : InspectorDefault);
         _inspectorOpen = _preferences.InspectorOpen;
         SetInspectorColumnVisible();
+
+        // Esc on the window's own tunnel, registered here rather than after the picture viewer's and ordered by
+        // an explicit guard instead: which overlay is up is a fact this handler can read, while handler order is
+        // a fact about the constructor that a later edit can change without noticing.
+        AddHandler(KeyDownEvent, OnInspectorExpandKeyDown, RoutingStrategies.Tunnel);
     }
 
     private static double InspectorClamp(double width) => Math.Clamp(width, InspectorMin, InspectorMax);
 
-    /// <summary>Opens the inspector on a tab ("plan" or "changes") and returns true so the caller knows the
-    /// surface it asked for is now up. The content is hosted in <see cref="InspectorHost"/>; a conversation
-    /// with nothing to show still opens, because "there is no plan yet" is itself an answer.</summary>
-    internal bool OpenInspector(string tab)
+    /// <summary>The pane's two possible homes: the column, and the overlay it is lifted into. Exactly one may
+    /// hold it — a control with a live visual parent cannot be adopted by a second <c>ContentControl</c>, which
+    /// is an exception rather than a quiet failure — so every move clears both first, and nothing else in this
+    /// file assigns to either host.</summary>
+    private Control? InspectorPane
+        => InspectorHost.Content as Control ?? InspectorExpandContent.Content as Control;
+
+    private void SetInspectorPane(Control? pane)
+    {
+        InspectorHost.Content = null;
+        InspectorExpandContent.Content = null;
+        if (_inspectorExpanded) InspectorExpandContent.Content = pane;
+        else InspectorHost.Content = pane;
+    }
+
+    /// <summary>Opens the inspector on a tab ("plan" or "changes") for one specific plan turn (-1 for the newest)
+    /// and returns true so the caller knows the surface it asked for is now up. The content is hosted in the
+    /// column, or in the overlay if the pane is currently expanded; a conversation with nothing to show still
+    /// opens, because "there is no plan yet" is itself an answer.</summary>
+    internal bool OpenInspector(string tab, int turnIndex = -1)
     {
         _inspectorOpen = true;
-        InspectorHost.Content = _chatPanel?.BuildInspectorContent(tab);
+        SetInspectorPane(_chatPanel?.BuildInspectorContent(tab, turnIndex));
         SetInspectorColumnVisible();
         if (_preferences.InspectorOpen != true)
         {
@@ -72,6 +99,8 @@ public partial class MainWindow
 
     internal void CloseInspector()
     {
+        // First out of the overlay, so a close can never leave a full-screen pane with no column to go back to.
+        RestoreInspector();
         _inspectorOpen = false;
         SetInspectorColumnVisible();
         if (_preferences.InspectorOpen)
@@ -81,17 +110,69 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Applies the two gates at once: the inspector shows only on the assistant page and only while
-    /// open. The grip rides with the column, so there is never a floating handle beside a hidden pane.</summary>
+    /// <summary>Applies the three gates at once: the inspector shows only on the assistant page, only while
+    /// open, and only while it is not covering the window from the overlay — where the column would hand the same
+    /// pane to two hosts at once. The grip rides with the column, so there is never a floating handle beside a
+    /// hidden pane.</summary>
     private void SetInspectorColumnVisible()
     {
-        var show = _inspectorOpen && _currentKey == "Assistant";
+        var show = _inspectorOpen && _currentKey == "Assistant" && !_inspectorExpanded;
         InspectorColumn.IsVisible = show;
         InspectorResizeGrip.IsVisible = show;
     }
 
-    /// <summary>Called from <see cref="NavigateTo"/>: the inspector follows the assistant page on and off.</summary>
-    private void SyncInspectorForPage() => SetInspectorColumnVisible();
+    /// <summary>Called from <see cref="NavigateTo"/>: the inspector follows the assistant page on and off, and
+    /// so does its expanded state — an overlay that outlives the page it belongs to would be a pane with no
+    /// conversation behind it, covering the settings page.</summary>
+    private void SyncInspectorForPage()
+    {
+        if (_currentKey != "Assistant") RestoreInspector();
+        SetInspectorColumnVisible();
+    }
+
+    internal void ToggleInspectorExpanded()
+    {
+        if (_inspectorExpanded) RestoreInspector();
+        else ExpandInspector();
+    }
+
+    private void ExpandInspector()
+    {
+        var pane = InspectorPane;
+        if (_inspectorExpanded || pane is null) return;
+        _inspectorExpanded = true;
+        SetInspectorPane(pane);
+        (pane as InspectorPanel)?.SetExpanded(true);
+        InspectorExpandHost.IsVisible = true;
+        SetInspectorColumnVisible();
+    }
+
+    /// <summary>Puts the pane back in the column. Idempotent, because three callers can race to it — the header
+    /// arrow, Esc, and leaving the assistant page — and none of them should have to know what the others did.
+    /// The column's own width is never touched by any of this, which is what makes the dragged width survive the
+    /// round trip without anything having to remember it.</summary>
+    internal void RestoreInspector()
+    {
+        if (!_inspectorExpanded) return;
+        var pane = InspectorPane;
+        _inspectorExpanded = false;
+        SetInspectorPane(pane);
+        (pane as InspectorPanel)?.SetExpanded(false);
+        InspectorExpandHost.IsVisible = false;
+        SetInspectorColumnVisible();
+    }
+
+    private void OnInspectorExpandKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        // The picture viewer owns Escape while it is up: it is the topmost layer, and the one thing a person
+        // has just asked for. Only then does an expanded inspector get the key — and it gets it before the
+        // composer's decision host, which is a window away from being on top.
+        if (PictureViewerHost.IsVisible) return;
+        if (!_inspectorExpanded) return;
+        RestoreInspector();
+        e.Handled = true;
+    }
 
     private void OnInspectorGripPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -121,6 +202,57 @@ public partial class MainWindow
 
     internal bool InspectorVisibleForCheck => InspectorColumn.IsVisible;
     internal double InspectorWidthForCheck => Inspector.Width;
+
+    /// <summary>Writes the width the grip writes, so a check can start from a width that is not the default and
+    /// tell "the column kept what you dragged it to" from "both numbers happen to be 360".</summary>
+    internal void SetInspectorWidthForCheck(double width) => Inspector.Width = InspectorClamp(width);
+
+    /// <summary>The pane itself, so a check can press the header's own arrow rather than the method behind it.</summary>
+    internal InspectorPanel? InspectorPaneForCheck => InspectorPane as InspectorPanel;
+
+    internal bool InspectorExpandedForCheck => _inspectorExpanded;
+    internal bool InspectorOverlayVisibleForCheck => InspectorExpandHost.IsVisible;
+
+    /// <summary>A control's own <c>Bounds</c> is relative to <i>its parent</i>, and the surfaces a coverage check
+    /// compares sit at four different depths of the tree — raw Bounds would be four unrelated coordinate systems,
+    /// and a pane that covered nothing could still "contain" the sidebar in them. Every rect a check reads off
+    /// this file is therefore brought into the client root's space first.</summary>
+    private Rect InClient(Visual target)
+        => target.TranslatePoint(new Point(0, 0), ClientRoot) is { } origin
+            ? new Rect(origin, target.Bounds.Size)
+            : default;
+
+    internal Rect InspectorOverlayBoundsForCheck => InClient(InspectorExpandSurface);
+    internal Rect SidebarBoundsForCheck => InClient(Sidebar);
+    internal Rect TopBarBoundsForCheck => InClient(TopBar);
+    internal Rect PageBoundsForCheck => InClient(PageHost);
+    internal Rect ClientBoundsForCheck => InClient(ClientRoot);
+    internal string InspectorPlanMarkdownForCheck
+        => (InspectorPane as InspectorPanel)?.PlanMarkdownForCheck ?? "";
+
+    /// <summary>Whether the overlay is the layer the design says it is. Nothing here sets <c>ZIndex</c>, so
+    /// document order is the whole stacking contract — and an overlay in the wrong slot still covers the shell
+    /// just as well, which is exactly why a bounds check cannot catch it and this can.</summary>
+    internal bool InspectorOverlayOrderForCheck
+    {
+        get
+        {
+            var shell = ClientRoot.Children.IndexOf(ShellRoot);
+            var overlay = ClientRoot.Children.IndexOf(InspectorExpandHost);
+            var viewer = ClientRoot.Children.IndexOf(PictureViewerHost);
+            return shell >= 0 && overlay > shell && overlay < viewer;
+        }
+    }
+
+    /// <summary>Sends a key down the same tunnel route <see cref="OnInspectorExpandKeyDown"/> listens on.</summary>
+    internal void PressInspectorKeyForCheck(Key key)
+        => OnInspectorExpandKeyDown(this, new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = key,
+            KeyModifiers = KeyModifiers.None,
+            Source = this,
+        });
 
     // ───────────────────────── Picture viewer ─────────────────────────
 

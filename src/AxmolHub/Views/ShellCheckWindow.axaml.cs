@@ -2627,7 +2627,7 @@ public partial class ShellCheckWindow : Window
         shell.OpenAssistant();
         shell.NavigateTo("Assistant");
         Dispatcher.UIThread.RunJobs();
-        Check(shell.OpenInspector("plan") && shell.InspectorVisibleForCheck
+        Check(shell.OpenInspector("plan", -1) && shell.InspectorVisibleForCheck
               && shell.InspectorWidthForCheck is >= 300 and <= 520,
             "打开审阅面板：它是聊天右边真实的一列，宽度落在可读区间里（实际 "
             + shell.InspectorWidthForCheck + "）");
@@ -2637,6 +2637,65 @@ public partial class ShellCheckWindow : Window
         Check(shell.InspectorVisibleForCheck, "回到助手页，之前打开的面板还在");
         shell.CloseInspector();
         Check(!shell.InspectorVisibleForCheck, "关掉之后那一列真的让位给聊天，而不是留一条空白");
+
+        // ── the same pane, lifted out of its column ──
+        // A width that is not the default, so the round trip below measures something: a restore that reset the
+        // column would otherwise pass on two copies of 360.
+        shell.OpenInspector("plan", -1);
+        shell.SetInspectorWidthForCheck(480);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        shell.InspectorPaneForCheck?.ClickExpandForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var overlay = shell.InspectorOverlayBoundsForCheck;
+        var client = shell.ClientBoundsForCheck;
+        Check(shell.InspectorExpandedForCheck
+              && shell.InspectorOverlayVisibleForCheck
+              && shell.InspectorOverlayOrderForCheck
+              && !shell.InspectorVisibleForCheck
+              && overlay.Contains(shell.SidebarBoundsForCheck)
+              && overlay.Contains(shell.TopBarBoundsForCheck)
+              && overlay.Contains(shell.PageBoundsForCheck)
+              && overlay.Width >= client.Width - 1
+              && overlay.Height >= client.Height - 1,
+            "撑开审阅面板：整片客户区被盖住，侧栏、顶栏、聊天列都在它下面，而右边那一列自己让了位（覆盖 "
+            + Fmt(overlay.Width) + "×" + Fmt(overlay.Height) + "，客户区 "
+            + Fmt(client.Width) + "×" + Fmt(client.Height) + "）");
+        var expandedPane = shell.InspectorPaneForCheck;
+        Check(expandedPane is not null
+              && expandedPane.ExpandedForCheck
+              && expandedPane.ExpandButtonTagForCheck == "InspectorRestore"
+              && expandedPane.ExpandGlyphIsForCheck("Hub.Icon.Restore")
+              && expandedPane.PlanHostMaxWidthForCheck == 820,
+            "撑开后箭头真的换成朝内的那一枚、文字也说「还原」，计划页收到聊天列的行长而不是铺满整屏（正文列宽上限 "
+            + Fmt(expandedPane?.PlanHostMaxWidthForCheck ?? 0) + "）");
+        shell.PressInspectorKeyForCheck(Key.Escape);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.InspectorExpandedForCheck
+              && !shell.InspectorOverlayVisibleForCheck
+              && shell.InspectorVisibleForCheck
+              && shell.InspectorWidthForCheck == 480
+              && shell.InspectorPaneForCheck?.ExpandButtonTagForCheck == "InspectorExpand"
+              && shell.InspectorPaneForCheck?.ExpandGlyphIsForCheck("Hub.Icon.Expand") == true
+              && shell.InspectorPaneForCheck?.PlanTabVisibleForCheck == true,
+            "Esc 把面板收回右边那一列：箭头翻回朝外，列宽还是撑开前拖到的 480，计划页也还在（实际 "
+            + Fmt(shell.InspectorWidthForCheck) + "）");
+
+        // The two ways out that are not the arrow: leaving the page it belongs to, and closing it. Either one
+        // leaving a full-screen pane behind would cover a page that cannot produce one.
+        shell.InspectorPaneForCheck?.ClickExpandForCheck();
+        shell.NavigateTo("Settings");
+        Check(!shell.InspectorExpandedForCheck && !shell.InspectorOverlayVisibleForCheck,
+            "离开助手页时展开状态一起没有：不会留下一整屏盖住别的页面");
+        shell.NavigateTo("Assistant");
+        shell.OpenInspector("plan", -1);
+        shell.InspectorPaneForCheck?.ClickExpandForCheck();
+        shell.CloseInspector();
+        Check(!shell.InspectorExpandedForCheck && !shell.InspectorOverlayVisibleForCheck
+              && !shell.InspectorVisibleForCheck,
+            "关掉审阅面板时展开状态一起没有，而不是留下一整屏没有列可回的面板");
 
         // ── the inspector content, fed a fixture snapshot directly ──
         var inspector = new InspectorPanel();
@@ -3132,6 +3191,7 @@ public partial class ShellCheckWindow : Window
         var observer = chat.StartConversation();
         var approvedSession = chat.StartConversation();
         var rejectedSession = chat.StartConversation();
+        var twoPlanSession = chat.StartConversation();
         const string plan = "# Reviewed plan\n\n- First, inspect the implementation.\n- Then, make the change.";
         var attentionCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         void CountAttention(string conversationId, ChatAttentionKind _)
@@ -3243,23 +3303,38 @@ public partial class ShellCheckWindow : Window
             panel.Reload();
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            var planRowText = panel.PlanApprovalMessageTextForCheck;
             var planCardVisible = panel.PlanApprovalCardOnScreenForCheck;
-            var planMarkdownVisible = panel.PlanApprovalMarkdownOnScreenForCheck;
+            var planCardsPainted = panel.PlanCardCountForCheck;
+            var planCardText = panel.PlanCardTextsForCheck.FirstOrDefault() ?? "";
+            var planBodiesSuppressed = panel.PlanBodiesSuppressedForCheck;
+            // The two hooks that used to be this assertion's positive half are now its negative half: a plan body
+            // that still reaches the transcript — rendered, or as the plain block rendering replaces — is the
+            // document back in the flow. That the document itself survives is pinned elsewhere, on the stored turn
+            // text above and on the instruction the approval sends below.
+            var planBodyInk = panel.PlanApprovalMarkdownOnScreenForCheck
+                              || panel.PlanApprovalMessageTextForCheck.Length > 0;
             Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 1
                   && chat.PendingApprovalConversationCount() == 2
                   && approvedSession.Messages.Last().ApprovalSeen
                   && chat.ViewedConversationId == approvedSession.Id
                   && panel.PendingPlanApprovalCardsForCheck == 1
                   && planCardVisible
-                  && planMarkdownVisible
-                  && planRowText.Contains("Reviewed plan", StringComparison.Ordinal),
-                "打开会话后仍计入待审批会话数字；Markdown 计划文本与待确认卡同时真实显示（待后台 "
-                + chat.PendingBackgroundApprovalCount(approvedSession.Id) + "，已读 "
-                + approvedSession.Messages.Last().ApprovalSeen + "，卡片 "
-                + panel.PendingPlanApprovalCardsForCheck + " / " + planCardVisible + "，Markdown "
-                + planMarkdownVisible + "，文本「"
-                + planRowText + "」）");
+                  && planCardsPainted == 1
+                  && panel.PlanCardOnScreenForCheck(0)
+                  && planCardText.Contains("Reviewed plan", StringComparison.Ordinal)
+                  && planBodiesSuppressed
+                  && !planBodyInk,
+                "打开会话后仍计入待审批会话数字；计划以一张紧凑卡片真实显示、标题上卡，正文不再铺进转录，决定仍在输入区（待后台 "
+                + chat.PendingBackgroundApprovalCount(approvedSession.Id) + "，卡面「" + planCardText + "」，"
+                + "转录里的正文 " + planBodyInk + "）");
+            shell.CloseInspector();
+            panel.ClickPlanCardForCheck(0);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(shell.InspectorVisibleForCheck
+                  && shell.InspectorPlanMarkdownForCheck.Contains("Reviewed plan", StringComparison.Ordinal),
+                "点计划卡即打开右栏，全文只在那里：卡片是正文的入口而不是正文的替代品（面板 "
+                + shell.InspectorVisibleForCheck + "，面板里 " + shell.InspectorPlanMarkdownForCheck.Length + " 字）");
             shell.NavigateTo("Settings");
             Check(chat.PendingBackgroundApprovalCount(null) == 2
                   && chat.PendingApprovalConversationCount() == 2,
@@ -3299,6 +3374,17 @@ public partial class ShellCheckWindow : Window
             Check(attentionCounts.GetValueOrDefault(approvedSession.Id) == 2,
                 "修改后再次生成计划只新增一次待审事件（实际 "
                 + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
+
+            // The card is the one surface for every disposition, so its wording has to change with the state
+            // rather than a second record line appear under it. Two cards now: the older one already answered.
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PlanCardCountForCheck == 2
+                  && panel.PlanCardStateKeysForCheck.SequenceEqual(
+                      ["ChatPlanRevisionRequested", "ChatPlanPending"], StringComparer.Ordinal),
+                "同一张计划卡就地换掉措辞：要求修改后旧卡说「计划已要求修改」、新卡说「计划待你审阅」，不再另起一行决定记录（实际 "
+                + string.Join(" / ", panel.PlanCardStateKeysForCheck) + "）");
 
             panel.ClickPlanChoiceForCheck("ChatPlanApprove");
             panel.ClickPlanContinueForCheck();
@@ -3341,13 +3427,55 @@ public partial class ShellCheckWindow : Window
                   && chat.RunFor(rejectedSession.Id) is null
                   && chat.PendingApprovalConversationCount() == 0,
                 "拒绝计划会留下拒绝记录、不启动 Agent、清空会话徽标计数，并保持计划模式");
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PlanCardStateKeysForCheck.SequenceEqual(["ChatPlanRejected"], StringComparer.Ordinal)
+                  && panel.PlanBodiesSuppressedForCheck,
+                "被拒绝的计划也只剩一张说「计划已拒绝」的卡片，正文从头到尾没有进过转录（实际 "
+                + string.Join(" / ", panel.PlanCardTextsForCheck) + "）");
+
+            // Two plans that differ, so a click on the older card can be told apart from a click on the newer
+            // one. The pane must show the document the card names, not simply the last plan that was written —
+            // which is the whole reason the card carries its turn index into the shell.
+            const string firstPlan = "# First draft\n\n- The older body.";
+            const string secondPlan = "# Second draft\n\n- The newer body.";
+            chat.ClientOverride = (_, _) => new ScriptedChatClient(
+                [twoPlanSession.Messages.Count(turn => turn.PlanApprovalState is not null) == 0
+                    ? firstPlan
+                    : secondPlan]);
+            chat.OpenConversation(twoPlanSession.Id);
+            chat.SelectMode(ChatModes.Plan);
+            chat.TryEnqueueSend(twoPlanSession.Id, "先给出计划", null, out _);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            Dispatcher.UIThread.RunJobs();
+            panel.ClickPlanChoiceForCheck("ChatPlanRevise");
+            panel.SetPlanFeedbackForCheck("换个思路再来一版");
+            panel.ClickPlanContinueForCheck();
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(panel.PlanCardCountForCheck == 2
+                  && panel.PlanCardTextsForCheck[0].Contains("First draft", StringComparison.Ordinal)
+                  && panel.PlanCardTextsForCheck[1].Contains("Second draft", StringComparison.Ordinal),
+                "两份计划是两张卡，各自的标题就是自己那份的标题（实际 "
+                + string.Join(" / ", panel.PlanCardTextsForCheck) + "）");
+            panel.ClickPlanCardForCheck(0);
+            Check(shell.InspectorPlanMarkdownForCheck.Contains("The older body", StringComparison.Ordinal),
+                "点旧的那张计划卡，右栏显示的是那一份计划而不是最新的一份（面板里 "
+                + shell.InspectorPlanMarkdownForCheck.Replace('\n', '|') + "）");
+            panel.ClickPlanCardForCheck(1);
+            Check(shell.InspectorPlanMarkdownForCheck.Contains("The newer body", StringComparison.Ordinal),
+                "点新的那张就换到新的一份：卡片与面板说的始终是同一份文档");
         }
         finally
         {
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
             chat.AttentionRequired -= CountAttention;
-            foreach (var session in new[] { observer, approvedSession, rejectedSession })
+            foreach (var session in new[] { observer, approvedSession, rejectedSession, twoPlanSession })
                 chat.DeleteConversation(session.Id);
             await WaitForIdleAsync(chat);
             panel.Reload();
