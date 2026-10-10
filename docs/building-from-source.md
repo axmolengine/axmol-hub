@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（904 条断言）
+# 外壳、本地化与数据根切换的自检（911 条断言）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（46 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-theme ./tmp/theme.txt
@@ -99,7 +99,15 @@ dotnet run --project src/AxmolHub -- --data-root ./data --smoke ./tmp/smoke.png
 dotnet run --project src/AxmolHub -- --data-root ./data --smoke-pages ./tmp/pages
 # 真操作验收：在真实引擎源码树上跑引擎管理链路（后面跟若干个引擎目录）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-ops ./tmp/ops-check.txt <引擎目录> [更多引擎目录...]
+# 唯一一条**真的出网**的验收：拿生产句体与生产桥抓一个被点名的 https 页，无头，退出码即失败断言数
+dotnet run --project src/AxmolHub -- --check-webfetch https://www.lua.org/manual/5.4/readme.html --preferences ./tmp/probe.json
 ```
+
+`--check-webfetch` 与其余开关的分工要说清：其余全部跑在桩替上（`ClientOverride` 的脚本模型、`WebFetchHttp` 的记录 handler），
+所以它们能证"策略与措辞对不对"，永远证不了"DNS 解析了吗、TLS 握手了吗、gzip 拆了吗、GBK 页猜对了吗、
+服务器会不会拒绝我们这个 User-Agent"。这一条把那一跳变成可重跑的，而不必有人开着窗口试；它只发一个 GET、不写任何东西，
+且先按 `--preferences` 指的那份设置读 `AllowOutboundWebFetch`——所以缺设置文件时它顺带证的就是"出厂即开"。
+`result=ok` 之外，输出里必须看到的是**页面正文**：标题在最前，脚本样式与菜单不在。
 
 上面的 `--data-root ./data` **不要省**：省了就用每用户的真实数据根，自检会读到你自己的引擎、项目与凭据（原因见上一节）。括号里的断言数**只是那一刻的实测值**——`--verify-shell` 的总数按场景扇出，改前改后都要自己跑一遍拿数，别拿算术去预测它。
 
@@ -175,17 +183,17 @@ dotnet run --project tests/AxmolHub.Checks -c Release -- ./artifacts/checks --ch
 
 > 注：此前 README 写"112 项"，与 `hub-development-plan.md` §3 与 `ci.md` §3 的 105 对不上，是不同时间点用不同数法留下的。现已统一为上面的分解。
 
-### AI 助手的十组检查
+### AI 助手的十一组检查
 
-助手层**不需要引擎、不需要网络、不需要 API key**：它经 `ChatWorkspace.ClientOverride` 注入一个脚本化的 `IChatClient`，跑的是真的 Core/Agent 代码。所以这十组在任何机器上都能单独跑，也是不需要工具链的那部分 AI 验收；界面那一半由上面的 `--verify-shell` 负责（同一套代码的活对象）。
+助手层**不需要引擎、不需要网络、不需要 API key**：模型那一侧经 `ChatWorkspace.ClientOverride` 注入一个脚本化的 `IChatClient`，出网那一侧经 `ChatWorkspace.WebFetchHttp` 注入一个从内存里答复的 `HttpMessageHandler`（`--verify-shell` 里 `web_fetch` 走的就是它，自检期间没有一个字节离开机器），跑的是真的 Core/Agent 代码。所以这十一组在任何机器上都能单独跑，也是不需要工具链的那部分 AI 验收；界面那一半由上面的 `--verify-shell` 负责（同一套代码的活对象）。这句话只描述自检，不描述产品：真正运行的 Hub 会经这两个缝之外的一条出网，验收断言里出现的"零网络"是桩替出来的结果，不是发布的口径 —— 发布口径在 README 的 Privacy policy 一节。
 
 ```powershell
-foreach ($g in 'providers','sessions','context','workspace','tool-policy','memory','tools','cross-session','images','routing') {
+foreach ($g in 'providers','sessions','context','workspace','tool-policy','memory','tools','cross-session','images','routing','copilot') {
   dotnet run --project tests/AxmolHub.Checks -- "--check-ai-$g"
 }
 ```
 
-每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-09 实测：33 / 36 / 20 / 6 / 7 / 2 / 10 / 41 / 7 / 1 = **163 条**。
+每组只打 `PASS:` / `FAIL:` 行、不打汇总，退出码非 0 即有失败。2026-10-10 实测：33 / 36 / 20 / 6 / 7 / 5 / 19 / 41 / 7 / 1 / 55 = **230 条**。
 
 **图片有四条入口，收到同一套准入里**：composer 的「+ → 添加图片…」、Ctrl+V 粘贴截图、把文件拖到输入框上，以及模型自己调 `capture_screen`。准入只看**文件头**（PNG / JPEG / GIF / WebP），扩展名不算数；单张上限 8 MiB、一条消息最多 4 张，**按大小先拒再读字节**，所以一次拖进一整文件夹的原图也不会先把窗口卡住。四条入口的图都落 `data-root/ai/sessions/{会话 id}/`（**不进工作区**，所以不会被文件工具当项目文件读到），并在消息边界以 user 角色发出去 —— `tool` 结果在 OpenAI 协议里带不了图。抓屏在 Windows 上是 GDI `PrintWindow`，黑帧不入库也不发送；macOS / Linux 尚无抓取后端，`capture_screen` 会明确拒答而不是给一张假图。**派生子会话**（`spawn_session`）默认关，需在「设置 → 工具权限」卡片里勾上「允许助手派生子会话」才可用。
 

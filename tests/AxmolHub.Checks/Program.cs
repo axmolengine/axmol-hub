@@ -3330,12 +3330,18 @@ if (args.Contains("--check-ai-tools"))
                  ("memory_read", tools.MemoryRead), ("memory_write", tools.MemoryWrite),
                  ("search_text", tools.SearchText), ("list_directory", tools.ListDirectory),
                  ("find_files", tools.FindFiles), ("capture_screen", tools.CaptureScreen),
+                 // web_fetch binds here too, but against a host that answers from memory: the eleven bodies this
+                 // loop binds are the ones asserted without a network, and the page-fetch tool belongs to that set
+                 // for exactly the reason the capture tool does — the decision is Core's, the socket is somebody
+                 // else's, and the stub is what makes the branches reachable at all.
+                 ("web_fetch", tools.FetchWebPage),
              })
         bound[wireName] = AIFunctionFactory.Create(body, new AIFunctionFactoryOptions { Name = wireName });
 
     var schema = string.Join("\n", bound.Values.Select(function => function.JsonSchema.GetRawText()));
     foreach (var expected in new[]
-             { "old_string", "new_string", "replace_all", "timeout_seconds", "ignore_case", "max_matches" })
+             { "old_string", "new_string", "replace_all", "timeout_seconds", "ignore_case", "max_matches",
+                 "max_characters" })
         if (!schema.Contains(expected, StringComparison.Ordinal))
             throw new Exception($"The wire schema does not advertise '{expected}'.");
     foreach (var leaked in new[]
@@ -3357,7 +3363,7 @@ if (args.Contains("--check-ai-tools"))
     }));
     if (!Convert.ToString(boundSearch)!.Contains("probe/app.cpp:3:", StringComparison.Ordinal))
         throw new Exception($"search_text did not bind the parameter names its schema advertises ({boundSearch}).");
-    Console.WriteLine("PASS: all ten tools bind, and the schema names are the names a call is accepted by.");
+    Console.WriteLine("PASS: all eleven tools bind, and the schema names are the names a call is accepted by.");
 
     // ── capture_screen：目标匹配、黑帧不发、正常帧落到会话目录 ──
     // The tool's every branch is asserted against a host that draws nothing, because the decision — which window,
@@ -3457,6 +3463,191 @@ if (args.Contains("--check-ai-tools"))
     if (Directory.GetFiles(where).Length != 1 || landed.Single() is not { File: "1.png", MediaType: "image/png" })
         throw new Exception($"The frame Hub stored is not the one the turn names: {landed.Single()}");
     Console.WriteLine("PASS: capture_screen refuses an ambiguous target, refuses a blank frame, and stores only a frame worth sending.");
+
+    // ── web_fetch：一条都不出网的出网工具 ──
+    // Every branch of a page fetch is a decision over a response somebody hands back, so the host here is a
+    // delegate with a script. The one thing no cell below can prove is that a real server answers — that hop is
+    // human-run, the same as the image channel's, and --check-webfetch is the procedure written for it.
+    var pages = new List<Func<FetchRequest, FetchResponse>>();
+    var sent = new List<Uri>();
+    var allowed = true;
+    var web = new WebBridge(() => allowed, (request, _) =>
+    {
+        sent.Add(request.Target);
+        if (pages.Count == 0) throw new InvalidOperationException("the fetch stub ran out of scripted responses");
+        var scripted = pages[0];
+        pages.RemoveAt(0);
+        return Task.FromResult(scripted(request));
+    });
+    var browsing = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "fetch-1",
+        ["SUPERSECRET"], log, null, null, null, null, null, web));
+    // A page as the stub serves it: the body arrives as bytes, which is also what makes the byte-cap cell
+    // something the host cannot cheat by returning a short string.
+    void QueuePage(int status, string type, string body, Uri? redirect = null)
+        => pages.Add(_ => new FetchResponse(status, type, redirect,
+            new MemoryStream(Encoding.UTF8.GetBytes(body))));
+    // A hop that dies before a response exists — a socket that closed, or one that never got an answer.
+    void QueueFailure(Exception problem) => pages.Add(_ => throw problem);
+
+    // The gate runs before the socket, in an order that is the model's rather than the implementer's: a call the
+    // switch refuses must not comment on URL syntax, because the user has to be told where the switch is.
+    allowed = false;
+    var switchedOff = await browsing.FetchWebPage("https://example.com/docs");
+    if (!switchedOff.Contains("outbound fetching turned off", StringComparison.Ordinal)
+        || !switchedOff.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A fetch the setting refuses answered another way: {switchedOff}");
+    allowed = true;
+    var noHost = await new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "fetch-2",
+        [], log, null, null, null, null, null, null)).FetchWebPage("https://example.com/docs");
+    if (!noHost.Contains("no fetch host", StringComparison.OrdinalIgnoreCase)
+        || !noHost.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A build without a fetch host answered like a fetch that worked: {noHost}");
+    // An empty scope is the shape the self-check claims is unwired, so it has to be unwired about this too.
+    if (WorkspaceToolScope.Empty.Web is not null)
+        throw new Exception("WorkspaceToolScope.Empty carries a fetch host; the zero-network claim is then false.");
+
+    var refusals = new List<string>();
+    foreach (var bad in new[]
+             { "example.com/docs", "http://example.com/docs", "https://127.0.0.1:8080/api", "https://localhost:5173/",
+                 "https://169.254.169.254/latest/meta-data", "https://192.168.1.1/", "https://[::1]/", "file:///etc/hosts" })
+        refusals.Add(await browsing.FetchWebPage(bad));
+    if (refusals.Any(line => !line.Contains("Refused", StringComparison.Ordinal))
+        || refusals.Any(line => !line.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        || !refusals[0].Contains("not an absolute https URL", StringComparison.Ordinal)
+        || !refusals[1].Contains("is not https", StringComparison.Ordinal)
+        || !refusals[2].Contains("loopback, link-local or a private address", StringComparison.Ordinal)
+        || !refusals[4].Contains("loopback, link-local or a private address", StringComparison.Ordinal)
+        || sent.Count != 0)
+        throw new Exception($"The address policy let something through or talked when it had already refused:{Environment.NewLine}"
+                            + string.Join(Environment.NewLine, refusals));
+    Console.WriteLine("PASS: web_fetch refuses the setting, the missing host and every unfetchable address without "
+                      + "opening a socket.");
+
+    QueuePage(200, "text/html; charset=utf-8",
+        "<html><head><title>Manual 5.4</title><script>var secret = 1;</script><style>a{color:red}</style></head>"
+        + "<body><nav>Home API</nav><h1>Readme</h1><p>lua &amp; C, &copy; 2026</p><p>Second <b>bold</b> bit</p>"
+        + "<ul><li>one</li><li>two</li></ul><!-- hidden --></body></html>");
+    var page = await browsing.FetchWebPage("https://www.lua.org/manual/5.4/readme.html");
+    if (!page.Contains("HTTP 200", StringComparison.Ordinal) || !page.StartsWith("https://www.lua.org/", StringComparison.Ordinal)
+        || !page.Contains("Manual 5.4", StringComparison.Ordinal) || !page.Contains("Readme", StringComparison.Ordinal)
+        || !page.Contains("lua & C", StringComparison.Ordinal) || !page.Contains("© 2026", StringComparison.Ordinal)
+        || page.Contains("var secret = 1", StringComparison.Ordinal) || page.Contains("color:red", StringComparison.Ordinal)
+        || page.Contains("<p>", StringComparison.Ordinal) || page.Contains("hidden", StringComparison.Ordinal)
+        || !page.Contains("one") || !page.Contains("two"))
+        throw new Exception($"A page did not come back as page text:{Environment.NewLine}{page}");
+    if (page.IndexOf("Manual 5.4", StringComparison.Ordinal) > page.IndexOf("Readme", StringComparison.Ordinal))
+        throw new Exception("The title was not hoisted above the body.");
+    Console.WriteLine("PASS: web_fetch hands back the title and the prose, and not the scripts, styles, markup or comments.");
+
+    // "There was nothing there" and "we could not ask" are two different sentences, and a 404 with a body is an
+    // answer with a body in it.
+    QueuePage(404, "text/html", "<h1>Not found</h1><p>No such manual page.</p>");
+    var missing = await browsing.FetchWebPage("https://example.com/gone");
+    QueuePage(200, "text/html", "<html><body><script>x=1;</script></body></html>");
+    var empty = await browsing.FetchWebPage("https://example.com/blank");
+    if (!missing.Contains("HTTP 404", StringComparison.Ordinal) || !missing.Contains("No such manual page", StringComparison.Ordinal)
+        || !empty.Contains("no readable text", StringComparison.Ordinal)
+        || !empty.Contains("not a network problem", StringComparison.Ordinal))
+        throw new Exception($"An empty or absent page was reported as a failure, or a failure as an empty page:{Environment.NewLine}"
+                            + $"{missing}{Environment.NewLine}{empty}");
+    Console.WriteLine("PASS: a 404 keeps its body, an empty page is an answer, and neither is dressed up as a timeout.");
+
+    QueuePage(200, "application/pdf", "%PDF-1.4 ...");
+    var binary = await browsing.FetchWebPage("https://example.com/manual.pdf");
+    QueuePage(200, "text/plain", new string('x', WebFetch.MaxBytes + 64));
+    var oversized = await browsing.FetchWebPage("https://example.com/huge.txt");
+    if (!binary.Contains("application/pdf", StringComparison.Ordinal) || !binary.Contains("which is not text", StringComparison.Ordinal)
+        || !binary.Contains("run_command", StringComparison.Ordinal)
+        || !oversized.Contains($"larger than {WebFetch.MaxBytes / 1024 / 1024} MiB", StringComparison.Ordinal)
+        || !oversized.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        throw new Exception($"A binary or an over-cap body was buffered instead of refused:{Environment.NewLine}"
+                            + $"{binary}{Environment.NewLine}{oversized}");
+    Console.WriteLine("PASS: web_fetch reads at most a megabyte and only text, and points at run_command for the rest.");
+
+    // Redirects are where a host policy gets walked past, so each shape is asserted on what was *asked*, not only
+    // on what was said.
+    sent.Clear();
+    QueuePage(302, "text/html", "", new Uri("http://internal.example.com/x"));
+    var downgraded = await browsing.FetchWebPage("https://example.com/start");
+    if (!downgraded.Contains("is not https", StringComparison.Ordinal) || sent.Count != 1)
+        throw new Exception($"A redirect left https and something still asked the second host: {downgraded}");
+    QueuePage(302, "text/html", "", new Uri("https://127.0.0.1:9/"));
+    var inward = await browsing.FetchWebPage("https://example.com/start");
+    if (!inward.Contains("loopback, link-local or a private address", StringComparison.Ordinal) || sent.Count != 2)
+        throw new Exception($"A redirect to a private address was followed: {inward}");
+    QueuePage(302, "text/html", "", new Uri("/next.html", UriKind.Relative));
+    QueuePage(200, "text/html", "<h1>Arrived</h1>");
+    var hopped = await browsing.FetchWebPage("https://example.com/start");
+    if (!hopped.Contains("https://example.com/next.html", StringComparison.Ordinal)
+        || !hopped.Contains("after 1 redirect", StringComparison.Ordinal) || !hopped.Contains("Arrived", StringComparison.Ordinal))
+        throw new Exception($"A relative Location was not resolved against the hop that sent it: {hopped}");
+    sent.Clear();
+    for (var spin = 0; spin < 6; spin++) QueuePage(302, "text/html", "", new Uri("https://example.com/round"));
+    var loop = await browsing.FetchWebPage("https://example.com/start");
+    if (!loop.Contains("kept redirecting", StringComparison.Ordinal) || !loop.Contains("do not retry", StringComparison.OrdinalIgnoreCase)
+        || sent.Count > WebFetch.MaxRedirects + 1)
+        throw new Exception($"A redirect loop was chased {sent.Count} hops before it was refused: {loop}");
+    Console.WriteLine("PASS: a redirect cannot cross out of https or inward, a relative one is resolved, and a loop is cut.");
+
+    QueueFailure(new TaskCanceledException("the request was cancelled"));
+    var timedOut = await browsing.FetchWebPage("https://example.com/slow");
+    QueueFailure(new HttpRequestException("no such host"));
+    var unreachable = await browsing.FetchWebPage("https://does-not-exist.example");
+    if (!timedOut.Contains("Could not reach", StringComparison.Ordinal)
+        || !timedOut.Contains($"within {(int)WebFetch.Timeout.TotalSeconds}s", StringComparison.Ordinal)
+        || !unreachable.Contains("Could not reach", StringComparison.Ordinal)
+        || unreachable.Contains("no readable text", StringComparison.Ordinal))
+        throw new Exception($"A timeout or a dead host was reported as an empty page:{Environment.NewLine}"
+                            + $"{timedOut}{Environment.NewLine}{unreachable}");
+    Console.WriteLine("PASS: a timeout and a socket failure both say could-not-reach, never there-is-nothing-there.");
+
+    // The window: what the model asked for is what it gets, what it must not see is gone, and the one place a
+    // token hides is never the activity line.
+    QueuePage(200, "text/plain", string.Concat(Enumerable.Range(1, 400).Select(index => $"line {index}\n")));
+    var cut = await browsing.FetchWebPage("https://example.com/long.txt", max_characters: 60);
+    if (!cut.Contains("line 1", StringComparison.Ordinal) || !cut.Contains("more characters not shown", StringComparison.Ordinal)
+        || !cut.Contains("max_characters", StringComparison.Ordinal) || cut.Contains("line 400", StringComparison.Ordinal))
+        throw new Exception($"max_characters did not bound the result the way its own name says: {cut}");
+    QueuePage(200, "text/html", "<p>token=SUPERSECRET leaked</p>");
+    var bled = await browsing.FetchWebPage("https://example.com/account?token=SUPERSECRET");
+    if (bled.Contains("SUPERSECRET", StringComparison.Ordinal) || !bled.Contains("[REDACTED]", StringComparison.Ordinal))
+        throw new Exception($"A stored secret came back through a page unhidden:{Environment.NewLine}{bled}");
+    var query = WebFetch.Shown("https://api.example.com/v1/items?token=SUPERSECRET");
+    if (query != "api.example.com/v1/items")
+        throw new Exception($"An activity row must show host and path only, and it showed '{query}'.");
+    Console.WriteLine("PASS: max_characters cuts where it says, a stored secret is hidden in the page and in the row.");
+
+    var cardFetch = ToolPreviews.PreviewFor("web_fetch", """{"url":"https://docs.example.com/build?token=SUPERSECRET"}""",
+        new WorkspaceToolScope(workspace, guards, dataRoot, "fetch-5", ["SUPERSECRET"], null, null, null, null, null, null, web));
+    if (!cardFetch.Contains("docs.example.com/build", StringComparison.Ordinal)
+        || !cardFetch.Contains("token=[REDACTED]", StringComparison.Ordinal)
+        || cardFetch.Contains("SUPERSECRET", StringComparison.Ordinal)
+        || !cardFetch.Contains("scheme: https", StringComparison.Ordinal))
+        throw new Exception($"The fetch card does not name the host, cap the read or hide the token:{Environment.NewLine}{cardFetch}");
+    allowed = false;
+    var cardOff = ToolPreviews.PreviewFor("web_fetch", """{"url":"https://docs.example.com/build"}""",
+        new WorkspaceToolScope(workspace, guards, dataRoot, "fetch-6", [], null, null, null, null, null, null, web));
+    allowed = true;
+    var cardBad = ToolPreviews.PreviewFor("web_fetch", """{"url":"http://docs.example.com/build"}""",
+        new WorkspaceToolScope(workspace, guards, dataRoot, "fetch-7", [], null, null, null, null, null, null, web));
+    if (!cardOff.Contains("outbound fetching turned off", StringComparison.Ordinal)
+        || !cardBad.Contains("is not https", StringComparison.Ordinal))
+        throw new Exception($"A card promised an action the tool would refuse:{Environment.NewLine}{cardOff}{Environment.NewLine}{cardBad}");
+    Console.WriteLine("PASS: the fetch card names the host, and says out loud when the call is going to be refused.");
+
+    // The switch, as the store actually reads it: absent is the shipped default (on), and an explicit off is
+    // honoured. Same file, two questions.
+    var webPreferences = Path.Combine(toolRoot, "webfetch-settings.json");
+    File.WriteAllText(webPreferences, "{}");
+    if (!new PreferencesStore(webPreferences).Load().AllowOutboundWebFetch)
+        throw new Exception("A settings file with no key switched fetching off; the shipped default is on.");
+    File.WriteAllText(webPreferences, """{"AllowOutboundWebFetch":false}""");
+    if (new PreferencesStore(webPreferences).Load().AllowOutboundWebFetch)
+        throw new Exception("An explicit off was read as on.");
+    File.WriteAllText(webPreferences, """{"AllowOutboundWebFetch":true}""");
+    if (!new PreferencesStore(webPreferences).Load().AllowOutboundWebFetch)
+        throw new Exception("An explicit on was not read back.");
+    Console.WriteLine("PASS: the outbound switch round-trips, and a settings file that says nothing leaves it on.");
 
     log.Write("self-check finished");
     Directory.Delete(toolRoot, recursive: true);

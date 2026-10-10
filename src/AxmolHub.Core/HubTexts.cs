@@ -359,6 +359,17 @@ public static class HubTexts
             + "large file costs a few lines here instead of the whole file. Each one is a model call, and there "
             + "are three answer slots in total, so this ships off. One answer spawns at most one helper, and a "
             + "helper cannot spawn further."),
+        // 出网开关与上面那个的差别是默认值：抓一个被点名的网页是这类助手的基本动作，默认关等于这功能对没找到
+        // 设置的人不存在。所以文案要说清「开」才是缺省，以及关掉之后拒绝的是哪一类动作。
+        ["AllowWebFetch"] = ("允许助手抓取网页", "Let the assistant read web pages"),
+        ["AllowWebFetchHint"] = (
+            "默认开启。抓取只走 https、只允许公网主机，重定向不许跨出 https，一次最多读 1 MiB；把脚本、样式和导航"
+            + "去掉之后，正文才交回模型。关掉它只是让这条通道不存在——命令沙箱里的 curl 从来不受这个开关约束，"
+            + "「询问审批」档下每一次抓取都照样要过一张卡。",
+            "On by default. Fetching is https only, to public hosts, with a redirect never allowed to leave "
+            + "https, and at most 1 MiB is read; scripts, styles and navigation are stripped before the page text "
+            + "reaches the model. Turning this off removes the channel — it has never governed curl inside the "
+            + "command sandbox — and in 「询问审批」 every fetch still asks for approval on a card."),
         ["UpdateReady"] = ("发现新版本 {0}。", "Version {0} is available."),
         // 下载中 / 已就绪 / 下载失败三态的状态行都要带版本号：一旦开始下载，"发现新版本 x.y.z"
         // 就被进度文案顶掉了，用户再也看不到自己要升到哪一版。{0} 是版本号，拼在状态文案前面。
@@ -649,6 +660,7 @@ public static class HubTexts
         ["ActivityRowFind"] = ("查找 {0}", "find {0}"),
         ["ActivityRowEditFile"] = ("编辑文件 {0}", "edit {0}"),
         ["ActivityRowRunCommand"] = ("执行命令", "run command"),
+        ["ActivityRowFetch"] = ("抓取 {0}", "fetch {0}"),
         ["ActivityRowGeneric"] = ("调用 {0}", "call {0}"),
         ["ActivityRowExpandThought"] = ("看思考全文", "Show the full thinking"),
         // Under a folded action row, one expandable panel lays the exchange out in full: the arguments the call

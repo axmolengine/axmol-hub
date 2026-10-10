@@ -89,6 +89,22 @@ public sealed class HubPreferences
     /// than a silent default.
     /// </summary>
     public bool AllowSpawnedSessions { get; set; }
+
+    /// <summary>
+    /// Whether the assistant may read a web page it was pointed at (<c>web_fetch</c>). <b>On by default</b>, which
+    /// is the deliberate opposite of <see cref="AllowSpawnedSessions"/>: fetching a URL the user or the model named
+    /// is what every assistant of this shape does, and a switch that ships off would just mean the capability does
+    /// not exist for anyone who never finds the setting. It is still a switch rather than nothing, because the call
+    /// leaves this machine for a server nobody here chose.
+    ///
+    /// <para>This is only whether the tool <i>can</i> run at all. Whether it has to ask first is the approval
+    /// tier's question (<see cref="ToolApprovalPolicy"/>), and a grant on that side does not open this one — see
+    /// <see cref="WebFetch.Decide"/> for the order they are checked in.</para>
+    ///
+    /// <para>Read per tool call rather than once per request, the same way the spawn permission is, so turning it
+    /// off in Settings takes effect on the next call instead of the next conversation.</para>
+    /// </summary>
+    public bool AllowOutboundWebFetch { get; set; } = true;
 }
 
 public sealed class PreferencesStore(string path)

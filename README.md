@@ -97,7 +97,7 @@ Keep changes scoped: UI logic in `AxmolHub`, build and state logic in `Core`, an
 
 ## Privacy policy
 
-Axmol Hub does not collect telemetry or personal information. It accesses the network only to fetch engine and toolchain version information and to download engines, toolchains, and dependencies that you choose to install or update (from axmol.dev, GitHub, and configured mirrors). Log files written for troubleshooting stay on your machine.
+Axmol Hub does not collect telemetry or personal information. It opens a network connection for three things: to fetch engine and toolchain version information and to download the engines, toolchains, and dependencies you choose to install or update (from axmol.dev, GitHub, and configured mirrors); to the model provider you configure, for sign-in, the model list, and the requests you send; and to the one address shown on an approval card when the assistant reads a web page with `web_fetch` (https only, at most 1 MiB, and the page's scripts and styles are stripped before its text reaches the model). The last channel is on by default and can be switched off in Settings; turning it off removes the tool entirely. Log files written for troubleshooting stay on your machine.
 
 ## Code signing policy
 

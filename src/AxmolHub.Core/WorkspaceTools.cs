@@ -24,6 +24,9 @@ namespace AxmolHub.Core;
 /// <param name="RecordFrames">Where a captured frame is handed to the app so the result turn can carry it. The
 /// turn is written by the app, not by this class, and the call id never reaches a tool body — so the frame goes
 /// out through the request's own scope, which is one request and one conversation by construction.</param>
+/// <param name="Web">The host's side of an outbound fetch: the setting that allows it and the socket that makes it.
+/// Null in a scope with nothing to send with — <c>web_fetch</c> then says so out loud rather than pretending the
+/// address was bad, which is the only way a zero-network self-check and a real Hub answer the same question.</param>
 public sealed record WorkspaceToolScope(
     string? WorkspaceRoot,
     WorkspaceGuards Guards,
@@ -35,7 +38,8 @@ public sealed record WorkspaceToolScope(
     ConversationStore? Sessions = null,
     CrossSessionBridge? CrossSession = null,
     ScreenCaptureBridge? Screen = null,
-    Action<IReadOnlyList<ChatImage>>? RecordFrames = null)
+    Action<IReadOnlyList<ChatImage>>? RecordFrames = null,
+    WebBridge? Web = null)
 {
     /// <summary>A scope with nothing in it. Every file and command tool answers
     /// <see cref="WorkspacePathVerdict.NoWorkspace"/> rather than guessing a directory.</summary>
@@ -277,6 +281,32 @@ public sealed class WorkspaceTools(WorkspaceToolScope context)
         return context.ApplyWorkspaceRoot is { } apply
             ? await apply(full).ConfigureAwait(false)
             : $"Workspace set to {full}.";
+    }
+
+    [Description("Fetch one web page over https and return its text with the scripts, styles and menus taken out. "
+                 + "For a documentation page, a changelog, or the link behind an error the user quoted — the parts "
+                 + "of the web that answer a question. Text only: a PDF or an image has to be downloaded with "
+                 + "run_command, which shows the user the whole command.")]
+    public async Task<string> FetchWebPage(
+        [Description("The absolute URL to read, https only, for example https://www.lua.org/manual/5.4/readme.html")]
+        string url,
+        [Description("How many characters of page text to return, up to 20000.")]
+        int max_characters = WebFetch.DefaultCharacters,
+        CancellationToken cancellationToken = default)
+    {
+        // No path guard runs here, deliberately: the sandbox says nothing about a URL. What has something to say is
+        // the setting (is this Hub allowed out at all), WebFetch's scheme-and-host policy (is this address one to
+        // ask), and the approval tier the registration names (does a person have to agree first).
+        if (context.Web is not { } bridge)
+            return WebFetch.ResultFor(new WebFetchDecision(WebFetchVerdict.RefusedNoHost, null), url ?? "");
+
+        var decision = WebFetch.Decide(bridge, url);
+        if (decision.Verdict != WebFetchVerdict.Allowed) return WebFetch.ResultFor(decision, url);
+
+        var target = decision.Target!;
+        context.Log?.Write($"Assistant fetching {SecretRedaction.Redact(target.ToString(), context.SensitiveValues)}");
+        return await WebFetch.FetchAsync(bridge, target, max_characters, context.SensitiveValues, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     [Description("Capture one window, or the whole display, as an image and put it in this conversation so you can "

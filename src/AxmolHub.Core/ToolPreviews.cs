@@ -24,6 +24,7 @@ public static class ToolPreviews
             "run_command" => CommandPreview(arguments, scope),
             "set_workspace" => WorkspacePreview(Text(arguments, "path"), scope, projectPaths),
             "capture_screen" => CapturePreview(arguments, scope),
+            "web_fetch" => FetchPreview(arguments, scope),
             "send_to_session" => SendPreview(arguments),
             "spawn_session" => SpawnPreview(arguments, scope),
             "memory_write" => MemoryPreview(arguments),
@@ -133,6 +134,27 @@ public static class ToolPreviews
             ? $"capture_screen · window \"{found.Title}\" (pid {found.ProcessId}) · {found.Width}×{found.Height} · "
               + $"{backend.Label}"
             : $"capture_screen · fullscreen · {backend.Label}";
+    }
+
+    /// <summary>Where this machine is about to go. The host is the thing a person is deciding about, so it leads the
+    /// card with the path and query after it — the query comes because a query is what gets sent, and it is the part
+    /// of a URL that carries a token, so it goes through the same redaction the command preview's output does.
+    /// A call that the address policy or Hub's own switch will refuse says so here rather than promising an action
+    /// the tool then declines: a card that lies is a card the user learns to ignore.</summary>
+    private static string FetchPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var url = Text(arguments, "url");
+        var asked = SecretRedaction.Redact(
+            url.Length > 0 ? url : "(no url given)", scope.SensitiveValues);
+        var decision = WebFetch.Decide(scope.Web, url);
+        if (decision.Verdict != WebFetchVerdict.Allowed) return $"{asked}\n{WebFetch.ResultFor(decision, url)}";
+        var target = decision.Target!;
+        // The query is shown because it is what gets sent — and redacted in the same breath, because a URL is one
+        // of the places an API key hides in plain sight.
+        var where = SecretRedaction.Redact($"{target.Host}{target.PathAndQuery}", scope.SensitiveValues);
+        return $"web_fetch · {where}\n"
+               + $"scheme: https · max_characters: {Number(arguments, "max_characters")} · "
+               + $"reads at most {WebFetch.MaxBytes / 1024 / 1024} MiB, {WebFetch.Timeout.TotalSeconds:0}s";
     }
 
     /// <summary>What a new session is going to be pointed at, and which sandbox it inherits. A person approving

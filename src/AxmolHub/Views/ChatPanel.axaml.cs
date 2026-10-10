@@ -2155,6 +2155,9 @@ public partial class ChatPanel : UserControl
             "list_directory"
                 => string.Format(culture, HubStrings.Get("ActivityRowList"), path.Length > 0 ? path : "."),
             "run_command" => HubStrings.Get("ActivityRowRunCommand"),
+            // Host and path only: the query is where a token hides, and this line is stored in the transcript.
+            "web_fetch" => string.Format(culture, HubStrings.Get("ActivityRowFetch"),
+                WebFetch.Shown(ArgField(args, "url") ?? "")),
             _ => string.Format(culture, HubStrings.Get("ActivityRowGeneric"), name),
         };
     }

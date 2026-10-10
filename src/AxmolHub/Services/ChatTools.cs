@@ -54,6 +54,14 @@ internal static class ChatTools
         "run_command" => WorkspacePaths.VerifyCommandRoot(scope.WorkspaceRoot, scope.Guards) == WorkspacePathVerdict.Allowed
             ? ToolRisk.WorkspaceCommand
             : ToolRisk.SystemCommand,
+        // Reading a page sends nothing the shell could not already send: a sandboxed run_command has been able to
+        // reach the same address without a card since the auto tier was drawn, and a refusal that pushes the model
+        // off the named, bounded, source-showing tool and onto that path is a worse guard, not a stricter one. So
+        // web_fetch shares the sandbox-command tier and the guards that actually bite are elsewhere: the address
+        // policy in WebFetch (https, public host, redirect cannot cross out of either), the byte cap, and Hub's own
+        // outbound switch, which no approval mode can open. Spelled out rather than left to the fallback arm, for
+        // the standing reason: "unknown tool" and "this tool was thought about" must not read the same here.
+        "web_fetch" => ToolRisk.WorkspaceCommand,
         // Moving the sandbox is the one call whose risk is the *directory*, not the verb: narrowing it to a
         // subfolder of where the session already works reaches nothing new (and writes inside it are already the
         // auto tier's business), a registered project is a directory the user handed Hub on purpose, and anything
@@ -171,6 +179,12 @@ internal static class ChatTools
         [
             AIFunctionFactory.Create(tools.FileWrite, Options("file_write")),
             AIFunctionFactory.Create(tools.RunCommand, Options("run_command")),
+            // The name is the pair's, not this call's: web_fetch reads a page from here, and the phase-two search
+            // arrives as web_search — which is not ours to name anyway, since a hosted tool is advertised by the
+            // provider's own kind string. Two nouns in front of "fetch" and "search" so the model sees one capability
+            // family even though only this half has a Hub body. The method behind it is FetchWebPage because
+            // WebFetch is the rules class in Core's namespace, and a method of that name would shadow it here.
+            AIFunctionFactory.Create(tools.FetchWebPage, Options("web_fetch")),
             AIFunctionFactory.Create(tools.CaptureScreen, Options("capture_screen")),
             AIFunctionFactory.Create(tools.SetWorkspace, Options("set_workspace")),
             AIFunctionFactory.Create(tools.MemoryWrite, Options("memory_write")),

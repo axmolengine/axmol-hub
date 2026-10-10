@@ -144,6 +144,12 @@
                「助手能不能自己再开一条会话花钱」。默认关，且关掉之后工具自己会说明去哪儿开，而不是让模型重试。 -->
           <CheckBox x:Name="SpawnCheck" Content="{DynamicResource AllowSpawnSessions}" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowSpawnSessionsHint}" />
+
+          <!-- 出网开关和上面那个一样不是审批档位，档位管「这次要不要问」，这个管「这台机器允不允许被读」。
+               默认开：抓一个用户或模型点名的网页是这一类助手的基本动作，默认关等于这功能对没找到设置的人不存在。
+               真正的闸是 WebFetch 的地址策略（只放 https、公网主机、重定向不许跨出去）加上 ask 档的那张卡。 -->
+          <CheckBox x:Name="WebFetchCheck" Content="{DynamicResource AllowWebFetch}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebFetchHint}" />
         </StackPanel>
       </Border>
 

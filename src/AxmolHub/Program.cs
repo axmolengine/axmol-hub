@@ -62,6 +62,17 @@ internal static class Program
             return;
         }
 
+        // Same headless contract as --check-secrets, for the claim that no stub transport in this repository can
+        // make: that a real address resolved, a real server answered, and page text came back through the body the
+        // model calls. It sends one GET and writes nothing, which is why it may read the real settings file — the
+        // outbound switch is part of what is being proven.
+        if (HubHostOptions.IsWebFetchSelfTest(args))
+        {
+            Environment.ExitCode = WebFetchSelfCheck.Run(HubHostOptions.WebFetchArgument(args),
+                HubHostOptions.Parse(args).PreferencesPath);
+            return;
+        }
+
         // Argument parsing must happen before AppBuilder: it decides which window to show.
         App.Options = HubHostOptions.Parse(args);
         if (!App.Options.IsAutomation)

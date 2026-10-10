@@ -138,6 +138,7 @@ public partial class SettingsPage : UserControl
         RestartUpdateButton.Click += (_, _) => UpdateService.Instance.ApplyAndRestart();
         AutoDownloadCheck.IsCheckedChanged += (_, _) => OnAutoDownloadChanged();
         SpawnCheck.IsCheckedChanged += (_, _) => OnSpawnChanged();
+        WebFetchCheck.IsCheckedChanged += (_, _) => OnWebFetchChanged();
         WireProviders();
 
         // Installed exactly once, on purpose — see SetDownloadTooltip for why re-assigning ToolTip.Tip
@@ -233,6 +234,7 @@ public partial class SettingsPage : UserControl
             AutoDownloadCheck.IsChecked = _preferences.AutoDownloadUpdates;
             AutoDownloadCheck.IsEnabled = UpdateService.Instance.IsInstalled;
             SpawnCheck.IsChecked = _preferences.AllowSpawnedSessions;
+            WebFetchCheck.IsChecked = _preferences.AllowOutboundWebFetch;
             // Re-render the update card from the last known check: this re-localizes the status line
             // on a language switch (it is written imperatively) and reflects a check the shell already
             // ran at startup (the update dot and this card share UpdateService.Last).
@@ -836,6 +838,23 @@ public partial class SettingsPage : UserControl
     /// <summary>Reads the switch the way the assistant does, for a self-check that has to prove the preference is
     /// the thing the tool consults rather than a checkbox that remembers nothing.</summary>
     internal bool AllowSpawnedSessionsForCheck => _preferences.AllowSpawnedSessions;
+
+    /// <summary>Outbound fetching ships <b>on</b>, unlike spawning, so this checkbox is an exit rather than an
+    /// entrance: its job is to let a person say "nothing this machine reads goes out without me deciding". The
+    /// assistant's own refusal names this setting when it is off, which is the only reason the switch and the
+    /// sentence can not drift apart.</summary>
+    private void OnWebFetchChanged()
+    {
+        if (!_ready) return;
+        var value = WebFetchCheck.IsChecked == true;
+        if (value == _preferences.AllowOutboundWebFetch) return;
+        _preferences.AllowOutboundWebFetch = value;
+        _preferencesStore.Save(_preferences);
+    }
+
+    /// <summary>The same argument as the spawn hook: a self-check that turns fetching off has to read the
+    /// preference the tool consults, not the checkbox that forgot it.</summary>
+    internal bool AllowOutboundWebFetchForCheck => _preferences.AllowOutboundWebFetch;
 
     private void OnAutoDownloadChanged()
     {

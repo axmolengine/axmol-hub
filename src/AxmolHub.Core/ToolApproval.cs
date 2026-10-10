@@ -12,10 +12,25 @@ public enum ToolRisk
     /// <summary>Changes something inside the session's workspace, or inside Hub's own records.</summary>
     WorkspaceWrite,
 
-    /// <summary>Starts a process in the session's sandbox. Its consequences are meant to stay in that directory,
-    /// which is why <see cref="ToolApprovalModes.Auto"/> lets it through and <see cref="ToolApprovalModes.Ask"/>
-    /// does not: the workspace is the thing the user pointed Hub at, and a build or a test run inside it is the
-    /// ordinary shape of the request. It is still execution, so a card still shows in the strict tier.</summary>
+    /// <summary>Does something whose <i>place</i> the user already pointed Hub at: a process run in the session's
+    /// sandbox, or one page read from the address the assistant was given. That is why
+    /// <see cref="ToolApprovalModes.Auto"/> lets it through and <see cref="ToolApprovalModes.Ask"/> does not — the
+    /// workspace and the URL both came from a request the person made, and a build or a documentation page is the
+    /// ordinary shape of it. It is still action, so a card shows in the strict tier.
+    ///
+    /// <para>Said plainly, because the old wording was a lie by half: an outbound fetch's consequences do
+    /// <b>not</b> stay in that directory. The tier holds for a different reason — a <c>run_command</c> in the same
+    /// sandbox has been able to reach the same address silently since this table was written, so putting the named,
+    /// bounded, source-showing tool on a <i>stricter</i> tier than the shell would only push the model toward the
+    /// path with no card on it. The guard on fetching is the address policy in <see cref="WebFetch"/> and Hub's own
+    /// outbound switch, neither of which an approval mode can relax.</para>
+    ///
+    /// <para>Also said plainly because it is a real coarseness: a grant on this tier
+    /// (<see cref="HubPreferences.TrustedTools"/>, and the card's 「总是允许」) is kept per <b>tool</b>, not per host,
+    /// so trusting <c>web_fetch</c> once stops every future page from asking. Per-host grants would need the trust
+    /// list to carry something other than a wire name — <see cref="ToolTrust"/> matches names exactly, so a
+    /// <c>web_fetch:example.com</c> entry matches nothing — and that is a change to the trust shape, not a string to
+    /// invent.</para></summary>
     WorkspaceCommand,
 
     /// <summary>Reaches past the sandbox — the user's screen, another session, a directory nobody chose — or is a

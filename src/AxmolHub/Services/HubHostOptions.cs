@@ -107,6 +107,29 @@ internal sealed record HubHostOptions(
             : null;
     }
 
+    /// <summary>
+    /// <c>--check-webfetch &lt;url&gt;</c>: one real fetch through the shipped <c>web_fetch</c> body, headless.
+    /// Handled like <see cref="CheckSecretsFlag"/> — before Avalonia, no window — because it is the only switch that
+    /// can answer "did this build actually leave the machine, and what came back". Everything else about the tool is
+    /// asserted on a stub transport, which proves the socket was constructed but not that a page arrives; the real hop
+    /// needs real DNS, real TLS and a real server, and a human staring at a chat window is the weak version of that.
+    /// It sends exactly one GET to the address on the command line and reads the outbound switch from the settings
+    /// file first, so it also proves what the default is on this machine.
+    /// </summary>
+    public const string CheckWebFetchFlag = "--check-webfetch";
+
+    public static bool IsWebFetchSelfTest(string[] args)
+        => args.Any(a => string.Equals(a, CheckWebFetchFlag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The address after the flag, or <c>null</c> when none was given.</summary>
+    public static string? WebFetchArgument(string[] args)
+    {
+        var index = Array.FindIndex(args, a => string.Equals(a, CheckWebFetchFlag, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal)
+            ? args[index + 1]
+            : null;
+    }
+
     public static HubHostOptions Parse(string[] args)
     {
         return new HubHostOptions(

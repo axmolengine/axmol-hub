@@ -77,14 +77,11 @@ public sealed class ProcessRunner(Action<string> log)
         {
             foreach (var entry in overrides) start.Environment[entry.Key] = entry.Value;
         }
-        var secrets = (sensitiveValues ?? []).Where(s => !string.IsNullOrEmpty(s))
-            .SelectMany(s => new[] { s, System.Text.Json.JsonSerializer.Serialize(s)[1..^1] }).Distinct().OrderByDescending(s => s.Length).ToArray();
-        string Redact(string value)
-        {
-            foreach (var secret in secrets)
-                value = value.Replace(secret, "[REDACTED]", StringComparison.Ordinal);
-            return value;
-        }
+        // One rule, in SecretRedaction, shared with the fetch tool and the approval card. The prepared list is
+        // hoisted because this redactor runs per output line, and rebuilding it there would make the cost of a
+        // long build log depend on how many credentials the user has stored.
+        var secrets = SecretRedaction.Prepare(sensitiveValues);
+        string Redact(string value) => SecretRedaction.RedactPrepared(value, secrets);
         log(Redact($"Command: {executable} {string.Join(" ", start.ArgumentList.Select(a => System.Text.Json.JsonSerializer.Serialize(a)))}; cwd={workingDirectory}"));
         using var process = new Process { StartInfo = start };
 
