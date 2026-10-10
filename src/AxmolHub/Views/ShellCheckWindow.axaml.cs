@@ -3137,11 +3137,25 @@ public partial class ShellCheckWindow : Window
 
             await RunPlanInBackgroundAsync(approvedSession);
             Check(chat.PendingBackgroundApprovalCount(observer.Id) == 1
+                  && chat.PendingApprovalConversationCount() == 1
                   && approvedSession.Messages.Last().ApprovalSeen == false,
                 "后台会话中的待确认计划计入任务栏审批标记");
             Check(attentionCounts.GetValueOrDefault(approvedSession.Id) == 1,
                 "一次计划确认只发出一次待处理关注事件（实际 "
                 + attentionCounts.GetValueOrDefault(approvedSession.Id) + " 次）");
+            await RunPlanInBackgroundAsync(rejectedSession);
+            Check(chat.PendingApprovalConversationCount() == 2
+                  && chat.PendingBackgroundApprovalCount(observer.Id) == 2,
+                "任务栏数字按待审批会话计数而非操作数，并能反映多个待处理会话（实际 "
+                + chat.PendingApprovalConversationCount() + "）");
+            Check(SystemAttentionService.FormatBadgeCount(0) == "0"
+                  && SystemAttentionService.FormatBadgeCount(1) == "1"
+                  && SystemAttentionService.FormatBadgeCount(42) == "42"
+                  && SystemAttentionService.FormatBadgeCount(999) == "999"
+                  && SystemAttentionService.FormatBadgeCount(1000) == "999+",
+                "原生徽标计数格式覆盖零、单/多位及极大值（实际 "
+                + string.Join(", ", new[] { 0, 1, 42, 999, 1000 }
+                    .Select(SystemAttentionService.FormatBadgeCount)) + "）");
             var deepLink = $"axmolhub://conversation/{approvedSession.Id}";
             Check(SystemAttentionService.TryGetConversationId(deepLink, out var activatedId)
                   && activatedId == approvedSession.Id
@@ -3183,34 +3197,24 @@ public partial class ShellCheckWindow : Window
                       viewed, background, new AttentionVisibility(false, true),
                       hasPendingPlan: false, RunResult.Parked),
                 "运行结束闸门：完成/失败/超时提醒而取消、暂停不报完成，仍有待确认计划时让位给审批提醒；失焦与最小化下同样成立");
-            Check(new AttentionVisibility(true, true).BadgeVisibleConversation(viewed) == viewed
-                  && new AttentionVisibility(true, false).BadgeVisibleConversation(viewed) is null
-                  && new AttentionVisibility(false, true).BadgeVisibleConversation(viewed) is null
-                  && new AttentionVisibility(false, false).BadgeVisibleConversation(viewed) is null,
-                "任务栏红点与系统通知读同一份可见性判定：窗口失焦或最小化、或不在助手页时，正看着的会话也算看不见");
-
-            // The composition in MainWindow is what actually feeds the predicate, and it is the half that was
-            // wrong: the shell used to hand the gate page selection and nothing else. Both states have to be
-            // forced, because the suite drives a real MainWindow that is never the foreground window and can
-            // never truly be minimized. Reset immediately — an override left behind is a product path that has
-            // stopped reading the desktop.
+            // Visibility suppresses only redundant system notifications. The native badge is a count of every
+            // pending session, so switching pages or minimizing must not change it.
             shell.NavigateTo("Assistant");
             shell.SetWindowVisibleForCheck(true);
             var forcedVisible = shell.AttentionNow;
-            var badgeWhileVisible = shell.AttentionBadgeConversation;
+            var badgeWhileVisible = chat.PendingApprovalConversationCount();
             shell.SetWindowVisibleForCheck(false);
             var forcedHidden = shell.AttentionNow;
-            var badgeWhileHidden = shell.AttentionBadgeConversation;
+            var badgeWhileHidden = chat.PendingApprovalConversationCount();
             shell.SetWindowVisibleForCheck(null);
             Dispatcher.UIThread.RunJobs();
             Check(forcedVisible is { WindowVisible: true, AssistantPageVisible: true }
-                  && badgeWhileVisible == chat.ViewedConversationId
                   && forcedHidden is { WindowVisible: false, AssistantPageVisible: true }
-                  && badgeWhileHidden is null
+                  && badgeWhileVisible == 2
+                  && badgeWhileHidden == badgeWhileVisible
                   && shell.AttentionNow.WindowVisible == (shell.IsActive && shell.WindowState != WindowState.Minimized),
-                "外壳把「窗口在前台」与「停在助手页」两个独立事实一起交给闸门；最小化或失焦时正看着的会话不再算可见，"
-                + "撤销强制后回到平台读数（可见时算作正在看的会话 "
-                + (badgeWhileVisible ?? "无") + "，隐藏时 " + (badgeWhileHidden ?? "无") + "）");
+                "系统通知闸门仍区分窗口可见性，而任务栏待审批会话数不随当前页面或窗口状态变化（可见/隐藏 "
+                + badgeWhileVisible + "/" + badgeWhileHidden + "）");
 
             await shell.HandleInstallLinkAsync(deepLink);
             panel.Reload();
@@ -3219,25 +3223,28 @@ public partial class ShellCheckWindow : Window
             var planRowText = panel.PlanApprovalMessageTextForCheck;
             var planCardVisible = panel.PlanApprovalCardOnScreenForCheck;
             var planMarkdownVisible = panel.PlanApprovalMarkdownOnScreenForCheck;
-            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 0
+            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 1
+                  && chat.PendingApprovalConversationCount() == 2
                   && approvedSession.Messages.Last().ApprovalSeen
                   && chat.ViewedConversationId == approvedSession.Id
                   && panel.PendingPlanApprovalCardsForCheck == 1
                   && planCardVisible
                   && planMarkdownVisible
                   && planRowText.Contains("Reviewed plan", StringComparison.Ordinal),
-                "打开会话后审批位于前台，不再显示任务栏角标；Markdown 计划文本与待确认卡同时真实显示（待后台 "
+                "打开会话后仍计入待审批会话数字；Markdown 计划文本与待确认卡同时真实显示（待后台 "
                 + chat.PendingBackgroundApprovalCount(approvedSession.Id) + "，已读 "
                 + approvedSession.Messages.Last().ApprovalSeen + "，卡片 "
                 + panel.PendingPlanApprovalCardsForCheck + " / " + planCardVisible + "，Markdown "
                 + planMarkdownVisible + "，文本「"
                 + planRowText + "」）");
             shell.NavigateTo("Settings");
-            Check(chat.PendingBackgroundApprovalCount(null) == 1,
-                "离开助手页后仍未解决的计划审批重新计入后台待处理标记");
+            Check(chat.PendingBackgroundApprovalCount(null) == 2
+                  && chat.PendingApprovalConversationCount() == 2,
+                "离开助手页不会改变所有未解决计划审批的任务栏数字");
             shell.NavigateTo("Assistant");
-            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 0,
-                "返回该会话后后台审批标记隐藏，但待确认卡仍可操作");
+            Check(chat.PendingBackgroundApprovalCount(approvedSession.Id) == 1
+                  && chat.PendingApprovalConversationCount() == 2,
+                "返回一个待审批会话时，其他后台会话仍计入数字且当前会话也不被漏计");
             Check(panel.PlanReviewChoicesForCheck.SequenceEqual(
                       ["ChatPlanApprove", "ChatPlanRevise"], StringComparer.Ordinal)
                   && panel.PlanReviewHasContinueForCheck
@@ -3284,10 +3291,12 @@ public partial class ShellCheckWindow : Window
                   && approvedCopy.Messages.Any(turn => turn.Role == ChatRoles.Assistant
                       && turn.PlanApprovalState == PlanApprovalStates.Approved)
                   && approvedUserText == approvedInstruction
-                  && approvedRun is null,
+                  && approvedRun is null
+                  && chat.PendingApprovalConversationCount() == 1,
                 "批准后切换 Agent 并以用户指令附带原样审阅计划继续执行，完成后无残留运行（模式 "
                 + approvedCopy?.Mode + "，末条计划状态 " + approvedState + "，用户指令「"
-                + approvedUserText?.Replace('\n', '|') + "」，运行 " + approvedRun?.Phase + "）");
+                + approvedUserText?.Replace('\n', '|') + "」，运行 " + approvedRun?.Phase
+                + "，其他待审批会话数 " + chat.PendingApprovalConversationCount() + "）");
             panel.Reload();
             Dispatcher.UIThread.RunJobs();
             Check(panel.PendingPlanApprovalCardsForCheck == 0,
@@ -3297,7 +3306,6 @@ public partial class ShellCheckWindow : Window
                     .Where(turn => turn.PlanApprovalState is not null)
                     .Select(turn => turn.PlanApprovalState) ?? []) + "）");
 
-            await RunPlanInBackgroundAsync(rejectedSession);
             chat.OpenConversation(rejectedSession.Id);
             panel.Reload();
             shell.UpdateLayout();
@@ -3307,8 +3315,9 @@ public partial class ShellCheckWindow : Window
             Check(rejectedCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)
                       ?.PlanApprovalState == PlanApprovalStates.Rejected
                   && chat.ActiveMode == ChatModes.Plan
-                  && chat.RunFor(rejectedSession.Id) is null,
-                "拒绝计划会留下拒绝记录、不启动 Agent，并保持计划模式");
+                  && chat.RunFor(rejectedSession.Id) is null
+                  && chat.PendingApprovalConversationCount() == 0,
+                "拒绝计划会留下拒绝记录、不启动 Agent、清空会话徽标计数，并保持计划模式");
         }
         finally
         {

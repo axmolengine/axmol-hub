@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
@@ -8,11 +9,9 @@ using Avalonia.Platform;
 namespace AxmolHub;
 
 /// <summary>
-/// What the shell knows about whether the user can see the assistant right now. Two independent facts kept
-/// apart on purpose: which page is on screen is a navigation answer, whether the window is in front of the user
-/// is a desktop answer. Folding them into one flag would make the row "minimized, still on the assistant page,
-/// still on this very conversation ⇒ notify" impossible to assert — it would come out true by construction, and
-/// a predicate that cannot be falsified is a decoration.
+/// What the shell knows about whether the user can see the assistant right now. The page selected and whether
+/// the window is in front of the user are separate facts: folding them into one flag would make "minimized,
+/// still on the Assistant page, still on this very conversation ⇒ notify" impossible to assert.
 /// </summary>
 internal readonly record struct AttentionVisibility(bool WindowVisible, bool AssistantPageVisible)
 {
@@ -24,12 +23,6 @@ internal readonly record struct AttentionVisibility(bool WindowVisible, bool Ass
         => WindowVisible
            && AssistantPageVisible
            && string.Equals(conversationId, viewedConversationId, StringComparison.Ordinal);
-
-    /// <summary>The conversation the taskbar badge may treat as on screen, or <c>null</c> when nobody can see it.
-    /// The badge and the toast read visibility through this one type so the dot can never say "hidden" while the
-    /// toast says "visible" — which is what happened while each path computed its own answer.</summary>
-    internal string? BadgeVisibleConversation(string? viewedConversationId)
-        => WindowVisible && AssistantPageVisible ? viewedConversationId : null;
 }
 
 /// <summary>Delivers actionable chat attention through the host OS and marks unresolved approvals on its app icon.</summary>
@@ -84,6 +77,7 @@ internal sealed class SystemAttentionService : IDisposable
                 MacNotifications.Show(title, body, conversationId);
             else if (OperatingSystem.IsLinux())
                 ShowLinuxNotification(title, body, conversationId);
+            Report($"Submitted a system notification request for conversation {conversationId}.");
         }
         catch (Exception ex)
         {
@@ -96,7 +90,7 @@ internal sealed class SystemAttentionService : IDisposable
     /// calls for one dot. Keyed on the handle rather than the window because a recreated window is a new taskbar
     /// button, and the overlay has to be asked for again.</summary>
     private IntPtr _badgedWindow;
-    private bool? _badgedVisible;
+    private int? _badgedCount;
 
     /// <summary>Set once the host has answered that it does not expose the overlay at all. That answer does not
     /// change mid-session, and re-asking turned one refusal into forty lines of log. It is also why the wrong
@@ -105,8 +99,9 @@ internal sealed class SystemAttentionService : IDisposable
     /// asked the shell again. The identifier is now pinned by <c>--verify-shell</c>.</summary>
     private bool _badgeUnsupported;
 
-    internal bool SetApprovalBadge(Window window, bool visible)
+    internal bool SetApprovalBadge(Window window, int pendingConversationCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(pendingConversationCount);
         try
         {
             if (_badgeUnsupported) return false;
@@ -120,9 +115,9 @@ internal sealed class SystemAttentionService : IDisposable
                     return false;
                 }
 
-                if (_badgedWindow == handle && _badgedVisible == visible) return true;
+                if (_badgedWindow == handle && _badgedCount == pendingConversationCount) return true;
 
-                if (!WindowsTaskbarBadge.TrySet(handle, visible, out var hr, out var failure))
+                if (!WindowsTaskbarBadge.TrySet(handle, pendingConversationCount, out var hr, out var failure))
                 {
                     // Latched only for the one answer that cannot improve with retrying: the object exists but
                     // does not speak this interface. Anything else — a taskbar button that has not been created
@@ -134,10 +129,12 @@ internal sealed class SystemAttentionService : IDisposable
                 }
 
                 _badgedWindow = handle;
-                _badgedVisible = visible;
+                _badgedCount = pendingConversationCount;
             }
             else if (OperatingSystem.IsMacOS())
-                MacNotifications.SetBadge(visible);
+                MacNotifications.SetBadge(pendingConversationCount > 0
+                    ? FormatBadgeCount(pendingConversationCount)
+                    : null);
             else return false;
             return true;
         }
@@ -147,6 +144,12 @@ internal sealed class SystemAttentionService : IDisposable
             Report("Could not update the application approval badge: " + ex);
             return false;
         }
+    }
+
+    internal static string FormatBadgeCount(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return count > 999 ? "999+" : count.ToString(CultureInfo.InvariantCulture);
     }
 
     internal void Report(string message)
@@ -285,6 +288,7 @@ internal sealed class SystemAttentionService : IDisposable
         start.ArgumentList.Add(title);
         start.ArgumentList.Add(body);
         var process = Process.Start(start) ?? throw new IOException("Could not start notify-send.");
+        Report($"Started Linux notification helper for conversation {conversationId}.");
         _ = ObserveLinuxNotificationAsync(process, conversationId, _shutdown.Token);
     }
 
@@ -302,9 +306,11 @@ internal sealed class SystemAttentionService : IDisposable
                 var diagnostic = (await error.ConfigureAwait(false)).Trim();
                 if (process.ExitCode != 0)
                 {
-                    System.Diagnostics.Trace.TraceWarning("notify-send failed: " + diagnostic);
+                    Report($"Linux notification helper failed for conversation {conversationId} "
+                           + $"(exit {process.ExitCode}): {diagnostic}");
                     return;
                 }
+                Report($"Linux notification helper completed for conversation {conversationId}.");
                 if (action == "default") NotificationActivated?.Invoke(conversationId);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -314,7 +320,7 @@ internal sealed class SystemAttentionService : IDisposable
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Trace.TraceError("Linux notification activation listener failed: " + ex);
+                Report("Linux notification listener failed: " + ex);
             }
         }
     }
@@ -346,11 +352,11 @@ internal sealed class SystemAttentionService : IDisposable
             SendObject(center, Selector("deliverNotification:"), notification);
         }
 
-        internal static void SetBadge(bool visible)
+        internal static void SetBadge(string? label)
         {
             var app = Send0(objc_getClass("NSApplication"), Selector("sharedApplication"));
             var tile = Send0(app, Selector("dockTile"));
-            SendObject(tile, Selector("setBadgeLabel:"), visible ? ToNSString("●") : IntPtr.Zero);
+            SendObject(tile, Selector("setBadgeLabel:"), label is null ? IntPtr.Zero : ToNSString(label));
         }
 
         internal static void SetActivationHandler(Action<string> handler) => _activated = handler;
@@ -473,7 +479,7 @@ internal sealed class SystemAttentionService : IDisposable
         /// Three separate calls can fail here — creating the object, initializing it, and the overlay itself —
         /// and reporting only the mapped exception left a log full of "Specified cast is not valid" with no way
         /// to tell which one the host was refusing.</summary>
-        internal static bool TrySet(IntPtr window, bool visible, out int hr, out string? failure)
+        internal static bool TrySet(IntPtr window, int pendingConversationCount, out int hr, out string? failure)
         {
             hr = 0;
             failure = null;
@@ -488,10 +494,14 @@ internal sealed class SystemAttentionService : IDisposable
             {
                 var setOverlay = Marshal.GetDelegateForFunctionPointer<SetOverlayIconDelegate>(
                     Marshal.ReadIntPtr(Marshal.ReadIntPtr(taskbar), SetOverlayIconSlot * IntPtr.Size));
-                var icon = visible ? CreateDotIcon() : IntPtr.Zero;
+                var icon = pendingConversationCount > 0 ? CreateCountIcon(pendingConversationCount) : IntPtr.Zero;
+                var description = pendingConversationCount > 0
+                    ? string.Format(CultureInfo.CurrentCulture,
+                        HubStrings.Get("PendingApprovalSessionsFormat"), pendingConversationCount)
+                    : "";
                 try
                 {
-                    hr = setOverlay(taskbar, window, icon, visible ? "Approval needed" : "");
+                    hr = setOverlay(taskbar, window, icon, description);
                     if (hr != 0)
                     {
                         failure = $"ITaskbarList3::SetOverlayIcon returned {Code(hr)}.";
@@ -555,9 +565,10 @@ internal sealed class SystemAttentionService : IDisposable
 
         internal static string Code(int value) => $"0x{value:x8}";
 
-        private static IntPtr CreateDotIcon()
+        private static IntPtr CreateCountIcon(int count)
         {
             const int size = 32;
+            const int badgeHeight = 30;
             var info = new BitmapInfo
             {
                 Header = new BitmapInfoHeader
@@ -583,21 +594,83 @@ internal sealed class SystemAttentionService : IDisposable
             try
             {
                 var bytes = new byte[size * size * 4];
-                const double radius = 12.5;
+                var label = FormatBadgeCount(count);
+                var badgeWidth = Math.Min(size, 23 + label.Length * 7);
+                var left = (size - badgeWidth) / 2.0;
+                var top = (size - badgeHeight) / 2.0;
+                var radius = badgeHeight / 2.0;
+                const int samplesPerAxis = 4;
                 for (var y = 0; y < size; y++)
                 for (var x = 0; x < size; x++)
                 {
-                    var dx = x - 15.5;
-                    var dy = y - 15.5;
-                    if (dx * dx + dy * dy > radius * radius) continue;
+                    var coverage = 0;
+                    for (var sampleY = 0; sampleY < samplesPerAxis; sampleY++)
+                    for (var sampleX = 0; sampleX < samplesPerAxis; sampleX++)
+                    {
+                        var px = x + (sampleX + 0.5) / samplesPerAxis;
+                        var py = y + (sampleY + 0.5) / samplesPerAxis;
+                        var nearestX = Math.Clamp(px, left + radius, left + badgeWidth - radius);
+                        var nearestY = Math.Clamp(py, top + radius, top + badgeHeight - radius);
+                        var dx = px - nearestX;
+                        var dy = py - nearestY;
+                        if (dx * dx + dy * dy <= radius * radius) coverage++;
+                    }
+
+                    if (coverage == 0) continue;
                     var offset = (y * size + x) * 4;
-                    bytes[offset] = 36;
-                    bytes[offset + 1] = 36;
-                    bytes[offset + 2] = 232;
-                    bytes[offset + 3] = 255;
+                    var alpha = coverage * 255 / (samplesPerAxis * samplesPerAxis);
+                    bytes[offset] = (byte)(36 * alpha / 255);
+                    bytes[offset + 1] = (byte)(36 * alpha / 255);
+                    bytes[offset + 2] = (byte)(232 * alpha / 255);
+                    bytes[offset + 3] = (byte)alpha;
                 }
 
                 Marshal.Copy(bytes, 0, pixels, bytes.Length);
+                var basePixels = (byte[])bytes.Clone();
+                var dc = CreateCompatibleDC(IntPtr.Zero);
+                if (dc == IntPtr.Zero) throw new InvalidOperationException("Could not create a badge drawing context.");
+                try
+                {
+                    var oldBitmap = SelectObject(dc, color);
+                    var font = CreateFontW(
+                        -18, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 4, 0, "Segoe UI");
+                    if (font == IntPtr.Zero)
+                        throw new InvalidOperationException("Could not create the taskbar badge font.");
+                    try
+                    {
+                        SelectObject(dc, font);
+                        SetBkMode(dc, 1);
+                        SetTextColor(dc, 0x00ffffff);
+                        var textBounds = new NativeRect(0, 0, size, size);
+                        if (DrawTextW(dc, label, label.Length, ref textBounds,
+                                0x00000001 | 0x00000004 | 0x00000020 | 0x00000800) == 0)
+                            throw new InvalidOperationException("Could not draw the taskbar badge count.");
+                    }
+                    finally
+                    {
+                        SelectObject(dc, oldBitmap);
+                        DeleteObject(font);
+                    }
+                }
+                finally
+                {
+                    DeleteDC(dc);
+                }
+                var renderedPixels = new byte[bytes.Length];
+                Marshal.Copy(pixels, renderedPixels, 0, renderedPixels.Length);
+                for (var offset = 0; offset < bytes.Length; offset += 4)
+                {
+                    var green = basePixels[offset + 1];
+                    if (basePixels[offset + 3] == 0 || renderedPixels[offset + 1] <= green) continue;
+                    var coverage = Math.Clamp(
+                        (renderedPixels[offset + 1] - green) * 255 / (255 - green), 0, 255);
+                    bytes[offset] = (byte)coverage;
+                    bytes[offset + 1] = (byte)coverage;
+                    bytes[offset + 2] = (byte)coverage;
+                    bytes[offset + 3] = (byte)coverage;
+                }
+                Marshal.Copy(bytes, 0, pixels, bytes.Length);
+
                 var iconInfo = new IconInfo { IsIcon = true, MaskBitmap = mask, ColorBitmap = color };
                 var icon = CreateIconIndirect(ref iconInfo);
                 if (icon == IntPtr.Zero) throw new InvalidOperationException("Could not create the taskbar badge icon.");
@@ -649,6 +722,15 @@ internal sealed class SystemAttentionService : IDisposable
             public IntPtr ColorBitmap;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect(int left, int top, int right, int bottom)
+        {
+            public int Left = left;
+            public int Top = top;
+            public int Right = right;
+            public int Bottom = bottom;
+        }
+
         [DllImport("ole32.dll")]
         private static extern int CoCreateInstance(
             ref Guid classId, IntPtr outer, uint context, ref Guid interfaceId, out IntPtr instance);
@@ -657,6 +739,24 @@ internal sealed class SystemAttentionService : IDisposable
             IntPtr deviceContext, ref BitmapInfo info, uint usage, out IntPtr bits, IntPtr section, uint offset);
         [DllImport("gdi32.dll", SetLastError = true)]
         private static extern IntPtr CreateBitmap(int width, int height, uint planes, uint bitsPerPixel, IntPtr bits);
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateCompatibleDC(IntPtr deviceContext);
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteDC(IntPtr deviceContext);
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateFontW")]
+        private static extern IntPtr CreateFontW(
+            int height, int width, int escapement, int orientation, int weight,
+            uint italic, uint underline, uint strikeOut, uint charSet, uint outputPrecision,
+            uint clipPrecision, uint quality, uint pitchAndFamily, string faceName);
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr SelectObject(IntPtr deviceContext, IntPtr graphicsObject);
+        [DllImport("gdi32.dll")]
+        private static extern int SetBkMode(IntPtr deviceContext, int mode);
+        [DllImport("gdi32.dll")]
+        private static extern uint SetTextColor(IntPtr deviceContext, uint color);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "DrawTextW")]
+        private static extern int DrawTextW(
+            IntPtr deviceContext, string text, int characterCount, ref NativeRect bounds, uint format);
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr CreateIconIndirect(ref IconInfo info);
         [DllImport("gdi32.dll")]

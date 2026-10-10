@@ -86,7 +86,8 @@ internal static class DeepLinkProtocolRegistration
         var shortcut = FindStartMenuShortcut();
         if (shortcut is null)
         {
-            diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu Programs folders; Windows toasts may not be delivered for this build.");
+            diagnostic?.Invoke("Axmol Hub.lnk was not found in the Start Menu Programs folders; "
+                               + "this build has no shortcut to register the Windows toast identity.");
             return;
         }
 

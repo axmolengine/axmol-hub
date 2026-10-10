@@ -2629,10 +2629,15 @@ public sealed class ChatWorkspace : IDisposable
     internal event Action<string, ChatAttentionKind>? AttentionRequired;
 
     /// <summary>The number of conversations with an unresolved approval that is not currently visible in the
-    /// assistant page. Completion-only sessions never contribute to the taskbar badge.</summary>
+    /// assistant page. Retained for the in-app background-attention checks.</summary>
     internal int PendingBackgroundApprovalCount(string? visibleConversationId)
         => _sessions.List()
             .Count(summary => summary.PendingApprovals > 0 && summary.Id != visibleConversationId);
+
+    /// <summary>The number of conversations with at least one unresolved approval, regardless of which session
+    /// is open. This is the taskbar/Dock badge count; a session with multiple decisions contributes once.</summary>
+    internal int PendingApprovalConversationCount()
+        => _sessions.List().Count(summary => summary.PendingApprovals > 0);
 
     internal ConversationRun? RunFor(string conversationId)
         => _runs.TryGetValue(conversationId, out var run) ? run : null;
