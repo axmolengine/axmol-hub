@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -400,12 +401,20 @@ public partial class ShellCheckWindow : Window
         // A scripted stream: the send path must append the user turn, then stream the reply into the flow.
         // The Markdown it carries is deliberately the full element set the chat can receive: heading,
         // inline code, link, bare URL, list, table and a fenced block.
+        //
+        // The extra fences are the syntax probe: one block per language a reader is likely to paste, including
+        // the two (bash, svg) that have no built-in definition at all. Which palette each one landed on is
+        // read off the live editors below, so this is the enumeration of what the resolver really answers, not
+        // a guess about it.
+        var syntaxLanguages = new[] { "xml", "html", "svg", "json", "csharp", "python", "powershell", "css", "javascript", "bash" };
+        var syntaxFixture = string.Concat(syntaxLanguages.Select(language =>
+            $"\n\n```{language}\nsample = \"{language}\";\n```"));
         var scriptedReply = "# 工具链\n\n你好，Axmol 助手，状态 `Configured`。\n\n"
                                      + "[Axmol 官网](https://axmol.dev/)\n\n"
                                      + "更多信息：https://github.com/axmolengine/axmol\n\n"
                                      + "- First item\n- Second item\n\n"
                                      + "| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |\n\n"
-                                     + "```cpp\nint main() {}\n```";
+                                     + "```cpp\nint main() {}\n```" + syntaxFixture;
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(
             [
                 "# 工具链\n\n你好，Axmol 助手，状态 `Configured`。",
@@ -413,6 +422,7 @@ public partial class ShellCheckWindow : Window
                 "\n\n更多信息：https://github.com/axmolengine/axmol",
                 "\n\n- First item\n- Second item\n\n| Name | Value |\n| --- | --- |\n| Long value | " + new string('x', 160) + " |",
                 "\n\n```cpp\nint main() {}\n```",
+                syntaxFixture,
             ]);
         shell.Chat.StartConversation();
         panel.Reload();
@@ -448,6 +458,58 @@ public partial class ShellCheckWindow : Window
         panel.ApplyMarkdownSyntaxHighlightingForCheck();
         Check(panel.HasSyntaxHighlightedCode("cpp"),
             "C++ fenced code block 使用可用的语法定义高亮");
+
+        // The built-in palettes are painted for a white page, so on a light shell this failure cannot appear at
+        // all — and the suite starts in whatever the operating system uses. Ask for the dark one, read the
+        // blocks back, then put the theme the user chose where it was.
+        var themeBeforeSyntax = ThemeService.Current;
+        ThemeService.Apply(HubTheme.Dark);
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        panel.ApplyMarkdownSyntaxHighlightingForCheck();
+        var landed = syntaxLanguages.Prepend("cpp")
+            .Select(language => (Language: language, Reading: panel.DarkSyntaxForCheck(language)))
+            .ToArray();
+        // A block is only wrong when it was handed a light-page palette: a language with no definition at all is
+        // painted as plain text and reads, and Hub's own C++ file is dark by construction, so it is expected to
+        // come back untouched rather than lifted. The names print either way, so a language that resolves to
+        // nothing says so here instead of hiding behind a passing check.
+        Check(landed.All(x => x.Reading.Found)
+              && landed.Where(x => x.Reading.Resolved).All(x => x.Reading.Adapted || x.Language == "cpp")
+              && landed.Count(x => x.Reading.Adapted) >= 8,
+            "暗色主题下每个能高亮的代码块都拿到抬过对比度的语法定义（实际："
+            + string.Join(" ", landed.Select(x => x.Language + "=" + x.Reading.Definition)) + "）");
+        // Read over every file the editor ships, not only the ones a fence happened to ask for: a language nobody
+        // pasted today is a language somebody will paste tomorrow. The count is pinned so the loop cannot pass by
+        // having found nothing to walk, and the lifted count so it cannot pass by changing nothing.
+        var darkWell = DarkSyntax.Well(ThemeVariant.Dark);
+        var builtIns = DarkSyntax.BuiltIns();
+        var leftUnreadable = new List<string>();
+        var lifted = 0;
+        foreach (var (name, xml) in builtIns)
+        {
+            lifted += DarkSyntax.Foregrounds(xml, darkWell)
+                .Count(foreground => foreground.Contrast < DarkSyntax.MinimumContrast);
+            var patched = DarkSyntax.Transform(xml, darkWell);
+            leftUnreadable.AddRange(DarkSyntax.Foregrounds(patched, darkWell)
+                .Where(foreground => foreground.Contrast < DarkSyntax.MinimumContrast)
+                .Select(foreground => name + ":" + foreground.Value));
+            if (XDocument.Parse(patched).Descendants().Attributes("background").Any())
+                leftUnreadable.Add(name + " 仍自带背景色");
+        }
+
+        var xmlFile = builtIns.FirstOrDefault(built => built.Name == "XML");
+        Check(builtIns.Count == 21 && leftUnreadable.Count == 0 && lifted > 0
+              && xmlFile.Xml is { Length: > 0 } xmlSource
+              && DarkSyntax.Foregrounds(xmlSource, darkWell)
+                  .Any(foreground => foreground.Contrast < DarkSyntax.MinimumContrast),
+            "编辑器自带的每份语法文件都被抬到暗色可读（抬了 " + lifted + " 处，XML 原本读不得，残留 "
+            + (leftUnreadable.Count == 0 ? "无" : string.Join(" / ", leftUnreadable)) + "）");
+        ThemeService.Apply(themeBeforeSyntax);
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
         Check(panel.HasMarkdownCopyToolbar(),
             "代码块右上角显示复制按钮且不显示语言标签");
         Check(HubTexts.Get("CopyCode", HubTexts.ChineseLanguage) == "复制代码"

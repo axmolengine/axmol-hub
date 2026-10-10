@@ -3556,6 +3556,22 @@ public partial class ChatPanel : UserControl
             .Any(editor => string.Equals(editor.Tag?.ToString(), language, StringComparison.OrdinalIgnoreCase)
                            && editor.SyntaxHighlighting is not null);
 
+    /// <summary>What a fenced block was actually handed. The definition's name travels with the answer because
+    /// yes-or-no cannot tell a palette that was lifted for the dark well from a language that has no definition
+    /// at all — and the second one is fine, while the first is the bug this reads for.</summary>
+    internal (bool Found, bool Resolved, bool Adapted, string Definition) DarkSyntaxForCheck(string language)
+    {
+        foreach (var editor in MessageFlow.GetLogicalDescendants().OfType<TextEditor>())
+        {
+            if (!string.Equals(editor.Tag?.ToString(), language, StringComparison.OrdinalIgnoreCase)) continue;
+            return editor.SyntaxHighlighting is { } definition
+                ? (true, true, DarkSyntax.IsAdapted(definition), definition.Name)
+                : (true, false, false, "（无定义）");
+        }
+
+        return (false, false, false, "（没有这个代码块）");
+    }
+
     internal bool HasMarkdownCopyToolbar()
         => MessageFlow.GetLogicalDescendants().OfType<MarkdownScrollViewer>()
             .Any(MarkdownMessageRenderer.HasCopyToolbar);

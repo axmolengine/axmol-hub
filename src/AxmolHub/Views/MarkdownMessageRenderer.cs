@@ -72,12 +72,12 @@ internal static class MarkdownMessageRenderer
         {
             foundEditor = true;
             editor.Classes.Add("markdown-code-editor");
-            if (editor.SyntaxHighlighting is null
-                && editor.Tag is string language
-                && Syntax.Value.Provider.Solve(language) is { } definition)
-            {
-                editor.SyntaxHighlighting = definition;
-            }
+            if (editor.SyntaxHighlighting is null && editor.Tag is string language)
+                editor.SyntaxHighlighting = Syntax.Value.Provider.Solve(language);
+            // The plugin answers for the languages Hub ships a definition of its own; everything else falls to
+            // the library's built-ins, and every one of those was painted for a white page. The well this block
+            // actually sits in is what says whether the palette it got can be read.
+            editor.SyntaxHighlighting = DarkSyntax.ForBackdrop(editor.SyntaxHighlighting);
 
             InstallCodeBlockToolbar(editor);
         }
