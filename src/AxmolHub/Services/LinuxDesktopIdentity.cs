@@ -9,7 +9,7 @@ namespace AxmolHub;
 /// Avalonia's default window class is the entry assembly name (`Avalonia.X11.X11Platform`), which is
 /// `AxmolHub` rather than this kebab form, so <c>Program.BuildAvaloniaApp</c> overrides it explicitly.
 ///
-/// Nothing here relates to Velopack's packId (`Axmol.Hub`) — that one is the update identity and the
+/// Nothing here relates to Velopack's packId (`dev.axmol.hubapp`) — that one is the update identity and the
 /// install directory name, and it deliberately does not take part in desktop matching.
 /// </summary>
 internal static class LinuxDesktopIdentity

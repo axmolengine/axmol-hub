@@ -15,8 +15,8 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
-# nupkg 上传时的统一命名前缀：由 packId 派生成小写连字符（Axmol.Hub → axmol-hub），与安装包同源。
-$taskAssetPrefix = ($taskPackId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+# Public release asset names are intentionally independent of the Velopack install identity.
+$taskAssetPrefix = $taskManifest.assetPrefix
 
 # Single source of the version: the repository-root Directory.Build.props, same as
 # Build.ps1 and Test.ps1 read. There is no second copy anywhere in this pipeline.
@@ -93,7 +93,7 @@ if ($Stage -in @('All', 'Upload')) {
     }
     # 名字规则与 Build.ps1 同源（AssetNames.ps1）。Upload 阶段面对的是发布名：Build 阶段就是带
     # -ReleaseAssetNames 打的包，Linux 那份不带版本段。
-    $taskSetup = Get-HubAssetName -PackId $taskPackId -Version $Version -Runtime $Runtime -Extension $taskSuffix -ReleaseAssetNames
+    $taskSetup = Get-HubAssetName -AssetPrefix $taskAssetPrefix -Version $Version -Runtime $Runtime -Extension $taskSuffix -ReleaseAssetNames
     $taskUpload = @(
         (Join-Path $taskOutput $taskSetup),
         (Join-Path $taskOutput ($taskSetup + '.sha256'))

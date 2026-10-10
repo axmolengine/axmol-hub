@@ -19,7 +19,9 @@ $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPack = $taskManifest.packages[0]
 if (-not $PackId) { $PackId = $taskManifest.packId }
-if (-not $PackTitle) { $PackTitle = 'Axmol Hub' }
+if (-not $PackTitle) {
+    $PackTitle = if ($Runtime -like 'win-*') { 'AxmolHub' } else { 'Axmol Hub' }
+}
 
 # 版本单一来源 = 仓库根的 Directory.Build.props（MSBuild 自动导入，五个项目共用一个值）。
 # 旧 .iss 里手工复制的 HubVersion 副本已随 Inno 一并删除，这里也不再读 App 项目文件。
@@ -124,7 +126,7 @@ if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutp
 if ($Runtime -like 'osx-*') {
     & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
 }
-$taskSetupName = Get-HubAssetName -PackId $PackId -PackTitle $PackTitle -Version $Version -Runtime $Runtime `
+$taskSetupName = Get-HubAssetName -AssetPrefix $taskManifest.assetPrefix -Version $Version -Runtime $Runtime `
     -Extension $taskSetup[0].Extension -ReleaseAssetNames:$ReleaseAssetNames
 Move-Item -LiteralPath $taskSetup[0].FullName -Destination (Join-Path $taskOutput $taskSetupName) -Force
 

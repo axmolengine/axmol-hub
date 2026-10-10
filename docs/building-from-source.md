@@ -135,7 +135,7 @@ dotnet run --project src\AxmolHub -- --data-root .\tmp\attention-test-data --pre
 安装版可用同一参数启动安装目录中的稳定启动器（将路径替换为本机实际位置）：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Axmol Hub\Axmol Hub.exe" --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
+& "$env:LOCALAPPDATA\dev.axmol.hubapp\AxmolHub.exe" --data-root .\tmp\attention-test-data --preferences .\tmp\attention-test-preferences.json --test-system-attention
 ```
 
 应用日志位于 `.\tmp\attention-test-data\logs\`，筛选 `[System attention]` 可检查开始菜单快捷方式的 AppUserModelID、通知子进程结果与任务栏 overlay 的 HRESULT。成功特征：数字徽标是 `The diagnostic numeric taskbar badge was requested successfully.`，Windows toast 是 `Started Windows toast helper …` 紧跟 `Windows toast helper completed … Toast.Show completed.`。失败特征同样直白：`Could not update the taskbar badge: CoCreateInstance(CLSID_TaskbarList, IID_ITaskbarList3) returned 0x80004002`，那个 `0x80004002`(E_NOINTERFACE) 就是 0.8.x 整段时间红点不亮的原因——它不是 Windows 的行为，而是代码里的 `IID_ITaskbarList3` 字面量末段抄错（`…9E9F8A5EEA84`，真值 `…9E9F8A5EEFAF`），这个值在 `explorerframe.dll` 里一次都没有、`HKCR\Interface` 里也没有；`--verify-shell` 现在把两个标识符连同四个易混近邻一起钉住。Windows 设置中还需允许 Axmol Hub 通知，并关闭勿扰/专注助手后重测。Toast 需要开始菜单中的 `Axmol Hub.lnk` 带有匹配的 AppUserModelID（同机的 Electron 客户端只靠这一条就够，不需要再写 `HKCU\Software\Classes\AppUserModelId`）；诊断会报告快捷方式缺失或写入失败。开发版只有在已有匹配快捷方式（通常由安装版创建）时才能完成 Toast 展示验证；任务栏徽标诊断不依赖安装版。若生产日志出现 `No system notification for approval ...`，表示会话仍正在前台显示审批卡，按策略不会重复弹系统通知；若出现 Toast 成功而桌面未显示，则检查 Windows 通知权限和勿扰/专注模式；若没有 `Started Windows toast helper`，则先查审批事件与通知闸门。自检模式不会弹真实通知，`--test-system-attention` 才是桌面手测入口。**但它证明的是投递，不是触发**：诊断直接调 `Show()`，绕过 `ShouldNotifyApproval`/`ShouldNotifyRun` 闸门，所以它全绿也说明不了"最小化后会不会提醒"——那一半要按上一节的三条件手动走一遍：停在当前会话、起一个 run、把窗口最小化或 Alt-Tab 走开（不要切页、不要换会话）。
@@ -224,7 +224,9 @@ dotnet src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --check-secrets
 
 **Linux 真跑记录（2026-10-08 更新）**：`linux-x64` **框架依赖**产物在 WSL2 Ubuntu-24.04（.NET 8.0.31）打出 `backend=encryptedfile` 全绿；同日在原生 Ubuntu（.NET 10.0.112 + `squashfs-tools`）补上了此前"仍未实测"的那半条 —— `installer/Build.ps1 -Runtime linux-x64` 产出 `linux-x64` 的 AppImage（自包含，约 50 MB；名字规则见 `installer/README.md`）与 full nupkg，`--appimage-extract` 解开后确认 `usr/bin/AxmolHub`、`.DirIcon`（512 PNG）、`usr/bin/Assets/hub-icon-{256,512}.png` 都在位；GUI 在真实 X11 会话里起得来，`xprop` 读到 `WM_CLASS = "…, \"axmol-hub\"` 与一份 `_NET_WM_ICON`。**未实测**的仍是签名/公证之外的东西：跨改名的增量更新（见下）与 macOS 通道。
 
-**改名带来的两个一次性代价**（`AxmolHub.App` → `AxmolHub`）：Windows 会把它当成**新的通知发送者**，用户对该应用已设的通知开关与历史归零一次（after-install 钩子会重新给 `Axmol Hub.lnk` 打 AppUserModelID 戳，投递本身不断）；而包内多数路径同时改名，**首个跨改名的更新包几乎没有 delta**，那一次用户下载的是接近全量的包。用户可见的启动路径不受影响 —— 协议与快捷方式指向的是安装根目录下 packTitle 派生的稳定启动器 `Axmol Hub.exe`（见 `installer/README.md`）。
+**改名带来的两个一次性代价**（`AxmolHub.App` → `AxmolHub`）：Windows 会把它当成**新的通知发送者**，用户对该应用已设的通知开关与历史归零一次（after-install 钩子会重新给 `Axmol Hub.lnk` 打 AppUserModelID 戳，投递本身不断）；而包内多数路径同时改名，**首个跨改名的更新包几乎没有 delta**，那一次用户下载的是接近全量的包。随后本次安装身份从 `Axmol.Hub` 切换为 `dev.axmol.hubapp`，会被 Velopack 视为另一款应用而非旧版升级；旧安装应先卸载，但 `%LocalAppData%\AxmolHub\` 用户数据保留。用户可见的启动路径为安装根目录下的 `AxmolHub.exe` 与开始菜单 `Axmol Hub.lnk`（见 `installer/README.md`）。
+
+Windows 的 Velopack 安装身份为 `dev.axmol.hubapp`；安装目录为 `%LocalAppData%\dev.axmol.hubapp\`，安装根启动器为 `AxmolHub.exe`，开始菜单快捷方式保留空格为 `Axmol Hub.lnk`，本地下载的 Setup 文件也叫 `AxmolHub.exe`（但在安装目录之外）。应用设置与数据继续存于 `%LocalAppData%\AxmolHub\`。Windows 不单独保存可复用的 secret key 文件：provider 凭据密文位于数据根的 `ai\secrets`，由当前用户 DPAPI 保护。
 
 Linux 的桌面身份（窗口类 / `.desktop` 文件名 / 图标名同为 `axmol-hub`）与图标铺设由 App 自己在每次启动时完成，因此**不用打开 GUI 也能验证这台机器上图标到底铺不铺得下去**：
 
@@ -244,7 +246,7 @@ dotnet run --project tests/AxmolHub.Checks -- artifacts/packaging-tools --prepar
 ./installer/Test.ps1 -Isolated
 ```
 
-安装包由 [Velopack](https://velopack.io) 生成，输出到 `artifacts/releases/win-x64/`：`Axmol.Hub-win-Setup.exe`、免安装的 `-Portable.zip`、自更新载荷 `.nupkg` 与更新索引。安装器是一键式的，等级为当前用户，无需管理员。安装检查会临时打包并登记自己的程序身份与快捷方式，验证安装、自包含启动、中文目录、跨版本升级保留数据及卸载保留数据，结束后卸载测试实例、保留现有 Hub。打包工具说明见 [installer/README.md](../installer/README.md)。
+安装包由 [Velopack](https://velopack.io) 生成，输出到 `artifacts/releases/win-x64/`：`AxmolHub.exe`、免安装的 `dev.axmol.hubapp-...-Portable.zip`、自更新载荷 `.nupkg` 与更新索引。安装器是一键式的，等级为当前用户，无需管理员。安装检查会临时打包并登记自己的程序身份与快捷方式，验证安装、自包含启动、中文目录、跨版本升级保留数据及卸载保留数据，结束后卸载测试实例、保留现有 Hub。打包工具说明见 [installer/README.md](../installer/README.md)。
 
 发布其他宿主的自包含 CLI：
 

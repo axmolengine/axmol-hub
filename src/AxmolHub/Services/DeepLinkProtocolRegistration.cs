@@ -9,6 +9,8 @@ namespace AxmolHub;
 internal static class DeepLinkProtocolRegistration
 {
     private const string Scheme = "axmolhub";
+    private const string GeneratedShortcutName = "AxmolHub.lnk";
+    private const string BrandedShortcutName = "Axmol Hub.lnk";
 
     public static void Register(Action<string>? diagnostic = null)
     {
@@ -37,6 +39,7 @@ internal static class DeepLinkProtocolRegistration
     [SupportedOSPlatform("windows")]
     private static void RegisterWindows(Action<string>? diagnostic)
     {
+        RenameStartMenuShortcut(restoreGeneratedName: false, diagnostic: diagnostic);
         var executable = WindowsLaunchPath();
         var command = $"\"{executable}\" \"%1\"";
         using var protocol = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + Scheme)
@@ -52,6 +55,7 @@ internal static class DeepLinkProtocolRegistration
     [SupportedOSPlatform("windows")]
     private static void UnregisterWindows()
     {
+        RenameStartMenuShortcut(restoreGeneratedName: true, diagnostic: null);
         var expectedCommand = $"\"{WindowsLaunchPath()}\" \"%1\"";
         using var commandKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\" + Scheme + @"\shell\open\command");
         if (!string.Equals(commandKey?.GetValue("") as string, expectedCommand, StringComparison.OrdinalIgnoreCase)) return;
@@ -62,7 +66,7 @@ internal static class DeepLinkProtocolRegistration
     {
         var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var installRoot = Directory.GetParent(appDirectory);
-        var stableLauncher = installRoot is null ? null : Path.Combine(installRoot.FullName, "Axmol Hub.exe");
+        var stableLauncher = installRoot is null ? null : Path.Combine(installRoot.FullName, "AxmolHub.exe");
         if (stableLauncher is not null && File.Exists(stableLauncher)) return stableLauncher;
         if (installRoot is not null && Directory.Exists(installRoot.FullName))
         {
@@ -81,7 +85,7 @@ internal static class DeepLinkProtocolRegistration
         // Velopack writes the shortcut into a *Programs* folder, not the Start Menu root that
         // SpecialFolder.StartMenu resolves to. Looking in the root made File.Exists false on every
         // launch, so the stamp never ran and the shortcut kept Velopack's own AUMID
-        // (velopack.Axmol.Hub) — which does not match this app's notifier AUMID, so Windows silently
+        // (velopack.dev.axmol.hubapp) — which does not match this app's notifier AUMID, so Windows silently
         // dropped every toast. Search the per-user Programs folder first, then the all-users one.
         var shortcut = FindStartMenuShortcut();
         if (shortcut is null)
@@ -148,11 +152,35 @@ internal static class DeepLinkProtocolRegistration
         {
             var path = Environment.GetFolderPath(folder);
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) continue;
-            var shortcut = Path.Combine(path, "Axmol Hub.lnk");
+            var shortcut = Path.Combine(path, BrandedShortcutName);
             if (File.Exists(shortcut)) return shortcut;
         }
 
         return null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RenameStartMenuShortcut(bool restoreGeneratedName, Action<string>? diagnostic)
+    {
+        var path = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+
+        var generated = Path.Combine(path, GeneratedShortcutName);
+        var branded = Path.Combine(path, BrandedShortcutName);
+        var source = restoreGeneratedName ? branded : generated;
+        var destination = restoreGeneratedName ? generated : branded;
+        if (!File.Exists(source)) return;
+
+        try
+        {
+            File.Move(source, destination, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var message = $"Could not rename the Hub Start Menu shortcut '{source}' to '{destination}': {ex}";
+            Trace.TraceWarning(message);
+            diagnostic?.Invoke(message);
+        }
     }
 
     [ComImport]

@@ -21,10 +21,10 @@ $taskRun = [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $taskWork = Join-Path $taskRoot "artifacts/install-checks/$taskRun"
 New-Item -ItemType Directory -Force -Path $taskWork | Out-Null
 $taskPackId = $taskManifest.packId
-$taskTitle = 'Axmol Hub'
+$taskTitle = 'AxmolHub'
 if ($Isolated) {
     $taskPackId = $taskManifest.packId + '.Validation.' + $taskRun
-    $taskTitle = 'Axmol Hub Validation ' + $taskRun
+    $taskTitle = 'AxmolHub Validation ' + $taskRun
 }
 $taskInstall = Join-Path $taskWork 'Hub 中文'
 $taskData = Join-Path $taskWork 'user data/HubData'
@@ -87,8 +87,8 @@ try {
     if ($taskInstallHook.ExitCode -ne 0) { throw "Install hook failed: $($taskInstallHook.ExitCode)" }
     $taskMuiCachePath = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
     $taskMuiCacheInstalledEntry = Join-Path $taskCurrent "$taskMainExe.FriendlyAppName"
-    $taskMuiCacheStableEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
-    $taskMuiCacheLegacyEntry = Join-Path $taskCurrent 'Axmol Hub.exe.FriendlyAppName'
+    $taskMuiCacheStableEntry = Join-Path $taskInstall 'AxmolHub.exe.FriendlyAppName'
+    $taskMuiCacheLegacyEntry = Join-Path $taskInstall 'Axmol Hub.exe.FriendlyAppName'
     $taskMuiCacheSameDirectoryOtherAppEntry = Join-Path $taskCurrent 'OtherApp.exe.FriendlyAppName'
     $taskMuiCacheOtherEntry = Join-Path $taskWork ("UnrelatedMuiCacheProbe-" + $taskRun + '.exe.FriendlyAppName')
     New-Item -Path $taskMuiCachePath -Force | Out-Null
@@ -174,7 +174,8 @@ try {
     while ((Test-Path -LiteralPath $taskCurrent) -and (Get-Date) -lt $taskDeadline) { Start-Sleep -Milliseconds 500 }
     if (Test-Path -LiteralPath $taskCurrent) { throw 'Uninstall left the application payload in place.' }
     if (Test-Path -LiteralPath $taskStub) { throw 'Uninstall left the stub executable in place.' }
-    $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) ($taskTitle + '.lnk')
+    $taskShortcutName = $taskTitle + '.lnk'
+    $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) $taskShortcutName
     if (Test-Path -LiteralPath $taskShortcut) { throw 'Uninstall left the Start menu shortcut in place.' }
     if (Get-HubUninstallEntry $taskPackId) { throw 'Uninstall left the uninstall registry entry in place.' }
     if (Test-Path -LiteralPath $taskProtocolRegistryPath) { throw 'Uninstall left the axmolhub URI registration in place.' }

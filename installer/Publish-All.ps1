@@ -20,10 +20,8 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
 $taskPackId = $taskManifest.packId
-# 用户可见的产物命名统一走这一份前缀：从 packId（Axmol.Hub）派生成小写连字符（axmol-hub），
-# 与安装包 axmol-hub-<version>-<rid>.{ext} 同源。nupkg 也用它，feed 里的 FileName 随之改写，
-# 保证「feed 引用名 == release 上实际资产名」，客户端下载才不会 404。
-$taskAssetPrefix = ($taskPackId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+# Public release filenames stay stable across changes to the Velopack installation identity.
+$taskAssetPrefix = $taskManifest.assetPrefix
 
 if (-not $Version) {
     [xml]$taskProduct = Get-Content -LiteralPath "$taskRoot/Directory.Build.props"
@@ -60,7 +58,7 @@ foreach ($taskPlat in $taskPlatforms) {
     }
 
     # 安装包 + 摘要：一个 tag 下同 channel 的多个架构（osx-arm64/osx-x64）文件名带完整 runtime，不冲突。
-    $taskSetup = Get-HubAssetName -PackId $taskPackId -Version $Version -Runtime $taskPlat.Dir -Extension $taskPlat.Suffix -ReleaseAssetNames
+    $taskSetup = Get-HubAssetName -AssetPrefix $taskAssetPrefix -Version $Version -Runtime $taskPlat.Dir -Extension $taskPlat.Suffix -ReleaseAssetNames
     $taskSetupPath = Join-Path $taskDir $taskSetup
     $taskFeed = Join-Path $taskDir "releases.$($taskPlat.Channel).json"
 
@@ -83,8 +81,8 @@ foreach ($taskPlat in $taskPlatforms) {
     # os==Windows 且 channel 恰等于平台默认值 "win" 时才省略**（Velopack DefaultName.GetSuggestedReleaseName）。
     # 我们用 channel=rid（win-x64/osx-arm64/…），它不是 "win"，故**四个平台（含 win）都带 -<rid>- 段**。
     # 按带后缀名找，找不到再退回无后缀名兜底。
-    # 改名目的：与安装包统一成小写连字符 axmol-hub-<ver>-<rid>-<full|delta>.nupkg（前缀由 packId 派生，
-    # 见 $taskAssetPrefix）。改完必须同步修 feed 里引用的 FileName/URL，否则客户端按 feed 找 nupkg 会 404。
+    # 改名目的：与安装包统一成 axmol-hub-<ver>-<rid>-<full|delta>.nupkg（前缀见 $taskAssetPrefix）。
+    # 改完必须同步修 feed 里引用的 FileName/URL，否则客户端按 feed 找 nupkg 会 404。
     foreach ($taskNupkg in @('full', 'delta')) {
         $taskCandidates = @(
             (Join-Path $taskDir "$taskPackId-$Version-$($taskPlat.Channel)-$taskNupkg.nupkg"),

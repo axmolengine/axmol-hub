@@ -62,6 +62,7 @@ internal static class WindowsMuiCache
         var executables = MainExecutableNames
             .Select(name => Path.Combine(currentDirectory, name))
             .Prepend(Path.Combine(installRoot, "Axmol Hub.exe"))
+            .Prepend(Path.Combine(installRoot, "AxmolHub.exe"))
             .Select(path => Path.GetFullPath(path) + ".")
             .ToArray();
 
