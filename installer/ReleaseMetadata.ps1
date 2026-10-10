@@ -7,8 +7,12 @@ function Get-ReleaseMetadata {
     )
 
     $versionPattern = '\d+\.\d+\.\d+(?:-\w+)?'
+    # The marker lives on the title line. Callers hand over the raw commit message, whose body can
+    # sit in the same paragraph as the title, so read the first non-empty line instead of the text
+    # as a whole. (git's %s is no help here: it is the first paragraph, not the first line.)
+    $titleLine = ($CommitMessage ?? '') -split '\r?\n' | Where-Object { $_ -match '\S' } | Select-Object -First 1
     $subject = [Regex]::Match(
-        $CommitMessage ?? '',
+        ($titleLine ?? '').Trim(),
         "^Version\s+(?<version>$versionPattern)(?<preview>\s+\(Preview\))?$")
     $fallback = [Regex]::Match($FallbackVersion ?? '', "^(?<version>$versionPattern)$")
     $version = if ($subject.Success) {

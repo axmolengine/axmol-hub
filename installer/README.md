@@ -91,7 +91,7 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 1. **`build.yml`** —— `on: push`（master）+ `pull_request` + `workflow_dispatch`。内部两类 job：
    - `verify`：三平台矩阵，验证代码正确性（编译、宿主判定、CLI JSON 契约、下载契约），**任何提交都跑**。
    - `package-*`：四个 job 各在原生 runner 上 `Publish.ps1 -Stage Build`（拉上一版 → 打包出 delta → 改名 + sha256），`upload-artifact` 上产物。**只在提交标题为 `Version x.y.z`、`Version x.y.z-beta`、`Version x.y.z (Preview)` 或手动触发时跑**，普通提交跳过打包。工作流按同一规则将预发布构建标记编入安装包。Windows 还多跑一步 `Test.ps1 -Isolated` 安装验收。
-2. **`dist.yml`** —— `on: workflow_run`（监听 build 完成）+ `workflow_dispatch`。以完整 Git 历史检出本次构建提交，解析上述提交标题决定是否发版；`0.y.z`、带 `-beta` 等预发布后缀、或标题以 `(Preview)` 结尾的 release 会在 GitHub 标记为 Pre-release。`(Preview)` 仅为发布标记，不进入产品版本、tag 或产物名。从最近一个可达 tag 到本次提交生成英文逐提交发布日志（提交标题保留原文；**版本提交本身不进日志**，且版本提交应只改 `Directory.Build.props`），再下载三平台产物，用 `Publish-All.ps1` 合并上传到一个 release。tag 明确创建在本次构建 SHA 上；重跑已有 release 时会刷新同一份发布日志及 Pre-release 状态。
+2. **`dist.yml`** —— `on: workflow_run`（监听 build 完成）+ `workflow_dispatch`。以完整 Git 历史检出本次构建提交，解析上述提交标题决定是否发版；`0.y.z`、带 `-beta` 等预发布后缀、或标题以 `(Preview)` 结尾的 release 会在 GitHub 标记为 Pre-release。`(Preview)` 仅为发布标记，不进入产品版本、tag 或产物名。从最近一个可达 tag 到本次提交生成英文逐提交发布日志（每条只取提交标题即信息首行，正文不进日志；**版本提交本身不进日志**，且版本提交应只改 `Directory.Build.props`），再下载三平台产物，用 `Publish-All.ps1` 合并上传到一个 release。tag 明确创建在本次构建 SHA 上；重跑已有 release 时会刷新同一份发布日志及 Pre-release 状态。
 
 日常发版：把版本号写进 `Directory.Build.props`，提交信息写 `Version x.y.z`，push 到 master。预览版可使用 `Version x.y.z (Preview)`；`0.y.z` 或 `-beta` 版本也自动作为预发布版。CI 自己判断是否打包、是否发布 —— 提交信息不是 `Version ...` 的普通提交只验证、不打包、不发布。
 

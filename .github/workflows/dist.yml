@@ -35,7 +35,10 @@ jobs:
         env:
           MANUAL_VERSION: ${{ github.event.inputs.version }}
         run: |
-          $commit_msg = "$(git show -s --format=%s)"
+          # Hand the raw message (%B) to the parser, not %s: %s is git's first paragraph, so a version
+          # commit with its body in the same paragraph would miss the 'Version x.y.z' match and this
+          # release would silently never happen. Get-ReleaseMetadata reads the title line.
+          $commit_msg = @(& git show -s --format=%B) -join "`n"
           Write-Host "Parsing release version from commit message: $commit_msg"
           . ./installer/ReleaseMetadata.ps1
           $release = Get-ReleaseMetadata -CommitMessage $commit_msg -FallbackVersion $env:MANUAL_VERSION
@@ -71,17 +74,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { $previousTag = '' }
 
           $range = if ($previousTag) { "$previousTag..$targetCommit" } else { $targetCommit }
-          $commits = @(& git log --reverse --format='%H%x09%h%x09%s' $range)
+          # One note per commit, and that note is the title. %s cannot give that: it is git's first
+          # *paragraph*, so a body written without a blank line under the title folds into the
+          # "subject" and pastes the whole essay into the release. Read %B and keep only the line that
+          # opens a record ('<full sha>\t<short>\t<title>'); every other line of the record is body.
+          $logLines = @(& git log --reverse --format='%H%x09%h%x09%B' $range)
           if ($LASTEXITCODE -ne 0) { throw "git log failed with $LASTEXITCODE." }
-          if (-not $commits) { throw "No commits found for release range $range." }
+          if ($logLines.Count -eq 0) { throw "No commits found for release range $range." }
 
           # The "Version x.y.z" commit is the release marker, not a change: it carries no user-visible
           # work, so it never belongs in the notes. Only drop it when it really is a version bump —
           # a commit that used that title but also touched other files would hide real work, so keep
           # it and warn instead of silently deleting it from the log.
+          $every = [System.Collections.Generic.List[string[]]]::new()
           $listed = [System.Collections.Generic.List[string[]]]::new()
-          foreach ($commit in $commits) {
-            $parts = $commit -split "`t", 3
+          foreach ($line in $logLines) {
+            if ($line -notmatch '^(?<sha>[0-9a-f]{40})\t(?<short>[0-9a-f]+)\t(?<title>.*)$') { continue }
+            $parts = @($Matches.sha, $Matches.short, $Matches.title.Trim())
+            $every.Add($parts)
             if ($parts[2] -match '^Version\s+\d+\.\d+\.\d+(-\w+)?(\s+\(Preview\))?$') {
               $touched = @(& git show --name-only --format='' $parts[0] | Where-Object { $_ })
               if ($touched.Count -eq 1 -and $touched[0] -eq 'Directory.Build.props') {
@@ -98,7 +108,7 @@ jobs:
           # the full range rather than publishing a release with nothing in it.
           if (-not $listed) {
             Write-Host 'Every commit in the range is a version marker; listing the full range instead.'
-            foreach ($commit in $commits) { $listed.Add(($commit -split "`t", 3)) }
+            $listed = $every
           }
 
           $notes = [System.Collections.Generic.List[string]]::new()

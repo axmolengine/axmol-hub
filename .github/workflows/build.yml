@@ -46,7 +46,7 @@ jobs:
         id: decide
         shell: pwsh
         run: |
-          $msg = "$(git log -1 --format=%s)"
+          $msg = @(& git log -1 --format=%B) -join "`n"
           Write-Host "HEAD commit message: $msg"
           . ./installer/ReleaseMetadata.ps1
           & ./tests/ReleaseMetadata.Tests.ps1
