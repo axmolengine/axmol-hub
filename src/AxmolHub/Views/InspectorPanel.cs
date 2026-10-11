@@ -41,6 +41,12 @@ internal sealed class InspectorPanel : UserControl
     /// cannot drive from a fixture.</summary>
     public event Action? RepoRefreshRequested;
 
+    /// <summary>Raised by one of the empty-scope jumps: "this list is empty, the other one is not — the reader
+    /// could want that one instead". The panel names the tab it wants and never switches itself, because landing
+    /// on a tab can mean opening a column that is shut, and only the shell knows the page it is on. It is the
+    /// same ask a run's <c>+N −M</c> chip makes, on the same route.</summary>
+    public event Action<string>? ScopeJumpRequested;
+
     private readonly Button _planTab;
     private readonly Button _changesTab;
     private readonly Button _repoTab;
@@ -218,6 +224,11 @@ internal sealed class InspectorPanel : UserControl
         if (changes.Count == 0)
         {
             _changesList.Children.Add(EmptyLine("InspectorChangesEmpty"));
+            // A jump earns its line only from a read that already says the tree is dirty. With nothing read,
+            // "the repository holds changes" would be a claim this surface never verified, and an invitation to
+            // go and find out anyway.
+            if (repository is { IsReadable: true } readable && readable.Entries.Count > 0)
+                _changesList.Children.Add(Jump("repo", "InspectorChangesJumpRepoFormat", readable.Entries.Count));
         }
         else
         {
@@ -254,6 +265,11 @@ internal sealed class InspectorPanel : UserControl
         if (repository.Entries.Count == 0)
         {
             _repoBody.Children.Add(EmptyLine("InspectorRepoEmpty"));
+            // The case this exists for: the assistant just ran `git commit`. The working tree is clean, the
+            // session's own writes are still on the transcript, and a reader who is told only "matches HEAD" has
+            // no way back to what they came here to see.
+            if (changes.Count > 0)
+                _repoBody.Children.Add(Jump("changes", "InspectorRepoJumpSessionFormat", changes.Count));
             return;
         }
         foreach (var entry in repository.Entries)
@@ -419,6 +435,26 @@ internal sealed class InspectorPanel : UserControl
             TextWrapping = TextWrapping.Wrap,
             Classes = { "inspector-empty" },
         }, "Hub.TextTertiary");
+
+    /// <summary>A sentence that is also a button: the empty-state jump. Two decisions in its construction. It
+    /// carries <c>inspector-jump</c> and never <c>inspector-empty</c>, because the notice accessor reads this body
+    /// by that class and a jump that borrowed the class would silently rewrite what the tab is said to end on.
+    /// And its text is an explicit child rather than a bound foreground, so the hover rule in the shell's styles
+    /// can reach it — a <see cref="Themed"/> brush would be a local binding, and a local binding outranks a
+    /// selector, which is how a control that should brighten when pointed at would stay grey.</summary>
+    private Control Jump(string targetTab, string textKey, int count)
+    {
+        var text = new TextBlock
+        {
+            Text = string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get(textKey), count),
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Classes = { "inspector-jump" },
+        };
+        var button = new Button { Classes = { "inspector-jump" }, Tag = targetTab, Content = text };
+        button.Click += (_, _) => ScopeJumpRequested?.Invoke(targetTab);
+        return button;
+    }
 
     private Control BuildChangeRow(ChangedFile change, Func<ChangedFile, (string? Diff, UndoCopyState State)> resolveDiff)
     {
@@ -613,7 +649,9 @@ internal sealed class InspectorPanel : UserControl
     internal void ClickExpandForCheck()
         => _expandButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-    internal int ChangeRowCountForCheck => _changesList.Children.Count;
+    /// <summary>The file rows, not the children of the list. An empty scope now ends on a sentence and sometimes
+    /// a jump, and a count that grew because a helper line was drawn would stop meaning "how many files".</summary>
+    internal int ChangeRowCountForCheck => ChangeRows().Count;
     internal string FirstChangePathForCheck
         => _changesList.Children.Count > 0
             && _changesList.Children[0] is StackPanel { Children.Count: > 0 } panel
@@ -647,6 +685,16 @@ internal sealed class InspectorPanel : UserControl
             .FirstOrDefault(button => button.Classes.Contains("inspector-change-header"))
             ?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
+
+    /// <summary>The empty-scope jump on the changes tab, as the reader sees it. Read apart from the notice line
+    /// on purpose: "the session has changed nothing" and "the repository holds three files, go look" are two
+    /// sentences, and a check that only saw the first would pass on a pane that cannot offer the second.</summary>
+    internal string ChangeJumpTextForCheck => JumpText(_changesList);
+    internal bool ChangeJumpPresentForCheck => ChangeJumpTextForCheck.Length > 0;
+
+    /// <summary>Presses the jump the reader would press. The click leaves the panel as an event, so a fixture pane
+    /// with no host can still prove *which* tab was asked for, and a live pane can prove the column opened.</summary>
+    internal void ClickChangeJumpForCheck() => ClickJump(_changesList);
 
     private List<Control> ChangeRows()
         => _changesList.Children.OfType<StackPanel>()
@@ -714,6 +762,24 @@ internal sealed class InspectorPanel : UserControl
             .FirstOrDefault(button => button.Tag as string == "InspectorRepoRefresh")
             ?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
+
+    /// <summary>The empty-scope jump back to the session's own list, which is what the tab ends on right after a
+    /// commit — the working tree is clean and the transcript still holds the writes.</summary>
+    internal string RepoJumpTextForCheck => JumpText(_repoBody);
+    internal bool RepoJumpPresentForCheck => RepoJumpTextForCheck.Length > 0;
+
+    internal void ClickRepoJumpForCheck() => ClickJump(_repoBody);
+
+    /// <summary>The jump line in this body, if one was drawn. Only the text carries the class, so the button and
+    /// its label are read through one descendant lookup.</summary>
+    private static string JumpText(StackPanel host)
+        => host.GetLogicalDescendants().OfType<TextBlock>()
+            .FirstOrDefault(block => block.Classes.Contains("inspector-jump"))?.Text ?? "";
+
+    private static void ClickJump(StackPanel host)
+        => host.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Classes.Contains("inspector-jump"))
+            ?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     private List<Control> RepositoryRows()
         => _repoBody.Children.OfType<StackPanel>()

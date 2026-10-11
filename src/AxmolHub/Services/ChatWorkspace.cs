@@ -3322,6 +3322,23 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>
+    /// Installs a repository answer without running git, through the same tail a landed read uses. The states a
+    /// pane can end on are more than a check machine can grow out of a real directory, and the answer has to be
+    /// installable to be asserted on. A seed is deliberately <em>not</em> counted in
+    /// <see cref="RepositoryReadsForCheck"/>: a cell that measures that counter has to stay meaning "how many gits
+    /// did the app start", not "how many fixtures were fed to it".
+    /// </summary>
+    internal void SeedRepositoryForCheck(string workspaceRoot, GitRepositoryState state)
+    {
+        _repository = new RepositorySnapshot(workspaceRoot, state);
+        RepositoryChanged?.Invoke();
+    }
+
+    /// <summary>Takes the answer back out, so the next cell starts from the same nothing a fresh session starts
+    /// from. Leaving one seeded would make a later "the tab asked for a read" assertion pass by accident.</summary>
+    internal void ClearRepositoryForCheck() => _repository = null;
+
+    /// <summary>
     /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask
     /// the call is recorded as waiting and the stream ends. The run keeps its slot and the decision can be made
     /// later — after a restart, even — because the pending call is in the transcript rather than in memory.

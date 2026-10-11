@@ -208,6 +208,36 @@
     <Style Selector="TextBlock.inspector-empty">
       <Setter Property="FontSize" Value="12" />
     </Style>
+    <!-- The empty-scope jump: a sentence that is also a button. A transparent template and no plate, because the
+         line it sits on is the thing being read, and a box drawn around one clause of it is exactly the chrome
+         this pane has no room for. The ink lives in the style rather than bound per control so that the hover rule
+         below can outrank it — a local binding would beat the selector and the line would never brighten. -->
+    <Style Selector="Button.inspector-jump">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent" Padding="0" ClipToBounds="True">
+            <ContentPresenter Content="{TemplateBinding Content}"
+                              HorizontalAlignment="Left"
+                              VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="TextBlock.inspector-jump">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Button.inspector-jump:pointerover TextBlock.inspector-jump">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
     <!-- The repository tab's prose lines: the caveat, the branch head, and the mark that a path is in both
          lists. One style because they are one kind of sentence; the ink itself is bound per control, so a theme
          switch that happens while the pane is open still reaches it. -->

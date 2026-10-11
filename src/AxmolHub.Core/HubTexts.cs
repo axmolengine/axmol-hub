@@ -690,6 +690,14 @@ public static class HubTexts
         ["InspectorRepoUnsafe"] = ("git 不信任这个目录的归属，要你亲自认下来它才让读",
             "git does not trust who owns this repository; it needs your own decision before Hub may read it"),
         ["InspectorRepoFailed"] = ("git 没能回答", "git did not answer"),
+        // The two empty-scope jumps. A list that is empty because the *other* scope is not leaves the reader at a
+        // dead end, so the empty sentence offers the way across — and only ever with a number it has actually
+        // verified: the changes tab offers this when a read has said the tree is dirty, the repository tab when
+        // the transcript says this session wrote files.
+        ["InspectorChangesJumpRepoFormat"] = ("仓库里有 {0} 处未提交，去仓库页看",
+            "the repository holds {0} uncommitted files — look at the Repository tab"),
+        ["InspectorRepoJumpSessionFormat"] = ("本会话改了 {0} 个文件，去改动页看",
+            "this session changed {0} files — look at the Changes tab"),
         // The column's two states. The restore wording names Esc because the key is the only other way out of a
         // surface that has just covered the window, and a keyboard exit nobody announces is not a keyboard exit.
         ["InspectorExpand"] = ("撑开面板到整个窗口", "Expand the panel to the whole window"),

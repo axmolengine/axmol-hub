@@ -98,6 +98,9 @@ public partial class ChatPanel
             // The pane asks; this is where the ask turns into a git read, because the panel has no session, no
             // log and no thread to wait on — and a pane that did its own I/O could not be fed a fixture by a check.
             _inspector.RepoRefreshRequested += RequestRepositoryRead;
+            // An empty scope pointing at the one that is not goes out through the same door a run's chip uses:
+            // landing on a tab can mean opening a column that is shut, and only the shell knows the page it is on.
+            _inspector.ScopeJumpRequested += target => OpenInspector?.Invoke(target, -1);
         }
 
         var planText = PlanTextFor(conversation, turnIndex);

@@ -3265,6 +3265,62 @@ public partial class ShellCheckWindow : Window
         Check(inspector.RepoNoticeForCheck.Contains(HubStrings.Get("InspectorRepoReading"), StringComparison.Ordinal),
             "还没读到仓库时面板说在读，而不是先说没有");
 
+        // ── the empty-scope jump: an empty list that knows the other one is not ──
+        // Both directions are one rule seen from the two tabs, and the rule is that a jump only appears over a
+        // list that really is worth opening. A jump to an empty list is a button that goes nowhere, and a jump
+        // that names a count the app never read would be a claim this surface cannot make — so every state that
+        // has no read behind it stays silent, and that is asserted as hard as the jump itself.
+        var dirtyThree = new GitRepositoryState(GitReadOutcome.Ok, @"D:\dev\probe", "master", 0, 0,
+            [
+                new GitStatusEntry("note.txt", " ", "M", false),
+                new GitStatusEntry("src/main.cpp", "M", " ", false),
+                new GitStatusEntry("assets/图标.png", "?", "?", true),
+            ],
+            new Dictionary<string, string>(StringComparer.Ordinal), false, null);
+        var cleanTree = new GitRepositoryState(GitReadOutcome.Ok, @"D:\dev\probe", "master", 0, 0, [],
+            new Dictionary<string, string>(StringComparer.Ordinal), false, null);
+        inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read), dirtyThree, "changes");
+        Check(inspector.ChangeRowCountForCheck == 0 && inspector.ChangeJumpPresentForCheck
+              && inspector.ChangeJumpTextForCheck == string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                  HubStrings.Get("InspectorChangesJumpRepoFormat"), 3),
+            "改动页空着而仓库有未提交时，那句空状态本身是个能点的跳转，报的正是读到的那个数（实际「"
+            + inspector.ChangeJumpTextForCheck + "」）");
+        inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read), null, "changes");
+        Check(!inspector.ChangeJumpPresentForCheck,
+            "还没读到仓库时改动页不跳转：没验证过的事实不该写成一句邀请");
+        inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read), cleanTree, "changes");
+        Check(!inspector.ChangeJumpPresentForCheck,
+            "读到的是干净工作树时也不跳转：那边也没有可看的东西，跳过去只是多一次空手");
+        // The other tab, the same rule. This is the screen right after the assistant ran `git commit`: nothing is
+        // uncommitted any more, and the reader is looking at a list that can no longer answer what they came for.
+        inspector.Reload(null, changes, _ => ((string?)null, UndoCopyState.Read), cleanTree, "repo");
+        Check(inspector.RepoRowCountForCheck == 0 && inspector.RepoJumpPresentForCheck
+              && inspector.RepoJumpTextForCheck == string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                  HubStrings.Get("InspectorRepoJumpSessionFormat"), changes.Length)
+              && inspector.RepoNoticeForCheck == HubStrings.Get("InspectorRepoEmpty"),
+            "工作树干净而本会话改过文件时，仓库页把话递回改动页，而那一句「工作树与 HEAD 一致」还是它自己的一句，"
+            + "跳转没有混进去（实际「" + inspector.RepoJumpTextForCheck + "」/「" + inspector.RepoNoticeForCheck + "」）");
+        var jumpedWrong = "";
+        foreach (var (outcome, _) in whyKeys)
+        {
+            inspector.Reload(null, changes, _ => ((string?)null, UndoCopyState.Read),
+                GitRepositoryState.Stopped(outcome, "probe"), "repo");
+            if (inspector.RepoJumpPresentForCheck) jumpedWrong += (jumpedWrong.Length == 0 ? "" : "、") + outcome;
+        }
+        inspector.Reload(null, changes, _ => ((string?)null, UndoCopyState.Read), null, "repo");
+        if (inspector.RepoJumpPresentForCheck) jumpedWrong += "还没读";
+        Check(jumpedWrong.Length == 0,
+            "读不到仓库的每一种原因都不跳转，因为那种时候这一边自己就是答案（多余的跳转：" + jumpedWrong + "）");
+        // The panel asks and the shell lands it. A jump must not switch this pane's own visibility, because the ask
+        // can arrive while the column is shut, and only the shell knows the page it is on.
+        var jumpedTo = "";
+        inspector.ScopeJumpRequested += target => jumpedTo = target;
+        inspector.Reload(null, [], _ => ((string?)null, UndoCopyState.Read), dirtyThree, "changes");
+        inspector.ClickChangeJumpForCheck();
+        Check(jumpedTo == "repo" && inspector.ChangesTabVisibleForCheck && !inspector.RepoTabVisibleForCheck,
+            "点跳转：面板只把「要去哪一页」递出去，自己不换页（实际请求「" + jumpedTo + "」，仍停在改动页 "
+            + inspector.ChangesTabVisibleForCheck + "）");
+
         // The repository tab's own chain, end to end: entering the tab hands a read request to the workspace, the
         // read answers away from the UI thread, and the answer has to land back on the pane. No git is needed to
         // drive this path — a session without a workspace is a read that answers at once — and if the
@@ -3306,6 +3362,41 @@ public partial class ShellCheckWindow : Window
             + (shell.Chat.RepositoryReadsForCheck - readsAfterFirst) + " 次）");
         shell.CloseInspector();
         shell.Chat.DeleteConversation(repoSession.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+
+        // The jump on a live pane is the part a fixture pane cannot prove: the ask goes out to the shell, and the
+        // shell lands it on the other tab. The repository answer is seeded rather than read, because a check
+        // machine has no dirty repository to point a session at — and the seeding is what lets the same cell prove
+        // the jump costs no git, since the snapshot it was drawn from is the one the target tab is served from.
+        var jumpWorkspace = ScratchDirectory.Resolve("review-jump-workspace");
+        System.IO.Directory.CreateDirectory(jumpWorkspace);
+        var jumpSession = chat.StartConversation();
+        chat.OpenConversation(jumpSession.Id);
+        chat.SetWorkspaceRoot(jumpSession.Id, jumpWorkspace);
+        panel.Reload();
+        chat.SeedRepositoryForCheck(chat.WorkspaceRootFor(jumpSession.Id) ?? jumpWorkspace, dirtyThree);
+        var readsBeforeJump = chat.RepositoryReadsForCheck;
+        shell.OpenInspector("changes", -1);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorPaneForCheck is { } jumpPane && jumpPane.ChangesTabVisibleForCheck
+              && jumpPane.ChangeJumpPresentForCheck,
+            "会话一个文件都没写过时，活的改动页上就摆着那个跳转（实际「"
+            + (shell.InspectorPaneForCheck?.ChangeJumpTextForCheck ?? "") + "」）");
+        shell.InspectorPaneForCheck?.ClickChangeJumpForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorVisibleForCheck
+              && shell.InspectorTabForCheck == "repo"
+              && shell.InspectorPaneForCheck is { } afterJump
+              && afterJump.RepoTabVisibleForCheck && !afterJump.ChangesTabVisibleForCheck
+              && chat.RepositoryReadsForCheck == readsBeforeJump,
+            "点这个跳转换的是外壳那一页（外壳记的是「" + shell.InspectorTabForCheck + "」），不是面板自己换个可见性，"
+            + "而且它一次 git 都不多跑（两次之间读了 " + (chat.RepositoryReadsForCheck - readsBeforeJump) + " 次）");
+        chat.ClearRepositoryForCheck();
+        shell.CloseInspector();
+        chat.DeleteConversation(jumpSession.Id);
         panel.Reload();
         Dispatcher.UIThread.RunJobs();
 

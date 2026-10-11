@@ -232,6 +232,11 @@ public partial class MainWindow
     /// <summary>The pane itself, so a check can press the header's own arrow rather than the method behind it.</summary>
     internal InspectorPanel? InspectorPaneForCheck => InspectorPane as InspectorPanel;
 
+    /// <summary>Which tab the <i>shell</i> last asked for. The pane's own visibility cannot tell the two routes
+    /// apart — a jump that switched tabs inside the panel would leave the same three booleans — so the cell that
+    /// proves a jump goes through the shell has to read the shell's answer.</summary>
+    internal string InspectorTabForCheck => _inspectorTab;
+
     internal bool InspectorExpandedForCheck => _inspectorExpanded;
     internal bool InspectorOverlayVisibleForCheck => InspectorExpandHost.IsVisible;
 
