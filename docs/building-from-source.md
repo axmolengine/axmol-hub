@@ -88,7 +88,7 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
 ```powershell
-# 外壳、本地化与数据根切换的自检（923 条断言）
+# 外壳、本地化与数据根切换的自检（1020 条断言）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
 # 主题层（46 条）/ 基础件（26 条）
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-theme ./tmp/theme.txt
