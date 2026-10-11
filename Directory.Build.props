@@ -72,10 +72,12 @@
          the shape depends on whether the restore passed a RID:
            · without a RID: the base TFM node plus one node per declared RuntimeIdentifiers
              (5 nodes for the app);
-           · with a RID: the base node plus that single RID node (2 nodes for the app), and it
-             rewrites the lock files of referenced projects along the way. That second half is
-             what bolted a stray net8.0/win-x64 node onto Agent's file in the middle of the
-             installer change committed as c4564e9.
+           · with a RID: the base node plus that single RID node (2 nodes for the app). It reaches
+             the referenced projects on the way too, which is what bolted a stray net8.0/win-x64
+             node onto Agent's file in the middle of the installer change committed as c4564e9.
+             No referenced project writes a lock any more, so that reach has nothing left to land
+             on — until a command-line property turns generation back on: measured, one restore
+             with the property forced on brought both Agent's and Core's file back.
          So the day a package version is bumped is the day a packaging run leaves a pruned file.
          installer/Build.ps1 now follows its publish with a RID-less restore of the app project,
          which rewrites the committed shape before any later step of the run can fail. A manual
