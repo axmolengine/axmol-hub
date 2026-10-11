@@ -5,8 +5,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Version: see Directory.Build.props at the repo root — the five projects share one product version. -->
-    <!-- RestorePackagesWithLockFile inherits true from the root props: this is the repo's second
-         project to introduce a PackageReference (the first is App), so the lock file must be tracked. -->
+    <!-- Opted out and untracked. This is common code: both App and Checks reference it and it is never
+         shipped on its own, and NuGet is explicit that a common code project's lock file has "little say
+         over the packages resolved for projects that depend on it". Measured before deleting the file: all
+         24 package entries it carried already sit in the App lock file at identical resolved versions,
+         alongside an axmolhub.agent project entry that records the three direct ranges below. So it pinned
+         nothing and only churned — every RID publish of App rewrote it, and commit c4564e9 bolted a stray
+         net8.0/win-x64 node onto it in the middle of an installer change.
+         One NuGet quirk outlives this comment: a packages.lock.json sitting in this directory is used by
+         restore even with this property set to false, and .gitignore keeps such a leftover out of
+         git status. If one reappears here, delete it. The policy and its reasoning are in the repo-root
+         Directory.Build.props. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../AxmolHub.Core/AxmolHub.Core.csproj" />

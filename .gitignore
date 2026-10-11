@@ -33,3 +33,11 @@ Thumbs.db
 tmp/
 cache/
 local/
+
+# NuGet lock files with no say over the build: Agent is common code and Checks is the test harness, and
+# both set RestorePackagesWithLockFile=false, so nothing should write these again. This is a tripwire
+# against re-committing one, not a place to park them: NuGet consumes a lock file that exists even when
+# the property is off, so delete any copy that shows up here. The App lock file stays tracked on purpose
+# (src/AxmolHub/packages.lock.json) — see Directory.Build.props.
+src/AxmolHub.Agent/packages.lock.json
+tests/AxmolHub.Checks/packages.lock.json

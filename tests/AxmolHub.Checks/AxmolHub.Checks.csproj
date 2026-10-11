@@ -4,9 +4,14 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- This project gets Microsoft.Extensions.AI and similar packages transitively through Agent
-         (a real dependency), so the lock file must be tracked (inherits true from the root props),
-         and it no longer opts out. -->
+    <!-- Opted out and untracked. This project declares no PackageReference of its own: its lock file held
+         23 package entries and not one of them Direct, every version arriving through Agent, and Checks
+         ships nothing to anybody. A lock with no direct dependency has no say over any build, so it joins
+         Core and Cli in the opt-out rather than following the App rule. Re-decide by the policy in the
+         repo-root Directory.Build.props if this project ever gains its own PackageReference, and delete a
+         leftover packages.lock.json before re-enabling it: NuGet consumes a lock file that exists even
+         while this property says false. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/AxmolHub.Core/AxmolHub.Core.csproj" />
