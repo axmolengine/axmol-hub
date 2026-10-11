@@ -76,6 +76,19 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private LiveBubble? _live;
 
+    /// <summary>Set when a live repaint was skipped because the composer was being typed into on Linux; the next
+    /// repaint or focus loss clears it. Keeps the message column from re-arranging — and the in-progress ibus
+    /// composition from jumping — while the user is composing a sentence during a streamed reply.</summary>
+    private bool _liveRepaintPending;
+
+    /// <summary>Where an open IME composition cannot survive a sibling re-arrange (Avalonia's X11 backend owns the
+    /// preedit in the control's own text presenter), so the streamed reply must not repaint the message column
+    /// while a draft is being composed. Gated on non-empty text, not focus alone: the composer keeps focus after
+    /// a send, and an empty box means no composition is open — so a just-sent reply must still stream normally.
+    /// Windows/macOS hand composition to the OS IME and need no such deferral.</summary>
+    private bool DeferringLiveRepaint =>
+        OperatingSystem.IsLinux() && InputBox.IsKeyboardFocusWithin && InputBox.Text.Length > 0;
+
     /// <summary>One attached run's worth of chrome: the row, the pieces of it that change while text arrives, and
     /// the timer that animates them. Created on attach, thrown away on detach; the run outlives both and carries
     /// every fact the chrome displays, so nothing here survives a detach and nothing here needs to.</summary>
@@ -2939,7 +2952,13 @@ public partial class ChatPanel : UserControl
 
     /// <summary>Highlights the composer frame while the input has focus so the whole rounded box reads as the
     /// thing being typed into.</summary>
-    private void SetComposerFocus(bool focused) => ComposerFrame.Classes.Set("focused", focused);
+    private void SetComposerFocus(bool focused)
+    {
+        ComposerFrame.Classes.Set("focused", focused);
+        // Leaving the composer is the point where re-arranging the column is safe again, so the reply the
+        // deferred ticks held back paints here (and the timer resumes on its own once focus is gone).
+        if (!focused) FlushLiveRepaintIfPending();
+    }
 
     /// <summary>Whether Up is free to take the key: the box is empty, or the person is already part-way through a
     /// recall. Anything else is a caret moving inside a draft, which is the text box's business and not this one.</summary>
@@ -3253,6 +3272,7 @@ public partial class ChatPanel : UserControl
         live.Timer = null;
         MessageFlow.Children.Remove(live.Row);
         _live = null;
+        _liveRepaintPending = false;
         UpdateSendState();
     }
 
@@ -3261,6 +3281,20 @@ public partial class ChatPanel : UserControl
         // Read off the run the bubble is attached to, not looked up by session id: the bubble and its run are the
         // same pairing from attach to detach, so a refresh can never land on a reply that started afterwards.
         var text = bubble.Run.LiveText;
+
+        // Painting the arriving text re-measures the whole message column, and the sticky scroll that follows it
+        // flips the column width, re-wrapping every completed bubble — both re-arrange the focused composer and
+        // interrupt an open Linux composition, so the caret jumps. Defer just those two while the user composes;
+        // the thinking glyph keeps running (cheap, and the suite guards against freezing it), and run.LiveText
+        // accrues server-side, so nothing is lost — focus loss flushes the held-back paint.
+        if (DeferringLiveRepaint)
+        {
+            if ((bubble.Preview.Text ?? "") != text) _liveRepaintPending = true;
+            RefreshGlyphPhase(bubble);
+            return;
+        }
+
+        _liveRepaintPending = false;
         bubble.Preview.Text = text;
         if (text.Length == 0) bubble.ShowedText = false;
         else if (!bubble.ShowedText)
@@ -3271,6 +3305,15 @@ public partial class ChatPanel : UserControl
 
         RefreshGlyphPhase(bubble);
         ScrollToEndIfSticky();
+    }
+
+    /// <summary>Paints the reply the deferred ticks were holding back, once it is safe to re-arrange the column:
+    /// the composer just lost focus (so no composition is open) or the live row is being torn down.</summary>
+    private void FlushLiveRepaintIfPending()
+    {
+        if (!_liveRepaintPending) return;
+        _liveRepaintPending = false;
+        if (_live is { } live) RefreshLive(live);
     }
 
     /// <summary>
@@ -4612,6 +4655,7 @@ public partial class ChatPanel : UserControl
     /// <summary>What the live bubble on screen says. It is read off the run, so this is also the proof that a
     /// reply kept arriving while its session was out of sight.</summary>
     internal string LivePreviewTextForCheck => _live?.Preview.Text ?? "";
+    internal bool LiveRepaintDeferredForCheck => _liveRepaintPending;
 
     /// <summary>Presses the round button the way a click would, so stopping goes through the view instead of
     /// cancelling a run behind the panel's back.</summary>
