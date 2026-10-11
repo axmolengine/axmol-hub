@@ -72,6 +72,22 @@ $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
 dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
+# When a publish has to rewrite packages.lock.json — a package version changed, or the file is not there — a
+# restore carrying a RID writes only the base node plus that RID. Measured: 2 nodes out against the 5 this
+# tracked file carries. Repair the full shape here, before vpk pack and the guards below can fail, so a run
+# that did bump a package cannot leave a pruned lock to be committed by accident. On an ordinary run the lock
+# is up to date, this restore changes nothing, and it costs about a fifth of a second. A warning and not a
+# throw: an offline machine must still finish the package it has already published.
+# Three alternatives deliberately not taken: turning generation off for this publish (a lock file is consumed
+# whether or not it is written, so that silently freezes the one pin that matters); snapshot and restore it
+# around the publish (that reverts legitimate updates too, leaving the artifact and its lock disagreeing); a
+# RID-less restore first and then a publish without restore (the self-contained runtime pack is an implicit
+# package reference that only a restore carrying a RID injects, so it fails).
+dotnet restore "$taskRoot/src/AxmolHub/AxmolHub.csproj"
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "RID-less restore failed: src/AxmolHub/packages.lock.json may be pruned to net8.0 and net8.0/$Runtime. Run 'dotnet restore src/AxmolHub/AxmolHub.csproj' before committing."
+}
+
 # Icon format per platform: Windows uses a multi-size ICO, macOS requires ICNS (.app bundle icon), Linux uses a single-size PNG.
 # Linux takes 512 rather than the 1254 original: vpk writes this one file as .DirIcon, {packId}.png at the AppDir root, and
 # usr/share/icons/hicolor/scalable/apps/{packId}.png (LinuxPackCommandRunner.PreprocessPackDir),
