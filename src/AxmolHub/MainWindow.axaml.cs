@@ -303,6 +303,10 @@ public partial class MainWindow : Window
         panel.CloseInspector = CloseInspector;
         panel.ToggleInspectorExpanded = ToggleInspectorExpanded;
         panel.RefreshInspector = RefreshInspector;
+        // The pane's header tabs are the reader's choice, and this column repaints on a schedule of its own —
+        // every transcript move, every repository read that lands. The shell asks for a tab by name on each of
+        // those, so it has to be told which one the reader is on, or their click is undone a token later.
+        panel.InspectorTabFollowed = tab => _inspectorTab = tab;
         return panel;
     }
 
@@ -1204,6 +1208,10 @@ public partial class MainWindow : Window
         // The settings gear is icon-only, so its tooltip is the only place the name "Settings" appears for it.
         // Set here rather than in ApplyLanguage so it is also in place at construction time.
         ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
+        // Same rule for the inspector's drawer button, and this one is in InitializeChrome rather than
+        // InitializeInspector because ApplyLanguage calls this: an icon-only control whose name lives only in a
+        // tooltip has to be rewritten when the language changes.
+        ToolTip.SetTip(InspectorToggle, HubStrings.Get("InspectorToggleTip"));
 
         // The bottom text block's visible text names the machine, not the menu; the tooltip is where
         // "this opens settings and appearance" is spelled out. Same place for the same reason.

@@ -100,6 +100,12 @@
   <!-- A panel with a divider = sidebar toggle, matching the shape GitHub Copilot Desktop uses. Stroked. -->
   <StreamGeometry x:Key="Hub.Icon.Panel">M4.5 5H19.5V19H4.5 Z M10 5V19</StreamGeometry>
 
+  <!-- The same plate with the divider on the right, so the two top-bar toggles read as a mirrored pair: the left
+       one opens the conversation list, this one the review column. Bounded 15×15 centred on the 24 grid —
+       deliberately not a copy of Hub.Icon.Panel's 15×14 box, because Stretch="Uniform" parks the leftover axis as
+       slack on one side, which puts a lopsided glyph off centre in its square slot. -->
+  <StreamGeometry x:Key="Hub.Icon.PanelRight">M4.5 4.5H19.5V19.5H4.5 Z M14 4.5V19.5</StreamGeometry>
+
   <!-- The inspector column's expand/restore pair. Two arrows on the same diagonal, a gap between their tips so
        the two glyphs stay distinguishable at 14px where a merged centre reads as one blob: expand puts the
        arrowhead on the outer corner (it points out, at the window edge), restore puts it on the inner end (it

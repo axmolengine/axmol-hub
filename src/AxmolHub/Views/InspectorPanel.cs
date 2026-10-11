@@ -47,6 +47,12 @@ internal sealed class InspectorPanel : UserControl
     /// same ask a run's <c>+N −M</c> chip makes, on the same route.</summary>
     public event Action<string>? ScopeJumpRequested;
 
+    /// <summary>Raised on every tab the pane lands on — including the one <see cref="Reload"/> was told to show.
+    /// The pane owns which surface is visible; the shell owns which one the next repaint asks for. Without this
+    /// the two disagree from the moment a reader presses a header tab and the transcript moves, and the column
+    /// bounces them back to the plan they were not reading.</summary>
+    public event Action<string>? TabSelected;
+
     private readonly Button _planTab;
     private readonly Button _changesTab;
     private readonly Button _repoTab;
@@ -191,7 +197,9 @@ internal sealed class InspectorPanel : UserControl
 
     /// <summary>Shows one tab surface and marks its button. All three stay in the tree, so painting a new plan
     /// does not rebuild a diff somebody had opened, and a check can read a tab it never selected. Anything that
-    /// is not one of the two action tabs lands on the plan, which is the pane's rest state.</summary>
+    /// is not one of the two action tabs lands on the plan, which is the pane's rest state. The shell is told
+    /// every time, including when it was the one that named the tab: one route, so a header click and a repaint
+    /// cannot disagree about where the reader is standing.</summary>
     private void SelectTab(string tab)
     {
         var changes = string.Equals(tab, "changes", StringComparison.Ordinal);
@@ -203,6 +211,7 @@ internal sealed class InspectorPanel : UserControl
         _planHost.IsVisible = plan;
         _changesScroll.IsVisible = changes;
         _repoScroll.IsVisible = repo;
+        TabSelected?.Invoke(tab);
     }
 
     /// <summary>Paints the three tabs from a snapshot and lands on the asked-for one. The diff resolver is lazy
@@ -626,6 +635,25 @@ internal sealed class InspectorPanel : UserControl
 
     internal bool PlanTabVisibleForCheck => _planHost.IsVisible;
     internal bool ChangesTabVisibleForCheck => _changesScroll.IsVisible;
+
+    /// <summary>Which tab button carries the underline. The three visibility booleans say what is on screen; this
+    /// says what the header claims is on screen, and a pane that showed one page while marking another is caught
+    /// by nothing else.</summary>
+    internal string SelectedTabKeyForCheck
+        => _planTab.Classes.Contains("selected") ? "plan"
+            : _changesTab.Classes.Contains("selected") ? "changes"
+            : _repoTab.Classes.Contains("selected") ? "repo"
+            : "";
+
+    /// <summary>Presses a header tab. Every repository test used to enter through the shell's own
+    /// <c>OpenInspector</c> — which is exactly how a pane that only <em>looked</em> like it had moved to 仓库
+    /// stayed green, because the shell already knew the tab it had just been asked for.</summary>
+    internal void ClickPlanTabForCheck() => ClickTab(_planTab);
+    internal void ClickChangesTabForCheck() => ClickTab(_changesTab);
+    internal void ClickRepoTabForCheck() => ClickTab(_repoTab);
+
+    private static void ClickTab(Button button)
+        => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>The markdown the plan tab is holding, read off the rendered viewer's own <c>Tag</c>. A check can
     /// therefore prove *which* plan a card click landed on, not merely that some plan is on screen.</summary>

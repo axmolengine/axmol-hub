@@ -904,17 +904,7 @@ public partial class ShellCheckWindow : Window
         // A glyph whose bounding box is not square sits off-centre in its square slot, because
         // Stretch="Uniform" puts the leftover axis' slack on one side — the failure Hub.Icon.Send's
         // comment documents. The two new message-action glyphs are measured rather than eyeballed.
-        static bool GlyphFitsItsSquareSlot(string key)
-        {
-            if (Application.Current is not { } app
-                || app.TryGetResource(key, app.ActualThemeVariant, out var value) != true
-                || value is not Avalonia.Media.Geometry glyph) return false;
-            var box = glyph.Bounds;
-            return Math.Abs(box.Width - box.Height) <= 0.6
-                   && Math.Abs(box.X + box.Width / 2 - 12) <= 0.8
-                   && Math.Abs(box.Y + box.Height / 2 - 12) <= 0.8;
-        }
-        Check(GlyphFitsItsSquareSlot("Hub.Icon.Refresh") && GlyphFitsItsSquareSlot("Hub.Icon.Branch"),
+        Check(FitsItsSquareSlot("Hub.Icon.Refresh") && FitsItsSquareSlot("Hub.Icon.Branch"),
             "重新生成与分叉图标的包围盒为正方形且居中于 24 网格（Uniform 缩放后不会偏心）");
         Check(panel.ScrollToBottomIsSquarePlateForCheck && panel.ScrollToBottomShowsArrowForCheck,
             "回到底部按钮是 28 见方的底板配垂直向下箭头（不再是空心胶囊）");
@@ -3140,6 +3130,115 @@ public partial class ShellCheckWindow : Window
               && new PreferencesStore(PreferencesPathFor(restoreRoot)).Load().InspectorOpen == false,
             "点那一列自己的 ×：列真的让位给聊天，设置里也记成关着，而不是下次启动又回来");
         restored.Close();
+
+        // ── the header tabs, pressed by a reader rather than by the shell ──
+        // Every repository test used to walk in through OpenInspector, which is precisely how "the column shows
+        // the plan when you clicked 仓库" stayed green: the shell already knew the tab it had just been asked
+        // for. These drive the pane's own header instead.
+        var tabSession = chat.StartConversation();
+        chat.OpenConversation(tabSession.Id);
+        panel.Reload();
+        shell.OpenInspector("plan", -1);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var tabPane = shell.InspectorPaneForCheck;
+        tabPane?.ClickChangesTabForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorTabForCheck == "changes" && tabPane is { } afterChanges
+              && afterChanges.ChangesTabVisibleForCheck && !afterChanges.PlanTabVisibleForCheck
+              && afterChanges.SelectedTabKeyForCheck == "changes",
+            "点页眉的「改动」：外壳跟着改到改动页，页眉的下划线也移过去了（外壳记的是「"
+            + shell.InspectorTabForCheck + "」，页眉标的是「"
+            + (shell.InspectorPaneForCheck?.SelectedTabKeyForCheck ?? "") + "」）");
+        // The transcript moves underneath them, which is the whole reason the column repaints at all.
+        chat.SeedTurnForCheck(tabSession.Id, "又一句");
+        panel.Reload();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorPaneForCheck is { } afterPaint && afterPaint.ChangesTabVisibleForCheck
+              && !afterPaint.PlanTabVisibleForCheck && shell.InspectorTabForCheck == "changes",
+            "转录又长一截之后重画，那一列还停在改动页，不会把人弹回他两分钟前就走开的计划页");
+        // The reader's actual complaint: 仓库 showed the plan, because the read that landed repainted the column
+        // on the tab the shell still remembered. Entering it by click must ask for its one read *and* still be
+        // on it when the answer comes back.
+        var repoTabReads = chat.RepositoryReadsForCheck;
+        shell.InspectorPaneForCheck?.ClickRepoTabForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var repoTabLanded = false;
+        await WaitUntilAsync(() =>
+        {
+            repoTabLanded = shell.InspectorPaneForCheck?.RepoNoticeForCheck
+                .Contains(HubStrings.Get("InspectorRepoNoWorkspace"), StringComparison.Ordinal) == true;
+            return repoTabLanded;
+        });
+        Check(chat.RepositoryReadsForCheck == repoTabReads + 1 && repoTabLanded
+              && shell.InspectorPaneForCheck is { } afterRepo && afterRepo.RepoTabVisibleForCheck
+              && !afterRepo.PlanTabVisibleForCheck && shell.InspectorTabForCheck == "repo",
+            "页眉点「仓库」递出那一次读取，读落回面板时人仍站在仓库页（两次之间读了 "
+            + (chat.RepositoryReadsForCheck - repoTabReads) + " 次）");
+        var quietReads = chat.RepositoryReadsForCheck;
+        shell.InspectorPaneForCheck?.ClickPlanTabForCheck();
+        shell.InspectorPaneForCheck?.ClickChangesTabForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(chat.RepositoryReadsForCheck == quietReads && shell.InspectorTabForCheck == "changes"
+              && ReferenceEquals(shell.InspectorPaneForCheck, tabPane),
+            "计划与改动两页一次 git 都不问，换页也不重造面板（外壳记的是「"
+            + shell.InspectorTabForCheck + "」）");
+        shell.CloseInspector();
+        chat.DeleteConversation(tabSession.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+
+        // ── the top bar's drawer button ──
+        // The column's way in and out has to exist whether or not a pane does, which is the difference between a
+        // drawer and the dead end a restored column used to be. It belongs to the assistant page rather than to
+        // the column: on another page there is nothing for it to show.
+        shell.OpenInspector("plan", -1);
+        shell.NavigateTo("Projects");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.InspectorToggleVisibleForCheck,
+            "审阅面板的开关只在助手页出现：别的页上没有可开可关的东西，摆在那儿就是一句假话");
+        shell.NavigateTo("Assistant");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorToggleVisibleForCheck && shell.InspectorVisibleForCheck
+              && shell.InspectorToggleTipForCheck == HubTexts.Get("InspectorToggleTip", HubStrings.Language)
+              && shell.InspectorToggleTipForCheck.Length > 0,
+            "回到助手页它又在了，而这枚只有图标的按钮确实带着文案表里那句提示（实际「"
+            + shell.InspectorToggleTipForCheck + "」）");
+        shell.InspectorPaneForCheck?.ClickChangesTabForCheck();
+        shell.ClickInspectorToggleForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.InspectorVisibleForCheck && !shell.InspectorGripVisibleForCheck
+              && !shell.InspectorExpandedForCheck && !shell.InspectorOverlayVisibleForCheck,
+            "一按收起：那一列连同它自己的拖拽手柄一起让位给聊天，不会留下一个浮着的展开态（列 "
+            + shell.InspectorVisibleForCheck + "、手柄 " + shell.InspectorGripVisibleForCheck
+            + "、展开 " + shell.InspectorExpandedForCheck + "、覆盖层 "
+            + shell.InspectorOverlayVisibleForCheck + "）");
+        shell.ClickInspectorToggleForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.InspectorVisibleForCheck && shell.InspectorTabForCheck == "changes"
+              && shell.InspectorPaneForCheck is { } reopened
+              && reopened.ChangesTabVisibleForCheck && !reopened.PlanTabVisibleForCheck,
+            "再按展开：回到读者上次停的那一页，而不是从头塞给他一个计划（外壳记的是「"
+            + shell.InspectorTabForCheck + "」）");
+        var (drawerWidth, drawerHeight) = shell.InspectorTogglePlateForCheck;
+        var drawerBounds = shell.InspectorToggleBoundsForCheck;
+        var barBounds = shell.TopBarBoundsForCheck;
+        Check(Math.Abs(drawerWidth - drawerHeight) <= 1.5
+              && Math.Abs(barBounds.Height - 42) <= 0.5
+              && drawerBounds.Width > 0 && drawerBounds.Right <= barBounds.Right + 0.5
+              && FitsItsSquareSlot("Hub.Icon.PanelRight"),
+            "开关的悬停底板是正方形、顶栏还是那 42 高、按钮没有越过右缘，图标在 24 网格上包围盒正方且居中（底板 "
+            + Fmt(drawerWidth) + "×" + Fmt(drawerHeight) + "，栏高 " + Fmt(barBounds.Height) + "）");
+        shell.CloseInspector();
+        Dispatcher.UIThread.RunJobs();
 
         // ── the same pane, lifted out of its column ──
         // A width that is not the default, so the round trip below measures something: a restore that reset the
@@ -9487,8 +9586,24 @@ public partial class ShellCheckWindow : Window
     // ---------------------------------------------------------------------
     // Fixtures and helpers
     // ---------------------------------------------------------------------
-    /// <summary>The settings file lives **inside the data root**: all state of one self-check lands in the same temp directory and can be dropped wholesale.</summary>
+    /// <summary>Preferences path inside a scratch root — the settings file one self-check shell owns.</summary>
     private static string PreferencesPathFor(string dataRoot) => System.IO.Path.Combine(dataRoot, "hub-settings.json");
+
+    /// <summary>
+    /// A glyph's bounding box must be square and centred on the 24 grid, because <c>Stretch="Uniform"</c> parks
+    /// any leftover axis as slack on one side — which is the failure <c>Hub.Icon.Send</c>'s own comment documents.
+    /// Read off the resource rather than off a screenshot, so a new glyph is measured the same way as an old one.
+    /// </summary>
+    private static bool FitsItsSquareSlot(string key)
+    {
+        if (Application.Current is not { } app
+            || app.TryGetResource(key, app.ActualThemeVariant, out var value) != true
+            || value is not Avalonia.Media.Geometry glyph) return false;
+        var box = glyph.Bounds;
+        return Math.Abs(box.Width - box.Height) <= 0.6
+               && Math.Abs(box.X + box.Width / 2 - 12) <= 0.8
+               && Math.Abs(box.Y + box.Height / 2 - 12) <= 0.8;
+    }
 
     /// <summary>Reads the three theme labels off the controls themselves: they are written in code,
     /// so only reading them back proves they followed the language switch.</summary>

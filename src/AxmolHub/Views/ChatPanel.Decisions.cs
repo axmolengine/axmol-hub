@@ -61,6 +61,12 @@ public partial class ChatPanel
     /// on which page, and whether the pane is currently covering the window.</summary>
     internal Action? RefreshInspector { get; set; }
 
+    /// <summary>Set by the shell: which tab the reader is actually standing on, every time the pane changes it.
+    /// A repaint asks for a tab by name, so a header click that the shell never heard about is undone by the next
+    /// streamed token — the column comes back on the plan. The handler is one assignment and nothing else: it
+    /// fires from inside <c>Reload</c>, and a repaint that repainted would be a loop.</summary>
+    internal Action<string>? InspectorTabFollowed { get; set; }
+
     /// <summary>The transcript shape the open column was last painted from: which conversation, how many turns.
     /// A turn count rather than a token count, because everything the pane shows is a turn — a plan body, one row
     /// per write — and rebuilding it for each streamed character would re-render markdown for a change nobody
@@ -105,6 +111,9 @@ public partial class ChatPanel
             // An empty scope pointing at the one that is not goes out through the same door a run's chip uses:
             // landing on a tab can mean opening a column that is shut, and only the shell knows the page it is on.
             _inspector.ScopeJumpRequested += target => OpenInspector?.Invoke(target, -1);
+            // And whichever tab the pane ends up showing, the shell is told, because the next repaint asks for a
+            // tab by name. Without this the reader's own click is undone by the next streamed token.
+            _inspector.TabSelected += tab => InspectorTabFollowed?.Invoke(tab);
         }
 
         var planText = PlanTextFor(conversation, turnIndex);

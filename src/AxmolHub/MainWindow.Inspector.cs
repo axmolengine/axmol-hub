@@ -30,7 +30,11 @@ public partial class MainWindow
 
     /// <summary>Which tab and which plan the column is currently holding. Remembered rather than re-asked, so a
     /// repaint while a run keeps writing lands where the reader was looking instead of bouncing them back to the
-    /// plan they left two minutes ago.</summary>
+    /// plan they left two minutes ago. Two writers, deliberately: <see cref="OpenInspector"/> when somebody asks
+    /// for a tab, and the pane itself through <c>InspectorTabFollowed</c> whenever it shows one — including from
+    /// a header click, which is the only way the reader can say "not this page" without closing the column. Not
+    /// persisted: which tab is a momentary decision, and a restored 仓库 would be either a git run during cold
+    /// start or a tab stranded on 「正在读仓库…」.</summary>
     private string _inspectorTab = "plan";
     private int _inspectorTurn = -1;
 
@@ -70,6 +74,10 @@ public partial class MainWindow
         RepoIndicator.Click += (_, _) => OnRepoIndicatorClicked();
         UpdateRepoIndicator();
 
+        // The top bar's drawer button, the sidebar toggle's mirror: it is the column's way in and out that does
+        // not depend on the pane being built, which is the difference between a drawer and a dead end.
+        InspectorToggle.Click += (_, _) => ToggleInspectorColumn();
+
         // Esc on the window's own tunnel, registered here rather than after the picture viewer's and ordered by
         // an explicit guard instead: which overlay is up is a fact this handler can read, while handler order is
         // a fact about the constructor that a later edit can change without noticing.
@@ -77,6 +85,23 @@ public partial class MainWindow
     }
 
     private static double InspectorClamp(double width) => Math.Clamp(width, InspectorMin, InspectorMax);
+
+    /// <summary>
+    /// The top bar's one control: it opens the column if it is shut and hides it if it is open. Both arms are
+    /// methods that already have their own assertions — opening re-enters through <see cref="OpenInspector"/>, so
+    /// the column comes back on the tab the reader last stood on (and if that was 仓库, it asks for its one read,
+    /// because asking again is what pressing the button means), and closing is <see cref="CloseInspector"/>, so the
+    /// persisted flag, the overlay and the grip all come down together rather than one of them being left behind.
+    /// </summary>
+    private void ToggleInspectorColumn()
+    {
+        if (_inspectorOpen)
+        {
+            CloseInspector();
+            return;
+        }
+        OpenInspector(_inspectorTab, _inspectorTurn);
+    }
 
     /// <summary>What the strip's repository slot does when pressed. The navigation comes first and is not
     /// decoration: <see cref="SetInspectorColumnVisible"/> gates the column on the assistant page, so opening it
@@ -162,6 +187,10 @@ public partial class MainWindow
         if (show) EnsureInspectorPane();
         InspectorColumn.IsVisible = show;
         InspectorResizeGrip.IsVisible = show;
+        // The drawer button belongs to the page, not to the column: while the pane is lifted into the overlay the
+        // column is legitimately empty, and a button that flipped off there would leave the person no way back
+        // except Esc.
+        InspectorToggle.IsVisible = _currentKey == "Assistant";
     }
 
     /// <summary>Builds the pane if nothing has yet, through the same door <see cref="OpenInspector"/> uses, and
@@ -258,6 +287,21 @@ public partial class MainWindow
 
     internal bool InspectorVisibleForCheck => InspectorColumn.IsVisible;
     internal double InspectorWidthForCheck => Inspector.Width;
+
+    /// <summary>The top bar's drawer button, as a check drives and reads it. Its tooltip is asserted rather than
+    /// assumed because the button carries no text of its own: if that one string is not wired, the control has no
+    /// name anywhere on the screen.</summary>
+    internal bool InspectorToggleVisibleForCheck => InspectorToggle.IsVisible;
+    internal bool InspectorGripVisibleForCheck => InspectorResizeGrip.IsVisible;
+    internal string InspectorToggleTipForCheck => ToolTip.GetTip(InspectorToggle) as string ?? "";
+    internal (double Width, double Height) InspectorTogglePlateForCheck
+        => (InspectorToggle.Bounds.Width, InspectorToggle.Bounds.Height);
+    internal Rect InspectorToggleBoundsForCheck => InClient(InspectorToggle);
+
+    /// <summary>Presses the top bar's own button, so a cell drives the wiring instead of calling
+    /// <see cref="ToggleInspectorColumn"/> and proving nothing.</summary>
+    internal void ClickInspectorToggleForCheck()
+        => InspectorToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     /// <summary>Writes the width the grip writes, so a check can start from a width that is not the default and
     /// tell "the column kept what you dragged it to" from "both numbers happen to be 360".</summary>

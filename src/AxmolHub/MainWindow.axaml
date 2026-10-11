@@ -446,10 +446,11 @@
     <!-- ==================== Content ==================== -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
 
-      <!-- Top bar: sidebar toggle + current page title. Named because the expanded inspector asserts that it
-           covers this, the sidebar and the page — the whole client area and not merely a wide pane. -->
+      <!-- Top bar: the sidebar's way in and out, the current page title, and the inspector's way in and out.
+           Named because the expanded inspector asserts that it covers this, the sidebar and the page — the whole
+           client area and not merely a wide pane. -->
       <Grid x:Name="TopBar" Grid.Row="0" Height="42" Margin="18,2,18,0"
-            ColumnDefinitions="Auto,*">
+            ColumnDefinitions="Auto,*,Auto">
         <Button x:Name="SidebarToggle" Grid.Column="0" Classes="icon-ghost">
           <Path Classes="stroked" Data="{StaticResource Hub.Icon.Panel}"
                 Width="18" Height="18" Stretch="Uniform" />
@@ -457,6 +458,13 @@
         <TextBlock x:Name="PageTitle" Grid.Column="1"
                    FontSize="14" Margin="10,0,0,0"
                    TextTrimming="CharacterEllipsis" />
+        <!-- The inspector column's drawer button, the left toggle's mirror. It belongs to the assistant page
+           rather than to the column: on another page there is nothing to show or hide, and a button that opened
+           a column nobody could see is the bug this row is here to stop. -->
+        <Button x:Name="InspectorToggle" Grid.Column="2" Classes="icon-ghost" IsVisible="False">
+          <Path Classes="stroked" Data="{StaticResource Hub.Icon.PanelRight}"
+                Width="18" Height="18" Stretch="Uniform" />
+        </Button>
       </Grid>
 
       <ContentControl x:Name="PageHost" Grid.Row="1"

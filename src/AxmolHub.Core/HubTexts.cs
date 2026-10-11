@@ -669,6 +669,10 @@ public static class HubTexts
         // read as the assistant's. Every state below is a sentence the tab can end on: each names why it stopped
         // rather than drawing an empty list, which is the same rule the four diff states above follow.
         ["InspectorTabRepo"] = ("仓库", "Repository"),
+        // The top bar's drawer button. Icon-only like the sidebar's, so the tooltip is the only place it has a
+        // name — and it names both directions, because one glyph that opens and closes cannot say which it is
+        // about to do without a second control that would repeat the column itself.
+        ["InspectorToggleTip"] = ("显示或隐藏审阅面板", "Show or hide the review panel"),
         // The invitation on a run's +N −M chip. The count alone says how much, not where to look; this is the
         // same one word of affordance the plan card's 「查看计划」 gives, and the only place that says the number
         // can be pressed.
