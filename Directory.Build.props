@@ -1,7 +1,7 @@
 <Project>
 
   <!--
-    Repo-wide MSBuild defaults. There is no .sln here and the four projects build
+    Repo-wide MSBuild defaults. There is no .sln here and the five projects build
     independently, so this file is their only shared configuration point.
 
     Boundary: only properties that should be identical across all projects. Anything
@@ -20,45 +20,68 @@
     <Version>0.9.1</Version>
 
     <!-- The NuGet-side equivalent of the repo's existing "version + SHA-256 double pin"
-         philosophy: pin each project's full transitive closure in packages.lock.json so
-         different dev machines don't resolve different versions.
+         philosophy: pin the shipped dependency closure in packages.lock.json so different
+         dev machines don't resolve different versions.
 
          Spell out the boundary, don't oversell it: what this fixes is **version drift**,
          not tampering — NuGet global packages already carry SHA-512 checks, and a lock
          file is not a signature.
 
-         **Only projects with real dependencies keep a lock file**: a lock file's value
-         comes from "pinning package versions". The lock file of a zero-dependency project
-         contains nothing but empty framework/RID nodes — it pins nothing, yet still jitters
-         along with the RID behavior below. Today App is the only project in the repo with a
-         PackageReference, so the repo **tracks App's lock file only**; Core / Cli / Checks
-         each turn this property off explicitly in their csproj (delete that line when the
-         first PackageReference is added).
+         **Policy: one lock file is tracked, the dependency-chain root.**
+           · AxmolHub (the app, shipped) — tracked. Measured shape: a net8.0 node of 8 Direct
+             plus 60 Transitive plus 2 Project entries, then one 9-entry node per declared
+             RuntimeIdentifiers (linux-x64, osx-arm64, osx-x64, win-x64).
+           · AxmolHub.Agent — opted out in its own csproj and untracked. Common code that both
+             App and Checks reference and that is never shipped alone, and NuGet's own wording
+             is that a common code project's lock file has "little say over the packages
+             resolved for projects that depend on it". Measured before deleting it: all 24
+             package entries it carried already sat in the App file at identical versions.
+           · AxmolHub.Checks — opted out and untracked for the same reason: 23 entries, not one
+             of them Direct, every version arriving through Agent, and nothing shipped.
+           · AxmolHub.Core / AxmolHub.Cli — opted out: no PackageReference at all, so a lock
+             file would hold nothing but empty framework and RID nodes.
+         A project that gains its first PackageReference re-decides by this rule rather than
+         copying a version number: is what it builds shipped on its own? If not, opt out.
 
-         RestoreLockedMode is deliberately not enabled: this machine only has SDK 10, so the
-         net8.0 targeting pack is restored through NuGet here, while CI's SDK 8 takes it from
-         the directory shipped with the SDK — the two can produce lock files with different
-         content, and locking outright would make CI fail lock-file validation. The order is:
-         commit the lock file first → wait for CI to genuinely go green once → then decide
-         whether to switch to locked mode. (Also: CI currently neither enables locked-mode nor
-         runs an explicit dotnet restore, so the lock file is not yet a gate.)
+         Presence outranks the property, and this is the part that gets missed: NuGet consumes
+         a packages.lock.json that exists in a project directory even when
+         RestorePackagesWithLockFile is false, and while that file matches the declared
+         dependencies it restores out of it with no re-evaluation of the graph at all. Opting
+         out therefore stops NuGet from writing the file; it does not stop a leftover copy from
+         pinning. Delete any that reappears in an opted-out directory. The two that used to be
+         tracked are named in .gitignore, so git status will not show such a leftover.
+
+         RestoreLockedMode is deliberately not enabled, and "not enabled" means not enforced,
+         not unused: the tracked file already decides which versions every restore on this
+         machine and in CI resolves. Locked mode would add one guarantee, that a mismatch
+         fails the restore instead of quietly rewriting the file. Two facts keep that a separate
+         decision, and neither is the SDK — build.yml runs DOTNET_SDK_VERSION 10.0.x, the same
+         major as a dev machine:
+           · shape. A committed multi-node file does not match the base-plus-one-RID graph that
+             a publish carrying a RID writes, so enabling locked mode today would fail the four
+             package jobs until the packaging restore path is reworked.
+           · the .NET SDK injects implicit PackageReference items, so a different SDK patch can
+             change the graph and fail a locked restore; the documented mitigation is a
+             global.json, which this repo deliberately does not pin.
+         The order is unchanged: keep the tracked file honest, then decide whether to enforce it.
 
          **Lock files jitter, and that is deterministic NuGet behavior, not an environment
-         anomaly** (reproduced by measurement on 2026-10-04): the content depends on whether
-         the last restore passed -r —
-           · without a RID: writes "the base TFM node + one node per declared RuntimeIdentifiers";
-           · with -r <rid>: **writes only that single RID node and prunes the rest**, and it
-             **rewrites the lock files of referenced projects along the way** (restoring App
-             with -r win-x64 adds net8.0/win-x64 to Core, even though Core itself declares
-             no RID at all).
-         installer/Build.ps1 runs dotnet publish -r win-x64, so **every local package build
-         prunes App's lock file from multiple RIDs down to 1** (Core's copy is no longer
-         tracked, so it is unaffected).
-         Don't count on "declaring RuntimeIdentifiers settles everything": that holds for
-         Cli but not for App, because a single -r restore still prunes multiple RIDs down to
-         one. **Running a RID-less dotnet restore once before committing restores it**
-         (measured: after one restore per project across the four projects, git status goes
-         back to zero). -->
+         anomaly** (re-measured on 2026-10-11 against this tree). NuGet rewrites a lock file only
+         when its check on the declared dependencies says the file is stale, so an ordinary
+         publish with nothing bumped leaves the tracked file byte-identical. When it does rewrite,
+         the shape depends on whether the restore passed a RID:
+           · without a RID: the base TFM node plus one node per declared RuntimeIdentifiers
+             (5 nodes for the app);
+           · with a RID: the base node plus that single RID node (2 nodes for the app), and it
+             rewrites the lock files of referenced projects along the way. That second half is
+             what bolted a stray net8.0/win-x64 node onto Agent's file in the middle of the
+             installer change committed as c4564e9.
+         So the day a package version is bumped is the day a packaging run leaves a pruned file.
+         installer/Build.ps1 now follows its publish with a RID-less restore of the app project,
+         which rewrites the committed shape before any later step of the run can fail. A manual
+         publish carrying a RID still needs that restore by hand; see docs/building-from-source.md.
+         Do not cure this by suppressing generation during a publish: the file is read whether or
+         not it is written, and an unmaintained pin is worse than a dirty one. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
   </PropertyGroup>

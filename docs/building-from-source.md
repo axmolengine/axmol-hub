@@ -207,6 +207,8 @@ foreach ($g in 'providers','sessions','context','workspace','tool-policy','memor
 dotnet publish src/AxmolHub/AxmolHub.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
 ```
 
+> **带 RID 的手工发布会把 `src/AxmolHub/packages.lock.json` 收成两个节点**（`net8.0` 与刚才那一个 RID），因为带 RID 的还原在重写锁文件时只写它自己那一档。重写只发生在锁文件被判定过期时，所以「什么都没升」的普通发布不会动这个文件 —— 一旦看见它的 diff，就说明这一次真的重写过。`installer/Build.ps1` 已经在 publish 之后自带一次无 RID 的 `dotnet restore` 把 5 节点形状写回来；手工跑上面这条命令就要自己补一次，提交前确认 `git status` 里锁文件没有输出。形状、策略与理由记在根目录 `Directory.Build.props`。
+
 > **Linux 另需一个中文字体。** 最小化安装的 Ubuntu 不带任何 CJK 字体，中文界面会整片显示成方框 ——
 > 界面语言默认是英文就是为了这个。Hub 会在启动时与切到中文时自行探测（判据是渲染器能不能匹配到
 > 汉字字形，不是"装没装某个包"），探测不到就提示 `sudo apt install fonts-noto-cjk`。

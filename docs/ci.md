@@ -107,7 +107,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 
 ### 2.4 SDK 版本
 
-CI 固定 `8.0.x`（`setup-dotnet` 在托管 runner 上会解析到足够新的 8.0.x 补丁，编译器 ≥ 4.14，能跑 Avalonia 生成器）。开发机**推荐**装 .NET 10 SDK（README 已说明：`net8.0` 目标框架下 Avalonia 12.1.3 的源生成器是按编译器 4.14 编译的，SDK 8 只有够新的补丁才满足，而 Ubuntu `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx 只有编译器 4.8、源生成器不产出、报 `CS0103`；.NET 10 一定满足）。开发机装的是更高版本（例如只有 SDK 10）这本身是额外信号：能同时通过 8 与 10 说明没有依赖新 SDK 行为。
+CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解析到的补丁编译器 ≥ 4.14，能跑 Avalonia 生成器）。开发机**推荐**装 .NET 10 SDK（README 已说明：`net8.0` 目标框架下 Avalonia 12.1.3 的源生成器是按编译器 4.14 编译的，SDK 8 只有够新的补丁才满足，而 Ubuntu `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx 只有编译器 4.8、源生成器不产出、报 `CS0103`；.NET 10 一定满足）。开发机装的是更高版本（例如只有 SDK 10）这本身是额外信号：能同时通过 10 与更高补丁说明没有依赖某个 SDK 补丁才有的行为。
 
 ### 2.5 action 版本策略
 
