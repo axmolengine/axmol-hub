@@ -36,7 +36,28 @@ internal sealed class SystemAttentionService : IDisposable
     /// so delivery itself never breaks.
     /// </summary>
     internal const string WindowsAppUserModelId = "AxmolHub";
+
+    /// <summary>The freedesktop action identifier Linux clicks come back as; notify-send 0.8.3 prints the
+    /// identifier rather than the label, so this is what the observer compares against.
+    ///
+    /// <para>It is deliberately **not** the spec's <c>default</c>: measured on GNOME 46, the shell invokes
+    /// <c>default</c> by itself when the banner times out, so an untouched notification would have reported a
+    /// click about five seconds after appearing and moved the view to a conversation nobody opened. A named
+    /// action stays silent (the same probe, 30 seconds, empty stdout) and arrives only from a real click on the
+    /// button, while a click on the body keeps the shell's own behaviour — activating the application, which is
+    /// what <see cref="RememberActivationTarget"/> answers.</para>
+    /// </summary>
+    internal const string LinuxActivationActionKey = "axmolhub-open";
+
+    /// <summary>How long a Linux notification's pending activation target stays believable. It has to outlast the
+    /// banner (a few seconds) plus the moment just after expiry, when the entry has only moved to the message
+    /// list; past that it would hijack an unrelated Alt-Tab.</summary>
+    internal static readonly TimeSpan ActivationTargetLifetime = TimeSpan.FromSeconds(90);
+
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _activationTargetLock = new();
+    private string? _activationTarget;
+    private DateTimeOffset _activationTargetAt;
 
     internal event Action<string>? NotificationActivated;
     internal event Action<string>? Diagnostic;
@@ -224,14 +245,103 @@ internal sealed class SystemAttentionService : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        start.ArgumentList.Add("--app-name=Axmol Hub");
-        start.ArgumentList.Add("--action=default,Open");
-        start.ArgumentList.Add("--wait");
-        start.ArgumentList.Add(title);
-        start.ArgumentList.Add(body);
+        foreach (var argument in BuildLinuxNotificationArguments(
+                     LinuxDesktopIdentity.Id, title, body, HubStrings.Get("NotificationActionOpen"), conversationId))
+            start.ArgumentList.Add(argument);
+        // Arm before the process is started: the helper may report its action key before the next line runs, and
+        // a body click may reach the window through the activation route instead.
+        RememberActivationTarget(conversationId, DateTimeOffset.UtcNow);
         var process = Process.Start(start) ?? throw new IOException("Could not start notify-send.");
         Report($"Started Linux notification helper for conversation {conversationId}.");
         _ = ObserveLinuxNotificationAsync(process, conversationId, _shutdown.Token);
+    }
+
+    /// <summary>
+    /// The one place the Linux notification's argv is assembled, kept pure so
+    /// <c>--check-linux-integration</c> can pin it on a host with no display.
+    ///
+    /// <para>Three click routes are packed into these arguments, because no single one covers every desktop and
+    /// every moment:</para>
+    /// <list type="number">
+    /// <item>the body carries an <c>axmolhub://conversation/…</c> anchor, and GNOME activates body links through
+    /// the registered <c>x-scheme-handler</c> — exact, and it works even when Hub is not running;</item>
+    /// <item>the action identifier is <see cref="LinuxActivationActionKey"/>, which servers that dispatch
+    /// <c>ActionInvoked</c> hand back to the waiting helper — exact, but only while the helper lives;</item>
+    /// <item>the <c>desktop-entry</c> hint is what lets the shell attribute the notification to Hub at all, so a
+    /// body click on the running app raises this window; that route carries no identifier, which is why
+    /// <see cref="RememberActivationTarget"/> exists.</item>
+    /// </list>
+    ///
+    /// <para>The action syntax is <c>[NAME=]Text</c>: the shipped argument used to be <c>default,Open</c>, which
+    /// has no <c>=</c> and so registers no name at all — the helper printed the option's index <c>0</c> while
+    /// <c>default,Open</c> became the label, and the click was never recognized. There is deliberately no
+    /// <c>--print-id</c>: it prepends the notification id to the stdout this list is parsed from.</para>
+    /// </summary>
+    internal static IReadOnlyList<string> BuildLinuxNotificationArguments(
+        string desktopEntryId, string title, string body, string actionLabel, string conversationId)
+    {
+        var link = $"axmolhub://conversation/{Uri.EscapeDataString(conversationId)}";
+        return new[]
+        {
+            "--app-name=Axmol Hub",
+            // The icon theme entry was installed under the same identifier as the desktop entry, so one name
+            // serves the banner logo, the hint, and the window-class match.
+            "--icon=" + desktopEntryId,
+            "--hint=string:desktop-entry:" + desktopEntryId,
+            $"--action={LinuxActivationActionKey}={actionLabel}",
+            "--wait",
+            title,
+            EscapeMarkupText(body) + "\n<a href=\"" + link + "\">" + EscapeMarkupText(actionLabel) + "</a>",
+        };
+    }
+
+    /// <summary>Undoes markup meaning in text the user typed. A session title holding <c>&lt;</c> or <c>&amp;</c>
+    /// would otherwise make the whole body fail to parse, and the notification would vanish rather than show a
+    /// stray character — which is why the anchor is appended after escaping, never before.</summary>
+    private static string EscapeMarkupText(string value)
+        => value.Replace("&", "&amp;", StringComparison.Ordinal)
+            .Replace("<", "&lt;", StringComparison.Ordinal)
+            .Replace(">", "&gt;", StringComparison.Ordinal);
+
+    /// <summary>Whether notify-send reported that the user activated the notification. The action identifier is
+    /// what it prints, but a server that received the action without a usable identifier prints the option index
+    /// instead, and exactly one action is registered — so <c>0</c> means the same click.</summary>
+    internal static bool IsActivationActionKey(string? output, string actionKey = LinuxActivationActionKey)
+    {
+        var reported = (output ?? "").Trim();
+        return reported.Length > 0 && (reported == actionKey || reported == "0");
+    }
+
+    /// <summary>Records the conversation the last Linux notification was about, for the one click route that
+    /// carries no identifier: the shell raising an already-running window. Last write wins.</summary>
+    internal void RememberActivationTarget(string conversationId, DateTimeOffset now)
+    {
+        lock (_activationTargetLock)
+        {
+            _activationTarget = conversationId;
+            _activationTargetAt = now;
+        }
+    }
+
+    /// <summary>Hands back the pending conversation once, and drops it. A target older than
+    /// <see cref="ActivationTargetLifetime"/> is answered with <c>null</c>: by then the notification has long
+    /// left the banner, and an ordinary visit to the window is no longer a click on it.</summary>
+    internal string? TryTakeActivationTarget(DateTimeOffset now)
+    {
+        lock (_activationTargetLock)
+        {
+            var target = _activationTarget;
+            _activationTarget = null;
+            if (target is null || now - _activationTargetAt > ActivationTargetLifetime) return null;
+            return target;
+        }
+    }
+
+    /// <summary>Drops the pending target without opening anything: a route that already named its conversation —
+    /// a body link, an action key, a deeplink — has decided, and a later plain window raise must not re-open it.</summary>
+    internal void ClearActivationTarget()
+    {
+        lock (_activationTargetLock) _activationTarget = null;
     }
 
     private async Task ObserveLinuxNotificationAsync(
@@ -252,8 +362,24 @@ internal sealed class SystemAttentionService : IDisposable
                            + $"(exit {process.ExitCode}): {diagnostic}");
                     return;
                 }
-                Report($"Linux notification helper completed for conversation {conversationId}.");
-                if (action == "default") NotificationActivated?.Invoke(conversationId);
+                if (IsActivationActionKey(action))
+                {
+                    Report($"Linux notification action \"{action}\" opened conversation {conversationId}.");
+                    NotificationActivated?.Invoke(conversationId);
+                }
+                else if (action.Length > 0)
+                {
+                    Report($"Linux notification for conversation {conversationId} reported action "
+                           + $"\"{action}\", which is not an activation.");
+                }
+                else
+                {
+                    // The usual ending: the banner expired before anything was clicked, and the helper exited with
+                    // nothing on stdout. Recorded because a click that never landed is the other half of "the
+                    // notification did nothing", and only this line tells the two apart.
+                    Report($"Linux notification for conversation {conversationId} closed without an action key; "
+                           + "only raising the window can still open it.");
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

@@ -126,6 +126,8 @@ dotnet run --project src/AxmolHub -- --check-webfetch https://www.lua.org/manual
 
 AI 助手的外壳检查还覆盖了计划审批卡、批准后以 Agent 模式继续、修改/拒绝、待审批计数、通知过滤（含窗口失焦与最小化）与会话深链激活。任务栏/Dock 徽标统计所有至少有一项未解决审批的会话（包括当前打开的会话），同一会话的多项审批只计一次；决定完成后计数随之更新，任务完成本身不计入。「用户看得见这条会话」要三件事同时成立：窗口在前台（既未失焦也未最小化）、停在 Assistant 页、且该页正显示这条会话——三项同时成立时，审批卡已经在眼前，因此不重复弹系统通知；最小化或 Alt-Tab 走开后，即使走开的正是当前会话，也会提醒。Windows 任务栏 overlay 和 macOS Dock 支持数字徽标；Linux 桌面环境没有统一的任务栏数字徽标接口，所以只使用该桌面实际提供的通知能力。自检会禁用真实系统通知和原生任务栏/Dock 徽标；Windows Toast、macOS 通知中心及 Linux 通知守护进程的显示与点击行为仍须在对应桌面环境实测。
 
+**Linux 的三条点击路由**：`notify-send` 那一条命令同时埋了三个入口，参数形状由 `--check-linux-integration` 钉住（`SystemAttentionService.BuildLinuxNotificationArguments` 是纯函数，无显示器也能断言）：正文末尾的 `<a href="axmolhub://conversation/{id}">` 锚点——GNOME 对正文链接调 `Gio.app_info_launch_default_for_uri`，命中已注册的 `x-scheme-handler/axmolhub`，应用没在跑也有效；具名动作 `axmolhub-open`——会派发 `ActionInvoked` 的桌面把键回报给还在等的子进程，KDE 等走这条；`--hint=string:desktop-entry:axmol-hub`——让 Shell 能把通知归属到本应用，因为点横幅主体时 GNOME 只**前置已运行的窗口**，不重跑 `Exec`，也就没有第二个进程、没有深链，此时靠「最近通知的那条会话」补一跳（`MainWindow.OnWindowActivated`，TTL 90 秒、取一次即清）。两个本机实测出来的坑：`--action` 的语法是 `[NAME=]Text`，旧的 `default,Open` 没有等号，动作键退化成序号 `0`，点击因此永远认不出来；而**不能**拿规范里的 `default` 当动作名——GNOME 46 在横幅约 5 秒超时、无人点击时会自己回报 `default`，通知就会凭空把视图挪到那条会话上。对照实验：`--action=default=…` 8 秒内退出并打印 `default`，`--action=axmolhub-open=…` 静默 30 秒不打印。窗口侧同样实测过：启动那次 `Activated` 在通知 arm 之后约 13 毫秒就到，比任何点击都早，所以只有「确实离开过前台」之后的回归才被当作一次点击（`_foregroundHasLeftWindow`，`--verify-shell` 直接钉住这两步）。
+
 **Windows 通知与任务栏标记手动诊断**：使用单独的数据目录启动应用，可立即请求一个示例 Toast 和 30 秒任务栏标记，不会创建或修改真实会话。开发版：
 
 ```powershell

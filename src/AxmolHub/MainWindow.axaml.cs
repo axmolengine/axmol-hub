@@ -37,6 +37,12 @@ public partial class MainWindow : Window
     private string? _attentionDiagnosticConversationId;
     private bool _windowIsOpen;
 
+    /// <summary>Whether this window has lost the foreground at least once since it was shown. A notification click
+    /// arrives as a *return* to the foreground, and a window that never left cannot be returning: without this,
+    /// the activation that finishes start-up consumes the pending conversation before any click exists — measured
+    /// on GNOME 46, where it fired 13 ms after the notification was armed.</summary>
+    private bool _foregroundHasLeftWindow;
+
     /// <summary>Forced window-visibility answer for the self-check, or <c>null</c> to read the platform. The
     /// suite drives a real <see cref="MainWindow"/> that is never the foreground window and can never truly be
     /// minimized, so without this the desktop half of the visibility composition could only ever be asserted in
@@ -110,6 +116,14 @@ public partial class MainWindow : Window
         _attention.NotificationActivated += NotificationActivated;
         _attention.Diagnostic += message => Dispatcher.UIThread.Post(
             () => WriteLog("[System attention] " + message));
+        // The route GNOME gives a click on a notification's body: the shell raises the already-running window
+        // instead of re-running the desktop entry, so no deeplink and no second instance ever reach the broker.
+        // That raise produces nothing but this event, and the conversation it belongs to is the one the
+        // attention service remembered when it sent the notification. It has to be a *return*: the activation
+        // that finishes start-up arrives on its own, ~13 ms after the first notification is armed in the
+        // measured run, and consuming there would spend the click before the user ever had one.
+        Activated += (_, _) => OnWindowActivated();
+        Deactivated += (_, _) => _foregroundHasLeftWindow = true;
         WireChatSeams();
         WireChatRuns();
 
@@ -168,8 +182,29 @@ public partial class MainWindow : Window
 
     internal void ActivateFromRequest()
     {
+        if (ConsumeActivationTarget()) return;
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
+    }
+
+    /// <summary>The window came back to the foreground — the only signal a desktop gives for a click on a
+    /// notification when it raises the running window instead of naming a conversation. Gated on the window
+    /// having genuinely left the foreground, see <see cref="_foregroundHasLeftWindow"/>.</summary>
+    private void OnWindowActivated()
+    {
+        if (_foregroundHasLeftWindow) _ = ConsumeActivationTarget();
+    }
+
+    /// <summary>Opens the conversation a notification was about when the window is being raised for one, and
+    /// reports whether it did. A raise with nothing pending — Alt-Tab, the taskbar, a second instance asked to
+    /// show itself — stays the plain raise it always was.</summary>
+    private bool ConsumeActivationTarget()
+    {
+        if (_attention.TryTakeActivationTarget(DateTimeOffset.UtcNow) is not { } conversationId) return false;
+        WriteLog($"[System attention] The window was raised with a notification pending; "
+                 + $"opening conversation {conversationId}.");
+        OpenConversationFromAttention(conversationId);
+        return true;
     }
 
     internal async Task HandleInstallLinkAsync(string value)
@@ -461,6 +496,10 @@ public partial class MainWindow : Window
 
     private void OpenConversationFromAttention(string conversationId)
     {
+        // Every route that lands here named its own conversation — an action key, a body link, a deeplink — so
+        // the remembered target has been overtaken. Left standing, it would replay this jump on the next
+        // ordinary raise, long after the notification it belonged to.
+        _attention.ClearActivationTarget();
         if (string.Equals(conversationId, _attentionDiagnosticConversationId, StringComparison.Ordinal))
         {
             NavigateTo("Assistant");
@@ -962,6 +1001,20 @@ public partial class MainWindow : Window
     /// client so the page can be verified with no network and no API key.
     /// </summary>
     internal ChatWorkspace Chat => _chat;
+
+    /// <summary>The OS attention channel, for the shell self-check: the pending notification target has to be
+    /// armed on the same object the production notification path arms it on, or the check proves nothing.</summary>
+    internal SystemAttentionService AttentionForCheck => _attention;
+
+    /// <summary>Drives the foreground transition a notification click is made of, for the self-check: the window a
+    /// check run shows never really leaves the foreground, so both the return that consumes a pending conversation
+    /// and the start-up activation that must not consume one can only be asserted through this. The argument is
+    /// the state being tested — whether this window had left the foreground before coming back.</summary>
+    internal void ReturnToForegroundForCheck(bool hadLeftForeground)
+    {
+        _foregroundHasLeftWindow = hadLeftForeground;
+        OnWindowActivated();
+    }
 
     /// <summary>The strip's background-reply counter, read as the user sees it.</summary>
     internal bool ChatRunsVisibleForCheck => ChatRuns.IsVisible;

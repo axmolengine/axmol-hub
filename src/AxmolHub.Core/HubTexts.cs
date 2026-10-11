@@ -597,6 +597,9 @@ public static class HubTexts
         ["ChatToolApprovalNotificationBody"] = ("会话「{0}」需要你批准一项操作。", "A conversation 「{0}」 needs you to approve an action."),
         ["AttentionDiagnosticTitle"] = ("Axmol Hub 通知测试", "Axmol Hub notification test"),
         ["AttentionDiagnosticBody"] = ("这是系统通知测试；任务栏标记将在 30 秒后恢复。", "This is a system notification test; the taskbar badge will reset after 30 seconds."),
+        // Linux notifications carry this twice: as the notify-send action label, and as the anchor text of the
+        // open-in-Hub link appended to the body. It is the only click target that names the conversation exactly.
+        ["NotificationActionOpen"] = ("打开会话", "Open conversation"),
         // After the decision the card collapses to one of these lines — the record stays in the transcript, the
         // buttons do not.
         ["ChatApprovalResolvedApproved"] = ("已批准", "Allowed"),

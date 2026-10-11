@@ -85,6 +85,61 @@ internal static class LinuxIntegrationSelfCheck
         DeepLinkProtocolRegistration.Register(null);
         Check(File.Exists(desktopFile) && File.GetLastWriteTimeUtc(desktopFile) == before, "a second registration rewrites nothing (bytes already match)");
 
+        // A click on a Linux notification can only be proven by a person clicking, so what the click is built out
+        // of is pinned here instead. Both halves of the bug this guards against were invisible at build time: an
+        // action argument with no identifier (notify-send's syntax is [NAME=]Text, so "default,Open" registered a
+        // button labelled "default,Open" and printed the index), and a notification no shell could attribute to
+        // this app — the same family as the desktop entry that shipped without an Icon= for months.
+        var conversationId = Guid.NewGuid().ToString("N");
+        var argv = SystemAttentionService.BuildLinuxNotificationArguments(
+            LinuxDesktopIdentity.Id, "计划等待确认", "会话「fix <A> & B」需要你的决定。", "打开会话", conversationId);
+        const string hintPrefix = "--hint=string:desktop-entry:";
+        var hint = argv.FirstOrDefault(a => a.StartsWith(hintPrefix, StringComparison.Ordinal));
+        Check(hint is not null && hint[hintPrefix.Length..] == LinuxDesktopIdentity.Id,
+            $"the notification sends the desktop-entry hint ({LinuxDesktopIdentity.Id}) the shell attributes it to");
+        // One string, three places: the hint is what a banner click is matched with, while StartupWMClass and
+        // Icon are how the running window and its logo are matched. Two spellings and the click lands nowhere.
+        Check(hint is not null && hint[hintPrefix.Length..] == Get(keys, "StartupWMClass")
+              && Get(keys, "StartupWMClass") == Get(keys, "Icon"),
+            "the desktop-entry hint, StartupWMClass and Icon are the same identifier");
+        Check(argv.Contains("--action=" + SystemAttentionService.LinuxActivationActionKey + "=打开会话"),
+            "the action names the identifier it must print back, with the label after an equals sign");
+        Check(!argv.Any(a => a.StartsWith("--action=default", StringComparison.Ordinal)),
+            "the action is not the spec's \"default\": a GNOME banner invokes that by itself when it times out untouched");
+        Check(!argv.Contains("--print-id"),
+            "no --print-id: it would prepend the notification id to the stdout the action key is read from");
+        var body = argv[^1];
+        Check(body.Contains($"<a href=\"axmolhub://conversation/{conversationId}\">", StringComparison.Ordinal),
+            "the body carries the conversation deep link as a markup anchor, the route that works with the app closed");
+        Check(body.Contains("fix &lt;A&gt; &amp; B", StringComparison.Ordinal) && !body.Contains("<A>", StringComparison.Ordinal),
+            "a session title holding markup characters is escaped instead of breaking the whole body");
+        Check(SystemAttentionService.IsActivationActionKey("axmolhub-open")
+              && SystemAttentionService.IsActivationActionKey(" axmolhub-open\n")
+              && SystemAttentionService.IsActivationActionKey("0")
+              && !SystemAttentionService.IsActivationActionKey("default")
+              && !SystemAttentionService.IsActivationActionKey("1")
+              && !SystemAttentionService.IsActivationActionKey("")
+              && !SystemAttentionService.IsActivationActionKey(null),
+            "the action key reader takes this app's identifier and the single-action index fallback, and refuses the "
+            + "bare \"default\" a GNOME banner reports when it times out untouched");
+
+        // The route that carries no identifier at all: GNOME raises the running window for a body click without
+        // re-running Exec, so the conversation comes from what the notification remembered.
+        using var attention = new SystemAttentionService();
+        var now = DateTimeOffset.UtcNow;
+        attention.RememberActivationTarget(conversationId, now);
+        Check(attention.TryTakeActivationTarget(now) == conversationId
+              && attention.TryTakeActivationTarget(now) is null,
+            "a bare activation takes the last notified conversation exactly once");
+        attention.RememberActivationTarget(conversationId,
+            now - SystemAttentionService.ActivationTargetLifetime - TimeSpan.FromSeconds(1));
+        Check(attention.TryTakeActivationTarget(now) is null,
+            $"a target older than {SystemAttentionService.ActivationTargetLifetime.TotalSeconds:0} seconds is dropped");
+        attention.RememberActivationTarget(conversationId, now);
+        attention.ClearActivationTarget();
+        Check(attention.TryTakeActivationTarget(now) is null,
+            "a click that named its own conversation clears the pending target so a later raise cannot replay it");
+
         foreach (var note in notes) Console.WriteLine("note: " + note);
         return failures;
     }

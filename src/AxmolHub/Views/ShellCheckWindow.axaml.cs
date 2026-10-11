@@ -4236,6 +4236,41 @@ public partial class ShellCheckWindow : Window
                   && shell.AttentionNow.WindowVisible == (shell.IsActive && shell.WindowState != WindowState.Minimized),
                 "系统通知闸门仍区分窗口可见性，而任务栏待审批会话数不随当前页面或窗口状态变化（可见/隐藏 "
                 + badgeWhileVisible + "/" + badgeWhileHidden + "）");
+            // The click that carries no identifier: a desktop that only raises the running window gives the shell
+            // one signal — the window came back — so the conversation has to be the one the notification
+            // remembered. Measured on GNOME 46 first, where the activation that finishes start-up arrived 13 ms
+            // after the notification was armed and spent it before any click existed; ActivateFromRequest is the
+            // entry point a second instance's bare activation reaches.
+            chat.OpenConversation(background);
+            shell.AttentionForCheck.RememberActivationTarget(viewed, DateTimeOffset.UtcNow);
+            shell.ReturnToForegroundForCheck(false);
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ViewedConversationId == background,
+                "还没离开过前台的激活不消费待处理会话：没人点过通知，视图不该被挪走（实际 " + chat.ViewedConversationId + "）");
+            shell.ReturnToForegroundForCheck(true);
+            shell.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ViewedConversationId == viewed && shell.AssistantVisible
+                  && shell.WindowState != WindowState.Minimized,
+                "走开再回来后，回到助手页并选中最近一次系统通知的那个会话（实际 " + chat.ViewedConversationId + "）");
+            chat.OpenConversation(background);
+            shell.ReturnToForegroundForCheck(true);
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ViewedConversationId == background,
+                "一次通知只被消费一次，稍后的普通回到前台不再跳回那个会话（实际 " + chat.ViewedConversationId + "）");
+            chat.OpenConversation(background);
+            shell.AttentionForCheck.RememberActivationTarget(viewed, DateTimeOffset.UtcNow);
+            shell.ActivateFromRequest();
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ViewedConversationId == viewed && shell.AssistantVisible,
+                "裸唤起同样消费待处理会话：窗口回到助手页并选中该会话（实际 " + chat.ViewedConversationId + "）");
+            shell.AttentionForCheck.RememberActivationTarget(background, DateTimeOffset.UtcNow);
+            await shell.HandleInstallLinkAsync(deepLink);
+            Dispatcher.UIThread.RunJobs();
+            shell.ActivateFromRequest();
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.ViewedConversationId == viewed,
+                "带 id 的深链到达时清掉待消费的会话，避免稍后普通唤起跳到旧会话（实际 " + chat.ViewedConversationId + "）");
 
             await shell.HandleInstallLinkAsync(deepLink);
             panel.Reload();
