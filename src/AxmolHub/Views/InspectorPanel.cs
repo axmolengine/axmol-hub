@@ -632,6 +632,22 @@ internal sealed class InspectorPanel : UserControl
     internal string PlanMarkdownForCheck
         => _planHost.Content is MarkdownScrollViewer viewer ? viewer.Tag as string ?? "" : "";
 
+    /// <summary>The plan tab's own "there is nothing here" sentence, read apart from the markdown. The markdown
+    /// accessor cannot tell a pane that was never built from a conversation that has no plan — both read as an
+    /// empty string — and a restored column is exactly the case where that difference is the whole claim.</summary>
+    internal string PlanNoticeForCheck
+        => _planHost.Content is TextBlock block && block.Classes.Contains("inspector-empty")
+            ? block.Text ?? ""
+            : "";
+
+    /// <summary>Presses the header's ×, which is the column's only way out from inside the pane. A check that
+    /// called the shell's own close instead would pass on a pane that never built its header at all — and a
+    /// headerless column is precisely the bug this keeps.</summary>
+    internal void ClickCloseForCheck()
+        => this.GetLogicalDescendants().OfType<Button>()
+            .FirstOrDefault(button => button.Tag as string == "InspectorClose")
+            ?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
     internal bool ExpandedForCheck => _expanded;
     internal string ExpandButtonTagForCheck => _expandButton.Tag as string ?? "";
     internal double PlanHostMaxWidthForCheck => _planHost.MaxWidth;

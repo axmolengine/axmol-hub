@@ -660,6 +660,14 @@ public partial class MainWindow : Window
         // left there, a dead workspace's plan would keep covering a page that can no longer produce one.
         RestoreInspector();
         _chatPanel = null;
+        // …and the same for the pane itself. `RestoreInspector` only acts on the overlay, so without this the
+        // dropped panel's pane stays hosted in the column: the next `NavigateTo` repaints the column from the new
+        // root, finds a pane already there, and shows the previous data root's plan under a conversation that has
+        // no idea it exists. Which tab and which plan turn go back to the defaults for the same reason — they were
+        // answers about a transcript that is gone.
+        SetInspectorPane(null);
+        _inspectorTab = "plan";
+        _inspectorTurn = -1;
 
         // The conversation sidebar holds the old workspace; rebuild it for the new one.
         _chatSidebar = BuildChatSidebar();

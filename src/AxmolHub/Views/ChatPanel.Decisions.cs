@@ -72,6 +72,10 @@ public partial class ChatPanel
         var conversation = _chat?.ActiveConversation;
         var signature = conversation is null ? "" : conversation.Id + ":" + conversation.Messages.Count;
         if (signature == _inspectorSignature) return;
+        // Nothing is wired yet while the constructor is still running — the shell assigns the seam after this
+        // panel comes back — so nothing has been painted, and priming the signature here would promise a repaint
+        // that never happened. The first real paint then re-primes it honestly.
+        if (RefreshInspector is null) return;
         _inspectorSignature = signature;
         RefreshInspector?.Invoke();
     }

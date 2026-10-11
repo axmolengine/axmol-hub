@@ -3109,6 +3109,38 @@ public partial class ShellCheckWindow : Window
         shell.CloseInspector();
         Check(!shell.InspectorVisibleForCheck, "关掉之后那一列真的让位给聊天，而不是留一条空白");
 
+        // ── a column that came back from the last run ──
+        // The open flag is persisted and the pane is not, so a restart is the one moment the column is on screen
+        // before anybody asked it to be — and every way out of it (the header, the three tabs, the ×) lives
+        // inside the pane. Built the way the app builds it: the settings file a previous run left behind, read
+        // back through the same store, handed to a fresh shell on its own scratch root so nothing here can
+        // disturb the language/theme the settings group reads back.
+        var restoreRoot = ScratchDirectory.Resolve("inspector-restore");
+        System.IO.Directory.CreateDirectory(restoreRoot);
+        var restoreStore = new PreferencesStore(PreferencesPathFor(restoreRoot));
+        restoreStore.Save(new HubPreferences { InspectorOpen = true, InspectorWidth = 420 });
+        var restored = new MainWindow(restoreRoot, restoreStore, restoreStore.Load());
+        restored.Show();
+        restored.NavigateTo("Assistant");
+        restored.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var restoredPane = restored.InspectorPaneForCheck;
+        Check(restored.InspectorVisibleForCheck && restored.InspectorWidthForCheck == 420
+              && restoredPane is not null
+              && restoredPane.PlanTabVisibleForCheck && !restoredPane.ChangesTabVisibleForCheck
+              && !restoredPane.RepoTabVisibleForCheck,
+            "重启后那一列自己把面板建了回来：三页页签都在，宽度还是存的那个，不是一列没法关的空白");
+        Check(restoredPane?.PlanNoticeForCheck == HubStrings.Get("InspectorPlanEmpty"),
+            "这一会话没有计划时那一列说「还没有生成计划」，而不是什么都不说（实际「"
+            + (restoredPane?.PlanNoticeForCheck ?? "(没有面板)") + "」）");
+        restoredPane?.ClickCloseForCheck();
+        restored.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(!restored.InspectorVisibleForCheck
+              && new PreferencesStore(PreferencesPathFor(restoreRoot)).Load().InspectorOpen == false,
+            "点那一列自己的 ×：列真的让位给聊天，设置里也记成关着，而不是下次启动又回来");
+        restored.Close();
+
         // ── the same pane, lifted out of its column ──
         // A width that is not the default, so the round trip below measures something: a restore that reset the
         // column would otherwise pass on two copies of 360.

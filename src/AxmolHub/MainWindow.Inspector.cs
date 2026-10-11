@@ -155,8 +155,26 @@ public partial class MainWindow
     private void SetInspectorColumnVisible()
     {
         var show = _inspectorOpen && _currentKey == "Assistant" && !_inspectorExpanded;
+        // The one rule the column may not break: a column on screen has a pane in it. Every way of getting here
+        // except an explicit <see cref="OpenInspector"/> — a restored open flag, a page navigation, coming back
+        // out of the overlay — used to be able to show the chrome with nothing inside, and the header, the tabs
+        // and the × that closes it all live *in* the pane, so what was on screen was a strip nobody could shut.
+        if (show) EnsureInspectorPane();
         InspectorColumn.IsVisible = show;
         InspectorResizeGrip.IsVisible = show;
+    }
+
+    /// <summary>Builds the pane if nothing has yet, through the same door <see cref="OpenInspector"/> uses, and
+    /// never for a column that already has one — the pane is kept for the window's life precisely so that
+    /// repainting does not fold back the diff rows a person had opened. Painted with
+    /// <c>mayReadRepository: false</c>: this runs from page navigation and from a cold start, and a read belongs
+    /// to the tab being entered and to the ⟳, nowhere else. Which tab is remembered is not persisted, so what
+    /// lands here is the plan tab of whatever conversation is on screen — including the honest
+    /// 「还没有生成计划」 when it has none.</summary>
+    private void EnsureInspectorPane()
+    {
+        if (InspectorPane is not null || _chatPanel is null) return;
+        SetInspectorPane(_chatPanel.BuildInspectorContent(_inspectorTab, _inspectorTurn, mayReadRepository: false));
     }
 
     /// <summary>Called from <see cref="NavigateTo"/>: the inspector follows the assistant page on and off, and
