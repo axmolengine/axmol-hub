@@ -337,7 +337,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// <summary>Handed back to the invoking client when a call parks for approval. Never sent anywhere.</summary>
     private const string PendingPlaceholder = "awaiting user approval";
 
-    /// <summary>Converts persisted turns into the wire shape, in order.
+    /// <summary>Converts persisted turns into the wire shape, in order, and never the other way round: what this
+    /// writes is what goes out, and the conversation file keeps what came in.
     /// <paramref name="images"/> resolves one stored attachment to the bytes behind it. It is supplied by the
     /// caller that owns the data root, because this layer has no business knowing where the pictures live — the
     /// same reason the tool scope is handed in per request rather than reached for.</summary>
@@ -347,7 +348,23 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var messages = new List<ChatMessage>(turns.Count);
         foreach (var turn in turns)
         {
-            messages.Add(ToChatMessage(turn, images));
+            // A tool call the model wrote out as prose must not go back out as an example of how to answer. It
+            // arrived as an assistant message, so replaying it teaches the next request to keep writing markup,
+            // and in one real session it went further: the review card mistook it for a plan, a person approved
+            // it, and it came back a second time in the user's own voice. The transcript keeps the bytes exactly
+            // as they arrived — this is the same boundary rule the captured frame below and InjectedFrom follow.
+            var wire = turn;
+            if (ControlTokens.IsLeakedCall(turn.Text))
+            {
+                var kept = ControlTokens.Strip(turn.Text);
+                // Taking the whole turn away is only safe when nothing else points at it. An assistant turn
+                // carrying a call, or the tool result answering one, would orphan its pair, and the endpoint
+                // answers that with a 400 rather than with a degraded reply.
+                if (kept.Length == 0 && turn.ToolCallId is not { Length: > 0 }) continue;
+                wire = turn with { Text = kept };
+            }
+
+            messages.Add(ToChatMessage(wire, images));
 
             // A frame the assistant captured itself is recorded on the tool result's turn, and a `tool` message
             // cannot carry image content in chat/completions — so the picture goes to the model as the user-role
@@ -483,8 +500,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         if (tools is { Count: > 0 })
         {
             options.Tools = [.. tools];
-            // One call per response: two calls in one message would park two approvals at once, and the card
-            // resolves one decision at a time. Sequential calls also keep the transcript order obvious.
+            // Asked for, not relied on. Measured against DeepSeek this goes out on the wire and the model answers
+            // with two and three calls anyway, so nothing may assume one call arrives per response — the loop
+            // pairs each call with its own result and parks one approval at a time regardless. A check that
+            // wants the multi-call shape is <c>batchClient.Batch</c> in the shell checks.
             options.AllowMultipleToolCalls = false;
             any = true;
         }

@@ -522,16 +522,8 @@ public partial class ShellCheckWindow : Window
             "Markdown 链接使用 Hub 主题配色而非默认纯蓝");
 
         // ── A tool call that arrived as prose ──
-        // Transcribed from a real thinking-model reply: the model framed its call with its own special token and
-        // the gateway forwarded that as message text, so no tool ever ran. The bytes are the point — the bars are
-        // U+FF5C fullwidth, and a fixture that typed "|" instead would test a shape nobody sends.
-        const string Bars = "\uFF5C\uFF5CDSML\uFF5C\uFF5C";
-        var leakedCall = "让我先确认「计划任务」到底记在哪。\n\n"
-                         + $"<{Bars} calls>\n"
-                         + $"<{Bars} invoke name=\"search_text\">\n"
-                         + $"<{Bars} parameter name=\"path\" string=\"true\">.agents/memory</{Bars} parameter>\n"
-                         + $"</{Bars} invoke>\n"
-                         + $"</{Bars} calls>";
+        // The fixture lives with the plan check below, which needs the same bytes; see <see cref="LeakedCall"/>.
+        var leakedCall = LeakedCallAfter("让我先确认「计划任务」到底记在哪。");
         Check(ControlTokens.IsLeakedCall(leakedCall)
               && !ControlTokens.IsLeakedCall("| Name | Value |\n| --- | --- |\n| answer | 42 |")
               && !ControlTokens.IsLeakedCall("普通的中文，加上 <tag> 标记，都不算泄漏"),
@@ -541,7 +533,8 @@ public partial class ShellCheckWindow : Window
 
         var fixtureSession = shell.Chat.ActiveConversation?.Id;
         var leakedSession = shell.Chat.StartConversation();
-        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([leakedCall]);
+        ScriptedChatClient? leakedClient = null;
+        shell.Chat.ClientOverride = (_, _) => leakedClient = new ScriptedChatClient([leakedCall]);
         await panel.SendForCheckAsync("查一下计划任务记在哪");
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
@@ -553,6 +546,20 @@ public partial class ShellCheckWindow : Window
         Check(panel.LastNoticeTextForCheck?.Contains(HubStrings.Get("ChatToolCallLeaked"), StringComparison.Ordinal) == true,
             "模型把调用写成正文时，状态条说清这次调用没有执行（实际提示 "
             + (panel.LastNoticeTextForCheck ?? "（没有提示）") + "）");
+        // The next request is the one that decides whether this stays a one-off. A leaked turn replayed as an
+        // assistant message reads as "this is how you answer here", and in one real session it is exactly what
+        // made the same call come back four times. The transcript still holds the bytes as they arrived — that
+        // is what preserved the evidence — so what is asserted is the pair: clean on the wire, untouched on disk.
+        await panel.SendForCheckAsync("那再看一眼别的地方");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(leakedClient?.LastMessages is { } replayed
+              && !replayed.Any(message => message.Text.Contains("DSML", StringComparison.Ordinal)),
+            "上一轮泄漏的标记不再回灌给模型（送到 "
+            + (leakedClient?.LastMessages?.Count ?? -1) + " 条消息）");
+        Check(shell.Chat.StoredCopyForCheck(leakedSession.Id)?.Messages.Any(
+                  message => message.Text.Contains("DSML", StringComparison.Ordinal)) == true,
+            "回灌洗干净了，会话文件里那一轮仍按到达时的原样存着");
         // Put the fixture back exactly as it was: the assertions after this one read the active session and count
         // the rows in the list, so a check that leaves a session behind tests its own leftovers.
         shell.Chat.ClientOverride = null;
@@ -1104,8 +1111,10 @@ public partial class ShellCheckWindow : Window
 
         // A leaked tool call must not be able to take up residence in the summary. The summary is read by every
         // later request, so one that carries the markup teaches the shape to the model that has to read it — and
-        // the leak starts coming back on its own. The transcript keeps what arrived; what is kept out is what the
-        // model is shown, at both ends of a compaction.
+        // the leak starts coming back on its own. The guard sits on the write, not only on the read: a summary
+        // that is nothing but markup used to pass a length check, get stored as a success, and then strip back to
+        // nothing on every request after it — the session lost its summarized history with a counter still
+        // claiming the compaction had worked.
         var beforeLeaky = shell.Chat.ActiveConversation?.Id;
         var leaky = shell.Chat.StartConversation();
         for (var turn = 0; turn < 12; turn++)
@@ -1119,10 +1128,31 @@ public partial class ShellCheckWindow : Window
               && !handed.Any(message => message.Text.Contains("DSML", StringComparison.Ordinal)),
             "压缩请求带去的转录不含那几行标记，摘要模型学不到这个形状（送到 "
             + (leakySummarizer?.LastMessages?.Count ?? -1) + " 条消息）");
-        Check(leakyCopy?.ContextSummary.Contains("DSML", StringComparison.Ordinal) == true
+        Check(leakyCopy?.ContextSummary == "## Task\n让我先确认「计划任务」到底记在哪。"
               && !shell.Chat.PreparedSystemPromptForCheck(leaky.Id).Contains("DSML", StringComparison.Ordinal),
-            "摘要按模型写的原样存着，但那几行标记不会跟着之后的每一次请求上到线上");
+            "摘要在落盘前就只剩模型真正说过的话，标记从来没有进过会话文件（存到「"
+            + (leakyCopy?.ContextSummary ?? "null") + "」）");
+        // The summary that is nothing but the call. There is no sentence left to keep, so this is the case that
+        // used to be filed as a successful compaction while carrying no history at all.
+        var emptyLeaky = shell.Chat.StartConversation();
+        for (var turn = 0; turn < 12; turn++)
+            shell.Chat.SeedTurnForCheck(emptyLeaky.Id, "第 " + turn + " 条普通对话内容");
+        var refusedAudits = new List<string>();
+        var savedRefusedAudit = shell.Chat.AuditWrite;
+        shell.Chat.AuditWrite = line => refusedAudits.Add(line);
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([LeakedCall]);
+        var emptyLeakyCompressed = await shell.Chat.CompressContextAsync(emptyLeaky.Id);
+        shell.Chat.ClientOverride = null;
+        shell.Chat.AuditWrite = savedRefusedAudit;
+        var emptyLeakyCopy = shell.Chat.StoredCopyForCheck(emptyLeaky.Id);
+        Check(!emptyLeakyCompressed && string.IsNullOrEmpty(emptyLeakyCopy?.ContextSummary)
+              && emptyLeakyCopy?.ContextSummaryThroughMessageCount == 0
+              && refusedAudits.Any(line => line.Contains("Compaction refused", StringComparison.Ordinal)),
+            "只有标记的摘要被当作压缩失败拒绝掉：压缩边界不推进、不把空摘要记成一次成功，且留下一行说清为什么"
+            + "（成功=" + emptyLeakyCompressed + "，边界 "
+            + (emptyLeakyCopy?.ContextSummaryThroughMessageCount ?? -1) + "）");
         shell.Chat.DeleteConversation(leaky.Id);
+        shell.Chat.DeleteConversation(emptyLeaky.Id);
         // Hand the section's own session back: the meter and the history assertions after this one read whatever
         // is on screen, and a fixture that leaves its session active tests its leftovers.
         if (beforeLeaky is { } leakyBack) shell.Chat.OpenConversation(leakyBack);
@@ -4122,6 +4152,24 @@ public partial class ShellCheckWindow : Window
             "自检清理：互发夹具没有留下运行、队列或指示点");
     }
 
+    /// <summary>
+    /// A tool call a thinking model wrote out as prose, transcribed from a real reply. The bars are written as
+    /// <c>\uFF5C</c> rather than typed, because the byte is the whole point: a fixture that used the ASCII "|" a
+    /// Markdown table is made of would test a shape nobody sends, and would pass while the detector it tests
+    /// reads a different character.
+    /// </summary>
+    private const string Bars = "\uFF5C\uFF5CDSML\uFF5C\uFF5C";
+
+    private static string LeakedCall { get; } = string.Join("\n",
+        $"<{Bars} calls>",
+        $"<{Bars} invoke name=\"search_text\">",
+        $"<{Bars} parameter name=\"path\" string=\"true\">.agents/memory</{Bars} parameter>",
+        $"</{Bars} invoke>",
+        $"</{Bars} calls>");
+
+    /// <summary>The same call beside the sentence the model actually meant to say, which is how it arrives.</summary>
+    private static string LeakedCallAfter(string prose) => prose + "\n\n" + LeakedCall;
+
     private async Task CheckPlanApprovalAsync(MainWindow shell, ChatPanel panel)
     {
         var chat = shell.Chat;
@@ -4154,6 +4202,36 @@ public partial class ShellCheckWindow : Window
 
         try
         {
+            chat.ClientOverride = (_, _) => new ScriptedChatClient([LeakedCall]);
+            var leakedPlan = chat.StartConversation();
+            chat.OpenConversation(leakedPlan.Id);
+            chat.SelectMode(ChatModes.Plan);
+            chat.TryEnqueueSend(leakedPlan.Id, "请先给出计划", null, out _);
+            await WaitForIdleAsync(chat);
+            // Any non-empty answer in plan mode becomes a review card, and the card cannot tell a plan from a
+            // tool call the model wrote out as prose. Approving one used to feed that markup back as a user
+            // instruction — the one role the model trusts most — which is how a single leaked call went on
+            // answering for the rest of a real session.
+            var leakedPlanIndex = -1;
+            for (var index = leakedPlan.Messages.Count - 1; index >= 0; index--)
+                if (leakedPlan.Messages[index].PlanApprovalState == PlanApprovalStates.Pending)
+                {
+                    leakedPlanIndex = index;
+                    break;
+                }
+
+            var turnsBeforeRefusal = leakedPlan.Messages.Count;
+            var refused = !chat.TryResolvePlanApproval(leakedPlan.Id, leakedPlanIndex,
+                PlanApprovalStates.Approved, out var leakedRefusal);
+            Check(leakedPlanIndex >= 0 && refused
+                  && leakedRefusal == "ChatPlanLeakedCall"
+                  && HubStrings.Get(leakedRefusal!) != leakedRefusal
+                  && leakedPlan.Messages.Count == turnsBeforeRefusal
+                  && leakedPlan.Messages[leakedPlanIndex].PlanApprovalState == PlanApprovalStates.Pending,
+                "写成正文的工具调用不会被批准成计划：给出自己的拒绝理由、不追加任何用户指令，卡片仍留在原处等修改"
+                + "（拒绝键 " + (leakedRefusal ?? "无") + "）");
+            chat.DeleteConversation(leakedPlan.Id);
+
             chat.ClientOverride = (_, _) => new ScriptedChatClient([plan]);
 
             await RunPlanInBackgroundAsync(approvedSession);

@@ -282,8 +282,25 @@ public sealed class ChatWorkspace : IDisposable
             // The ceiling applies to what gets stored, not to what the model was permitted to write: a summary
             // that ran long has already cost the request, and the only question left is whether it is going to sit
             // in every prompt that follows. What the cap leaves behind says which part went.
-            var text = ToolResultCap.ApplyTokenBudget(summary.ToString().Trim(), request.Value.SummaryCeilingTokens)
-                .Trim();
+            //
+            // Stripped before the emptiness test, not only where the summary is read back: a summary that is
+            // nothing but a tool call the model wrote out as prose passes a length check here, then reads as
+            // nothing on every later request — the session loses its summarized history silently while
+            // ContextSummaryThroughMessageCount still claims the compaction succeeded.
+            var written = summary.ToString();
+            var text = ToolResultCap.ApplyTokenBudget(ControlTokens.Strip(written),
+                request.Value.SummaryCeilingTokens).Trim();
+            if (text.Length == 0 && ControlTokens.IsLeakedCall(written))
+            {
+                // Refused here rather than thrown like the empty answer below, because the two callers are not
+                // alike: the button catches, and the pump between segments calls this from inside a run, where an
+                // exception would take the user's turn down with it. Saying no leaves the summary unset and the
+                // boundary unmoved, which is exactly what the ineffective-compaction counter exists to notice.
+                Audit(conversationId, "Compaction refused: the summary was a tool call the model wrote out as "
+                                      + "text, so it carries none of the history");
+                return false;
+            }
+
             if (text.Length == 0)
                 throw new InvalidOperationException("The model returned an empty context summary.");
 
@@ -2327,6 +2344,16 @@ public sealed class ChatWorkspace : IDisposable
 
         if (decision == PlanApprovalStates.Approved)
         {
+            // A review card can be standing on a turn where the model wrote its tool call out as text instead of
+            // sending one. That markup is not a plan, and approving it feeds it back as a user instruction — the
+            // one role the model trusts most. Measured in one session's own transcript: a leaked call was
+            // approved, replayed as the user's words, and the leak then recurred three more times.
+            if (ControlTokens.IsLeakedCall(pending.Text))
+            {
+                refusalKey = "ChatPlanLeakedCall";
+                return false;
+            }
+
             if (ModelFor(conversationId) is null)
             {
                 refusalKey = "NoAvailableChatModels";
