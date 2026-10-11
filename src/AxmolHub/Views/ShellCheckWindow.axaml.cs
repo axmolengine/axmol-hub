@@ -3400,6 +3400,128 @@ public partial class ShellCheckWindow : Window
         panel.Reload();
         Dispatcher.UIThread.RunJobs();
 
+        // ── the status strip's repository slot ──
+        // The mapping is asserted as a table before anything live, because four of these states have to stay
+        // silent — and a strip that lit on every session from first launch would be indistinguishable from a
+        // correct one in a live cell, since a live cell only ever sees one state at a time.
+        var silentNames = "";
+        foreach (var (name, state) in new (string, GitRepositoryState?)[]
+        {
+            ("还没读过", null),
+            ("干净工作树", cleanTree),
+            ("没有工作目录", GitRepositoryState.Stopped(GitReadOutcome.NoWorkspace, "probe")),
+            ("这个目录不是仓库", GitRepositoryState.Stopped(GitReadOutcome.NotARepository, "probe")),
+        })
+        {
+            var (visible, text) = MainWindow.RepoIndicatorStateFor(state);
+            if (visible || text.Length > 0) silentNames += (silentNames.Length == 0 ? "" : "、") + name;
+        }
+        Check(silentNames.Length == 0,
+            "状态条的仓库指示只在有事可说时开口：还没读、干净、没有工作目录、不是仓库这四种都闭嘴（多嘴的："
+            + silentNames + "）");
+        var (_, dirtyLine) = MainWindow.RepoIndicatorStateFor(dirtyThree);
+        var noBranch = new GitRepositoryState(GitReadOutcome.Ok, @"D:\dev\probe", "", 0, 0,
+            [new GitStatusEntry("note.txt", " ", "M", false)],
+            new Dictionary<string, string>(StringComparer.Ordinal), false, null);
+        var (_, detachedLine) = MainWindow.RepoIndicatorStateFor(noBranch);
+        var cutShort = new GitRepositoryState(GitReadOutcome.Ok, @"D:\dev\probe", "master", 0, 0,
+            [
+                new GitStatusEntry("note.txt", " ", "M", false),
+                new GitStatusEntry("src/main.cpp", "M", " ", false),
+            ],
+            new Dictionary<string, string>(StringComparer.Ordinal), true, null);
+        var (_, cutLine) = MainWindow.RepoIndicatorStateFor(cutShort);
+        Check(dirtyLine == string.Format(CultureInfo.CurrentCulture,
+                  HubStrings.Get("StatusRepoDirtyFormat"), dirtyThree.Entries.Count, "master")
+              && detachedLine.Contains("—", StringComparison.Ordinal)
+              && cutLine == string.Format(CultureInfo.CurrentCulture,
+                  HubStrings.Get("StatusRepoDirtyTruncatedFormat"), cutShort.Entries.Count, "master"),
+            "脏工作树那一行报的是读到的个数和分支名，没有分支名时用仓库页同一个破折号，被截断的说「2+」而不是把上限"
+            + "报成确数（实际「" + dirtyLine + "」/「" + detachedLine + "」/「" + cutLine + "」）");
+        var wrongFailure = "";
+        foreach (var outcome in new[] { GitReadOutcome.GitMissing, GitReadOutcome.UnsafeRepository,
+                GitReadOutcome.Failed })
+        {
+            var (visible, text) = MainWindow.RepoIndicatorStateFor(GitRepositoryState.Stopped(outcome, "probe"));
+            if (!visible || text != HubStrings.Get("StatusRepoFailed"))
+                wrongFailure += (wrongFailure.Length == 0 ? "" : "、") + outcome;
+        }
+        Check(wrongFailure.Length == 0,
+            "真读不到的那三种在状态条合成一句短话——五种理由各说各的归仓库页，那才是读理由的地方（不合规的："
+            + wrongFailure + "）");
+        // Live. The snapshot is seeded rather than read, because a check machine has no dirty repository to point
+        // a session at; seeding goes through the same tail a landing uses, so what the cells below actually measure
+        // is the wiring from that landing to the strip — and that no git ran on the way.
+        var stripWorkspace = ScratchDirectory.Resolve("review-strip-workspace");
+        Directory.CreateDirectory(stripWorkspace);
+        var stripSession = chat.StartConversation();
+        chat.OpenConversation(stripSession.Id);
+        chat.SetWorkspaceRoot(stripSession.Id, stripWorkspace);
+        panel.Reload();
+        shell.NavigateTo("Assistant");
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.RepoIndicatorVisibleForCheck,
+            "这个目录一次都没读过时状态条那颗指示是灭的，而不是先猜一个数");
+        var readsBeforeLight = chat.RepositoryReadsForCheck;
+        chat.SeedRepositoryForCheck(chat.WorkspaceRootFor(stripSession.Id) ?? stripWorkspace, dirtyThree);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.RepoIndicatorVisibleForCheck
+              && shell.RepoIndicatorTextForCheck.Contains("master", StringComparison.Ordinal)
+              && chat.RepositoryReadsForCheck == readsBeforeLight,
+            "一次读落地就把分支和未提交数写进状态条，而这一趟自己没跑 git（实际「"
+            + shell.RepoIndicatorTextForCheck + "」，读了 "
+            + (chat.RepositoryReadsForCheck - readsBeforeLight) + " 次）");
+        // A session pointed somewhere else must not keep reporting the directory it left, and the slot belongs to
+        // the window rather than to the assistant page — it stays while a person is on another page, because that
+        // is when they need the reminder.
+        var awaySession = chat.StartConversation();
+        chat.OpenConversation(awaySession.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.RepoIndicatorVisibleForCheck,
+            "换到一个没有工作目录的会话时指示跟着闭嘴，而不是继续报上一个目录的数");
+        chat.OpenConversation(stripSession.Id);
+        panel.Reload();
+        shell.NavigateTo("Projects");
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.RepoIndicatorVisibleForCheck && !shell.AssistantVisible,
+            "指示条是窗口自己的东西，离开助手页它还在（当前页 " + shell.AssistantVisible + "）");
+        // Pressing it is a way into the tab, not a second read: the only way it was reachable at all is a read
+        // that already landed, so the tab has to open onto what is already known.
+        var readsBeforePress = chat.RepositoryReadsForCheck;
+        shell.ClickRepoIndicatorForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        Check(shell.AssistantVisible && shell.InspectorVisibleForCheck
+              && shell.InspectorTabForCheck == "repo"
+              && shell.InspectorPaneForCheck?.RepoTabVisibleForCheck == true,
+            "从项目页点状态条的仓库指示：先回到助手页，再把右列开到仓库页，而不是把列开在看不见的地方");
+        Check(chat.RepositoryReadsForCheck == readsBeforePress,
+            "从指示条进仓库页一次 git 都不多跑，用的是已经读到的那一份（两次之间读了 "
+            + (chat.RepositoryReadsForCheck - readsBeforePress) + " 次）");
+        // And the row itself: a sixth column in a 28-pixel strip may not grow the strip, square the log glyph
+        // into a rectangle, or squeeze the operation text out.
+        var (plateWidth, plateHeight) = shell.LogTogglePlateForCheck;
+        Check(shell.StatusStripHeightForCheck <= 28.5
+              && Math.Abs(plateWidth - plateHeight) <= 1.5
+              && shell.StatusWidthForCheck > 40
+              && shell.RepoIndicatorWidthForCheck > 0,
+            "指示条亮着的时候状态栏还是那 28 高、日志底板还是正方形、左边的状态文字没被挤没（列高 "
+            + Fmt(shell.StatusStripHeightForCheck) + "，底板 " + Fmt(plateWidth) + "×" + Fmt(plateHeight)
+            + "，状态宽 " + Fmt(shell.StatusWidthForCheck) + "）");
+        chat.ClearRepositoryForCheck();
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+        Check(!shell.RepoIndicatorVisibleForCheck,
+            "把那份读回收走之后指示跟着灭，而不是留着一个已经没有对象的数字");
+        shell.CloseInspector();
+        chat.DeleteConversation(stripSession.Id);
+        chat.DeleteConversation(awaySession.Id);
+        panel.Reload();
+        Dispatcher.UIThread.RunJobs();
+
         // ── the steer strip: a second tap before an interjection spends a request ──
         var session = chat.StartConversation();
         chat.OpenConversation(session.Id);

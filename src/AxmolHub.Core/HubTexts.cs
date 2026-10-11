@@ -780,6 +780,13 @@ public static class HubTexts
         ["RevokeTrustedTool"] = ("撤销", "Revoke"),
         ["RevokeAllTrustedTools"] = ("全部撤销", "Revoke all"),
         ["RunningSessionsFormat"] = ("{0} 个会话运行中", "{0} sessions running"),
+        // The strip's repository slot. It speaks in two states only: something uncommitted, and a read that could
+        // not answer. A clean tree, a directory that is not a repository and a directory nobody has read yet all
+        // stay silent, because the strip is where the app says what needs acting on — and those three do not.
+        ["StatusRepoDirtyFormat"] = ("仓库 {0} 处未提交 · {1}", "repository: {0} uncommitted · {1}"),
+        ["StatusRepoDirtyTruncatedFormat"] = ("仓库 {0}+ 处未提交 · {1}", "repository: {0}+ uncommitted · {1}"),
+        ["StatusRepoFailed"] = ("仓库状态读不到", "the repository state could not be read"),
+        ["StatusRepoOpenHint"] = ("看仓库里有什么改动", "see what the repository holds"),
         ["ChatPreparing"] = ("正在准备回复", "Preparing a response"),
         ["ChatGenerating"] = ("正在生成回复", "Generating response"),
         ["You"] = ("你", "You"),

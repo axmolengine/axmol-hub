@@ -377,6 +377,15 @@ public partial class MainWindow : Window
         _chat.Changed += SyncApprovalBadge;
         _chat.AttentionRequired += OnChatAttentionRequired;
         _chat.RunCompleted += OnChatRunCompleted;
+        // The strip's repository slot is a render of what has already been read, so it follows the reads other
+        // triggers started: one handler per landing, one per conversation switch, and a completion that takes the
+        // stale number away. None of the three asks git anything — which is the whole reason a slot that lives
+        // outside the chat page can be honest about a repository without paying for it.
+        // A completion still lets it come back: the panel reads again on a finished run when the repository tab
+        // is the one being looked at, and that landing repaints this.
+        _chat.RepositoryChanged += UpdateRepoIndicator;
+        _chat.Changed += UpdateRepoIndicator;
+        _chat.RunCompleted += (_, _) => InvalidateRepoIndicator();
         SyncApprovalBadge();
     }
 
@@ -496,6 +505,85 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Renders the strip's repository slot from the last read this app already holds. It never asks for one: the
+    /// only states worth 28 pixels of the strip are states some other trigger — entering the repository tab,
+    /// pressing its ⟳, a run that finished while the tab was up — already verified by running git. That is what
+    /// makes this element safe to subscribe to <see cref="ChatWorkspace.Changed"/>: it reads one slot and formats
+    /// one string, and the ban on hanging work off that event is a ban on <em>reads</em>, not on repainting.
+    /// </summary>
+    private void UpdateRepoIndicator()
+    {
+        // Reached from the same event as <see cref="SyncApprovalBadge"/>, and that one's comment says why the hop
+        // is not paranoia: of ChatWorkspace's raise sites, only some are provably on the UI thread. The null test
+        // is the other half — <c>WireChatRuns</c> subscribes before <c>InitializeComponent</c> has built the
+        // strip, so a raise that early would be a null dereference of a control that has nothing to say yet.
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateRepoIndicator);
+            return;
+        }
+        if (RepoIndicatorText is null) return;
+        var (visible, text) = RepoIndicatorStateFor(
+            _chat.RepositoryFor(_chat.ActiveConversation?.WorkspaceRoot)?.State);
+        RepoIndicator.IsVisible = visible;
+        RepoIndicatorText.Text = visible ? text : "";
+        ToolTip.SetTip(RepoIndicator, HubStrings.Get("StatusRepoOpenHint"));
+    }
+
+    /// <summary>The whole decision, as a function of the snapshot — which is also the shape a check asserts on,
+    /// because a strip that lit on every session from first launch would look identical to one that lit on the
+    /// dirty one until something was actually read. Silence is the answer for a clean tree, for a directory that
+    /// is not a repository, for a session with no directory, and for a directory nobody has read yet: none of
+    /// those is something the person needs told twice a second. Only a tree with something uncommitted, and a
+    /// read that honestly failed, earn the row.</summary>
+    internal static (bool Visible, string Text) RepoIndicatorStateFor(GitRepositoryState? state)
+    {
+        if (state is null) return (false, "");
+        if (!state.IsReadable)
+        {
+            // NoWorkspace and NotARepository are not failures — there is no repository here to be dirty in — and
+            // a strip that reported them would be lit for every ordinary chat. The three that are honest failures
+            // own one short sentence here; their five distinct reasons stay down in the tab, which is where a
+            // person who asks gets to read them.
+            return state.Outcome is GitReadOutcome.GitMissing or GitReadOutcome.UnsafeRepository
+                or GitReadOutcome.Failed
+                ? (true, HubStrings.Get("StatusRepoFailed"))
+                : (false, "");
+        }
+        if (state.Entries.Count == 0) return (false, "");
+        // The same dash the tab's own head line uses for a detached branch, so the two surfaces never disagree
+        // about what a branch that is not named is called.
+        var branch = string.IsNullOrEmpty(state.Branch) ? "—" : state.Branch;
+        // A cut list says how many were listed, not how many are dirty, and the strip is not allowed to let the
+        // two read as the same number.
+        var key = state.Truncated ? "StatusRepoDirtyTruncatedFormat" : "StatusRepoDirtyFormat";
+        return (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get(key), state.Entries.Count, branch));
+    }
+
+    /// <summary>Takes the slot's words away without waiting for anything to answer. A run can commit, check out
+    /// or build without Hub's file tool, and from the moment one ends the cached read is no longer a fact — and a
+    /// persistent surface that keeps repeating a number the run just invalidated is worse than one that says
+    /// nothing. The next read that lands brings it back.</summary>
+    private void InvalidateRepoIndicator()
+    {
+        // Same construction-window as <see cref="UpdateRepoIndicator"/>: a run cannot complete before the strip
+        // exists, but the subscription is older than the strip is, and this is the one handler that would find
+        // out the hard way.
+        if (RepoIndicatorText is null) return;
+        RepoIndicator.IsVisible = false;
+        RepoIndicatorText.Text = "";
+    }
+
+    internal bool RepoIndicatorVisibleForCheck => RepoIndicator.IsVisible;
+    internal string RepoIndicatorTextForCheck => RepoIndicatorText.Text ?? "";
+
+    /// <summary>Presses the strip's own button, so a check drives the wiring rather than the shell method the
+    /// button happens to end up calling.</summary>
+    internal void ClickRepoIndicatorForCheck()
+        => RepoIndicator.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+    /// <summary>
     /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
     /// up a <c>MainWindow</c> and closes the old one because its state, pages, and log are all bound
     /// to the root. Here we only rebuild <see cref="HubWorkspace"/> and drop the page cache: pages
@@ -565,6 +653,9 @@ public partial class MainWindow : Window
         _chat = new ChatWorkspace(next.Store.Root);
         WireChatSeams();
         WireChatRuns();
+        // A new workspace has read nothing yet, so the strip's repository slot has nothing true to say. Left
+        // standing, it would report the previous root's dirty count against a directory nobody is looking at.
+        InvalidateRepoIndicator();
         // The pane may be living in the window-wide overlay, and it belongs to the panel about to be dropped:
         // left there, a dead workspace's plan would keep covering a page that can no longer produce one.
         RestoreInspector();
@@ -714,6 +805,9 @@ public partial class MainWindow : Window
         _chatSidebar?.Reload();
         UpdatePageTitle();
         UpdateChatRunsStatus();
+        // The strip's repository slot is composed copy, not a DynamicResource, so a language switch has to be
+        // told or the row keeps the previous tongue while everything around it changes.
+        UpdateRepoIndicator();
 
         foreach (var page in _pages.Values)
         {
@@ -860,6 +954,14 @@ public partial class MainWindow : Window
     /// <summary>The strip's background-reply counter, read as the user sees it.</summary>
     internal bool ChatRunsVisibleForCheck => ChatRuns.IsVisible;
     internal string ChatRunsTextForCheck => ChatRuns.Text ?? "";
+
+    /// <summary>The strip row and the log button's own plate, measured while the repository slot is lit. Adding a
+    /// sixth column to a 28-pixel row is only safe if the row did not grow and the square glyph did not become a
+    /// rectangle, and neither of those is visible in an assertion that only reads strings.</summary>
+    internal double StatusStripHeightForCheck => StatusStrip.Bounds.Height;
+    internal double RepoIndicatorWidthForCheck => RepoIndicator.Bounds.Width;
+    internal (double Width, double Height) LogTogglePlateForCheck => (LogToggle.Bounds.Width, LogToggle.Bounds.Height);
+    internal double StatusWidthForCheck => Status.Bounds.Width;
 
     /// <summary>Whether the assistant page is the one on screen.</summary>
     internal bool AssistantVisible => _currentKey == "Assistant";

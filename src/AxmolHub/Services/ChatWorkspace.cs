@@ -3335,8 +3335,14 @@ public sealed class ChatWorkspace : IDisposable
     }
 
     /// <summary>Takes the answer back out, so the next cell starts from the same nothing a fresh session starts
-    /// from. Leaving one seeded would make a later "the tab asked for a read" assertion pass by accident.</summary>
-    internal void ClearRepositoryForCheck() => _repository = null;
+    /// from. Leaving one seeded would make a later "the tab asked for a read" assertion pass by accident. The
+    /// event goes out with it, because the surfaces that rendered the answer are listening for that event and
+    /// nothing else: without it a cleared slot would keep showing the number it no longer has.</summary>
+    internal void ClearRepositoryForCheck()
+    {
+        _repository = null;
+        RepositoryChanged?.Invoke();
+    }
 
     /// <summary>
     /// Asked before every tool call. A read runs; anything else depends on the mode, and when the mode says ask

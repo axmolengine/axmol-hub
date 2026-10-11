@@ -463,8 +463,8 @@
                       Margin="24,14,24,0" />
 
       <!-- Slim status strip. -->
-      <Grid Grid.Row="2" Height="28" Margin="18,0,18,0"
-            ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+      <Grid x:Name="StatusStrip" Grid.Row="2" Height="28" Margin="18,0,18,0"
+            ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
         <Ellipse Grid.Column="0" Width="6" Height="6"
                  Fill="{DynamicResource Hub.Success}"
                  VerticalAlignment="Center" />
@@ -474,19 +474,33 @@
                    FontSize="11" Margin="8,0,0,0"
                    TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center" />
+        <!-- The repository's own state, rendered from the last read this app already paid for. It is quiet on a
+             clean tree, on a directory that is not a repository, and before anything has been read — the strip
+             says what needs acting on and nothing else. It is the reminder, not the entry point: entering the
+             repository tab or pressing its ⟳ is what runs git, and this element never asks for a read. Its own
+             Auto column, because a second sentence inside the * column would take trimming room away from the
+             operation status it is supposed to sit beside. -->
+        <Button x:Name="RepoIndicator" Grid.Column="2" Classes="strip"
+                IsVisible="False" Margin="6,0,0,0" MaxWidth="220"
+                VerticalAlignment="Center">
+          <!-- Its own TextBlock rather than a string content, so a long branch name is trimmed inside MaxWidth
+               instead of pushing the row's other slots: a surface that overflows is a bug here, not a style. -->
+          <TextBlock x:Name="RepoIndicatorText" TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center" />
+        </Button>
         <!-- Background replies get their own slot rather than overwriting the operation status: a session
              streaming is not a Hub operation, and neither should erase the other. Hidden while nothing is
              answering, so the strip is as bare as it was. It is the only sign of a running reply outside the
              assistant page, where the conversation list — and its per-session dot — is not shown. -->
-        <TextBlock x:Name="ChatRuns" Grid.Column="2"
+        <TextBlock x:Name="ChatRuns" Grid.Column="3"
                    IsVisible="False"
                    Foreground="{DynamicResource Hub.TextSecondary}"
                    FontSize="11" Margin="8,0,0,0"
                    VerticalAlignment="Center" />
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
-                Grid.Column="3" Classes="strip"
+                Grid.Column="4" Classes="strip"
                 IsEnabled="False" Margin="6,0,0,0" />
-        <Button x:Name="LogToggle" Grid.Column="4" Classes="icon-ghost"
+        <Button x:Name="LogToggle" Grid.Column="5" Classes="icon-ghost"
                 Padding="6">
           <Path x:Name="LogToggleChevron" Classes="stroked"
                 Data="{StaticResource Hub.Icon.Chevron}"

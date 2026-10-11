@@ -63,6 +63,13 @@ public partial class MainWindow
         _inspectorOpen = _preferences.InspectorOpen;
         SetInspectorColumnVisible();
 
+        // The strip's repository slot is a way *into* the tab, not a second copy of it. Pressing it goes to the
+        // page that owns the column first, because a column opened while another page is up is a column that
+        // opened invisibly — and it opens on the repository tab without asking git anything, since the only way
+        // this button is reachable at all is a read that already landed.
+        RepoIndicator.Click += (_, _) => OnRepoIndicatorClicked();
+        UpdateRepoIndicator();
+
         // Esc on the window's own tunnel, registered here rather than after the picture viewer's and ordered by
         // an explicit guard instead: which overlay is up is a fact this handler can read, while handler order is
         // a fact about the constructor that a later edit can change without noticing.
@@ -70,6 +77,15 @@ public partial class MainWindow
     }
 
     private static double InspectorClamp(double width) => Math.Clamp(width, InspectorMin, InspectorMax);
+
+    /// <summary>What the strip's repository slot does when pressed. The navigation comes first and is not
+    /// decoration: <see cref="SetInspectorColumnVisible"/> gates the column on the assistant page, so opening it
+    /// from Projects would set the flag, persist it, and show a person nothing at all.</summary>
+    private void OnRepoIndicatorClicked()
+    {
+        if (_currentKey != "Assistant") NavigateTo("Assistant");
+        OpenInspector("repo", -1);
+    }
 
     /// <summary>The pane's two possible homes: the column, and the overlay it is lifted into. Exactly one may
     /// hold it — a control with a live visual parent cannot be adopted by a second <c>ContentControl</c>, which
@@ -232,9 +248,9 @@ public partial class MainWindow
     /// <summary>The pane itself, so a check can press the header's own arrow rather than the method behind it.</summary>
     internal InspectorPanel? InspectorPaneForCheck => InspectorPane as InspectorPanel;
 
-    /// <summary>Which tab the <i>shell</i> last asked for. The pane's own visibility cannot tell the two routes
-    /// apart — a jump that switched tabs inside the panel would leave the same three booleans — so the cell that
-    /// proves a jump goes through the shell has to read the shell's answer.</summary>
+    /// <summary>Which tab the <em>shell</em> last asked for. The pane's own visibility cannot tell the two routes
+    /// apart — a jump that switched tabs inside the panel would leave exactly the same three booleans — so a cell
+    /// that means "the ask went out to the shell and the shell landed it" has to read the shell's answer.</summary>
     internal string InspectorTabForCheck => _inspectorTab;
 
     internal bool InspectorExpandedForCheck => _inspectorExpanded;
