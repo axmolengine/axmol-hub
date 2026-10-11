@@ -120,8 +120,16 @@ public sealed class PackageInstaller(DownloadManager downloads, string root, Act
             if ((entry.ExternalAttributes >> 16 & 0xF000) == 0xA000) throw new InvalidDataException("Archive symlinks are not supported.");
             expanded = checked(expanded + entry.Length);
             if (expanded > 8L * 1024 * 1024 * 1024) throw new InvalidDataException("Archive exceeds extraction limit (8 GiB).");
-            var path = SafePath(root, entry.FullName);
-            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\')) Directory.CreateDirectory(path);
+            // The ZIP specification says '/', but an archive built on Windows may store '\' — the official
+            // axmol-2.x release assets do, all 9198 entries of them. On Windows the two happen to be the same
+            // separator, so an unnormalized name still lands in a directory there; on Linux '\' is an ordinary
+            // character and the whole engine extracts as flat files literally named "axmol-2.11.5\core\..." —
+            // the install then fails validation with "missing axmol/axmolver.h.in (v3) or core/axmolver.h.in
+            // (v2)" and nothing on disk explains why. Normalize before SafePath resolves the path, so the
+            // traversal check also sees the real components instead of a harmless-looking single file name.
+            var name = entry.FullName.Replace('\\', '/');
+            var path = SafePath(root, name);
+            if (name.EndsWith('/')) Directory.CreateDirectory(path);
             else
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);

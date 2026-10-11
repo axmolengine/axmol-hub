@@ -6446,6 +6446,30 @@ var badZip = Path.Combine(root, Guid.NewGuid() + ".zip");
 using (var zip = ZipFile.Open(badZip, ZipArchiveMode.Create)) zip.CreateEntry("../escape.txt");
 await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.ExtractSafely(badZip, Path.Combine(root, "extracted"))), "ZIP traversal rejected");
 
+// The official axmol-2.x release assets store every entry name with '\' — all 9198 entries of
+// axmol-2.11.5.zip. On Windows that happens to be the separator anyway; on a host where it is an ordinary
+// character the extraction used to place flat files literally named "axmol-2.11.5\core\..." in the staging
+// directory, so the engine root never existed and the install died with "missing axmol/axmolver.h.in (v3) or
+// core/axmolver.h.in (v2)" — a message that blamed the v2/v3 layout instead of the archive.
+var backslashZip = Path.Combine(root, Guid.NewGuid() + ".zip");
+using (var zip = ZipFile.Open(backslashZip, ZipArchiveMode.Create))
+{
+    using (var header = new StreamWriter(zip.CreateEntry("axmol-2.11.5\\core\\axmolver.h.in").Open()))
+        header.Write("#define AX_VERSION_MAJOR 2\n#define AX_VERSION_MINOR 11\n#define AX_VERSION_PATCH 5\n");
+    foreach (var marker in new[] { "1k\\1kiss.ps1", "tools\\cmdline\\axmol.ps1", "templates\\cpp\\axproj-template.json" })
+        using (var file = new StreamWriter(zip.CreateEntry("axmol-2.11.5\\" + marker).Open())) file.Write("marker");
+}
+var backslashOut = Path.Combine(root, "backslash-extracted");
+await Task.Run(() => PackageInstaller.ExtractSafely(backslashZip, backslashOut));
+Check(File.Exists(Path.Combine(backslashOut, "axmol-2.11.5", "core", "axmolver.h.in"))
+    && !Directory.EnumerateFiles(backslashOut).Any(entry => Path.GetFileName(entry).Contains('\\')),
+    "Backslash-separated archive extracts into real directories, not flat backslash-named files");
+Check(StateStore.ValidateEngine(Path.Combine(backslashOut, "axmol-2.11.5"), "official-lts").Version == "2.11.5",
+    "The v2 engine asset from the backslash archive validates through the core/ layout, not the axmol/ one");
+var backslashTraversalZip = Path.Combine(root, Guid.NewGuid() + ".zip");
+using (var zip = ZipFile.Open(backslashTraversalZip, ZipArchiveMode.Create)) zip.CreateEntry("..\\escape.txt");
+await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.ExtractSafely(backslashTraversalZip, Path.Combine(root, "backslash-escape"))), "Backslash ZIP traversal rejected");
+
 // Deciding SDK integrity is back with the engine (it validates during the CMake configure step); Hub no longer
 // assembles or verifies an SDK of its own.
 var cancelledScript = Path.Combine(root, "must-not-start.ps1");
