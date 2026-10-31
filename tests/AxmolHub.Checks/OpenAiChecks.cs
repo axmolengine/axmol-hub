@@ -793,6 +793,30 @@ internal static class OpenAiChecks
             && (await PlanStreamFailure("data: {\"type\":\"response.incomplete\"}\n\n"))?.Contains("incomplete") == true,
             "plan stream reports failed usage limits and incomplete responses");
 
+        // A relay in front of the Responses wire rejects response chaining (AgentRouter answers
+        // "previous_response_id expected null"), and Hub already sends the whole conversation, so the field is
+        // dropped before it leaves. The OpenAI endpoint itself keeps it.
+        foreach (var (baseUrl, keepsChain) in new[] { ("https://ps.air-outer.com/v1", false), ("https://api.openai.com/v1", true) })
+        {
+            var relayBodies = new List<string>();
+            var relay = new ModelProvider
+            {
+                Id = "relay", Name = "Relay", IsCustom = true, BaseUrl = baseUrl,
+                Protocol = ModelProtocols.Responses, Model = "fixture-model",
+            };
+            using var relayClient = ChatClientFactory.Create(relay, "fixture-model", null, transport: new Handler(async (request, token) =>
+            {
+                relayBodies.Add(await request.Content!.ReadAsStringAsync(token));
+                return Json("""{"id":"resp1","object":"response","created_at":1,"status":"completed","model":"fixture-model","output":[]}""");
+            }));
+            // What FunctionInvokingChatClient hands the next tool round: the previous response id.
+            await relayClient.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") },
+                new ChatOptions { ConversationId = "resp_previous" });
+            using var relayBody = JsonDocument.Parse(relayBodies.Single());
+            Check(relayBody.RootElement.TryGetProperty("previous_response_id", out _) == keepsChain,
+                keepsChain ? "the OpenAI endpoint keeps response chaining" : "a responses relay never receives a response chain");
+        }
+
         // A re-login that failed between its two writes leaves a plan registration beside the legacy secret.
         // The secret is what requests carry, so it decides: the user is still asked to sign in.
         var halfCredential = new ProviderCredential { Id = "openai-half", ProviderId = "openai", AuthKind = "openaiOAuth",
