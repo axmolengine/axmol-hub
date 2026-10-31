@@ -729,7 +729,9 @@ public partial class ChatPanel : UserControl
             : null;
         var displayedEffort = _chat.ActiveReasoningEffort;
         SelectedReasoningLabel.IsVisible = supportsReasoning;
-        SelectedReasoningLabel.Text = supportsReasoning ? ReasoningChoiceLabel(displayedEffort) : "";
+        SelectedReasoningLabel.Text = !supportsReasoning ? ""
+            : routed ? $"{HubStrings.Get("ChatRoutingAutoChip")} · {ReasoningChoiceLabel(displayedEffort)}"
+            : ReasoningChoiceLabel(displayedEffort);
         ToolTip.SetTip(SelectedReasoningLabel, routed
             ? route is { } chosen
                 ? $"{chosen.Model} · {ReasoningEffortLabel(chosen.Effort)} — {chosen.Reason}"

@@ -110,13 +110,27 @@ internal sealed class ShellAssistantChecks
         var routeSession = shell.Chat.ActiveConversation ?? shell.Chat.StartConversation();
         Check(shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
             "新会话默认是手动选择，不会被静默自动路由");
-        Check(shell.Chat.SetRouting(routeSession.Id, ChatRouting.Auto)
-              && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Auto
+        var autoReasoningSwitch = panel.FindControl<ToggleSwitch>("AutoReasoningSwitch")!;
+        autoReasoningSwitch.IsChecked = true;
+        Check(shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Auto
               && shell.Chat.ActiveRouting == ChatRouting.Auto,
             "会话可以打开自动路由（Routing 落在会话上而不是全局）");
+        var chipTracksRouting = true;
+        var routingChipObservations = new List<string>();
+        foreach (var automatic in new[] { true, false, true })
+        {
+            autoReasoningSwitch.IsChecked = automatic;
+            var expectedChip = automatic
+                ? HubStrings.Get("ChatRoutingAutoChip") + " · " + HubStrings.Get("ChatEffortHigh")
+                : HubStrings.Get("ChatEffortHigh");
+            chipTracksRouting &= panel.ReasoningChipTextForCheck == expectedChip;
+            routingChipObservations.Add($"{automatic}: {panel.ReasoningChipTextForCheck}");
+        }
         panel.Reload();
-        Check(panel.ReasoningChipTextForCheck == HubStrings.Get("ChatEffortHigh"),
-            "开启自动推理时芯片仍显示明确档位（实际「" + panel.ReasoningChipTextForCheck + "」）");
+        Check(chipTracksRouting && panel.ReasoningChipTextForCheck
+                == HubStrings.Get("ChatRoutingAutoChip") + " · " + HubStrings.Get("ChatEffortHigh"),
+            "切换自动推理立即同步芯片的自动标识与明确档位，重载后保持一致（实际 "
+            + string.Join(" → ", routingChipObservations) + "；重载「" + panel.ReasoningChipTextForCheck + "」）");
         Check(shell.Chat.SelectReasoningEffort(ChatReasoningEfforts.Low)
               && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
             "手选一档，本会话立刻退出自动路由——被悄悄覆盖的手选不算手选");
@@ -2209,11 +2223,12 @@ internal sealed class ShellAssistantChecks
               && tookRoute.Value.Reason.Length > 0
               && string.Equals(routedClient?.LastOptions?.Reasoning?.Effort.ToString(), tookRoute.Value.Effort,
                   StringComparison.OrdinalIgnoreCase)
-              && panel.ReasoningChipTextForCheck == panel.ReasoningChipLabelForCheck(tookRoute.Value.Effort)
+              && panel.ReasoningChipTextForCheck == HubStrings.Get("ChatRoutingAutoChip") + " · "
+                  + panel.ReasoningChipLabelForCheck(tookRoute.Value.Effort)
               && shell.Chat.StoredCopyForCheck(routedSession.Id)?.ReasoningEffort == tookRoute.Value.Effort
               && shell.Chat.ActiveConversation?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)
                   ?.RunReasoningEffort == tookRoute.Value.Effort,
-            "自动推导后芯片显示本次实际选择的明确档位（实际「" + tookRoute?.Effort
+            "自动推导后芯片保留自动标识并显示本次实际选择的明确档位（实际「" + tookRoute?.Effort
             + "」，显示「" + panel.ReasoningChipTextForCheck + "」）");
         Check(routeAudits.Count(line => line.Contains("Auto route:", StringComparison.Ordinal)) == 1
               && routeAudits.Any(line => line.Contains(tookRoute?.Effort ?? "\n", StringComparison.Ordinal)),
