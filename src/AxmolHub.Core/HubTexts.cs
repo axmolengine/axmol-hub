@@ -902,7 +902,7 @@ public static class HubTexts
         ["ComputerUseApprovalTitle"] = ("允许 AI 使用此应用？", "Allow AI to use this app?"),
         ["ComputerUseAllowConversation"] = ("允许此会话", "Allow this session"),
         ["ComputerUseAlwaysAllow"] = ("始终允许", "Always allow"),
-        ["ComputerUseGrantHint"] = ("仅授权此应用的截图和输入操作。", "Grants screenshot and input actions for this app only."),
+        ["ComputerUseGrantHint"] = ("仅授权上述应用的截图和输入操作；窗口标题变化无需重复授权。", "Grants screenshot and input actions for the application above; title changes do not require another grant."),
         ["TrustedComputerAppsTitle"] = ("始终允许的桌面应用", "Always allowed desktop apps"),
         ["TrustedComputerAppsHint"] = ("这些应用可在没有重复审批的情况下接受 Computer Use 操作。", "These apps can receive Computer Use actions without another approval."),
         ["ChatPlanApprovalQuestion"] = ("是否按这个计划开始执行？", "Start implementing this plan?"),

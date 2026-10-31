@@ -53,7 +53,8 @@ internal static class MacOsComputerUse
                 var width = (int)Math.Round(rect.Size.Width);
                 var height = (int)Math.Round(rect.Size.Height);
                 if (width < 32 || height < 32) continue;
-                windows.Add(new CapturableWindow((nint)windowId, title, checked((int)pid), width, height));
+                windows.Add(new CapturableWindow((nint)windowId, title, checked((int)pid), width, height)
+                    { Owner = DesktopApplicationIdentity.Resolve(checked((int)pid)) });
             }
             return windows;
         }
@@ -68,6 +69,7 @@ internal static class MacOsComputerUse
             CGRequestScreenCaptureAccess();
             throw new UnauthorizedAccessException("Screen Recording permission is required.");
         }
+        if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok) return null;
         var path = Path.Combine(Path.GetTempPath(), $"axmolhub-computer-use-{Guid.NewGuid():N}.png");
         try
         {
@@ -123,6 +125,8 @@ internal static class MacOsComputerUse
         }
         if (!IsFrontmost(window.ProcessId))
             return "Refused: the selected application is not frontmost. Bring it to the front and ask before retrying; input is never sent to a different app.";
+        if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok)
+            return "Refused: the selected window's application identity changed before input.";
         if (!GetWindowBounds(window.Handle, out var bounds))
             return "Refused: the selected application window is no longer available.";
 

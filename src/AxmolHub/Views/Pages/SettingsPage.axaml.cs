@@ -583,7 +583,7 @@ public partial class SettingsPage : UserControl
 
         foreach (var app in _chat.TrustedComputerApps)
         {
-            TrustedComputerAppList.Children.Add(TrustRow(app, TrustGrantRowTag.ComputerApp, () => RevokeTrustedComputerApp(app)));
+            TrustedComputerAppList.Children.Add(TrustRow(app.ExecutablePath, TrustGrantRowTag.ComputerApp, () => RevokeTrustedComputerApp(app)));
         }
 
         ShowTrustGroup(TrustedToolGroup, TrustedToolList);
@@ -640,7 +640,7 @@ public partial class SettingsPage : UserControl
         if (_chat.RevokeAllTrustedCommands()) RebuildTrustedGrants();
     }
 
-    private void RevokeTrustedComputerApp(string app)
+    private void RevokeTrustedComputerApp(ComputerApplication app)
     {
         if (_chat.RevokeTrustedComputerApp(app)) RebuildTrustedGrants();
     }

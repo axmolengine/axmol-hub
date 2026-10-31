@@ -763,8 +763,8 @@ public sealed partial class ChatWorkspace : IDisposable
     internal Action<HubPreferences>? PreferencesPersist { get => _execution.PreferencesPersist; set => _execution.PreferencesPersist = value; }
     /// <summary>The tools the whole app has been told to stop asking about, in the order they were granted.</summary>
     public IReadOnlyList<string> TrustedTools { get => _execution.TrustedTools; }
-    public IReadOnlyList<string> TrustedComputerApps { get => _execution.TrustedComputerApps; }
-    public bool RevokeTrustedComputerApp(string app) => _execution.RevokeTrustedComputerApp(app);
+    public IReadOnlyList<ComputerApplication> TrustedComputerApps { get => _execution.TrustedComputerApps; }
+    public bool RevokeTrustedComputerApp(ComputerApplication app) => _execution.RevokeTrustedComputerApp(app);
     public bool RevokeAllTrustedComputerApps() => _execution.RevokeAllTrustedComputerApps();
     /// <summary>Takes one app-wide grant back. Sessions keep their own shorter list — a revoke here says "stop
     /// trusting this for everything I have not answered yet", not "answer every past session's question again".</summary>
@@ -1093,8 +1093,9 @@ public sealed partial class ChatWorkspace : IDisposable
     public bool TryEnqueueSend(string conversationId, string text, string? attachedContext, out string? refusalKey) => _execution.TryEnqueueSend(conversationId, text, attachedContext, out refusalKey);
     internal int QueuedWakeCount { get => _execution.QueuedWakeCount; }
     internal Func<ScreenCaptureBridge?>? ScreenCaptureBridgeProvider { get => _execution.ScreenCaptureBridgeProvider; set => _execution.ScreenCaptureBridgeProvider = value; }
+    internal Func<ComputerUseBridge?>? ComputerUseBridgeProvider { get => _execution.ComputerUseBridgeProvider; set => _execution.ComputerUseBridgeProvider = value; }
 
-    public bool TrustComputerApp(string app) => _execution.TrustComputerApp(app);
+    public bool TrustComputerApp(ComputerApplication app) => _execution.TrustComputerApp(app);
     /// <summary>Grants a tool for every session. The card's 「总是允许」 and the settings page both come through
     /// here, so one rule decides what a grant is written into and whether it was already there.</summary>
     public bool TrustTool(string tool) => _execution.TrustTool(tool);

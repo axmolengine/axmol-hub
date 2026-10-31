@@ -43,14 +43,14 @@ public partial class SettingsPage : UserControl
     internal bool ToolApprovalLabelsAreLocalizedForCheck => ToolApprovalPicker.Items.OfType<ComboBoxItem>().All(item => item.Content is string text && text.Length > 0);
     internal bool UpdateChannelLabelsAreLocalizedForCheck => UpdateChannelPicker.Items.OfType<ComboBoxItem>().All(item => item.Content is string text && text.Length > 0);
     internal bool UpdateChannelPickerEnabledForCheck => UpdateChannelPicker.IsEnabled;
-    internal string[] TrustedComputerAppsForCheck => (_chat?.TrustedComputerApps ?? []).ToArray();
+    internal ComputerApplication[] TrustedComputerAppsForCheck => (_chat?.TrustedComputerApps ?? []).ToArray();
     internal int TrustedComputerAppRowsForCheck => TrustedComputerAppList.Children.OfType<Control>().Count(child => Equals(child.Tag, TrustGrantRowTag.ComputerApp));
     /// <summary>Whether that list is on the page at all — an empty one takes its heading and its revoke-all button
     /// with it, which is the whole point of the ledger's single empty line.</summary>
     internal bool TrustedComputerAppGroupShownForCheck => TrustedComputerAppGroup.IsVisible;
 
-    internal bool TrustComputerAppForCheck(string app) => ApplyTrustGrantForCheck(() => _chat?.TrustComputerApp(app) == true);
-    internal bool RevokeTrustedComputerAppForCheck(string app) => ApplyTrustGrantForCheck(() => _chat?.RevokeTrustedComputerApp(app) == true);
+    internal bool TrustComputerAppForCheck(ComputerApplication app) => ApplyTrustGrantForCheck(() => _chat?.TrustComputerApp(app) == true);
+    internal bool RevokeTrustedComputerAppForCheck(ComputerApplication app) => ApplyTrustGrantForCheck(() => _chat?.RevokeTrustedComputerApp(app) == true);
     internal bool RevokeAllTrustedComputerAppsForCheck() => ApplyTrustGrantForCheck(() => _chat?.RevokeAllTrustedComputerApps() == true);
 
     /// <summary>The trust list as stored, for the assertion that a grant written from a card lands here.</summary>

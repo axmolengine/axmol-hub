@@ -336,10 +336,11 @@ internal sealed partial class ChatExecutionCoordinator
                 // there, because that is where the grant has to outlive the request.
                 ApplyGrantedFile: path => Sessions.ApplyGrantedFileAsync(conversationId, path))
             {
-                ComputerUse = OperatingSystem.IsWindows()
+                ComputerUse = ComputerUseBridgeProvider is { } inputProvider ? inputProvider() : OperatingSystem.IsWindows()
                     ? new ComputerUseBridge(WindowsScreenCapture.Operate)
                     : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()
                     : OperatingSystem.IsLinux() ? LinuxComputerUse.InputBridge() : null,
+                ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
                 // Read from the session's own record rather than the screen: a parked call answered after a
                 // restart acts on the directories its card was shown for. Normalized here, with the guards in
                 // hand, because the lists come out of a user-editable session file — a protected location that a
@@ -1678,10 +1679,11 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal Action<HubPreferences>? PreferencesPersist { get; set; }
     internal Func<ScreenCaptureBridge?>? ScreenCaptureBridgeProvider { get; set; }
+    internal Func<ComputerUseBridge?>? ComputerUseBridgeProvider { get; set; }
     internal IReadOnlyList<string> TrustedTools => PreferencesProvider?.Invoke()?.TrustedTools ?? [];
-    internal IReadOnlyList<string> TrustedComputerApps => PreferencesProvider?.Invoke()?.TrustedComputerApps ?? [];
+    internal IReadOnlyList<ComputerApplication> TrustedComputerApps => PreferencesProvider?.Invoke()?.TrustedComputerApps ?? [];
 
-    internal bool TrustComputerApp(string app)
+    internal bool TrustComputerApp(ComputerApplication app)
     {
         var preferences = PreferencesProvider?.Invoke();
         if (preferences is null || !ComputerUseGrants.Add(preferences.TrustedComputerApps, app)) return false;
@@ -1690,7 +1692,7 @@ internal sealed partial class ChatExecutionCoordinator
         return true;
     }
 
-    internal bool RevokeTrustedComputerApp(string app)
+    internal bool RevokeTrustedComputerApp(ComputerApplication app)
     {
         var preferences = PreferencesProvider?.Invoke();
         if (preferences is null || !ComputerUseGrants.Remove(preferences.TrustedComputerApps, app)) return false;
@@ -1887,10 +1889,16 @@ internal sealed partial class ChatExecutionCoordinator
                 // the person answered for. It cannot walk past the ladder's first two rungs either, because those
                 // refuse a call before any verb is consulted — a missing sandbox root and a cache break are not verbs.
                 var verbGrant = ChatTools.GrantedCommandVerb(member.Name, member.ArgumentsJson, TrustedCommands);
-                var computerApp = ComputerUseGrants.ApplicationForTool(member.Name, member.ArgumentsJson);
-                var computerGrant = computerApp.Length > 0
-                                    && (ComputerUseGrants.Contains(conversation.AllowedComputerApps, computerApp)
-                                        || ComputerUseGrants.Contains(TrustedComputerApps, computerApp));
+                var computerUse = ComputerUseGrants.IsComputerUseTool(member.Name);
+                var target = computerUse
+                    ? ComputerUseGrants.ResolveTarget(scope.Workspace.Screen, member.Name, member.ArgumentsJson) : null;
+                var computerGrant = HasComputerGrant(conversation, target?.Application);
+                if (computerUse)
+                    Sessions.Registry.TryUpdate(run.ConversationId, opened =>
+                    {
+                        var at = opened.IndexOfToolCall(member.CallId);
+                        if (at >= 0) opened.Messages[at] = opened.Messages[at] with { ApprovalComputerTarget = target };
+                    });
                 var granted = computerGrant || verbGrant || (ToolApprovalPolicy.IsGrantable(risk)
                               && (sessionGrant || ToolTrust.Contains(TrustedTools, member.Name)));
                 // Nothing to show, so nothing to wait on. Letting it through hands the call to the tool's own body,
@@ -1903,8 +1911,8 @@ internal sealed partial class ChatExecutionCoordinator
                 // read-only grant it lands is the whole of what the card can give.
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
-                var parks = ComputerUseGrants.IsComputerUseTool(member.Name)
-                    ? computerApp.Length > 0 && !computerGrant
+                var parks = computerUse
+                    ? target is not null && !computerGrant
                     : !granted && !malformed
                       && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
                 return new CallVerdict(member, risk, asks, malformed, granted, sessionGrant, verbGrant, parks,
@@ -1932,7 +1940,6 @@ internal sealed partial class ChatExecutionCoordinator
             ParkedCall Of(CallVerdict verdict) => new(verdict.Call, null, verdict.Asks, seen, null, null,
                 verdict.Risk == ToolRisk.CacheBreak);
 
-            var thisCall = Judge(call);
             // Asked again about a call that is already on the card: a sibling of the same response raised the group,
             // and the loop still consults the gate for every call it recorded. One decision, one audit line, one
             // park — a second SuspendForApproval would cancel a stream that already ended, and a second attention
@@ -1940,6 +1947,7 @@ internal sealed partial class ChatExecutionCoordinator
             if (conversation.Messages.Any(turn => turn.ToolCallId == call.CallId
                                                   && turn.ApprovalState == ChatApprovalStates.Pending))
                 return new List<ParkedCall>();
+            var thisCall = Judge(call);
             AuditVerdict(thisCall);
             if (!thisCall.Parks) return null;
 
@@ -1947,7 +1955,6 @@ internal sealed partial class ChatExecutionCoordinator
             // asked for together are answered together, and a card for one of them while another waits unstated
             // would be a question about half of what is about to happen.
             var group = new List<ParkedCall> { Of(thisCall) };
-            var computerUseHoldsBatch = batch.Any(member => ComputerUseGrants.IsComputerUseTool(member.Name));
             foreach (var sibling in batch)
             {
                 if (sibling.CallId == call.CallId) continue;
@@ -1956,8 +1963,8 @@ internal sealed partial class ChatExecutionCoordinator
                 if (conversation.Messages.Any(turn => turn.ToolCallId == sibling.CallId
                                                       && turn.ApprovalState == ChatApprovalStates.Pending)) continue;
                 var verdict = Judge(sibling);
-                if (!verdict.Parks && !computerUseHoldsBatch) continue;
-                if (verdict.Parks) AuditVerdict(verdict);
+                if (!verdict.Parks) continue;
+                AuditVerdict(verdict);
                 group.Add(Of(verdict));
             }
 
@@ -2081,9 +2088,9 @@ internal sealed partial class ChatExecutionCoordinator
         }
 
         var toolName = conversation.Messages[index].ToolName ?? "tool";
-        var computerApp = ComputerUseGrants.ApplicationForTool(toolName, conversation.Messages[index].ToolArguments);
+        var computerApp = conversation.Messages[index].ApprovalComputerTarget?.Application;
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
-        if (isComputerUse && computerApp.Length == 0)
+        if (isComputerUse && computerApp is null)
         {
             refusalKey = "ChatApprovalGone";
             return false;
@@ -2100,29 +2107,14 @@ internal sealed partial class ChatExecutionCoordinator
             ? ChatTools.TrustCandidateVerb(toolName, conversation.Messages[index].ToolArguments,
                 ScopeFor(conversationId).Workspace, TrustedCommands)
             : null;
-        var frozenComputerArguments = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (isComputerUse)
-        {
-            foreach (var owed in conversation.UnansweredCallsOfBatch(batchId))
-            {
-                if (owed.ApprovalState != ChatApprovalStates.Pending
-                    || !ComputerUseGrants.IsComputerUseTool(owed.ToolName)
-                    || !string.Equals(ComputerUseGrants.ApplicationForTool(owed.ToolName, owed.ToolArguments),
-                        computerApp, StringComparison.OrdinalIgnoreCase)
-                    || string.IsNullOrEmpty(owed.ToolCallId)) continue;
-                frozenComputerArguments[owed.ToolCallId] = FreezeComputerTargetArguments(
-                    conversationId, owed.ToolName!, owed.ToolArguments);
-            }
-        }
         Sessions.Registry.TryUpdate(conversationId, opened =>
         {
             foreach (var owed in opened.UnansweredCallsOfBatch(batchId))
             {
                 if (owed.ApprovalState != ChatApprovalStates.Pending) continue;
                 var owedIsComputerUse = ComputerUseGrants.IsComputerUseTool(owed.ToolName);
-                var owedApp = ComputerUseGrants.ApplicationForTool(owed.ToolName, owed.ToolArguments);
                 if (owedIsComputerUse && (!isComputerUse
-                    || !string.Equals(owedApp, computerApp, StringComparison.OrdinalIgnoreCase))) continue;
+                    || computerApp?.IsSameApplication(owed.ApprovalComputerTarget?.Application) != true)) continue;
                 if (isComputerUse && !owedIsComputerUse) continue;
                 // A question is not answered by an approval, same as on the refusal side above.
                 if (owed.ToolName == AskUserTool.ToolName) continue;
@@ -2130,8 +2122,6 @@ internal sealed partial class ChatExecutionCoordinator
                 opened.Messages[at] = opened.Messages[at] with
                 {
                     ApprovalState = ChatApprovalStates.Approved,
-                    ToolArguments = frozenComputerArguments.TryGetValue(owed.ToolCallId!, out var frozen)
-                        ? frozen : owed.ToolArguments,
                 };
             }
 
@@ -2151,11 +2141,11 @@ internal sealed partial class ChatExecutionCoordinator
         // Outside the session gate: the app-wide half is a different file, with a different owner, and the registry
         // lock must not be held while the settings store is written.
         if (alwaysAllow && grantable) TrustTool(toolName);
-        if (isComputerUse && alwaysAllow) TrustComputerApp(computerApp);
+        if (isComputerUse && alwaysAllow) TrustComputerApp(computerApp!);
         // The verb grant is app-level only: the session list above is the tool answer's, and a second per-session
         // list for verbs would be a second place for the two to disagree.
         if (verbKey is not null) TrustCommand(verbKey);
-        AuditApproval(conversationId, isComputerUse ? computerApp : verbKey ?? toolName,
+        AuditApproval(conversationId, isComputerUse ? computerApp!.ExecutablePath : verbKey ?? toolName,
             isComputerUse
                 ? alwaysAllow ? "computer app always allowed" : "computer app allowed for conversation"
                 : alwaysAllow ? "always allowed" : "allowed");
@@ -2164,32 +2154,23 @@ internal sealed partial class ChatExecutionCoordinator
         return true;
     }
 
-    private string FreezeComputerTargetArguments(string conversationId, string toolName, string? argumentsJson)
+    private bool HasComputerGrant(Conversation? conversation, ComputerApplication? app)
+        => app is not null && (ComputerUseGrants.Contains(conversation?.AllowedComputerApps, app)
+                               || ComputerUseGrants.Contains(TrustedComputerApps, app));
+
+    private ComputerUseTarget? ApprovedComputerTargetFor(string conversationId, string? callId)
     {
-        var app = ComputerUseGrants.ApplicationForTool(toolName, argumentsJson);
-        if (app.Length == 0 || argumentsJson is null) return argumentsJson ?? "{}";
-        var screen = ScopeFor(conversationId).Workspace.Screen;
-        if (screen is null) return argumentsJson;
-        try
+        ComputerUseTarget? Read()
         {
-            var requestedPid = 0;
-            using (var document = System.Text.Json.JsonDocument.Parse(argumentsJson))
-            {
-                if (document.RootElement.TryGetProperty("process_id", out var pid)
-                    && pid.TryGetInt32(out var parsedPid)) requestedPid = parsedPid;
-            }
-            var match = ScreenCapture.Find(screen.Windows(), app, requestedPid);
-            if (!match.Ok || match.Window is not { } window) return argumentsJson;
-            var arguments = System.Text.Json.Nodes.JsonNode.Parse(argumentsJson) as System.Text.Json.Nodes.JsonObject;
-            if (arguments is null) return argumentsJson;
-            arguments["process_id"] = window.ProcessId;
-            return arguments.ToJsonString();
+            var conversation = Sessions.Registry.Peek(conversationId);
+            var at = callId is null ? -1 : conversation?.IndexOfToolCall(callId) ?? -1;
+            var target = at < 0 ? null : conversation!.Messages[at].ApprovalComputerTarget;
+            return HasComputerGrant(conversation, target?.Application) ? target : null;
         }
-        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException
-                                  or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-        {
-            return argumentsJson;
-        }
+        // Grants can be revoked while a call is queued. Read the registry on its owning thread immediately
+        // before capture or input rather than caching a permission in the scope assembled for a model round.
+        return Dispatcher.UIThread.CheckAccess() ? Read()
+            : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
     }
 
     private ConversationRun? RunForDecision(string conversationId, out string? refusalKey)
@@ -2354,7 +2335,9 @@ internal sealed partial class ChatExecutionCoordinator
             var unanswered = conversation.UnansweredCallsOfBatch(batchId);
             var computerUseBatch = unanswered.Any(turn => ComputerUseGrants.IsComputerUseTool(turn.ToolName));
             return unanswered
-                .Where(turn => !computerUseBatch || turn.ApprovalState == ChatApprovalStates.Approved)
+                // A granted sibling has no card of its own. Resume it too, but leave another application's
+                // pending card parked. Its body rechecks the live grant in case it was revoked in the meantime.
+                .Where(turn => !computerUseBatch || turn.ApprovalState != ChatApprovalStates.Pending)
                 .Select(turn => new ApprovedCall(turn.ToolName ?? "", turn.ToolArguments ?? "{}", mode,
                     turn.ToolCallId ?? "", turn.ToolName == AskUserTool.ToolName, turn.ApprovalWriteFingerprint,
                     turn.ApprovalAccessKind, turn.ApprovalCacheBreak))

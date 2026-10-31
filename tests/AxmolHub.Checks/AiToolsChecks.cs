@@ -1519,12 +1519,45 @@ internal static class AiToolsChecks
         };
         var blank = false;
         var drawing = false;
-        var host = new ScreenCaptureBridge(() => [new CapturableWindow(1, "Axmol Demo", 100, 800, 600), new CapturableWindow(2, "Axmol Hub — 助手", 200, 1200, 800), new CapturableWindow(3, "Outlook", 300, 1000, 700)], window =>
+        var fixtureApp = new ComputerApplication(Path.GetFullPath(Path.Combine(toolRoot, "fixture-editor")));
+        // Persisted identities need headless coverage: UI grant fixtures never exercise the JSON contract.
+        var storedComputerSession = new Conversation();
+        ComputerUseGrants.Add(storedComputerSession.AllowedComputerApps, fixtureApp);
+        ComputerUseGrants.Add(storedComputerSession.AllowedComputerApps, fixtureApp);
+        var storedComputerPreferences = new HubPreferences();
+        ComputerUseGrants.Add(storedComputerPreferences.TrustedComputerApps, fixtureApp);
+        var copiedComputerSession = JsonSerializer.Deserialize<Conversation>(JsonSerializer.Serialize(storedComputerSession));
+        var copiedComputerPreferences = JsonSerializer.Deserialize<HubPreferences>(JsonSerializer.Serialize(storedComputerPreferences));
+        if (copiedComputerSession?.AllowedComputerApps.Count != 1
+            || !ComputerUseGrants.Contains(copiedComputerSession.AllowedComputerApps, fixtureApp)
+            || !ComputerUseGrants.Contains(copiedComputerPreferences?.TrustedComputerApps, fixtureApp))
+            throw new Exception("Stored Computer Use grants lost their executable identity or admitted duplicates.");
+        Console.WriteLine("PASS: conversation and permanent application grants round-trip as executable identities.");
+        // A caption must not silently become consent for its current owner. Ignoring old title-only fields
+        // needs no migration or compatibility branch in the app, but is still a permission boundary.
+        var titleOnlySession = JsonSerializer.Deserialize<Conversation>(
+            """{"AllowedComputerApps":["Editor"],"allowedComputerApps":["Editor"]}""");
+        var titleOnlyPreferences = JsonSerializer.Deserialize<HubPreferences>(
+            """{"TrustedComputerApps":["Editor"],"trustedComputerApps":["Editor"]}""");
+        if (titleOnlySession?.AllowedComputerApps.Count != 0 || titleOnlyPreferences?.TrustedComputerApps.Count != 0)
+            throw new Exception("Title-only data was promoted into Computer Use application authorization.");
+        Console.WriteLine("PASS: title-only data cannot authorize an application's executable.");
+        var outlook = new CapturableWindow(3, "Outlook", 300, 1000, 700)
+            { Owner = new ComputerProcessIdentity(fixtureApp, 1000) };
+        ComputerUseTarget? approvedTarget = null;
+        Action? duringCapture = null;
+        var sentInputs = 0;
+        var host = new ScreenCaptureBridge(() => [new CapturableWindow(1, "Axmol Demo", 100, 800, 600), new CapturableWindow(2, "Axmol Hub — 助手", 200, 1200, 800), outlook], window =>
         {
             asked.Add(window);
+            duringCapture?.Invoke();
             return drawing ? null : new CapturedFrame(pngBytes, window?.Width ?? 3840, window?.Height ?? 2160, blank ? new FrameStats(window?.Width ?? 3840, window?.Height ?? 2160, 1, 0) : new FrameStats(window?.Width ?? 3840, window?.Height ?? 2160, 240, 182.4));
         });
-        var grabbing = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], log, shots, Screen: host, RecordFrames: frames => landed.AddRange(frames)));
+        var grabbing = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], log, shots, Screen: host, RecordFrames: frames => landed.AddRange(frames))
+        {
+            ApprovedComputerTarget = () => approvedTarget,
+            ComputerUse = new ComputerUseBridge((_, _) => { sentInputs++; return null; }),
+        });
         // One target, several hits: the refusal lists the candidates and the host is never asked to draw. Guessing
         // between two windows would send back a frame the model cannot tell apart from the one it asked for.
         var ambiguous = grabbing.CaptureScreen("Axmol");
@@ -1548,6 +1581,7 @@ internal static class AiToolsChecks
         // The blank rule: nothing is stored and no picture is attached. This is the branch that decides whether the
         // channel is trustworthy, because a black PNG is a valid file, a valid header and a plausible byte count.
         var storedWith = landed.Count;
+        approvedTarget = ComputerUseTarget.FromWindow(outlook);
         blank = true;
         var black = grabbing.CaptureScreen("Outlook");
         if (!black.Contains("blank frame", StringComparison.Ordinal) || !black.Contains("Outlook", StringComparison.Ordinal) || landed.Count != storedWith || !black.Contains("do not retry", StringComparison.OrdinalIgnoreCase) || !black.Contains("screenshot", StringComparison.OrdinalIgnoreCase))
@@ -1566,6 +1600,56 @@ internal static class AiToolsChecks
         var named = grabbing.CaptureScreen("Outlook");
         if (!named.Contains("pid 300", StringComparison.Ordinal) || landed.Count != 1)
             throw new Exception($"A named capture did not land as one stored frame: {named}");
+        // Gate fixtures cannot catch a body that skips authorization. Both capture entry points and input
+        // must stop before touching the backend when the live grant was revoked.
+        var captureCount = asked.Count;
+        var original = outlook;
+        var frozen = approvedTarget;
+        string[] TryComputerBodies() => [grabbing.CaptureScreen("Outlook"),
+            grabbing.ComputerUse("Outlook", "screenshot"), grabbing.ComputerUse("Outlook", "press_key", key: "Tab")];
+        approvedTarget = null;
+        var revokedResults = TryComputerBodies();
+        if (asked.Count != captureCount || sentInputs != 0
+            || revokedResults.Any(result => !result.StartsWith("Refused:", StringComparison.Ordinal)))
+            throw new Exception($"A revoked application grant reached capture or input: {string.Join("; ", revokedResults)}");
+        Console.WriteLine("PASS: screenshot and input bodies recheck the live application grant before touching a backend.");
+        approvedTarget = frozen;
+        // Keeping a title, PID or handle does not keep consent if the process incarnation or executable changed.
+        // Equivalent ownership failures share one claim, with the failing fixture named in its exception.
+        foreach (var changed in new[]
+        {
+            (Name: "recycled PID", Window: original with { Owner = original.Owner! with { StartedAtUtcTicks = 2000 } }),
+            (Name: "different executable", Window: original with { Owner = original.Owner! with
+                { Application = new ComputerApplication(fixtureApp.ExecutablePath + "-other") } }),
+            (Name: "unverified owner", Window: original with { Owner = null }),
+            (Name: "different handle", Window: original with { Handle = 33 }),
+        })
+        {
+            outlook = changed.Window;
+            var results = TryComputerBodies();
+            if (asked.Count != captureCount || sentInputs != 0 || landed.Count != 1
+                || results.Any(result => !result.StartsWith("Refused:", StringComparison.Ordinal)))
+                throw new Exception($"An invalid window owner reached capture or input ({changed.Name}): {string.Join("; ", results)}");
+        }
+        outlook = original;
+        Console.WriteLine("PASS: frozen window ownership rejects reused addresses and unverified or different executables.");
+        // A capture can block in native code while the grant is revoked or the window changes owners. Rechecking
+        // before attaching is a separate privacy boundary from refusing to begin the capture.
+        foreach (var change in new[] { "grant", "owner" })
+        {
+            duringCapture = () =>
+            {
+                if (change == "grant") approvedTarget = null;
+                else outlook = original with { Owner = null };
+            };
+            var interrupted = grabbing.CaptureScreen("Outlook");
+            if (!interrupted.StartsWith("Refused:", StringComparison.Ordinal) || landed.Count != 1)
+                throw new Exception($"A frame was attached after its {change} changed during capture: {interrupted}");
+            approvedTarget = frozen;
+            outlook = original;
+        }
+        duringCapture = null;
+        Console.WriteLine("PASS: capture rechecks authorization and ownership before storing or attaching a frame.");
         // The card says which window is about to leave the machine, in the same words the tool will act on.
         var card = ToolPreviews.PreviewFor("capture_screen", """{"target":"Outlook"}""", new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], null, Screen: host));
         if (!card.Contains("window \"Outlook\"", StringComparison.Ordinal) || !card.Contains("pid 300", StringComparison.Ordinal) || !card.Contains("1000×700", StringComparison.Ordinal))
@@ -1588,15 +1672,20 @@ internal static class AiToolsChecks
         var twinSession = Conversation.Create("orcarouter");
         var twinAsked = new List<CapturableWindow?>();
         var twinLanded = new List<ChatImage>();
-        var twins = new ScreenCaptureBridge(() => [new CapturableWindow(11, "Axmol Hub v0.9.3", 200, 1200, 800), new CapturableWindow(12, "Axmol Hub v0.9.3", 201, 1280, 820)], window =>
+        var twinWindow = new CapturableWindow(12, "Axmol Hub v0.9.3", 201, 1280, 820)
+            { Owner = new ComputerProcessIdentity(fixtureApp, 2000) };
+        var twins = new ScreenCaptureBridge(() => [new CapturableWindow(11, "Axmol Hub v0.9.3", 200, 1200, 800), twinWindow], window =>
         {
             twinAsked.Add(window);
             return new CapturedFrame(pngBytes, window?.Width ?? 1, window?.Height ?? 1, new FrameStats(window?.Width ?? 1, window?.Height ?? 1, 240, 182.4));
         });
-        var twinHost = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, twinSession.Id, [], log, twinShots, Screen: twins, RecordFrames: frames => twinLanded.AddRange(frames)));
+        ComputerUseTarget? twinTarget = null;
+        var twinHost = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, twinSession.Id, [], log, twinShots, Screen: twins, RecordFrames: frames => twinLanded.AddRange(frames))
+            { ApprovedComputerTarget = () => twinTarget });
         var twinRefusal = twinHost.CaptureScreen("Axmol Hub");
         if (!twinRefusal.Contains("matches 2 windows", StringComparison.Ordinal) || !twinRefusal.Contains("process_id", StringComparison.Ordinal) || twinAsked.Count != 0)
             throw new Exception($"Two windows sharing a title were not refused by title: {twinRefusal}");
+        twinTarget = ComputerUseTarget.FromWindow(twinWindow);
         var picked = twinHost.CaptureScreen("Axmol Hub", false, 201);
         if (!picked.Contains("pid 201", StringComparison.Ordinal) || picked.Contains("pid 200", StringComparison.Ordinal) || twinAsked.Single()is not { } chosen || chosen.Handle != 12 || twinLanded.Count != 1)
             throw new Exception($"The process id did not pick the window it named: {picked}");

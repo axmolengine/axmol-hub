@@ -5,7 +5,10 @@ namespace AxmolHub.Core;
 /// the host's own capture call needs, and nothing here reads it, so a self-check can invent a window list without
 /// owning a screen.
 /// </summary>
-public sealed record CapturableWindow(nint Handle, string Title, int ProcessId, int Width, int Height);
+public sealed record CapturableWindow(nint Handle, string Title, int ProcessId, int Width, int Height)
+{
+    public ComputerProcessIdentity? Owner { get; init; }
+}
 
 /// <summary>
 /// A frame the host produced. The statistics ride along because the capture holds the pixel buffer before it

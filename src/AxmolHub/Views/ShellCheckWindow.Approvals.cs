@@ -14,10 +14,12 @@ namespace AxmolHub;
 internal sealed class ShellApprovalsChecks
 {
     private readonly Action<bool, string> Check;
+    private readonly CheckReport Report;
     private readonly ShellCheckFixture Fixture;
     internal ShellApprovalsChecks(CheckReport report, Action<bool, string> check, ShellCheckFixture fixture)
     {
         Check = check;
+        Report = report;
         Fixture = fixture;
     }
 
@@ -48,6 +50,9 @@ internal sealed class ShellApprovalsChecks
         var peerSession = StartAgentSession(chat);
         // A call on the tier no grant can open, so its card can be shown to have lost the button that would lie.
         var screenSession = StartAgentSession(chat);
+        var screenPeerSession = StartAgentSession(chat);
+        var savedScreenProvider = chat.ScreenCaptureBridgeProvider;
+        var savedComputerProvider = chat.ComputerUseBridgeProvider;
         // The same tier, reached through the sandbox's own tool rather than past it: a git write that moves a ref
         // starts in the directory the person chose and still belongs on the reach tier. This fixture is the one that
         // proves a grant on <c>run_command</c> does not open it — and it stays a fixture about *that* verb after the
@@ -243,7 +248,7 @@ internal sealed class ShellApprovalsChecks
                 var id when id == gitWriteSession.Id => gitWriteClient,
                 var id when id == commitAutoSession.Id => commitAutoClient,
                 var id when id == commitAskSession.Id => commitAskClient,
-                var id when id == screenSession.Id => screenClient,
+                var id when id == screenSession.Id || id == screenPeerSession.Id => screenClient,
                 var id when id == longCardSession.Id => longCardClient,
                 _ => new ScriptedChatClient(["不该被使用"]),
             };
@@ -533,17 +538,15 @@ internal sealed class ShellApprovalsChecks
                   && !schema.Contains("oldString") && !schema.Contains("ignoreCase"),
                 "Agent 档的工具名互不重复、都是 snake_case，参数在线上也是模型发出的那个形状（实际 "
                 + agentToolNames.Length + " 个）");
-            var computerGrantRoundTrip = new Conversation();
-            ComputerUseGrants.Add(computerGrantRoundTrip.AllowedComputerApps, "Editor App");
-            var grantSessionCopy = System.Text.Json.JsonSerializer.Deserialize<Conversation>(
-                System.Text.Json.JsonSerializer.Serialize(computerGrantRoundTrip));
-            var grantPreferences = new HubPreferences();
-            ComputerUseGrants.Add(grantPreferences.TrustedComputerApps, "Editor App");
-            var grantPreferencesCopy = System.Text.Json.JsonSerializer.Deserialize<HubPreferences>(
-                System.Text.Json.JsonSerializer.Serialize(grantPreferences));
-            Check(ComputerUseGrants.Contains(grantSessionCopy?.AllowedComputerApps, "Editor App")
-                  && ComputerUseGrants.Contains(grantPreferencesCopy?.TrustedComputerApps, "Editor App"),
-                "对话级与应用级 Computer Use 授权都能往返保存到 JSON 状态");
+            // The native resolver is not linked into headless Core checks. An unavailable identity would make
+            // every desktop call refuse, even though all synthetic grant fixtures still passed.
+            if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+            {
+                var nativeOwner = DesktopApplicationIdentity.Resolve(Environment.ProcessId);
+                Check(nativeOwner is { StartedAtUtcTicks: > 0 } && System.IO.File.Exists(nativeOwner.Application.ExecutablePath),
+                    $"应用身份解析能从 OS 读取宿主可执行文件（实际 {nativeOwner?.Application.ExecutablePath ?? "missing"}）");
+            }
+            else Report.Skip("应用身份解析：仅支持 Windows/macOS");
 
             // The capability this build took away, pinned where the list itself is: the model may ask for a directory
             // or one file the task or the user named, and has no way at all to move the session's own root — a name
@@ -1154,7 +1157,24 @@ internal sealed class ShellApprovalsChecks
             await WaitForIdleAsync(chat);
 
             // A named screen target uses the dedicated application gate, independently of the ordinary tool tier.
-            chat.ScreenCaptureBridgeProvider = () => new ScreenCaptureBridge(() => [], _ => null);
+            var previewApplication = new ComputerApplication(System.IO.Path.GetFullPath("fixtures/HubPreview"));
+            var previewWindow = new CapturableWindow(42, "Axmol Hub Desktop Preview - Multi Monitor Session", 101, 800, 600)
+                { Owner = new ComputerProcessIdentity(previewApplication, 1000) };
+            var foreignApplication = new ComputerApplication(System.IO.Path.GetFullPath("fixtures/OtherPreview"));
+            var foreignWindow = new CapturableWindow(43, "Other Preview", 102, 800, 600)
+                { Owner = new ComputerProcessIdentity(foreignApplication, 2000) };
+            var capturedWindows = new List<CapturableWindow?>();
+            var operatedWindows = new List<CapturableWindow>();
+            chat.ScreenCaptureBridgeProvider = () => new ScreenCaptureBridge(() => [previewWindow, foreignWindow], window =>
+            {
+                capturedWindows.Add(window);
+                return null;
+            });
+            chat.ComputerUseBridgeProvider = () => new ComputerUseBridge((window, _) =>
+            {
+                operatedWindows.Add(window);
+                return null;
+            });
             chat.SetApprovalMode(screenSession.Id, ToolApprovalModes.Full);
             chat.OpenConversation(screenSession.Id);
             chat.TryEnqueueSend(screenSession.Id, "看看屏幕上是什么", null, out _);
@@ -1206,31 +1226,136 @@ internal sealed class ShellApprovalsChecks
             panel.SetInputForCheck("");
             await WaitForIdleAsync(chat);
             var deniedScreen = chat.StoredCopyForCheck(screenSession.Id);
-            Check(!ComputerUseGrants.Contains(chat.TrustedComputerApps, "Axmol Hub")
+            Check(!ComputerUseGrants.Contains(chat.TrustedComputerApps, previewApplication)
                   && deniedScreen?.AllowedComputerApps.Count == 0
                   && deniedScreen?.Messages.Any(turn => turn.Role == ChatRoles.Tool
                       && turn.ToolCallId == screenCallId && turn.Text == ToolApprovalResults.Denied) == true,
                 "拒绝目标应用后工具收到拒绝结果，没有执行，也没有写入应用或对话授权");
+            previewWindow = previewWindow with { Title = "Axmol Hub Preview" };
             screenClient.CallsRemaining = 1;
             screenClient.Arguments = new Dictionary<string, object?>
                 { ["target"] = "Axmol Hub Preview", ["fullscreen"] = false };
             chat.TryEnqueueSend(screenSession.Id, "截取 Axmol Hub Preview", null, out _);
             var conversationGrantCallId = await WaitForPendingCallAsync(screenSession);
+            // Rename after the card but before approval: execution must retain the frozen window address.
+            previewWindow = previewWindow with { Title = "Button review: auth-key" };
             Check(conversationGrantCallId is not null
                   && chat.TryResolveApproval(screenSession.Id, conversationGrantCallId ?? "",
                       approved: true, alwaysAllow: false, out _),
                 "允许此对话会恢复指定应用的 Computer Use 调用");
             await WaitForIdleAsync(chat);
             Check(ComputerUseGrants.Contains(chat.StoredCopyForCheck(screenSession.Id)?.AllowedComputerApps,
-                      "Axmol Hub Preview")
-                  && !ComputerUseGrants.Contains(chat.TrustedComputerApps, "Axmol Hub Preview"),
-                "对话授权只保存在当前对话，不会进入全局应用清单");
-            chat.ScreenCaptureBridgeProvider = null;
-            Check(chat.TrustComputerApp("Axmol Hub Preview")
+                      previewApplication)
+                  && !ComputerUseGrants.Contains(chat.TrustedComputerApps, previewApplication)
+                  && capturedWindows.Count == 1 && capturedWindows[0]?.Title == previewWindow.Title,
+                $"对话授权只保存在当前对话，卡片后标题变化仍执行同一窗口（实际截图 {capturedWindows.Count}）");
+            async Task<ChatTurn?> ComputerRound(Conversation session, string tool, string title, string action = "screenshot")
+            {
+                chat.OpenConversation(session.Id);
+                screenClient.ToolName = tool;
+                screenClient.CallsRemaining = 1;
+                screenClient.Arguments = tool == ToolNames.CaptureScreen
+                    ? new() { ["target"] = title }
+                    : new() { ["application"] = title, ["action"] = action, ["key"] = "Tab" };
+                chat.TryEnqueueSend(session.Id, $"Computer grant round {screenClient.Requests}: {tool} {title}", null, out _);
+                await WaitForIdleAsync(chat);
+                return session.Messages.LastOrDefault(turn => turn.ToolName == tool && turn.Role == ChatRoles.Assistant);
+            }
+            void DenyComputer(Conversation session, ChatTurn? turn)
+            {
+                if (turn?.ApprovalState == ChatApprovalStates.Pending)
+                    chat.TryResolveApproval(session.Id, turn.ToolCallId!, approved: false, alwaysAllow: false, out _);
+            }
+            var reuse = new List<bool>();
+            foreach (var title in new[] { "Button review: layout", "Button review: layout", "Button review: colors" })
+            {
+                previewWindow = previewWindow with { Title = title };
+                var count = capturedWindows.Count;
+                var turn = await ComputerRound(screenSession, ToolNames.CaptureScreen, title);
+                reuse.Add(turn?.ApprovalState != ChatApprovalStates.Pending && capturedWindows.Count == count + 1);
+                DenyComputer(screenSession, turn);
+            }
+            var beforeAlternate = capturedWindows.Count;
+            var alternating = await ComputerRound(screenSession, ToolNames.ComputerUse, "review: colors");
+            reuse.Add(capturedWindows.Count == beforeAlternate + 1);
+            DenyComputer(screenSession, alternating);
+            var inputTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key");
+            reuse.Add(operatedWindows.Count == 1 && operatedWindows[0].Owner?.Application == previewApplication);
+            DenyComputer(screenSession, inputTurn);
+            Check(reuse.All(value => value),
+                $"同一应用授权复用：重复截图、标题变化、两工具交替和输入均不再审批（实际 {string.Join(',', reuse)}）");
+
+            // A peer has no conversation grant. Global trust is reused, never copied into its local grants.
+            var peerPending = await ComputerRound(screenPeerSession, ToolNames.CaptureScreen, previewWindow.Title);
+            var peerAsked = peerPending?.ApprovalState == ChatApprovalStates.Pending;
+            Check(peerAsked, $"应用会话授权不泄露到新会话（实际需审批 {peerAsked}）");
+            DenyComputer(screenPeerSession, peerPending);
+            await WaitForIdleAsync(chat);
+            chat.TrustComputerApp(previewApplication);
+            var beforeGlobal = capturedWindows.Count;
+            var globallyGranted = await ComputerRound(screenPeerSession, ToolNames.ComputerUse, "colors");
+            var globalReused = capturedWindows.Count == beforeGlobal + 1
+                               && chat.StoredCopyForCheck(screenPeerSession.Id)?.AllowedComputerApps.Count == 0;
+            DenyComputer(screenPeerSession, globallyGranted);
+            chat.RevokeTrustedComputerApp(previewApplication);
+            var revoked = await ComputerRound(screenPeerSession, ToolNames.CaptureScreen, "review: colors");
+            var revokedAsked = revoked?.ApprovalState == ChatApprovalStates.Pending;
+            DenyComputer(screenPeerSession, revoked);
+            await WaitForIdleAsync(chat);
+            Check(globalReused && revokedAsked,
+                $"全局应用授权可跨会话复用，撤销后再次审批（实际复用 {globalReused}，撤销后审批 {revokedAsked}）");
+
+            // One batch mixes both tools for the same owner and a different owner. One card only approves its app.
+            screenClient.CallsRemaining = 0;
+            screenClient.Batch =
+            [
+                (ToolNames.CaptureScreen, new() { ["target"] = previewWindow.Title }),
+                (ToolNames.ComputerUse, new() { ["application"] = "Button review:", ["action"] = "screenshot" }),
+                (ToolNames.CaptureScreen, new() { ["target"] = foreignWindow.Title }),
+            ];
+            chat.TryEnqueueSend(screenPeerSession.Id, "Batch calls to two applications", null, out _);
+            await WaitForIdleAsync(chat);
+            var pendingApps = screenPeerSession.Messages.Where(turn => turn.ApprovalState == ChatApprovalStates.Pending).ToArray();
+            var pendingOwn = pendingApps.FirstOrDefault(turn => turn.ApprovalComputerTarget?.Application == previewApplication);
+            var beforeBatchCapture = capturedWindows.Count;
+            var batchAccepted = pendingOwn is not null && chat.TryResolveApproval(screenPeerSession.Id,
+                pendingOwn.ToolCallId!, approved: true, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
+            var remainingApps = screenPeerSession.Messages.Where(turn => turn.ApprovalState == ChatApprovalStates.Pending).ToArray();
+            Check(pendingApps.Length == 3 && batchAccepted && capturedWindows.Count == beforeBatchCapture + 2
+                  && remainingApps.Length == 1 && remainingApps[0].ApprovalComputerTarget?.Application == foreignApplication,
+                $"批量审批按应用身份分组：两工具同应用一起批准，不放行另一应用（实际卡 {pendingApps.Length}，批准 {batchAccepted}，执行 {capturedWindows.Count - beforeBatchCapture}，剩余 {remainingApps.Length}）");
+            foreach (var pending in remainingApps) DenyComputer(screenPeerSession, pending);
+            await WaitForIdleAsync(chat);
+            // Already-granted siblings have no pending card. Resuming only the approved calls would strand them
+            // forever; marking them pending instead would ask again about an application this session may use.
+            screenClient.Batch =
+            [
+                (ToolNames.CaptureScreen, new() { ["target"] = previewWindow.Title }),
+                (ToolNames.ComputerUse, new() { ["application"] = "Button review:", ["action"] = "screenshot" }),
+                (ToolNames.CaptureScreen, new() { ["target"] = foreignWindow.Title }),
+            ];
+            var beforeGrantedBatch = capturedWindows.Count;
+            chat.TryEnqueueSend(screenPeerSession.Id, "Batch with an already authorized application", null, out _);
+            await WaitForIdleAsync(chat);
+            var pendingForeign = screenPeerSession.Messages.Where(turn => turn.ApprovalState == ChatApprovalStates.Pending).ToArray();
+            var foreignAccepted = pendingForeign.Length == 1
+                && pendingForeign[0].ApprovalComputerTarget?.Application == foreignApplication
+                && chat.TryResolveApproval(screenPeerSession.Id, pendingForeign[0].ToolCallId!,
+                    approved: true, alwaysAllow: false, out _);
+            await WaitForIdleAsync(chat);
+            Check(foreignAccepted && capturedWindows.Count == beforeGrantedBatch + 3
+                  && !screenPeerSession.HasUnansweredToolCall(),
+                $"批量恢复不重复询问已授权应用，也不遗失其调用（实际待批 {pendingForeign.Length}，执行 {capturedWindows.Count - beforeGrantedBatch}，未答 {screenPeerSession.HasUnansweredToolCall()}）");
+            foreach (var pending in pendingForeign) DenyComputer(screenPeerSession, pending);
+            await WaitForIdleAsync(chat);
+            chat.ScreenCaptureBridgeProvider = savedScreenProvider;
+            chat.ComputerUseBridgeProvider = savedComputerProvider;
+            Check(chat.TrustComputerApp(previewApplication)
                   && ComputerUseGrants.Contains(new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root))
-                      .Load().TrustedComputerApps, "Axmol Hub Preview")
-                  && chat.RevokeTrustedComputerApp("Axmol Hub Preview")
-                  && !ComputerUseGrants.Contains(chat.TrustedComputerApps, "Axmol Hub Preview"),
+                      .Load().TrustedComputerApps, previewApplication)
+                  && chat.RevokeTrustedComputerApp(previewApplication)
+                  && !ComputerUseGrants.Contains(chat.TrustedComputerApps, previewApplication),
                 "始终允许应用写入偏好文件，并能通过设置对应的撤销入口移除");
 
             // The other half of the same ladder, reached through the tool that leaves the machine. A page fetch
@@ -2111,13 +2236,14 @@ internal sealed class ShellApprovalsChecks
                   && settings.TrustedToolsForCheck.Length == 0 && settings.TrustedCommandsForCheck.Length == 0
                   && settings.TrustedComputerAppsForCheck.Length == 0,
                 "没有授权时三份清单都不画，只留一行说明，而不是三个空列表各自解释一遍");
-            Check(settings.TrustComputerAppForCheck("Computer Use Fixture App")
+            var settingsApplication = new ComputerApplication(System.IO.Path.GetFullPath("fixtures/Computer Use Fixture App"));
+            Check(settings.TrustComputerAppForCheck(settingsApplication)
                   && settings.TrustedComputerAppGroupShownForCheck && !settings.TrustGrantsEmptyShownForCheck
                   && settings.TrustedComputerAppRowsForCheck == 1
-                  && settings.TrustedComputerAppsForCheck.SequenceEqual(new[] { "Computer Use Fixture App" })
+                  && settings.TrustedComputerAppsForCheck.SequenceEqual(new[] { settingsApplication })
                   && new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root)).Load().TrustedComputerApps
-                      .SequenceEqual(new[] { "Computer Use Fixture App" })
-                  && settings.RevokeTrustedComputerAppForCheck("Computer Use Fixture App")
+                      .SequenceEqual(new[] { settingsApplication })
+                  && settings.RevokeTrustedComputerAppForCheck(settingsApplication)
                   && !settings.TrustedComputerAppGroupShownForCheck && settings.TrustGrantsEmptyShownForCheck,
                 "设置页显示始终允许的应用，持久保存，并能逐项撤销回空状态");
             Check(settings.TrustToolForCheck("run_command")
@@ -2161,8 +2287,8 @@ internal sealed class ShellApprovalsChecks
                     settings.RevokeAllTrustedCommandsForCheck,
                     () => new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root)).Load().TrustedCommands.Count),
                 ("桌面应用",
-                    () => settings.TrustComputerAppForCheck("Computer Use Fixture App")
-                        && settings.TrustComputerAppForCheck("Computer Use Fixture App 2"),
+                    () => settings.TrustComputerAppForCheck(settingsApplication)
+                        && settings.TrustComputerAppForCheck(new ComputerApplication(settingsApplication.ExecutablePath + " 2")),
                     () => settings.TrustedComputerAppRowsForCheck,
                     settings.RevokeAllTrustedComputerAppsForCheck,
                     () => new PreferencesStore(PreferencesPathFor(shell.Workspace.Store.Root)).Load().TrustedComputerApps.Count),
@@ -2245,6 +2371,8 @@ internal sealed class ShellApprovalsChecks
             searchedGate.TrySetResult(true);
             reopened?.Dispose();
             chat.PreferencesProvider = savedPreferencesProvider;
+            chat.ScreenCaptureBridgeProvider = savedScreenProvider;
+            chat.ComputerUseBridgeProvider = savedComputerProvider;
             chat.WebFetchHttp = null;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;
@@ -2252,7 +2380,7 @@ internal sealed class ShellApprovalsChecks
             foreach (var id in new[] { readSession.Id, parkSession.Id, denySession.Id, supersededSession.Id,
                     restartSession.Id, badgeSession.Id, batchSession.Id, autoRunSession.Id, askRunSession.Id,
                     movedSession.Id, grantSession.Id, peerSession.Id, gitWriteSession.Id, commitAutoSession.Id,
-                    commitAskSession.Id, screenSession.Id,
+                    commitAskSession.Id, screenSession.Id, screenPeerSession.Id,
                     fetchSession.Id, longCardSession.Id, tripleSession.Id, buildSession.Id, quietBuildSession.Id,
                     stallSession.Id,
                     searchSession.Id, searchedSession.Id })

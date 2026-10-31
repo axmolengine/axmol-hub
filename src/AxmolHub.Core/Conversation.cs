@@ -332,6 +332,10 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
 
     public bool ApprovalCacheBreak { get; init; }
 
+    /// <summary>The OS-resolved application and window bound at the gate, including already-granted calls.
+    /// Without this identity a call cannot authorize or control an application.</summary>
+    public ComputerUseTarget? ApprovalComputerTarget { get; init; }
+
     /// <summary>The file name of the pre-image this write left in <see cref="ChatUndoStore"/>, kept by name rather
     /// than as a full path so a session file still means the same thing after the data root moves. Null when the
     /// write created a file (there was nothing before it), kept no copy, or has already been reverted — the copy
@@ -477,9 +481,10 @@ public sealed class Conversation
     /// <summary>Durable references to every file revision this session can still reach. Kept outside the
     /// transcript so compaction, edit-and-resend and history trimming cannot erase file history.</summary>
     public List<string> ChangeHistoryIds { get; set; } = [];
-    /// <summary>Application names this conversation may control through Computer Use.</summary>
+    /// <summary>Executable identities this conversation may control; window titles confer no permission.</summary>
     [System.Text.Json.Serialization.JsonInclude]
-    internal List<string> AllowedComputerApps { get; set; } = [];
+    [System.Text.Json.Serialization.JsonPropertyName("allowedComputerApplications")]
+    internal List<ComputerApplication> AllowedComputerApps { get; set; } = [];
     public string ContextSummary { get; set; } = "";
     public int ContextSummaryThroughMessageCount { get; set; }
 

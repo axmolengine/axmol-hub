@@ -88,6 +88,8 @@ public sealed record WorkspaceToolScope(
     Func<string, Task<string>>? ApplyGrantedFile = null)
 {
     internal ComputerUseBridge? ComputerUse { get; init; }
+    /// <summary>Returns this call's frozen target only while its application grant remains in force.</summary>
+    public Func<ComputerUseTarget?>? ApprovedComputerTarget { get; init; }
     /// <summary>Fingerprint of the file shown on a parked fs_write approval card; null on an automatic call.</summary>
     public string? ApprovedWriteFingerprint { get; init; }
     /// <summary>Keep a batch journal locked until the host has persisted its tool result.</summary>
@@ -966,13 +968,19 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         {
             return $"Refused: {ex.Message} Check the operating system's screen or accessibility permission; do not retry until the required capability is available.";
         }
-        var match = ScreenCapture.Find(windows, wanted, process_id);
+        var match = ResolveApprovedComputerWindow(windows, wanted, process_id);
         if (!match.Ok) return match.Refusal!;
         var window = match.Window;
 
         // A grabber swallows its own failure and answers null, so what the model reads is a sentence about the
         // screen rather than a stack trace from the host.
-        if (host.Grab(window) is not { } frame)
+        CapturedFrame? frame;
+        try { frame = host.Grab(window); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            return "Refused: the operating system denied screen capture for this app. Ask the user to check screen recording access before retrying.";
+        }
+        if (frame is null)
             return $"Refused: the {backend.Label} capture of {Described(window, false)} returned no frame. The "
                    + "window may have closed, or the display may be locked; ask the user before capturing anything "
                    + "else.";
@@ -989,6 +997,16 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                    + "cannot read (a hardware-accelerated surface, or a protected desktop); ask the user for a "
                    + "screenshot instead, and do not retry this target.";
 
+        try
+        {
+            if (context.ApprovedComputerTarget?.Invoke() is not { } stillApproved
+                || !stillApproved.Matches(window!) || !stillApproved.Find(host.Windows()).Ok)
+                return "Refused: the application's Computer Use grant or window owner changed during capture. No image was attached.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            return "Refused: the application identity could not be rechecked after capture. No image was attached.";
+        }
         var verdict = ChatImageFormat.Admit(frame.Png, 0);
         if (verdict != ChatImageVerdict.Accepted) return ChatImageFormat.ResultFor(verdict, frame.Png.LongLength);
         if (context.Sessions is not { } store)
@@ -1005,7 +1023,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     [Description("Use one named application window. Supported actions are screenshot, click, type, press_key, and scroll. "
                  + "Coordinates are relative to the window's top-left. The application must be named on every call.")]
     internal string ComputerUse(
-        [Description("The exact visible application/window title used for the user's authorization.")] string application,
+        [Description("The visible application/window title to locate. Authorization follows its owning application, not the title.")] string application,
         [Description("One action: screenshot, click, type, press_key, or scroll.")] string action,
         [Description("Horizontal window-relative coordinate for click; otherwise 0.")] int x = 0,
         [Description("Vertical window-relative coordinate for click; otherwise 0.")] int y = 0,
@@ -1014,7 +1032,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("Vertical scroll amount; positive scrolls up, negative down, from -10 to 10.")] int scroll = 0,
         [Description("Narrow the target to this process id when titles are ambiguous.")] int process_id = 0)
     {
-        var app = ComputerUseGrants.NormalizeKey(application);
+        var app = ComputerUseGrants.NormalizeTitle(application);
         if (app.Length is 0 or > 256)
             return "Refused: Computer Use needs one application window title, no more than 256 characters. Do not retry without a title.";
         var normalizedAction = (action ?? "").Trim().ToLowerInvariant();
@@ -1027,6 +1045,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (normalizedAction == "scroll" && scroll is 0 or < -10 or > 10)
             return "Refused: scroll must be between -10 and 10, excluding zero. Do not retry automatically.";
 
+        if (normalizedAction == "screenshot") return CaptureScreen(app, process_id: process_id);
         var backend = CaptureBackends.ForCurrent();
         if (context.Screen is not { } host)
             return $"Refused: Computer Use cannot enumerate or capture application windows on this {backend.Label} build. Ask the user to operate the app manually.";
@@ -1034,7 +1053,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         CapturableWindow target;
         try
         {
-            var match = ScreenCapture.Find(host.Windows(), app, process_id);
+            var match = ResolveApprovedComputerWindow(host.Windows(), app, process_id);
             if (!match.Ok || match.Window is null) return match.Refusal!;
             target = match.Window;
         }
@@ -1043,29 +1062,20 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             return $"Refused: {ex.Message} Check the operating system's screen or accessibility permission, then ask the user before trying again.";
         }
 
-        if (normalizedAction == "screenshot")
-        {
-            CapturedFrame? frame;
-            try { frame = host.Grab(target); }
-            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
-            {
-                return "Refused: the operating system denied screen capture for this app. Ask the user to grant screen recording access and retry only after they do.";
-            }
-            if (frame is null || frame.Stats.IsBlank())
-                return $"Refused: the capture backend returned no readable frame for \"{target.Title}\". Ask the user for a screenshot; do not retry this target.";
-            var verdict = ChatImageFormat.Admit(frame.Png, 0);
-            if (verdict != ChatImageVerdict.Accepted) return ChatImageFormat.ResultFor(verdict, frame.Png.LongLength);
-            if (context.Sessions is not { } store)
-                return "Refused: this conversation has no attachment storage. Ask the user for a screenshot.";
-            var image = store.SaveImage(context.ConversationId, frame.Png);
-            context.RecordFrames?.Invoke([image]);
-            return $"Captured application window \"{target.Title}\" ({frame.Width}×{frame.Height}); the image is attached to this result.";
-        }
-
         if (context.ComputerUse is not { } operations)
             return $"Refused: this {backend.Label} build can capture windows but has no input-control backend. Ask the user to perform this action.";
         var refusal = operations.Operate(target, new ComputerActionRequest(normalizedAction, x, y, text, key, scroll));
         return refusal ?? $"Completed {normalizedAction} in application window \"{target.Title}\".";
+    }
+
+    private ScreenCapture.Match ResolveApprovedComputerWindow(IReadOnlyList<CapturableWindow> windows, string title, int pid)
+    {
+        if (context.ApprovedComputerTarget?.Invoke() is { } approved) return approved.Find(windows);
+        var match = ScreenCapture.Find(windows, title, pid);
+        if (!match.Ok) return match;
+        return new ScreenCapture.Match(null, ComputerUseTarget.FromWindow(match.Window) is null
+            ? "Refused: Hub could not verify the executable identity of this application window. No screenshot or input is allowed; ask the user to operate it manually."
+            : "Refused: this call has no current Computer Use application grant. Request approval for the named application before capturing or sending input.");
     }
 
     private static string Described(CapturableWindow? window, bool fullscreen)

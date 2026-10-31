@@ -936,8 +936,8 @@ public partial class ChatPanel
 
     private Control BuildComputerUseApprovalCard(string conversationId, string callId, ChatTurn turn)
     {
-        var app = ComputerUseGrants.ApplicationForTool(turn.ToolName, turn.ToolArguments);
-        if (app.Length == 0) app = HubStrings.Get("ComputerUseApprovalTitle");
+        if (turn.ApprovalComputerTarget is not { } target) return BuildApprovalPendingLine(turn);
+        var app = target.WindowTitle;
         var card = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 10 };
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
         var icon = new Path
@@ -980,7 +980,7 @@ public partial class ChatPanel
         {
             Name = "ComputerUseGrantDescription",
             Classes = { "muted" },
-            Text = HubStrings.Get("ComputerUseGrantHint"),
+            Text = target.Application.ExecutablePath + "\n" + HubStrings.Get("ComputerUseGrantHint"),
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Left,
         });

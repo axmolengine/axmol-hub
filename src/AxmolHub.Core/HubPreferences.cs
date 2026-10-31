@@ -67,9 +67,10 @@ public sealed class HubPreferences
     /// <summary>Commit title prefixes accepted by the assistant's local commit-summary parser.</summary>
     public List<string> CommitSummaryPrefixes { get; set; } = [.. CommitSummary.DefaultPrefixes];
 
-    /// <summary>Applications the user has permanently authorized for Computer Use.</summary>
+    /// <summary>Executable identities permanently authorized for Computer Use.</summary>
     [System.Text.Json.Serialization.JsonInclude]
-    internal List<string> TrustedComputerApps { get; set; } = [];
+    [System.Text.Json.Serialization.JsonPropertyName("trustedComputerApplications")]
+    internal List<ComputerApplication> TrustedComputerApps { get; set; } = [];
 
     /// <summary>Expanded width of the left navigation/session sidebar in px, range 240–420; adjusted by the sidebar's drag handle.</summary>
     public double SidebarWidth { get; set; } = 300;

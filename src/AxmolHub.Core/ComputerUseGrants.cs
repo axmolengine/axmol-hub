@@ -1,70 +1,65 @@
+using System.Text.Json;
+
 namespace AxmolHub.Core;
 
-/// <summary>Canonical application keys used by Computer Use grants.</summary>
+/// <summary>Application grants. Window-title arguments only locate a window; they are never grant keys.</summary>
 internal static class ComputerUseGrants
 {
-    public static string ApplicationFromArguments(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return "";
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(json);
-            return document.RootElement.TryGetProperty("application", out var value)
-                && value.ValueKind == System.Text.Json.JsonValueKind.String
-                ? NormalizeKey(value.GetString())
-                : "";
-        }
-        catch (System.Text.Json.JsonException) { return ""; }
-    }
-
-    public static string ApplicationForTool(string? toolName, string? json)
-    {
-        if (toolName == ToolNames.ComputerUse) return ApplicationFromArguments(json);
-        if (toolName != ToolNames.CaptureScreen || string.IsNullOrWhiteSpace(json)) return "";
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(json);
-            return document.RootElement.TryGetProperty("target", out var value)
-                   && value.ValueKind == System.Text.Json.JsonValueKind.String
-                ? NormalizeKey(value.GetString()) : "";
-        }
-        catch (System.Text.Json.JsonException) { return ""; }
-    }
-
     public static bool IsComputerUseTool(string? name) => name is ToolNames.ComputerUse or ToolNames.CaptureScreen;
 
-    public static string NormalizeKey(string? value)
+    public static string NormalizeTitle(string? value)
         => (value ?? "").Trim().Normalize(System.Text.NormalizationForm.FormC);
 
-    public static List<string> Normalize(IEnumerable<string>? values)
-        => (values ?? [])
-            .Select(NormalizeKey)
-            .Where(value => value.Length is > 0 and <= 256)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-    public static bool Contains(IEnumerable<string>? values, string? app)
+    public static string LocatorForTool(string? toolName, string? json)
     {
-        var key = NormalizeKey(app);
-        return key.Length > 0 && (values ?? []).Any(value =>
-            string.Equals(NormalizeKey(value), key, StringComparison.OrdinalIgnoreCase));
+        if (!IsComputerUseTool(toolName) || string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                   && document.RootElement.TryGetProperty(toolName == ToolNames.CaptureScreen ? "target" : "application", out var value)
+                   && value.ValueKind == JsonValueKind.String ? NormalizeTitle(value.GetString()) : "";
+        }
+        catch (JsonException) { return ""; }
     }
 
-    public static bool Add(List<string> values, string? app)
+    public static ComputerUseTarget? ResolveTarget(ScreenCaptureBridge? screen, string? toolName, string? json)
     {
-        var key = NormalizeKey(app);
-        if (key.Length is 0 or > 256 || Contains(values, key)) return false;
+        var title = LocatorForTool(toolName, json);
+        if (screen is null || title.Length is 0 or > 256) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json!);
+            if (toolName == ToolNames.CaptureScreen && document.RootElement.TryGetProperty("fullscreen", out var full)
+                && full.ValueKind != JsonValueKind.False) return null;
+            var processId = 0;
+            if (document.RootElement.TryGetProperty("process_id", out var pid)
+                && (!pid.TryGetInt32(out processId) || processId < 0)) return null;
+            var match = ScreenCapture.Find(screen.Windows(), title, processId);
+            return match.Ok ? ComputerUseTarget.FromWindow(match.Window) : null;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or UnauthorizedAccessException
+                                      or System.ComponentModel.Win32Exception or IOException)
+        {
+            return null;
+        }
+    }
+
+    public static List<ComputerApplication> Normalize(IEnumerable<ComputerApplication>? values)
+        => (values ?? []).Select(value => ComputerApplication.FromExecutable(value?.ExecutablePath))
+            .OfType<ComputerApplication>().DistinctBy(app => app.ExecutablePath, ComputerApplication.PathComparer).ToList();
+
+    public static bool Contains(IEnumerable<ComputerApplication>? values, ComputerApplication? app)
+        => ComputerApplication.FromExecutable(app?.ExecutablePath) is { } key
+           && (values ?? []).Any(value => key.IsSameApplication(ComputerApplication.FromExecutable(value?.ExecutablePath)));
+
+    public static bool Add(List<ComputerApplication> values, ComputerApplication? app)
+    {
+        if (ComputerApplication.FromExecutable(app?.ExecutablePath) is not { } key || Contains(values, key)) return false;
         values.Add(key);
         return true;
     }
 
-    public static bool Remove(List<string> values, string? app)
-    {
-        var key = NormalizeKey(app);
-        var index = values.FindIndex(value =>
-            string.Equals(NormalizeKey(value), key, StringComparison.OrdinalIgnoreCase));
-        if (index < 0) return false;
-        values.RemoveAt(index);
-        return true;
-    }
+    public static bool Remove(List<ComputerApplication> values, ComputerApplication app)
+        => values.RemoveAll(value => app.IsSameApplication(ComputerApplication.FromExecutable(value?.ExecutablePath))) > 0;
 }

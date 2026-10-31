@@ -46,10 +46,14 @@ public static class WindowsScreenCapture
         if (!OperatingSystem.IsWindows()) return "Refused: Windows input is unavailable on this host.";
         if (!IsWindow(window.Handle) || !IsWindowVisible(window.Handle))
             return "Refused: the authorized application window has closed. Do not retry until it is visible again.";
+        if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(List()).Ok)
+            return "Refused: the selected window's application identity changed before input.";
         if (!SetForegroundWindow(window.Handle) || GetForegroundWindow() != window.Handle)
             return "Refused: Windows did not give the target app keyboard focus. Select the app and ask before retrying.";
         if (!GetWindowRect(window.Handle, out var rect))
             return "Refused: Windows could not read the target window bounds.";
+        if (!target.Find(List()).Ok || GetForegroundWindow() != window.Handle)
+            return "Refused: the selected application's identity or focus changed before input.";
 
         switch (request.Action)
         {
@@ -161,7 +165,8 @@ public static class WindowsScreenCapture
             var height = rect.Bottom - rect.Top;
             if (width < 32 || height < 32) return true;
             GetWindowThreadProcessId(handle, out var processId);
-            found.Add(new CapturableWindow(handle, title.ToString(), processId, width, height));
+            found.Add(new CapturableWindow(handle, title.ToString(), processId, width, height)
+                { Owner = DesktopApplicationIdentity.Resolve(processId) });
             return true;
         }, IntPtr.Zero);
         return found;
@@ -188,6 +193,8 @@ public static class WindowsScreenCapture
 
     private static CapturedFrame? GrabCore(CapturableWindow? window)
     {
+        if (window is not null && (ComputerUseTarget.FromWindow(window) is not { } approved
+                                   || !approved.Find(List()).Ok)) return null;
         var source = window is null ? GetDC(nint.Zero) : GetWindowDC(window.Handle);
         if (source == nint.Zero) return null;
 
