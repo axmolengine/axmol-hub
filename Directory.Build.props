@@ -17,7 +17,7 @@
          artifact where Core.dll reported 1.0.0 and Cli.dll reported 0.1.6.
          installer/Build.ps1 and installer/Test.ps1 also read the version from this file;
          stop copying extra copies anywhere else. -->
-    <Version>0.18.0</Version>
+    <Version>0.18.1</Version>
 
     <Company>Simdsoft Limited</Company>
     <Copyright>Copyright &#169; 2026 Simdsoft Limited</Copyright>
