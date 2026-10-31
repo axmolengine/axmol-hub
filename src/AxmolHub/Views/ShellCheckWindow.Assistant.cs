@@ -121,15 +121,15 @@ internal sealed class ShellAssistantChecks
         {
             autoReasoningSwitch.IsChecked = automatic;
             var expectedChip = automatic
-                ? HubStrings.Get("ChatRoutingAutoChip") + " · " + HubStrings.Get("ChatEffortHigh")
+                ? HubStrings.Get("ChatRoutingAutoChip")
                 : HubStrings.Get("ChatEffortHigh");
             chipTracksRouting &= panel.ReasoningChipTextForCheck == expectedChip;
             routingChipObservations.Add($"{automatic}: {panel.ReasoningChipTextForCheck}");
         }
         panel.Reload();
         Check(chipTracksRouting && panel.ReasoningChipTextForCheck
-                == HubStrings.Get("ChatRoutingAutoChip") + " · " + HubStrings.Get("ChatEffortHigh"),
-            "切换自动推理立即同步芯片的自动标识与明确档位，重载后保持一致（实际 "
+                == HubStrings.Get("ChatRoutingAutoChip"),
+            "自动推理时芯片仅显示自动，切回手动恢复明确档位，重载后保持一致（实际 "
             + string.Join(" → ", routingChipObservations) + "；重载「" + panel.ReasoningChipTextForCheck + "」）");
         Check(shell.Chat.SelectReasoningEffort(ChatReasoningEfforts.Low)
               && shell.Chat.RoutingFor(routeSession.Id) == ChatRouting.Manual,
@@ -2223,12 +2223,11 @@ internal sealed class ShellAssistantChecks
               && tookRoute.Value.Reason.Length > 0
               && string.Equals(routedClient?.LastOptions?.Reasoning?.Effort.ToString(), tookRoute.Value.Effort,
                   StringComparison.OrdinalIgnoreCase)
-              && panel.ReasoningChipTextForCheck == HubStrings.Get("ChatRoutingAutoChip") + " · "
-                  + panel.ReasoningChipLabelForCheck(tookRoute.Value.Effort)
+              && panel.ReasoningChipTextForCheck == HubStrings.Get("ChatRoutingAutoChip")
               && shell.Chat.StoredCopyForCheck(routedSession.Id)?.ReasoningEffort == tookRoute.Value.Effort
               && shell.Chat.ActiveConversation?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)
                   ?.RunReasoningEffort == tookRoute.Value.Effort,
-            "自动推导后芯片保留自动标识并显示本次实际选择的明确档位（实际「" + tookRoute?.Effort
+            "自动推导后芯片仅显示自动，实际请求与落盘保留明确档位（实际「" + tookRoute?.Effort
             + "」，显示「" + panel.ReasoningChipTextForCheck + "」）");
         Check(routeAudits.Count(line => line.Contains("Auto route:", StringComparison.Ordinal)) == 1
               && routeAudits.Any(line => line.Contains(tookRoute?.Effort ?? "\n", StringComparison.Ordinal)),
