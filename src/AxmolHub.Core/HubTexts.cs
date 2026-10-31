@@ -1542,7 +1542,7 @@ public static class HubTexts
         ["OpenModelCatalog"] = ("浏览模型目录", "Browse catalog"),
         ["ModelCatalogTitle"] = ("{0} 模型目录", "{0} model catalog"),
         ["ModelCatalogHint"] = ("双击模型即可启用；可连续选择多个模型。", "Double-click models to enable them; you can choose several."),
-        ["ModelCatalogSearchHint"] = ("搜索模型名称", "Search model names"),
+        ["ModelCatalogCount"] = ("模型数量: {0}/{1}", "Model count: {0}/{1}"),
         ["ModelCatalogEmpty"] = ("缓存目录为空。点击刷新从提供商获取模型。", "The cached catalog is empty. Refresh to fetch models from the provider."),
         ["ModelCatalogRefreshUnavailable"] = ("请先完成提供商鉴权后再刷新模型目录。", "Authenticate this provider before refreshing its model catalog."),
         ["ModelCatalogNoMatch"] = ("没有匹配的模型。", "No matching models."),

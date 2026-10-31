@@ -165,6 +165,64 @@
     </Style>
   </ControlTheme>
 
+  <!-- The catalog search uses the same icon slots and field chrome as engine and project search. -->
+  <ControlTheme x:Key="HubModelCatalogSearch" TargetType="Border">
+    <Setter Property="Height" Value="42" />
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Style Selector="^:focus-within">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Accent}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+  </ControlTheme>
+
+  <!-- ==================== Model catalog rows ====================
+       The row container owns its whole surface, including selection; a second painted data-template
+       background would hide the selected fill and leave Fluent's accent visible as a thick outer frame. -->
+  <ControlTheme x:Key="HubModelCatalogItem" TargetType="ListBoxItem">
+    <Setter Property="Background" Value="{DynamicResource Hub.ProviderSurface}" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="Padding" Value="10,8" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+    <Setter Property="MinHeight" Value="48" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="FocusAdorner" Value="{x:Null}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Frame"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+    </Style>
+    <Style Selector="^:selected /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#Frame">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+  </ControlTheme>
+
   <!-- ==================== ComboBoxItem ==================== -->
   <ControlTheme x:Key="{x:Type ComboBoxItem}" TargetType="ComboBoxItem">
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />

@@ -96,6 +96,9 @@ public partial class SettingsPage : UserControl
     /// <summary>Set when a rebuild was skipped while a draft was open; applied when the draft closes.</summary>
     private bool _pendingReload;
 
+    /// <summary>Catalog entry tooltips stay suppressed across provider-card rebuilds while the picker is open.</summary>
+    private bool _modelCatalogOpen;
+
     /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public SettingsPage()
     {
@@ -1736,7 +1739,7 @@ public partial class SettingsPage : UserControl
     {
         var linked = IsLinked(provider);
         var keyless = !provider.RequiresCredential;
-        var ready = keyless || linked;
+        var ready = !provider.NeedsOpenAiRelogin && (keyless || linked);
 
         var status = new StackPanel
         {
@@ -1749,9 +1752,9 @@ public partial class SettingsPage : UserControl
         var label = new TextBlock
         {
             Text = HubStrings.Get(
-                keyless ? "ProviderKeylessReady"
-                    : provider.NeedsOpenAiRelogin ? "OpenAiLegacyRelogin"
+                provider.NeedsOpenAiRelogin ? "OpenAiLegacyRelogin"
                     : linked ? "ProviderConnected"
+                    : keyless ? "ProviderKeylessReady"
                     : "ProviderNotConnected"),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
@@ -2061,7 +2064,9 @@ public partial class SettingsPage : UserControl
             Tag = SectionTags.ModelCatalog,
         };
         ToolTip.SetTip(catalog, HubStrings.Get("OpenModelCatalog"));
-        catalog.Click += async (_, _) => await OpenModelCatalogAsync(provider);
+        ToolTip.SetServiceEnabled(catalog, !_modelCatalogOpen);
+        ToolTip.AddToolTipOpeningHandler(catalog, (_, e) => e.Cancel = _modelCatalogOpen);
+        catalog.Click += async (_, _) => await OpenModelCatalogAsync(provider, catalog);
         actions.Children.Add(catalog);
 
         var add = new Button
@@ -2662,11 +2667,34 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    private async Task OpenModelCatalogAsync(ModelProvider provider)
+    private async Task OpenModelCatalogAsync(ModelProvider provider, Button entry)
     {
-        if (_chat is null) return;
-        await CreateModelCatalogWindow(provider).ShowAsync(Owner());
-        RebuildProviderGroups();
+        if (_chat is null || _modelCatalogOpen) return;
+        _modelCatalogOpen = true;
+        SetCatalogToolTipsEnabled(false);
+        try
+        {
+            await CreateModelCatalogWindow(provider).ShowAsync(Owner());
+        }
+        finally
+        {
+            _modelCatalogOpen = false;
+            // Refresh or activation may have detached the original entry. Restore it as well as the
+            // live entries; any replacement is constructed from the same open-state flag.
+            ToolTip.SetServiceEnabled(entry, true);
+            SetCatalogToolTipsEnabled(true);
+            RebuildProviderGroups();
+        }
+    }
+
+    private void SetCatalogToolTipsEnabled(bool enabled)
+    {
+        foreach (var button in ProviderGroupList.GetLogicalDescendants().OfType<Button>()
+                     .Where(button => button.Tag as string == SectionTags.ModelCatalog))
+        {
+            if (!enabled) ToolTip.SetIsOpen(button, false);
+            ToolTip.SetServiceEnabled(button, enabled);
+        }
     }
 
     private ModelCatalogWindow CreateModelCatalogWindow(ModelProvider provider)

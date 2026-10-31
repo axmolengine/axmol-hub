@@ -3,6 +3,7 @@ using Avalonia.Controls;
 namespace AxmolHub;
 public sealed partial class ModelCatalogWindow : Window
 {
+    internal string CountTextForCheck => _count.Text ?? "";
     internal void SearchForCheck(string query) => _search.Text = query;
     internal string[] VisibleModelNamesForCheck => _list.Items.OfType<ModelRow>().Select(row => row.Name).ToArray();
     internal string[] EnabledModelNamesForCheck => _list.Items.OfType<ModelRow>().Where(row => row.Enabled).Select(row => row.Name).ToArray();

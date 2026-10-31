@@ -418,6 +418,8 @@ internal sealed class ShellProvidersChecks
                 + " key=" + (shell.Chat.CredentialFor(drafted.Id)?.HasSecret == true)
                 + " catalog=" + shell.Chat.CachedModels(drafted.Id).Count) + "）");
 
+        var draftedStatus = drafted is null ? null : settings.ProviderGroupForId(drafted.Id)?.LinkedStatusText;
+
         using var providerReload = new ChatWorkspace(scratchRoot);
         var reloadedConfigCustom = providerReload.Providers.FirstOrDefault(provider => provider.Id == drafted?.Id);
         var expectedWireLine = string.Format(CultureInfo.CurrentCulture,
@@ -438,6 +440,13 @@ internal sealed class ShellProvidersChecks
         var keyless = shell.Chat.Providers.FirstOrDefault(provider => provider.IsCustom);
         Check(keylessSaved && keyless is { IsCustom: true } && shell.Chat.CredentialFor(keyless.Id) is null,
             "API key 留空时仍能添加自定义 provider，且不会创建凭据");
+        var keylessStatus = keyless is null ? null : settings.ProviderGroupForId(keyless.Id)?.LinkedStatusText;
+        // The optional-key requirement cannot detect a real stored key. A wrong mark makes a working
+        // custom endpoint look unauthenticated; exercise both drafts through the actual rendered label.
+        Check(draftedStatus == HubStrings.Get("ProviderConnected")
+              && keylessStatus == HubStrings.Get("ProviderKeylessReady"),
+            "自定义 provider 的状态按实际密钥显示：有密钥已鉴权，留空无需密钥（实际 ["
+                + draftedStatus + " | " + keylessStatus + "]）");
         if (keyless is not null && shell.Chat.RemoveProvider(keyless.Id)) settings.RefreshProviderGroupsForCheck();
 
         // ── Sign-in methods and accounts ──
@@ -1481,8 +1490,10 @@ internal sealed class ShellProvidersChecks
         {
             Check(catalog.UsesVirtualizingPanelForCheck,
                 "模型目录使用虚拟化列表面板，滚动时只创建可见项");
+            var countStates = new List<string> { catalog.CountTextForCheck };
             catalog.SearchForCheck("qwen3");
             Dispatcher.UIThread.RunJobs();
+            countStates.Add(catalog.CountTextForCheck);
             Check(catalog.VisibleModelNamesForCheck.SequenceEqual(["qwen3"]),
                 "目录搜索框实时过滤模型 ID（实际 [" + string.Join(",", catalog.VisibleModelNamesForCheck) + "]）");
             catalog.SearchForCheck("");
@@ -1494,6 +1505,20 @@ internal sealed class ShellProvidersChecks
                   && shell.Chat.AvailableChatModels.Count(choice => choice.Provider.Id == target.Id) == 2,
                 "双击可以连续启用多个模型且不重建列表（实际 ["
                     + string.Join(",", catalog.EnabledModelNamesForCheck) + "]）");
+            countStates.Add(catalog.CountTextForCheck);
+            settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+                """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"},{"id":"count-probe"}]}"""));
+            await catalog.RefreshForCheckAsync();
+            countStates.Add(catalog.CountTextForCheck);
+            settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+                """{"object":"list","data":[{"id":"llama3.2"},{"id":"qwen3"}]}"""));
+            await catalog.RefreshForCheckAsync();
+            // A filtered count would claim the catalog shrank while searching. Reading the painted
+            // footer across activation and refresh catches stale totals without asserting its geometry.
+            Check(countStates.SequenceEqual(["模型数量: 0/2", "模型数量: 0/2", "模型数量: 2/2", "模型数量: 2/3"])
+                  && catalog.CountTextForCheck == "模型数量: 2/2",
+                "目录数量按完整缓存统计，搜索不改变，启用和刷新后更新（实际 ["
+                    + string.Join(" | ", countStates.Append(catalog.CountTextForCheck)) + "]）");
         }
         settings.RefreshProviderGroupsForCheck();
         fetched = settings.ProviderGroupForId(target.Id);

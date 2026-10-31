@@ -18,7 +18,7 @@ public sealed partial class ModelCatalogWindow : Window
     private readonly Func<string, bool> _isEnabled;
     private readonly Func<string, bool> _enableModel;
     private readonly Func<Task<ModelFetchResult>> _refresh;
-    private readonly TextBox _search = new() { PlaceholderText = HubStrings.Get("ModelCatalogSearchHint") };
+    private readonly TextBox _search = new() { PlaceholderText = HubStrings.Get("Search") };
     private readonly ListBox _list = new() { Margin = new Thickness(0, 10, 0, 0) };
     private readonly TextBlock _empty = new()
     {
@@ -32,6 +32,11 @@ public sealed partial class ModelCatalogWindow : Window
         Classes = { "muted" },
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 8, 0, 0),
+    };
+    private readonly TextBlock _count = new()
+    {
+        Classes = { "muted" },
+        VerticalAlignment = VerticalAlignment.Center,
     };
     private readonly Button _refreshButton;
     private readonly bool _canRefresh;
@@ -80,8 +85,9 @@ public sealed partial class ModelCatalogWindow : Window
         };
         layout.Children.Add(hint);
 
-        Grid.SetRow(_search, 1);
-        layout.Children.Add(_search);
+        var searchFrame = BuildSearchField();
+        Grid.SetRow(searchFrame, 1);
+        layout.Children.Add(searchFrame);
         var listArea = new Grid { RowDefinitions = new RowDefinitions("*") };
         listArea.Children.Add(_list);
         listArea.Children.Add(_empty);
@@ -91,12 +97,17 @@ public sealed partial class ModelCatalogWindow : Window
         Grid.SetRow(_status, 3);
         layout.Children.Add(_status);
 
+        var footer = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(0, 16, 0, 0),
+        };
+        footer.Children.Add(_count);
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
             Spacing = 8,
-            Margin = new Thickness(0, 16, 0, 0),
         };
         _refreshButton = new Button
         {
@@ -112,8 +123,10 @@ public sealed partial class ModelCatalogWindow : Window
         close.Click += (_, _) => Close(HubDialogResult.Ok);
         buttons.Children.Add(_refreshButton);
         buttons.Children.Add(close);
-        Grid.SetRow(buttons, 4);
-        layout.Children.Add(buttons);
+        Grid.SetColumn(buttons, 1);
+        footer.Children.Add(buttons);
+        Grid.SetRow(footer, 4);
+        layout.Children.Add(footer);
 
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
         root.Children.Add(chrome.Header);
@@ -121,6 +134,13 @@ public sealed partial class ModelCatalogWindow : Window
         root.Children.Add(layout);
         Content = root;
 
+        _list.Background = Brushes.Transparent;
+        // Overlay scrollbars consume the row's right edge. Reserve their own column instead so both
+        // the rounded border and the model state remain visible while scrolling.
+        ScrollViewer.SetAllowAutoHide(_list, false);
+        ScrollViewer.SetHorizontalScrollBarVisibility(_list, Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled);
+        _list.Bind(ItemsControl.ItemContainerThemeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("HubModelCatalogItem"));
         _list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
         _list.ItemTemplate = new FuncDataTemplate<ModelRow>((_, _) => ModelRow.Render(), supportsRecycling: true);
         _search.TextChanged += (_, _) => Filter();
@@ -130,11 +150,80 @@ public sealed partial class ModelCatalogWindow : Window
             if (e.Key == Key.Enter && _list.SelectedItem is not null) EnableSelected();
         };
 
+        UpdateCount();
         Filter();
         if (!canRefresh && _models.Count == 0)
             _status.Text = HubStrings.Get("ModelCatalogRefreshUnavailable");
         Opened += (_, _) => _search.Focus();
     }
+
+    private Border BuildSearchField()
+    {
+        _search.Background = Brushes.Transparent;
+        _search.BorderThickness = new Thickness(0);
+        _search.Padding = new Thickness(0);
+        _search.Margin = new Thickness(0);
+        _search.VerticalContentAlignment = VerticalAlignment.Center;
+        _search.Bind(TextBox.PlaceholderForegroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+
+        Avalonia.Controls.Shapes.Path Icon(string key, double size)
+        {
+            var icon = new Avalonia.Controls.Shapes.Path
+            {
+                Width = size,
+                Height = size,
+                Stretch = Stretch.Uniform,
+                Fill = Brushes.Transparent,
+                StrokeThickness = 1.7,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            };
+            icon.Bind(Avalonia.Controls.Shapes.Path.DataProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(key));
+            icon.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
+            return icon;
+        }
+
+        var clearSearch = new Button
+        {
+            Classes = { "quiet" },
+            Content = Icon("Hub.Icon.Close", 14),
+            Padding = new Thickness(0),
+            Width = 28,
+            Height = 28,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = false,
+        };
+        ToolTip.SetTip(clearSearch, HubStrings.Get("ClearSearch"));
+        clearSearch.Click += (_, _) =>
+        {
+            _search.Text = "";
+            _search.Focus();
+        };
+        _search.TextChanged += (_, _) => clearSearch.IsVisible = !string.IsNullOrEmpty(_search.Text);
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("40,*,36") };
+        content.Children.Add(Icon("Hub.Icon.Search", 18));
+        Grid.SetColumn(_search, 1);
+        content.Children.Add(_search);
+        Grid.SetColumn(clearSearch, 2);
+        content.Children.Add(clearSearch);
+        var frame = new Border { Child = content };
+        frame.Bind(StyledElement.ThemeProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("HubModelCatalogSearch"));
+        return frame;
+    }
+
+    private void UpdateCount()
+        => _count.Text = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            HubStrings.Get("ModelCatalogCount"),
+            _models.Count(_isEnabled),
+            _models.Count);
 
     private void Filter()
     {
@@ -158,6 +247,7 @@ public sealed partial class ModelCatalogWindow : Window
         if (_enableModel(row.Name))
         {
             row.Enabled = true;
+            UpdateCount();
             _status.Text = string.Format(
                 System.Globalization.CultureInfo.InvariantCulture,
                 HubStrings.Get("ModelCatalogEnabled"),
@@ -185,6 +275,7 @@ public sealed partial class ModelCatalogWindow : Window
             }
 
             _models = _loadModels();
+            UpdateCount();
             _status.Text = _models.Count == 0
                 ? HubStrings.Get("ModelsFetchedEmpty")
                 : string.Format(
@@ -228,13 +319,13 @@ public sealed partial class ModelCatalogWindow : Window
 
         public static Control Render()
         {
-            var text = new StackPanel { Spacing = 2 };
-            text.Children.Add(new TextBlock
+            var text = new TextBlock
             {
                 [!TextBlock.TextProperty] = new Binding(nameof(Name)),
                 FontWeight = FontWeight.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+                Margin = new Thickness(0, 0, 12, 0),
+            };
 
             var enabledState = new TextBlock
             {
@@ -258,21 +349,16 @@ public sealed partial class ModelCatalogWindow : Window
             state.Children.Add(enabledState);
             state.Children.Add(disabledState);
 
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            var grid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                Tag = "model-catalog-row",
+            };
             Grid.SetColumn(text, 0);
             Grid.SetColumn(state, 1);
             grid.Children.Add(text);
             grid.Children.Add(state);
-            var row = new Border
-            {
-                Height = 48,
-                Padding = new Thickness(8, 4),
-                Tag = "model-catalog-row",
-                Child = grid,
-            };
-            row.Bind(Border.BackgroundProperty,
-                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.ProviderSurface"));
-            return row;
+            return grid;
         }
 
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
