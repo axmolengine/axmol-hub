@@ -793,29 +793,92 @@ internal static class OpenAiChecks
             && (await PlanStreamFailure("data: {\"type\":\"response.incomplete\"}\n\n"))?.Contains("incomplete") == true,
             "plan stream reports failed usage limits and incomplete responses");
 
-        // A relay in front of the Responses wire rejects response chaining (AgentRouter answers
-        // "previous_response_id expected null"), and Hub already sends the whole conversation, so the field is
-        // dropped before it leaves. The OpenAI endpoint itself keeps it.
-        foreach (var (baseUrl, keepsChain) in new[] { ("https://ps.air-outer.com/v1", false), ("https://api.openai.com/v1", true) })
+        // Exercise the real tool loop: deleting previous_response_id after the loop has already sent an
+        // increment is not stateless replay. The relay and plan need both calls and both results by round three.
+        credential.Secret = exchanged.Encode();
+        foreach (var (loopProvider, keepsChain, plan) in new[]
         {
-            var relayBodies = new List<string>();
-            var relay = new ModelProvider
+            (new ModelProvider { Id = "relay", Name = "Relay", IsCustom = true, BaseUrl = "https://agentrouter.org/v1",
+                Protocol = ModelProtocols.Responses, Model = "fixture-model" }, false, false),
+            (provider, false, true),
+            (new ModelProvider { Id = "api", Name = "API", IsCustom = true, BaseUrl = "https://api.openai.com/v1",
+                Protocol = ModelProtocols.Responses, Model = "fixture-model" }, true, false),
+        })
+        {
+            var bodies = new List<string>();
+            using var loopClient = ChatClientFactory.Create(loopProvider, "fixture-model", null, transport: new Handler(async (request, token) =>
             {
-                Id = "relay", Name = "Relay", IsCustom = true, BaseUrl = baseUrl,
-                Protocol = ModelProtocols.Responses, Model = "fixture-model",
-            };
-            using var relayClient = ChatClientFactory.Create(relay, "fixture-model", null, transport: new Handler(async (request, token) =>
-            {
-                relayBodies.Add(await request.Content!.ReadAsStringAsync(token));
-                return Json("""{"id":"resp1","object":"response","created_at":1,"status":"completed","model":"fixture-model","output":[]}""");
+                bodies.Add(await request.Content!.ReadAsStringAsync(token));
+                using var posted = JsonDocument.Parse(bodies[^1]);
+                if (!posted.RootElement.TryGetProperty("stream", out var stream) || !stream.GetBoolean())
+                    return Json("""{"id":"resp_direct","object":"response","created_at":1,"status":"completed","model":"fixture-model","output":[]}""");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(StreamEvents(bodies.Count <= 2, namespaced: plan, round: bodies.Count),
+                        Encoding.UTF8, "text/event-stream"),
+                };
             }));
-            // What FunctionInvokingChatClient hands the next tool round: the previous response id.
-            await relayClient.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") },
-                new ChatOptions { ConversationId = "resp_previous" });
-            using var relayBody = JsonDocument.Parse(relayBodies.Single());
-            Check(relayBody.RootElement.TryGetProperty("previous_response_id", out _) == keepsChain,
-                keepsChain ? "the OpenAI endpoint keeps response chaining" : "a responses relay never receives a response chain");
+            var answer = new StringBuilder();
+            var toolRuns = 0;
+            await foreach (var chunk in new ChatPipeline(loopClient).SendAsync(loopProvider, [ChatTurn.User("Read the file")],
+                tools: [AIFunctionFactory.Create(() => { toolRuns++; return "file contents"; }, "read_file")]))
+                answer.Append(chunk);
+            var valid = answer.ToString() == "done" && toolRuns == 2 && bodies.Count == 3;
+            var trace = new List<string>();
+            for (var round = 1; round <= bodies.Count; round++)
+            {
+                using var body = JsonDocument.Parse(bodies[round - 1]);
+                var requestBody = body.RootElement;
+                var items = requestBody.GetProperty("input").EnumerateArray().ToArray();
+                var hasChain = requestBody.TryGetProperty("previous_response_id", out var chain);
+                trace.Add($"{round}:chain={(hasChain ? chain.GetString() : "-")},items=" + string.Join(",", items.Select(item =>
+                    (item.TryGetProperty("type", out var type) ? type.GetString() : item.GetProperty("role").GetString())
+                    + (item.TryGetProperty("call_id", out var id) ? ":" + id.GetString() : ""))));
+                valid &= round == 1 ? !hasChain : keepsChain ? hasChain && chain.GetString() == $"resp{round - 1}" : !hasChain;
+                if (keepsChain || round == 1) continue;
+                var calls = items.Where(item => item.TryGetProperty("type", out var type) && type.GetString() == "function_call").ToArray();
+                var outputs = items.Where(item => item.TryGetProperty("type", out var type) && type.GetString() == "function_call_output").ToArray();
+                valid &= calls.Length == round - 1 && outputs.Length == round - 1
+                    && items.Any(item => item.TryGetProperty("role", out var role) && role.GetString() == "user")
+                    && calls.Select(item => item.GetProperty("call_id").GetString()).SequenceEqual(
+                        Enumerable.Range(1, round - 1).Select(i => $"call{i}"))
+                    && outputs.Select(item => item.GetProperty("call_id").GetString()).SequenceEqual(
+                        Enumerable.Range(1, round - 1).Select(i => $"call{i}"))
+                    && (!plan || calls.All(item => item.TryGetProperty("namespace", out var ns) && ns.GetString() == "hub"));
+            }
+            Check(valid, (plan ? "plan tool loop replays complete namespaced history"
+                : keepsChain ? "OpenAI tool loop retains response chaining" : "relay tool loop replays complete paired history")
+                + $" (tool runs={toolRuns}, answer={answer}, {string.Join("; ", trace)})");
+
+            var direct = await loopClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
+            var directId = direct.ConversationId;
+            var sentBeforeChain = bodies.Count;
+            var nonStreamingRejected = false;
+            var streamingRejected = false;
+            try
+            {
+                await loopClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")], new ChatOptions { ConversationId = "resp_old" });
+            }
+            catch (InvalidOperationException) { nonStreamingRejected = true; }
+            try
+            {
+                await foreach (var _ in loopClient.GetStreamingResponseAsync(
+                    [new ChatMessage(ChatRole.User, "hello")], new ChatOptions { ConversationId = "resp_old" })) { }
+            }
+            catch (InvalidOperationException) { streamingRejected = true; }
+            var directChainSent = keepsChain && bodies.Count == sentBeforeChain + 2 && bodies.Skip(sentBeforeChain).All(body =>
+            {
+                using var posted = JsonDocument.Parse(body);
+                return posted.RootElement.TryGetProperty("previous_response_id", out var id) && id.GetString() == "resp_old";
+            });
+            Check(keepsChain
+                    ? directId == "resp_direct" && !nonStreamingRejected && !streamingRejected && directChainSent
+                    : directId is null && nonStreamingRejected && streamingRejected && bodies.Count == sentBeforeChain,
+                (plan ? "plan hides response ids and refuses explicit chains"
+                    : keepsChain ? "OpenAI preserves explicit response chains" : "relay hides response ids and refuses explicit chains")
+                + $" (id={directId ?? "-"}, rejected={nonStreamingRejected}/{streamingRejected}, sends={bodies.Count - sentBeforeChain})");
         }
+        credential.Secret = legacySecret;
 
         // A re-login that failed between its two writes leaves a plan registration beside the legacy secret.
         // The secret is what requests carry, so it decides: the user is still asked to sign in.
@@ -837,15 +900,15 @@ internal static class OpenAiChecks
         if (Directory.Exists(scratch)) Directory.Delete(scratch, true);
     }
 
-    private static string StreamEvents(bool tool, bool namespaced = false)
+    private static string StreamEvents(bool tool, bool namespaced = false, int round = 1)
     {
         var item = tool
-            ? JsonSerializer.SerializeToElement(new { id = "fc1", type = "function_call", call_id = "call1", name = "read_file", arguments = "{}", status = "completed", @namespace = namespaced ? "hub" : null })
-            : JsonSerializer.SerializeToElement(new { id = "msg1", type = "message", role = "assistant", status = "completed",
+            ? JsonSerializer.SerializeToElement(new { id = $"fc{round}", type = "function_call", call_id = $"call{round}", name = "read_file", arguments = "{}", status = "completed", @namespace = namespaced ? "hub" : null })
+            : JsonSerializer.SerializeToElement(new { id = $"msg{round}", type = "message", role = "assistant", status = "completed",
                 content = new[] { new { type = "output_text", text = "done", annotations = Array.Empty<object>() } } });
-        var reasoning = JsonSerializer.SerializeToElement(new { id = "rs1", type = "reasoning",
+        var reasoning = JsonSerializer.SerializeToElement(new { id = $"rs{round}", type = "reasoning",
             summary = Array.Empty<object>(), encrypted_content = "fixture-encrypted-reasoning" });
-        object Response(string status, object[] output) => new { id = "resp1", @object = "response", created_at = 1, model = "fixture-model", status, output };
+        object Response(string status, object[] output) => new { id = $"resp{round}", @object = "response", created_at = 1, model = "fixture-model", status, output };
         var events = new List<object>
         {
             new { type = "response.created", response = Response("in_progress", []) },
@@ -855,15 +918,15 @@ internal static class OpenAiChecks
         };
         if (tool)
         {
-            events.Add(new { type = "response.function_call_arguments.delta", item_id = "fc1", output_index = 1, delta = "{}" });
-            events.Add(new { type = "response.function_call_arguments.done", item_id = "fc1", output_index = 1, arguments = "{}" });
+            events.Add(new { type = "response.function_call_arguments.delta", item_id = $"fc{round}", output_index = 1, delta = "{}" });
+            events.Add(new { type = "response.function_call_arguments.done", item_id = $"fc{round}", output_index = 1, arguments = "{}" });
         }
         else
         {
-            events.Add(new { type = "response.content_part.added", item_id = "msg1", output_index = 1, content_index = 0,
+            events.Add(new { type = "response.content_part.added", item_id = $"msg{round}", output_index = 1, content_index = 0,
                 part = new { type = "output_text", text = "", annotations = Array.Empty<object>() } });
-            events.Add(new { type = "response.output_text.delta", item_id = "msg1", output_index = 1, content_index = 0, delta = "done" });
-            events.Add(new { type = "response.output_text.done", item_id = "msg1", output_index = 1, content_index = 0, text = "done" });
+            events.Add(new { type = "response.output_text.delta", item_id = $"msg{round}", output_index = 1, content_index = 0, delta = "done" });
+            events.Add(new { type = "response.output_text.done", item_id = $"msg{round}", output_index = 1, content_index = 0, text = "done" });
         }
         events.Add(new { type = "response.output_item.done", output_index = 1, item });
         events.Add(new { type = "response.completed", response = Response("completed", [reasoning, item]) });

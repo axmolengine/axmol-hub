@@ -2527,15 +2527,11 @@ public partial class SettingsPage : UserControl
 
     private Control BuildAddIcon()
     {
-        var path = new Avalonia.Controls.Shapes.Path
-        {
-            Data = Avalonia.Media.Geometry.Parse("M6,1.5 V10.5 M1.5,6 H10.5"),
-            StrokeThickness = 1.7,
-            StrokeLineCap = Avalonia.Media.PenLineCap.Round,
-        };
-        path.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
-            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
-        return new Viewbox { Width = 14, Height = 14, Child = path };
+        var icon = HubActionIcon.Create("Hub.Icon.Plus");
+        icon.Width = 14;
+        icon.Height = 14;
+        icon.StrokeThickness = 1.7;
+        return icon;
     }
 
     /// <summary>

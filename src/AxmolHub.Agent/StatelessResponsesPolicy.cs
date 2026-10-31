@@ -7,9 +7,9 @@ using System.Text.Json.Nodes;
 namespace AxmolHub.Agent;
 
 /// <summary>
-/// Removes the two fields a Responses body uses to ask the endpoint to continue from earlier state. Hub sends the
-/// whole conversation on every round, so the chain is redundant — and gateways that only accept the stateless
-/// Codex shape reject it outright (AgentRouter answers <c>previous_response_id expected null</c>).
+/// Removes the two fields a Responses body uses to ask the endpoint to continue from earlier state. The chat
+/// client prevents the tool loop from selecting an incremental replay first; this is a final wire safeguard for
+/// gateways that reject chaining (AgentRouter answers <c>previous_response_id expected null</c>).
 /// </summary>
 public sealed class StatelessResponsesPolicy : PipelinePolicy
 {

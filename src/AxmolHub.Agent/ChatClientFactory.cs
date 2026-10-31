@@ -202,17 +202,17 @@ public static class ChatClientFactory
                 options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
             if (headers is not null)
                 options.AddPolicy(headers, PipelinePosition.BeforeTransport);
-            // A response id only chains on the endpoint that issued it. Hub already sends the whole conversation,
-            // so a relay receives the same content either way — and the relays that proxy a stateless Codex body
-            // reject the field outright (AgentRouter: "previous_response_id expected null"). OpenAI's own endpoint
-            // keeps the client's chaining; its plan transport strips the field itself.
+            // Stateless relays reject chaining; the client wrapper below prevents the tool loop from choosing
+            // incremental replay. Keep the wire policy as a final safeguard. OpenAI's own API keeps chaining,
+            // while the plan transport independently removes the field.
             if (!IsOpenAiEndpoint(provider))
                 options.AddPolicy(new StatelessResponsesPolicy(), PipelinePosition.BeforeTransport);
             // Last, so the recorded body is the one that leaves: the replay policy above has already rewritten
             // the messages, and a recording taken before that would document an intention rather than a request.
             options.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
             var responses = new ResponsesClient(credential, options).AsIChatClient(model);
-            return provider.IsOpenAiPlan ? new OpenAiStreamingChatClient(responses) : responses;
+            IChatClient client = provider.IsOpenAiPlan ? new OpenAiStreamingChatClient(responses) : responses;
+            return provider.IsOpenAiPlan || !IsOpenAiEndpoint(provider) ? new StatelessResponsesChatClient(client) : client;
 #pragma warning restore OPENAI001
         }
 
