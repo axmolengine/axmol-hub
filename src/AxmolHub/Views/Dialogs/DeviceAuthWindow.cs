@@ -80,6 +80,7 @@ public sealed partial class DeviceAuthWindow : Window
         _copy = new Button
         {
             Content = HubStrings.Get("AuthDeviceCopy"),
+            Classes = { "compact" },
             Opacity = 0,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 6, 0, 0),

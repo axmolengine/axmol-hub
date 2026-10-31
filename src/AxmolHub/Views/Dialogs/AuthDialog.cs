@@ -157,7 +157,7 @@ public sealed partial class AuthDialog : Window
 
         _steps.Children.Add(options);
 
-        _next = new Button { Content = HubStrings.Get("Next"), IsDefault = true, IsEnabled = false };
+        _next = new Button { Content = HubStrings.Get("Next"), IsDefault = true, IsEnabled = false, Classes = { "compact" }, Margin = new Thickness(0) };
         _next.Click += (_, _) => Choose(_selection!);
         _navButtons.Children.Add(_next);
         _navButtons.Children.Add(DialogButtons.Cancel(this));
@@ -225,7 +225,8 @@ public sealed partial class AuthDialog : Window
         {
             Content = HubStrings.Get("Save"),
             IsDefault = true,
-            Classes = { "primary" },
+            Classes = { "compact", "primary" },
+            Margin = new Thickness(0),
         };
         _confirm.Click += async (_, _) => await ConfirmKeyAsync();
 
@@ -235,6 +236,8 @@ public sealed partial class AuthDialog : Window
         {
             Content = HubStrings.Get("Back"),
             IsCancel = true,
+            Classes = { "compact" },
+            Margin = new Thickness(0),
         };
         back.Click += (_, _) =>
         {
@@ -383,7 +386,7 @@ internal static class DialogButtons
 {
     public static Button Cancel(Window owner)
     {
-        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true };
+        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true, Classes = { "compact" }, Margin = new Thickness(0) };
         cancel.Click += (_, _) => owner.Close(HubDialogResult.Cancel);
         return cancel;
     }

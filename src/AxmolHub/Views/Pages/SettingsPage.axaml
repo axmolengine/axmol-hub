@@ -195,7 +195,7 @@
           <StackPanel x:Name="TrustedToolGroup" Spacing="4" IsVisible="False">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="{DynamicResource TrustedToolsTitle}" Classes="muted" VerticalAlignment="Center" />
-              <Button Grid.Column="1" x:Name="RevokeAllTrustedToolsButton" Classes="quiet"
+              <Button Grid.Column="1" x:Name="RevokeAllTrustedToolsButton" Classes="compact quiet" Margin="0"
                       Content="{DynamicResource RevokeAllTrustedTools}" />
             </Grid>
             <StackPanel x:Name="TrustedToolList" Spacing="4" />
@@ -204,7 +204,7 @@
           <StackPanel x:Name="TrustedCommandGroup" Spacing="4" IsVisible="False">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="{DynamicResource TrustedCommandsTitle}" Classes="muted" VerticalAlignment="Center" />
-              <Button Grid.Column="1" x:Name="RevokeAllTrustedCommandsButton" Classes="quiet"
+              <Button Grid.Column="1" x:Name="RevokeAllTrustedCommandsButton" Classes="compact quiet" Margin="0"
                       Content="{DynamicResource RevokeAllTrustedTools}" />
             </Grid>
             <StackPanel x:Name="TrustedCommandList" Spacing="4" />
@@ -216,7 +216,7 @@
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="{DynamicResource TrustedComputerAppsTitle}" Classes="muted"
                          VerticalAlignment="Center" ToolTip.Tip="{DynamicResource TrustedComputerAppsHint}" />
-              <Button Grid.Column="1" x:Name="RevokeAllTrustedComputerAppsButton" Classes="quiet"
+              <Button Grid.Column="1" x:Name="RevokeAllTrustedComputerAppsButton" Classes="compact quiet" Margin="0"
                       Content="{DynamicResource RevokeAllTrustedTools}" />
             </Grid>
             <StackPanel x:Name="TrustedComputerAppList" Spacing="4" />
@@ -275,11 +275,11 @@
                  after changing the directory the first thing you want to do is peek inside it. Both buttons dock
                  to the right; the one declared first sits further right. -->
             <DockPanel>
-              <Button x:Name="OpenDataFolderButton" DockPanel.Dock="Right" Classes="quiet"
+              <Button x:Name="OpenDataFolderButton" DockPanel.Dock="Right" Classes="compact quiet"
                       Margin="12,0,0,0" Content="{DynamicResource OpenFolder}" />
-              <Button x:Name="ChooseDataDirectoryButton" DockPanel.Dock="Right" Classes="more"
+              <Button x:Name="ChooseDataDirectoryButton" DockPanel.Dock="Right" Classes="compact more"
                       Margin="12,0,0,0" Content="{DynamicResource Browse}" />
-              <TextBox x:Name="DataLocation" IsReadOnly="True" />
+              <TextBox x:Name="DataLocation" Margin="0" IsReadOnly="True" />
             </DockPanel>
             <!-- Goes through DynamicResource with **no** imperative assignment besides x:Name, so it is the
                  localization probe: the self-check reads its text to prove that existing controls really did
@@ -295,9 +295,9 @@
           <StackPanel Spacing="6">
             <TextBlock Text="{DynamicResource DefaultProjectDirectory}" FontWeight="SemiBold" />
             <DockPanel>
-              <Button x:Name="ChooseProjectDirectoryButton" DockPanel.Dock="Right" Classes="more" Margin="12,0,0,0"
+              <Button x:Name="ChooseProjectDirectoryButton" DockPanel.Dock="Right" Classes="compact more" Margin="12,0,0,0"
                       Content="{DynamicResource Browse}" />
-              <TextBox x:Name="DefaultProjectLocation" IsReadOnly="True" />
+              <TextBox x:Name="DefaultProjectLocation" Margin="0" IsReadOnly="True" />
             </DockPanel>
             <TextBlock Classes="muted" Text="{DynamicResource ProjectDirectoryHint}" />
           </StackPanel>
@@ -357,7 +357,7 @@
                  SettingsPage.RenderUpdateState), and it is set from code so that the re-render Reload already
                  runs is what re-localizes it on a language switch. A {DynamicResource} on the same property
                  would be a second author, and the loser would be the one that keeps the old language. -->
-            <Button Grid.Column="1" x:Name="CheckForUpdatesButton"
+            <Button Grid.Column="1" x:Name="CheckForUpdatesButton" Classes="compact"
                     VerticalAlignment="Center" Margin="12,0,0,0" />
           </Grid>
         </StackPanel>
@@ -371,15 +371,15 @@
           <TextBlock Classes="muted" Text="{DynamicResource EditorHint}" TextWrapping="Wrap" />
 
           <DockPanel>
-            <Button x:Name="BrowseEditorButton" DockPanel.Dock="Right" Margin="12,0,0,0" Classes="more"
+            <Button x:Name="BrowseEditorButton" DockPanel.Dock="Right" Margin="12,0,0,0" Classes="compact more"
                     Content="{DynamicResource BrowseEditor}" />
             <!-- Items are built in code from the detected list (see SettingsPage.RenderEditors): the rows are
                  product names, which are not localized copy. -->
-            <ComboBox x:Name="EditorPicker" MinWidth="260" HorizontalAlignment="Stretch" />
+            <ComboBox x:Name="EditorPicker" Margin="0" MinWidth="260" HorizontalAlignment="Stretch" />
           </DockPanel>
 
           <StackPanel>
-            <Button x:Name="DetectEditorButton" Margin="0,0,0,6" Classes="more"
+            <Button x:Name="DetectEditorButton" Margin="0,0,0,6" Classes="compact more"
                     Content="{DynamicResource DetectAgain}" />
             <TextBlock x:Name="EditorLocation" Classes="muted" TextTrimming="CharacterEllipsis" />
           </StackPanel>

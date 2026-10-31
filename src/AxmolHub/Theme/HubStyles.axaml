@@ -152,6 +152,14 @@
   </Style>
 
   <!-- ==================== Button variants ==================== -->
+  <!-- Smaller action plates without changing typography, colour, or content alignment.
+       MinHeight leaves room for platform fonts; centering prevents a multiline neighbour stretching the plate. -->
+  <Style Selector="Button.compact">
+    <Setter Property="Padding" Value="12,5" />
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
   <!-- WPF's Style x:Key="Primary" -->
   <Style Selector="Button.primary">
     <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />

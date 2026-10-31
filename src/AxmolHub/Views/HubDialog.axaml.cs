@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
 using AxmolHub.Core;
@@ -151,7 +152,14 @@ public partial class HubDialog : Window
     private void Add(HubDialogResult result, string caption, bool primary, bool cancel, bool danger)
     {
         // IsDefault / IsCancel handle Enter and Esc, equivalent to WPF MessageBox's default-button and Esc behavior.
-        var button = new Button { Content = caption, IsDefault = primary, IsCancel = cancel };
+        var button = new Button
+        {
+            Content = caption,
+            IsDefault = primary,
+            IsCancel = cancel,
+            Classes = { "compact" },
+            Margin = new Thickness(0),
+        };
         if (primary)
         {
             button.Classes.Add("primary");

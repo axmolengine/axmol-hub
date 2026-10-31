@@ -79,8 +79,8 @@ public sealed class AndroidReleaseWindow : Window
             Margin = new Thickness(0, 0, 0, 14),
         });
 
-        var buttons = new WrapPanel();
-        _browse = new Button { Content = L("选择密钥库", "Choose keystore") };
+        var buttons = new WrapPanel { ItemSpacing = 8, LineSpacing = 8 };
+        _browse = new Button { Content = L("选择密钥库", "Choose keystore"), Classes = { "compact" }, Margin = new Thickness(0) };
         _browse.Click += async (_, _) =>
         {
             var result = await Pickers.PickFileAsync(this, Title!,
@@ -91,9 +91,9 @@ public sealed class AndroidReleaseWindow : Window
             }
         };
 
-        _create = new Button { Content = L("新建密钥库", "Create keystore") };
-        _save = new Button { Content = L("验证并保存", "Verify and save"), Classes = { "primary" } };
-        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true };
+        _create = new Button { Content = L("新建密钥库", "Create keystore"), Classes = { "compact" }, Margin = new Thickness(0) };
+        _save = new Button { Content = L("验证并保存", "Verify and save"), Classes = { "compact", "primary" }, Margin = new Thickness(0) };
+        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true, Classes = { "compact" }, Margin = new Thickness(0) };
 
         AndroidReleaseSettings Read() => new()
         {

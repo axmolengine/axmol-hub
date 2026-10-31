@@ -40,15 +40,15 @@ internal sealed class CodeEditorView : Grid
         _status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         DockPanel.SetDock(_status, Dock.Left);
         bar.Children.Add(_status);
-        var saveButton = new Button { Content = "Save", IsEnabled = writable, Margin = new Thickness(8, 0, 0, 0) };
+        var saveButton = new Button { Content = "Save", IsEnabled = writable, Classes = { "compact" }, Margin = new Thickness(8, 0, 0, 0) };
         saveButton.Click += (_, _) => Save();
         DockPanel.SetDock(saveButton, Dock.Right);
         bar.Children.Add(saveButton);
-        var reload = new Button { Content = "Reload", IsEnabled = writable, Margin = new Thickness(8, 0, 0, 0) };
+        var reload = new Button { Content = "Reload", IsEnabled = writable, Classes = { "compact" }, Margin = new Thickness(8, 0, 0, 0) };
         reload.Click += async (_, _) => await ReloadAsync();
         DockPanel.SetDock(reload, Dock.Right);
         bar.Children.Add(reload);
-        _discardButton = new Button { Content = "Discard and close", IsVisible = false, Margin = new Thickness(8, 0, 0, 0) };
+        _discardButton = new Button { Content = "Discard and close", IsVisible = false, Classes = { "compact" }, Margin = new Thickness(8, 0, 0, 0) };
         _discardButton.Click += (_, _) => discardAndClose();
         DockPanel.SetDock(_discardButton, Dock.Right);
         bar.Children.Add(_discardButton);

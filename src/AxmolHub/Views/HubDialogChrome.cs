@@ -259,7 +259,14 @@ internal sealed class HubDialogChrome
             Margin = new Thickness(0, 12, 0, 0),
         };
 
-        var cancelButton = new Button { Name = "DialogCancelButton", Content = cancelText, IsCancel = true };
+        var cancelButton = new Button
+        {
+            Name = "DialogCancelButton",
+            Content = cancelText,
+            IsCancel = true,
+            Classes = { "compact" },
+            Margin = new Thickness(0),
+        };
         cancelButton.Click += (_, _) => cancel();
 
         var confirmButton = new Button
@@ -267,7 +274,8 @@ internal sealed class HubDialogChrome
             Name = "DialogConfirmButton",
             Content = confirmText,
             IsDefault = true,
-            Classes = { "primary" },
+            Classes = { "compact", "primary" },
+            Margin = new Thickness(0),
         };
         confirmButton.Click += (_, _) => confirm();
 

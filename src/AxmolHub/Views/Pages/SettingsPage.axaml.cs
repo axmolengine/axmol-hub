@@ -606,8 +606,9 @@ public partial class SettingsPage : UserControl
         });
         var button = new Button
         {
-            Classes = { "quiet" },
+            Classes = { "compact", "quiet" },
             Content = HubStrings.Get("RevokeTrustedTool"),
+            Margin = new Thickness(0),
             Tag = key,
         };
         button.Click += (_, _) => revoke();
@@ -1365,7 +1366,7 @@ public partial class SettingsPage : UserControl
             ProviderGroupList.Children.Add(backend);
             if (_chat.SecretBackend.Kind == SecretStoreKind.Keychain && _chat.SecretBackend.DegradedReason is not null)
             {
-                var retry = new Button { Content = HubStrings.Get("TaskRetry") };
+                var retry = new Button { Content = HubStrings.Get("TaskRetry"), Classes = { "compact" } };
                 retry.Click += (_, _) =>
                 {
                     try { _chat.RetrySecretReads(); RebuildProviderGroups(); }
@@ -1695,9 +1696,9 @@ public partial class SettingsPage : UserControl
             HorizontalAlignment = HorizontalAlignment.Right,
             Spacing = 8,
         };
-        var cancel = new Button { Content = HubStrings.Get("Cancel"), Classes = { "quiet" } };
+        var cancel = new Button { Content = HubStrings.Get("Cancel"), Classes = { "compact", "quiet" }, Margin = new Thickness(0) };
         cancel.Click += (_, _) => CloseDraft();
-        var save = new Button { Content = HubStrings.Get("Save"), Classes = { "primary" }, IsDefault = true };
+        var save = new Button { Content = HubStrings.Get("Save"), Classes = { "compact", "primary" }, Margin = new Thickness(0), IsDefault = true };
         save.Click += (_, _) => CommitEditDraft(provider, name, baseUrl);
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
@@ -1810,12 +1811,13 @@ public partial class SettingsPage : UserControl
             HorizontalAlignment = HorizontalAlignment.Right,
             Spacing = 8,
         };
-        var cancel = new Button { Content = HubStrings.Get("Cancel"), Classes = { "quiet" } };
+        var cancel = new Button { Content = HubStrings.Get("Cancel"), Classes = { "compact", "quiet" }, Margin = new Thickness(0) };
         cancel.Click += (_, _) => CloseDraft();
         var save = new Button
         {
             Content = HubStrings.Get("AddProviderAction"),
-            Classes = { "primary" },
+            Classes = { "compact", "primary" },
+            Margin = new Thickness(0),
             IsDefault = true,
             Tag = SectionTags.AddDraftSave,
         };

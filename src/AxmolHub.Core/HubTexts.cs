@@ -299,7 +299,7 @@ public static class HubTexts
         ["SelectEditor"] = ("选择编辑器", "Choose editor"),
         ["NotSelected"] = ("尚未选择", "Not selected"),
         ["EditorHint"] = ("用于打开项目的编辑器。列表是本机探测到的编辑器（macOS 上是 /Applications 里的应用），不在列表里的用「浏览…」；项目页可以为单个项目另选。", "The editor that opens projects. The list holds what was found on this machine — on macOS, the applications in /Applications; use Browse… for one installed elsewhere. A project can override it from the projects page."),
-        ["BrowseEditor"] = ("浏览…", "Browse…"),
+        ["BrowseEditor"] = ("浏览", "Browse"),
         ["DetectAgain"] = ("重新探测", "Detect again"),
         ["NoEditorFound"] = ("没有可用的编辑器，请在设置中选择。", "No editor available — choose one in Settings."),
         ["OpenInEditor"] = ("用编辑器打开", "Open in editor"),

@@ -86,7 +86,7 @@ public sealed class PrebuiltWindow : Window
                 Margin = new Thickness(0, 12, 0, 0),
             });
 
-            var open = new Button { Content = HubStrings.Get("OpenEnginesPage"), Classes = { "quiet" }, Margin = new Thickness(0, 12, 0, 0) };
+            var open = new Button { Content = HubStrings.Get("OpenEnginesPage"), Classes = { "compact", "quiet" }, Margin = new Thickness(0, 12, 0, 0) };
             open.Click += (_, _) =>
             {
                 _navigate?.Invoke("Installs");

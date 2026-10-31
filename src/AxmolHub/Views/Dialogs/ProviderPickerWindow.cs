@@ -93,9 +93,9 @@ public sealed partial class ProviderPickerWindow : Window
             Spacing = 8,
             Margin = new Thickness(0, 16, 0, 0),
         };
-        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true };
+        var cancel = new Button { Content = HubStrings.Get("Cancel"), IsCancel = true, Classes = { "compact" }, Margin = new Thickness(0) };
         cancel.Click += (_, _) => Close(HubDialogResult.Cancel);
-        var add = new Button { Content = HubStrings.Get("Add"), IsDefault = true, Classes = { "primary" } };
+        var add = new Button { Content = HubStrings.Get("Add"), IsDefault = true, Classes = { "compact", "primary" }, Margin = new Thickness(0) };
         add.Click += (_, _) => Commit();
         buttons.Children.Add(cancel);
         buttons.Children.Add(add);

@@ -60,10 +60,10 @@
 
       <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,*,Auto" Margin="0,0,0,10">
         <ComboBox x:Name="EngineFilter" MinWidth="155" Margin="0,0,8,0" />
-        <ComboBox Grid.Column="1" x:Name="PlatformFilter" MinWidth="145" />
+        <ComboBox Grid.Column="1" x:Name="PlatformFilter" MinWidth="145" Margin="0" />
         <TextBlock Grid.Column="2" x:Name="ResultCount" Classes="muted"
                    VerticalAlignment="Center" Margin="14,0,0,0" />
-        <Button Grid.Column="3" x:Name="SortButton" Classes="quiet" />
+        <Button Grid.Column="3" x:Name="SortButton" Classes="compact quiet" Margin="0" />
       </Grid>
 
       <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
@@ -164,11 +164,11 @@
             <TextBlock x:Name="EmptyProjects" Classes="muted" TextWrapping="Wrap"
                        HorizontalAlignment="Center" />
             <StackPanel x:Name="EmptyActions" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
-              <Button Content="{DynamicResource OpenExisting}" Click="OnOpenExisting" Classes="quiet more" />
-              <Button Content="{DynamicResource NewProject}" Click="OnNewProject" Classes="primary" />
+              <Button Content="{DynamicResource OpenExisting}" Click="OnOpenExisting" Classes="compact quiet more" Margin="0" />
+              <Button Content="{DynamicResource NewProject}" Click="OnNewProject" Classes="compact primary" Margin="0" />
             </StackPanel>
             <Button x:Name="ClearFiltersButton" Content="{DynamicResource ClearSearch}" Click="OnClearFilters"
-                    Classes="quiet" IsVisible="False" />
+                    Classes="compact quiet" Margin="0" IsVisible="False" />
           </StackPanel>
         </Grid>
       </Border>
@@ -198,8 +198,8 @@
                       <TextBlock Text="{DynamicResource Location}" />
                       <DockPanel>
                         <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
-                                DockPanel.Dock="Right" Margin="6,0,0,0" Padding="10,8" />
-                        <TextBox x:Name="ProjectLocationBox" />
+                                DockPanel.Dock="Right" Margin="6,0,0,0" Classes="compact more" />
+                        <TextBox x:Name="ProjectLocationBox" Margin="0" />
                       </DockPanel>
                     </StackPanel>
                     <StackPanel Spacing="6">
@@ -234,8 +234,8 @@
           <StackPanel Grid.Row="2" x:Name="OverlayActions" Orientation="Horizontal" HorizontalAlignment="Right"
                       Margin="16,12,20,16" Spacing="8">
             <Button x:Name="OverlayCancelButton" Content="{DynamicResource Cancel}" Click="OnCloseOverlay"
-                    Classes="quiet" />
-            <Button x:Name="OverlayPrimaryButton" Classes="primary" Click="OnOverlayPrimary" />
+                    Classes="compact quiet" Margin="0" />
+            <Button x:Name="OverlayPrimaryButton" Classes="compact primary" Margin="0" Click="OnOverlayPrimary" />
           </StackPanel>
         </Grid>
       </Border>

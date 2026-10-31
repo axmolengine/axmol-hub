@@ -21,9 +21,9 @@ public sealed partial class OpenAiLoginCard : UserControl
         VerticalAlignment = VerticalAlignment.Center;
         _error = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var open = new Button { Content = HubStrings.Get("AuthOpenAiOpen") };
+        var open = new Button { Content = HubStrings.Get("AuthOpenAiOpen"), Classes = { "compact" }, Margin = new Thickness(0) };
         open.Click += (_, _) => UrlLauncher.TryOpen(attempt.AuthorizationUrl);
-        var copy = new Button { Content = HubStrings.Get("AuthOpenAiCopy") };
+        var copy = new Button { Content = HubStrings.Get("AuthOpenAiCopy"), Classes = { "compact" }, Margin = new Thickness(0) };
         copy.Click += async (_, _) =>
         {
             try
@@ -40,7 +40,7 @@ public sealed partial class OpenAiLoginCard : UserControl
         actions.Children.Add(open);
         actions.Children.Add(copy);
         _callback = new TextBox { PlaceholderText = HubStrings.Get("AuthOpenAiCallback"), AcceptsReturn = false };
-        var submit = new Button { Content = HubStrings.Get("AuthOpenAiSubmit") };
+        var submit = new Button { Content = HubStrings.Get("AuthOpenAiSubmit"), Classes = { "compact" }, Margin = new Thickness(0) };
         submit.Click += (_, _) =>
         {
             if (!attempt.Submit(_callback.Text?.Trim() ?? ""))
@@ -50,7 +50,7 @@ public sealed partial class OpenAiLoginCard : UserControl
             }
             else _callback.Clear();
         };
-        var close = new Button { Content = HubStrings.Get("Cancel") };
+        var close = new Button { Content = HubStrings.Get("Cancel"), Classes = { "compact" }, Margin = new Thickness(0) };
         close.Click += (_, _) => cancel();
         var footer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         footer.Children.Add(submit);

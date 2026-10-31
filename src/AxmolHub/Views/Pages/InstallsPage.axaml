@@ -63,10 +63,10 @@
     </Grid>
 
     <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,10">
-      <ComboBox x:Name="ChannelFilter" MinWidth="155" />
+      <ComboBox x:Name="ChannelFilter" MinWidth="155" Margin="0" />
       <TextBlock Grid.Column="1" x:Name="ResultCount" Classes="muted"
                  VerticalAlignment="Center" Margin="14,0,0,0" />
-      <Button Grid.Column="2" x:Name="SortButton" Classes="quiet" />
+      <Button Grid.Column="2" x:Name="SortButton" Classes="compact quiet" Margin="0" />
     </Grid>
 
     <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
@@ -173,11 +173,11 @@
                     Spacing="10" IsVisible="False">
           <TextBlock x:Name="EmptyEngines" Classes="muted" TextWrapping="Wrap" HorizontalAlignment="Center" />
           <StackPanel x:Name="EmptyActions" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
-            <Button Content="{DynamicResource ImportEngine}" Click="OnImportEngine" Classes="quiet more" />
-            <Button Content="{DynamicResource InstallOfficial}" Click="OnInstallEngine" Classes="primary" />
+            <Button Content="{DynamicResource ImportEngine}" Click="OnImportEngine" Classes="compact quiet more" Margin="0" />
+            <Button Content="{DynamicResource InstallOfficial}" Click="OnInstallEngine" Classes="compact primary" Margin="0" />
           </StackPanel>
           <Button x:Name="ClearFiltersButton" Content="{DynamicResource ClearSearch}" Click="OnClearFilters"
-                  Classes="quiet" IsVisible="False" />
+                  Classes="compact quiet" Margin="0" IsVisible="False" />
         </StackPanel>
       </Grid>
     </Border>

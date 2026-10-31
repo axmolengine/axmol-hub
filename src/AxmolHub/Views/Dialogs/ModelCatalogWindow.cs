@@ -101,12 +101,14 @@ public sealed partial class ModelCatalogWindow : Window
         _refreshButton = new Button
         {
             Content = HubStrings.Get("RefreshModels"),
+            Classes = { "compact" },
+            Margin = new Thickness(0),
             IsEnabled = canRefresh,
             Tag = "model-catalog-refresh",
         };
         ToolTip.SetTip(_refreshButton, HubStrings.Get("RefreshModelsHint"));
         _refreshButton.Click += async (_, _) => await RefreshAsync();
-        var close = new Button { Content = HubStrings.Get("CloseModelCatalog"), IsDefault = true, IsCancel = true };
+        var close = new Button { Content = HubStrings.Get("CloseModelCatalog"), IsDefault = true, IsCancel = true, Classes = { "compact" }, Margin = new Thickness(0) };
         close.Click += (_, _) => Close(HubDialogResult.Ok);
         buttons.Children.Add(_refreshButton);
         buttons.Children.Add(close);
