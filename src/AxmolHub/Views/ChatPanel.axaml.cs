@@ -2928,9 +2928,38 @@ public partial class ChatPanel : UserControl
         return block;
     }
 
-    private Button GoalActionButton(string glyph, string tooltipKey, Action action)
+    private Button GoalActionButton(string geometryKey, string tooltipKey, Action action)
     {
-        var button = new Button { Content = glyph, Padding = new Thickness(6, 1), MinWidth = 22, MinHeight = 22 };
+        var filled = geometryKey is "Hub.Icon.Pause" or "Hub.Icon.Play";
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Data = ThemeGeometry(geometryKey),
+            Stretch = Stretch.None,
+            StrokeThickness = 1.8,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            IsHitTestVisible = false,
+        };
+        path.Bind(filled ? Avalonia.Controls.Shapes.Path.FillProperty : Avalonia.Controls.Shapes.Path.StrokeProperty,
+            new DynamicResourceExtension("Hub.TextPrimary"));
+        // Center the authored viewport, not a font's baseline or the Path's stretched ink bounds.
+        var icon = new Viewbox
+        {
+            Width = 16, Height = 16,
+            IsHitTestVisible = false,
+            Child = new Canvas { Width = 24, Height = 24, Children = { path } },
+        };
+        var button = new Button
+        {
+            Name = tooltipKey,
+            Content = icon,
+            Width = 24, Height = 24,
+            MinWidth = 0, MinHeight = 0,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
         ToolTip.SetTip(button, HubStrings.Get(tooltipKey));
         button.Click += (_, _) => action();
         return button;

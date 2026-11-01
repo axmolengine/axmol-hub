@@ -163,6 +163,10 @@
        any leftover axis as slack on one side (see Hub.Icon.Send above). -->
   <StreamGeometry x:Key="Hub.Icon.Stop">M9.1 7.3H14.9A1.8 1.8 0 0 1 16.7 9.1V14.9A1.8 1.8 0 0 1 14.9 16.7H9.1A1.8 1.8 0 0 1 7.3 14.9V9.1A1.8 1.8 0 0 1 9.1 7.3Z</StreamGeometry>
 
+  <!-- Goal actions: filled pause bars and play triangle, centered in the authored 24-unit viewport. -->
+  <StreamGeometry x:Key="Hub.Icon.Pause">M6 5H10V19H6Z M14 5H18V19H14Z</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Play">M6 5L18 12L6 19Z</StreamGeometry>
+
   <!-- A panel with a divider = sidebar toggle, matching the shape GitHub Copilot Desktop uses. Stroked. -->
   <StreamGeometry x:Key="Hub.Icon.Panel">M4.5 5H19.5V19H4.5 Z M10 5V19</StreamGeometry>
   <!-- A desktop application window: outer frame, title bar, and clear content area. -->
