@@ -235,8 +235,11 @@ internal static class DriveRunner
                     box.Text = Str(step, "value");
                 }
                 else if (control is ListBoxItem item) item.IsSelected = true;
-                else if (control is ToggleButton toggle) toggle.IsChecked = !toggle.IsChecked;
-                else if (control is Button button) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                else if (control is Button button)
+                {
+                    if (button is ToggleButton toggle) toggle.IsChecked = !toggle.IsChecked;
+                    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
                 else return "not clickable: " + control.GetType().Name;
                 await Settle();
                 return null;
