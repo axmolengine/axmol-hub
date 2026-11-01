@@ -3171,7 +3171,8 @@ internal sealed partial class ChatExecutionCoordinator
             // `StatusOf` is null. Only the message says what happened, and without it the goal paused on the one
             // failure it exists for.
             Audit(run.ConversationId, $"Provider attempts exhausted; cooling down: {ex.Message}");
-            await ParkGoalForProviderAsync(run.ConversationId, ProviderRetryDefaults.GoalCooldown).ConfigureAwait(false);
+            var spent = Sessions.Registry.Peek(run.ConversationId)?.GoalCooldownCount ?? 0;
+            await ParkGoalForProviderAsync(run.ConversationId, CooldownDelay(spent)).ConfigureAwait(false);
             return (RunResult.Incomplete, "ChatGoalWaiting", false, ex.Message);
         }
         catch (TimeoutException ex)
@@ -3881,7 +3882,7 @@ internal sealed partial class ChatExecutionCoordinator
                         {
                             // The wait is the point: an endpoint that answered with nothing is retried after a
                             // backoff rather than immediately, on the same budget as a provider's Retry-After.
-                            ParkForProvider(opened, GoalPolicyFor(opened), EmptyAnswerDelay(opened.GoalCooldownCount));
+                            ParkForProvider(opened, GoalPolicyFor(opened), CooldownDelay(opened.GoalCooldownCount));
                             if (opened.GoalWakeAt is { } wake) ScheduleGoalWake(opened.Id, wake);
                         }
                         else

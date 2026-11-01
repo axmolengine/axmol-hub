@@ -11,5 +11,4 @@ public static class ProviderRetryDefaults
     public static readonly TimeSpan BackoffCeiling = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan GoalMaxInlineWait = BackoffCeiling;
     public static readonly TimeSpan MaxInlineWait = TimeSpan.FromSeconds(120);
-    public static readonly TimeSpan GoalCooldown = BackoffCeiling;
 }
