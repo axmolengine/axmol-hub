@@ -1723,7 +1723,7 @@ internal sealed class ShellAssistantChecks
         shell.Chat.AddGoalBudget(budgetedGoal.Id);
         var budgetAddedWhilePaused = budgetedGoal.GoalState == ChatGoalStates.Paused
             && budgetClients.All(client => client.LastMessages is null)
-            && budgetedGoal.GoalTokenBudget == (shell.Chat.PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 1_000_000);
+            && budgetedGoal.GoalTokenBudget == (shell.Chat.PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 0);
         shell.Chat.ResumeGoal(budgetedGoal.Id);
         await panel.WaitForRunToFinishForCheck();
         goalAttempts = budgetClients.Count(client => client.LastMessages is not null);

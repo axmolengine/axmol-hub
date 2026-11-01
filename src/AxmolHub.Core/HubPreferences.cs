@@ -107,7 +107,20 @@ public sealed class HubPreferences
 
     /// <summary>Automatic goal runs. Zero removes only this ceiling, not token or progress guards.</summary>
     public int GoalContinuationLimit { get; set; } = 0;
-    public long GoalTokenBudget { get; set; } = 1_000_000;
+
+    /// <summary>Ceiling on the tokens a goal may spend in total. <b>Off by default</b> — zero means no ceiling.
+    ///
+    /// <para>A goal exists so an unstable provider cannot end a task: the run backs off through a 429 or a dropped
+    /// stream and carries on, which is the whole reason the feature is here. A token sum is a different job — it
+    /// bounds spending — and the two do not belong in one number that Hub picks without being asked. It also
+    /// counted the whole transcript again on every round, so on a large window a single request is hundreds of
+    /// thousands of tokens and this ceiling would have stopped a goal after two or three of them.</para>
+    ///
+    /// <para>A runaway is caught where it happens instead: <see cref="GoalNoProgressLimit"/> pauses a goal after
+    /// three consecutive answers without progress, which is tighter than any token sum and blind to how large the
+    /// conversation is. A person who wants a spend ceiling can still set one — <c>Conversation.GoalTokenBudget</c>
+    /// wins over this — and reaching it is reported as a stop, never as completion.</para></summary>
+    public long GoalTokenBudget { get; set; }
     public int ProviderMaxRetries { get; set; } = ProviderRetryDefaults.MaxRetries;
     public int GoalNoProgressLimit { get; set; } = 3;
     public int GoalCooldownLimit { get; set; } = 2;

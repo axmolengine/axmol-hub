@@ -184,7 +184,7 @@ internal sealed partial class ChatExecutionCoordinator
             if (opened.GoalStopReason == "limit") opened.GoalContinuationLimit = policy.ContinuationLimit + 10;
             else
             {
-                var configuredBudget = Math.Max(0, PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 1_000_000);
+                var configuredBudget = Math.Max(0, PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 0);
                 opened.GoalTokenBudget = configuredBudget == 0 ? 0
                     : opened.GoalReportedTokens + opened.GoalEstimatedTokens + configuredBudget;
             }
