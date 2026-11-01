@@ -4,7 +4,7 @@ namespace AxmolHub.Core;
 public static class CommitSummary
 {
     public const string Marker = "Commit summary:";
-    public static readonly string[] DefaultPrefixes = ["feat:", "fix:", "docs:", "misc:"];
+    public static readonly string[] DefaultPrefixes = ["feat:", "fix:", "docs:", "misc:", "ver:"];
 
     public static IReadOnlyList<string> NormalizePrefixes(IEnumerable<string>? prefixes)
     {
@@ -38,12 +38,19 @@ public static class CommitSummary
 
     public static bool IsValid(string? summary, IEnumerable<string>? prefixes = null)
     {
-        if (string.IsNullOrWhiteSpace(summary) || summary.Length > 120
-            || summary.Contains('\n') || summary.Contains('\r') || summary.Any(char.IsControl)
-            || summary.StartsWith('-') || summary.EndsWith('.')) return false;
-        var trimmed = summary.Trim();
-        if (!string.Equals(trimmed, summary, StringComparison.Ordinal)) return false;
+        if (!IsWellFormedTitle(summary)) return false;
+        if (summary!.StartsWith('-') || summary.EndsWith('.')) return false;
         return NormalizePrefixes(prefixes).Any(prefix => summary.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase)
             && summary.Length > prefix.Length + 1);
     }
+
+    /// <summary>
+    /// A title the user typed verbatim, such as `@hub commit "..."`. Commit conventions differ per project,
+    /// so no prefix rule applies; only what a commit object cannot carry (empty, multi-line, control
+    /// characters, stray surrounding whitespace) is refused.
+    /// </summary>
+    public static bool IsWellFormedTitle(string? title)
+        => !string.IsNullOrWhiteSpace(title) && title.Length <= 120
+            && !title.Contains('\n') && !title.Contains('\r') && !title.Any(char.IsControl)
+            && string.Equals(title.Trim(), title, StringComparison.Ordinal);
 }

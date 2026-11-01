@@ -194,7 +194,11 @@ public sealed class PreferencesStore(string path)
         // And the command-verb list with the same care and the same reason: the shape rules live in CommandTrust so
         // the store, the card's verb button and the settings page cannot disagree about what a stored verb means.
         preferences.TrustedCommands = CommandTrust.Normalize(preferences.TrustedCommands);
-        preferences.CommitSummaryPrefixes = [.. CommitSummary.NormalizePrefixes(preferences.CommitSummaryPrefixes)];
+        var commitPrefixes = CommitSummary.NormalizePrefixes(preferences.CommitSummaryPrefixes);
+        // Upgrade only the former shipped default; a user's custom prefix list remains authoritative.
+        if (commitPrefixes.SequenceEqual(["feat:", "fix:", "docs:", "misc:"], StringComparer.OrdinalIgnoreCase))
+            commitPrefixes = CommitSummary.DefaultPrefixes;
+        preferences.CommitSummaryPrefixes = [.. commitPrefixes];
         preferences.TrustedComputerApps = ComputerUseGrants.Normalize(preferences.TrustedComputerApps);
         // The routing ceiling is a cost guard: a value this build cannot read falls back to the shipped ceiling
         // rather than to "no ceiling", which is the one way a hand-edited settings file could spend past the

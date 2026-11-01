@@ -178,7 +178,7 @@
                      Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource CommitSummaryPrefixesHint}" />
           <TextBox x:Name="CommitSummaryPrefixesBox" Width="320" HorizontalAlignment="Left"
-                   PlaceholderText="feat:, fix:, docs:, misc:" />
+                   PlaceholderText="feat:, fix:, docs:, misc:, ver:" />
 
           <!-- The 「以后都不问」 ledger. One header for all three lists: they answer one question — what the
                assistant will not ask about again — and this is a record, not an input. Nothing here can be

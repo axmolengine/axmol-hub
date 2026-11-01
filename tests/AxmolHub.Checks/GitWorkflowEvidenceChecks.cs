@@ -34,6 +34,7 @@ internal static class GitWorkflowEvidenceChecks
         foreach (var (text, expectedTitle, expectedSyntax) in new (string, string?, bool)[]
         {
             ("@hub commit \"fix: supplied title\"", "fix: supplied title", true),
+            ("@hub commit \"ver: 0.19.0\"", "ver: 0.19.0", true),
             ("@hub commit 'fix: single quoted title'", "fix: single quoted title", true),
             ("@hub commit 'fix: title' && push", null, false),
             (" @HUB COMMIT \"docs: 中文标题\" ", "docs: 中文标题", true),
@@ -49,11 +50,11 @@ internal static class GitWorkflowEvidenceChecks
             var action = GitWorkflow.ParseRequest(text, out var title, out var validSyntax);
             if (action != "commit" || title != expectedTitle || validSyntax != expectedSyntax)
                 throw new Exception("Explicit commit title parsing failed: " + text);
-            if (validSyntax && (string.IsNullOrEmpty(title) || title.Contains('\n') || title.StartsWith("chore:"))
-                && CommitSummary.IsValid(title)) throw new Exception("An invalid explicit title was accepted.");
+            if (validSyntax && !(string.IsNullOrEmpty(title) || title.Contains('\n'))
+                && !CommitSummary.IsWellFormedTitle(title)) throw new Exception("A well-formed explicit title was rejected: " + text);
         }
         if (!CommitSummary.IsValid("chore: configured title", ["chore:"]))
             throw new Exception("Configured prefixes were not honored for explicit titles.");
-        Console.WriteLine("PASS: exact @hub actions accept optional quoted commit titles as data; malformed or noncompliant titles cannot execute.");
+        Console.WriteLine("PASS: exact @hub actions accept optional quoted commit titles as data; malformed titles cannot execute and typed titles escape the prefix rule.");
     }
 }

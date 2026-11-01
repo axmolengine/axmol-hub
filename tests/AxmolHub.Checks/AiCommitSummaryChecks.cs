@@ -4,9 +4,9 @@ internal static class AiCommitSummaryChecks
 {
     internal static async Task RunAsync(string root, string[] args)
     {
-        var valid = "Done.\n\nCommit summary: feat: add offline commit shortcut";
-        if (CommitSummary.Parse(valid) != "feat: add offline commit shortcut")
-            throw new Exception("The explicit commit-summary marker did not yield its valid title.");
+        foreach (var title in new[] { "feat: add offline commit shortcut", "ver: 0.19.0" })
+            if (CommitSummary.Parse("Done.\n\nCommit summary: " + title) != title)
+                throw new Exception("The explicit commit-summary marker did not yield its valid title: " + title);
         if (CommitSummary.Parse("Commit summary: chore: update dependencies") is not null)
             throw new Exception("A title with an unconfigured prefix was accepted.");
         if (CommitSummary.Parse("Commit summary: feat: first\nCommit summary: fix: second") is not null)
@@ -16,11 +16,30 @@ internal static class AiCommitSummaryChecks
         var configured = CommitSummary.NormalizePrefixes(["feature", "repair:", " "]);
         if (CommitSummary.Parse("Commit summary: feature: save staged files", configured)
             != "feature: save staged files"
-            || CommitSummary.IsValid("feature: " + new string('x', 121), configured))
+            || CommitSummary.IsValid("feature: " + new string('x', 121), configured)
+            || CommitSummary.IsValid("ver: 0.19.0", configured))
             throw new Exception("Custom prefixes or the title length bound were not enforced.");
-        var oldPreferences = System.Text.Json.JsonSerializer.Deserialize<HubPreferences>("{}");
-        if (oldPreferences is null || CommitSummary.NormalizePrefixes(oldPreferences.CommitSummaryPrefixes).Count == 0)
-            throw new Exception("Legacy preferences without commit-prefix settings did not keep usable defaults.");
+        // A title typed into @hub commit "..." answers to its own project's convention: no prefix rule,
+        // only what a commit object cannot carry.
+        if (!CommitSummary.IsWellFormedTitle("整理发布流程")
+            || CommitSummary.IsWellFormedTitle("")
+            || CommitSummary.IsWellFormedTitle("chore: two\nlines")
+            || CommitSummary.IsWellFormedTitle(" padded ")
+            || CommitSummary.IsWellFormedTitle(new string('x', 121)))
+            throw new Exception("A typed commit title was not judged by the commit-object limits alone.");
+        var preferencesPath = Path.Combine(root, "commit-summary-preferences.json");
+        foreach (var (json, expected) in new (string, string[])[]
+        {
+            ("{}", CommitSummary.DefaultPrefixes),
+            ("{\"CommitSummaryPrefixes\":[\"feat:\",\"fix:\",\"docs:\",\"misc:\"]}", CommitSummary.DefaultPrefixes),
+            ("{\"CommitSummaryPrefixes\":[\"feature\",\"repair:\"]}", ["feature:", "repair:"]),
+        })
+        {
+            await File.WriteAllTextAsync(preferencesPath, json);
+            var preferences = new PreferencesStore(preferencesPath).Load();
+            if (!preferences.CommitSummaryPrefixes.SequenceEqual(expected, StringComparer.Ordinal))
+                throw new Exception("Commit prefixes did not upgrade former defaults or preserve a custom list: " + json);
+        }
 
         var git = CommandShells.Resolve("git");
         if (git is not null)
@@ -49,7 +68,7 @@ internal static class AiCommitSummaryChecks
                 if (!repository.IsReadable || repository.Root is not { } repositoryRoot)
                     throw new Exception("Git fixture repository could not be read.");
                 var outcome = await GitRepository.CommitStagedAsync(repo, repositoryRoot,
-                    "feat: commit non-ignored changes", ["feat:", "fix:", "docs:", "misc:"], runner);
+                    "feat: commit non-ignored changes", CommitSummary.DefaultPrefixes, runner);
                 if (!outcome.Success) throw new Exception("Staged commit failed: " + outcome.FailureKey + " " + outcome.Detail);
                 var committed = await runner.RunAsync(git, ["show", "--format=", "--name-only", "HEAD"], repo);
                 var status = await GitRepository.ReadAsync(repo, runner);
@@ -64,6 +83,18 @@ internal static class AiCommitSummaryChecks
                     "", ["feat:", "fix:"], runner);
                 if (noneStaged.Success || noneStaged.FailureKey != "nothing-staged")
                     throw new Exception("Commit accepted an empty index.");
+
+                // A typed title outside the configured prefixes still commits when the caller says so.
+                await File.WriteAllTextAsync(Path.Combine(repo, "freeform.txt"), "typed title\n");
+                var freeform = await GitRepository.CommitStagedAsync(repo, repositoryRoot, "整理发布流程", null, runner);
+                var freeformTitle = await runner.RunAsync(git, ["log", "-1", "--format=%s"], repo);
+                if (!freeform.Success || freeformTitle.Output.TrimEnd('\r', '\n') != "整理发布流程")
+                    throw new Exception("A typed title outside the configured prefixes was refused: "
+                        + freeform.FailureKey + " " + freeform.Detail);
+                await File.WriteAllTextAsync(Path.Combine(repo, "freeform.txt"), "second typed title\n");
+                var unfreeform = await GitRepository.CommitStagedAsync(repo, repositoryRoot, "整理发布流程", ["feat:"], runner);
+                if (unfreeform.Success || unfreeform.FailureKey != "invalid-summary")
+                    throw new Exception("The prefix rule stopped guarding summaries Hub proposes.");
 
                 var remote = Path.Combine(Path.GetTempPath(), "axmol-hub-commit-remote-" + Guid.NewGuid().ToString("N") + ".git");
                 try

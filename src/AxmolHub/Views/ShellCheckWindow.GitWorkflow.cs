@@ -243,7 +243,7 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await File.WriteAllTextAsync(Path.Combine(workspace, "explicit-title.txt"), "use the user's title\n");
             var beforeInvalidStatus = (await Git("status", "--porcelain")).Output;
             var invalidRefused = true;
-            foreach (var invalid in new[] { "@hub commit \"chore: invalid prefix\"", "@hub commit \"fix: missing quote", "@hub commit \"\"" })
+            foreach (var invalid in new[] { "@hub commit \"fix: missing quote", "@hub commit \"\"", "@hub commit \"   \"" })
                 invalidRefused &= !chat.TryEnqueueSend(localSession.Id, invalid, null, out var error) && error == "GitCommitTitleInvalid";
             invalidRefused &= (await Git("status", "--porcelain")).Output == beforeInvalidStatus
                 && (await Git("rev-parse", "HEAD")).Output == afterBareCommit;

@@ -1200,9 +1200,9 @@ internal sealed partial class ChatExecutionCoordinator
                 "push" => await GitRepository.PushAsync(facts.Root, repositoryRoot, runner,
                     Providers.SensitiveValues()).ConfigureAwait(false),
                 "commit-push" => await GitRepository.CommitAndPushStagedAsync(facts.Root, repositoryRoot,
-                    summary, facts.Prefixes, runner, Providers.SensitiveValues()).ConfigureAwait(false),
+                    summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
                 _ => await GitRepository.CommitStagedAsync(facts.Root, repositoryRoot,
-                    summary, facts.Prefixes, runner, Providers.SensitiveValues()).ConfigureAwait(false),
+                    summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
             };
         }
         if (!result.Success)
@@ -1335,8 +1335,7 @@ internal sealed partial class ChatExecutionCoordinator
                 refusalKey = "ChatSessionBusy";
                 return false;
             }
-            if (!validGitSyntax || explicitTitle is not null
-                && !CommitSummary.IsValid(explicitTitle, PreferencesProvider?.Invoke().CommitSummaryPrefixes))
+            if (!validGitSyntax || explicitTitle is not null && !CommitSummary.IsWellFormedTitle(explicitTitle))
             {
                 refusalKey = "GitCommitTitleInvalid";
                 return false;
@@ -1456,6 +1455,10 @@ internal sealed partial class ChatExecutionCoordinator
         StartRun(conversationId);
         return true;
     }
+
+    /// <summary>No prefix list means a title the user typed, which answers to its own project's convention.</summary>
+    private static IReadOnlyList<string>? TitlePrefixes(bool explicitText, IReadOnlyList<string> prefixes)
+        => explicitText ? null : prefixes;
 
     private async Task CompleteLocalGitRequestAsync(string conversationId, string root, ChatTurn? source, string action,
         string? explicitTitle = null)

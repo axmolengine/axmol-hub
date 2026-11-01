@@ -530,7 +530,9 @@ public static partial class GitRepository
         yield return "--show-toplevel";
     }
 
-    /// <summary>Stages non-ignored worktree changes, then revalidates and commits the resulting index.</summary>
+    /// <summary>Stages non-ignored worktree changes, then revalidates and commits the resulting index.
+    /// A null <paramref name="prefixes"/> means the title was typed by the user in `@hub commit "..."`,
+    /// so only the commit-object limits apply and the project's own convention wins.</summary>
     public static async Task<GitCommitResult> CommitStagedAsync(string workspaceRoot, string expectedRoot,
         string summary, IEnumerable<string>? prefixes, ProcessRunner runner,
         IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default)
@@ -547,7 +549,8 @@ public static partial class GitRepository
         if (state.Entries.Any(entry => entry.IndexState == "U" || entry.WorktreeState == "U"))
             return new(false, "conflict", null);
         if (state.Entries.Count == 0) return new(false, "nothing-staged", null);
-        if (!CommitSummary.IsValid(summary, prefixes)) return new(false, "invalid-summary", null);
+        var titled = prefixes is null ? CommitSummary.IsWellFormedTitle(summary) : CommitSummary.IsValid(summary, prefixes);
+        if (!titled) return new(false, "invalid-summary", null);
         var stage = await runner.RunAsync(git, ["add", "-A", "--", "."], root,
             timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
         if (stage.ExitCode != 0)
@@ -620,7 +623,8 @@ public static partial class GitRepository
         }
     }
 
-    /// <summary>Stages and commits non-ignored changes, then pushes; a clean worktree only pushes pending commits.</summary>
+    /// <summary>Stages and commits non-ignored changes, then pushes; a clean worktree only pushes pending commits.
+    /// A null <paramref name="prefixes"/> follows the rule in <see cref="CommitStagedAsync"/>: the title is kept as typed.</summary>
     public static async Task<GitCommitResult> CommitAndPushStagedAsync(string workspaceRoot, string expectedRoot,
         string summary, IEnumerable<string>? prefixes, ProcessRunner runner,
         IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default)

@@ -1311,7 +1311,7 @@ public static class HubTexts
         // control. Shown as the title's tooltip.
         ["ToolPermissionHint"] = ("单个会话可以在聊天里改这一档，不影响这里。", "A single session can override this in the chat without changing it here."),
         ["CommitSummaryPrefixesTitle"] = ("提交摘要前缀", "Commit summary prefixes"),
-        ["CommitSummaryPrefixesHint"] = ("用逗号分隔。默认：feat:, fix:, docs:, misc:。点击提交或提交并推送后，Hub 会暂存仓库中的非忽略更改再提交；点击推送则只推送当前分支。无法本地安全处理时会启动正常 Agent 操作，并遵循现有工具审批权限，产生额外额度消耗。", "Comma-separated. Defaults: feat:, fix:, docs:, misc:. Commit and commit-and-push stage non-ignored repository changes before committing; push sends only the current branch. If local handling is unsafe, a normal Agent run takes over under the existing tool approval policy and incurs additional usage."),
+        ["CommitSummaryPrefixesHint"] = ("用逗号分隔。默认：feat:, fix:, docs:, misc:, ver:。这些前缀约束 Hub 建议的提交摘要；`@hub commit \"...\"` 里输入的标题原样使用，因为各项目的提交规范不同。点击提交或提交并推送后，Hub 会暂存仓库中的非忽略更改再提交；点击推送则只推送当前分支。无法本地安全处理时会启动正常 Agent 操作，并遵循现有工具审批权限，产生额外额度消耗。", "Comma-separated. Defaults: feat:, fix:, docs:, misc:, ver:. These prefixes govern the summaries Hub proposes; a title typed into `@hub commit \"...\"` is used verbatim, because commit conventions differ per project. Clicking Commit or Commit and push stages non-ignored repository changes and then commits them; clicking Push sends only the current branch. If local handling is unsafe, a normal Agent run takes over under the existing tool approval policy and incurs additional usage."),
         ["CommitSummaryAction"] = ("提交", "Commit"),
         ["GitActionExpired"] = ("该操作已过期或会话正忙，请使用当前消息的操作。", "This action is stale or the session is busy; use the current message's actions."),
         ["GitPushAuthorizationTip"] = ("点击即授权推送当前分支到已配置的上游。", "Click to authorize pushing the current branch to its configured upstream."),
@@ -1325,7 +1325,7 @@ public static class HubTexts
         ["CommitPushPartialFailure"] = ("本地提交已创建，但推送失败；请检查远端状态。", "The local commit succeeded, but push failed; check the remote state."),
         ["CommitSummaryWorkspaceChanged"] = ("会话工作目录已变化，未提交。", "The session workspace changed; nothing was committed."),
         ["CommitSummaryInvalid"] = ("提交摘要格式无效，未提交。", "The commit summary is invalid; nothing was committed."),
-        ["GitCommitTitleInvalid"] = ("请使用 @hub commit \"fix: 提交标题\"；标题须符合已配置前缀、为单行且不超过 120 字符。", "Use @hub commit \"fix: commit title\"; the title must use a configured prefix, be one line, and contain at most 120 characters."),
+        ["GitCommitTitleInvalid"] = ("请使用 @hub commit \"提交标题\"；标题为单行、不超过 120 字符，前缀按项目自己的规范。", "Use @hub commit \"commit title\"; the title must be one line of at most 120 characters, with whatever prefix your project uses."),
         ["CommitSummaryGitMissing"] = ("未找到 Git，未提交。", "Git was not found; nothing was committed."),
         ["CommitSummaryBusy"] = ("仓库正被另一项 Hub 操作占用，未提交。", "The repository is busy with another Hub operation; nothing was committed."),
         ["CommitSummaryRepoUnavailable"] = ("无法重新验证 Git 仓库状态，未提交。", "Could not revalidate repository state; nothing was committed."),
