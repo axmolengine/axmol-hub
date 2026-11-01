@@ -253,10 +253,16 @@ public partial class MainWindow
     private void SyncInspectorTabInset()
     {
         var actions = TitleBarRightActions.Bounds.Width;
-        InspectorTabSlot.Margin = new Thickness(_inspectorExpanded ? 0 : 5, 0, actions, 0);
+        var grip = _inspectorExpanded ? 0 : 5;
+        InspectorTabSlot.Margin = new Thickness(grip, 0, actions, 0);
         // An Auto column otherwise measures the tabs at infinity and lets their desired width widen the
         // column again after a grip drag. The content pane is the width authority, never the tab captions.
         InspectorTabSlot.Width = Math.Max(0, (_inspectorExpanded ? TitleBar.Bounds.Width : Inspector.Width) - actions);
+        // The title bar already reserves the action plates in its own Auto column, but its title lane does
+        // not share the shell's inspector column. Reserve the rest here so ellipsis and hit testing stop
+        // at the grip's left edge instead of letting a growing tab strip paint over the title.
+        var titleInset = InspectorColumn.IsVisible ? Math.Max(0, Inspector.Width + grip - actions) : 0;
+        ConversationTitleZone.Margin = new Thickness(0, 0, titleInset, 0);
     }
 
     /// <summary>

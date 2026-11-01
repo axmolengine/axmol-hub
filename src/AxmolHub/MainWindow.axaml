@@ -738,21 +738,18 @@
                   Background="{DynamicResource Hub.BorderSubtle}"
                   IsHitTestVisible="False" IsVisible="False" />
         </Grid>
-        <!-- The conversation's own title, in the conversation zone, pinned to that zone's left edge and not to the
-             middle of it. HorizontalAlignment="Left" is load-bearing: Stretch is the default, and a Stretch child
-             whose width is capped by MaxWidth is *centred* by the layout rather than pinned — so with the cap in
-             play the label floated wherever the cell's middle was and no margin could move it (measured: text at
-             581 with the bar's cell at [300,1094]). Left also leaves the element the width of the text, so the
-             pointer's hot band is the title rather than a 240-wide strip of the drag surface. The twelve pixels are
-             the pane's own inset on this side of the bar (the tab strip's), and they are what keeps a long title's
-             glyphs off the hairline at [299,300): the box starts at 312 and CharacterEllipsis trims inside it.
-             Hit-test visible, unlike the page's name, because a tooltip only appears over an element the pointer
-             can hit — and the press it takes is handed to the bar's own handler, so pressing here still drags the
-             window (MainWindow.InitializeTitleBar). -->
-        <TextBlock x:Name="ConversationTitle" Grid.Column="1"
-                   FontSize="13" Margin="12,0,0,0" MaxWidth="240"
-                   HorizontalAlignment="Left"
-                   TextTrimming="CharacterEllipsis" />
+        <!-- The title owns a bounded lane: SyncInspectorTabInset reserves the part of the inspector column not
+             already occupied by the right-hand action plates. The tab slot is a sibling of TitleBar, so the
+             title bar's own star column cannot otherwise see it grow during a grip drag. Clip the lane as well
+             as trimming its text, including when the remaining width reaches zero. -->
+        <Grid x:Name="ConversationTitleZone" Grid.Column="1" ClipToBounds="True">
+          <!-- Left keeps a MaxWidth-capped title pinned to the lane's start. The full title remains available
+               through its tooltip; pointer presses still go to the title bar's window-drag handler. -->
+          <TextBlock x:Name="ConversationTitle"
+                     FontSize="13" Margin="12,0,12,0" MaxWidth="240"
+                     HorizontalAlignment="Left"
+                     TextTrimming="CharacterEllipsis" />
+        </Grid>
         <!-- The right column's two buttons, in the order the reader meets them: lift the pane over the whole
              window, then open or shut the column. They are the pane header's own two controls, moved up here
              where they survive the surface they control — a button inside a column cannot be pressed while the
