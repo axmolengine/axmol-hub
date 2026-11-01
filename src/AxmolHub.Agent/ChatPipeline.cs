@@ -251,6 +251,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 if (!verdicts.ContainsKey(call.CallId))
                 {
                     var asked = CallsOfResponse(context.Messages, call);
+                    // Missing/empty arguments must be objects on the next request. Normalize the live batch
+                    // before recording or gating it; changing only ArgumentsJson leaves the SDK sending null.
+                    // Existing argument values and SDK error metadata remain intact.
+                    foreach (var content in asked) content.Arguments ??= new Dictionary<string, object?>();
                     // One response, one chain of thought: a thinking model reasons once per response and may ask
                     // for several tools inside it, so every call of the batch is filed with the same block.
                     var said = thinking.Length > 0 ? thinking.ToString() : null;
