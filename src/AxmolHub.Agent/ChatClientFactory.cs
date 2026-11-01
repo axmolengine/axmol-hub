@@ -28,23 +28,6 @@ namespace AxmolHub.Agent;
 /// </summary>
 public static class ChatClientFactory
 {
-    /// <summary>
-    /// How many retries the request pipeline may make after its first attempt, on both wires.
-    ///
-    /// <para>Two — three attempts in total — which is the number the client model's own default already applied.
-    /// The number is not the change; <b>owning</b> it is. Inherited, it was invisible in this file, undocumented,
-    /// unasserted, and one SDK bump away from becoming a different number that nobody chose, on a request path
-    /// where a retry is what makes a rate-limited provider feel like a broken connection.</para>
-    ///
-    /// <para>The budget this has to be read against: the tool loop carries no per-turn round cap — the model
-    /// ends it by answering — and every round-trip is a request that can now be attempted three times, so a
-    /// long investigation multiplies the two together. Each wait in between is the provider's own
-    /// <c>Retry-After</c>, and <see cref="IdleAwareRetryPolicy"/> hands it to the run so the inactivity deadline
-    /// stands down for it rather than mistaking an obeyed limit for a dead stream. That is why the number
-    /// stays small and why the checks count the requests rather than trusting the policy.</para>
-    /// </summary>
-    public const int MaxRetries = 2;
-
     public static IChatClient Create(Core.ModelProvider provider, string? modelOverride = null)
         => Create(provider, modelOverride, null);
 
@@ -147,7 +130,7 @@ public static class ChatClientFactory
         string? interactionId = null,
         System.Net.Http.HttpMessageHandler? transport = null,
         Action<int, TimeSpan>? onRetryWait = null,
-        int maxRetries = MaxRetries,
+        int maxRetries = Core.ProviderRetryDefaults.MaxRetries,
         TimeSpan? maxInlineRetryWait = null)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))

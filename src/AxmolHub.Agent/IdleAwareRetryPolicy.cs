@@ -1,4 +1,5 @@
 using System.ClientModel.Primitives;
+using AxmolHub.Core;
 
 namespace AxmolHub.Agent;
 
@@ -17,7 +18,7 @@ namespace AxmolHub.Agent;
 /// instead of holding a run slot asleep.</para>
 /// </summary>
 public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? onWait,
-    TimeSpan? maxInlineWait = null) : ClientRetryPolicy(Math.Clamp(maxRetries, 0, 10))
+    TimeSpan? maxInlineWait = null) : ClientRetryPolicy(Math.Clamp(maxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit))
 {
     /// <summary>How many times the policy has tried to send the request, taken from
     /// <see cref="ClientRetryPolicy.GetNextDelay"/> so the wait can name the attempt that follows it. The base
@@ -54,10 +55,15 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
                     && ProviderFailure.RetryAfter(value, DateTimeOffset.UtcNow, name.EndsWith("-ms")) is { } delay)
                 { specified = delay; break; }
         }
-        // The installed SDK supplies exponential backoff but no jitter. Honor an explicit server delay exactly.
+        // A token-rate window rarely clears within the SDK's first few seconds. Give 429s a 5s exponential
+        // base before jitter; other recoverable errors keep the SDK base. Explicit server delays win exactly.
+        var exponential = base.GetNextDelay(message, tryCount).TotalMilliseconds;
+        if (specified is null && message.Response?.Status == 429)
+            exponential = Math.Max(exponential, ProviderRetryDefaults.RateLimitBaseDelay.TotalMilliseconds
+                * Math.Pow(2, Math.Clamp(tryCount - 1, 0, ProviderRetryDefaults.MaxRetriesLimit)));
         var next = specified ?? TimeSpan.FromMilliseconds(
-            Math.Min(30_000, base.GetNextDelay(message, tryCount).TotalMilliseconds)
-            * (0.75 + Random.Shared.NextDouble() * 0.5));
+            Math.Min(ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,
+                exponential * (1 + (Random.Shared.NextDouble() * 2 - 1) * ProviderRetryDefaults.JitterFraction)));
         if (maxInlineWait is { } ceiling && next > ceiling) throw new ProviderCooldownException(next);
         return next;
     }

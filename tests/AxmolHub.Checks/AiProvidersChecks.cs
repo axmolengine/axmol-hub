@@ -279,7 +279,7 @@ internal static class AiProvidersChecks
             exhausted = ex.GetType().Name + ": " + ex.Message;
         }
 
-        if (throttled.Attempts != ChatClientFactory.MaxRetries + 1 || exhausted.Length == 0)
+        if (throttled.Attempts != ProviderRetryDefaults.MaxRetries + 1 || exhausted.Length == 0)
             throw new Exception($"A provider that only ever answers 429 took {throttled.Attempts} attempt(s) and threw " + (exhausted.Length == 0 ? "nothing at all" : exhausted));
         // The streaming wire is what a chat turn actually uses, and the policy is documented not to restart a response
         // whose body has already begun. So this one measures instead of assuming it matches the two calls above — the
@@ -325,6 +325,12 @@ internal static class AiProvidersChecks
 
         if (slowWire.Attempts != 2 || notices.Count != 2 || notices[0] != "attempt 2" || notices[1] != "released" || seen[0] != TimeSpan.FromSeconds(3))
             throw new Exception($"A rate limit that named a three-second wait reported [{string.Join(" | ", notices)}] " + $"over {slowWire.Attempts} attempt(s) with delays " + $"[{string.Join(", ", seen.Select(s => s.TotalSeconds.ToString("0.###")))}]" + (slowWire.Failure.Length > 0 ? ", " + slowWire.Failure : ""));
+        // Synthetic token-rate errors, with and without a diagnostic suffix; not captured provider responses.
+        var tokenRateLimits = new[]
+        {
+            "Your requests to model-a have exceeded token rate limit.",
+            "Your requests to model-b have exceeded token rate limit.\n[hub-request-id=fixture-request-429]",
+        };
         foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses })
         {
             var probeProvider = new ModelProvider { IsCustom = true, Name = "Retry", BaseUrl = retryProvider.BaseUrl, Model = "m", Protocol = protocol };
@@ -333,6 +339,28 @@ internal static class AiProvidersChecks
             try { await ChatClientFactory.Create(probeProvider, "m", null, transport: quotaWire).GetResponseAsync(retryMessages); }
             catch (Exception) { }
             if (quotaWire.Attempts != 1) throw new Exception("Quota exhaustion was retried.");
+            foreach (var text in tokenRateLimits)
+            {
+                var body = System.Text.Json.JsonSerializer.Serialize(new { error = new { message = text, type = "rate_limit_error" } });
+                if (!ChatPipeline.RateLimited(body) || ChatPipeline.UsageExhausted(body))
+                    throw new Exception("A token rate limit was confused with exhausted quota.");
+                var limitedWire = new RateLimitWire(ProviderRetryDefaults.MaxRetries, errorBody: body);
+                await ChatClientFactory.Create(probeProvider, "m", null, transport: limitedWire).GetResponseAsync(retryMessages);
+                if (limitedWire.Attempts != ProviderRetryDefaults.MaxRetries + 1)
+                    throw new Exception("Token-rate retries ended before the configured budget was used.");
+            }
+            // Observe the first token-rate backoff without sleeping through a real rate window.
+            var tokenBackoffWire = new RateLimitWire(1, omitRetryAfter: true);
+            try
+            {
+                await ChatClientFactory.Create(probeProvider, "m", null, transport: tokenBackoffWire,
+                    maxInlineRetryWait: TimeSpan.Zero).GetResponseAsync(retryMessages);
+                throw new Exception("A token-rate delay was not handed off.");
+            }
+            catch (ProviderCooldownException ex) when (
+                ex.Delay >= ProviderRetryDefaults.RateLimitBaseDelay * (1 - ProviderRetryDefaults.JitterFraction)
+                && ex.Delay <= ProviderRetryDefaults.RateLimitBaseDelay * (1 + ProviderRetryDefaults.JitterFraction)) { }
+            if (tokenBackoffWire.Attempts != 1) throw new Exception("A parked backoff sent another request.");
             var backoff = new List<TimeSpan>();
             var transient = new RateLimitWire(2, status: System.Net.HttpStatusCode.ServiceUnavailable, omitRetryAfter: true);
             await ChatClientFactory.Create(probeProvider, "m", null, transport: transient,
@@ -355,7 +383,7 @@ internal static class AiProvidersChecks
             try
             {
                 await ChatClientFactory.Create(probeProvider, "m", null, transport: cooldownWire,
-                    maxInlineRetryWait: TimeSpan.FromSeconds(30)).GetResponseAsync(retryMessages);
+                    maxInlineRetryWait: ProviderRetryDefaults.GoalMaxInlineWait).GetResponseAsync(retryMessages);
                 throw new Exception("A long Retry-After waited inline or returned success.");
             }
             catch (ProviderCooldownException ex) when (ex.Delay == TimeSpan.FromHours(1)) { }
@@ -374,7 +402,7 @@ internal static class AiProvidersChecks
         if (ProviderFailure.RetryAfter(retryNow.AddSeconds(90).ToString("r"), retryNow) != TimeSpan.FromSeconds(90)
             || ProviderFailure.RetryAfter("1500", retryNow, milliseconds: true) != TimeSpan.FromMilliseconds(1500))
             throw new Exception("Retry-After date or millisecond parsing drifted.");
-        Console.WriteLine("PASS: the retry wait is reported with the provider's own number — " + notices[0] + " after " + seen[0].TotalSeconds.ToString("0.#") + "s, then released, over " + slowWire.Attempts + " attempts; both protocols bound jitter, skip quota retries and cancel waits.");
+        Console.WriteLine("PASS: the retry wait is reported with the provider's own number — " + notices[0] + " after " + seen[0].TotalSeconds.ToString("0.#") + "s, then released, over " + slowWire.Attempts + " attempts; both protocols bound jitter, allow five retries for token rate limits, skip quota retries and cancel waits.");
         // Which failures are a rate limit, judged on the words providers actually use, and which must stay plain. The
         // rule fails twice over if it is loose in either direction: a 429 that reads as a generic failure points a
         // person at credentials and settings that are fine, and anything else that reads as a limit tells them to wait
@@ -412,7 +440,7 @@ internal static class AiProvidersChecks
         })
             if (!ChatPipeline.UsageExhausted(spent))
                 throw new Exception($"A spent usage allowance was not recognised: {spent}");
-        foreach (var notExhausted in new[] { "HTTP 429 (rate_limit_error)", "usage_limit_hint", "The usage limit has been raised" })
+        foreach (var notExhausted in new[] { "HTTP 429 (rate_limit_error)", "usage_limit_hint", "The usage limit has been raised" }.Concat(tokenRateLimits))
             if (ChatPipeline.UsageExhausted(notExhausted))
                 throw new Exception($"Something that only looks like a spent allowance was labelled one: {notExhausted}");
         Console.WriteLine("PASS: a spent plan allowance is named apart from a rate limit, so the ending can ask for the reset instead of a retry.");

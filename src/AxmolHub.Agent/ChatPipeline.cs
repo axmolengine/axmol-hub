@@ -560,7 +560,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
 
     /// <summary>Whether a failure is the provider saying "not now" rather than "not like that".
     ///
-    /// <para>Narrow on purpose, in both directions. <see cref="ChatClientFactory.MaxRetries"/> retries already
+    /// <para>Narrow on purpose, in both directions. <see cref="ProviderRetryDefaults.MaxRetries"/> retries already
     /// happened inside the pipeline by the time a message like this reaches a caller, so what is left is to say so
     /// — and the generic failure sentence sends a person to settings and credentials that are fine when the answer
     /// is to wait. "429" alone is not a needle because request ids contain digits; a billing exhaustion that no

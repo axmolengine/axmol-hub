@@ -108,7 +108,7 @@ public sealed class HubPreferences
     /// <summary>Automatic goal runs. Zero removes only this ceiling, not token or progress guards.</summary>
     public int GoalContinuationLimit { get; set; } = 0;
     public long GoalTokenBudget { get; set; } = 1_000_000;
-    public int ProviderMaxRetries { get; set; } = 2;
+    public int ProviderMaxRetries { get; set; } = ProviderRetryDefaults.MaxRetries;
     public int GoalNoProgressLimit { get; set; } = 3;
     public int GoalCooldownLimit { get; set; } = 2;
 
@@ -213,7 +213,7 @@ public sealed class PreferencesStore(string path)
         preferences.MaxAutoEffort = ModelRouting.Ceiling(preferences.MaxAutoEffort);
         preferences.GoalContinuationLimit = Math.Max(0, preferences.GoalContinuationLimit);
         preferences.GoalTokenBudget = Math.Max(0, preferences.GoalTokenBudget);
-        preferences.ProviderMaxRetries = Math.Clamp(preferences.ProviderMaxRetries, 0, 10);
+        preferences.ProviderMaxRetries = Math.Clamp(preferences.ProviderMaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         preferences.GoalNoProgressLimit = Math.Clamp(preferences.GoalNoProgressLimit, 2, 20);
         preferences.GoalCooldownLimit = Math.Clamp(preferences.GoalCooldownLimit, 0, 5);
         if (removedRetiredTools) Save(preferences);

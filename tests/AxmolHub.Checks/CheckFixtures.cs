@@ -158,7 +158,7 @@ sealed class InMemorySecretStore : ISecretStore
 /// text chunks and records the messages it was asked to answer, so the pipeline can be tested with no network
 /// at all. This is the payoff of routing every provider through the M.E.AI abstraction — the seam is fakeable.</summary>
 sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation = false,
-    (long Input, long Output, long Reasoning, long Cached)[]? usage = null) : IChatClient
+    (long Input, long Output, long Reasoning, long Cached)[]? usage = null, Exception? failure = null) : IChatClient
 {
     public IList<ChatMessage>? LastMessages { get; private set; }
     public ChatOptions? LastOptions { get; private set; }
@@ -199,6 +199,7 @@ sealed class FakeChatClient(IReadOnlyList<string> chunks, bool honorCancellation
                 ]);
                 await Task.Yield();
             }
+        if (failure is not null) throw failure;
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) => null;

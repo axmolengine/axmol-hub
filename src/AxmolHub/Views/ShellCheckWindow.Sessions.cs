@@ -940,7 +940,7 @@ internal sealed class ShellSessionsChecks
             chat.NoteRetryWait(waitingRun, 2, TimeSpan.FromSeconds(3));
             Dispatcher.UIThread.RunJobs();
 
-            Check(waitingRun.RetryWaiting && panel.ChatActivityTextForCheck.Contains("2/3", StringComparison.Ordinal),
+            Check(waitingRun.RetryWaiting && panel.ChatActivityTextForCheck.Contains($"2/{ProviderRetryDefaults.MaxRetries + 1}", StringComparison.Ordinal),
                 "限流等待写在气泡既有的一行状态上（实际「" + panel.ChatActivityTextForCheck + "」）");
             await Task.Delay(1200);
             Check(chat.IsRunning(throttled.Id) && waitingRun.RetryWaiting,
@@ -971,7 +971,7 @@ internal sealed class ShellSessionsChecks
             chat.OpenConversation(throttled.Id);
             chat.OpenConversation(rebuilt.Id);
             Dispatcher.UIThread.RunJobs();
-            Check(panel.ChatActivityTextForCheck.Contains("3/3", StringComparison.Ordinal),
+            Check(panel.ChatActivityTextForCheck.Contains($"3/{ProviderRetryDefaults.MaxRetries + 1}", StringComparison.Ordinal),
                 "会话切走再切回，进行中的等待从运行记录重建而不是丢掉（实际「" + panel.ChatActivityTextForCheck + "」）");
             chat.NoteRetryWait(chat.RunFor(rebuilt.Id)!, 0, TimeSpan.Zero);
             await WaitForRunAsync(chat, rebuilt.Id);

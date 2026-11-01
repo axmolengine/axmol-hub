@@ -21,10 +21,13 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
         long reported = 0;
         var completed = false;
         var hasUsage = false;
+        var hasContent = false;
         try
         {
             await foreach (var update in base.GetStreamingResponseAsync(list, options, cancellationToken).ConfigureAwait(false))
             {
+                hasContent |= update.Contents.Any(content => content is not UsageContent
+                    && content is not TextContent { Text: null or "" });
                 foreach (var usage in update.Contents.OfType<UsageContent>())
                 {
                     hasUsage = true;
@@ -37,9 +40,11 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
         }
         finally
         {
-            // No usage keeps the reservation as an explicit estimate, including interrupted responses.
+            // An unsuccessful request with no response content releases its reservation. A completed or
+            // partially streamed response without usage keeps an estimate; reported usage always wins.
             if (afterRequest is not null)
-                await afterRequest(estimate, hasUsage ? reported : -1, completed).ConfigureAwait(false);
+                await afterRequest(estimate, hasUsage ? reported : !completed && !hasContent ? 0 : -1, completed)
+                    .ConfigureAwait(false);
         }
     }
 }

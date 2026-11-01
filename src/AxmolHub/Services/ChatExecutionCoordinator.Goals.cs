@@ -40,6 +40,8 @@ internal sealed partial class ChatExecutionCoordinator
         => ApplyOnUiAsync(() =>
         {
             if (Sessions.Registry.Peek(id) is not { Goal: { Length: > 0 } } conversation) return;
+            // Zero also settles a failed request that returned no content: release its reservation without
+            // inventing reported consumption. Negative usage retains the estimate for a completed/partial response.
             if (reported >= 0)
             {
                 conversation.GoalEstimatedTokens = Math.Max(0, conversation.GoalEstimatedTokens - estimate);
@@ -180,8 +182,12 @@ internal sealed partial class ChatExecutionCoordinator
         {
             var policy = GoalPolicyFor(opened);
             if (opened.GoalStopReason == "limit") opened.GoalContinuationLimit = policy.ContinuationLimit + 10;
-            else opened.GoalTokenBudget = Math.Max(policy.TokenBudget,
-                opened.GoalReportedTokens + opened.GoalEstimatedTokens) + 100_000;
+            else
+            {
+                var configuredBudget = Math.Max(0, PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 1_000_000);
+                opened.GoalTokenBudget = configuredBudget == 0 ? 0
+                    : opened.GoalReportedTokens + opened.GoalEstimatedTokens + configuredBudget;
+            }
             opened.GoalState = ChatGoalStates.Paused;
         });
         Changed?.Invoke();

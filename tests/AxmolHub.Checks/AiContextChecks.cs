@@ -1156,7 +1156,35 @@ internal static class AiContextChecks
             if (reports is null ? reserved <= 0 || actual != 0 : reserved != 0 || actual != 44)
                 throw new Exception($"Goal request settlement retained {reserved} estimated and {actual} reported tokens.");
         }
-        Console.WriteLine("PASS: reported goal usage replaces its reservation once; missing usage remains explicitly estimated.");
+        // No-content failures used to spend a full context reservation on every cooldown, so switching
+        // providers could immediately exhaust the shared goal budget without sending a successful request.
+        foreach (var failure in new Exception[] { new HttpRequestException("429 token rate limit"),
+                     new ProviderCooldownException(TimeSpan.FromMinutes(1)), new OperationCanceledException() })
+        foreach (var hasPartialResponse in new[] { false, true })
+        {
+            long reserved = 0;
+            var settlements = 0;
+            var completedRequests = 0;
+            try
+            {
+                var client = new FakeChatClient(hasPartialResponse ? ["partial response"] : [""], failure: failure);
+                await foreach (var chunk in new ChatPipeline(client).SendAsync(probeProvider,
+                    [ChatTurn.User("failed goal request")],
+                    beforeRequest: estimate => { reserved += estimate; return Task.CompletedTask; },
+                    afterRequest: (estimate, reported, completed) =>
+                    {
+                        settlements++;
+                        if (completed) completedRequests++;
+                        if (reported >= 0) reserved -= estimate;
+                        return Task.CompletedTask;
+                    })) _ = chunk;
+                throw new Exception("A failed request returned successfully.");
+            }
+            catch (Exception ex) when (ReferenceEquals(ex, failure)) { }
+            if (settlements != 1 || completedRequests != 0 || (hasPartialResponse ? reserved <= 0 : reserved != 0))
+                throw new Exception($"Failed goal settlement: partial={hasPartialResponse}, reserved={reserved}, settled={settlements}.");
+        }
+        Console.WriteLine("PASS: reported usage replaces reservations; empty failures release them, while completed/partial responses without usage retain estimates.");
 
         // ── A loop that repeats itself instead of working is stopped ──
         // With no round cap, this and the error counter are what stand between a long task and an unbounded paid

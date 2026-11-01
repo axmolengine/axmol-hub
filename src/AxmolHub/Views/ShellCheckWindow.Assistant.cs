@@ -1721,10 +1721,13 @@ internal sealed class ShellAssistantChecks
         var refusedBudget = budgetedGoal.GoalState == ChatGoalStates.BudgetLimited
             && budgetClients.All(client => client.LastMessages is null);
         shell.Chat.AddGoalBudget(budgetedGoal.Id);
+        var budgetAddedWhilePaused = budgetedGoal.GoalState == ChatGoalStates.Paused
+            && budgetClients.All(client => client.LastMessages is null)
+            && budgetedGoal.GoalTokenBudget == (shell.Chat.PreferencesProvider?.Invoke()?.GoalTokenBudget ?? 1_000_000);
         shell.Chat.ResumeGoal(budgetedGoal.Id);
         await panel.WaitForRunToFinishForCheck();
         goalAttempts = budgetClients.Count(client => client.LastMessages is not null);
-        Check(refusedBudget && goalAttempts == 1 && budgetedGoal.GoalState == ChatGoalStates.Complete
+        Check(refusedBudget && budgetAddedWhilePaused && goalAttempts == 1 && budgetedGoal.GoalState == ChatGoalStates.Complete
               && !budgetedGoal.GoalCompletionVerified && budgetedGoal.GoalEstimatedTokens > 0
               && budgetedGoal.GoalReportedTokens == 0,
             "预算不足时模型零请求；增加预算后恢复为模型报告完成（未核验），没有 usage 的端点只保留估算（实际 "
@@ -1746,9 +1749,10 @@ internal sealed class ShellAssistantChecks
         Check(goalAttempts == 1 && parkedGoal?.GoalState == ChatGoalStates.Waiting
               && parkedGoal.GoalWakeAt > DateTimeOffset.UtcNow && parkedGoal.GoalCooldownCount == 1
               && parkedGoal.GoalContinuationCount == 0 && parkedGoal.GoalNoProgressRequests == 0
+              && parkedGoal.GoalReportedTokens == 0 && parkedGoal.GoalEstimatedTokens == 0
               && panel.GoalCapsuleHostVisibleForCheck
               && panel.GoalCapsuleActionTooltipsForCheck.Contains(HubStrings.Get("ChatGoalPause")),
-            "冷却等待持久化且不轮询模型，不消耗续跑或无进展计数（实际 "
+            "冷却等待持久化且不轮询模型，空响应不消耗 Token、续跑或无进展计数（实际 "
             + goalAttempts + " / " + parkedGoal?.GoalState + "）");
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
         if (parkedGoal is not null)

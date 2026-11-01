@@ -2504,7 +2504,7 @@ public partial class ChatPanel : UserControl
     /// the policy's own number rather than a guess, so the line cannot drift from how many attempts exist.</summary>
     private static string RetryActivityText((int Attempt, TimeSpan Delay) wait)
         => string.Format(System.Globalization.CultureInfo.CurrentCulture,
-            HubStrings.Get("ChatRetryWaitFormat"), wait.Attempt, Agent.ChatClientFactory.MaxRetries + 1,
+            HubStrings.Get("ChatRetryWaitFormat"), wait.Attempt, ProviderRetryDefaults.MaxRetries + 1,
             wait.Delay.TotalSeconds < 1 ? wait.Delay.TotalSeconds.ToString("0.#")
                 : Math.Round(wait.Delay.TotalSeconds).ToString("0"));
 
@@ -4611,7 +4611,7 @@ public partial class ChatPanel : UserControl
     /// back, so a retry button cannot appear at one door and be missing at the other.</summary>
     private static bool NoticeIsRetryable(string key)
         => key is "ChatNoFirstFrame" or "ChatTimedOut" or "ChatTimedOutAfterRetries"
-            or "ChatStreamInterrupted" or "ChatConnectionFailed" or "ChatRateLimited"
+            or "ChatStreamInterrupted" or "ChatConnectionFailed" or "ChatRateLimited" or "ChatProviderRetryLater"
             or "ChatFailed" or "ChatNoResponse" or "ChatReasoningOnly" or "ChatUndeclaredTool";
 
     private static bool NoticeIsContinuable(string key) => key == "ChatResponseTruncated";

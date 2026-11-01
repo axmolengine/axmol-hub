@@ -111,8 +111,8 @@ internal sealed partial class ChatExecutionCoordinator
                 .ConfigureAwait(false);
             var client = ClientOverride?.Invoke(request.Value.Provider, conversationId)
                          ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, null,
-                             maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ChatClientFactory.MaxRetries,
-                             maxInlineRetryWait: trackGoal ? TimeSpan.FromSeconds(30) : null);
+                             maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
+                             maxInlineRetryWait: trackGoal ? ProviderRetryDefaults.GoalMaxInlineWait : ProviderRetryDefaults.MaxInlineWait);
             var pipeline = new ChatPipeline(client);
             var summary = new StringBuilder();
             await foreach (var chunk in pipeline.SendAsync(
@@ -920,6 +920,7 @@ internal sealed partial class ChatExecutionCoordinator
         }
         catch (ProviderCooldownException ex)
         {
+            if (Sessions.Registry.Peek(conversationId)?.GoalState != ChatGoalStates.Active) throw;
             await ParkGoalForProviderAsync(conversationId, ex.Delay).ConfigureAwait(false);
             return false;
         }
@@ -2915,6 +2916,11 @@ internal sealed partial class ChatExecutionCoordinator
                 break;
             }
         }
+        catch (ProviderCooldownException)
+        {
+            result = RunResult.Incomplete;
+            noticeKey = "ChatProviderRetryLater";
+        }
         catch (GoalGuardException ex)
         {
             result = RunResult.Incomplete;
@@ -3110,8 +3116,13 @@ internal sealed partial class ChatExecutionCoordinator
         }
         catch (ProviderCooldownException ex)
         {
-            await ParkGoalForProviderAsync(run.ConversationId, ex.Delay).ConfigureAwait(false);
-            return (RunResult.Incomplete, "ChatGoalWaiting", false, null);
+            if (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active)
+            {
+                await ParkGoalForProviderAsync(run.ConversationId, ex.Delay).ConfigureAwait(false);
+                return (RunResult.Incomplete, "ChatGoalWaiting", false, null);
+            }
+            Audit(run.ConversationId, $"Provider requested a {ex.Delay.TotalSeconds:0.#}s wait; returning the run slot");
+            return (RunResult.Incomplete, "ChatProviderRetryLater", false, null);
         }
         catch (GoalGuardException ex)
         {
@@ -3132,7 +3143,7 @@ internal sealed partial class ChatExecutionCoordinator
         {
             // SDK attempts are exhausted. Park the same logical run; a bounded wake is not a goal continuation.
             Audit(run.ConversationId, $"Provider attempts exhausted; cooling down: {ex.Message}");
-            await ParkGoalForProviderAsync(run.ConversationId, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            await ParkGoalForProviderAsync(run.ConversationId, ProviderRetryDefaults.GoalCooldown).ConfigureAwait(false);
             return (RunResult.Incomplete, "ChatGoalWaiting", false, ex.Message);
         }
         catch (TimeoutException ex)
@@ -3156,7 +3167,9 @@ internal sealed partial class ChatExecutionCoordinator
             // because "assistant request failed" points a person at settings and credentials that are fine.
             Audit(run.ConversationId,
                 "Rate limited: the provider refused with a limit after the pipeline's retries");
-            return (RunResult.Failed, "ChatRateLimited", true, ex.Message);
+            var retries = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatRateLimitRetriesFormat"), run.RetryCost().Waits);
+            return (RunResult.Failed, "ChatRateLimited", true, retries + ex.Message);
         }
         catch (Exception ex) when (mayRecover && ContextOverflow.IsContextOverflow(ex.Message))
         {
@@ -3458,8 +3471,8 @@ internal sealed partial class ChatExecutionCoordinator
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
                      ?? ChatClientFactory.Create(request.Provider, request.ModelName, reasoning,
                          onRetryWait: (attempt, delay) => NoteRetryWait(run, attempt, delay),
-                maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ChatClientFactory.MaxRetries,
-                maxInlineRetryWait: trackGoal ? TimeSpan.FromSeconds(30) : null);
+                maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
+                maxInlineRetryWait: trackGoal ? ProviderRetryDefaults.GoalMaxInlineWait : ProviderRetryDefaults.MaxInlineWait);
         var pipeline = new ChatPipeline(client, reasoning);
         // Which tool brackets each response has opened, by batch. A response that parks stops at its head call, and
         // any call the mode allowed *ahead* of it opened its bracket on the way to that decision and is never

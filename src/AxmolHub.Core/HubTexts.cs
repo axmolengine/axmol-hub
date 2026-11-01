@@ -863,6 +863,8 @@ public static class HubTexts
         ["ViewReferral"] = ("了解详情", "Learn more"),
         ["ChatFailed"] = ("助手请求失败：", "Assistant request failed: "),
         ["ChatConnectionFailed"] = ("连接模型服务失败：", "Could not connect to the model provider: "),
+        ["ChatProviderRetryLater"] = ("提供方要求等待较长时间，本次请求已停止，请稍后重试。", "The provider requested a long wait. This request has stopped; please retry later."),
+        ["ChatRateLimitRetriesFormat"] = ("本次运行已退避重试 {0} 次。", "This run retried {0} times with backoff. "),
         ["ChatRateLimited"] = ("模型服务在限流，稍后再试：", "The model provider is rate-limiting requests, try again shortly: "),
         // A spent allowance is not a rate limit: waiting seconds fixes one and not the other, and the difference
         // is hours, so the sentence has to say what is actually owed instead of "try again shortly".
