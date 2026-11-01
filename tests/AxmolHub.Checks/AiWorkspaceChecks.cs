@@ -33,8 +33,7 @@ internal static class AiWorkspaceChecks
         foreach (var escaping in new[]
         {
             "../outside.cpp",
-            "src/../../outside.cpp",
-            ""
+            "src/../../outside.cpp"
         }
 
         )
@@ -43,6 +42,12 @@ internal static class AiWorkspaceChecks
             if (verdict != WorkspacePathVerdict.EscapesWorkspace)
                 throw new Exception($"'{escaping}' was answered with {verdict} instead of EscapesWorkspace.");
         }
+
+        // An empty path names nothing, which is not an escape: its sentence has to say "name the file", because
+        // the escaping one sends a model off asking for a workspace it already has.
+        if (WorkspacePaths.ResolveWrite(workspace, "", guards).Verdict != WorkspacePathVerdict.NoPath
+            || !WorkspacePaths.ResultFor(WorkspacePathVerdict.NoPath, "").Contains("empty or missing", StringComparison.Ordinal))
+            throw new Exception("An empty path was not answered with NoPath and the sentence that says so.");
 
         foreach (var outside in new[]
         {

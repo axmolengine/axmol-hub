@@ -8,6 +8,10 @@ public enum WorkspacePathVerdict
     Allowed,
     NoWorkspace,
     MissingWorkspace,
+    /// <summary>The call named no path at all: the argument was empty or missing, which is not a spelling that
+    /// climbs out of the workspace. Its own verdict because the way out is different — nothing here is closed, so
+    /// the remedy is to name the file, not to ask for a wider workspace.</summary>
+    NoPath,
     EscapesWorkspace,
     /// <summary>A path this build can resolve, that no directory of this session contains. Its own verdict rather
     /// than a second meaning for <see cref="EscapesWorkspace"/> because the way out is different: the spelling was
@@ -669,7 +673,9 @@ public static class WorkspacePaths
         // A file grant has no workspace behind it, so a session that holds one and nothing else still resolves it.
         if (sandbox.Roots.Count == 0 && sandbox.Files.Count == 0)
             return WorkspacePath.Refuse(WorkspacePathVerdict.NoWorkspace, relative ?? "");
-        if (string.IsNullOrWhiteSpace(relative)) return WorkspacePath.Refuse(WorkspacePathVerdict.EscapesWorkspace, "");
+        // An empty path is not an escaping one — nothing was named, so there is nothing to widen. Kept out of the
+        // escape branch because that sentence sends a model off asking the user for a grant it does not need.
+        if (string.IsNullOrWhiteSpace(relative)) return WorkspacePath.Refuse(WorkspacePathVerdict.NoPath);
 
         // A rooted path is not a workspace-relative one: it is addressed against the directories this session
         // has, and if none holds it the answer names the way out — a grant — rather than pretending the spelling
@@ -945,6 +951,11 @@ public static class WorkspacePaths
             + "inside a directory the user granted this session. Ask the user to name the directory again from the "
             + "workspace menu beside the composer — only they can set it. Do not guess a directory and do not retry "
             + "this call.",
+        WorkspacePathVerdict.NoPath =>
+            "Refused: this call named no path at all — the argument was empty or missing, which is not the same as "
+            + "a path outside the workspace. Nothing here is closed: name the file or directory the call is about, "
+            + "relative to the workspace or absolute inside a directory the user granted this session, and do not "
+            + "retry with an empty path.",
         WorkspacePathVerdict.EscapesWorkspace =>
             $"Refused: '{detail}' is not a workspace-relative path. Paths must be relative to the workspace and "
             + "must not use '..', a drive letter or a rooted path. Do not retry another spelling of this path; if "

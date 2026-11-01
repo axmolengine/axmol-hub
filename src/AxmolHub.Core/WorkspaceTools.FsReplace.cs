@@ -30,10 +30,16 @@ public sealed partial class WorkspaceTools
         var changes = new Dictionary<string, FsTextChange>(comparer);
         long bytesRead = 0;
         long outputBudget = 0;
-        foreach (var item in edits)
+        for (var index = 0; index < edits.Count; index++)
         {
+            var item = edits[index];
             if (item is null || string.IsNullOrEmpty(item.old_string))
                 return Refuse("Refused: every fs_replace edit requires a nonempty old_string.");
+            // Named by position because a batch can hold several edits: an edit with no file is the model's own
+            // argument to fix, and "edit 3 of 5" is the only handle on it when there is no path to quote.
+            if (string.IsNullOrWhiteSpace(item.path))
+                return Refuse($"Refused: edit {index + 1} of {edits.Count} names no file — every edit needs its own "
+                              + "'path', the file that edit belongs to. Do not retry with an empty path.");
             var path = WorkspacePaths.ResolveWrite(scope.Sandbox, item.path, scope.Guards);
             if (!path.IsAllowed) return Refuse(WorkspacePaths.ResultFor(path.Verdict, path.Display));
             if (!changes.TryGetValue(path.Full, out var current))
