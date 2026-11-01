@@ -419,7 +419,7 @@ public static class WorkspacePaths
     /// </summary>
     public static bool FileGrantIsReadOnly(string fullPath, WorkspaceGuards guards)
         => IsProtected(fullPath, guards)
-           || !IsWritableText(Path.GetFileName(fullPath)) && !TextFile.HasTextPrefix(fullPath);
+           || !IsWritableText(Path.GetFileName(fullPath)) && !TextFile.HasTextFilePrefix(fullPath);
 
     /// <summary>Whether this exact path is one of the files this session was granted. Exact and canonical: a file
     /// grant is one file, so nothing under it and nothing beside it counts.</summary>
