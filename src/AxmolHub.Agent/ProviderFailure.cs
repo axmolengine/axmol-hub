@@ -36,6 +36,19 @@ public static class ProviderFailure
 
     public static bool AuthenticationFailed(Exception exception) => StatusOf(exception) is 401 or 403;
 
+    /// <summary>Whether the provider answered and refused, for a reason that is neither the account's allowance
+    /// running out nor its credentials being wrong.
+    ///
+    /// <para>These are the refusals that are not a verdict on the request: a 400 naming another Azure resource, a
+    /// route the gateway renamed under us, a 404 from a deployment that is being swapped. All of them have been
+    /// seen to clear without the request changing. A null status is excluded on purpose — that is Hub's own
+    /// exception, and parking the run on one would retry a bug instead of reporting it.</para></summary>
+    public static bool ProviderRefused(Exception exception)
+    {
+        if (StatusOf(exception) is not int status || status < 400) return false;
+        return status is not (401 or 403) && !QuotaExhausted(exception.Message);
+    }
+
     public static bool Recoverable(Exception exception)
         => !QuotaExhausted(exception.Message) && !AuthenticationFailed(exception)
             && (StatusOf(exception) is 408 or 429 or 500 or 502 or 503 or 504

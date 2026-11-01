@@ -3162,7 +3162,8 @@ internal sealed partial class ChatExecutionCoordinator
             return (RunResult.Failed, "ChatUsageExhausted", true, ex.Message);
         }
         catch (Exception ex) when (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active
-            && (ProviderFailure.Recoverable(ex) || ChatPipeline.RateLimited(ex.Message)))
+            && (ProviderFailure.Recoverable(ex) || ChatPipeline.RateLimited(ex.Message)
+                || ProviderFailure.ProviderRefused(ex)))
         {
             // SDK attempts are exhausted. Park the same logical run; a bounded wake is not a goal continuation.
             // The second half of the condition is the rate limit that arrives *inside* the event stream: the HTTP
@@ -3827,6 +3828,10 @@ internal sealed partial class ChatExecutionCoordinator
                 // exactly the runs the reader is most likely to be asking about. The per-answer reading is filed on
                 // <paramref name="stamped"/> alone, so it can never land on an older reply's turn.
                 CommitRunCosts(opened, run, stamped);
+                // A round that came back at all ends the streak the cooldown budget counts: the endpoint is answering
+                // again, so the next rate limit starts from the first wait instead of the last one. Without this the
+                // count only ever grew, and a long healthy session ran out of waits at the first bad evening.
+                if (result == RunResult.Completed) opened.GoalCooldownCount = 0;
 
                 if (opened.GoalState == ChatGoalStates.Waiting && opened.GoalStopReason == "approval"
                     && !HasGoalPendingDecision(opened)) opened.GoalState = ChatGoalStates.Active;
