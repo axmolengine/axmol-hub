@@ -9,6 +9,25 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class ContextCompression
 {
+    /// <summary>Adds a freshly summarized range to the summary already stored rather than replacing it.</summary>
+    /// <para>Every compaction covers turns the previous summary never saw, so rewriting the stored text through one
+    /// more summary loses detail that nothing left in the transcript can restore: the third summary is a summary of
+    /// a summary of a summary, and the loss compounds with the session's length. Sections are kept side by side
+    /// instead, and the newest one — the turns a person is actually still working on — survives verbatim.</para>
+    public static string AddSection(string? previous, string section)
+    {
+        if (string.IsNullOrWhiteSpace(previous)) return section;
+        if (string.IsNullOrWhiteSpace(section)) return previous;
+        return previous + "\n\n" + section;
+    }
+
+    /// <summary>Whether a stored summary has outgrown what may be stored, so the next summarization has to rewrite
+    /// it whole instead of adding to it. Measured with the same bound that will be applied when it is injected, so
+    /// "over the ceiling" means the same thing in both places.</summary>
+    public static bool ExceedsCeiling(string? summary, int ceilingTokens)
+        => !string.IsNullOrWhiteSpace(summary)
+           && ToolResultCap.ApplyTokenBudget(summary, ceilingTokens).Length < summary.Length;
+
     /// <summary>The largest cut that still keeps the newest <paramref name="keepRecent"/> turns and leaves no
     /// unanswered tool call in the archived prefix.</summary>
     public static int CutPoint(IReadOnlyList<ChatTurn> messages, int keepRecent = 4)

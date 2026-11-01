@@ -74,6 +74,15 @@ internal sealed class ShellContextChecks
                 + " 条，占用 " + used + "/" + budget + " tokens，首个工具结果「"
                 + firstResult[..Math.Min(160, firstResult.Length)] + "」）");
             var logged = System.IO.File.Exists(logFile) ? System.IO.File.ReadAllText(logFile) : "";
+            // Pure decision, no window involved: a summary that exists is added to, and only one that has outgrown
+            // its ceiling is rewritten whole. Both halves are asserted because the loss this guards against — a
+            // summary of a summary of a summary — is invisible in any single compaction and only shows up on the
+            // third one, which no fixture in this suite runs.
+            Check(ContextCompression.AddSection("第一段", "第二段") == "第一段\n\n第二段"
+                  && ContextCompression.AddSection("", "第二段") == "第二段"
+                  && !ContextCompression.ExceedsCeiling("短摘要", 128)
+                  && ContextCompression.ExceedsCeiling(new string('x', 4096), 128),
+                "已有摘要时新一轮压缩追加一节，只有超出存储上限时才整篇重写");
             // Mid-run summarization can archive a prefix before those results are old enough for tier one.
             // Seed the retained transcript as an uncompressed history for the second run, so persisted elision
             // is still checked independently, rather than requiring both tiers at the old end-of-run timing.
