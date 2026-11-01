@@ -145,19 +145,30 @@ public sealed class ConversationStore(string root)
     }
 
     /// <summary>
-    /// The guards this store can build by itself: its own data root, and no engine list — engines are an app fact
-    /// that lives above it. That is enough to keep the one directory that must never be written through out of a
-    /// session file's writable half, where it is demoted to the read-only half instead; an engine root is demoted
-    /// where that list exists, and every path is graded against the full guards again when a tool uses it.
+    /// The guards a grant is filed by: the data root this store already knows, and the engine installations it
+    /// cannot know — engines are an app fact that lives above it, so the shell hands that list down through
+    /// <see cref="GuardsProvider"/> once at startup. With the list, a protected location is demoted into the
+    /// read-only half here and stays there: <see cref="WorkspacePaths.SplitRoots"/> files an entry by the guards it
+    /// is given, so an engine root left out of them came back from the next save in the <i>writable</i> half — a
+    /// session file contradicting the refusal the assistant had just been handed, and a chip offering the revoke
+    /// button of a writing for a reading.
+    ///
+    /// <para>A store nobody wired — a headless check — keeps the old answer: its own data root and no engines. Every
+    /// path is graded against the full guards again when a tool uses it, which is the floor under both.</para>
     /// </summary>
-    private WorkspaceGuards OwnGuards => new(root, []);
+    public Func<WorkspaceGuards>? GuardsProvider { get; set; }
+
+    private WorkspaceGuards OwnGuards => GuardsProvider?.Invoke() ?? new(root, []);
 
     /// <summary>
     /// Both grant lists through their shape rules, at the one door both the load and the save go through — see
     /// <see cref="WorkspacePaths.SplitRoots"/>. A protected location found in the writable half is moved to the
     /// read-only half rather than dropped: the card that put it there opened the reading, and a demotion keeps
-    /// exactly that. The granted files go through <see cref="WorkspacePaths.NormalizeFiles"/>, which takes no
-    /// guards on purpose: a file's permission is asked at every resolution, so there is no half to move it to.
+    /// exactly that. The workspace root gets the same treatment, for the same reason and one more: every door that
+    /// sets a workspace refuses a protected location, so a session file still holding one was never going to be
+    /// written through — it reads as the grant it really was, and the session moves to where its work can happen.
+    /// The granted files go through <see cref="WorkspacePaths.NormalizeFiles"/>, which takes no guards on purpose: a
+    /// file's permission is asked at every resolution, so there is no half to move it to.
     /// </summary>
     private void NormalizeGrants(Conversation conversation)
     {
@@ -172,6 +183,12 @@ public sealed class ConversationStore(string root)
             OwnGuards);
         conversation.GrantedRoots = write;
         conversation.ReadOnlyRoots = read;
+        if (conversation.WorkspaceRoot is { Length: > 0 } workspace
+            && WorkspacePaths.IsProtected(workspace, OwnGuards))
+        {
+            conversation.ReadOnlyRoots.Add(workspace);
+            conversation.WorkspaceRoot = null;
+        }
         conversation.GrantedFiles = WorkspacePaths.NormalizeFiles(conversation.GrantedFiles);
     }
 

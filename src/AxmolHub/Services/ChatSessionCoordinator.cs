@@ -451,9 +451,18 @@ internal sealed partial class ChatSessionCoordinator
         return conversation;
     }
 
+    /// <summary>New chat from anywhere with no directory to name: it keeps whatever workspace the selection already
+    /// carries.</summary>
     internal Conversation StartOrOpenEmptyConversation()
         => FindEmptyDraft(null) is { } draft ? OpenDraft(draft) : StartConversation();
-    internal Conversation StartOrOpenEmptyConversation(string? workspaceRoot)
+
+    /// <summary>
+    /// A draft in a directory <see cref="StartOrOpenEmptyConversationInWorkspace"/> has already validated — the only
+    /// door that brings a workspace of its own, and deliberately not public: a group outlives the directory it was
+    /// named after, so a caller passing that root unchecked could open a session in a protected location, one that
+    /// reads everything and writes nothing in every approval mode.
+    /// </summary>
+    private Conversation StartDraftIn(string workspaceRoot)
     {
         // The draft this group already owns if it has one, otherwise an unclaimed one, otherwise a new session:
         // two workspaces ＋ in a row get two drafts, because the second click may not move the first group.
@@ -482,7 +491,7 @@ internal sealed partial class ChatSessionCoordinator
     {
         var (verdict, full) = ValidateWorkspacePath(workspaceRoot);
         if (verdict is not null) return (null, verdict);
-        return (StartOrOpenEmptyConversation(full), null);
+        return (StartDraftIn(full), null);
     }
 
     internal (double Milliseconds, bool CameFromCache) LastSessionLoad { get; private set; }

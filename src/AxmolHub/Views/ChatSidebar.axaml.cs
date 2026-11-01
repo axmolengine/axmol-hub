@@ -438,8 +438,14 @@ public partial class ChatSidebar : UserControl
             ToolTip.SetTip(newButton, HubStrings.Get(newTip));
             if (bucket.Key == SessionGroupKey.Workspaces)
                 newButton.Click += async (_, _) => await PickWorkspaceForNewConversationAsync();
+            // A group is named after the workspace of the sessions in it, so it can outlive the reason that workspace
+            // was accepted: the folder can be gone, and it can have become an engine installation since. The ＋ goes
+            // through the same door as the picker and gives the same verdict, rather than starting a session that
+            // could read everything and write nothing.
+            else if (bucket.WorkspaceRoot is { Length: > 0 } workspace)
+                newButton.Click += (_, _) => StartWorkspaceConversation(workspace);
             else
-                newButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation(bucket.WorkspaceRoot);
+                newButton.Click += (_, _) => _chat.StartOrOpenEmptyConversation();
             Grid.SetColumn(newButton, 2);
             row.Children.Add(newButton);
         }

@@ -15,7 +15,6 @@ namespace AxmolHub;
 /// </summary>
 internal sealed class ConversationRegistry(ConversationStore store)
 {
-    internal Func<WorkspaceGuards>? GuardsProvider { get; set; }
     /// <summary>Guards the two maps only; a session's own gate is what serializes its writes.</summary>
     private readonly object _maintenance = new();
 
@@ -49,7 +48,7 @@ internal sealed class ConversationRegistry(ConversationStore store)
                                                       && turn.ToolCallId is { Length: > 0 })
                     && conversation.HasUnansweredToolCall())
                 {
-                    if (GuardsProvider?.Invoke() is { } guards)
+                    if (store.GuardsProvider?.Invoke() is { } guards)
                     {
                         var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots, guards);
                         var sandbox = new WorkspaceSandbox(conversation.WorkspaceRoot, write, read)

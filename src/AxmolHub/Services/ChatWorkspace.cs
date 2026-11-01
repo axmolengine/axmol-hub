@@ -25,7 +25,10 @@ public sealed partial class ChatWorkspace : IDisposable
         _sessions.Execution = _execution;
         _execution.Providers = _providers;
         _execution.Sessions = _sessions;
-        _sessions.Registry.GuardsProvider = () => new WorkspaceGuards(dataRoot, _execution.EngineRootsProvider?.Invoke() ?? []);
+        // The store owns the guards: they decide which half a grant is written into as well as how a recovered
+        // batch is graded, and the two answers disagreeing is what put a read-only grant back into the writable
+        // half on the next save.
+        _sessions.Registry.Store.GuardsProvider = () => new WorkspaceGuards(dataRoot, _execution.EngineRootsProvider?.Invoke() ?? []);
         _providers.LoadProviders();
     }
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get => _execution.HubSnapshotProvider; set => _execution.HubSnapshotProvider = value; }
@@ -552,26 +555,21 @@ public sealed partial class ChatWorkspace : IDisposable
     /// </summary>
     public Conversation StartOrOpenEmptyConversation() => _sessions.StartOrOpenEmptyConversation();
     /// <summary>
-    /// The same empty draft, but belonging to <paramref name = "workspaceRoot"/> — which is what a ＋ sitting on a
-    /// workspace group means: "a new session <em>here</em>". Null asks for the plain-chat case, so the draft is put
-    /// away from any directory rather than keeping whatever the composer's chip happened to be holding; the group
-    /// a session lands in is derived from this field, so setting it is the whole of the routing.
-    ///
-    /// <para>Two deliberate omissions. There is no "does this folder still exist" check: the group on screen can
-    /// only be reached from a session that names that directory, and a directory the user has moved is repaired
-    /// from the ⋯ next to this ＋ — refusing to create would hide the repair. And a draft that already has a
-    /// message is left alone, because re-homing a conversation with history under somebody's feet is a worse
-    /// surprise than a button that did nothing.</para>
-    ///
-    /// <para>A directory picked in the chip while nothing was on screen is not orphaned by this: that pending value
-    /// goes to the session <see cref = "StartConversation"/> creates, and the write here replaces it with the group
-    /// the click came from — which is the direction the user was pointing in.</para>
-    /// </summary>
-    public Conversation StartOrOpenEmptyConversation(string? workspaceRoot) => _sessions.StartOrOpenEmptyConversation(workspaceRoot);
-    /// <summary>
     /// Validates a folder chosen for a new workspace before opening or changing any conversation. Unlike
     /// <see cref = "SelectWorkspaceRoot"/>, a rejected choice must not retarget the conversation that was already
     /// on screen.
+    ///
+    /// <para>Both doors that carry a directory of their own end here: the chip's picker, and the ＋ on a workspace
+    /// group, which is the same request one click removed. A group outlives its folder — it is derived from the
+    /// sessions that name it — so the ＋ re-checks that folder: gone, or a protected location, which would hand the
+    /// session a workspace it could read and never write. The refusal says which, and the ⋯ beside the ＋ still
+    /// repairs a folder that moved, so nothing is hidden that the user could not reach.</para>
+    ///
+    /// <para>Two things the door still leaves alone. A draft that already has a message is not re-homed, because
+    /// moving a conversation with history under somebody's feet is a worse surprise than a button that did nothing.
+    /// And a directory picked in the chip while nothing was on screen is not orphaned: that pending value goes to
+    /// the session <see cref = "StartConversation"/> creates, and the write here replaces it with the group the
+    /// click came from — which is the direction the user was pointing in.</para>
     /// </summary>
     public (Conversation? Conversation, WorkspacePathVerdict? Verdict) StartOrOpenEmptyConversationInWorkspace(string workspaceRoot) => _sessions.StartOrOpenEmptyConversationInWorkspace(workspaceRoot);
     /// <summary>
