@@ -38,6 +38,8 @@ internal sealed class CodeEditorView : Grid
         _editor = CodeSurface.ForFile(path, TextEol.ToLf(baseline.Text));
         _editor.IsReadOnly = !writable;
         _editor.ShowLineNumbers = true;
+        _editor.Name = "WorkspaceTextEditor";
+        _editor.ContextMenu = CreateTextMenu();
         _editor.TextChanged += (_, _) => UpdateStatus();
         _editor.GotFocus += (_, _) => ObserveDisk();
         _editor.AddHandler(KeyDownEvent, (_, e) =>
@@ -58,27 +60,47 @@ internal sealed class CodeEditorView : Grid
 
     internal bool CanSave => IsDirty && !_editor.IsReadOnly && !_saving;
 
-    internal ContextMenu CreateTabMenu(Action close, Action? reveal = null)
+    private ContextMenu CreateTextMenu()
     {
         var menu = new ContextMenu();
-        var save = new MenuItem { Tag = "save", InputGesture = new KeyGesture(Key.S,
-            OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control) };
-        save.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension("CodeSave"));
-        save.Click += (_, _) => { if (!Save()) reveal?.Invoke(); };
-        var reload = new MenuItem { Tag = "reload" };
-        reload.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension("CodeReload"));
-        reload.Click += async (_, _) => { reveal?.Invoke(); await ReloadAsync(); };
-        var closeItem = new MenuItem { Tag = "close" };
-        closeItem.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension("WorkspaceCloseTab"));
-        closeItem.Click += (_, _) => close();
-        menu.Items.Add(save);
-        menu.Items.Add(reload);
+        var modifier = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        MenuItem Add(string tag, string caption, Action action, KeyGesture? gesture = null)
+        {
+            var item = new MenuItem { Tag = tag, InputGesture = gesture };
+            item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(caption));
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+            return item;
+        }
+        var undo = Add("undo", "CodeUndo", () => _editor.Undo(), new KeyGesture(Key.Z, modifier));
+        var redo = Add("redo", "CodeRedo", () => _editor.Redo(), OperatingSystem.IsMacOS()
+            ? new KeyGesture(Key.Z, modifier | KeyModifiers.Shift) : new KeyGesture(Key.Y, modifier));
         menu.Items.Add(new Separator());
-        FileRevealMenu.Add(menu, _owner, () => _canRead() ? _path : null);
-        menu.Items.Add(closeItem);
-        menu.Opening += (_, _) => save.IsEnabled = CanSave;
+        var cut = Add("cut", "CutText", _editor.Cut, new KeyGesture(Key.X, modifier));
+        var copy = Add("copy", "CopyMessage", _editor.Copy, new KeyGesture(Key.C, modifier));
+        var paste = Add("paste", "PasteText", _editor.Paste, new KeyGesture(Key.V, modifier));
+        var selectAll = Add("selectAll", "CodeSelectAll", _editor.SelectAll, new KeyGesture(Key.A, modifier));
+        menu.Items.Add(new Separator());
+        var save = Add("save", "CodeSave", () => Save(), new KeyGesture(Key.S, modifier));
+        var reload = Add("reload", "CodeReload", () => _ = ReloadAsync());
+        menu.Items.Add(new Separator());
+        AddFileReveal(menu);
+        menu.Opened += (_, _) =>
+        {
+            undo.IsEnabled = !_editor.IsReadOnly && _editor.CanUndo;
+            redo.IsEnabled = !_editor.IsReadOnly && _editor.CanRedo;
+            cut.IsEnabled = !_editor.TextArea.Selection.IsEmpty && _editor.CanCut;
+            copy.IsEnabled = !_editor.TextArea.Selection.IsEmpty && _editor.CanCopy;
+            paste.IsEnabled = !_editor.IsReadOnly && _editor.CanPaste;
+            selectAll.IsEnabled = _editor.Document.TextLength > 0;
+            save.IsEnabled = CanSave;
+            reload.IsEnabled = !_saving && _canRead();
+        };
         return menu;
     }
+
+    internal void AddFileReveal(ContextMenu menu)
+        => FileRevealMenu.Add(menu, _owner, () => _canRead() ? _path : null);
 
     internal bool Save()
     {

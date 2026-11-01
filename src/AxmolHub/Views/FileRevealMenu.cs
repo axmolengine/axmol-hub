@@ -12,7 +12,7 @@ internal static class FileRevealMenu
     {
         var item = new MenuItem { Tag = "reveal" };
         item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(FileManagerReveal.LabelKey));
-        menu.Opening += (_, _) =>
+        menu.Opened += (_, _) =>
         {
             var path = pathFor();
             item.IsEnabled = path is not null && File.Exists(path);

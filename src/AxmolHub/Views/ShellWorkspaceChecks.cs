@@ -26,20 +26,22 @@ internal sealed partial class ShellDecisionsChecks
         var error = CodeFileWindow.ShowEditor(shell, path, scopeFor);
         var editor = shell.WorkspaceDocumentContentForCheck as CodeEditorView;
         if (error is not null || editor is null) return (false, false, false);
-        editor.EditorForCheck.Text += "// Saved through inactive tab\n";
-        view.SelectExisting(original);
-        var menu = view.TabMenuForCheck(path)!;
+        editor.EditorForCheck.Text += "// Saved through text menu\n";
+        var menu = editor.EditorForCheck.ContextMenu!;
         var saveItem = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "save"));
         saveItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         var commands = !editor.IsDirty && File.ReadAllText(path) == editor.EditorForCheck.Text
-            && ReferenceEquals(view.SelectedContentForCheck, originalContent);
-        File.WriteAllText(path, "// Reloaded through tab menu\n");
+            && ReferenceEquals(view.SelectedContentForCheck, editor);
+        File.WriteAllText(path, "// Reloaded through text menu\n");
         menu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "reload"))
             .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         Dispatcher.UIThread.RunJobs();
         commands &= !editor.IsDirty && editor.EditorForCheck.Text == File.ReadAllText(path)
             && ReferenceEquals(view.SelectedContentForCheck, editor);
-        commands &= menu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal"));
+        var tabMenu = view.TabMenuForCheck(path)!;
+        commands &= menu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal"))
+            && tabMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal"))
+            && !tabMenu.Items.OfType<MenuItem>().Any(item => item.Tag is "save" or "reload");
         editor.EditorForCheck.Text += "// Unsaved fixture\n";
         var buffer = editor.EditorForCheck.Text;
         var tabs = true;

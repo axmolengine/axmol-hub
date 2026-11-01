@@ -1102,7 +1102,7 @@ internal sealed partial class ShellDecisionsChecks
         restored.ShowWorkspaceDocument(Path.Combine(restoredWorkspace, "src/main.cpp"), "src/main.cpp", workspaceContent);
         restored.UpdateLayout();
         var workspaceChecks = await CheckWorkspaceDocumentsAsync(restored, restoredWorkspace);
-        Check(workspaceChecks.Commands, "文件 Tab 右键菜单操作被点名的缓冲：保存非活动文件不写错目标，重新加载更新其磁盘基准");
+        Check(workspaceChecks.Commands, "文本区右键菜单保存和重新加载当前缓冲，更新磁盘基准；文本区与 Tab 共用定位入口，Tab 不再提供保存或重载");
         Check(restored.WorkspaceDocumentVisibleForCheck
               && restored.WorkspaceDocumentTitleForCheck == "src/main.cpp"
               && ReferenceEquals(restored.WorkspaceDocumentContentForCheck, workspaceContent)

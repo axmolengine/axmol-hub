@@ -49,6 +49,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private string _key = "";
     private bool _drawer;
     private bool _sizing;
+    private bool _closingTabs;
+    private enum TabCloseScope { Single, All, Others, Right }
     internal Control TabStrip { get; }
     internal event Action<string>? FileRequested;
     internal event Action<string>? ToolRequested;
@@ -231,14 +233,16 @@ internal sealed class WorkspaceView : Grid, IDisposable
         if (_state is null) return;
         _tabRows.Children.Clear();
         _tabs.Clear();
+        var state = _state;
         foreach (var tool in new[] { "plan", "repo" })
         {
-            if (!_state.Tools.Contains(tool)) continue;
-            AddTab(tool, null, tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool), () => CloseTool(tool));
+            if (!state.Tools.Contains(tool)) continue;
+            AddTab(tool, null, tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool),
+                () => _ = CloseTabsAsync(state, tool));
         }
-        foreach (var document in _state.Documents)
+        foreach (var document in state.Documents)
             AddTab(document.Path, Path.GetFileName(document.Title), null,
-                () => SelectExisting(document.Path), () => _ = CloseDocumentAsync(document), document.Dirty(), document.Content as CodeEditorView);
+                () => SelectExisting(document.Path), () => _ = CloseTabsAsync(state, document.Path), document.Dirty(), document.Content as CodeEditorView);
         LayoutTabs();
     }
 
@@ -256,17 +260,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             ClipToBounds = true };
         if (resource is null) ToolTip.SetTip(button, id);
-        ContextMenu TabMenu()
-        {
-            if (editor is not null) return editor.CreateTabMenu(close, select);
-            var closeItem = new MenuItem { Tag = "close" };
-            closeItem.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension("WorkspaceCloseTab"));
-            closeItem.Click += (_, _) => close();
-            var menu = new ContextMenu();
-            if (id == "plan") FileRevealMenu.Add(menu, _owner, () => _inspector.PlanFilePathFor?.Invoke());
-            menu.Items.Add(closeItem);
-            return menu;
-        }
+        var state = _state!;
+        ContextMenu TabMenu() => CreateTabMenu(state, id, editor);
         plate.ContextMenu = TabMenu();
         plate.Name = editor is not null ? "WorkspaceDocumentTab" : id == "plan" ? "WorkspacePlanTab" : "WorkspaceChangesTab";
         button.Click += (_, _) => select();
@@ -340,46 +335,107 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _overflow.IsVisible = _overflowMenu.Items.Count > 0;
     }
 
-    private void CloseTool(string tool)
+    private static string[] TabIds(State state)
+        => new[] { "plan", "repo" }.Where(state.Tools.Contains)
+            .Concat(state.Documents.Select(document => document.Path)).ToArray();
+
+    private ContextMenu CreateTabMenu(State state, string id, CodeEditorView? editor)
     {
-        if (_state is null) return;
-        _state.Tools.Remove(tool);
-        if (_state.Selected == tool) ChooseRemaining();
-        Render();
+        var menu = new ContextMenu();
+        if (editor is not null) editor.AddFileReveal(menu);
+        else if (id == "plan") FileRevealMenu.Add(menu, _owner, () => _inspector.PlanFilePathFor?.Invoke());
+        if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+        foreach (var (scope, tag, caption) in new[]
+                 {
+                     (TabCloseScope.Single, "close", "WorkspaceCloseTab"),
+                     (TabCloseScope.All, "closeAll", "WorkspaceCloseAllTabs"),
+                     (TabCloseScope.Others, "closeOthers", "WorkspaceCloseOtherTabs"),
+                     (TabCloseScope.Right, "closeRight", "WorkspaceCloseTabsToRight"),
+                 })
+        {
+            var item = new MenuItem { Tag = tag };
+            item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(caption));
+            item.Click += (_, _) => _ = CloseTabsAsync(state, id, scope);
+            menu.Items.Add(item);
+            menu.Opened += (_, _) => item.IsEnabled = !_closingTabs && ReferenceEquals(state, _state)
+                && CloseTargets(state, id, scope).Length > 0;
+        }
+        return menu;
     }
 
-    private void ChooseRemaining(int documentIndex = 0)
+    private static string[] CloseTargets(State state, string id, TabCloseScope scope)
     {
-        if (_state is null) return;
-        _state.Selected = _state.Documents.Count > 0
-            ? _state.Documents[Math.Clamp(documentIndex, 0, _state.Documents.Count - 1)].Path
-            : _state.Tools.Contains("repo") ? "repo" : _state.Tools.Contains("plan") ? "plan" : null;
+        var ids = TabIds(state);
+        var index = Array.IndexOf(ids, id);
+        if (index < 0) return [];
+        return scope switch
+        {
+            TabCloseScope.All => ids,
+            TabCloseScope.Others => ids.Where(target => target != id).ToArray(),
+            TabCloseScope.Right => ids.Skip(index + 1).ToArray(),
+            _ => [id],
+        };
     }
 
-    private async Task CloseDocumentAsync(Document document, bool discard = false)
+    private async Task CloseTabsAsync(State state, string id, TabCloseScope scope = TabCloseScope.Single, bool discard = false)
     {
-        var state = _state;
-        if (state is null) return;
+        if (_closingTabs || !ReferenceEquals(state, _state)) return;
+        // Snapshot both the workspace and document instances before the first confirmation can yield.
+        var targets = CloseTargets(state, id, scope)
+            .Select(target => (Id: target, Document: state.Documents.Find(document => document.Path == target))).ToArray();
+        _closingTabs = true;
+        try
+        {
+            foreach (var target in targets)
+            {
+                if (target.Document is { } document)
+                {
+                    if (!state.Documents.Contains(document)) continue;
+                    if (!await CloseDocumentAsync(state, document, discard)) break;
+                }
+                else
+                {
+                    state.Tools.Remove(target.Id);
+                    if (state.Selected == target.Id) ChooseRemaining(state);
+                }
+                if (ReferenceEquals(state, _state)) Render();
+            }
+        }
+        finally { _closingTabs = false; }
+    }
+
+    private static void ChooseRemaining(State state, int documentIndex = 0)
+    {
+        state.Selected = state.Documents.Count > 0
+            ? state.Documents[Math.Clamp(documentIndex, 0, state.Documents.Count - 1)].Path
+            : state.Tools.Contains("repo") ? "repo" : state.Tools.Contains("plan") ? "plan" : null;
+    }
+
+    private async Task<bool> CloseDocumentAsync(State state, Document document, bool discard)
+    {
         if (document.Dirty() && !discard)
         {
             var answer = await HubDialog.ShowAsync(_owner, HubStrings.Get("CodeUnsavedTitle"),
                 document.Path + "\n\n" + HubStrings.Get("CodeUnsavedClose"), HubDialogButtons.SaveDiscardCancel);
-            if (answer == HubDialogResult.Cancel) return;
-            if (answer == HubDialogResult.Save && (document.Content is not CodeEditorView editor || !editor.Save())) return;
+            if (answer == HubDialogResult.Cancel) return false;
+            if (answer == HubDialogResult.Save && (document.Content is not CodeEditorView editor || !editor.Save()))
+            {
+                if (ReferenceEquals(state, _state)) { state.Selected = document.Path; Render(); }
+                return false;
+            }
         }
         var index = state.Documents.IndexOf(document);
-        state.Documents.Remove(document);
-        if (ReferenceEquals(state, _state))
-        {
-            if (state.Selected == document.Path) ChooseRemaining(index);
-            Render();
-        }
+        if (index < 0) return true;
+        state.Documents.RemoveAt(index);
+        if (document.Content is CodeEditorView closedEditor) closedEditor.StateChanged -= RenderTabs;
+        if (state.Selected == document.Path) ChooseRemaining(state, index);
+        return true;
     }
 
     internal void CloseSelected(bool discard = false)
     {
-        if (_state?.Documents.Find(document => document.Path == _state.Selected) is { } document)
-            _ = CloseDocumentAsync(document, discard);
+        if (_state is { Selected: { } id } state && state.Documents.Any(document => document.Path == id))
+            _ = CloseTabsAsync(state, id, discard: discard);
     }
 
     private void ApplyTreeLayout()
@@ -429,7 +485,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         foreach (var state in _states.Values)
             state.Documents.RemoveAll(document => document.Dirty());
         if (_state is not null && !_state.Documents.Any(document => document.Path == _state.Selected)
-            && _state.Selected is not ("plan" or "repo")) ChooseRemaining();
+            && _state.Selected is not ("plan" or "repo")) ChooseRemaining(_state);
         Render();
     }
     public void Dispose() { foreach (var state in _states.Values) state.Tree.Dispose(); }
@@ -466,5 +522,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
         => _overflowMenu.Items.OfType<MenuItem>().Single(item => item.Tag as string == id)
             .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
 
-    internal void CloseToolForCheck(string tool) => CloseTool(tool);
+    internal void CloseToolForCheck(string tool)
+    {
+        if (_state is { } state) _ = CloseTabsAsync(state, tool);
+    }
 }

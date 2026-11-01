@@ -23,7 +23,6 @@ public sealed class CodeFileWindow : Window
         MinWidth = 520;
         MinHeight = 320;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        editor.ContextMenu = editor.CreateTabMenu(Close);
         Content = new HubDialogChrome(this, "CloseWindow", Close).Wrap(editor);
         Closing += async (_, e) =>
         {
