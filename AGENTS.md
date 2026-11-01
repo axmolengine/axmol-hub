@@ -122,48 +122,15 @@ build is slow); keep the script and output under ignored `tmp/`. View the PNGs a
 
 ## Checks and assertions
 
-An assertion is a claim that can be false, in a suite that must still finish. Prefer a small set of checks
-that catches distinct, consequential failures over exhaustive enumeration of visible properties. Assertion
-counts are measured from each run's `RESULT:` line; they are observations, not targets or quotas.
+**Do not add checks by default. Keep both ShellCheck and headless suites small, including their fixtures.**
 
-- **Require a reason to add coverage.** A requested feature or new UI does not imply one assertion per property.
-  Prefer updating or reusing an existing check. Add a new claim only when it covers a distinct, consequential
-  failure that current coverage misses; record the failure, its impact, and why existing checks cannot catch it.
-- **Prioritize by impact.** Automate data integrity, permission and isolation boundaries, core task completion,
-  and high-impact silent failures. Leave low-risk appearance details, exact copy, tooltips, and decorative
-  dimensions to manual review unless the acceptance criteria explicitly require them.
-- **One claim, one result.** Loop equivalent fixture cases and report one result with useful observations. Do not
-  combine unrelated claims into a large boolean expression or hide multiple independent checks in one summary;
-  reducing output lines alone is not assertion reduction.
-- **Name the failure and its impact.** If a build, type, or existing check already catches it, do not add a
-  duplicate report assertion. State what user-visible or data-level harm the retained assertion prevents.
-- **Print observations, assert invariants.** A value that matters only when something else is red goes in
-  `CheckReport.Line` or in that message — a number nobody would act on is the line that goes stale.
-- **Justify tolerances.** Distinguish product requirements from measurement tolerances. Keep fixed product
-  limits tied to the agreed behavior; document why measurement tolerances fit the observed layout or platform.
-  When one changes, explain the cause and retain evidence that it still catches the target failure; there is no
-  arbitrary limit on how many times a sound tolerance may be recalibrated.
-- **Control external dependencies.** Do not depend on network services, real credentials, the user's data root,
-  or a vendor's current live catalog. Use injected transports and fixed protocol samples. Temporary paths,
-  synthetic model identifiers, and real dispatcher timing are allowed when the behavior under test needs them.
-- **A group fails itself first and never stops the run.** An unbuildable fixture is one `夹具：…` assertion and
-  a `return`; what the host cannot supply is `Skip`, never a failure; no `throw` leaves a group.
-- **One runtime ceiling.** Keep `SuiteCeiling` as the whole-run timeout and give expensive groups a focused
-  switch when that materially speeds iteration. Report measured duration and investigate a suite that approaches
-  the ceiling; describe it as a budget overrun unless a specific stalled operation is identified. Quote totals
-  and durations only from a dated `RESULT:` line. Do not set assertion-count quotas.
-- **The cheapest mode that can see it wins.** Headless for facts that need no live visual tree or dispatcher,
-  `--verify-shell` for interaction and layout claims that do, theme/foundation for shared tokens — one claim,
-  one primary home.
-- **One primary home per failure.** Cover shared component contracts once, and leave each caller to check only
-  its own wiring or distinct behavior. Preserve genuinely different protocol, security, compatibility, and
-  negative cases; do not keep duplicate evidence for the same failure.
-- **Delete the claim with the behaviour.** The same change rewrites or removes assertions invalidated by a
-  behavior change. Do not leave checks red, skip them into green, or loosen them without evidence.
-- **Track net change.** When adding or removing checks, summarize the net assertion change and the reason. Do not
-  impose a mechanical one-in/one-out rule or delete necessary safety coverage to meet a count.
-- **Placement and naming.** New groups live in `ShellCheckWindow.<Topic>.cs`, never in the 17k-line main file;
-  the name is greppable and stable in the report's language, and the message carries the observed value.
+- For small fixes and feature optimizations, prefer a build and manual verification; reuse existing coverage.
+- Add a minimal check only for an uncovered, consequential failure (data integrity, permissions/isolation or
+  core workflows), and explain why it is necessary.
+- Headless is not a license to add more checks. Choose the cheapest suitable mode only for a necessary check;
+  reserve ShellCheck for essential live-UI behavior. Cover shared behavior once, not every property or UI detail.
+- Keep fixtures offline and isolated from user data. Update or remove obsolete checks with the behavior;
+  do not hide failures or raise `SuiteCeiling` just to accommodate growth.
 
 ## Line endings are LF
 
