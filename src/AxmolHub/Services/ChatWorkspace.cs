@@ -152,6 +152,9 @@ public sealed partial class ChatWorkspace : IDisposable
     /// record of a decision owed, and archiving it behind a summary would answer it by losing it.
     /// </summary>
     public bool CanCompressContext(string conversationId) => _execution.CanCompressContext(conversationId);
+    /// <summary>Whether the button has something to gain by being pressed: the compaction reading against the
+    /// floor a hand-pressed summary is held to. False while the conversation is still short.</summary>
+    public bool CanCompactByHand(string conversationId) => _execution.CanCompactByHand(conversationId);
     public bool IsCompressingContext(string conversationId) => _execution.IsCompressingContext(conversationId);
     /// <summary>Summarizes the older part of a conversation with its selected model, keeping the newest four
     /// turns intact. The transcript remains available in storage; requests use the persisted summary in place

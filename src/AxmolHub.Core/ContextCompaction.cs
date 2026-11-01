@@ -33,6 +33,23 @@ public static class ContextCompaction
     /// spending money in a loop, not a request someone asked for.</summary>
     public const int MaximumIneffectiveCompactions = 3;
 
+    /// <summary>How full a conversation has to be before compressing it by hand is allowed. Below this a person
+    /// is asking to summarize a session that still has most of its room, which spends a request to make the
+    /// conversation worse: the summary replaces text the model could have read.
+    ///
+    /// <para>Measured on <see cref="DecisionRoom"/> for the same reason the trigger is. Against the window itself
+    /// the floor would be unreachable on a large one — a session compacting at 85 000 of a million tokens is at 9%
+    /// of its window — and the button would be disabled exactly when compaction is most imminent.</para>
+    ///
+    /// <para>Only the hand-pressed button asks this. <see cref="ShouldCompact"/> stays the whole rule for a
+    /// compaction Hub decides on: what is bounded there is the transcript's size, not a person's request.</para>
+    /// </summary>
+    public const double ManualFloorRatio = 0.5;
+
+    /// <summary>Whether compressing this conversation by hand is worth doing rather than spending a request on a
+    /// session that is not yet large enough to need one.</summary>
+    public static bool CanCompactByHand(int used, int room) => Ratio(used, DecisionRoom(room)) >= ManualFloorRatio;
+
     /// <summary>The newest tool results a clear leaves alone. The model is reasoning about these; a file it read
     /// six calls ago it can read again, and the one it just read it may still be quoting.</summary>
     public const int KeepRecentResults = 6;
@@ -44,6 +61,15 @@ public static class ContextCompaction
 
     /// <summary>Whether this conversation should be compacted at all.</summary>
     public static bool ShouldCompact(int used, int room) => Ratio(used, room) >= TriggerRatio;
+
+    /// <summary>How full the <paramref name="room"/> may be, in tokens, before a compaction is due.
+    ///
+    /// <para>Measured against <see cref="DecisionRoom"/> rather than the room itself, so the number a window
+    /// shows on its marker is the number <see cref="ShouldCompact"/> compares against. Derived here rather than
+    /// stored beside the reading for the same reason <see cref="CanSummarize"/> lives here: two copies of one
+    /// threshold drift, and a marker that drifts says a compaction is due where none happens.</para>
+    /// </summary>
+    public static int TriggerTokens(int room) => (int)Math.Ceiling(DecisionRoom(room) * TriggerRatio);
 
     /// <summary>Whether a tier finished the job.</summary>
     public static bool ReachedTarget(int used, int room) => Ratio(used, room) <= TargetRatio;

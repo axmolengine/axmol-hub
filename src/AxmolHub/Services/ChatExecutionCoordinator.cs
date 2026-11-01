@@ -81,6 +81,18 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool IsCompressingContext(string conversationId) => _compressingConversations.Contains(conversationId);
 
+    /// <summary>Whether compressing by hand is worth a request right now: the reading the automatic trigger acts
+    /// on, measured through the floor <see cref="ContextCompaction.CanCompactByHand"/> states. Separate from
+    /// <see cref="CanCompressContext"/> on purpose — that one is also the tool loop's gate for handing the
+    /// transcript over to a compaction, and a floor there would refuse a handoff the session actually needs.
+    /// </summary>
+    internal bool CanCompactByHand(string conversationId)
+    {
+        if (Sessions.Registry.Peek(conversationId) is null) return false;
+        var (used, room, _) = CompactionReading(conversationId);
+        return ContextCompaction.CanCompactByHand(used, room);
+    }
+
     /// <summary>What a compaction could take back now, and what it could take back when the block was set — the
     /// pair <see cref="ContextCompaction.ShouldRecover"/> needs to tell "there is more to work with" apart from
     /// "the same candidates that already failed are still here". Zero for the first is "nothing to do".</summary>

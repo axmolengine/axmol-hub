@@ -1148,9 +1148,18 @@ public partial class ChatPanel : UserControl
     {
         if (ContextProgressTrack is null || ContextProgressFill is null) return;
         var reading = usage ?? CurrentContextUsage();
+        var track = Math.Max(0, ContextProgressTrack.Bounds.Width);
         // A bar has an end, so it fills up to it; the percentage next to it is allowed to say 118%.
-        ContextProgressFill.Width = ContextProgressTrack.Bounds.Width
-                                     * Math.Clamp((double)reading.Used / Math.Max(1, reading.Room), 0, 1);
+        ContextProgressFill.Width = track * Math.Clamp((double)reading.Used / Math.Max(1, reading.Room), 0, 1);
+        // The point Hub compacts at without being asked. It sits at the bar's end when the cost ceiling is not in
+        // play, and a line there says nothing the end of the bar has not already said.
+        if (ContextProgressTrigger is null) return;
+        var capped = reading.TriggerTokens < reading.Room;
+        ContextProgressTrigger.IsVisible = capped;
+        if (!capped) return;
+        var left = track * Math.Clamp((double)reading.TriggerTokens / Math.Max(1, reading.Room), 0, 1);
+        // Kept off the track's clipped edge, where the line would be half a pixel of nothing.
+        ContextProgressTrigger.Margin = new Thickness(Math.Clamp(left, 0, Math.Max(0, track - 2)), 0, 0, 0);
     }
 
     /// <summary>
@@ -1180,6 +1189,13 @@ public partial class ChatPanel : UserControl
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ChatContextMeasuredNote"),
                 usage.MeasuredInputTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
+        // The figure the ring cannot say by itself: Hub compacts on a capped room, so on a large window the
+        // percentage and the trigger are two different scales, and only this line names the one that acts.
+        if (usage.TriggerTokens < usage.Room)
+            notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("ChatContextCompactionTriggerFormat"),
+                usage.TriggerTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                Math.Max(0, usage.Used).ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
         if (usage.DriftPermille > ContextReport.UncalibratedPermille
             && usage.EffectiveWindow != usage.RawWindow)
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
@@ -1237,11 +1253,20 @@ public partial class ChatPanel : UserControl
         if (_chat is null) return;
         var conversation = _chat.ActiveConversation;
         var compressing = conversation is not null && _chat.IsCompressingContext(conversation.Id);
-        CompressContextButton.IsEnabled = conversation is not null
-                                          && !compressing
-                                          && _chat.CanCompressContext(conversation.Id);
+        // Two refusals kept apart, because they mean different things: "nothing early enough to summarize" and
+        // "too little to be worth a request", the floor the automatic trigger deliberately does not have.
+        var summarizable = conversation is not null && _chat.CanCompressContext(conversation.Id);
+        var aboveFloor = conversation is not null && _chat.CanCompactByHand(conversation.Id);
+        CompressContextButton.IsEnabled = summarizable && aboveFloor && !compressing;
         CompressContextButton.Content = HubStrings.Get(
             compressing ? "ChatCompressingContext" : "ChatCompressContext");
+        // What the button does, where it cannot be read off the label: it summarizes rather than deletes, and
+        // each refusal says which one it is instead of greying out for no stated reason.
+        ToolTip.SetTip(CompressContextButton, conversation is null
+            ? null
+            : HubStrings.Get(!summarizable
+                ? "ChatContextCompressUnavailable"
+                : aboveFloor ? "ChatContextCompressHint" : "ChatContextCompressBelowFloor"));
     }
 
     private void ShowContextMenu()

@@ -1080,6 +1080,15 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
+    <!-- The point on the context bar where Hub compacts without being asked. Drawn over the bar rather than
+         beside it, because the gap between the two is the whole reading on a window larger than the cost
+         ceiling: 9% of a million-token window is where a compaction is already due. -->
+    <Style Selector="Border.context-progress-trigger">
+      <Setter Property="Width" Value="2" />
+      <Setter Property="CornerRadius" Value="1" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="Background" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
     <Style Selector="TextBlock.context-popover-status">
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
@@ -1547,6 +1556,9 @@
           <Border Background="{DynamicResource Hub.SurfaceRaised}" CornerRadius="3" />
           <Border x:Name="ContextProgressFill" HorizontalAlignment="Left"
                   Background="{DynamicResource Hub.Success}" CornerRadius="3" />
+          <!-- Placed in UpdateContextProgressFill from the same reading as the fill. Hidden whenever the ceiling
+               is not in play, where the two numbers coincide and a line at the end of the bar says nothing. -->
+          <Border x:Name="ContextProgressTrigger" Classes="context-progress-trigger" IsVisible="False" />
         </Grid>
         <!-- The cache hit rate, above every row of the breakdown and bolder than any of them: it is the one figure
              here that is a ratio over the session's own bill rather than a slice of the window, and the reason

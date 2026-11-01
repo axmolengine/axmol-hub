@@ -689,6 +689,11 @@ public static class HubTexts
         ["ChatContextSourceFormat"] = ("窗口 {1} tokens，来源：{0}", "Window of {1} tokens, from {0}"),
         ["ChatContextMeasuredNote"] = ("{0} tokens 是上次请求的实测值，它之后的新增按估算补上。",
             "{0} tokens is what the last request measured; the turns since then are estimated on top."),
+        // The trigger is not the window: a compaction is decided on a room capped at what one round is worth
+        // re-sending, so on a large window the ring's percentage and this line are two different scales. It
+        // names the number that acts, and the reading it is compared with right now.
+        ["ChatContextCompactionTriggerFormat"] = ("占用到 {0} tokens 时自动压缩（当前 {1}）",
+            "Compacts on its own at {0} tokens (now {1})"),
         // What the answer <i>cost</i>, as opposed to how much of the window it fills — the rows above are an
         // estimate of the latter, and the note above is one request's measured input. These two lines are the
         // measured spend: every request of the round summed, because a tool loop pays for the transcript again
@@ -736,6 +741,13 @@ public static class HubTexts
         // run is on screen, and in the strip below the transcript when none is.
         ["ChatCompactingContext"] = ("上下文压缩中…", "Compacting context…"),
         ["ChatContextCompressUnavailable"] = ("当前对话没有足够的早期内容可供压缩。", "There is not enough earlier session content to compress yet."),
+        // The button's floor, which the automatic trigger does not have: below half of the room compaction is
+        // measured on, the summary would replace text the model can still read.
+        ["ChatContextCompressBelowFloor"] = ("上下文还没用到一半，压缩只会把能直接读到的内容换成摘要。",
+            "The session is under half full; compressing now would trade readable text for a summary."),
+        // What pressing the button does, for the case the label cannot carry it: a summary is not a deletion.
+        ["ChatContextCompressHint"] = ("把早期内容摘要成一段，最新几条消息保持原文。",
+            "Summarizes the earlier turns into one message; the newest are kept verbatim."),
         ["ChatContextCompressFailed"] = ("压缩上下文失败：", "Could not compress context: "),
         ["ChatContextCompressing"] = ("上下文压缩完成前，暂时不能发送或重试消息。", "Sending or retrying is unavailable until context compression finishes."),
         ["ChatAddContext"] = ("添加上下文", "Add context"),

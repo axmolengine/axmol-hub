@@ -156,9 +156,14 @@ public sealed record ContextUsage
     /// is why it is its own row rather than part of <see cref="Used"/>.</summary>
     public required int OutputReserve { get; init; }
 
-    /// <summary>What the conversation may use: <see cref="EffectiveWindow"/> minus the reserve. The percentage and
-    /// <see cref="Free"/> are measured against this, because it is the same number the compaction trigger compares
-    /// against — a ring that rounded the other way would have the screen and the request disagree.</summary>
+    /// <summary>What the conversation may use: <see cref="EffectiveWindow"/> minus the reserve. The percentage
+    /// and <see cref="Free"/> are measured against this — a ring that rounded the other way would have the screen
+    /// and the request disagree.
+    ///
+    /// <para>It is <b>not</b> the number a compaction is decided on. That comparison is made against
+    /// <see cref="ContextCompaction.DecisionRoom"/>, which caps this by what one round is worth re-sending, and
+    /// <see cref="TriggerTokens"/> is where the capped figure becomes visible. On a window larger than the cap the
+    /// two are far apart: a million-token model compacts at 85 000, which is 9% of this room.</para></summary>
     public required int Room { get; init; }
 
     /// <summary>What the next request would carry. A model's own reading when it gave one, with the turns written
@@ -202,4 +207,10 @@ public sealed record ContextUsage
     /// <summary>Fill of the room, through the same function the compaction trigger uses. Uncapped: a conversation
     /// that does not fit is at more than 100%, and the ring is not allowed to report that as a full one.</summary>
     public double Fill => ContextCompaction.Ratio(Used, Room);
+
+    /// <summary>How much <see cref="Used"/> may reach before Hub compacts on its own, through the same capped room
+    /// the trigger compares against. Shown beside the fill so a window larger than the cap does not look like it
+    /// compacts for no reason; equal to <see cref="Room"/> when the cap is not in play, which is also the signal
+    /// that there is nothing to warn about.</summary>
+    public int TriggerTokens => ContextCompaction.TriggerTokens(Room);
 }
