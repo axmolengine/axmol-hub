@@ -1526,7 +1526,8 @@ public partial class ChatPanel
         var goal = conversation.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User
             && turn.IsGoal && chat.IsCurrentGoalTurn(conversation.Id, turn.At));
         var state = chat.GoalStateFor(conversation.Id);
-        if (goal is null || state is not (ChatGoalStates.Active or ChatGoalStates.Paused or ChatGoalStates.BudgetLimited))
+        if (goal is null || state is not (ChatGoalStates.Active or ChatGoalStates.Waiting or ChatGoalStates.Paused
+            or ChatGoalStates.Blocked or ChatGoalStates.Complete or ChatGoalStates.BudgetLimited))
         {
             GoalCapsuleHost.IsVisible = false;
             GoalCapsuleHost.Child = null;
@@ -1534,13 +1535,19 @@ public partial class ChatPanel
         }
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        if (state == ChatGoalStates.Active)
+        if (state is ChatGoalStates.Active or ChatGoalStates.Waiting)
             actions.Children.Add(GoalActionButton("Ⅱ", "ChatGoalPause", () =>
             {
                 chat.PauseGoal(conversation.Id);
                 RefreshGoalCapsule();
             }));
-        else
+        else if (state == ChatGoalStates.BudgetLimited)
+            actions.Children.Add(GoalActionButton("+", "ChatGoalAddBudget", () =>
+            {
+                chat.AddGoalBudget(conversation.Id);
+                RefreshGoalCapsule();
+            }));
+        else if (state is ChatGoalStates.Paused or ChatGoalStates.Blocked)
             actions.Children.Add(GoalActionButton("▶", "ChatGoalResume", () =>
             {
                 chat.ResumeGoal(conversation.Id);
@@ -1565,7 +1572,10 @@ public partial class ChatPanel
         row.Children.Add(icon);
         var statusKey = state switch
         {
-            ChatGoalStates.Paused when conversation.GoalStopReason == "no_activity" => "ChatGoalNoActivity",
+            ChatGoalStates.Complete => conversation.GoalCompletionVerified ? "ChatGoalComplete" : "ChatGoalModelReported",
+            ChatGoalStates.Waiting => "ChatGoalWaiting",
+            ChatGoalStates.Blocked => "ChatGoalBlocked",
+            ChatGoalStates.Paused when conversation.GoalStopReason is "no_activity" or "no_progress" => "ChatGoalNoActivity",
             ChatGoalStates.Paused when conversation.GoalStopReason == "blocked" => "ChatGoalBlocked",
             ChatGoalStates.Paused => "ChatGoalPaused",
             ChatGoalStates.BudgetLimited => "ChatGoalBudgetLimited",
@@ -1575,7 +1585,8 @@ public partial class ChatPanel
         var reasonKey = conversation.GoalStopReason switch
         {
             "limit" => "ChatGoalLimitTip",
-            "no_activity" => "ChatGoalNoActivityTip",
+            "no_activity" or "no_progress" => "ChatGoalNoActivityTip",
+            "token_budget" => "ChatGoalTokenBudget",
             "blocked" => "ChatGoalBlockedTip",
             _ => null,
         };

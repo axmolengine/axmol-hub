@@ -325,7 +325,56 @@ internal static class AiProvidersChecks
 
         if (slowWire.Attempts != 2 || notices.Count != 2 || notices[0] != "attempt 2" || notices[1] != "released" || seen[0] != TimeSpan.FromSeconds(3))
             throw new Exception($"A rate limit that named a three-second wait reported [{string.Join(" | ", notices)}] " + $"over {slowWire.Attempts} attempt(s) with delays " + $"[{string.Join(", ", seen.Select(s => s.TotalSeconds.ToString("0.###")))}]" + (slowWire.Failure.Length > 0 ? ", " + slowWire.Failure : ""));
-        Console.WriteLine("PASS: the retry wait is reported with the provider's own number — " + notices[0] + " after " + seen[0].TotalSeconds.ToString("0.#") + "s, then released, over " + slowWire.Attempts + " attempts.");
+        foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses })
+        {
+            var probeProvider = new ModelProvider { IsCustom = true, Name = "Retry", BaseUrl = retryProvider.BaseUrl, Model = "m", Protocol = protocol };
+            var quotaWire = new RateLimitWire(0, always: true, errorBody:
+                """{"error":{"type":"insufficient_quota","message":"No credits"}}""");
+            try { await ChatClientFactory.Create(probeProvider, "m", null, transport: quotaWire).GetResponseAsync(retryMessages); }
+            catch (Exception) { }
+            if (quotaWire.Attempts != 1) throw new Exception("Quota exhaustion was retried.");
+            var backoff = new List<TimeSpan>();
+            var transient = new RateLimitWire(2, status: System.Net.HttpStatusCode.ServiceUnavailable, omitRetryAfter: true);
+            await ChatClientFactory.Create(probeProvider, "m", null, transport: transient,
+                onRetryWait: (attempt, delay) => { if (attempt > 0) backoff.Add(delay); }).GetResponseAsync(retryMessages);
+            if (transient.Attempts != 3 || backoff.Count != 2
+                || backoff[0].TotalSeconds is < 0.6 or > 1.0 || backoff[1].TotalSeconds is < 1.2 or > 2.0)
+                throw new Exception("Exponential jitter did not stay inside the retry envelope.");
+            using var cancel = new CancellationTokenSource();
+            var cancelWire = new RateLimitWire(1, retryAfterSeconds: 3);
+            try
+            {
+                await ChatClientFactory.Create(probeProvider, "m", null, transport: cancelWire,
+                    onRetryWait: (attempt, _) => { if (attempt > 0) cancel.Cancel(); })
+                    .GetResponseAsync(retryMessages, cancellationToken: cancel.Token);
+                throw new Exception("Cancelled retry returned success.");
+            }
+            catch (OperationCanceledException) { }
+            if (cancelWire.Attempts != 1) throw new Exception("Cancellation sent another request.");
+            var cooldownWire = new RateLimitWire(1, retryAfterSeconds: 3600);
+            try
+            {
+                await ChatClientFactory.Create(probeProvider, "m", null, transport: cooldownWire,
+                    maxInlineRetryWait: TimeSpan.FromSeconds(30)).GetResponseAsync(retryMessages);
+                throw new Exception("A long Retry-After waited inline or returned success.");
+            }
+            catch (ProviderCooldownException ex) when (ex.Delay == TimeSpan.FromHours(1)) { }
+            if (cooldownWire.Attempts != 1) throw new Exception("A cooldown sent a polling request.");
+            var networkWire = new RateLimitWire(1, networkFailure: true);
+            await ChatClientFactory.Create(probeProvider, "m", null, transport: networkWire).GetResponseAsync(retryMessages);
+            if (networkWire.Attempts != 2) throw new Exception("A network interruption was not recovered inside retries.");
+            var authWire = new RateLimitWire(0, always: true, status: System.Net.HttpStatusCode.Unauthorized);
+            try { await ChatClientFactory.Create(probeProvider, "m", null, transport: authWire).GetResponseAsync(retryMessages); }
+            catch (Exception ex) when (ProviderFailure.AuthenticationFailed(ex)) { }
+            if (authWire.Attempts != 1) throw new Exception("Authentication failure was retried.");
+        }
+        foreach (var body in new[] { "null", "[]", "\"temporarily busy\"", "{\"error\":null}" })
+            if (ProviderFailure.QuotaExhausted(body)) throw new Exception("An unstructured error was treated as exhausted quota.");
+        var retryNow = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        if (ProviderFailure.RetryAfter(retryNow.AddSeconds(90).ToString("r"), retryNow) != TimeSpan.FromSeconds(90)
+            || ProviderFailure.RetryAfter("1500", retryNow, milliseconds: true) != TimeSpan.FromMilliseconds(1500))
+            throw new Exception("Retry-After date or millisecond parsing drifted.");
+        Console.WriteLine("PASS: the retry wait is reported with the provider's own number — " + notices[0] + " after " + seen[0].TotalSeconds.ToString("0.#") + "s, then released, over " + slowWire.Attempts + " attempts; both protocols bound jitter, skip quota retries and cancel waits.");
         // Which failures are a rate limit, judged on the words providers actually use, and which must stay plain. The
         // rule fails twice over if it is loose in either direction: a 429 that reads as a generic failure points a
         // person at credentials and settings that are fine, and anything else that reads as a limit tells them to wait

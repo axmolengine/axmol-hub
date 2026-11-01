@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 
 namespace AxmolHub.Agent;
@@ -18,8 +17,7 @@ namespace AxmolHub.Agent;
 /// <para>Two exemptions are what keep the refusal off correct work, and both are read from the transcript
 /// rather than from counters, so a restart, a steer or a replayed session sees the same history:</para>
 /// <list type="bullet">
-/// <item>A successful state-changing call (<c>file_write</c>, <c>run_command</c>, <c>request_directory</c>,
-/// <c>request_file</c>, <c>memory_write</c>) ends the walk. Re-reading a file you just edited is
+/// <item>A confirmed write, a zero-exit command, or a granted path ends the walk. Re-reading a file you just edited is
 /// verification, not spinning.</item>
 /// <item>A result that <see cref="ToolLoopContextGuard.Elide"/> rewrote tells the model in so many words to
 /// call again if it still needs it — so a repeat after an elision is Hub asking for it, not a loop.</item>
@@ -39,15 +37,6 @@ public static class ToolSpinGuard
     /// inside it, with no state change between, they are the problem.</summary>
     public const int WindowSize = 12;
 
-    /// <summary>The tools whose success means the world moved. Read against their results below, not trusted
-    /// by name alone. <c>request_directory</c> is here because its success is a grant recorded on the session —
-    /// state a repeat would be asking for twice, and the answer to the second ask is "already granted". Its
-    /// one-file sibling <c>request_file</c> lands the same record, so it belongs here for the same reason.</summary>
-    private static readonly string[] StateChangingTools =
-        [Core.LegacyFileToolNames.FileWrite, Core.ToolNames.FsWrite, Core.ToolNames.FsReplace, Core.ToolNames.FsDelete,
-         Core.ToolNames.FsMove, Core.ToolNames.RunCommand, Core.LegacyFileToolNames.RequestDirectory,
-         Core.LegacyFileToolNames.RequestFile, Core.ToolNames.FsRequestAccess, Core.ToolNames.MemoryWrite];
-
     /// <summary>The sentence a refused repeat hands back to the model. Matched on itself by the checks.</summary>
     public const string RefusalMarker = "has already run";
 
@@ -60,8 +49,7 @@ public static class ToolSpinGuard
     /// their order (an argument list is ordered), and everything else round-trips through the JSON tree.</summary>
     public static string NormalizeArguments(string argumentsJson)
     {
-        if (JsonNode.Parse(argumentsJson) is not JsonObject arguments) return argumentsJson;
-        return Canonical(arguments).ToJsonString();
+        return Core.GoalProgress.NormalizeArguments(argumentsJson);
     }
 
     /// <summary>
@@ -101,7 +89,7 @@ public static class ToolSpinGuard
                     continue;
                 paired++;
                 // The world moved: anything older than this is a different problem, not a repetition of this one.
-                if (StateChangingTools.Contains(call.Name, StringComparer.Ordinal) && LooksSuccessful(call.Name, text))
+                if (Core.GoalProgress.StateChanged(call.Name, text))
                     return null;
                 if (text.StartsWith(ToolLoopContextGuard.ElidedResultPrefix, StringComparison.Ordinal)
                     || (elidedCallIds is { Count: > 0 } elided && elided.Contains(call.CallId))) continue;
@@ -115,63 +103,6 @@ public static class ToolSpinGuard
         }
 
         return null;
-    }
-
-    /// <summary>A refusal, a denial and a failure left the world where it was; only their absence counts as a
-    /// move. The prefixes are the ones Hub's own invoker and approval gate write.</summary>
-    private static bool LooksSuccessful(string toolName, string result)
-    {
-        if (result.Length == 0
-            || result.StartsWith("Tool failed:", StringComparison.Ordinal)
-            || result == Core.ToolApprovalResults.Denied
-            || result == Core.ToolApprovalResults.Superseded
-            // A call closed because the attempt ended before it ran changed nothing either. Left out of this list,
-            // a state-changing tool the model legitimately re-asks after a continue would read as "the world moved",
-            // which silently relaxes the guard on exactly the call whose repeat is the loop this protects against.
-            || result == Core.ToolApprovalResults.NotAnswered
-            || result == Core.ToolApprovalResults.Unavailable)
-            return false;
-
-        // Only these affirmative result shapes prove a state change. In particular, file_write's readable
-        // refusals are nonempty, and treating them as progress lets repeated bad anchors reset the spin guard.
-        return toolName switch
-        {
-            Core.LegacyFileToolNames.FileWrite or Core.ToolNames.FsWrite or Core.ToolNames.FsReplace => result.StartsWith("Created ", StringComparison.Ordinal)
-                            || result.StartsWith("Edited ", StringComparison.Ordinal),
-            Core.ToolNames.FsDelete => result.StartsWith("Deleted ", StringComparison.Ordinal),
-            Core.ToolNames.FsMove => result.StartsWith("Moved ", StringComparison.Ordinal),
-            Core.LegacyFileToolNames.RequestDirectory or Core.ToolNames.FsRequestAccess => result.StartsWith("Granted", StringComparison.Ordinal),
-            // One file is the same fact at another width: the second ask is answered "already granted", so a repeat
-            // after a landed card is a request for state that already moved.
-            Core.LegacyFileToolNames.RequestFile => result.StartsWith("Granted", StringComparison.Ordinal),
-            Core.ToolNames.MemoryWrite => result.StartsWith("Saved ", StringComparison.Ordinal),
-            // A command may have changed files before returning a nonzero exit code, so its exit status is not
-            // evidence that no state changed. Tool failures above are the cases where execution never completed.
-            Core.ToolNames.RunCommand => true,
-            _ => false,
-        };
-    }
-
-    private static JsonNode Canonical(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject table:
-            {
-                var sorted = new JsonObject();
-                foreach (var pair in table.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-                    sorted[pair.Key] = pair.Value is null ? null : Canonical(pair.Value.DeepClone());
-                return sorted;
-            }
-            case JsonArray items:
-            {
-                var kept = new JsonArray();
-                foreach (var item in items) kept.Add(item is null ? null : Canonical(item.DeepClone()));
-                return kept;
-            }
-            default:
-                return node;
-        }
     }
 
     private static string TextOf(FunctionResultContent result) => result.Result switch

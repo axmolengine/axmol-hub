@@ -1681,6 +1681,112 @@ internal sealed class ShellAssistantChecks
         Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRateLimited"), StringComparison.Ordinal) == true
               && panel.LastNoticeTextForCheck!.Contains("429", StringComparison.Ordinal),
             "模型服务限流时说「在限流，稍后再试」并带上服务方的原话，而不是通用请求失败");
+        // The old capsule checks never ran a goal: they could stay green while automation bypassed admission,
+        // polled a cooldown or accepted an unsupported completion. These cases use the real send/finish path.
+        Conversation PausedGoal(string text)
+        {
+            var goal = shell.Chat.StartConversation();
+            shell.Chat.SelectMode(ChatModes.Agent);
+            shell.Chat.SeedGoalForCheck(goal.Id, text);
+            shell.Chat.PauseGoal(goal.Id);
+            return goal;
+        }
+        var boundedGoal = PausedGoal("不要用活动次数冒充进展");
+        boundedGoal.GoalContinuationLimit = 0;
+        var goalAttempts = 0;
+        shell.Chat.ClientOverride = (_, _) =>
+        {
+            goalAttempts++;
+            return new ScriptedChatClient(["Still working."], finish: "stop");
+        };
+        shell.Chat.ResumeGoal(boundedGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        Check(goalAttempts == 3 && boundedGoal.GoalState == ChatGoalStates.Paused
+              && boundedGoal.GoalStopReason == "no_progress" && boundedGoal.GoalContinuationCount == 2,
+            "续跑上限 0 不关闭无进展保护：无证据的答复在三次请求后暂停，只有后两次计为续跑（实际 "
+            + goalAttempts + " / " + boundedGoal.GoalState + " / " + boundedGoal.GoalContinuationCount + "）");
+        shell.Chat.DeleteConversation(boundedGoal.Id);
+
+        var budgetedGoal = PausedGoal("在请求前检查预算");
+        budgetedGoal.GoalTokenBudget = 1;
+        var budgetClients = new List<ScriptedChatClient>();
+        shell.Chat.ClientOverride = (_, _) =>
+        {
+            var client = new ScriptedChatClient(["Done.\n[GOAL_COMPLETE]"], finish: "stop");
+            budgetClients.Add(client);
+            return client;
+        };
+        shell.Chat.ResumeGoal(budgetedGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var refusedBudget = budgetedGoal.GoalState == ChatGoalStates.BudgetLimited
+            && budgetClients.All(client => client.LastMessages is null);
+        shell.Chat.AddGoalBudget(budgetedGoal.Id);
+        shell.Chat.ResumeGoal(budgetedGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        goalAttempts = budgetClients.Count(client => client.LastMessages is not null);
+        Check(refusedBudget && goalAttempts == 1 && budgetedGoal.GoalState == ChatGoalStates.Complete
+              && !budgetedGoal.GoalCompletionVerified && budgetedGoal.GoalEstimatedTokens > 0
+              && budgetedGoal.GoalReportedTokens == 0,
+            "预算不足时模型零请求；增加预算后恢复为模型报告完成（未核验），没有 usage 的端点只保留估算（实际 "
+            + goalAttempts + " / " + budgetedGoal.GoalState + " / " + budgetedGoal.GoalEstimatedTokens + "）");
+        shell.Chat.DeleteConversation(budgetedGoal.Id);
+
+        var coolingGoal = PausedGoal("等待提供方冷却并恢复");
+        goalAttempts = 0;
+        shell.Chat.ClientOverride = (_, _) =>
+        {
+            goalAttempts++;
+            return new ScriptedChatClient([], exception: new AxmolHub.Agent.ProviderCooldownException(TimeSpan.FromHours(1)));
+        };
+        shell.Chat.ResumeGoal(coolingGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        await Task.Delay(30);
+        Dispatcher.UIThread.RunJobs();
+        var parkedGoal = shell.Chat.StoredCopyForCheck(coolingGoal.Id);
+        Check(goalAttempts == 1 && parkedGoal?.GoalState == ChatGoalStates.Waiting
+              && parkedGoal.GoalWakeAt > DateTimeOffset.UtcNow && parkedGoal.GoalCooldownCount == 1
+              && parkedGoal.GoalContinuationCount == 0 && parkedGoal.GoalNoProgressRequests == 0
+              && panel.GoalCapsuleHostVisibleForCheck
+              && panel.GoalCapsuleActionTooltipsForCheck.Contains(HubStrings.Get("ChatGoalPause")),
+            "冷却等待持久化且不轮询模型，不消耗续跑或无进展计数（实际 "
+            + goalAttempts + " / " + parkedGoal?.GoalState + "）");
+        shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
+        if (parkedGoal is not null)
+        {
+            parkedGoal.GoalWakeAt = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);
+            new ConversationStore(shell.Workspace.Store.Root).Save(parkedGoal);
+        }
+        using (var recoveredGoal = new ChatWorkspace(shell.Workspace.Store.Root)
+        {
+            ClientOverride = (_, _) => new ScriptedChatClient(["Recovered.\n[GOAL_COMPLETE]"], finish: "stop"),
+            PreferencesProvider = shell.Chat.PreferencesProvider,
+            HubSnapshotProvider = shell.Chat.HubSnapshotProvider,
+        })
+        {
+            recoveredGoal.OpenConversation(coolingGoal.Id);
+            for (var wait = 0; wait < 200; wait++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                if (recoveredGoal.StoredCopyForCheck(coolingGoal.Id)?.GoalState == ChatGoalStates.Complete) break;
+                await Task.Delay(5);
+            }
+            var restored = recoveredGoal.StoredCopyForCheck(coolingGoal.Id);
+            Check(restored?.GoalState == ChatGoalStates.Complete && restored.GoalWakeAt is null
+                  && restored.GoalContinuationCount == 0 && restored.GoalEstimatedTokens > parkedGoal?.GoalEstimatedTokens,
+                "重启后按已持久化的冷却时间恢复同一次逻辑运行，进度账本保留而续跑计数不增（实际 "
+                + restored?.GoalState + " / " + restored?.GoalContinuationCount + "）");
+        }
+        shell.Chat.DeleteConversation(coolingGoal.Id);
+
+        var dependentGoal = PausedGoal("核验尚未返回的依赖");
+        dependentGoal.GoalWaitingFor.Add("pending-helper");
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(["Claimed done.\n[GOAL_COMPLETE]"], finish: "stop");
+        shell.Chat.ResumeGoal(dependentGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        Check(dependentGoal.GoalState == ChatGoalStates.Waiting && !dependentGoal.GoalCompletionVerified,
+            "仍有依赖未返回时完成标记不能使目标完成（实际 " + dependentGoal.GoalState + "）");
+        shell.Chat.DeleteConversation(dependentGoal.Id);
+
         shell.Chat.DeleteConversation(failureCheckConversation.Id);
         shell.Chat.OpenConversation(opsConversation.Id);
         opsConversation = shell.Chat.ActiveConversation!;

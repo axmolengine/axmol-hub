@@ -394,7 +394,9 @@ sealed class WireRecorder : System.Net.Http.HttpMessageHandler
 /// the pipeline made. The retry path is otherwise invisible from this repository: the policy that implements it
 /// lives in a dependency, so without a counter here nothing knows how many requests a turn really costs, and a
 /// dropped retry would look exactly like a working channel that simply was not needed today.</summary>
-internal sealed class RateLimitWire(int failFirst, bool always = false, int retryAfterSeconds = 0)
+internal sealed class RateLimitWire(int failFirst, bool always = false, int retryAfterSeconds = 0,
+    HttpStatusCode status = HttpStatusCode.TooManyRequests, string? errorBody = null, bool omitRetryAfter = false,
+    bool networkFailure = false)
     : System.Net.Http.HttpMessageHandler
 {
     public int Attempts;
@@ -407,17 +409,19 @@ internal sealed class RateLimitWire(int failFirst, bool always = false, int retr
         Attempts++;
         if (always || Attempts <= failFirst)
         {
-            var throttled = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+            if (networkFailure) throw new HttpRequestException("Simulated network interruption.");
+            var throttled = new HttpResponseMessage(status)
             {
                 Content = new StringContent(
-                    "{\"error\":{\"message\":\"Rate limit reached. Slow down.\",\"type\":\"rate_limit_error\","
-                    + "\"code\":\"rate_limit_exceeded\"}}", Encoding.UTF8, "application/json"),
+                    errorBody ?? ("{\"error\":{\"message\":\"Rate limit reached. Slow down.\",\"type\":\"rate_limit_error\","
+                    + "\"code\":\"rate_limit_exceeded\"}}"), Encoding.UTF8, "application/json"),
             };
             // Zero, not absent: the policy has to be seen reading the provider's own wait, and a real delay would
             // make the suite depend on a clock. The cells that measure the wait ask for seconds instead — see the
             // hook below the streaming retry cell, where the number has to be the provider's, not the jitter's.
-            throttled.Headers.RetryAfter =
-                new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(retryAfterSeconds));
+            if (!omitRetryAfter)
+                throttled.Headers.RetryAfter =
+                    new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(retryAfterSeconds));
             SawRetryAfter = true;
             return System.Threading.Tasks.Task.FromResult(throttled);
         }

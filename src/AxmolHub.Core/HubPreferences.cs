@@ -105,6 +105,13 @@ public sealed class HubPreferences
     /// </summary>
     public string MaxAutoEffort { get; set; } = ChatReasoningEfforts.XHigh;
 
+    /// <summary>Automatic goal runs. Zero removes only this ceiling, not token or progress guards.</summary>
+    public int GoalContinuationLimit { get; set; } = 0;
+    public long GoalTokenBudget { get; set; } = 1_000_000;
+    public int ProviderMaxRetries { get; set; } = 2;
+    public int GoalNoProgressLimit { get; set; } = 3;
+    public int GoalCooldownLimit { get; set; } = 2;
+
     /// <summary>
     /// Whether the assistant may start a child session of its own (<c>spawn_session</c>). <b>Off by default</b>,
     /// because each child is a model call nobody clicked and the run registry only has three slots. The reason to
@@ -204,6 +211,11 @@ public sealed class PreferencesStore(string path)
         // rather than to "no ceiling", which is the one way a hand-edited settings file could spend past the
         // strongest tier anyone agreed to.
         preferences.MaxAutoEffort = ModelRouting.Ceiling(preferences.MaxAutoEffort);
+        preferences.GoalContinuationLimit = Math.Max(0, preferences.GoalContinuationLimit);
+        preferences.GoalTokenBudget = Math.Max(0, preferences.GoalTokenBudget);
+        preferences.ProviderMaxRetries = Math.Clamp(preferences.ProviderMaxRetries, 0, 10);
+        preferences.GoalNoProgressLimit = Math.Clamp(preferences.GoalNoProgressLimit, 2, 20);
+        preferences.GoalCooldownLimit = Math.Clamp(preferences.GoalCooldownLimit, 0, 5);
         if (removedRetiredTools) Save(preferences);
         return preferences;
     }

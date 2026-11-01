@@ -161,6 +161,13 @@ public sealed class ConversationStore(string root)
     /// </summary>
     private void NormalizeGrants(Conversation conversation)
     {
+        conversation.GoalProgressFingerprints = (conversation.GoalProgressFingerprints ?? [])
+            .TakeLast(GoalProgress.WindowSize).ToList();
+        conversation.GoalWaitingFor ??= [];
+        conversation.GoalReportedTokens = Math.Max(0, conversation.GoalReportedTokens);
+        conversation.GoalEstimatedTokens = Math.Max(0, conversation.GoalEstimatedTokens);
+        if (conversation.GoalState == ChatGoalStates.Paused && conversation.GoalStopReason == "blocked")
+            conversation.GoalState = ChatGoalStates.Blocked;
         var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots,
             OwnGuards);
         conversation.GrantedRoots = write;

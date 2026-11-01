@@ -1105,6 +1105,59 @@ internal static class AiContextChecks
         if (!insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionCallContent>().Select(call => call.CallId).SequenceEqual(insistent.LastRequest.SelectMany(message => message.Contents).OfType<FunctionResultContent>().Select(result => result.CallId)))
             throw new Exception("The loop's own request lost the call/result pairing.");
         Console.WriteLine("PASS: the tool loop ends on the model's own answer, with the declarations on every request, " + "capping every result and eliding the old ones.");
+        // A goal's ceiling must intercept the follow-up request inside the invoker, not only the outer send.
+        // The existing long-loop fixture never installs a goal guard, so it cannot catch this overspend.
+        var budgetClient = new InsistentToolClient { RoundsBeforeAnswering = 3 };
+        var budgetGoal = Conversation.Create("probe");
+        budgetGoal.GoalTokenBudget = 0;
+        var admissions = 0;
+        var settled = 0;
+        try
+        {
+            await foreach (var chunk in new ChatPipeline(budgetClient).SendAsync(probeProvider,
+                [ChatTurn.User("budgeted tool loop")], tools: [probeTool],
+                beforeRequest: estimate =>
+                {
+                    admissions++;
+                    if (!GoalPolicy.For(budgetGoal).CanRequest(budgetGoal, estimate))
+                        throw new GoalGuardException("token_budget");
+                    budgetGoal.GoalEstimatedTokens += estimate;
+                    budgetGoal.GoalTokenBudget = budgetGoal.GoalEstimatedTokens;
+                    return Task.CompletedTask;
+                },
+                afterRequest: (_, reported, completed) =>
+                {
+                    if (completed && reported < 0) settled++;
+                    return Task.CompletedTask;
+                })) _ = chunk;
+            throw new Exception("An over-budget follow-up reached the provider.");
+        }
+        catch (GoalGuardException ex) when (ex.Reason == "token_budget") { }
+        if (budgetClient.CallCount != 1 || admissions != 2 || settled != 1)
+            throw new Exception($"Budget guard admitted {admissions}, sent {budgetClient.CallCount}, settled {settled} requests.");
+        Console.WriteLine("PASS: the goal budget refuses the tool-loop follow-up before the provider sees it.");
+
+        // End-of-stream usage replaces a reservation once, while an endpoint without usage retains the estimate.
+        // The normal context meter measures spend too, but cannot prove this independent goal ledger is settled.
+        var usageCases = new (long Input, long Output, long Reasoning, long Cached)[]?[]
+            { null, [(40, 2, 1, 0), (40, 4, 2, 0)] };
+        foreach (var reports in usageCases)
+        {
+            long reserved = 0, actual = 0;
+            var measured = new FakeChatClient(["answer"], usage: reports);
+            await foreach (var chunk in new ChatPipeline(measured).SendAsync(probeProvider,
+                [ChatTurn.User("measured goal request")],
+                beforeRequest: estimate => { reserved += estimate; return Task.CompletedTask; },
+                afterRequest: (estimate, reported, _) =>
+                {
+                    if (reported >= 0) { reserved -= estimate; actual += reported; }
+                    return Task.CompletedTask;
+                })) _ = chunk;
+            if (reports is null ? reserved <= 0 || actual != 0 : reserved != 0 || actual != 44)
+                throw new Exception($"Goal request settlement retained {reserved} estimated and {actual} reported tokens.");
+        }
+        Console.WriteLine("PASS: reported goal usage replaces its reservation once; missing usage remains explicitly estimated.");
+
         // ── A loop that repeats itself instead of working is stopped ──
         // With no round cap, this and the error counter are what stand between a long task and an unbounded paid
         // loop. The verdict is read from the transcript the loop itself accumulated, so the probe here is the pure

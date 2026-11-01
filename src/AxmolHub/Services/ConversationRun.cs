@@ -229,7 +229,7 @@ internal sealed class ConversationRun : IDisposable
     public string ConversationId { get; }
 
     // Snapshot of existing tool-result identities at run start; compaction can change message indexes.
-    internal HashSet<string> GoalPriorToolResults { get; set; } = new(StringComparer.Ordinal);
+    internal long GoalPriorProgress { get; set; }
     public RunPhase Phase { get; private set; } = RunPhase.Streaming;
     public RunResult Result { get; private set; } = RunResult.Completed;
 

@@ -697,6 +697,7 @@ public sealed partial class ChatWorkspace : IDisposable
         => _execution.PushSuggestedAsync(conversationId, expectedWorkspaceRoot, summary, turnAt, commitFirst);
     public bool PauseGoal(string conversationId) => _execution.PauseGoal(conversationId);
     public bool ResumeGoal(string conversationId) => _execution.ResumeGoal(conversationId);
+    public bool AddGoalBudget(string conversationId) => _execution.AddGoalBudget(conversationId);
     public bool ClearGoal(string conversationId) => _execution.ClearGoal(conversationId);
     public bool CompleteGoal(string conversationId) => _execution.CompleteGoal(conversationId);
     internal bool HasPendingPlanApproval(string conversationId) => _execution.HasPendingPlanApproval(conversationId);

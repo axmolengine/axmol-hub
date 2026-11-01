@@ -35,6 +35,8 @@ public static class ChatModes
 public static class ChatGoalStates
 {
     public const string Active = "active";
+    public const string Waiting = "waiting";
+    public const string Blocked = "blocked";
     public const string Paused = "paused";
     public const string Complete = "complete";
     public const string BudgetLimited = "budget_limited";
@@ -532,6 +534,20 @@ public sealed class Conversation
 
     /// <summary>Why automatic goal continuation stopped, if known.</summary>
     public string? GoalStopReason { get; set; }
+
+    /// <summary>Per-goal ceilings snapshot the settings; null loads the current defaults for older files.</summary>
+    public int? GoalContinuationLimit { get; set; }
+    public long? GoalTokenBudget { get; set; }
+    public long GoalReportedTokens { get; set; }
+    public long GoalEstimatedTokens { get; set; }
+    public int GoalCooldownCount { get; set; }
+    public DateTimeOffset? GoalWakeAt { get; set; }
+    public List<string> GoalProgressFingerprints { get; set; } = [];
+    public string? GoalCheckpoint { get; set; }
+    public long GoalProgressVersion { get; set; }
+    public int GoalNoProgressRequests { get; set; }
+    public List<string> GoalWaitingFor { get; set; } = [];
+    public bool GoalCompletionVerified { get; set; }
     public string ReasoningEffort { get; set; } = ChatReasoningEfforts.Default;
 
     /// <summary>Whether the person or Hub picks the model and tier for this session — see

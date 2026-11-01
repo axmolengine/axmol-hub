@@ -537,8 +537,9 @@ internal sealed partial class ChatSessionCoordinator
         var notifyStarted = measurement.ElapsedMs;
         Execution.Changed?.Invoke();
         measurement.NotifyMs = measurement.ElapsedMs - notifyStarted;
-        if (_active is { GoalState: ChatGoalStates.Active } goalThread && NormalizeMode(goalThread.Mode) == ChatModes.Agent && Execution.RunFor(goalThread.Id) is null && Execution.RunningCount < MaxConcurrentRuns && !goalThread.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending || turn.PlanApprovalState == PlanApprovalStates.Pending))
-            Execution.StartRun(goalThread.Id);
+        if (_active is { Goal: { Length: > 0 } } goalThread && NormalizeMode(goalThread.Mode) == ChatModes.Agent
+            && Execution.RunFor(goalThread.Id) is null)
+            Execution.RestoreGoal(goalThread.Id);
         if (_active is { } selected) _ = Execution.RefreshGitPresentationAsync(selected.Id);
         return _active;
     }

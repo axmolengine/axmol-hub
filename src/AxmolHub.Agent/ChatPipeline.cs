@@ -165,6 +165,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         int? maxOutputTokens = null,
         bool yieldForCompaction = false,
         Func<Task<bool>>? canYieldForCompaction = null,
+        Func<long, Task>? beforeRequest = null,
+        Func<long, long, bool, Task>? afterRequest = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -196,7 +198,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // is the start of the next one.
         var thinking = new StringBuilder();
         var thinkingSpent = false;
-        IChatClient effectiveClient = client;
+        IChatClient effectiveClient = beforeRequest is null ? client
+            : new GoalRequestGuard(client, schemaTokens, window.OutputReserve, beforeRequest, afterRequest);
         ToolLoopContextGuard? guard = null;
         if (tools is { Count: > 0 })
         {
@@ -208,7 +211,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // is the only place that can decide to give control back, and measuring it against "does it still fit"
             // let one measured run send 4 520 397 input tokens in eighteen minutes without ever yielding.
             guard = new ToolLoopContextGuard(
-                reasoning is null ? client : new ReasoningHarvestClient(client, reasoning), budget,
+                reasoning is null ? effectiveClient : new ReasoningHarvestClient(effectiveClient, reasoning), budget,
                 ContextCompaction.DecisionRoom(budget))
             {
                 PendingInterjection = pendingInterjection,
@@ -578,9 +581,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// the type <c>usage_limit_reached</c> and states the reset in the same body.</para>
     /// </summary>
     public static bool UsageExhausted(string? message)
-        => message is { Length: > 0 }
-           && (message.Contains("usage_limit_reached", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("usage limit has been reached", StringComparison.OrdinalIgnoreCase));
+        => ProviderFailure.QuotaExhausted(message);
 
     /// <summary>
     /// What the tool declarations of one request cost, in tokens. A function's name, its description and its

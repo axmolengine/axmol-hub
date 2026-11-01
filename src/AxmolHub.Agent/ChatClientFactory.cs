@@ -146,7 +146,9 @@ public static class ChatClientFactory
         ReasoningTable? reasoning,
         string? interactionId = null,
         System.Net.Http.HttpMessageHandler? transport = null,
-        Action<int, TimeSpan>? onRetryWait = null)
+        Action<int, TimeSpan>? onRetryWait = null,
+        int maxRetries = MaxRetries,
+        TimeSpan? maxInlineRetryWait = null)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
@@ -194,7 +196,7 @@ public static class ChatClientFactory
             // The retry decision is stated on both wires from one constant, so the two cannot drift into two
             // different numbers of attempts — and both wrap it in the same policy, so a wait is reported on
             // whichever wire the model answers on.
-            options.RetryPolicy = new IdleAwareRetryPolicy(MaxRetries, onRetryWait);
+            options.RetryPolicy = new IdleAwareRetryPolicy(maxRetries, onRetryWait, maxInlineRetryWait);
             if (provider.IsOpenAiPlan)
                 options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(
                     new OpenAiPlanTransport(provider, transport ?? new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false })));
@@ -217,7 +219,7 @@ public static class ChatClientFactory
         }
 
         var chatOptions = new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) };
-        chatOptions.RetryPolicy = new IdleAwareRetryPolicy(MaxRetries, onRetryWait);
+        chatOptions.RetryPolicy = new IdleAwareRetryPolicy(maxRetries, onRetryWait, maxInlineRetryWait);
         if (transport is not null)
             chatOptions.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
         if (reasoning is not null)

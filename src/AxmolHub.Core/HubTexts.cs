@@ -630,11 +630,16 @@ public static class HubTexts
         ["ChatGoalSentAsGoal"] = ("作为目标发送", "Sent as goal"),
         ["ChatGoalActive"] = ("进行中的目标", "Active goal"),
         ["ChatGoalPaused"] = ("已暂停的目标", "Paused goal"),
-        ["ChatGoalBudgetLimited"] = ("已达到本次自动续作次数上限", "Automatic continuation limit reached"),
-        ["ChatGoalNoActivity"] = ("目标已暂停：连续两次未调用工具", "Goal paused: no tool activity in two runs"),
-        ["ChatGoalBlocked"] = ("目标已暂停：需要处理阻碍", "Goal paused: action needed"),
-        ["ChatGoalLimitTip"] = ("自动续作次数已用完，不代表模型或账户额度耗尽。可查看最近回复后继续。", "The automatic continuation count was exhausted, not the model or account quota. Review the latest reply before resuming."),
-        ["ChatGoalNoActivityTip"] = ("连续两次运行没有工具结果；这不一定代表没有进展。请查看回复后继续或补充指示。", "Two runs produced no tool results; this does not necessarily mean no progress. Review the replies before resuming or adding instructions."),
+        ["ChatGoalBudgetLimited"] = ("目标预算已用完", "Goal budget reached"),
+        ["ChatGoalTokenBudget"] = ("目标 Token 预算不足，已暂停请求。", "Goal token budget reached; no further request was sent."),
+        ["ChatGoalComplete"] = ("已确认完成的目标", "Confirmed complete goal"),
+        ["ChatGoalModelReported"] = ("模型报告已完成（未核验）", "Model reported complete (unverified)"),
+        ["ChatGoalWaiting"] = ("目标等待中", "Goal waiting"),
+        ["ChatGoalAddBudget"] = ("追加预算：10 次续跑或 100,000 Tokens（不自动恢复）", "Add budget: 10 continuations or 100,000 tokens (does not resume)"),
+        ["ChatGoalNoActivity"] = ("目标已暂停：连续无有效进展", "Goal paused: no new progress"),
+        ["ChatGoalBlocked"] = ("目标受阻：需要处理阻碍", "Goal blocked: action needed"),
+        ["ChatGoalLimitTip"] = ("自动续跑预算已用完，不代表模型或账户额度耗尽。请明确追加预算后再恢复。", "The continuation budget was exhausted, not the provider quota. Add budget explicitly before resuming."),
+        ["ChatGoalNoActivityTip"] = ("近期请求没有新的有效结果，或反复出现同一错误。请查看回复后恢复或补充指示。", "Recent requests produced no new evidence or repeated the same error. Review the replies before resuming or adding instructions."),
         ["ChatGoalBlockedTip"] = ("助手报告需要外部条件或用户操作。请查看最近回复。", "The assistant reported an external prerequisite or user action. Review its latest reply."),
         ["ChatGoalCleared"] = ("已清除的目标", "Cleared goal"),
         ["ChatGoalPause"] = ("暂停目标", "Pause goal"),
@@ -861,6 +866,7 @@ public static class HubTexts
         ["ChatRateLimited"] = ("模型服务在限流，稍后再试：", "The model provider is rate-limiting requests, try again shortly: "),
         // A spent allowance is not a rate limit: waiting seconds fixes one and not the other, and the difference
         // is hours, so the sentence has to say what is actually owed instead of "try again shortly".
+        ["ChatAuthExpired"] = ("提供方认证失败，请重新登录或检查凭据：", "Provider authentication failed; sign in again or check credentials: "),
         ["ChatUsageExhausted"] = ("套餐额度已用尽，等额度窗口恢复后再试（这不是限流）：", "This plan's usage allowance is spent; wait for it to reset — this is not rate limiting: "),
         // Three endings that used to share one sentence, because they are three different things to do about: a
         // stream that went quiet mid-reply, a round the provider never opened, and a round that never opened

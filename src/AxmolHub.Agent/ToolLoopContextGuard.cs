@@ -198,7 +198,7 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     /// carries, and a picture is priced in tokens rather than converted to imaginary characters so it survives a
     /// division.
     /// </summary>
-    private static int EstimateTokens(IReadOnlyList<ChatMessage> messages)
+    internal static int EstimateTokens(IReadOnlyList<ChatMessage> messages)
     {
         var tokens = 0;
         foreach (var message in messages)

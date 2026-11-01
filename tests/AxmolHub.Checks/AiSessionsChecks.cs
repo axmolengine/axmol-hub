@@ -8,25 +8,61 @@ internal static class AiSessionsChecks
 {
     internal static async Task RunAsync(string root, string[] args)
     {
-        // A tool result is an activity signal, not proof that the objective progressed.
+        // Existing continuation coverage now tests evidence, not the number of tool rows.
         var firstEmpty = GoalContinuation.Decide("partial", false, 0, 0);
-        var secondEmpty = GoalContinuation.Decide("partial again", false, firstEmpty.EmptyRuns, 1);
+        var secondEmpty = GoalContinuation.Decide("partial again", false, firstEmpty.EmptyRuns, 1, noProgressLimit: 2);
         var working = GoalContinuation.Decide("partial", true, firstEmpty.EmptyRuns, 1);
-        var limited = GoalContinuation.Decide("partial", true, 0, GoalContinuation.Limit);
-        var blocked = GoalContinuation.Decide("need access [GOAL_BLOCKED]", true, 0, 0);
-        var completed = GoalContinuation.Decide("done [GOAL_COMPLETE]", false, 1, GoalContinuation.Limit);
-        if (!firstEmpty.Continue || secondEmpty.State != ChatGoalStates.Paused || secondEmpty.Reason != "no_activity"
+        var limited = GoalContinuation.Decide("partial", true, 0, 7, continuationLimit: 7);
+        var blocked = GoalContinuation.Decide("need access\n[GOAL_BLOCKED]", true, 0, 0);
+        var completed = GoalContinuation.Decide("done\n[GOAL_COMPLETE]", false, 1, 700);
+        if (!firstEmpty.Continue || secondEmpty.State != ChatGoalStates.Paused || secondEmpty.Reason != "no_progress"
             || !working.Continue || working.EmptyRuns != 0 || limited.State != ChatGoalStates.BudgetLimited
-            || limited.Reason != "limit" || blocked.State != ChatGoalStates.Paused || blocked.Reason != "blocked"
+            || limited.Reason != "limit" || blocked.State != ChatGoalStates.Blocked || blocked.Reason != "blocked"
             || completed.State != ChatGoalStates.Complete || completed.Continue)
             throw new Exception("Goal continuation did not stop on inactivity, blockers, completion or its automatic limit.");
+        for (var run = 0; run < 1000; run++)
+            if (!GoalContinuation.Decide("new evidence", true, 0, run, continuationLimit: 0).Continue)
+                throw new Exception("Zero continuation ceiling still stopped a progressing goal.");
+        foreach (var literal in new[] { "quoted [GOAL_COMPLETE]", "> [GOAL_COMPLETE]", "    [GOAL_COMPLETE]",
+                     "```text\n[GOAL_COMPLETE]", "~~~\n[GOAL_COMPLETE]", "[GOAL_COMPLETE]\nnot done" })
+            if (GoalContinuation.ParseFinalMarker(literal).Marker is not null)
+                throw new Exception("Literal marker completed a goal: " + literal);
+        if (GoalContinuation.ParseFinalMarker("```\n[GOAL_COMPLETE]\n```\n[GOAL_COMPLETE]").Text != "```\n[GOAL_COMPLETE]\n```"
+            || GoalContinuation.Decide("[GOAL_COMPLETE]", true, 0, 0, completionAllowed: false).State == ChatGoalStates.Complete)
+            throw new Exception("Completion stripped prose or ignored failed verification.");
+        var legacyGoal = JsonSerializer.Deserialize<Conversation>("""{"Goal":"legacy","GoalState":"paused","GoalStopReason":"limit","GoalContinuationCount":3}""")!;
+        var legacyPolicy = GoalPolicy.For(legacyGoal);
+        if (!legacyPolicy.CanContinue(legacyGoal) || legacyGoal.GoalContinuationCount != 3
+            || legacyGoal.GoalReportedTokens != 0 || legacyGoal.GoalState != ChatGoalStates.Paused)
+            throw new Exception("Legacy goals lost their state or inherited the retired three-run ceiling.");
         var goalSession = Conversation.Create("orcarouter");
         goalSession.GoalEmptyRunCount = secondEmpty.EmptyRuns;
         goalSession.GoalStopReason = secondEmpty.Reason;
+        goalSession.GoalState = ChatGoalStates.Waiting;
+        goalSession.GoalWakeAt = DateTimeOffset.UtcNow.AddMinutes(2);
+        goalSession.GoalContinuationLimit = 0;
+        goalSession.GoalTokenBudget = 200;
+        goalSession.GoalReportedTokens = 90;
+        goalSession.GoalEstimatedTokens = 10;
+        if (!GoalProgress.Observe(goalSession, ToolNames.FsRead, "{\"path\":\"a\",\"limit\":2}", "evidence", false)
+            || GoalProgress.Observe(goalSession, ToolNames.FsRead, "{\"limit\":2,\"path\":\"a\"}", "evidence", false)
+            || GoalProgress.Observe(goalSession, ToolNames.FsRead, "{\"path\":\"a\",\"limit\":3}", "evidence", false)
+            || GoalProgress.Observe(goalSession, ToolNames.RunCommand, "{}", "shell: /bin/sh · exit: 1\nfailed", false))
+            throw new Exception("A duplicate read or failed command counted as progress.");
+        var policy = GoalPolicy.For(goalSession);
+        if (!policy.CanRequest(goalSession, 100) || policy.CanRequest(goalSession, 101))
+            throw new Exception("Goal request estimate escaped its remaining budget.");
         var goalStore = new ConversationStore(root);
         goalStore.Save(goalSession);
         var restoredGoal = goalStore.Load(goalSession.Id);
-        if (restoredGoal?.GoalEmptyRunCount != 2 || restoredGoal.GoalStopReason != "no_activity")
+        goalSession.GoalEmptyRunCount = 2;
+        goalStore.Save(goalSession);
+        restoredGoal = goalStore.Load(goalSession.Id);
+        if (restoredGoal?.GoalState != ChatGoalStates.Waiting || restoredGoal.GoalWakeAt != goalSession.GoalWakeAt
+            || restoredGoal.GoalReportedTokens != 90 || restoredGoal.GoalEstimatedTokens != 10
+            || restoredGoal.GoalProgressFingerprints.Count != 4)
+            throw new Exception("Goal checkpoint lost its cooldown, evidence or spend.");
+        if (restoredGoal?.GoalEmptyRunCount != 2 || restoredGoal.GoalStopReason != "no_progress")
             throw new Exception("Goal stop reason and inactivity count did not round-trip.");
         goalStore.Delete(goalSession.Id);
         Console.WriteLine("PASS: goal continuation bounds inactive runs and persists its stop reason.");
