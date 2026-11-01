@@ -386,10 +386,10 @@ public partial class ChatSidebar : UserControl
             foreach (var item in items) menu.Items.Add(item);
             var menuButton = new Button
             {
-                Content = "⋯",
-                Width = 28,
-                Height = 22,
-                FontSize = 16,
+                Content = HubActionIcon.More(),
+                Width = 24,
+                Height = 24,
+                Classes = { "sidebar-action" },
             };
             menuButton.Classes.Add("group-menu");
             ToolTip.SetTip(menuButton, HubStrings.Get(bucket.WorkspaceRoot is { Length: > 0 }
@@ -427,8 +427,9 @@ public partial class ChatSidebar : UserControl
                     Height = 12,
                     Stretch = Stretch.Uniform,
                 },
-                Width = 28,
-                Height = 22,
+                Width = 24,
+                Height = 24,
+                Classes = { "sidebar-action" },
                 Tag = bucket.Key,
             };
             // Its own class, and the assertions reach the button through it: group-menu is read as "this group's
@@ -684,12 +685,10 @@ public partial class ChatSidebar : UserControl
         item.Click += (_, _) => _chat.OpenConversation(summary.Id);
         var menuButton = new Button
         {
-            Content = "⋯",
-            Width = 34,
+            Content = HubActionIcon.More(),
+            Width = HubMetrics.ControlHeight,
             Height = HubMetrics.ControlHeight,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            FontSize = 18,
+            Classes = { "sidebar-action" },
         };
         menuButton.Classes.Add("session-menu");
         ToolTip.SetTip(menuButton, HubStrings.Get("ConversationActions"));
