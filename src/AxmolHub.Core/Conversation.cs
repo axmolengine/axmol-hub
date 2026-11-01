@@ -211,6 +211,8 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public string? ToolName { get; init; }
     public string? ToolCallId { get; init; }
     public string? ToolArguments { get; init; }
+    /// <summary>Execution failure, denied approval or an explicit refusal in Hub's shared result vocabulary.
+    /// Older records may lack the flag for textual refusals.</summary>
     public bool ToolFailed { get; init; }
     public string? AttachedContext { get; init; }
 

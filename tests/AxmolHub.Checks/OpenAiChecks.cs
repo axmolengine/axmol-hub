@@ -835,10 +835,17 @@ internal static class OpenAiChecks
                     (item.TryGetProperty("type", out var type) ? type.GetString() : item.GetProperty("role").GetString())
                     + (item.TryGetProperty("call_id", out var id) ? ":" + id.GetString() : ""))));
                 valid &= round == 1 ? !hasChain : keepsChain ? hasChain && chain.GetString() == $"resp{round - 1}" : !hasChain;
+                if (!keepsChain && !plan)
+                    valid &= items.All(item => !item.TryGetProperty("id", out _)
+                        && !item.TryGetProperty("encrypted_content", out _)
+                        && (!item.TryGetProperty("type", out var type) || type.GetString() != "reasoning"));
                 if (keepsChain || round == 1) continue;
                 var calls = items.Where(item => item.TryGetProperty("type", out var type) && type.GetString() == "function_call").ToArray();
                 var outputs = items.Where(item => item.TryGetProperty("type", out var type) && type.GetString() == "function_call_output").ToArray();
-                valid &= calls.Length == round - 1 && outputs.Length == round - 1
+                valid &= (plan || items.Any(item => item.TryGetProperty("role", out var role) && role.GetString() == "assistant"
+                    && item.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String
+                    && content.GetString()!.Contains("Need to read the file.", StringComparison.Ordinal)))
+                    && calls.Length == round - 1 && outputs.Length == round - 1
                     && items.Any(item => item.TryGetProperty("role", out var role) && role.GetString() == "user")
                     && calls.Select(item => item.GetProperty("call_id").GetString()).SequenceEqual(
                         Enumerable.Range(1, round - 1).Select(i => $"call{i}"))
@@ -907,7 +914,8 @@ internal static class OpenAiChecks
             : JsonSerializer.SerializeToElement(new { id = $"msg{round}", type = "message", role = "assistant", status = "completed",
                 content = new[] { new { type = "output_text", text = "done", annotations = Array.Empty<object>() } } });
         var reasoning = JsonSerializer.SerializeToElement(new { id = $"rs{round}", type = "reasoning",
-            summary = Array.Empty<object>(), encrypted_content = "fixture-encrypted-reasoning" });
+            summary = round == 1 ? new[] { new { type = "summary_text", text = "Need to read the file." } } : [],
+            encrypted_content = "fixture-encrypted-reasoning" });
         object Response(string status, object[] output) => new { id = $"resp{round}", @object = "response", created_at = 1, model = "fixture-model", status, output };
         var events = new List<object>
         {
@@ -916,6 +924,18 @@ internal static class OpenAiChecks
             new { type = "response.output_item.done", output_index = 0, item = reasoning },
             new { type = "response.output_item.added", output_index = 1, item },
         };
+        if (round == 1)
+        {
+            // The SDK accumulates summaries from their deltas, not from the completed item's snapshot alone.
+            events.InsertRange(2, [
+                new { type = "response.reasoning_summary_part.added", item_id = $"rs{round}", output_index = 0,
+                    summary_index = 0, part = new { type = "summary_text", text = "" } },
+                new { type = "response.reasoning_summary_text.delta", item_id = $"rs{round}", output_index = 0,
+                    summary_index = 0, delta = "Need to read the file." },
+                new { type = "response.reasoning_summary_text.done", item_id = $"rs{round}", output_index = 0,
+                    summary_index = 0, text = "Need to read the file." },
+            ]);
+        }
         if (tool)
         {
             events.Add(new { type = "response.function_call_arguments.delta", item_id = $"fc{round}", output_index = 1, delta = "{}" });

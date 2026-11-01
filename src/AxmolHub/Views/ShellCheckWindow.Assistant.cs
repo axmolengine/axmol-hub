@@ -1701,18 +1701,40 @@ internal sealed class ShellAssistantChecks
         };
         shell.Chat.ResumeGoal(boundedGoal.Id);
         await panel.WaitForRunToFinishForCheck();
+        // Also reach the request-admission guard inside one tool loop: it must not pretend to be tool spin.
+        var guardedGoal = PausedGoal("失败调用没有新进展");
+        var guardedClient = new ApprovalChatClient
+        {
+            CallsRemaining = 10, ToolName = "fs_read",
+            Arguments = new() { ["path"] = "missing-goal-progress-fixture.txt" },
+            ArgumentsByCall = request => new() { ["path"] = $"missing-goal-progress-fixture-{request}.txt" },
+        };
+        shell.Chat.ClientOverride = (_, _) => guardedClient;
+        shell.Chat.ResumeGoal(guardedGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var guardedNotice = panel.LastNoticeTextForCheck;
         Check(goalAttempts == 3 && boundedGoal.GoalState == ChatGoalStates.Paused
-              && boundedGoal.GoalStopReason == "no_progress" && boundedGoal.GoalContinuationCount == 2,
+              && boundedGoal.GoalStopReason == "no_progress" && boundedGoal.GoalContinuationCount == 2
+              && guardedClient.Requests == 3 && guardedGoal.GoalState == ChatGoalStates.Paused
+              && guardedGoal.GoalStopReason == "no_progress"
+              && guardedNotice == HubStrings.Get("ChatGoalNoProgress")
+              && guardedGoal.Messages.Where(turn => turn.Role == ChatRoles.Tool).All(turn => turn.ToolFailed),
             "续跑上限 0 不关闭无进展保护：无证据的答复在三次请求后暂停，只有后两次计为续跑（实际 "
-            + goalAttempts + " / " + boundedGoal.GoalState + " / " + boundedGoal.GoalContinuationCount + "）");
+            + goalAttempts + " / " + boundedGoal.GoalState + " / " + boundedGoal.GoalContinuationCount
+            + "; admission=" + guardedClient.Requests + " / " + guardedGoal.GoalState + " / "
+            + guardedGoal.GoalStopReason + " / " + guardedNotice + " / failures="
+            + string.Join(" | ", guardedGoal.Messages.Where(turn => turn.Role == ChatRoles.Tool)
+                .Select(turn => turn.ToolFailed + ":" + turn.Text)) + "）");
         shell.Chat.DeleteConversation(boundedGoal.Id);
+        shell.Chat.DeleteConversation(guardedGoal.Id);
 
         var budgetedGoal = PausedGoal("在请求前检查预算");
         budgetedGoal.GoalTokenBudget = 1;
         var budgetClients = new List<ScriptedChatClient>();
         shell.Chat.ClientOverride = (_, _) =>
         {
-            var client = new ScriptedChatClient(["Done.\n[GOAL_COMPLETE]"], finish: "stop");
+            // The reported production loop: optional commit metadata followed an otherwise valid goal marker.
+            var client = new ScriptedChatClient(["Done.\n[GOAL_COMPLETE]\nCommit summary: fix: finish the task"], finish: "stop");
             budgetClients.Add(client);
             return client;
         };
@@ -1729,7 +1751,11 @@ internal sealed class ShellAssistantChecks
         goalAttempts = budgetClients.Count(client => client.LastMessages is not null);
         Check(refusedBudget && budgetAddedWhilePaused && goalAttempts == 1 && budgetedGoal.GoalState == ChatGoalStates.Complete
               && !budgetedGoal.GoalCompletionVerified && budgetedGoal.GoalEstimatedTokens > 0
-              && budgetedGoal.GoalReportedTokens == 0,
+              && budgetedGoal.GoalReportedTokens == 0
+              && budgetedGoal.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)?.Text
+                  == "Done.\n\nCommit summary: fix: finish the task"
+              && budgetedGoal.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant)?.CommitSummary
+                  == "fix: finish the task",
             "预算不足时模型零请求；增加预算后恢复为模型报告完成（未核验），没有 usage 的端点只保留估算（实际 "
             + goalAttempts + " / " + budgetedGoal.GoalState + " / " + budgetedGoal.GoalEstimatedTokens + "）");
         shell.Chat.DeleteConversation(budgetedGoal.Id);
@@ -1791,11 +1817,66 @@ internal sealed class ShellAssistantChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         var limitedCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
-        Check(limitedCopy?.GoalState == ChatGoalStates.Waiting && limitedCopy.GoalCooldownCount == 1
-              && limitedCopy.GoalWakeAt > DateTimeOffset.UtcNow,
-            "流内 429 没有 HTTP 状态码，也按提供方冷却停车而不是把目标暂停（实际 "
-            + limitedCopy?.GoalState + " / " + limitedCopy?.GoalStopReason + "）");
         shell.Chat.PauseGoal(streamLimited.Id);
+        streamLimited.GoalCooldownCount = GoalPolicy.For(streamLimited, shell.Chat.PreferencesProvider?.Invoke()).CooldownLimit;
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var resumedLimit = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        var resumeRestarted = resumedLimit?.GoalState == ChatGoalStates.Waiting
+                              && resumedLimit.GoalCooldownCount == 1;
+        // Success before a later failure in the SAME tool loop must reset the earlier waiting streak.
+        shell.Chat.PauseGoal(streamLimited.Id);
+        var recoveredToolClient = new ApprovalChatClient
+        {
+            CallsRemaining = 1, ToolName = "fs_read",
+            Arguments = new() { ["path"] = "missing-retry-streak-fixture.txt" },
+            FollowUpException = new InvalidOperationException("stream error: exceeded token rate limit"),
+        };
+        shell.Chat.ClientOverride = (_, _) =>
+        {
+            streamLimited.GoalCooldownCount = 2;
+            return recoveredToolClient;
+        };
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var recoveredCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        shell.Chat.PauseGoal(streamLimited.Id);
+        shell.Chat.ClientOverride = (_, _) =>
+        {
+            streamLimited.GoalCooldownCount = 2;
+            return new ScriptedChatClient([], exception: recoveredToolClient.FollowUpException);
+        };
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var exhaustedCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        var exhaustedNotice = panel.LastNoticeTextForCheck;
+        // The relay's HTTP-400 text is inside a successful SSE transport: preserve ErrorContent's origin.
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], reasoning:
+            [new Microsoft.Extensions.AI.ErrorContent("HTTP 400: The requested item was created under a different OpenAI resource.")
+                { ErrorCode = "invalid_request_error" }]);
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var resourceCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        shell.Chat.PauseGoal(streamLimited.Id);
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], reasoning:
+            [new Microsoft.Extensions.AI.ErrorContent("Account unavailable.") { ErrorCode = "insufficient_quota" }]);
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var quotaCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        Check(limitedCopy?.GoalState == ChatGoalStates.Waiting && limitedCopy.GoalCooldownCount == 1
+              && limitedCopy.GoalWakeAt is not null && resumeRestarted
+              && recoveredToolClient.Requests == 2 && recoveredCopy?.GoalState == ChatGoalStates.Waiting
+              && recoveredCopy.GoalCooldownCount == 1
+              && exhaustedCopy?.GoalState == ChatGoalStates.Paused && exhaustedCopy.GoalWakeAt is null
+              && exhaustedCopy.GoalStopReason == "provider_retry_exhausted"
+              && exhaustedNotice?.StartsWith(HubStrings.Get("ChatGoalRetryExhausted"), StringComparison.Ordinal) == true
+              && resourceCopy?.GoalState == ChatGoalStates.Waiting && resourceCopy.GoalCooldownCount == 1
+              && resourceCopy.GoalWakeAt is not null
+              && quotaCopy?.GoalState == ChatGoalStates.Blocked && quotaCopy.GoalCooldownCount == 0,
+            "流内失败有界退避：成功请求重置，资源错误等待，耗尽明确暂停，真实额度不足不重试（实际 "
+            + limitedCopy?.GoalState + " / recovery=" + recoveredCopy?.GoalCooldownCount
+            + " / exhausted=" + exhaustedCopy?.GoalState + "）");
+        shell.Chat.DeleteConversation(streamLimited.Id);
         if (parkedGoal is not null)
         {
             parkedGoal.GoalWakeAt = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);

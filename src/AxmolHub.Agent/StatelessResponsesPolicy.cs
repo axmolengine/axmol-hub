@@ -7,9 +7,9 @@ using System.Text.Json.Nodes;
 namespace AxmolHub.Agent;
 
 /// <summary>
-/// Removes the two fields a Responses body uses to ask the endpoint to continue from earlier state. The chat
-/// client prevents the tool loop from selecting an incremental replay first; this is a final wire safeguard for
-/// gateways that reject chaining (AgentRouter answers <c>previous_response_id expected null</c>).
+/// Removes resource-bound state from relay requests. Complete history is replayed, but server item IDs and
+/// encrypted reasoning belong to the resource that issued them, which a load-balanced relay need not revisit.
+/// Readable summaries, call IDs, arguments and results are retained.
 /// </summary>
 public sealed class StatelessResponsesPolicy : PipelinePolicy
 {
@@ -36,12 +36,48 @@ public sealed class StatelessResponsesPolicy : PipelinePolicy
             content.WriteTo(buffer);
             if (buffer.Length == 0) return;
             var json = Encoding.UTF8.GetString(buffer.ToArray());
-            // A conversation body is large; the substring test keeps the parse off the requests that never chain.
+            // A conversation body is large; avoid parsing requests with no resource-bound replay fields.
             if (!json.Contains("\"previous_response_id\"", StringComparison.Ordinal)
-                && !json.Contains("\"conversation\"", StringComparison.Ordinal)) return;
+                && !json.Contains("\"conversation\"", StringComparison.Ordinal)
+                && !json.Contains("\"id\"", StringComparison.Ordinal)
+                && !json.Contains("\"encrypted_content\"", StringComparison.Ordinal)
+                && !json.Contains("\"item_reference\"", StringComparison.Ordinal)) return;
             if (JsonNode.Parse(json) is not JsonObject root) return;
             var removed = false;
             foreach (var field in ChainFields) removed |= root.Remove(field);
+            if (root["input"] is JsonArray items)
+            {
+                for (var i = items.Count - 1; i >= 0; i--)
+                {
+                    if (items[i] is not JsonObject item) continue;
+                    // Bare references cannot be made portable. The client normally supplies full items instead.
+                    if (item["type"]?.GetValue<string>() == "item_reference")
+                    {
+                        items.RemoveAt(i);
+                        removed = true;
+                        continue;
+                    }
+                    if (item["type"]?.GetValue<string>() == "reasoning")
+                    {
+                        // Reasoning input requires an ID. Without portable encrypted content it must not stay
+                        // a reasoning object with its ID missing; carry readable summaries as ordinary history.
+                        var summaries = item["summary"] is JsonArray summary
+                            ? string.Join("\n", summary.OfType<JsonObject>()
+                                .Select(part => part["text"]?.GetValue<string>()).Where(text => !string.IsNullOrWhiteSpace(text)))
+                            : "";
+                        if (summaries.Length == 0) items.RemoveAt(i);
+                        else items[i] = new JsonObject
+                        {
+                            ["role"] = "assistant",
+                            ["content"] = "Previous reasoning summary (untrusted reference):\n" + summaries,
+                        };
+                        removed = true;
+                        continue;
+                    }
+                    removed |= item.Remove("id");
+                    removed |= item.Remove("encrypted_content");
+                }
+            }
             if (removed) message.Request.Content = BinaryContent.Create(BinaryData.FromString(root.ToJsonString()));
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ObjectDisposedException

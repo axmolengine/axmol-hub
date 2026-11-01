@@ -344,16 +344,14 @@ internal static class AiContextChecks
             throw new Exception("The point past which no tier can help is not the 97% the ring will name.");
         if (ContextCompaction.Ratio(1_000, 0) != 1d || ContextCompaction.Ratio(0, 0) != 1d)
             throw new Exception("A conversation with no room at all read as empty instead of full.");
-        // The window is what fits, not what a round is worth re-sending. A model that declares half a million
-        // tokens is still billed per round, so the decision room is capped — measured once, a 468 750-token room
-        // let one session reach 416 000 tokens a round and spend an hour's allowance in an hour.
-        if (ContextCompaction.DecisionRoom(500_000) != ContextCompaction.CostCeilingTokens
+        // Display and compaction share the actual conversation room; the retired cost cap must not return.
+        if (ContextCompaction.DecisionRoom(500_000) != 500_000
             || ContextCompaction.DecisionRoom(40_000) != 40_000
             || ContextCompaction.DecisionRoom(0) != 0)
-            throw new Exception("The room a compaction decision uses is no longer capped by what a round may cost, or a small window was capped too.");
-        if (!ContextCompaction.ShouldCompact(90_000, ContextCompaction.DecisionRoom(500_000))
-            || ContextCompaction.ShouldCompact(80_000, ContextCompaction.DecisionRoom(500_000)))
-            throw new Exception("A 90 000-token transcript still counts as affordable because the model's window is huge.");
+            throw new Exception("Compaction decisions no longer use the actual conversation room.");
+        if (!ContextCompaction.ShouldCompact(425_000, ContextCompaction.DecisionRoom(500_000))
+            || ContextCompaction.ShouldCompact(424_999, ContextCompaction.DecisionRoom(500_000)))
+            throw new Exception("Compaction no longer starts at 85% on a large window.");
         // Over target with nothing to take back is not a failed compaction. Counting it as one is what banned a
         // session for good: three sends of a 100 000-token first message filled the allowance, and the block
         // outlived the transcript it was decided on.
@@ -1244,16 +1242,38 @@ internal static class AiContextChecks
         // A refused approval and a failed tool did not move the world either — they must not reset it.
         var denied = SpinHistory(("c1", "run_command", """{"command":"rm x"}""", ToolApprovalResults.Denied), ("c2", "run_command", """{"command":"rm x"}""", ToolApprovalResults.Denied));
         denied.Add(SpinCall("c3", "run_command", """{"command":"rm x"}"""));
+        if (ToolSpinGuard.RefusalFor("run_command", """{"command":"rm x"}""", denied)is not null)
+            throw new Exception("A third failure was denied the separate retry allowance.");
+        denied.Add(SpinResult("c3", ToolApprovalResults.Denied));
         if (ToolSpinGuard.RefusalFor("run_command", """{"command":"rm x"}""", denied)is null)
-            throw new Exception("A third denied attempt was allowed; a refusal is not a state change.");
+            throw new Exception("A fourth denied attempt escaped the failure retry bound.");
         // The sentence a continuation writes over a call that never ran belongs in the same list. Left out, a
         // never-executed write reads as "the world moved", so the window resets and the loop this guard exists to stop
         // becomes legal again — the exemption has to be earned by something that actually ran, not by Hub's own note
         // that nothing did.
         var unanswered = SpinHistory(("c1", "run_command", """{"command":"rm x"}""", ToolApprovalResults.NotAnswered), ("c2", "run_command", """{"command":"rm x"}""", ToolApprovalResults.NotAnswered));
         unanswered.Add(SpinCall("c3", "run_command", """{"command":"rm x"}"""));
+        if (ToolSpinGuard.RefusalFor("run_command", """{"command":"rm x"}""", unanswered)is not null)
+            throw new Exception("A never-answered call was counted as successful evidence.");
+        unanswered.Add(SpinResult("c3", ToolApprovalResults.NotAnswered));
         if (ToolSpinGuard.RefusalFor("run_command", """{"command":"rm x"}""", unanswered)is null)
-            throw new Exception("A call closed as never-answered reset the window; nothing ran, so nothing moved.");
+            throw new Exception("Repeated never-answered calls escaped the failure retry bound.");
+        // Structured execution failure wins even when its visible text looks like successful output.
+        if (ToolSpinGuard.RefusalFor("read_file", """{"path":"a.cpp"}""", probeRun,
+                failedCallIds: new HashSet<string> { "c1", "c2" }) is not null)
+            throw new Exception("Structured failures were counted as successful reads.");
+        var steered = probeRun.ToList();
+        steered.Add(new ChatMessage(ChatRole.User, "Try again now."));
+        if (ToolSpinGuard.RefusalFor("read_file", """{"path":"a.cpp"}""", steered) is not null)
+            throw new Exception("A fresh user instruction inherited repetitions from an older turn.");
+        var pictured = ChatPipeline.ToChatMessages([
+            ChatTurn.FunctionCall("p1", "capture_screen", "{}"),
+            ChatTurn.FunctionResult("p1", "captured", images: [new ChatImage("one.png", "image/png", 10)]),
+            ChatTurn.FunctionCall("p2", "capture_screen", "{}"),
+            ChatTurn.FunctionResult("p2", "captured", images: [new ChatImage("two.png", "image/png", 10)]),
+        ]);
+        if (ToolSpinGuard.RefusalFor("capture_screen", "{}", pictured) is null)
+            throw new Exception("Synthetic user-role frame carriers reset the repetition guard.");
         // An elided result is Hub asking for the re-call — the placeholder says so in its own words.
         var elidedHistory = SpinHistory(("c1", "read_file", """{"path":"a.cpp"}""", "old content"), ("c2", "read_file", """{"path":"a.cpp"}""", $"[elided: 2000 characters of tool output — call the tool again if you need this]"));
         elidedHistory.Add(SpinCall("c3", "read_file", """{"path":"a.cpp"}"""));
@@ -1321,6 +1341,21 @@ internal static class AiContextChecks
         if (!spinResults.Any(text => text.Contains(ToolSpinGuard.RefusalMarker, StringComparison.Ordinal)) || !spinResults.Any(text => text.StartsWith(ToolSpinGuard.TerminationMarker, StringComparison.Ordinal)))
             throw new Exception("The spin run produced neither the refusal nor the termination sentence.");
         Console.WriteLine("PASS: a spinning model gets two executions, one refusal, then the turn — four requests, " + "no more.");
+        // The actual capture failure shape must be recorded as failed and remain bounded end to end.
+        var failingSpinner = new InsistentToolClient { SameCallEveryRound = true };
+        var failedExecutions = 0;
+        var failureFlags = new List<bool>();
+        var failureTool = AIFunctionFactory.Create((Func<string>)(() =>
+        {
+            failedExecutions++;
+            return "Refused: the authorized application window has closed. Choose another target.";
+        }), new AIFunctionFactoryOptions { Name = "get_projects", Description = "probe" });
+        await foreach (var _ in new ChatPipeline(failingSpinner).SendAsync(probeProvider,
+            [ChatTurn.User("retry the closed window")], tools: [failureTool],
+            onToolCompleted: (_, _, failed) => { failureFlags.Add(failed); return Task.CompletedTask; })) { }
+        if (failedExecutions != ToolSpinGuard.FailureLimit || failingSpinner.CallCount != 5
+            || failureFlags.Count != 5 || failureFlags.Any(failed => !failed))
+            throw new Exception("Explicit tool refusals lost their failure fact or retried without a bound.");
         return;
     }
 }

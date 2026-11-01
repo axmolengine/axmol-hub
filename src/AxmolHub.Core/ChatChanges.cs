@@ -1,9 +1,8 @@
 namespace AxmolHub.Core;
 
 /// <summary>What one <c>file_write</c> call came to. Read off the result's own sentence rather than
-/// <see cref="ChatTurn.ToolFailed"/>, which only means an exception or a denied approval: a write that the tool
-/// refused answers <i>as text</i> with <c>failed = false</c>, so the failure flag would call every refusal a
-/// success.</summary>
+/// <see cref="ChatTurn.ToolFailed"/>: older sessions did not flag textual refusals, and a failure bit alone
+/// cannot distinguish a created file from an edited one.</summary>
 public enum ChangeVerdict
 {
     /// <summary>The file did not exist and now does.</summary>

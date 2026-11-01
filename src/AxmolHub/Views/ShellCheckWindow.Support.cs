@@ -176,6 +176,8 @@ internal static class ShellCheckSupport
         public Microsoft.Extensions.AI.ChatOptions? LastOptions { get; private set; }
         public int CallsRemaining { get; set; } = 1;
         public int Requests { get; private set; }
+        /// <summary>Optional provider failure after the first tool-call response, for retry-streak checks.</summary>
+        public Exception? FollowUpException { get; set; }
         /// <summary>What the response says before it asks, emitted as text ahead of the call — the shape a model
         /// writes an answer in: the prose and the call arrive as one assistant message and Hub files both on one
         /// turn. Said once, on the response that carries the call.</summary>
@@ -231,6 +233,7 @@ internal static class ShellCheckSupport
         {
             Requests++;
             LastOptions = options;
+            if (Requests >= 2 && FollowUpException is { } failure) throw failure;
             if (Requests >= 2)
             {
                 FollowUpReached?.TrySetResult(true);

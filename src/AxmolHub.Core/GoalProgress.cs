@@ -30,10 +30,16 @@ public static class GoalProgress
            || result.StartsWith("Tool failed:", StringComparison.Ordinal)
            || result.StartsWith("Refused", StringComparison.Ordinal)
            || result.StartsWith("No change", StringComparison.Ordinal)
+           || result.StartsWith("This session has no workspace directory", StringComparison.Ordinal)
            || result.StartsWith("This exact call", StringComparison.Ordinal)
            || result.StartsWith("This turn is stopping:", StringComparison.Ordinal)
            || result is ToolApprovalResults.Denied or ToolApprovalResults.Superseded
                or ToolApprovalResults.NotAnswered or ToolApprovalResults.Unavailable;
+
+    /// <summary>Command exit status is part of the execution outcome even when the tool returned normally.</summary>
+    public static bool Failed(string toolName, string result, bool failed = false)
+        => Failed(result, failed) || toolName == ToolNames.RunCommand
+           && Regex.IsMatch(result, @"exit: (?!0(?:\D|$))-?\d+");
 
     public static bool StateChanged(string toolName, string result)
     {
@@ -55,8 +61,7 @@ public static class GoalProgress
     public static bool Observe(Conversation conversation, string tool, string arguments, string result, bool failed)
     {
         var normalized = Regex.Replace(result, @"(?m)^shell:.*$|^\(the whole output.*$|^已用时间.*$|^Time Elapsed.*$|Change (?:ID|batch): \S+", "");
-        var commandFailed = tool == ToolNames.RunCommand && Regex.IsMatch(result, @"exit: (?!0(?:\D|$))-?\d+");
-        var error = Failed(result, failed) || commandFailed;
+        var error = Failed(tool, result, failed);
         // Changing only the arguments is activity, not new evidence. Successful writes are different:
         // their arguments describe the state change even when the result only names the edited file.
         var evidence = normalized.Trim();

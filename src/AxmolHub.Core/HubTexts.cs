@@ -911,6 +911,10 @@ public static class HubTexts
         // false — the picker is full — and would hide the one fact the person can act on: which name went missing,
         // and that the chip is where to put a new one. {0} = the model name the session carries.
         ["ChatSessionModelGoneFormat"] = ("这条会话指定的模型 {0} 现在不在这个提供商可用的模型里。请在模型胶囊里选一个再问。", "The model this session names, {0}, is not among the provider's usable models. Pick another in the model chip and ask again."),
+        ["ChatGoalRetryExhausted"] = ("提供方连续失败，退避重试次数已用尽，目标已暂停。",
+            "The provider kept failing; backoff retries are exhausted and the goal is paused."),
+        ["ChatGoalNoProgress"] = ("目标连续多次请求没有取得新进展，已暂停自动续跑。请补充线索或调整目标后继续。",
+            "The goal made no new progress across consecutive requests; automatic continuation is paused. Add context or revise the goal to continue."),
         // Said when the model asked for the same call twice after being refused, and the turn was ended rather
         // than paid for a third time. Not a failure and not silence: everything it found is above this line.
         ["ChatToolSpinStopped"] = ("模型反复请求同一个调用，本轮到此为止——上面已有的结果都还在。换一种问法或直接给出指示即可继续。",

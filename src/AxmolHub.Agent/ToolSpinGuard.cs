@@ -11,13 +11,14 @@ namespace AxmolHub.Agent;
 /// success) and the context budget. A model that has decided the answer is "read the same file again" trips
 /// none of those: every call succeeds, the window compacts, the loop runs forever. This guard catches that one
 /// shape by walking the transcript the loop itself accumulated: the same tool with the same arguments, run
-/// <see cref="RepeatLimit"/> times inside a sliding window with nothing state-changing in between, is refused
-/// as a result string the model reads instead of an exception that kills the turn.</para>
+/// <see cref="RepeatLimit"/> times successfully inside a sliding window with nothing state-changing in between,
+/// is refused as a result string the model reads instead of an exception that kills the turn. Failed calls
+/// have a separate <see cref="FailureLimit"/> allowance: a missing window is not a successful capture.</para>
 ///
 /// <para>Two exemptions are what keep the refusal off correct work, and both are read from the transcript
 /// rather than from counters, so a restart, a steer or a replayed session sees the same history:</para>
 /// <list type="bullet">
-/// <item>A confirmed write, a zero-exit command, or a granted path ends the walk. Re-reading a file you just edited is
+/// <item>A confirmed write or a granted path ends the walk. Re-reading a file you just edited is
 /// verification, not spinning.</item>
 /// <item>A result that <see cref="ToolLoopContextGuard.Elide"/> rewrote tells the model in so many words to
 /// call again if it still needs it — so a repeat after an elision is Hub asking for it, not a loop.</item>
@@ -32,6 +33,13 @@ public static class ToolSpinGuard
     /// <summary>Identical calls within the window that make the next one a spin. Three: one call, its verify,
     /// and one more is already more than a debugging loop needs.</summary>
     public const int RepeatLimit = 3;
+
+    /// <summary>Failed executions of one signature allowed before refusing another attempt.
+    /// A refusal still gives the model a chance to choose another tool instead of ending the turn immediately.</summary>
+    public const int FailureLimit = 3;
+
+    // A captured-frame carrier uses the user role for transport, but is not a new user instruction.
+    internal const string CapturedFrameKey = "AxmolHub.CapturedFrame";
 
     /// <summary>How far back repetitions count. Beyond this the calls were part of working through the problem;
     /// inside it, with no state change between, they are the problem.</summary>
@@ -58,6 +66,8 @@ public static class ToolSpinGuard
     /// client's own accumulated list, which keeps original bytes — so elisions are reported through
     /// <paramref name="elidedCallIds"/> (see <see cref="ToolLoopContextGuard.ElidedCallIds"/>), and a result
     /// carrying the elide prefix directly is accepted as a second, list-independent spelling of the same fact.
+    /// <paramref name="failedCallIds"/> carries live and replayed execution failures; older textual refusals
+    /// use the shared result vocabulary rather than a second tool-specific list.
     ///
     /// <para>The walk runs backwards and stops after <see cref="WindowSize"/> paired results: only the newest
     /// window can refuse, so pairing and normalizing the whole transcript would price every check at the size
@@ -66,14 +76,18 @@ public static class ToolSpinGuard
     /// window of twelve calls normally costs one normalization, the wanted one.</para>
     /// </summary>
     public static string? RefusalFor(string toolName, string argumentsJson, IList<ChatMessage> history,
-        IReadOnlySet<string>? elidedCallIds = null)
+        IReadOnlySet<string>? elidedCallIds = null, IReadOnlySet<string>? failedCallIds = null)
     {
         var wantedArguments = NormalizeArguments(argumentsJson);
         var results = new Dictionary<string, string>(StringComparer.Ordinal);
         var identical = 0;
+        var failed = 0;
         var paired = 0;
         for (var messageIndex = history.Count - 1; messageIndex >= 0 && paired < WindowSize; messageIndex--)
         {
+            // A new user instruction authorizes a fresh attempt; earlier turns are not this invocation's loop.
+            if (history[messageIndex].Role == ChatRole.User
+                && history[messageIndex].AdditionalProperties?.ContainsKey(CapturedFrameKey) != true) break;
             var contents = history[messageIndex].Contents;
             for (var contentIndex = contents.Count - 1; contentIndex >= 0; contentIndex--)
             {
@@ -88,16 +102,26 @@ public static class ToolSpinGuard
                 if (content is not FunctionCallContent call || !results.Remove(call.CallId, out var text))
                     continue;
                 paired++;
+                var failure = Core.GoalProgress.Failed(call.Name, text, failedCallIds?.Contains(call.CallId) == true);
                 // The world moved: anything older than this is a different problem, not a repetition of this one.
-                if (Core.GoalProgress.StateChanged(call.Name, text))
+                if (!failure && Core.GoalProgress.StateChanged(call.Name, text))
                     return null;
                 if (text.StartsWith(ToolLoopContextGuard.ElidedResultPrefix, StringComparison.Ordinal)
                     || (elidedCallIds is { Count: > 0 } elided && elided.Contains(call.CallId))) continue;
                 if (!string.Equals(call.Name, toolName, StringComparison.Ordinal)) continue;
                 if (NormalizeArguments(JsonSerializer.Serialize(call.Arguments)) != wantedArguments) continue;
+                // Keep failure retries apart from successful repetitions. A closed capture target is not
+                // evidence the model can answer from, but retrying an unchanged target forever is not useful either.
+                if (failure)
+                {
+                    if (++failed < FailureLimit) continue;
+                    return $"This exact call ({toolName} with the same arguments) has already run and failed {failed} times. "
+                           + "Do not retry these unchanged arguments: choose another approach or explain what the user "
+                           + "needs to restore. No successful result is available for this call.";
+                }
                 if (++identical >= RepeatLimit - 1)
-                    return $"This exact call ({toolName} with the same arguments) has already run {identical + 1} times "
-                           + "in this turn and the results are in the conversation. Stop repeating it: answer from "
+                    return $"This exact call ({toolName} with the same arguments) has already run successfully {identical} times "
+                           + "and the results are in the conversation. Stop repeating it: answer from "
                            + "what you have already found, or do something different.";
             }
         }

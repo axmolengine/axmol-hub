@@ -239,6 +239,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // them runs, then delivered in the order the model asked for them. Rebuilt whenever a call turns up
             // that is not in it, which is the first call of the next response.
             var verdicts = new Dictionary<string, MemberVerdict>(StringComparer.Ordinal);
+            // Retain the execution outcome separately from model-visible text, for both live calls and replay.
+            var failedCallIds = history.Where(turn => turn.Role == ChatRoles.Tool && turn.ToolFailed
+                    && turn.ToolCallId is not null).Select(turn => turn.ToolCallId!)
+                .ToHashSet(StringComparer.Ordinal);
             // The same calls in the order the model asked, kept beside the verdicts because the delivery needs the
             // order: a turn ended mid-batch owes an answer to every call behind the one that ended it.
             var batch = new List<ToolCallInfo>();
@@ -325,6 +329,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                         // have written a call the transcript never finishes.
                         await AbandonBehindAsync(verdict.Call).ConfigureAwait(false);
                     }
+                    failedCallIds.Add(verdict.Call.CallId);
                     if (onToolCompleted is not null)
                         await onToolCompleted(verdict.Call, refusal, true).ConfigureAwait(false);
                     return refusal;
@@ -334,6 +339,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 {
                     // Delivered as this call's own answer, and the loop goes on: a refusal the model never hears
                     // about is a refusal it asks for again, and the calls behind this one were not refused.
+                    failedCallIds.Add(verdict.Call.CallId);
                     if (onToolCompleted is not null)
                         await onToolCompleted(verdict.Call, ToolApprovalResults.Denied, true).ConfigureAwait(false);
                     return ToolApprovalResults.Denied;
@@ -361,9 +367,12 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     // produced it — and an uncapped result can push the whole window out on its own.
                     // Capped against the model's whole window, not against the conversation budget: the schema
                     // cost of a mode must not quietly shrink every result that mode can ask for.
-                    var text = ToolResultCap.Apply(SerializeToolResult(raw), window.Tokens);
+                    var serialized = SerializeToolResult(raw);
+                    var failed = GoalProgress.Failed(info.Name, serialized);
+                    var text = ToolResultCap.Apply(serialized, window.Tokens);
+                    if (failed) failedCallIds.Add(info.CallId);
                     if (onToolCompleted is not null)
-                        await onToolCompleted(info, text, false).ConfigureAwait(false);
+                        await onToolCompleted(info, text, failed).ConfigureAwait(false);
                     return text;
                 }
                 catch (OperationCanceledException)
@@ -372,6 +381,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 }
                 catch (Exception ex)
                 {
+                    failedCallIds.Add(info.CallId);
                     if (onToolCompleted is not null)
                         await onToolCompleted(info, "Tool failed: " + ex.Message, true).ConfigureAwait(false);
                     throw;
@@ -417,7 +427,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 // standing between a long task and an unbounded paid loop — see ToolSpinGuard for the exemptions
                 // that keep it off correct work.
                 if (ToolSpinGuard.RefusalFor(info.Name, info.ArgumentsJson, context.Messages,
-                        guard?.ElidedCallIds) is { } spinRefusal)
+                        guard?.ElidedCallIds, failedCallIds) is { } spinRefusal)
                 {
                     var signature = info.Name + "\n" + ToolSpinGuard.NormalizeArguments(info.ArgumentsJson);
                     var refusals = spinRefusals.GetValueOrDefault(signature) + 1;
@@ -498,9 +508,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     // provider that reports a soft error after answering still owes its answer, and a failure
                     // notice is not worth losing text that is already in hand.
                     var failedSaid = failure.Message;
-                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(failedSaid)
+                    throw new ProviderResponseException(string.IsNullOrWhiteSpace(failedSaid)
                         ? "The provider failed the response without saying why."
-                        : failedSaid);
+                        : failedSaid, failure.ErrorCode);
                 }
                 else if (content is WebSearchToolCallContent searched)
                 {
@@ -716,7 +726,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                    + string.Join(", ", turn.Images.Select(image => $"{image.File} ({image.Bytes} bytes)")) + "]";
         if (unsent > 0) text += MissingPictures(unsent, turn.Images.Count);
         media.Insert(0, new TextContent(text));
-        return new ChatMessage(ChatRole.User, media);
+        return new ChatMessage(ChatRole.User, media)
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary { [ToolSpinGuard.CapturedFrameKey] = true },
+        };
     }
 
     /// <summary>Resolves each named attachment and appends the ones the caller could deliver. The count returned is

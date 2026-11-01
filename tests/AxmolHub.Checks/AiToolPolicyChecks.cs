@@ -245,7 +245,9 @@ internal static class AiToolPolicyChecks
         // The per-session override rides on the session file, and a file written before approval existed must
         // still load — with the pending count reading as zero rather than throwing.
         var policyStore = new ConversationStore(root);
-        var workspaceRoot = Path.Combine(root, "project");
+        // The simulated workspace must not be inside the protected data root the store owns.
+        var workspaceRoot = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(root))!, "tool-policy-workspace");
+        Directory.CreateDirectory(workspaceRoot);
         var policyConversation = Conversation.Create("orcarouter");
         policyConversation.Append(ChatTurn.User("写一个文件"));
         policyConversation.ApprovalMode = ToolApprovalModes.Auto;
@@ -262,7 +264,7 @@ internal static class AiToolPolicyChecks
         var pendingSummary = policyStore.List().First(summary => summary.Id == policyConversation.Id);
         if (pendingSummary.PendingApprovals != 1)
             throw new Exception($"The index did not report the pending approval (reported {pendingSummary.PendingApprovals}).");
-        File.WriteAllText(Path.Combine(root, "ai", "sessions", "legacy-no-approval.json"), """{"Id":"legacy-no-approval","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"assistant","Text":"","ToolCallId":"c1","ToolName":"get_projects"}]}""");
+        File.WriteAllText(Path.Combine(root, "ai", "sessions", "legacy-no-approval.json"), """{"Id":"legacy-no-approval","Title":"legacy","ProviderId":"orcarouter","Messages":[{"Role":"assistant","Text":"","ToolCallId":"c1","ToolName":"workspace_map"}]}""");
         if (policyStore.Load("legacy-no-approval")is not { ApprovalMode: null, WorkspaceRoot: null, AutoApprovedTools: { Count: 0 } } legacy)
             throw new Exception("A session file predating tool approval no longer loads.");
         if (legacy.Messages[0].ApprovalState is not null || legacy.Messages[0].ApprovalPreview is not null)
@@ -311,7 +313,7 @@ internal static class AiToolPolicyChecks
         var denyCompleted = 0;
         var denyResult = "";
         var denyFailed = false;
-        var denyClient = new ToolLoopChatClient();
+        var denyClient = new ToolLoopChatClient(callName: "project_list");
         var denyAnswer = new StringBuilder();
         await foreach (var chunk in new ChatPipeline(denyClient).SendAsync(gateProvider, [ChatTurn.User("write a file")], tools: [gatedFunction], gate: (info, _, _) =>
         {
@@ -331,7 +333,7 @@ internal static class AiToolPolicyChecks
             denyAnswer.Append(chunk);
         // The call is recorded before the gate is asked, which is what lets a pending call be marked after the fact
         // instead of needing a side table of its own.
-        if (string.Join(",", order) != "started:get_projects,gate:get_projects")
+        if (string.Join(",", order) != "started:project_list,gate:project_list")
             throw new Exception($"The pipeline asked the gate in the wrong order: {string.Join(",", order)}.");
         if (denyCompleted != 1 || denyFailed != true || denyResult != ToolApprovalResults.Denied)
             throw new Exception($"A refused call was not reported to the model as a failure: 「{denyResult}」 (failed={denyFailed}).");
@@ -365,7 +367,7 @@ internal static class AiToolPolicyChecks
         // there means "the response asked", and only the gate count beside it says whether anything acted on it. The
         // answer is a property of the shipped Microsoft.Extensions.AI assembly, so it is measured here rather than
         // assumed — the assertion allows both, and the printed line records which one this lock file gives.
-        var declaredClient = new ToolLoopChatClient();
+        var declaredClient = new ToolLoopChatClient(callName: "project_list");
         var declaredSeen = new List<string>();
         var declaredGated = 0;
         var declaredAnswer = new StringBuilder();
@@ -399,11 +401,16 @@ internal static class AiToolPolicyChecks
 
         if (reachedCaller != providerSaid)
             throw new Exception("An in-stream provider error did not reach the caller as its own sentence: " + $"「{reachedCaller ?? "nothing was thrown"}」");
+        if (!ProviderFailure.ProviderRefused(new ProviderResponseException(providerSaid))
+            || ProviderFailure.ProviderRefused(new InvalidOperationException(providerSaid))
+            || ProviderFailure.ProviderRefused(new ProviderResponseException("Account unavailable.", "insufficient_quota"))
+            || !ProviderFailure.AuthenticationFailed(new ProviderResponseException("Account unavailable.", "invalid_api_key")))
+            throw new Exception("Provider stream failures lost their origin/code or local failures were retried.");
         Console.WriteLine("PASS: an in-stream provider error reaches the caller as the provider's own sentence.");
         // Pending: the stream ends, nothing is written as the call's result, and the placeholder stays inside.
         using var parkCancellation = new CancellationTokenSource();
         var parkCompleted = 0;
-        var parkClient = new ToolLoopChatClient(honorCancellation: true);
+        var parkClient = new ToolLoopChatClient(callName: "project_list", honorCancellation: true);
         var parkAnswer = new StringBuilder();
         var parkThrew = false;
         try
@@ -468,8 +475,8 @@ internal static class AiToolPolicyChecks
             throw new Exception($"The concurrency class disagreed with the tier over 「{cell.Name}」 ({cell.Risk}).");
         // The count is part of the assertion: a table where every row flipped to true would still satisfy the rows
         // above, and what it would mean is that writes started running beside reads.
-        if (concurrentTable.Count(cell => cell.Expected) != 9)
-            throw new Exception($"The concurrency class holds {concurrentTable.Count(cell => cell.Expected)} tools, " + "which is not the nine reads it was drawn to cover.");
+        if (concurrentTable.Count(cell => cell.Expected) != 10)
+            throw new Exception($"The concurrency class holds {concurrentTable.Count(cell => cell.Expected)} tools, " + "which is not the ten reads it was drawn to cover.");
         Console.WriteLine("PASS: the read-only tier may start beside its siblings, and nothing above that tier does.");
         // The proof that "may start beside" is not only a decision on paper. Two safe calls are put in one response and
         // each refuses to finish until <b>both</b> are inside: a serial executor deadlocks on that barrier and the cell

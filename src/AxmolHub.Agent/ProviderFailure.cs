@@ -27,26 +27,34 @@ public static class ProviderFailure
             || body.Contains("usage limit has been reached", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static int? StatusOf(Exception exception) => exception switch
+    public static int? StatusOf(Exception exception)
     {
-        System.ClientModel.ClientResultException result => result.Status,
-        System.Net.Http.HttpRequestException request => (int?)request.StatusCode,
-        _ => null,
-    };
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            var status = current switch
+            {
+                System.ClientModel.ClientResultException result => (int?)result.Status,
+                System.Net.Http.HttpRequestException request => (int?)request.StatusCode,
+                _ => null,
+            };
+            if (status is > 0) return status;
+        }
+        return null;
+    }
 
-    public static bool AuthenticationFailed(Exception exception) => StatusOf(exception) is 401 or 403;
+    public static bool AuthenticationFailed(Exception exception)
+        => StatusOf(exception) is 401 or 403
+           || exception is ProviderResponseException { ErrorCode: "invalid_api_key" or "authentication_error"
+               or "permission_denied" or "unauthorized" or "forbidden" };
 
-    /// <summary>Whether the provider answered and refused, for a reason that is neither the account's allowance
-    /// running out nor its credentials being wrong.
-    ///
-    /// <para>These are the refusals that are not a verdict on the request: a 400 naming another Azure resource, a
-    /// route the gateway renamed under us, a 404 from a deployment that is being swapped. All of them have been
-    /// seen to clear without the request changing. A null status is excluded on purpose — that is Hub's own
-    /// exception, and parking the run on one would retry a bug instead of reporting it.</para></summary>
+    /// <summary>A provider refusal that may be retried within the goal's bounded allowance.
+    /// Stream errors retain their origin and code even when the transport status was 200; arbitrary local
+    /// exceptions are not provider failures and must not be silently retried.</summary>
     public static bool ProviderRefused(Exception exception)
     {
-        if (StatusOf(exception) is not int status || status < 400) return false;
-        return status is not (401 or 403) && !QuotaExhausted(exception.Message);
+        if (AuthenticationFailed(exception) || QuotaExhausted(exception.Message)
+            || exception is ProviderResponseException stream && QuotaExhausted(stream.ErrorCode)) return false;
+        return StatusOf(exception) is >= 400 || exception is ProviderResponseException;
     }
 
     public static bool Recoverable(Exception exception)
@@ -65,6 +73,13 @@ public static class ProviderFailure
             return TimeSpan.FromSeconds(Math.Clamp((date - now).TotalSeconds, 0, 86400));
         return null;
     }
+}
+
+/// <summary>A failure explicitly emitted by the model endpoint, not a local execution exception.
+/// Keeping the code separate from the display message prevents stream-level failures from bypassing retry.</summary>
+public sealed class ProviderResponseException(string message, string? errorCode = null) : InvalidOperationException(message)
+{
+    public string? ErrorCode { get; } = errorCode;
 }
 
 /// <summary>Hands a long provider wait to the persisted goal scheduler instead of occupying a run slot.</summary>

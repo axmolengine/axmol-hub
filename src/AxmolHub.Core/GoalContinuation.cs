@@ -8,7 +8,8 @@ public static class GoalContinuation
     public const string CompleteMarker = "[GOAL_COMPLETE]";
     public const string BlockedMarker = "[GOAL_BLOCKED]";
 
-    /// <summary>Only a standalone final control line outside Markdown fences is executable metadata.</summary>
+    /// <summary>Only a standalone final control line outside Markdown fences is executable metadata.
+    /// An optional commit-summary trailer may follow it; ordinary prose may not.</summary>
     public static (string? Marker, string Text) ParseFinalMarker(string? answer)
     {
         var text = TextEol.ToLf(answer ?? "");
@@ -16,6 +17,16 @@ public static class GoalContinuation
         while (end > 0 && char.IsWhiteSpace(text[end - 1])) end--;
         var start = end == 0 ? 0 : text.LastIndexOf('\n', end - 1) + 1;
         var line = text[start..end];
+        // Both app features emit trailing metadata. The optional commit title must neither hide a goal marker
+        // nor become a requirement for one. Its configured prefix is irrelevant to goal completion.
+        if (line.StartsWith(CommitSummary.Marker, StringComparison.OrdinalIgnoreCase)
+            && CommitSummary.IsWellFormedTitle(line[CommitSummary.Marker.Length..].Trim()))
+        {
+            end = start;
+            while (end > 0 && char.IsWhiteSpace(text[end - 1])) end--;
+            start = end == 0 ? 0 : text.LastIndexOf('\n', end - 1) + 1;
+            line = text[start..end];
+        }
         if (line is not (CompleteMarker or BlockedMarker)) return (null, text);
         char fence = '\0';
         var width = 0;
@@ -30,7 +41,10 @@ public static class GoalContinuation
             if (fence == '\0') { fence = mark; width = length; }
             else if (mark == fence && length >= width && string.IsNullOrWhiteSpace(candidate[length..])) fence = '\0';
         }
-        return fence == '\0' ? (line, text[..start].TrimEnd()) : (null, text);
+        if (fence != '\0') return (null, text);
+        var before = text[..start].TrimEnd();
+        var after = text[end..].Trim();
+        return (line, before.Length == 0 ? after : after.Length == 0 ? before : before + "\n\n" + after);
     }
 
     public static GoalDecision Decide(string? answer, bool madeProgress, int emptyRuns, int continuations,

@@ -258,9 +258,9 @@ internal sealed partial class ChatExecutionCoordinator
 
         var memory = MemoryIndexSection(conversation?.WorkspaceRoot);
         var commit = conversation?.WorkspaceRoot is { Length: > 0 } && NormalizeMode(conversation.Mode) == ChatModes.Agent
-            ? "\n\n# Commit summary (local deterministic feature)\nWhen the user's task is fully completed and verified, finish the final answer with exactly one standalone line in this form: `Commit summary: feat: concise imperative title`. Use one of these configured prefixes: "
+            ? "\n\n# Commit summary (local deterministic feature)\nWhen the user's task is fully completed and verified and meaningful repository changes were made, you may suggest a commit title using one standalone line in this form: `Commit summary: feat: concise imperative title`. Use one of these configured prefixes: "
               + string.Join(", ", CommitSummary.NormalizePrefixes(PreferencesProvider?.Invoke().CommitSummaryPrefixes))
-              + ". Keep the title on one line and at most 120 characters. Do not include this line when the task failed, was cancelled, remains incomplete, or no meaningful repository change was made. This is only a proposed title; never claim a commit was made."
+              + ". Keep the title on one line and at most 120 characters. Do not include this line when the task failed, was cancelled, remains incomplete, or no meaningful repository change was made. This line is optional and never a prerequisite for goal completion. If included with a goal marker, put it before the final standalone goal marker. This is only a proposed title; never claim a commit was made."
             : "";
         var goal = conversation?.Goal is { Length: > 0 } objective
                    && conversation.GoalState == ChatGoalStates.Active
@@ -1321,6 +1321,8 @@ internal sealed partial class ChatExecutionCoordinator
                 opened.GoalState = ChatGoalStates.Active;
                 opened.GoalEmptyRunCount = 0;
                 opened.GoalNoProgressRequests = 0;
+                // An explicit resume starts a new retry streak rather than inheriting an exhausted allowance.
+                opened.GoalCooldownCount = 0;
                 opened.GoalWakeAt = null;
                 opened.GoalStopReason = null;
             }
@@ -2494,8 +2496,9 @@ internal sealed partial class ChatExecutionCoordinator
                 var value = await tool.InvokeAsync(new AIFunctionArguments(arguments), run.Token).ConfigureAwait(false);
                 // Capped with the same bound the pipeline uses, so a call reads identically whether or not it
                 // needed permission first.
-                result = ToolResultCap.Apply(ChatPipeline.SerializeToolResult(value), budget);
-                failed = false;
+                var serialized = ChatPipeline.SerializeToolResult(value);
+                failed = GoalProgress.Failed(call.Name, serialized);
+                result = ToolResultCap.Apply(serialized, budget);
             }
             catch (OperationCanceledException)
             {
@@ -3141,39 +3144,46 @@ internal sealed partial class ChatExecutionCoordinator
         {
             if (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active)
             {
-                await ParkGoalForProviderAsync(run.ConversationId, ex.Delay).ConfigureAwait(false);
-                return (RunResult.Incomplete, "ChatGoalWaiting", false, null);
+                var notice = await ParkGoalForProviderAsync(run.ConversationId, ex.Delay).ConfigureAwait(false);
+                return (RunResult.Incomplete, notice, false, null);
             }
             Audit(run.ConversationId, $"Provider requested a {ex.Delay.TotalSeconds:0.#}s wait; returning the run slot");
             return (RunResult.Incomplete, "ChatProviderRetryLater", false, null);
         }
         catch (GoalGuardException ex)
         {
-            return (RunResult.Incomplete, ex.Reason == "token_budget" ? "ChatGoalTokenBudget" : "ChatToolSpinStopped", false, null);
+            Audit(run.ConversationId, $"Goal admission stopped: {ex.Reason}");
+            return (RunResult.Incomplete, ex.Reason switch
+            {
+                "token_budget" => "ChatGoalTokenBudget",
+                "no_progress" => "ChatGoalNoProgress",
+                _ => "ChatGoalPaused",
+            }, false, null);
         }
         catch (Exception ex) when (ProviderFailure.AuthenticationFailed(ex))
         {
             Audit(run.ConversationId, $"Provider authentication failed: {ex.Message}");
             return (RunResult.Failed, "ChatAuthExpired", true, ex.Message);
         }
-        catch (Exception ex) when (ChatPipeline.UsageExhausted(ex.Message))
+        catch (Exception ex) when (ChatPipeline.UsageExhausted(ex.Message)
+            || ex is ProviderResponseException streamError && ProviderFailure.QuotaExhausted(streamError.ErrorCode))
         {
             Audit(run.ConversationId, "Usage allowance exhausted; transport retries were not attempted");
             return (RunResult.Failed, "ChatUsageExhausted", true, ex.Message);
         }
         catch (Exception ex) when (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active
+            && !ContextOverflow.IsContextOverflow(ex.Message)
+            && !ChatPipeline.DeclinedStreamUsage(ex.Message)
             && (ProviderFailure.Recoverable(ex) || ChatPipeline.RateLimited(ex.Message)
                 || ProviderFailure.ProviderRefused(ex)))
         {
-            // SDK attempts are exhausted. Park the same logical run; a bounded wake is not a goal continuation.
-            // The second half of the condition is the rate limit that arrives *inside* the event stream: the HTTP
-            // status is 200, the refusal is an `error` event, so the transport policy had nothing to retry and
-            // `StatusOf` is null. Only the message says what happened, and without it the goal paused on the one
-            // failure it exists for.
-            Audit(run.ConversationId, $"Provider attempts exhausted; cooling down: {ex.Message}");
+            // HTTP and in-stream provider failures share the goal's bounded wait. Stream errors retain their
+            // origin even without a transport status, rather than being mistaken for local app exceptions.
+            Audit(run.ConversationId, $"Provider failure: {ex.GetType().Name}, status={ProviderFailure.StatusOf(ex)}, "
+                + $"code={(ex as ProviderResponseException)?.ErrorCode}; cooling down: {ex.Message}");
             var spent = Sessions.Registry.Peek(run.ConversationId)?.GoalCooldownCount ?? 0;
-            await ParkGoalForProviderAsync(run.ConversationId, CooldownDelay(spent)).ConfigureAwait(false);
-            return (RunResult.Incomplete, "ChatGoalWaiting", false, ex.Message);
+            var notice = await ParkGoalForProviderAsync(run.ConversationId, CooldownDelay(spent)).ConfigureAwait(false);
+            return (RunResult.Incomplete, notice, false, ex.Message);
         }
         catch (TimeoutException ex)
         {
@@ -3829,10 +3839,6 @@ internal sealed partial class ChatExecutionCoordinator
                 // exactly the runs the reader is most likely to be asking about. The per-answer reading is filed on
                 // <paramref name="stamped"/> alone, so it can never land on an older reply's turn.
                 CommitRunCosts(opened, run, stamped);
-                // A round that came back at all ends the streak the cooldown budget counts: the endpoint is answering
-                // again, so the next rate limit starts from the first wait instead of the last one. Without this the
-                // count only ever grew, and a long healthy session ran out of waits at the first bad evening.
-                if (result == RunResult.Completed) opened.GoalCooldownCount = 0;
 
                 if (opened.GoalState == ChatGoalStates.Waiting && opened.GoalStopReason == "approval"
                     && !HasGoalPendingDecision(opened)) opened.GoalState = ChatGoalStates.Active;
@@ -3853,7 +3859,7 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.GoalState = noticeKey is "ChatUsageExhausted" or "ChatAuthExpired"
                         ? ChatGoalStates.Blocked : ChatGoalStates.Paused;
                     opened.GoalStopReason = result == RunResult.Cancelled ? "stopped"
-                        : noticeKey == "ChatToolSpinStopped" ? "no_progress" : "error";
+                        : noticeKey is "ChatToolSpinStopped" or "ChatGoalNoProgress" ? "no_progress" : "error";
                 }
                 else if (opened.GoalState == ChatGoalStates.Active && NormalizeMode(opened.Mode) == ChatModes.Agent
                     && (result == RunResult.Completed || retryableEmpty)

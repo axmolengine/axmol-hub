@@ -24,12 +24,25 @@ internal static class AiSessionsChecks
             if (!GoalContinuation.Decide("new evidence", true, 0, run, continuationLimit: 0).Continue)
                 throw new Exception("Zero continuation ceiling still stopped a progressing goal.");
         foreach (var literal in new[] { "quoted [GOAL_COMPLETE]", "> [GOAL_COMPLETE]", "    [GOAL_COMPLETE]",
-                     "```text\n[GOAL_COMPLETE]", "~~~\n[GOAL_COMPLETE]", "[GOAL_COMPLETE]\nnot done" })
+                     "```text\n[GOAL_COMPLETE]", "~~~\n[GOAL_COMPLETE]", "[GOAL_COMPLETE]\nnot done",
+                     "```text\n[GOAL_COMPLETE]\nCommit summary: fix: sample",
+                     "[GOAL_COMPLETE]\nnot done\nCommit summary: fix: sample" })
             if (GoalContinuation.ParseFinalMarker(literal).Marker is not null)
                 throw new Exception("Literal marker completed a goal: " + literal);
         if (GoalContinuation.ParseFinalMarker("```\n[GOAL_COMPLETE]\n```\n[GOAL_COMPLETE]").Text != "```\n[GOAL_COMPLETE]\n```"
             || GoalContinuation.Decide("[GOAL_COMPLETE]", true, 0, 0, completionAllowed: false).State == ChatGoalStates.Complete)
             throw new Exception("Completion stripped prose or ignored failed verification.");
+        // Optional commit metadata cannot mask completion, in either order or with a configured custom prefix.
+        foreach (var answer in new[] { "Done.\n[GOAL_COMPLETE]\nCommit summary: fix: finish the task",
+                     "Done.\n[GOAL_COMPLETE]\nCommit summary: chore: finish the task",
+                     "Done.\nCommit summary: fix: finish the task\n[GOAL_COMPLETE]", "Done.\n[GOAL_COMPLETE]" })
+        {
+            var parsed = GoalContinuation.ParseFinalMarker(answer);
+            if (GoalContinuation.Decide(answer, false, 2, 700).State != ChatGoalStates.Complete
+                || parsed.Text.Contains(GoalContinuation.CompleteMarker, StringComparison.Ordinal)
+                || CommitSummary.Parse(parsed.Text) != CommitSummary.Parse(answer))
+                throw new Exception("Optional commit metadata masked completion or was removed with the marker.");
+        }
         var legacyGoal = JsonSerializer.Deserialize<Conversation>("""{"Goal":"legacy","GoalState":"paused","GoalStopReason":"limit","GoalContinuationCount":3}""")!;
         var legacyPolicy = GoalPolicy.For(legacyGoal);
         if (!legacyPolicy.CanContinue(legacyGoal) || legacyGoal.GoalContinuationCount != 3

@@ -47,17 +47,30 @@ internal sealed partial class ChatExecutionCoordinator
                 conversation.GoalEstimatedTokens = Math.Max(0, conversation.GoalEstimatedTokens - estimate);
                 conversation.GoalReportedTokens += reported;
             }
-            // Failures and provider retries must never tick the progress counter.
-            if (completed && !summary) conversation.GoalNoProgressRequests++;
+            // Success is per model request, not per whole tool loop: a recovered tool-call response ends the
+            // failure streak even if a later request in the same loop fails again. Empty/error streams do not.
+            if (completed)
+            {
+                conversation.GoalCooldownCount = 0;
+                if (!summary) conversation.GoalNoProgressRequests++;
+            }
             Sessions.Registry.TryUpdate(id, _ => { });
         });
 
-    private Task ParkGoalForProviderAsync(string id, TimeSpan delay)
-        => ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(id, opened =>
+    private async Task<string> ParkGoalForProviderAsync(string id, TimeSpan delay)
+    {
+        var notice = "ChatGoalPaused";
+        await ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(id, opened =>
         {
             ParkForProvider(opened, GoalPolicyFor(opened), delay);
+            notice = opened.GoalState == ChatGoalStates.Waiting ? "ChatGoalWaiting"
+                : opened.GoalStopReason == "provider_retry_exhausted" ? "ChatGoalRetryExhausted" : "ChatGoalPaused";
+            Audit(id, $"Goal provider retry: state={opened.GoalState}, waits={opened.GoalCooldownCount}, "
+                + $"reason={opened.GoalStopReason}, wake={opened.GoalWakeAt:O}");
             if (opened.GoalWakeAt is { } at && RunFor(id) is null) ScheduleGoalWake(id, at);
-        }));
+        })).ConfigureAwait(false);
+        return notice;
+    }
 
     /// <summary>Puts a goal to sleep before its next request, on the same counters a provider's own
     /// <c>Retry-After</c> is spent against: a wait is allowed while the cooldown budget holds, and the wait that
