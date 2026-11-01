@@ -338,11 +338,19 @@ public partial class ChatSidebar : UserControl
         var row = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            Background = Brushes.Transparent,
             // One indent step per level, so the heading and the groups under it are one shape rather than a
             // list of names that happen to be related.
             Margin = new Thickness(bucket.Depth * 12, 8, 0, 2),
         };
         row.Classes.Add("group-row");
+        if (bucket.WorkspaceRoot is { Length: > 0 })
+        {
+            row.Classes.Add("workspace-row");
+            var plate = new Border { Classes = { "group-plate" }, IsHitTestVisible = false };
+            Grid.SetColumnSpan(plate, 3);
+            row.Children.Add(plate);
+        }
 
         var label = new TextBlock
         {
@@ -648,13 +656,13 @@ public partial class ChatSidebar : UserControl
         var title = summary.Title.Length > 0 ? summary.Title : HubStrings.Get("NewConversation");
         var row = new Border
         {
-            Background = Brushes.Transparent,
             CornerRadius = new CornerRadius(6),
             // The rows follow their header in, so a session reads as belonging to the group above it without a
             // line, a box or a second label saying so.
             Margin = new Thickness(depth * 12, 0, 0, 0),
         };
         row.Classes.Add("session-row");
+        row.Classes.Set("active", summary.Id == activeId);
         // The middle column is the status slot, and it is sized to the widest mark it can hold — the thinking
         // glyph's running dot needs room past the arc's ends — so every mark sits at the same x on every row and
         // nothing in this grid reflows when a state changes.
@@ -674,7 +682,7 @@ public partial class ChatSidebar : UserControl
             Content = label,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Padding = new Thickness(10, 8),
+            Padding = new Thickness(10, 4),
             Margin = new Thickness(0),
         };
         ToolTip.SetTip(item, summary.SpawnedTask is { Length: > 0 } task
@@ -686,8 +694,8 @@ public partial class ChatSidebar : UserControl
         var menuButton = new Button
         {
             Content = HubActionIcon.More(),
-            Width = HubMetrics.ControlHeight,
-            Height = HubMetrics.ControlHeight,
+            Width = 30,
+            Height = 30,
             Classes = { "sidebar-action" },
         };
         menuButton.Classes.Add("session-menu");

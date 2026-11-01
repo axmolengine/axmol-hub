@@ -5,7 +5,16 @@
              x:DataType="local:ChatSidebar">
 
   <UserControl.Styles>
-    <!-- Conversation rows (moved verbatim from ChatPanel styles). -->
+    <!-- Paint conversation states on the row, including its status and action slots. -->
+    <Style Selector="Border.session-row">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.session-row:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Border.session-row.active">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+    </Style>
     <Style Selector="Button.session">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
@@ -13,13 +22,12 @@
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="12" />
+      <Setter Property="MinHeight" Value="30" />
     </Style>
-    <Style Selector="Button.session:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    <Style Selector="Border.session-row:pointerover Button.session">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.session.active">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <!-- Shared square hover plate for sidebar icons; geometry content avoids font-baseline drift. -->
@@ -47,13 +55,21 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
-    <!-- Group headers. The plate, the arrow and the hover brightening come from the shell's HubExpanderHeader
-         theme (see ChatSidebar.BuildGroupHeader) — the default theme paints a checked ToggleButton with a solid
-         accent block, which would turn a quiet row label into a highlight. What is set here is only how quiet and
-         how small a group label is, and the colour goes on the control rather than on its text block, because a
-         Foreground of the TextBlock's own would outrank the theme's hover brightening and leave the label dead.
+    <!-- Group headers keep the shell's expander arrow and transparent toggle template. A workspace's hover
+         plate spans the whole grid, leaving its action buttons independent of the fold target. Foreground goes
+         on the toggle so that its content presenter inherits the row's hover brightening.
          The group's ⋯ deliberately does NOT reuse the "session-menu" class: the list counts those buttons to prove
          every row has an actions menu, and a group wearing the class would be counted as a session. -->
+    <Style Selector="Border.group-plate">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="Grid.workspace-row:pointerover Border.group-plate">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Grid.workspace-row:pointerover ToggleButton.group-toggle">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
     <Style Selector="ToggleButton.group-toggle">
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
