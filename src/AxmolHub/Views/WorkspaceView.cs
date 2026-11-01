@@ -80,11 +80,11 @@ internal sealed class WorkspaceView : Grid, IDisposable
             Margin = new Thickness(12, 0, 0, 0), Height = 32, ClipToBounds = true };
         _tabGrid.Children.Add(_tabRows);
         _overflow = new Button { Name = "WorkspaceTabOverflow", Content = HubActionIcon.More(),
-            Classes = { "titlebar" }, Width = 28, Height = 28, Padding = default, Margin = default, IsVisible = false, Flyout = _overflowMenu };
+            Classes = { "titlebar" }, Margin = default, IsVisible = false, Flyout = _overflowMenu };
         _overflow.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceMoreTabs"));
         Grid.SetColumn(_overflow, 1);
         _tabGrid.Children.Add(_overflow);
-        var plus = new Button { Name = "WorkspaceAddTab", Content = HubActionIcon.Create("Hub.Icon.Plus"), Classes = { "titlebar" }, Width = 28, Height = 28, Padding = default, Margin = default };
+        var plus = new Button { Name = "WorkspaceAddTab", Content = HubActionIcon.Create("Hub.Icon.Plus"), Classes = { "titlebar" }, Margin = default };
         plus.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceAddTab"));
         var menu = new MenuFlyout();
         foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("files", "WorkspaceFiles") })
@@ -453,7 +453,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var capacity = _tabGrid.Bounds.Width - 28 - (_overflow.IsVisible ? 28 : 0);
         return Math.Abs(slot.X - (shell.InspectorExpandedForCheck ? shell.ClientBoundsForCheck.X : edge.X)) < 0.5
             && Math.Abs(strip.X - slot.X - 12) < 0.5 && strip.Right <= actions.Left + 0.5
-            && Math.Abs(plus.Bounds.Width - plus.Bounds.Height) < 0.5 && plus.Bounds.Width == 28
+            && Math.Abs(plus.Bounds.Width - plus.Bounds.Height) < 0.5
             && Math.Abs(_folder.Bounds.Width - _folder.Bounds.Height) < 0.5
             && (capacity < 32 || visible.Any(tab => tab.Id == _state?.Selected))
             && visible.All(tab => tab.Plate.Bounds.Right <= capacity + 0.5)

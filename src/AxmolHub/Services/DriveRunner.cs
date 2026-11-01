@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -28,7 +29,7 @@ namespace AxmolHub;
 /// </summary>
 internal static class DriveRunner
 {
-    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(300);
 
     public static void Attach(MainWindow window, IClassicDesktopStyleApplicationLifetime lifetime, string scriptPath)
     {
@@ -204,6 +205,24 @@ internal static class DriveRunner
                 await Settle();
                 return null;
             }
+            case "popup":
+            {
+                if (FindPopup(window, Str(step, "name")) is not { } popup) return "popup not found: " + step;
+                popup.IsOpen = !step.TryGetProperty("close", out var close) || !close.GetBoolean();
+                await Settle();
+                return null;
+            }
+            case "dialog":
+            {
+                // Shown and left open for a person to look at; pair it with a long wait. Not awaited on purpose.
+                var buttons = Enum.Parse<HubDialogButtons>(Opt(step, "buttons") ?? "Ok");
+                var danger = step.TryGetProperty("danger", out var d) && d.GetBoolean();
+                var body = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get(Str(step, "bodyKey")), 1);
+                _ = HubDialog.ShowAsync(window, HubStrings.Get(Str(step, "titleKey")), body, buttons, danger);
+                await Settle();
+                return null;
+            }
             case "click":
             case "type":
             {
@@ -234,6 +253,14 @@ internal static class DriveRunner
                         return "context menu popup not open: " + menuOwner;
                     capture = popup;
                 }
+                else if (Opt(step, "popup") is { } popupName)
+                {
+                    // A Popup is its own top-level window, so the main-window capture never contains it.
+                    if (FindPopup(window, popupName)?.Child is not Visual child
+                        || TopLevel.GetTopLevel(child) is not Visual root)
+                        return "popup not open: " + popupName;
+                    capture = root;
+                }
                 var stats = SmokeCapture.Capture(capture, path);
                 digests.Add(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
                 shotTaken();
@@ -250,6 +277,10 @@ internal static class DriveRunner
         Dispatcher.UIThread.RunJobs();
         await Task.Delay(50);
     }
+
+    /// <summary>A Popup is not in the visual tree, so it is found through the logical tree.</summary>
+    private static Popup? FindPopup(Control root, string name)
+        => root.GetLogicalDescendants().OfType<Popup>().FirstOrDefault(popup => popup.Name == name);
 
     private static string Str(JsonElement e, string key) => e.GetProperty(key).GetString() ?? "";
 

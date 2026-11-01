@@ -155,8 +155,8 @@
   <!-- Smaller action plates without changing typography, colour, or content alignment.
        MinHeight leaves room for platform fonts; centering prevents a multiline neighbour stretching the plate. -->
   <Style Selector="Button.compact">
-    <Setter Property="Padding" Value="12,5" />
-    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Padding" Value="12,3" />
+    <Setter Property="MinHeight" Value="30" />
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
 

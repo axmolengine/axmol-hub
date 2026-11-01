@@ -33,10 +33,10 @@
   </UserControl.Styles>
 
   <Grid RowDefinitions="Auto,Auto,*">
-    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,0,0,14">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,14">
       <TextBlock Text="{DynamicResource Installs}" FontSize="28" FontWeight="SemiBold"
                  VerticalAlignment="Center" Margin="0,0,18,0" />
-      <Border Grid.Column="1" Classes="engine-search" MinWidth="120" MaxWidth="420" Height="42" VerticalAlignment="Center"
+      <Border Grid.Column="1" Classes="engine-search" Width="400" MaxWidth="420" Height="34" VerticalAlignment="Center"
               Background="{DynamicResource Hub.SurfaceSunken}" BorderBrush="{DynamicResource Hub.BorderStrong}"
               BorderThickness="1" CornerRadius="6" Margin="0,0,10,0">
         <Grid ColumnDefinitions="40,*,36">
@@ -57,9 +57,9 @@
         </Grid>
       </Border>
       <Button Grid.Column="2" x:Name="ImportButton" Content="{DynamicResource ImportEngine}"
-              Classes="quiet more" Margin="0,0,8,0" />
+              Classes="compact quiet more" Margin="0,0,8,0" />
       <Button Grid.Column="3" x:Name="InstallButton" Content="{DynamicResource InstallOfficial}"
-              Classes="primary" />
+              Classes="compact primary" />
     </Grid>
 
     <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,10">
