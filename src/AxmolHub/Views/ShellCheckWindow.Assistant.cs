@@ -1776,6 +1776,23 @@ internal sealed class ShellAssistantChecks
             + parkedState + " / " + parkedReason + "）");
 
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
+
+        // A rate limit that arrives as an event inside the stream carries no HTTP status, so the transport policy
+        // had nothing to retry and every attempt-level test reads "not recoverable". The message is the only
+        // evidence there is, and a goal that pauses on it stops for the one failure it exists for.
+        var streamLimited = PausedGoal("流内限流也要退避");
+        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception:
+            new InvalidOperationException("stream error: Your requests to gpt-6.1-sol have exceeded token rate limit"));
+        shell.Chat.ResumeGoal(streamLimited.Id);
+        await panel.WaitForRunToFinishForCheck();
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var limitedCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        Check(limitedCopy?.GoalState == ChatGoalStates.Waiting && limitedCopy.GoalCooldownCount == 1
+              && limitedCopy.GoalWakeAt > DateTimeOffset.UtcNow,
+            "流内 429 没有 HTTP 状态码，也按提供方冷却停车而不是把目标暂停（实际 "
+            + limitedCopy?.GoalState + " / " + limitedCopy?.GoalStopReason + "）");
+        shell.Chat.PauseGoal(streamLimited.Id);
         if (parkedGoal is not null)
         {
             parkedGoal.GoalWakeAt = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);

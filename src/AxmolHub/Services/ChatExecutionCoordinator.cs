@@ -3162,9 +3162,13 @@ internal sealed partial class ChatExecutionCoordinator
             return (RunResult.Failed, "ChatUsageExhausted", true, ex.Message);
         }
         catch (Exception ex) when (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active
-            && ProviderFailure.Recoverable(ex))
+            && (ProviderFailure.Recoverable(ex) || ChatPipeline.RateLimited(ex.Message)))
         {
             // SDK attempts are exhausted. Park the same logical run; a bounded wake is not a goal continuation.
+            // The second half of the condition is the rate limit that arrives *inside* the event stream: the HTTP
+            // status is 200, the refusal is an `error` event, so the transport policy had nothing to retry and
+            // `StatusOf` is null. Only the message says what happened, and without it the goal paused on the one
+            // failure it exists for.
             Audit(run.ConversationId, $"Provider attempts exhausted; cooling down: {ex.Message}");
             await ParkGoalForProviderAsync(run.ConversationId, ProviderRetryDefaults.GoalCooldown).ConfigureAwait(false);
             return (RunResult.Incomplete, "ChatGoalWaiting", false, ex.Message);
