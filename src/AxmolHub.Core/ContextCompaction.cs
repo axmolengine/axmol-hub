@@ -260,15 +260,17 @@ public static class ContextElider
     private static string PlaceholderFor(ChatTurn turn)
     {
         var pictures = turn.Images.Count;
-        // Named with the same shape the agent-layer placeholder uses: the size that was there, and the one way
-        // to get it back. A model that wonders whether the tool ran can ask again; a model that reads nothing but
-        // "[cleared]" has no way to tell a file it can re-read from a step that was skipped.
-        var body = $"{Marker}: {turn.Text.Length} characters of tool output removed to keep this conversation "
-                   + "inside the model's window — call the tool again if you still need it]";
+        // Named with the tool that answered and the size that was there: the one way back is to ask that tool
+        // again, and a model reading only "[cleared]" cannot tell a file it can re-read from a step that was
+        // skipped. The call and its arguments are the turn before this one, which clearing never touches, so the
+        // tool's name here plus that call is enough to reconstruct what was lost.
+        var tool = string.IsNullOrEmpty(turn.ToolName) ? "the tool" : turn.ToolName;
+        var body = $"{Marker}: {tool} returned {turn.Text.Length} characters; the answer was removed to keep this "
+                   + $"conversation inside the model's window — call {tool} again if you still need it]";
         return pictures == 0
             ? body
-            : $"{Marker}: {turn.Text.Length} characters and {pictures} captured picture(s) removed to keep this "
-              + "conversation inside the model's window — the picture files are still on disk, and the tool can be "
-              + "called again if you still need them]";
+            : $"{Marker}: {tool} returned {turn.Text.Length} characters and {pictures} captured picture(s); both "
+              + "were removed to keep this conversation inside the model's window — the picture files are still on "
+              + $"disk, and {tool} can be called again if you still need them]";
     }
 }
