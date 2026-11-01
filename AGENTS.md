@@ -221,10 +221,12 @@ Chinese stays where it is *data*, not prose:
 
 Anything a terminal renders — an echo line, a sudo prompt helper — is English for the same reason.
 
-A release is cut by a commit titled `Version x.y.z` (also `Version x.y.z-beta` or
-`Version x.y.z (Preview)`). Its **only** change is the version in `Directory.Build.props` — it is the
-release marker, not a change, and the release notes skip it. Versions beginning with `0.` and titles
-ending in `(Preview)` are published as GitHub Pre-releases.
+A release is cut by a commit titled `ver: x.y.z` (also `ver: x.y.z-beta` or
+`ver: x.y.z (Preview)`). Its **only** change is the version in `Directory.Build.props` — it is the
+release marker, not a change. Release notes skip `ver:`-prefixed commits only when they change that
+file alone; bundled changes stay visible with a warning. An all-version range gets a neutral note,
+never a fallback that restores skipped markers. Versions beginning with `0.` and titles ending in
+`(Preview)` are published as GitHub Pre-releases.
 Anything else belongs in its own commit; if it rides along with the version bump, CI warns and the
 commit stays in the notes.
 

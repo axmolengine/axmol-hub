@@ -1,5 +1,5 @@
-# Release orchestration: parse the commit message for "Version x.y.z" to decide whether to release,
-# download the three platforms' artifacts, and upload them merged into one release.
+# Release orchestration: recognize "ver: x.y.z" titles to decide whether to release, download the
+# three platforms' artifacts, and upload them merged into one release.
 # Triggers = workflow_run (listening for a completed build) + workflow_dispatch (manual version input).
 # Same semantics as axslcc's dist.yml: every completed build triggers it, and a regex on the commit
 # message plus the run result decide whether a release really happens.
@@ -29,9 +29,9 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
 
-      # The release marker: Version 1.8.0; Version 1.8.0-beta and Version 1.8.0 (Preview) are accepted
-      # too. When nothing matches, the manually entered version is used; with neither, release_ver is
-      # empty and every later step is skipped.
+      # The release marker: ver: 1.8.0; ver: 1.8.0-beta and ver: 1.8.0 (Preview) are accepted too.
+      # When nothing matches, the manually entered version is used; with neither, release_ver is empty
+      # and every later step is skipped.
       - name: Check release version
         id: check_ver
         shell: pwsh
@@ -39,7 +39,7 @@ jobs:
           MANUAL_VERSION: ${{ github.event.inputs.version }}
         run: |
           # Hand the raw message (%B) to the parser, not %s: %s is git's first paragraph, so a version
-          # commit with its body in the same paragraph would miss the 'Version x.y.z' match and this
+          # commit with its body in the same paragraph would miss the 'ver: x.y.z' match and this
           # release would silently never happen. Get-ReleaseMetadata reads the title line.
           $commit_msg = @(& git show -s --format=%B) -join "`n"
           Write-Host "Parsing release version from commit message: $commit_msg"
@@ -53,17 +53,6 @@ jobs:
           "release_tag=v$release_ver" >> $env:GITHUB_OUTPUT
           "release_target=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
-          # Convention guard: a "Version x.y.z" commit must be a version bump and nothing else. It is
-          # the release marker, so anything riding along with it either belongs in its own commit or
-          # will be missing from the release notes (the step below drops pure version bumps).
-          if ($release.IsVersionCommit) {
-            $touched = @(& git show --name-only --format='' HEAD | Where-Object { $_ })
-            $extra = @($touched | Where-Object { $_ -ne 'Directory.Build.props' })
-            if ($extra) {
-              Write-Host "::warning file=Directory.Build.props::The 'Version $release_ver' commit also changes: $($extra -join ', '). Keep version bumps limited to Directory.Build.props."
-            }
-          }
-
       - name: Build release notes
         id: release_notes
         if: steps.check_ver.outputs.release_ver != ''
@@ -72,6 +61,7 @@ jobs:
           RELEASE_TAG: ${{ steps.check_ver.outputs.release_tag }}
           REPOSITORY_URL: https://github.com/${{ github.repository }}
         run: |
+          . ./installer/ReleaseMetadata.ps1
           $targetCommit = "$(git rev-parse HEAD)"
           $previousTag = "$(git describe --tags --abbrev=0 --exclude=$env:RELEASE_TAG $targetCommit 2>$null)"
           if ($LASTEXITCODE -ne 0) { $previousTag = '' }
@@ -85,50 +75,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "git log failed with $LASTEXITCODE." }
           if ($logLines.Count -eq 0) { throw "No commits found for release range $range." }
 
-          # The "Version x.y.z" commit is the release marker, not a change: it carries no user-visible
-          # work, so it never belongs in the notes. Only drop it when it really is a version bump —
-          # a commit that used that title but also touched other files would hide real work, so keep
-          # it and warn instead of silently deleting it from the log.
-          $every = [System.Collections.Generic.List[string[]]]::new()
-          $listed = [System.Collections.Generic.List[string[]]]::new()
-          foreach ($line in $logLines) {
-            if ($line -notmatch '^(?<sha>[0-9a-f]{40})\t(?<short>[0-9a-f]+)\t(?<title>.*)$') { continue }
-            $parts = @($Matches.sha, $Matches.short, $Matches.title.Trim())
-            $every.Add($parts)
-            if ($parts[2] -match '^Version\s+\d+\.\d+\.\d+(-\w+)?(\s+\(Preview\))?$') {
-              $touched = @(& git show --name-only --format='' $parts[0] | Where-Object { $_ })
-              if ($touched.Count -eq 1 -and $touched[0] -eq 'Directory.Build.props') {
-                Write-Host "Skipping version marker $($parts[1]): it only bumps Directory.Build.props."
-                continue
-              }
-
-              Write-Host "::warning file=Directory.Build.props::Commit $($parts[1]) is titled 'Version x.y.z' but also changes $($touched.Count) file(s); keeping it in the release notes."
-            }
-            $listed.Add($parts)
+          $notes = Get-ReleaseNotes -LogLines $logLines -RepositoryUrl $env:REPOSITORY_URL -PreviousTag $previousTag -ReleaseTag $env:RELEASE_TAG -ReadTouchedFiles {
+            param($sha)
+            $touched = @(& git show --name-only --format='' $sha | Where-Object { $_ })
+            if ($LASTEXITCODE -ne 0) { throw "git show failed with $LASTEXITCODE for $sha." }
+            $touched
           }
-
-          # Never ship an empty body: if every commit in the range was a version marker, fall back to
-          # the full range rather than publishing a release with nothing in it.
-          if (-not $listed) {
-            Write-Host 'Every commit in the range is a version marker; listing the full range instead.'
-            $listed = $every
-          }
-
-          $notes = [System.Collections.Generic.List[string]]::new()
-          $notes.Add('## Release notes')
-          $notes.Add('')
-          foreach ($parts in $listed) {
-            $commitUrl = "$env:REPOSITORY_URL/commit/$($parts[0])"
-            $notes.Add("- [``$($parts[1])``]($commitUrl) $($parts[2])")
-          }
-          if ($previousTag) {
-            $notes.Add('')
-            $notes.Add("[Full changelog: $previousTag...$env:RELEASE_TAG]($env:REPOSITORY_URL/compare/$previousTag...$env:RELEASE_TAG)")
-          }
+          foreach ($warning in $notes.Warnings) { Write-Host $warning }
 
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          Set-Content -LiteralPath $notesPath -Encoding UTF8 -Value $notes
-          Write-Host "Release notes contain $($listed.Count) commit(s) after '$previousTag'."
+          Set-Content -LiteralPath $notesPath -Encoding UTF8 -Value $notes.Lines
+          Write-Host "Release notes contain $($notes.CommitCount) commit(s) after '$previousTag'."
           Get-Content -LiteralPath $notesPath
           "notes_file=$notesPath" >> $env:GITHUB_OUTPUT
 

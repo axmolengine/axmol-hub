@@ -1,10 +1,10 @@
 # Build + verify + installer packaging: three responsibilities in one workflow, layered by job.
-#   - meta: parses the commit message for "Version x.y.z" and decides whether to package (an ordinary
+#   - meta: parses the commit title for "ver: x.y.z" and decides whether to package (an ordinary
 #     commit is verified only, never packaged).
 #   - verify: the three-platform matrix that checks the code is correct (compile, host detection, CLI
 #     contract, download contract); it runs on every commit.
 #   - package-*: four platforms, each running vpk pack on its own native runner (packaging cannot be
-#     cross-built); only a "Version" commit or a manual trigger reaches them.
+#     cross-built); only a release-marker commit or a manual trigger reaches them.
 # Whether a release is published is decided by dist.yml from the commit message and the run result
 # (the same split as axslcc's build.yml + dist.yml).
 name: Build
@@ -33,7 +33,7 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
-  # ── Package or not: parse the commit message. An ordinary commit (not "Version x.y.z") is verified
+  # ── Package or not: parse the commit title. An ordinary commit without a release marker is verified
   #    only, never packaged; only a release commit or a manual trigger walks the packaging path, which
   #    saves the expensive vpk pack for the run that really publishes. ──
   meta:

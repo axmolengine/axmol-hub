@@ -12,10 +12,10 @@
 
 | workflow | 触发 | 目的 | 是否阻塞合并 |
 | --- | --- | --- | --- |
-| `build.yml` | push 到 `master`、PR、手动 | 验证（三平台构建健康度）+ 打包（仅 `Version` 提交） | **是** |
+| `build.yml` | push 到 `master`、PR、手动 | 验证（三平台构建健康度）+ 打包（仅版本标记提交） | **是** |
 | `dist.yml` | build 完成后（`workflow_run`）、手动 | 三平台安装包合并发布到一个 release | 否（发布用） |
 
-分开发的理由：安装包链路要下载固定版 Velopack CLI、发布自包含 App、再做真实安装/升级/卸载验收，属于发布动作；把它塞进每个 PR 会让 CI 变慢、变脆，而且失败信息（打包器、签名之类）与"代码是否可构建"无关。因此打包只在提交信息为 `Version x.y.z` 时触发，普通提交只跑验证。
+分开发的理由：安装包链路要下载固定版 Velopack CLI、发布自包含 App、再做真实安装/升级/卸载验收，属于发布动作；把它塞进每个 PR 会让 CI 变慢、变脆，而且失败信息（打包器、签名之类）与"代码是否可构建"无关。因此打包只在提交标题为 `ver: x.y.z`（也接受 `-beta` 后缀及 `(Preview)` 标记）时自动触发，普通提交只跑验证。
 
 ---
 
@@ -208,7 +208,7 @@ CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解�
 
 **`build.yml`**（`on: push` master + `pull_request` + `workflow_dispatch`）—— 两类 job：
 
-- `meta`：解析提交信息是否为 `^Version x.y.z$`，输出 `should_package`（普通提交只验证、不打包）。
+- `meta`：用 `Get-ReleaseMetadata` 解析提交标题是否为 `ver: x.y.z`，输出 `should_package`（普通提交只验证、不打包）。
 - `verify`：三平台矩阵（§2 的验证职责，任何提交都跑）。
 - `package-*`：四个 job，`needs: meta` + `if: should_package == 'true'`，各在原生 runner 上打包：
   1. `--prepare-packaging`：按 `installer/packaging-manifest.json` 下载 Velopack CLI **1.2.161** 的 `.nupkg`，校验 SHA-256（`ac9be738…`），再从已校验的本地源把 `vpk` 装进 `cache/packaging-tools/vpk`，**不修改 PATH**。
@@ -218,8 +218,8 @@ CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解�
 
 **`dist.yml`**（`on: workflow_run` 监听 build + `workflow_dispatch`）：
 
-5. 以完整 Git 历史检出触发 build 的提交，解析**提交标题**（提交信息首行）`^Version x.y.z$`（接受 `x.y.z-beta`）→ 决定 `release_ver`；匹配不到则用手动输入的 `version`，两者皆无则跳过全部后续步骤。这里读的必须是首行而不是 `%s`：`%s` 是「首个段落」，标题与正文之间漏了空行的提交会把整段折成一行当标题，一条带正文的 `Version x.y.z` 就会匹配失败、打包与发布静默不发生。`Get-ReleaseMetadata` 收整条提交信息，自己取首个非空行；回归用例见 `tests/ReleaseMetadata.Tests.ps1`。
-6. 用最近一个可达 tag（排除本次 `v<version>`，兼容重跑）到本次构建提交的 `git log` 生成英文发布日志；每项只包含短 SHA、提交链接和**提交标题**，正文一律不进日志（同因：%s 是首段不是首行，故按 `%B` 逐条输出，只保留形如 `<完整 SHA>\t<短 SHA>\t<标题>` 的记录起始行，其余行是该条提交的正文，直接丢弃），并附英文完整 compare 链接。首次发布没有旧 tag 时收集截至当前提交的全部历史。**`Version x.y.z` 这条提交本身不进日志**：它是发布标记不是变更，且规范上只改 `Directory.Build.props` —— 只有当它真的只改这一个文件时才跳过，若夹带了别的文件则保留并打警告（否则实质改动会从日志里消失）。区间里全是版本标记时回退为列出全部，日志不会为空。`Check release version` 另有一道守卫：版本提交若带上了 `Directory.Build.props` 之外的文件，会在该 run 上留一条 warning。
+5. 以完整 Git 历史检出触发 build 的提交，解析**提交标题**（提交信息首个非空行）`ver: x.y.z`（也接受 `-beta` 后缀及 `(Preview)` 标记）→ 决定 `release_ver`；匹配不到则用手动输入的 `version`，两者皆无则跳过全部后续步骤。这里读的必须是首行而不是 `%s`：`%s` 是「首个段落」，标题与正文之间漏了空行的提交会把整段折成一行当标题，一条带正文的 `ver: x.y.z` 就会匹配失败、打包与发布静默不发生。`Get-ReleaseMetadata` 收整条提交信息，自己取首个非空行；Build 和 Dist 共用这个解析器，回归用例见 `tests/ReleaseMetadata.Tests.ps1`。
+6. 用最近一个可达 tag（排除本次 `v<version>`，兼容重跑）到本次构建提交的 `git log` 生成英文发布日志；每项只包含短 SHA、提交链接和**提交标题**，正文一律不进日志（同因：%s 是首段不是首行，故按 `%B` 逐条输出，只保留形如 `<完整 SHA>\t<短 SHA>\t<标题>` 的记录起始行，其余行是该条提交的正文，直接丢弃），并附英文完整 compare 链接。首次发布没有旧 tag 时收集截至当前提交的全部历史。**`ver:` 开头的版本提交本身不进日志**：它是发布标记不是变更，且规范上只改 `Directory.Build.props` —— 只有当它真的只改这一个文件时才跳过，若夹带了别的文件则保留并打警告（否则实质改动会从日志里消失）。区间里全是纯版本提交时显示英文“无用户可见变更”说明，不会回填已过滤的提交。日志格式化与过滤统一放在 `installer/ReleaseMetadata.ps1`（与版本标记解析同一份脚本），回归用例见 `tests/ReleaseMetadata.Tests.ps1`。版本提交夹带 `Directory.Build.props` 之外的文件时，这条 warning 由同一个格式化函数给出，并列出夹带的文件——发布前只剩一处判断。
 7. `dawidd6/action-download-artifact` 下载三平台产物。
 8. `installer/Publish-All.ps1`：逐平台裁剪 feed 只留本版 → 收集安装包 + sha256 + full/delta nupkg（`vpk` 原名带 `-<channel>-` 段，上传时改名为 `axmol-hub-<version>-<rid>-{full|delta}.nupkg`，**并同步改写 feed 的 `FileName`**）+ 按 channel（= 完整 RID）命名的 feed `releases.<rid>.json` → `gh release create --target <本次构建 SHA> --notes-file <发布日志>` / `gh release upload --clobber` → 回读资产清单确认每一件都在。重跑已有 release 时用同一份日志更新正文。需要 `permissions: contents: write` 与 `GH_TOKEN`。
 
