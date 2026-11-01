@@ -40,6 +40,8 @@ public static class TextFile
 {
     public const int MaxEditorBytes = 2 * 1024 * 1024;
     public const int MaxDiffBytes = 1024 * 1024;
+    private const int TextDetectionCharacters = 20;
+    private const int MaxTextDetectionBytes = 84;
     private sealed class Gate
     {
         internal readonly SemaphoreSlim Semaphore = new(1, 1);
@@ -69,6 +71,69 @@ public static class TextFile
         catch (DirectoryNotFoundException) { return new(TextFileState.Missing); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { return new(TextFileState.Failed, detail: ex.Message); }
+    }
+
+    /// <summary>Quickly classify the first 20 characters of a file without loading its full contents.</summary>
+    public static bool HasTextFilePrefix(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> sample = stackalloc byte[MaxTextDetectionBytes];
+            var length = 0;
+            while (length < sample.Length)
+            {
+                var count = stream.Read(sample[length..]);
+                if (count == 0) break;
+                length += count;
+            }
+            return HasTextPrefix(sample[..length]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Classify at most the first 20 characters of proposed text content.</summary>
+    public static bool HasTextContentPrefix(string text)
+        => IsTextSample(text.AsSpan(0, Math.Min(text.Length, TextDetectionCharacters)));
+
+    private static bool HasTextPrefix(ReadOnlySpan<byte> bytes)
+    {
+        Encoding encoding;
+        var skip = 0;
+        if (bytes.StartsWith(new byte[] { 0xff, 0xfe, 0, 0 }))
+        { encoding = new UTF32Encoding(false, true, true); skip = 4; }
+        else if (bytes.StartsWith(new byte[] { 0, 0, 0xfe, 0xff }))
+        { encoding = new UTF32Encoding(true, true, true); skip = 4; }
+        else if (bytes.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }))
+        { encoding = new UTF8Encoding(true, true); skip = 3; }
+        else if (bytes.StartsWith(new byte[] { 0xff, 0xfe }))
+        { encoding = new UnicodeEncoding(false, true, true); skip = 2; }
+        else if (bytes.StartsWith(new byte[] { 0xfe, 0xff }))
+        { encoding = new UnicodeEncoding(true, true, true); skip = 2; }
+        else encoding = new UTF8Encoding(false, true);
+
+        var length = bytes.Length - skip;
+        while (length >= 0)
+        {
+            try
+            {
+                var sample = encoding.GetString(bytes.Slice(skip, length));
+                return IsTextSample(sample.AsSpan(0, Math.Min(sample.Length, TextDetectionCharacters)));
+            }
+            catch (DecoderFallbackException) when (length > 0) { length--; }
+        }
+        return false;
+    }
+
+    private static bool IsTextSample(ReadOnlySpan<char> sample)
+    {
+        foreach (var character in sample)
+            if (char.IsControl(character) && character is not ('\t' or '\r' or '\n' or '\f')) return false;
+        return true;
     }
 
     public static TextFileSnapshot Decode(byte[] bytes)

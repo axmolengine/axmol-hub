@@ -219,11 +219,11 @@ public static class WorkspacePaths
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".aidl", ".axaml", ".axproj", ".bat", ".c", ".cc", ".cfg", ".cmake", ".cpp", ".cs", ".css", ".cxx",
-        ".def", ".editorconfig", ".entitlements", ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl",
-        ".go", ".gradle", ".h", ".hlsl", ".hpp", ".html", ".in", ".ini", ".ipp", ".java", ".js", ".json", ".kt",
-        ".lua", ".m", ".md", ".metal", ".mm", ".patch", ".pbxproj", ".plist", ".pro", ".props", ".properties",
-        ".ps1", ".py", ".rc", ".rs", ".sh", ".sln", ".csproj", ".storyboard", ".strings", ".stringsdict", ".swift",
-        ".svg", ".targets", ".tmpl", ".toml", ".ts", ".tsx", ".txt", ".vcxproj", ".vert", ".xaml", ".xcconfig",
+        ".def", ".dart", ".editorconfig", ".entitlements", ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl",
+        ".go", ".gradle", ".groovy", ".h", ".hlsl", ".hpp", ".html", ".in", ".ini", ".ipp", ".java", ".js", ".json", ".jl", ".kt",
+        ".lua", ".m", ".md", ".metal", ".mm", ".patch", ".pbxproj", ".php", ".plist", ".pl", ".pm", ".pro", ".props", ".properties",
+        ".ps1", ".py", ".r", ".rb", ".rc", ".rs", ".scala", ".sh", ".sln", ".csproj", ".sql", ".storyboard", ".strings", ".stringsdict", ".swift",
+        ".svg", ".targets", ".tmpl", ".toml", ".ts", ".tsx", ".txt", ".vb", ".vcxproj", ".vert", ".xaml", ".xcconfig",
         ".xib", ".xml", ".yaml", ".yml",
     };
 
@@ -418,7 +418,8 @@ public static class WorkspacePaths
     /// artifact. Both are properties of the path, so no session file can be edited into a permission.
     /// </summary>
     public static bool FileGrantIsReadOnly(string fullPath, WorkspaceGuards guards)
-        => IsProtected(fullPath, guards) || !IsWritableText(Path.GetFileName(fullPath));
+        => IsProtected(fullPath, guards)
+           || !IsWritableText(Path.GetFileName(fullPath)) && !TextFile.HasTextPrefix(fullPath);
 
     /// <summary>Whether this exact path is one of the files this session was granted. Exact and canonical: a file
     /// grant is one file, so nothing under it and nothing beside it counts.</summary>
@@ -452,7 +453,8 @@ public static class WorkspacePaths
     public static WorkspacePath ResolveRead(string? root, string relative, WorkspaceGuards guards)
         => ResolveRead(WorkspaceSandbox.For(root), relative, guards);
 
-    public static WorkspacePath ResolveWrite(WorkspaceSandbox sandbox, string relative, WorkspaceGuards guards)
+    public static WorkspacePath ResolveWrite(WorkspaceSandbox sandbox, string relative, WorkspaceGuards guards,
+        bool allowUnlistedText = false)
     {
         var resolved = Resolve(sandbox, relative, guards);
         if (!resolved.IsAllowed) return resolved;
@@ -467,13 +469,14 @@ public static class WorkspacePaths
         if (IsProtected(resolved.Full, guards))
             return WorkspacePath.Refuse(WorkspacePathVerdict.ReadOnlyRoot, resolved.Display);
         if (Directory.Exists(resolved.Full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotAFile, resolved.Display);
-        if (!IsWritableText(Path.GetFileName(resolved.Full)))
+        if (!allowUnlistedText && !IsWritableText(Path.GetFileName(resolved.Full)))
             return WorkspacePath.Refuse(WorkspacePathVerdict.ExtensionNotAllowed, resolved.Display);
         return resolved;
     }
 
-    public static WorkspacePath ResolveWrite(string? root, string relative, WorkspaceGuards guards)
-        => ResolveWrite(WorkspaceSandbox.For(root), relative, guards);
+    public static WorkspacePath ResolveWrite(string? root, string relative, WorkspaceGuards guards,
+        bool allowUnlistedText = false)
+        => ResolveWrite(WorkspaceSandbox.For(root), relative, guards, allowUnlistedText);
 
     /// <summary>Resolve a file or directory for management without widening an exact-file or protected grant.</summary>
     public static WorkspacePath ResolveManage(WorkspaceSandbox sandbox, string path, WorkspaceGuards guards)

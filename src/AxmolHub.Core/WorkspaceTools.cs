@@ -254,8 +254,9 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         bool replace_all = false)
         => WriteText(path, original => FileEdit.Apply(original, old_string, new_string, replace_all));
 
-    [Description("Create a text file or replace its entire contents. Set overwrite to true only when the existing "
-                 + "file should be replaced. For localized changes use fs_replace.")]
+    [Description("Create a UTF-8 text file or replace its entire contents. Known text extensions are allowed; "
+                 + "other extensions are accepted when the existing file or new content begins like text. Set overwrite "
+                 + "to true only when the existing file should be replaced. For localized changes use fs_replace.")]
     public string FsWrite(
         [Description("Path in the session workspace or a granted writable directory.")] string path,
         [Description("The complete new text of the file.")] string content,
@@ -266,20 +267,28 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         using var gate = context.TakeChangeGate?.Invoke(ToolNames.FsWrite);
         if (context.TakeChangeGate is not null && gate is null) return ToolApprovalResults.Busy;
         return WriteText(path, original => FileEdit.Overwrite(original, content, overwrite),
-            context.ApprovedWriteFingerprint, wholeFile: true);
+            context.ApprovedWriteFingerprint, wholeFile: true, allowUnlistedText: true, unlistedContent: content ?? "");
     }
 
     private string WriteText(string path, Func<string?, FileEditResult> makeEdit, string? approvedFingerprint = null,
-        bool wholeFile = false)
+        bool wholeFile = false, bool allowUnlistedText = false, string? unlistedContent = null)
     {
-        var resolved = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards);
+        var resolved = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText);
         if (!resolved.IsAllowed) return Refusal(resolved.Verdict, resolved.Display, path);
 
         using var write = TextFile.AcquireWrite(resolved.Full);
         // Resolve again after waiting: another Hub writer or a permission change may have intervened.
-        var permitted = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards);
+        var permitted = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText);
         if (!permitted.IsAllowed || permitted.Full != resolved.Full)
             return $"Refused: the permitted path changed before writing {resolved.Display}. Read it again.";
+
+        if (allowUnlistedText && !WorkspacePaths.IsWritableText(Path.GetFileName(resolved.Full)))
+        {
+            var looksLikeText = File.Exists(resolved.Full)
+                ? TextFile.HasTextFilePrefix(resolved.Full)
+                : TextFile.HasTextContentPrefix(unlistedContent ?? "");
+            if (!looksLikeText) return NotText(resolved.Display);
+        }
 
         string? original = null;
         byte[]? originalBytes = null;
@@ -324,7 +333,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             return $"Refused: could not save complete before/after snapshots for {resolved.Display}: {ex.Message}";
         }
 
-        var replaced = write.Replace(() => WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards),
+        var replaced = write.Replace(() => WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText),
             originalBytes, edit.Updated);
         if (replaced.Verdict != TextReplaceVerdict.Written)
         {
@@ -360,7 +369,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     /// <summary>Capture the file identity for a parked full-write call. Invalid paths fail closed.</summary>
     public static string WriteFingerprint(WorkspaceToolScope scope, string path)
     {
-        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards);
+        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards, allowUnlistedText: true);
         if (!resolved.IsAllowed) return "invalid";
         try
         {

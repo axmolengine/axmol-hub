@@ -91,13 +91,20 @@ public static class ToolPreviews
     private static string FullWritePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
     {
         var path = Text(arguments, "path");
-        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards);
+        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards, allowUnlistedText: true);
         if (!resolved.IsAllowed) return WorkspacePaths.ResultFor(resolved.Verdict, path);
         try
         {
+            var unlisted = !WorkspacePaths.IsWritableText(Path.GetFileName(resolved.Full));
+            if (unlisted && (File.Exists(resolved.Full)
+                    ? !TextFile.HasTextFilePrefix(resolved.Full)
+                    : !TextFile.HasTextContentPrefix(Text(arguments, "content"))))
+                return $"Refused: {resolved.Display} does not begin like text.";
             if (File.Exists(resolved.Full) && new FileInfo(resolved.Full).Length > 256L * 1024 * 1024)
                 return "Refused: the file exceeds the 256 MiB backup limit.";
-            var original = File.Exists(resolved.Full) ? File.ReadAllText(resolved.Full) : null;
+            var original = File.Exists(resolved.Full) ? WorkspaceTools.ReadAll(resolved.Full) : null;
+            if (File.Exists(resolved.Full) && original is null)
+                return $"Refused: {resolved.Display} is not UTF-8 text.";
             var edit = FileEdit.Overwrite(original, Text(arguments, "content"), Flag(arguments, "overwrite"));
             return edit.Changed ? FileDiff.Unified(original ?? "", edit.Updated, resolved.Display)
                 : edit.Verdict == FileEditVerdict.Unchanged ? $"No change: {resolved.Display} already has that content."
@@ -297,7 +304,9 @@ public static class ToolPreviews
         var facts = new List<string> { File.Exists(full) ? "exists" : "does not exist yet" };
         if (WorkspacePaths.ProtectedLocationOf(full, scope.Guards) is { } location) facts.Add(ProtectedFact(location));
         else if (!WorkspacePaths.IsWritableText(Path.GetFileName(full)))
-            facts.Add("its extension is outside the write allowlist");
+            facts.Add(File.Exists(full) && TextFile.HasTextFilePrefix(full)
+                ? "its extension is outside the write allowlist; the file prefix looks like text"
+                : "its extension is outside the write allowlist and the file is read only");
         if (WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, full).Verdict
             is GrantVerdict.AlreadyGranted or GrantVerdict.InsideGrant)
             facts.Add("already reachable by this session");
