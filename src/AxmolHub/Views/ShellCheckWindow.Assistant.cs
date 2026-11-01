@@ -666,7 +666,7 @@ internal sealed class ShellAssistantChecks
         await panel.SendForCheckAsync("把结论写进 docs/plan.md");
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var undeclaredSaid = undeclaredClient.LastSystem?.Contains("no tool named `write`", StringComparison.Ordinal) == true;
+        var undeclaredSaid = undeclaredClient.LastUser?.Contains("no tool named `write`", StringComparison.Ordinal) == true;
         Check(undeclaredClient.Round == 2
               && undeclaredSaid
               && shell.Chat.StoredCopyForCheck(undeclaredSession.Id)?.Messages.Any(

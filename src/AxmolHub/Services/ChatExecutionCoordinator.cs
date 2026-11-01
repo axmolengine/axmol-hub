@@ -2987,8 +2987,8 @@ internal sealed partial class ChatExecutionCoordinator
         if (!ToolCallNudge.LooksLikeDeclinedAction(run.LiveText)) return false;
         if (!run.TryArmToolNudge()) return false;
         Audit(run.ConversationId,
-            "The reply described its own limits and called no tool; continuing once with the correction in the "
-            + "system prompt");
+            "The reply described its own limits and called no tool; continuing once with the correction as a "
+            + "trailing user message");
         return true;
     }
 
@@ -2998,7 +2998,7 @@ internal sealed partial class ChatExecutionCoordinator
         if (!run.TryArmUndeclaredNudge(asked)) return false;
         Audit(run.ConversationId,
             $"The response asked for {string.Join(", ", asked)}, which this request never declared; continuing once "
-            + "with the correction in the system prompt");
+            + "with the correction as a trailing user message");
         return true;
     }
 
@@ -3443,12 +3443,19 @@ internal sealed partial class ChatExecutionCoordinator
             systemPrompt += "\n\nUse web_search for current or external information when it materially improves the answer. "
                 + "Use web_fetch to read a selected public HTTPS result when its summary is not enough. Search and Fetch "
                 + "are billable DeepSeek API calls; avoid duplicate calls and rely on the returned sources.";
-        if (RunFor(conversationId)?.ToolNudgeArmed == true)
-            systemPrompt += "\n\n" + ToolCallNudge.Sentence;
+        // The run's corrections ride as a trailing user message, never in the system prompt: a correction request
+        // follows an assistant reply, and a history that ends on an assistant message is a prefill that some
+        // bridges refuse outright (HTTP 400 "conversation must end with a user message"). The message is built
+        // here per request and never stored, so the transcript shows nothing the person did not type.
+        var run = RunFor(conversationId);
+        var corrections = new List<string>(2);
+        if (run?.ToolNudgeArmed == true) corrections.Add(ToolCallNudge.Sentence);
         // Armed only by a response that named a tool this request never declared: the name it asked for is in the
         // sentence, because that is the fact the model cannot read back from a transcript in which nothing ran.
-        if (RunFor(conversationId)?.UndeclaredNudge is { } undeclaredNudge)
-            systemPrompt += "\n\n" + undeclaredNudge;
+        if (run?.UndeclaredNudge is { } undeclaredNudge) corrections.Add(undeclaredNudge);
+        if (corrections.Count > 0)
+            history = [.. history, ChatTurn.User(
+                "[Automated message from the app, not from the user]\n" + string.Join("\n\n", corrections))];
 
         return new ChatRequest(choice.Provider, modelName, reasoning, tools, scope,
             systemPrompt,

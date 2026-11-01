@@ -462,14 +462,15 @@ internal static class ShellCheckSupport
     {
         private int _round;
         public int Round => _round;
-        /// <summary>The system message of the last request made, so a check can read what the model was told.</summary>
-        public string? LastSystem { get; private set; }
+        /// <summary>The trailing user message of the last request, where the correction is delivered.</summary>
+        public string? LastUser { get; private set; }
 
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException("The undeclared-call check only uses the streaming path.");
         public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var list = messages.ToList();
-            LastSystem = list.FirstOrDefault(message => message.Role == Microsoft.Extensions.AI.ChatRole.System)?.Text;
+            LastUser = list.LastOrDefault() is { Role: var role } last
+                && role == Microsoft.Extensions.AI.ChatRole.User ? last.Text : null;
             _round++;
             if (_round == 1)
             {
