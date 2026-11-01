@@ -1521,6 +1521,7 @@ public partial class ChatPanel
         {
             GoalCapsuleHost.IsVisible = false;
             GoalCapsuleHost.Child = null;
+            StopGoalCountdown();
             return;
         }
         var goal = conversation.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User
@@ -1531,6 +1532,7 @@ public partial class ChatPanel
         {
             GoalCapsuleHost.IsVisible = false;
             GoalCapsuleHost.Child = null;
+            StopGoalCountdown();
             return;
         }
 
@@ -1560,16 +1562,13 @@ public partial class ChatPanel
         }));
 
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto") };
-        var icon = new Avalonia.Controls.Shapes.Path
-        {
-            Width = 16, Height = 16, Stretch = Stretch.Uniform,
-            Data = ThemeGeometry(ComposerModeIconKey(ChatModes.Agent)),
-            Fill = Brushes.Transparent, StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-        row.Children.Add(icon);
+        // A waiting goal wears the same turning ring a running command does. The run slot is free while the wake is
+        // pending, but the goal is still working, and a static icon beside a countdown reads as "stopped, waiting
+        // for you to press play". The glyph stops itself when the capsule is rebuilt without it — it ticks only
+        // while visible and only for a phase that moves.
+        row.Children.Add(conversation.GoalState == ChatGoalStates.Waiting && conversation.GoalWakeAt is not null
+            ? GoalWaitingGlyph()
+            : GoalIdleGlyph());
         var statusKey = state switch
         {
             ChatGoalStates.Complete => conversation.GoalCompletionVerified ? "ChatGoalComplete" : "ChatGoalModelReported",
@@ -1608,10 +1607,89 @@ public partial class ChatPanel
             Grid.SetColumn(elapsed, 3);
             row.Children.Add(elapsed);
         }
+        else if (conversation.GoalState == ChatGoalStates.Waiting && conversation.GoalWakeAt is { } wake)
+        {
+            // The wait is a number the person can plan around, so it is shown counting down rather than as a
+            // static "waiting": the coordinator holds the wake, and this only reports the distance to it.
+            _goalCountdown = new TextBlock { Classes = { "goal-capsule-elapsed" } };
+            Grid.SetColumn(_goalCountdown, 3);
+            row.Children.Add(_goalCountdown);
+            _goalWakeAt = wake;
+            ShowGoalCountdown();
+        }
+        else
+        {
+            StopGoalCountdown();
+        }
         Grid.SetColumn(actions, 4);
         row.Children.Add(actions);
         GoalCapsuleHost.Child = row;
         GoalCapsuleHost.IsVisible = true;
+    }
+
+    private TextBlock? _goalCountdown;
+    private DateTimeOffset? _goalWakeAt;
+    private Avalonia.Threading.DispatcherTimer? _goalCountdownTimer;
+
+    private Control GoalWaitingGlyph()
+    {
+        var glyph = new ActivityGlyph
+        {
+            Width = 16, Height = 16, Phase = ActivityPhase.RunningTool,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        glyph.Bind(ActivityGlyph.TrackBrushProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        glyph.Bind(ActivityGlyph.DotBrushProperty, new DynamicResourceExtension("Hub.Accent"));
+        return glyph;
+    }
+
+    private Control GoalIdleGlyph()
+    {
+        var icon = new Avalonia.Controls.Shapes.Path
+        {
+            Width = 16, Height = 16, Stretch = Stretch.Uniform,
+            Data = ThemeGeometry(ComposerModeIconKey(ChatModes.Agent)),
+            Fill = Brushes.Transparent, StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        return icon;
+    }
+
+    private void ShowGoalCountdown()
+    {
+        UpdateGoalCountdown();
+        if (_goalCountdownTimer is not null) return;
+        _goalCountdownTimer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _goalCountdownTimer.Tick += (_, _) => UpdateGoalCountdown();
+        _goalCountdownTimer.Start();
+    }
+
+    private void UpdateGoalCountdown()
+    {
+        if (_goalCountdown is null || _goalWakeAt is not { } wake)
+        {
+            StopGoalCountdown();
+            return;
+        }
+
+        var seconds = (int)Math.Ceiling(Math.Max(0, (wake - DateTimeOffset.UtcNow).TotalSeconds));
+        _goalCountdown.Text = "· " + string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatGoalWaitingCountdownFormat"), seconds);
+        // The wake itself is the coordinator's timer. This one stops at zero and leaves the last number standing,
+        // rather than rebuilding the capsule every second waiting for a state that is about to change anyway.
+        if (seconds > 0) return;
+        _goalCountdownTimer?.Stop();
+        _goalCountdownTimer = null;
+    }
+
+    private void StopGoalCountdown()
+    {
+        _goalCountdownTimer?.Stop();
+        _goalCountdownTimer = null;
+        _goalCountdown = null;
+        _goalWakeAt = null;
     }
 
     // ── the steer-confirm strip ──

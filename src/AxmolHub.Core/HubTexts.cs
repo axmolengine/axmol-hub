@@ -635,6 +635,8 @@ public static class HubTexts
         ["ChatGoalComplete"] = ("已确认完成的目标", "Confirmed complete goal"),
         ["ChatGoalModelReported"] = ("模型报告已完成（未核验）", "Model reported complete (unverified)"),
         ["ChatGoalWaiting"] = ("目标等待中", "Goal waiting"),
+        // Beside the turning ring while a goal is parked: the wait is a number, not a mood.
+        ["ChatGoalWaitingCountdownFormat"] = ("{0}s 后重试", "retrying in {0}s"),
         ["ChatGoalAddBudget"] = ("追加预算：10 次续跑或 100,000 Tokens（不自动恢复）", "Add budget: 10 continuations or 100,000 tokens (does not resume)"),
         ["ChatGoalNoActivity"] = ("目标已暂停：连续无有效进展", "Goal paused: no new progress"),
         ["ChatGoalBlocked"] = ("目标受阻：需要处理阻碍", "Goal blocked: action needed"),

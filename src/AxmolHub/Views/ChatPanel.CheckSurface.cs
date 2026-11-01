@@ -1189,6 +1189,12 @@ public partial class ChatPanel : UserControl
     internal bool GoalDraftSelectedForCheck => GoalDraftSelectedForActiveConversation;
     internal int GoalMessageCardCountForCheck => MessageRows.SelectMany(row => new ILogical[] { row }.Concat(row.GetLogicalDescendants())).OfType<Border>().Count(border => border.Classes.Contains("goal-message-card"));
     internal bool GoalCapsuleHostVisibleForCheck => GoalCapsuleHost.IsVisible;
+    /// <summary>The countdown beside a parked goal, and whether the ring beside it is still turning. The run slot is
+    /// free while a goal waits, so without these two nothing on screen would show that work is still coming.</summary>
+    internal string? GoalCapsuleCountdownForCheck => GoalCapsuleHost.GetLogicalDescendants().OfType<TextBlock>()
+        .FirstOrDefault(block => block.Classes.Contains("goal-capsule-elapsed"))?.Text;
+    internal bool GoalCapsuleWaitingAnimatedForCheck => GoalCapsuleHost.GetLogicalDescendants().OfType<ActivityGlyph>()
+        .Any(glyph => glyph.Phase == ActivityPhase.RunningTool && glyph.IsTicking);
     internal bool GoalCapsuleForCheck => GoalCapsuleHost.IsVisible
         && GoalCapsuleHost.GetLogicalDescendants().OfType<TextBlock>().Any(block => block.Classes.Contains("goal-capsule-text") && block.Text == "完成目标并依据证据核验")
         && Grid.GetRow(GoalCapsuleHost) == Grid.GetRow(SteerConfirmHost) + 1

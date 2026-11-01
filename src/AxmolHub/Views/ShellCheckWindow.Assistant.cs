@@ -1751,6 +1751,9 @@ internal sealed class ShellAssistantChecks
               && parkedGoal.GoalContinuationCount == 0 && parkedGoal.GoalNoProgressRequests == 0
               && parkedGoal.GoalReportedTokens == 0 && parkedGoal.GoalEstimatedTokens == 0
               && panel.GoalCapsuleHostVisibleForCheck
+              && panel.GoalCapsuleWaitingAnimatedForCheck
+              && panel.GoalCapsuleCountdownForCheck is { Length: > 0 } countdown
+              && countdown.Contains("·", StringComparison.Ordinal)
               && panel.GoalCapsuleActionTooltipsForCheck.Contains(HubStrings.Get("ChatGoalPause")),
             "冷却等待持久化且不轮询模型，空响应不消耗 Token、续跑或无进展计数（实际 "
             + goalAttempts + " / " + parkedGoal?.GoalState + "）");
