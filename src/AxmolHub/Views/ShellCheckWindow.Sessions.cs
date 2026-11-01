@@ -445,17 +445,22 @@ internal sealed class ShellSessionsChecks
         Check(sidebar.GroupOfForCheck(fromChats ?? "") == SessionGroupKey.Recent,
             "它发出第一条消息后归在「对话」分组里，而不是某个目录下面");
 
-        // A group whose directory is gone still gets a ＋, and nothing blocks it: that directory is exactly
-        // what the user moved away, so the session ＋ creates first binds to the old location, and the
-        // re-path entry sits in the same group's ⋯. Refusing here would leave no entry point on screen.
+        // A remembered group is not permission to open a missing directory. Keep its original session bound
+        // to that path for repointing, but refuse the new draft without falling back to the active workspace.
         var goneOne = Seeded(movedAway, "又搬走一次");
         sidebar.Reload();
-        var fromGone = sidebar.NewSessionFromGroupForCheck(keyMoved);
-        Check(sidebar.GroupOfForCheck(goneOne.Id) == keyMoved
-              && fromGone is { Length: > 0 } && fromGone != goneOne.Id
-              && chat.WorkspaceRootFor(fromGone) == System.IO.Path.GetFullPath(movedAway),
-            "目录已不存在的分组上的 ＋ 照样新建并绑定那个旧路径（实际目录 "
-            + RootOf(fromGone) + "）");
+        var activeBeforeMissing = chat.ActiveConversation?.Id;
+        var sessionsBeforeMissing = chat.Conversations.Select(session => session.Id).ToArray();
+        sidebar.NewSessionFromGroupForCheck(keyMoved);
+        var missingStatus = shell.StatusTextForCheck;
+        Check(!Directory.Exists(movedAway)
+              && sidebar.GroupOfForCheck(goneOne.Id) == keyMoved
+              && chat.ActiveConversation?.Id == activeBeforeMissing
+              && sessionsBeforeMissing.SequenceEqual(chat.Conversations.Select(session => session.Id))
+              && chat.WorkspaceRootFor(goneOne.Id) == System.IO.Path.GetFullPath(movedAway)
+              && missingStatus == HubStrings.Get("ChatWorkspaceRejected") + movedAway,
+            "目录已不存在的分组 ＋ 明确拒绝，不建草稿或切换工作区，原会话仍保存原路径（实际提示「"
+            + missingStatus + "」，当前目录 " + RootOf(chat.ActiveConversation?.Id) + "）");
 
         Check(sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces)
               && sidebar.GroupNewTipForCheck(SessionGroupKey.Workspaces) == HubStrings.Get("GroupNewWorkspaceTip")
@@ -474,9 +479,8 @@ internal sealed class ShellSessionsChecks
         // ＋ has its own style class, so it is neither mistaken for the group's third menu item (that comes
         // from reading the ⋯'s Tag) nor mixed into the actions-menu count — the row count expects a menu on
         // every row, and counting one too many or too few is a false pass.
-        // Eight, not nine: the ninth used to be fromGone, the still-empty draft the last ＋ made under a directory
-        // that no longer exists. A draft with nothing in it is no longer a row anywhere — the group it belongs to is
-        // on screen because the directory is designated, and that is where its header's ＋ hands the draft back.
+        // Eight rows: the missing directory's ＋ was refused and added no draft or row. Drafts belonging to
+        // existing directories stay off the list until their first message; their workspace headers remain.
         Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
               && sidebar.SessionRowCountForCheck == 8
               && sidebar.GroupMenuTitlesForCheck(keyA).Length == 2
