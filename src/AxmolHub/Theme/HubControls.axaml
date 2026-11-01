@@ -27,7 +27,8 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="5" />
-    <Setter Property="Padding" Value="14,9" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Margin" Value="0,0,8,0" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -90,7 +91,8 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="4" />
-    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Margin" Value="0,6,0,0" />
     <Setter Property="CaretBrush" Value="{DynamicResource Hub.TextPrimary}" />
     <Setter Property="SelectionBrush" Value="{DynamicResource Hub.Accent}" />
@@ -167,7 +169,7 @@
 
   <!-- The catalog search uses the same icon slots and field chrome as engine and project search. -->
   <ControlTheme x:Key="HubModelCatalogSearch" TargetType="Border">
-    <Setter Property="Height" Value="42" />
+    <Setter Property="Height" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
@@ -187,9 +189,9 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="6" />
-    <Setter Property="Padding" Value="10,8" />
-    <Setter Property="Margin" Value="0,0,0,6" />
-    <Setter Property="MinHeight" Value="48" />
+    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="Margin" Value="0,0,0,4" />
+    <Setter Property="MinHeight" Value="34" />
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
     <Setter Property="FocusAdorner" Value="{x:Null}" />
@@ -226,7 +228,7 @@
   <!-- ==================== ComboBoxItem ==================== -->
   <ControlTheme x:Key="{x:Type ComboBoxItem}" TargetType="ComboBoxItem">
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="Padding" Value="10,6" />
     <Setter Property="FocusAdorner" Value="{x:Null}" />
     <Setter Property="Template">
       <ControlTemplate>
@@ -260,8 +262,8 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="4" />
-    <Setter Property="MinHeight" Value="38" />
-    <Setter Property="Padding" Value="10,9" />
+    <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
+    <Setter Property="Padding" Value="10,0" />
     <Setter Property="Margin" Value="0,6,0,0" />
     <Setter Property="MaxDropDownHeight" Value="260" />
     <Setter Property="FocusAdorner" Value="{x:Null}" />

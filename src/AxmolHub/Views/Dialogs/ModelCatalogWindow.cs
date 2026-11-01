@@ -162,6 +162,7 @@ public sealed partial class ModelCatalogWindow : Window
         _search.Background = Brushes.Transparent;
         _search.BorderThickness = new Thickness(0);
         _search.Padding = new Thickness(0);
+        _search.MinHeight = 0;
         _search.Margin = new Thickness(0);
         _search.VerticalContentAlignment = VerticalAlignment.Center;
         _search.Bind(TextBox.PlaceholderForegroundProperty,
@@ -196,6 +197,7 @@ public sealed partial class ModelCatalogWindow : Window
             Padding = new Thickness(0),
             Width = 28,
             Height = 28,
+            MinHeight = 0,
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = false,
         };

@@ -2059,6 +2059,7 @@ public partial class SettingsPage : UserControl
             Classes = { "quiet" },
             Width = 30,
             Height = 28,
+            MinHeight = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Tag = SectionTags.ModelCatalog,
@@ -2075,6 +2076,7 @@ public partial class SettingsPage : UserControl
             Classes = { "quiet" },
             Width = 30,
             Height = 28,
+            MinHeight = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Tag = SectionTags.AddModelButton,
@@ -2091,6 +2093,7 @@ public partial class SettingsPage : UserControl
             Classes = { "quiet" },
             Width = 30,
             Height = 28,
+            MinHeight = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             IsEnabled = provider.Models.Count > 0,
@@ -2196,12 +2199,8 @@ public partial class SettingsPage : UserControl
             tokensField = BuildField(HubStrings.Get("ModelContextEditHint"), tokens);
         }
 
-        // The three controls share one row edge, so they need one height: the buttons stretch to the row the
-        // input sets rather than carrying a height of their own. An explicit button height (34 was tried) plus
-        // the input's own padding left 3px of input above and below the buttons — centred, and still visibly
-        // misaligned, because the eye compares the two boxes' edges, not their middle.
-        // A Grid rather than a horizontal StackPanel: the panel's cross-axis sizing would have to be trusted to
-        // hand the buttons the row's full height, while a Grid cell gives it unconditionally.
+        // Single-line fields and buttons share the theme's control height. A grid stretches the buttons
+        // to the input's row edge without adding per-control heights or padding overrides.
         var buttons = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("Auto,Auto"),
@@ -2213,7 +2212,6 @@ public partial class SettingsPage : UserControl
             Content = HubStrings.Get("Cancel"),
             Classes = { "quiet" },
             MinWidth = 72,
-            Padding = new Thickness(12, 0),
             Margin = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Stretch,
         };
@@ -2224,7 +2222,6 @@ public partial class SettingsPage : UserControl
             Classes = { "primary" },
             IsDefault = true,
             MinWidth = 72,
-            Padding = new Thickness(12, 0),
             Margin = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Stretch,
         };
@@ -2395,7 +2392,7 @@ public partial class SettingsPage : UserControl
         // null brush). Hover only lifts the fill.
         var row = new Border
         {
-            Padding = new Thickness(12, 8),
+            Padding = new Thickness(12, 4),
             Tag = SectionTags.ModelRow,
             Classes = { "model-row", "provider-row" },
             Child = grid,

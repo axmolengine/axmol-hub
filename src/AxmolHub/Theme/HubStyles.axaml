@@ -81,6 +81,7 @@
        corner, square corners - so the bar reads as a title bar and not as an app toolbar. The close plate is the
        one that turns red, which is the only place in this app that colour is allowed to mean "destructive". -->
   <Style Selector="Button.window-control">
+    <Setter Property="MinHeight" Value="0" />
     <Setter Property="Width" Value="46" />
     <Setter Property="Height" Value="32" />
     <Setter Property="Padding" Value="0" />
@@ -155,8 +156,8 @@
   <!-- Smaller action plates without changing typography, colour, or content alignment.
        MinHeight leaves room for platform fonts; centering prevents a multiline neighbour stretching the plate. -->
   <Style Selector="Button.compact">
-    <Setter Property="Padding" Value="12,3" />
-    <Setter Property="MinHeight" Value="30" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="MinHeight" Value="28" />
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
 

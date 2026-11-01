@@ -57,6 +57,9 @@ internal static class HubMetrics
     /// center inside it.</summary>
     public const double ColumnMaxWidth = 820;
 
+    /// <summary>The shared height for single-line fields, buttons and drop-downs.</summary>
+    public const double ControlHeight = 32;
+
     /// <summary>Hub's <c>ScrollBar</c>, which is 10px wide (<c>Theme/HubControls.axaml</c> owns the number) and
     /// is painted <i>over</i> whatever fills its scroller rather than taking a column of its own. A surface whose
     /// text has to stay readable therefore stops one bar-width short of its scroller's edge: the reading column,

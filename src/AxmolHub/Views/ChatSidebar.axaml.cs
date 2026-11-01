@@ -686,7 +686,7 @@ public partial class ChatSidebar : UserControl
         {
             Content = "⋯",
             Width = 34,
-            Height = 36,
+            Height = HubMetrics.ControlHeight,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
             FontSize = 18,

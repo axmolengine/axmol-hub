@@ -1054,8 +1054,8 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
     <Style Selector="Button.model-menu-button">
-      <Setter Property="MinHeight" Value="38" />
-      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
+      <Setter Property="Padding" Value="10,0" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
@@ -1116,7 +1116,7 @@
       <Setter Property="TextAlignment" Value="Right" />
     </Style>
     <Style Selector="Button.context-compress">
-      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
       <Setter Property="CornerRadius" Value="9" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />

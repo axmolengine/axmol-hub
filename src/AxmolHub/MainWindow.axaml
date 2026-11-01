@@ -82,6 +82,7 @@
     </Style>
 
     <Style Selector="Button.assistant-action">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Width" Value="26" />
@@ -172,6 +173,7 @@
          height: the two sit in the same bottom row a few pixels apart, and a fully rounded cap beside a 6px
          plate reads as a control of another kind rather than as the one to press. -->
     <Style Selector="Button.update-action.pill">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Height" Value="28" />
       <Setter Property="MinWidth" Value="28" />
       <Setter Property="CornerRadius" Value="6" />
@@ -188,6 +190,7 @@
          title-bar drawers. Both sit in a fixed-height row, so without the centering they stretch to that row's
          height and the hover plate becomes a tall rectangle around a square icon. -->
     <Style Selector="Button.icon-ghost">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7" />
@@ -219,6 +222,7 @@
          size are one size and cannot be changed apart: the self-check asserts the plate is 19.5 and that the two
          drawers are the same as each other. -->
     <Style Selector="Button.titlebar">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="3.75" />
@@ -317,6 +321,7 @@
          at rest for the same reason the arrows are. All four hold a 14 DIP glyph, which is why the padding below
          belongs to the class and not to one of them. -->
     <Style Selector="Button.viewer-action">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Width" Value="30" />
       <Setter Property="Height" Value="30" />
       <Setter Property="CornerRadius" Value="8" />
