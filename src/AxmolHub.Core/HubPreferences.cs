@@ -108,6 +108,20 @@ public sealed class HubPreferences
     /// <summary>Automatic goal runs. Zero removes only this ceiling, not token or progress guards.</summary>
     public int GoalContinuationLimit { get; set; } = 0;
 
+    /// <summary>Which layout this file was written in. Bumped when a stored default has to be told apart from a
+    /// decision: <see cref="Load"/> migrates anything older and writes the file back once.</summary>
+    public int SettingsVersion { get; set; }
+
+    /// <summary>The current layout. Version 1 turned <see cref="GoalTokenBudget"/> from "a million tokens" into
+    /// "no ceiling"; see the migration in <see cref="Load"/> for why the number had to be recognised rather than
+    /// simply changed.</summary>
+    public const int CurrentSettingsVersion = 1;
+
+    /// <summary>The value <see cref="GoalTokenBudget"/> carried as a shipped default before version 1. Recognised on
+    /// load because the field was serialized into every file, so almost every install has it written down whether
+    /// or not anybody chose it.</summary>
+    public const long RetiredGoalTokenBudget = 1_000_000;
+
     /// <summary>Ceiling on the tokens a goal may spend in total. <b>Off by default</b> — zero means no ceiling.
     ///
     /// <para>A goal exists so an unstable provider cannot end a task: the run backs off through a 429 or a dropped
@@ -225,11 +239,23 @@ public sealed class PreferencesStore(string path)
         // strongest tier anyone agreed to.
         preferences.MaxAutoEffort = ModelRouting.Ceiling(preferences.MaxAutoEffort);
         preferences.GoalContinuationLimit = Math.Max(0, preferences.GoalContinuationLimit);
+        // Version 1: the goal token budget stopped having a default. Until now every file carried 1 000 000 because
+        // the field was serialized with the shipped default, so a stored 1 000 000 is that retired default rather
+        // than a decision somebody made — and changing the default alone would never reach an existing install,
+        // because the file wins for the life of the install. Anything that differs from the old number is a
+        // deliberate ceiling and is left exactly as written.
+        var upgraded = false;
+        if (preferences.SettingsVersion < HubPreferences.CurrentSettingsVersion)
+        {
+            if (preferences.GoalTokenBudget == HubPreferences.RetiredGoalTokenBudget) preferences.GoalTokenBudget = 0;
+            preferences.SettingsVersion = HubPreferences.CurrentSettingsVersion;
+            upgraded = true;
+        }
         preferences.GoalTokenBudget = Math.Max(0, preferences.GoalTokenBudget);
         preferences.ProviderMaxRetries = Math.Clamp(preferences.ProviderMaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         preferences.GoalNoProgressLimit = Math.Clamp(preferences.GoalNoProgressLimit, 2, 20);
         preferences.GoalCooldownLimit = Math.Clamp(preferences.GoalCooldownLimit, 0, 5);
-        if (removedRetiredTools) Save(preferences);
+        if (removedRetiredTools || upgraded) Save(preferences);
         return preferences;
     }
     public void Save(HubPreferences preferences) => StateStore.WriteJson(path, preferences);

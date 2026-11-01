@@ -1064,6 +1064,23 @@ internal sealed partial class ShellDecisionsChecks
         System.IO.Directory.CreateDirectory(restoreRoot);
         var restoreStore = new PreferencesStore(PreferencesPathFor(restoreRoot));
         restoreStore.Save(new HubPreferences { InspectorOpen = true, InspectorWidth = 420 });
+        // Version 0 → 1: the goal token budget used to be serialized into every file as the shipped default, so a
+        // stored 1 000 000 is that retired default rather than a decision, and changing the default alone would
+        // never reach an existing install. A number somebody actually chose has to survive untouched.
+        var migratedRoot = ScratchDirectory.Resolve("preferences-migration");
+        System.IO.Directory.CreateDirectory(migratedRoot);
+        var migratedPath = PreferencesPathFor(migratedRoot);
+        System.IO.File.WriteAllText(migratedPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":1000000}");
+        var migrated = new PreferencesStore(migratedPath).Load();
+        var keptRoot = ScratchDirectory.Resolve("preferences-migration-kept");
+        System.IO.Directory.CreateDirectory(keptRoot);
+        var keptPath = PreferencesPathFor(keptRoot);
+        System.IO.File.WriteAllText(keptPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":500000}");
+        var kept = new PreferencesStore(keptPath).Load();
+        Check(migrated.GoalTokenBudget == 0 && migrated.SettingsVersion == HubPreferences.CurrentSettingsVersion
+              && kept.GoalTokenBudget == 500_000 && kept.SettingsVersion == HubPreferences.CurrentSettingsVersion,
+            "旧版设置文件里那个默认目标预算被认成旧默认并迁为「不限」，人选过的预算原样保留（实际 "
+            + migrated.GoalTokenBudget + " / " + kept.GoalTokenBudget + "）");
         var restored = new MainWindow(restoreRoot, restoreStore, restoreStore.Load());
         restored.Show();
         restored.NavigateTo("Assistant");
