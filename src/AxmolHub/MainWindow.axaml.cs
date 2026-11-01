@@ -769,12 +769,11 @@ public partial class MainWindow : Window
     /// together: an unnamed condition would only ever tell "is it visible" apart from the rest.</summary>
     internal enum UpdateActionKind
     {
-        /// <summary>No update (or no usable check result): the button is not on screen.</summary>
+        /// <summary>No update, no usable check result, or the transfer is moving (the strip reports it
+        /// for itself): the button is not on screen.</summary>
         Hidden,
         /// <summary>An update is known and not on disk: accent circle + dot, press fetches it.</summary>
         Found,
-        /// <summary>The transfer is moving: quiet circle, no dot — the number lives in the strip.</summary>
-        Downloading,
         /// <summary>The bytes have landed: accent pill + dot, press arms (or applies when armed).</summary>
         Ready,
     }
@@ -789,7 +788,8 @@ public partial class MainWindow : Window
     /// <para>The dot rides both states that wait for a person (<see cref="UpdateActionKind.Found"/> after a
     /// check — or after a cancel, which is exactly when auto-download will not fetch again by itself — and
     /// <see cref="UpdateActionKind.Ready"/> when the process swap is owed) and stands down while the
-    /// transfer reports for itself.</para>
+    /// transfer reports for itself — while it moves the button is <see cref="UpdateActionKind.Hidden"/>, the
+    /// strip's percentage and cancel being the only surface that needs to exist.</para>
     /// </summary>
     internal static (UpdateActionKind Kind, string? LabelKey, string? TipKey) UpdateActionStateFor(
         UpdateService.CheckOutcome? last, UpdateService.DownloadState download, bool armed)
@@ -804,7 +804,7 @@ public partial class MainWindow : Window
             UpdateService.DownloadState.Ready =>
                 (UpdateActionKind.Ready, armed ? "TaskRestartArmed" : "TaskRestartAction", "UpdateRestartActionTip"),
             UpdateService.DownloadState.Downloading =>
-                (UpdateActionKind.Downloading, null, "TaskSlotTip"),
+                (UpdateActionKind.Hidden, null, null),
             _ =>
                 (UpdateActionKind.Found, null, "TaskDownloadSlotTip"),
         };
@@ -840,13 +840,9 @@ public partial class MainWindow : Window
 
         // Exactly one shape class decides the plate; Classes.Set keeps the others off without a rebuild.
         UpdateActionButton.Classes.Set("icon", kind == UpdateActionKind.Found);
-        UpdateActionButton.Classes.Set("quiet", kind == UpdateActionKind.Downloading);
         UpdateActionButton.Classes.Set("pill", kind == UpdateActionKind.Ready);
 
-        // Both glyphs stay in the content grid as static resources — swapping Data at runtime would have to
-        // re-resolve the geometry through a resource lookup that can silently miss after a theme switch.
         UpdateActionGlyph.IsVisible = kind == UpdateActionKind.Found;
-        UpdateActionGlyphBusy.IsVisible = kind == UpdateActionKind.Downloading;
         UpdateActionText.IsVisible = kind == UpdateActionKind.Ready;
         UpdateActionText.Text = labelKey is null ? "" : HubStrings.Get(labelKey);
         UpdateActionDot.IsVisible = kind is UpdateActionKind.Found or UpdateActionKind.Ready;
@@ -874,8 +870,8 @@ public partial class MainWindow : Window
     /// <summary>
     /// The button's one press, decided by the state it was showing: fetch it (which is also the retry after
     /// a cancelled download — the reason <see cref="UpdateService.StartPendingDownload"/> does not care
-    /// about auto-download), lift the queue popover while it downloads, or — the third branch, past the
-    /// switch — hand the press to the restart's own gate.
+    /// about auto-download), or — past the switch — hand the press to the restart's own gate. While the
+    /// download moves the button is hidden, so there is no press to route.
     ///
     /// <para>That gate is <see cref="UpdateService.PressUpdateRestart"/> rather than a copy of the two-tap
     /// rule kept here: replacing the process is the one thing this app cannot undo from the inside, and the
@@ -894,11 +890,6 @@ public partial class MainWindow : Window
                 // Fetch it, and stop there. The transfer ends in Ready and the button then becomes the
                 // pill, so the process swap stays behind a press the user meant.
                 service.StartPendingDownload();
-                return;
-            case UpdateActionKind.Downloading:
-                // The number belongs to the strip and the row's cancel to the popover; this press only
-                // lifts the surface that holds them.
-                ToggleTaskPopup();
                 return;
         }
 

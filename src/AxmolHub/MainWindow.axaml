@@ -140,12 +140,12 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
 
-    <!-- The update's button in the bottom row: one control, three shapes, decided by class
-         (`icon` = found, `quiet` = downloading, `pill` = ready). The accent plate is the same accent every
+    <!-- The update's button in the bottom row: one control, two shapes, decided by class
+         (`icon` = found, `pill` = ready); it is hidden while the download moves, the strip reports that. The accent plate is the same accent every
          other primary action wears (Button.send, the strip's old accent slot) — this is not a new colour,
          it is the existing one given a permanent address. The pill exists because words are the only honest
          shape for "this replaces the process"; the circle is enough while the press just fetches bytes.
-         The glyph is stroked, not filled: Hub.Icon.Send and Hub.Icon.Refresh are open paths, and a filled
+         The glyph is stroked, not filled: Hub.Icon.Send is an open path, and a filled
          open path in Avalonia paints nothing — a silent way for the button to arrive invisible. -->
     <Style Selector="Button.update-action">
       <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
@@ -167,19 +167,6 @@
     <Style Selector="Button.update-action:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
-    <!-- Downloading: the number belongs to the strip's queue slot, so this state only says "something is
-         moving" and stays off the accent while it says it — an accent plate here would compete with the
-         ready-pill for the meaning "press me now". -->
-    <Style Selector="Button.update-action.quiet">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="Height" Value="32" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-    </Style>
-    <Style Selector="Button.update-action.quiet:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    </Style>
     <!-- Ready: the pill. One word-cluster at a fixed 28 height so the row's other two controls, which are
          31-32 tall, never jump when the state changes under them. Its corners are the gear's (6), not half its
          height: the two sit in the same bottom row a few pixels apart, and a fully rounded cap beside a 6px
@@ -195,12 +182,6 @@
       <Setter Property="StrokeThickness" Value="1.8" />
       <Setter Property="StrokeLineCap" Value="Round" />
       <Setter Property="StrokeJoin" Value="Round" />
-    </Style>
-    <Style Selector="Button.update-action.quiet Path.icon">
-      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
-    </Style>
-    <Style Selector="Button.update-action.quiet:pointerover Path.icon">
-      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
     <!-- Ghost icon buttons: the status-strip log chevron and (with Button.titlebar's tighter plate) the two
@@ -890,9 +871,6 @@
                     <Grid>
                       <Path x:Name="UpdateActionGlyph" Classes="icon"
                             Data="{StaticResource Hub.Icon.Send}"
-                            Width="16" Height="16" Stretch="Uniform" />
-                      <Path x:Name="UpdateActionGlyphBusy" Classes="icon" IsVisible="False"
-                            Data="{StaticResource Hub.Icon.Refresh}"
                             Width="16" Height="16" Stretch="Uniform" />
                       <TextBlock x:Name="UpdateActionText" IsVisible="False"
                                  TextTrimming="CharacterEllipsis" MaxWidth="150"

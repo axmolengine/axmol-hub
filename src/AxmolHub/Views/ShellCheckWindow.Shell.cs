@@ -1040,7 +1040,7 @@ internal sealed class ShellLayoutChecks
 
         // The update's decision table, on the pure function that now owns it: found (the press fetches —
         // including after a cancel, which is exactly when auto-download will not fetch again by itself),
-        // downloading (the press lifts the queue; the dot stands down because the percentage reports),
+        // downloading (the button is hidden because the strip's percentage reports),
         // ready (the pill; the dot is back because the restart is owed), and silence with no update. The
         // arm is a label change on the pill, not a state of its own.
         var outcomeAvailable = new UpdateService.CheckOutcome(
@@ -1061,9 +1061,9 @@ internal sealed class ShellLayoutChecks
         Check(foundState.Kind == MainWindow.UpdateActionKind.Found
               && foundState.LabelKey is null && foundState.TipKey == "TaskDownloadSlotTip",
             "待下载状态 = 圆形 + 红点（无标签，提示带版本）：" + foundState.Kind + "/" + foundState.TipKey);
-        Check(downloadingState.Kind == MainWindow.UpdateActionKind.Downloading
-              && downloadingState.LabelKey is null && downloadingState.TipKey == "TaskSlotTip",
-            "下载中状态 = 安静圆形、无红点，进度归状态条：" + downloadingState.Kind);
+        Check(downloadingState.Kind == MainWindow.UpdateActionKind.Hidden
+              && downloadingState.LabelKey is null && downloadingState.TipKey is null,
+            "下载中状态 = 按钮整个不在屏上，进度归状态条：" + downloadingState.Kind);
         Check(readyState.Kind == MainWindow.UpdateActionKind.Ready
               && readyState.LabelKey == "TaskRestartAction" && readyState.TipKey == "UpdateRestartActionTip",
             "就绪状态 = 胶囊「重启完成更新」：" + readyState.Kind + "/" + readyState.LabelKey);

@@ -177,17 +177,17 @@ public partial class MainWindow
     internal bool UpdateActionVisibleForCheck => UpdateActionHost.IsVisible;
     /// <summary>The pill's word — empty in the circle states, where the glyph speaks instead.</summary>
     internal string UpdateActionLabelForCheck => UpdateActionText.Text ?? "";
-    /// <summary>Which of the three shapes is on the button right now, read off the classes the style
+    /// <summary>Which of the two shapes is on the button right now, read off the classes the style
     /// selector actually matches.</summary>
-    internal string UpdateActionShapeForCheck => UpdateActionButton.Classes.Contains("pill") ? "pill" : UpdateActionButton.Classes.Contains("quiet") ? "quiet" : UpdateActionButton.Classes.Contains("icon") ? "icon" : "?";
+    internal string UpdateActionShapeForCheck => UpdateActionButton.Classes.Contains("pill") ? "pill" : UpdateActionButton.Classes.Contains("icon") ? "icon" : "?";
     /// <summary>Whether the red dot is up. A check reads this and then the dot's pixels — IsVisible alone
     /// proves the decision, not the paint.</summary>
     internal bool UpdateActionDotVisibleForCheck => UpdateActionDot.IsVisible;
     /// <summary>The button's tooltip, where the pending version is spelled out in every state that owes one.</summary>
     internal string UpdateActionTipForCheck => ToolTip.GetTip(UpdateActionButton) as string ?? "";
-    /// <summary>Which glyph is in the content grid: "send" (found), "busy" (downloading), "label" (pill) —
+    /// <summary>Which glyph is in the content grid: "send" (found), "label" (pill) —
     /// the shape a frame capture cannot name for itself.</summary>
-    internal string UpdateActionGlyphForCheck => UpdateActionText.IsVisible ? "label" : UpdateActionGlyphBusy.IsVisible ? "busy" : UpdateActionGlyph.IsVisible ? "send" : "none";
+    internal string UpdateActionGlyphForCheck => UpdateActionText.IsVisible ? "label" : UpdateActionGlyph.IsVisible ? "send" : "none";
 
     /// <summary>The three pieces of the bottom row in the <b>window's own</b> coordinates — the space a
     /// frame capture reads pixels in, so "the button sits left of the gear" and "the dot paints red at the
