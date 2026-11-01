@@ -84,7 +84,10 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
 
     private static Button ActionButton(string tip, string icon)
     {
-        var button = new Button { Name = tip, Content = icon == "Hub.Icon.Close" ? HubActionIcon.Close() : HubActionIcon.Create(icon),
+        var glyph = icon == "Hub.Icon.Close" ? HubActionIcon.Close() : HubActionIcon.Create(icon);
+        // The close cross is inked in 8 units; a 13-unit ring beside it reads as the larger of the pair.
+        if (glyph is Avalonia.Controls.Shapes.Path ring) ring.Width = ring.Height = 10;
+        var button = new Button { Name = tip, Content = glyph,
             Width = 28, Height = 28, Margin = default, Classes = { "viewer-action" } };
         button.Bind(ToolTip.TipProperty, new DynamicResourceExtension(tip));
         return button;
