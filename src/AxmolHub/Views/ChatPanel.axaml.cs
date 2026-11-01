@@ -1148,18 +1148,9 @@ public partial class ChatPanel : UserControl
     {
         if (ContextProgressTrack is null || ContextProgressFill is null) return;
         var reading = usage ?? CurrentContextUsage();
-        var track = Math.Max(0, ContextProgressTrack.Bounds.Width);
         // A bar has an end, so it fills up to it; the percentage next to it is allowed to say 118%.
-        ContextProgressFill.Width = track * Math.Clamp((double)reading.Used / Math.Max(1, reading.Room), 0, 1);
-        // The point Hub compacts at without being asked. It sits at the bar's end when the cost ceiling is not in
-        // play, and a line there says nothing the end of the bar has not already said.
-        if (ContextProgressTrigger is null) return;
-        var capped = reading.TriggerTokens < reading.Room;
-        ContextProgressTrigger.IsVisible = capped;
-        if (!capped) return;
-        var left = track * Math.Clamp((double)reading.TriggerTokens / Math.Max(1, reading.Room), 0, 1);
-        // Kept off the track's clipped edge, where the line would be half a pixel of nothing.
-        ContextProgressTrigger.Margin = new Thickness(Math.Clamp(left, 0, Math.Max(0, track - 2)), 0, 0, 0);
+        ContextProgressFill.Width = ContextProgressTrack.Bounds.Width
+                                     * Math.Clamp((double)reading.Used / Math.Max(1, reading.Room), 0, 1);
     }
 
     /// <summary>
@@ -1189,13 +1180,14 @@ public partial class ChatPanel : UserControl
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ChatContextMeasuredNote"),
                 usage.MeasuredInputTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
-        // The figure the ring cannot say by itself: Hub compacts on a capped room, so on a large window the
-        // percentage and the trigger are two different scales, and only this line names the one that acts.
-        if (usage.TriggerTokens < usage.Room)
+        // The figure the ring cannot say by itself: the percentage the transcript reaches before Hub cuts it,
+        // named on the same scale as the ring's own number, and what that percentage is in tokens.
+        if (usage.Room > 0)
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ChatContextCompactionTriggerFormat"),
                 usage.TriggerTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-                Math.Max(0, usage.Used).ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
+                Math.Round(100.0 * usage.TriggerTokens / usage.Room)
+                    .ToString("0", System.Globalization.CultureInfo.CurrentCulture)));
         if (usage.DriftPermille > ContextReport.UncalibratedPermille
             && usage.EffectiveWindow != usage.RawWindow)
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,

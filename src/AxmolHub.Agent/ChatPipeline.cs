@@ -207,12 +207,13 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // ContextTrimmer only ever sees the first iteration. The harvest sits inside the guard for the same
             // reason and one more: it must read the list as it will actually go out, assistant messages the loop
             // added since the last request included, or the reasoning it hands the wire policy is stale by a turn.
-            // The handoff is asked about against the host's cost ceiling rather than the model's window: the loop
-            // is the only place that can decide to give control back, and measuring it against "does it still fit"
-            // let one measured run send 4 520 397 input tokens in eighteen minutes without ever yielding.
+            // The handoff is asked about against the room the request is trimmed to, which is also where a
+            // compaction is decided: the loop is the only place that can give control back while the next round
+            // still has a complete transcript to compact, and measuring it against "does it still fit" let one
+            // measured run send 4 520 397 input tokens in eighteen minutes without ever yielding.
             guard = new ToolLoopContextGuard(
                 reasoning is null ? effectiveClient : new ReasoningHarvestClient(effectiveClient, reasoning), budget,
-                ContextCompaction.DecisionRoom(budget))
+                budget)
             {
                 PendingInterjection = pendingInterjection,
                 YieldForCompaction = yieldForCompaction,

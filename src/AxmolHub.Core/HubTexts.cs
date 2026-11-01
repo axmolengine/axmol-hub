@@ -689,11 +689,10 @@ public static class HubTexts
         ["ChatContextSourceFormat"] = ("窗口 {1} tokens，来源：{0}", "Window of {1} tokens, from {0}"),
         ["ChatContextMeasuredNote"] = ("{0} tokens 是上次请求的实测值，它之后的新增按估算补上。",
             "{0} tokens is what the last request measured; the turns since then are estimated on top."),
-        // The trigger is not the window: a compaction is decided on a room capped at what one round is worth
-        // re-sending, so on a large window the ring's percentage and this line are two different scales. It
-        // names the number that acts, and the reading it is compared with right now.
-        ["ChatContextCompactionTriggerFormat"] = ("占用到 {0} tokens 时自动压缩（当前 {1}）",
-            "Compacts on its own at {0} tokens (now {1})"),
+        // Where the transcript gets cut, which the ring's percentage does not say by itself: the token count the
+        // compaction fires at, and the reading it is compared with right now.
+        ["ChatContextCompactionTriggerFormat"] = ("占用到 {1}% 时自动压缩（约 {0} tokens）",
+            "Compacts on its own at {1}% (about {0} tokens)"),
         // What the answer <i>cost</i>, as opposed to how much of the window it fills — the rows above are an
         // estimate of the latter, and the note above is one request's measured input. These two lines are the
         // measured spend: every request of the round summed, because a tool loop pays for the transcript again

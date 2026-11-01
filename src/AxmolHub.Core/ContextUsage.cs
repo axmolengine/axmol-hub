@@ -160,10 +160,10 @@ public sealed record ContextUsage
     /// and <see cref="Free"/> are measured against this — a ring that rounded the other way would have the screen
     /// and the request disagree.
     ///
-    /// <para>It is <b>not</b> the number a compaction is decided on. That comparison is made against
-    /// <see cref="ContextCompaction.DecisionRoom"/>, which caps this by what one round is worth re-sending, and
-    /// <see cref="TriggerTokens"/> is where the capped figure becomes visible. On a window larger than the cap the
-    /// two are far apart: a million-token model compacts at 85 000, which is 9% of this room.</para></summary>
+    /// <para>A compaction is decided on this same figure — at <see cref="TriggerTokens"/>, 85% of it — so there is
+    /// only one scale on the screen. It was not always so: a cost ceiling used to cap the room the decision was
+    /// made on, which put the trigger at 9% of a million-token window and compacted sessions that were nowhere
+    /// near full.</para></summary>
     public required int Room { get; init; }
 
     /// <summary>What the next request would carry. A model's own reading when it gave one, with the turns written
@@ -208,9 +208,8 @@ public sealed record ContextUsage
     /// that does not fit is at more than 100%, and the ring is not allowed to report that as a full one.</summary>
     public double Fill => ContextCompaction.Ratio(Used, Room);
 
-    /// <summary>How much <see cref="Used"/> may reach before Hub compacts on its own, through the same capped room
-    /// the trigger compares against. Shown beside the fill so a window larger than the cap does not look like it
-    /// compacts for no reason; equal to <see cref="Room"/> when the cap is not in play, which is also the signal
-    /// that there is nothing to warn about.</summary>
+    /// <summary>How much <see cref="Used"/> may reach before Hub compacts on its own: 85% of <see cref="Room"/>, as
+    /// a token count. Quoted in the popover beside the fill, because the ring's percentage answers "how much is
+    /// left" and nothing about when the transcript gets cut.</summary>
     public int TriggerTokens => ContextCompaction.TriggerTokens(Room);
 }

@@ -37,10 +37,6 @@ public static class ContextCompaction
     /// is asking to summarize a session that still has most of its room, which spends a request to make the
     /// conversation worse: the summary replaces text the model could have read.
     ///
-    /// <para>Measured on <see cref="DecisionRoom"/> for the same reason the trigger is. Against the window itself
-    /// the floor would be unreachable on a large one — a session compacting at 85 000 of a million tokens is at 9%
-    /// of its window — and the button would be disabled exactly when compaction is most imminent.</para>
-    ///
     /// <para>Only the hand-pressed button asks this. <see cref="ShouldCompact"/> stays the whole rule for a
     /// compaction Hub decides on: what is bounded there is the transcript's size, not a person's request.</para>
     /// </summary>
@@ -77,24 +73,19 @@ public static class ContextCompaction
     /// <summary>How full the transcript may be left, in tokens, for a room of this size.</summary>
     public static int TargetTokens(int room) => (int)Math.Ceiling(Math.Max(0, room) * TargetRatio);
 
-    /// <summary>
-    /// The largest room a compaction decision may use, whatever window the model declares.
+    /// <summary>The room a compaction decision uses: the window's own conversation room, and nothing narrower.
     ///
-    /// <para>A tool loop re-sends the whole transcript on <b>every</b> round, so a prompt's size is not paid once;
-    /// it is paid per round, and the window is only the point at which the request stops fitting. Reading "it fits"
-    /// as "it is affordable" is what let one measured session run at 300 000–416 000 tokens a round until the
-    /// account's five-hour allowance was gone — one hour of that day logged 27 313 333 input tokens. A hundred
-    /// thousand tokens is already a large conversation, and a hundred rounds of it is ten million, so past this
-    /// the transcript is compacted even though the model would have accepted more.</para>
+    /// <para>It used to be capped at 100 000 tokens, on the argument that a tool loop re-sends the whole transcript
+    /// every round, so a prompt's size is paid per round and "it fits" is not "it is affordable". The argument is
+    /// sound and the cap was still wrong: on a million-token window it put the trigger at 9% of what the model
+    /// holds, so a session was compacted — and lost the middle of its transcript — long before it was anywhere near
+    /// full, which is not what any of the tools this one is measured against do. A transcript is compacted when it
+    /// is nearly full, by the window's own figure; the cost of a large window is then paid per round, visibly,
+    /// instead of being taken out of the conversation.
     ///
-    /// <para>Tier one is arithmetic on text Hub already owns — no request, no cost — so the ceiling only decides
-    /// when the free tier is asked to work. It never changes the window a request is trimmed to.</para>
+    /// <para>A room of zero stays zero — that is "nothing fits", not "plenty of room".</para>
     /// </summary>
-    public const int CostCeilingTokens = 100_000;
-
-    /// <summary>The room a compaction decision uses: the window's own room, capped by what one round is worth
-    /// re-sending. A room of zero stays zero — that is "nothing fits", not "plenty of room".</summary>
-    public static int DecisionRoom(int room) => room <= 0 ? room : Math.Min(room, CostCeilingTokens);
+    public static int DecisionRoom(int room) => room;
 
     /// <summary>The fewest messages a prefix must hold before summarizing it is worth a request. One message is
     /// not a prefix: both <c>CanCompressContext</c> and the request builder refuse fewer, so a candidate measure that
