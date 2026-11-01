@@ -482,7 +482,9 @@ public partial class ChatPanel
             };
         }
 
-        var planText = PlanTextFor(conversation, turnIndex);
+        var selectedPlan = PlanTurnFor(conversation, turnIndex);
+        var planText = selectedPlan is null ? null : PlanMarkdown(selectedPlan);
+        _inspector.PlanFilePathFor = () => selectedPlan is null ? null : _chat?.PlanFilePath(selectedPlan);
         var conversationId = conversation?.Id ?? "";
         // The first scope of the tab is the turn itself: the rows come from the transcript and the revisions it
         // points at, so they say what the assistant did rather than what the tree happens to hold.
@@ -538,33 +540,21 @@ public partial class ChatPanel
     /// conversation, otherwise the newest plan it holds. The fallback is what a stale pointer degrades to — a
     /// message deleted or regenerated since the card was drawn should move the pane to the plan that is really
     /// there, not leave it showing nothing.</summary>
-    private string? PlanTextFor(Conversation? conversation, int turnIndex)
+    private ChatTurn? PlanTurnFor(Conversation? conversation, int turnIndex)
     {
         if (conversation is null) return null;
         if (turnIndex >= 0 && turnIndex < conversation.Messages.Count
             && conversation.Messages[turnIndex] is { Role: ChatRoles.Assistant, PlanApprovalState: { Length: > 0 } } chosen)
-        {
-            return PlanMarkdown(chosen);
-        }
-
-        return LatestPlanText(conversation);
+            return chosen;
+        return conversation.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
+            && turn.PlanApprovalState is { Length: > 0 } && PlanMarkdown(turn) is { Length: > 0 });
     }
 
     /// <summary>The markdown of the newest plan this conversation produced — the pending one if a plan is
     /// waiting, otherwise the last one it answered, so the card and 「查看计划」 still show something after
     /// approval.</summary>
     private string? LatestPlanText(Conversation? conversation)
-    {
-        if (conversation is null) return null;
-        string? latest = null;
-        foreach (var turn in conversation.Messages)
-        {
-            if (turn.Role != ChatRoles.Assistant) continue;
-            if (turn.PlanApprovalState is not { Length: > 0 }) continue;
-            if (PlanMarkdown(turn) is { Length: > 0 } markdown) latest = markdown;
-        }
-        return latest;
-    }
+        => PlanTurnFor(conversation, -1) is { } turn ? PlanMarkdown(turn) : null;
 
     /// <summary>
     /// What the pane shows for one plan turn: its body, wherever the turn says it is.

@@ -1,84 +1,67 @@
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Interactivity;
+using AxmolHub.Core;
 
 namespace AxmolHub;
 
 public partial class MainWindow
 {
-    private ContentControl _codeWorkspaceContent = null!;
-    private Grid _codeWorkspaceHost = null!;
-    private TextBlock _codeWorkspaceTitle = null!;
-    private Func<bool>? _codeWorkspaceIsDirty;
+    private WorkspaceView? _workspaceView;
 
-    internal bool CodeWorkspaceIsDirty => _codeWorkspaceHost?.IsVisible == true && _codeWorkspaceIsDirty?.Invoke() == true;
-    internal bool CodeWorkspaceVisibleForCheck => _codeWorkspaceHost.IsVisible;
-    internal string CodeWorkspaceTitleForCheck => _codeWorkspaceTitle.Text ?? "";
-    internal Control? CodeWorkspaceContentForCheck => _codeWorkspaceContent.Content as Control;
+    internal bool WorkspaceHasDirtyBuffers => _workspaceView?.HasDirtyBuffers == true;
+    internal bool WorkspaceDocumentVisibleForCheck => _workspaceView?.DocumentSelectedForCheck == true;
+    internal string WorkspaceDocumentTitleForCheck => _workspaceView?.SelectedTitleForCheck ?? "";
+    internal Control? WorkspaceDocumentContentForCheck => _workspaceView?.SelectedContentForCheck;
+    internal WorkspaceView? WorkspaceViewForCheck => _workspaceView;
 
-    private void InitializeCodeWorkspace()
+    private Control? BuildWorkspaceContent()
     {
-        _codeWorkspaceContent = this.FindControl<ContentControl>("CodeWorkspaceContent")!;
-        _codeWorkspaceHost = this.FindControl<Grid>("CodeWorkspaceHost")!;
-        _codeWorkspaceTitle = this.FindControl<TextBlock>("CodeWorkspaceTitle")!;
-        this.FindControl<Button>("CodeWorkspaceCloseButton")!.Click += async (_, _) => await CloseCodeWorkspaceAsync();
-        AddHandler(InputElement.KeyDownEvent, async (_, e) =>
+        if (_chatPanel?.BuildInspectorContent(_inspectorTab, _inspectorTurn) is not InspectorPanel inspector) return null;
+        if (_workspaceView is null)
         {
-            if (e.Key != Key.Escape || !_codeWorkspaceHost.IsVisible) return;
-            e.Handled = true;
-            await CloseCodeWorkspaceAsync();
-        }, RoutingStrategies.Tunnel);
-    }
-
-    internal void ShowCodeWorkspace(string title, Control content, Func<bool>? isDirty = null)
-    {
-        if (CodeWorkspaceIsDirty)
-        {
-            _ = ReplaceCodeWorkspaceAsync(title, content, isDirty);
-            return;
+            _workspaceView = new WorkspaceView(this, inspector);
+            _workspaceView.ToolRequested += tab => _inspectorTab = tab;
+            _workspaceView.FileRequested += path =>
+            {
+                var id = _chat.ActiveConversation?.Id ?? "";
+                var root = _chat.ActiveWorkspaceRoot;
+                var error = CodeFileWindow.ShowEditor(this, path, () => _chat.EditorScopeFor(id, root), RefreshInspector);
+                if (error is not null) _ = HubDialog.ShowAsync(this, HubStrings.Get("WorkspaceFiles"), HubStrings.Get(error));
+            };
+            _workspaceView.OpenRequested += ShowWorkspace;
+            Closed += (_, _) => _workspaceView.Dispose();
         }
-        SetCodeWorkspace(title, content, isDirty);
+        var conversationId = _chat.ActiveConversation?.Id ?? "";
+        var root = _chat.ActiveWorkspaceRoot;
+        _workspaceView.SetContext(root, () => _chat.EditorScopeFor(conversationId, root));
+        return _workspaceView;
     }
 
-    private async Task ReplaceCodeWorkspaceAsync(string title, Control content, Func<bool>? isDirty)
+    private void ShowWorkspace()
     {
-        var answer = await HubDialog.ShowAsync(this, "Unsaved code buffer",
-            "This file has unsaved changes. Discard them and open the requested code view?",
-            HubDialogButtons.YesNo, danger: true);
-        if (answer == HubDialogResult.Yes) SetCodeWorkspace(title, content, isDirty);
-    }
-
-    private void SetCodeWorkspace(string title, Control content, Func<bool>? isDirty)
-    {
-        _codeWorkspaceTitle.Text = title;
-        _codeWorkspaceContent.Content = content;
-        _codeWorkspaceIsDirty = isDirty;
-        _codeWorkspaceHost.IsVisible = true;
-    }
-
-    internal void CloseCodeWorkspace(bool discard = false)
-    {
-        if (discard)
+        _inspectorOpen = true;
+        SetInspectorPane(_workspaceView);
+        SetInspectorColumnVisible();
+        _workspaceView?.RefreshLayout();
+        if (!_preferences.InspectorOpen)
         {
-            _codeWorkspaceContent.Content = null;
-            _codeWorkspaceIsDirty = null;
-            _codeWorkspaceHost.IsVisible = false;
+            _preferences.InspectorOpen = true;
+            _preferencesStore.Save(_preferences);
         }
-        else _ = CloseCodeWorkspaceAsync();
     }
 
-    private async Task CloseCodeWorkspaceAsync()
+    internal bool SelectWorkspaceDocument(string path)
     {
-        if (!_codeWorkspaceHost.IsVisible) return;
-        if (_codeWorkspaceIsDirty?.Invoke() == true)
-        {
-            var answer = await HubDialog.ShowAsync(this, "Unsaved code buffer",
-                "This file has unsaved changes. Discard them and close the code workspace?",
-                HubDialogButtons.YesNo, danger: true);
-            if (answer != HubDialogResult.Yes) return;
-        }
-        _codeWorkspaceContent.Content = null;
-        _codeWorkspaceIsDirty = null;
-        _codeWorkspaceHost.IsVisible = false;
+        BuildWorkspaceContent();
+        return _workspaceView?.SelectExisting(path) == true;
     }
+
+    internal void ShowWorkspaceDocument(string path, string title, Control content, Func<bool>? isDirty = null)
+    {
+        BuildWorkspaceContent();
+        _workspaceView?.OpenDocument(path, title, content, isDirty);
+    }
+
+    internal void CloseWorkspaceDocument(bool discard = false) => _workspaceView?.CloseSelected(discard);
+    internal bool SaveWorkspaceBuffers() => _workspaceView?.SaveAll() != false;
+    internal void DiscardWorkspaceBuffers() => _workspaceView?.DiscardAll();
 }

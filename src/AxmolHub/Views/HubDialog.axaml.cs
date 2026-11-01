@@ -10,6 +10,7 @@ public enum HubDialogButtons
     Ok,
     OkCancel,
     YesNo,
+    SaveDiscardCancel,
 }
 
 /// <summary>
@@ -24,6 +25,8 @@ public enum HubDialogResult
     Ok,
     Yes,
     No,
+    Save,
+    Discard,
 }
 
 /// <summary>
@@ -136,6 +139,12 @@ public partial class HubDialog : Window
             case HubDialogButtons.OkCancel:
                 Add(HubDialogResult.Cancel, HubStrings.Get("Cancel"), primary: false, cancel: true, danger: false);
                 Add(HubDialogResult.Ok, HubStrings.Get("Ok"), primary: true, cancel: false, danger: danger);
+                break;
+
+            case HubDialogButtons.SaveDiscardCancel:
+                Add(HubDialogResult.Cancel, HubStrings.Get("Cancel"), primary: false, cancel: true, danger: false);
+                Add(HubDialogResult.Discard, HubStrings.Get("CodeDiscard"), primary: false, cancel: false, danger: true);
+                Add(HubDialogResult.Save, HubStrings.Get("CodeSave"), primary: true, cancel: false, danger: false);
                 break;
 
             case HubDialogButtons.YesNo:

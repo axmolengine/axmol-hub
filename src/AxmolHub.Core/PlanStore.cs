@@ -163,6 +163,11 @@ public static class PlanStore
         }
     }
 
+    /// <summary>The validated stored file behind a plan, or null for inline, missing or refused references.</summary>
+    public static string? PathOf(ChatTurn turn, string? dataRoot)
+        => turn.Plan?.File is { } name && IsBodyName(name) && DirectoryFor(dataRoot) is { } directory
+            && File.Exists(Path.Combine(directory, name)) ? Path.Combine(directory, name) : null;
+
     /// <summary>How many documents the store holds. A check reads it because "the store stayed bounded" is a
     /// fact about the disk, not about anything in memory.</summary>
     public static int FileCount(string? dataRoot)

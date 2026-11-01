@@ -27,14 +27,19 @@ internal sealed partial class InspectorPanel : UserControl
     /// <summary>Which tab button carries the underline. The visibility booleans say what is on screen; this says
     /// what the header claims is on screen, and a pane that showed one page while marking another is caught by
     /// nothing else.</summary>
-    internal string SelectedTabKeyForCheck => _planTab.Classes.Contains("selected") ? "plan" : _changesTab.Classes.Contains("selected") ? "changes" : "";
+    internal string SelectedTabKeyForCheck => _planScroll.IsVisible ? "plan" : "changes";
 
     /// <summary>Presses a header tab. Every repository test used to enter through the shell's own
     /// <c>OpenInspector</c> — which is exactly how a pane that only <em>looked</em> like it had moved to 仓库
     /// stayed green, because the shell already knew the tab it had just been asked for.</summary>
-    internal void ClickPlanTabForCheck() => ClickTab(_planTab);
-    internal void ClickChangesTabForCheck() => ClickTab(_changesTab);
-    internal void ClickRepoTabForCheck() => ClickTab(_changesTab);
+    internal void ClickPlanTabForCheck() => RequestToolForCheck("plan");
+    internal void ClickChangesTabForCheck() => RequestToolForCheck("repo");
+    internal void ClickRepoTabForCheck() => RequestToolForCheck("repo");
+    private void RequestToolForCheck(string key)
+    {
+        if (SelectToolForCheck is { } select) select(key);
+        else { SelectTab(key); if (key == "repo") RepoRefreshRequested?.Invoke(); }
+    }
 
     /// <summary>Names a scope through the picker, the way a reader does. A scope picked here sticks — entering
     /// the tab deliberately does not reset it — so a check that makes a claim about the repo list has to say which
@@ -69,6 +74,11 @@ internal sealed partial class InspectorPanel : UserControl
     /// and a check pinned to an index goes stale the moment a column is added between them.</summary>
     internal bool PlanCopyButtonInHeaderForCheck => ReferenceEquals(_planCopyButton.Parent, _header) && Grid.GetColumn(_planCopyButton) < Grid.GetColumn(_viewSettings);
     internal bool PlanCopyButtonVisibleForCheck => _planCopyButton.IsVisible;
+    internal bool FileTreeToggleAlignedForCheck => _fileTreeToggle is { IsVisible: true } button
+        && ReferenceEquals(button.Parent, _header) && Grid.GetColumn(button) > Grid.GetColumn(_viewSettings)
+        && Math.Abs(button.Bounds.Center.Y - _viewSettings.Bounds.Center.Y) < 0.5
+        && button.Bounds.Size == _viewSettings.Bounds.Size;
+    internal bool FileTreeToggleVisibleForCheck => _fileTreeToggle?.IsVisible == true;
     internal bool ViewSettingsVisibleForCheck => _viewSettings.IsVisible;
     /// <summary>Whether the plan tab's own document paints its selection from the Hub token. The pane is the
     /// renderer's other audience, and the colour of a selection is exactly the kind of thing a rule written for
@@ -78,7 +88,7 @@ internal sealed partial class InspectorPanel : UserControl
     /// other audience, and a menu attached inside ChatPanel alone would leave selecting the plan useless.</summary>
     internal bool PlanSelectionMenuForCheck => _planHost.Content is MarkdownScrollViewer viewer && SelectionMenu.HeadersForCheck(viewer).SequenceEqual([HubStrings.Get("CopyMessage"), HubStrings.Get("QuoteSelection")]);
     /// <summary>Visible header actions only: the plan page has a gear and an optional copy button. The tabs are
-    /// not in this row any more — they are in the title bar (see <see cref="TabStrip"/>) — and the hidden Changes
+    /// not in this row any more — they are in the title bar's workspace strip — and the hidden Changes
     /// edit actions must not inflate this count or appear over a plan.</summary>
     /// <summary>The page's own buttons, without the scope picker that shares the row: the picker is a control in its
     /// own right, and counting it as a page action would make "the gear and the copy button" a different number just

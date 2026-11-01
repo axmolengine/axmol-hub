@@ -24,6 +24,13 @@ internal sealed class ChangesEditSession
         Active.Remove(this);
     }
 
+    internal static string? SaveAll()
+    {
+        foreach (var session in Active.ToArray())
+            if (session.IsDirty && session.Save() is { } error) return error;
+        return null;
+    }
+
     internal static void DiscardAll()
     {
         foreach (var session in Active.ToArray()) session.Cancel();

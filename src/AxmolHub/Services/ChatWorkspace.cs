@@ -687,6 +687,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// names nothing, and <c>null</c> with the reason when the document is not there to read. The transcript and
     /// the review column ask through here so both read the one representation rule
     /// (<see cref = "PlanStore.BodyOf"/>) rather than each keeping their own idea of where a plan lives.</summary>
+    internal string? PlanFilePath(ChatTurn turn) => _sessions.PlanFilePath(turn);
     internal string? PlanBody(ChatTurn turn, out PlanBodyState state) => _sessions.PlanBody(turn, out state);
     public bool IsRunning(string conversationId) => _execution.IsRunning(conversationId);
     internal Task RefreshGitPresentationAsync(string conversationId) => _execution.RefreshGitPresentationAsync(conversationId);

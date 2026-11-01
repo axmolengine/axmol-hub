@@ -432,6 +432,82 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Accent}" />
     </Style>
+    <Style Selector="Border.workspace-tab">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.workspace-tab.selected, Border.workspace-tab:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.workspace-tab-select, Button.workspace-tab-close">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- These buttons contain bounded, ellipsized content rather than the generic button's inline label. -->
+    <Style Selector="Button.workspace-tab-select, Button.workspace-file-row">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Frame" Background="{TemplateBinding Background}"
+                  CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}"
+                  ClipToBounds="True">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Foreground="{TemplateBinding Foreground}"
+                              HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="Border.workspace-tab.selected Button.workspace-tab-select">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.workspace-tab-select:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close">
+      <Setter Property="Opacity" Value="0" />
+    </Style>
+    <Style Selector="Border.workspace-tab.selected Button.workspace-tab-close, Border.workspace-tab.dirty Button.workspace-tab-close, Border.workspace-tab:pointerover Button.workspace-tab-close, Border.workspace-tab:focus-within Button.workspace-tab-close">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Border.workspace-tab.dirty Canvas.workspace-tab-close-glyph">
+      <Setter Property="Opacity" Value="0" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:pointerover Canvas.workspace-tab-close-glyph, Button.workspace-tab-close:focus-visible Canvas.workspace-tab-close-glyph">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:pointerover Ellipse.workspace-tab-dirty-dot, Button.workspace-tab-close:focus-visible Ellipse.workspace-tab-dirty-dot">
+      <Setter Property="Opacity" Value="0" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
+    </Style>
+    <Style Selector="Button.titlebar.selected">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.workspace-file-row">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.workspace-file-row.selected">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.workspace-entry">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="12,8" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
     <Style Selector="Button.inspector-file-menu">
       <Setter Property="Padding" Value="6,0" />
       <Setter Property="MinWidth" Value="30" />
@@ -647,7 +723,7 @@
            resizing it, and a four-way arrow there promises a resize that will never happen; the plain arrow the
            rest of the window uses is the honest one. -->
       <Border x:Name="TitleBarDragArea" Background="Transparent" />
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto">
         <!-- The nav zone: the drawer's button and the page's own name, in a cell as wide as the sidebar. MinWidth
              follows Sidebar.Width, the same number row one's first column is built from, so this cell's right edge
              *is* the sidebar's border — live through a grip drag, zero while the drawer is shut. That is the whole
@@ -699,21 +775,21 @@
              the page: on another page there is nothing to show or hide, and a button that opened a column
              nobody could see is the bug this bar is here to stop.
 
-             Two columns rather than one so that the drawer never moves: the star column to their left absorbs
-             the pair appearing and disappearing, which is what keeps the drawer and the three caption plates at
-             the same x in all three states (nothing open, column, lifted) — asserted against the pixels,
-             because a plate that has been painted over keeps its bounds and only loses its face. -->
-        <Button x:Name="InspectorExpandToggle" Grid.Column="2" Classes="titlebar"
+             A right-aligned action group keeps the drawer and caption plates fixed while the expand button
+             appears. The tab slot reserves this group's measured width on every host, so a narrow pane cannot
+             paint over the actions or intercept their clicks. -->
+        <StackPanel x:Name="TitleBarRightActions" Grid.Column="2" Orientation="Horizontal">
+        <Button x:Name="InspectorExpandToggle" Classes="titlebar"
                 IsVisible="False" Margin="0,0,4,0">
           <Path Classes="stroked" Data="{StaticResource Hub.Icon.Expand}"
                 Width="12" Height="12" Stretch="Uniform" />
         </Button>
-        <Button x:Name="InspectorToggle" Grid.Column="3" Classes="titlebar"
+        <Button x:Name="InspectorToggle" Classes="titlebar"
                 IsVisible="False" Margin="0,0,4,0">
           <Path x:Name="InspectorToggleGlyph" Classes="stroked" Data="{StaticResource Hub.Icon.PanelRight}"
                 Width="12" Height="12" Stretch="Uniform" />
         </Button>
-        <StackPanel x:Name="WindowControls" Grid.Column="4" Orientation="Horizontal">
+        <StackPanel x:Name="WindowControls" Orientation="Horizontal">
           <!-- Stretch="None" on all three, with the glyphs authored in the 12x12 box they are drawn in. The
                glyphs above live on a 0-24 grid and are scaled with Uniform; these three are not, because scaling
                a 1-unit stroke by the fit factor is what made the minimize bar render either as a dot or as two
@@ -730,6 +806,7 @@
             <Path Classes="glyph" Data="M2 2L10 10 M10 2L2 10"
                   Width="12" Height="12" Stretch="None" />
           </Button>
+        </StackPanel>
         </StackPanel>
       </Grid>
     </Grid>
@@ -749,7 +826,8 @@
          pane's gear, its copy plate and the changes editing trio stay in its header, which is the row a reader
          still meets once the strip is out of it. -->
     <ContentControl x:Name="InspectorTabSlot" Grid.Row="0" Grid.Column="2"
-                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                    HorizontalAlignment="Left" HorizontalContentAlignment="Stretch"
+                    VerticalAlignment="Top" ClipToBounds="True"
                     Margin="5,0,0,0" IsVisible="False" />
 
     <!-- The pane's left border, continued up through the bar: the same one-pixel line at the same x, so the column
@@ -1001,7 +1079,7 @@
                     Classes="strip" Padding="10,4" />
           </Grid>
           <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
-                   SelectionBrush="{DynamicResource Hub.Selection}"
+                   SelectionBrush="{DynamicResource Hub.SurfaceHover}"
                    IsReadOnly="True" TextWrapping="NoWrap"
                    AcceptsReturn="True" />
         </Grid>
@@ -1135,26 +1213,6 @@
              card growing a second box: the rail's own hairline continues this one down the card. -->
         <Border Grid.Row="1" BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,1,0,0">
           <ContentControl x:Name="SettingsHost" />
-        </Border>
-      </Grid>
-    </Border>
-  </Grid>
-  <Grid x:Name="CodeWorkspaceHost" Grid.Row="1" Margin="0,0,0,28" IsVisible="False" ClipToBounds="True">
-    <Border Background="{DynamicResource Hub.SurfaceChrome}">
-      <Grid RowDefinitions="48,*">
-        <Border BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,0,0,1">
-          <Grid ColumnDefinitions="*,Auto" Margin="20,0,12,0">
-            <TextBlock x:Name="CodeWorkspaceTitle" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" />
-            <Button x:Name="CodeWorkspaceCloseButton" Grid.Column="1" Classes="viewer-action"
-                    VerticalAlignment="Center" ToolTip.Tip="{DynamicResource CloseWindow}">
-              <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.Close}"
-                    Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
-                    StrokeLineCap="Round" StrokeJoin="Round" />
-            </Button>
-          </Grid>
-        </Border>
-        <Border Grid.Row="1" BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,1,0,0">
-          <ContentControl x:Name="CodeWorkspaceContent" />
         </Border>
       </Grid>
     </Border>

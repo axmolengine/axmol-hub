@@ -7,6 +7,48 @@ namespace AxmolHub;
 /// <summary>The small outline glyph shared by inspector and message actions.</summary>
 internal static class HubActionIcon
 {
+    /// <summary>A close glyph authored in a fixed square, not stretched from the 24-unit toolbar geometry.
+    /// The surrounding 20-unit target stays easy to hit while the ink remains a quiet, centered eight-unit cross.</summary>
+    internal static Avalonia.Controls.Control Close()
+    {
+        var path = new Path
+        {
+            Data = Geometry.Parse("M1,1 L7,7 M7,1 L1,7"),
+            StrokeThickness = 1.2,
+            StrokeLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+            Tag = "Hub.Icon.Close",
+        };
+        path.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        var square = new Avalonia.Controls.Canvas { Width = 8, Height = 8, IsHitTestVisible = false };
+        square.Children.Add(path);
+        return square;
+    }
+
+    internal static Avalonia.Controls.Control Unsaved()
+    {
+        var dot = new Avalonia.Controls.Shapes.Ellipse
+        {
+            Width = 6, Height = 6, IsHitTestVisible = false, Tag = "Hub.Icon.Unsaved",
+        };
+        dot.Bind(Avalonia.Controls.Shapes.Shape.FillProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        return dot;
+    }
+
+    internal static Avalonia.Controls.Control More()
+    {
+        var square = new Avalonia.Controls.Canvas { Width = 14, Height = 14, IsHitTestVisible = false };
+        foreach (var left in new[] { 1.0, 6.0, 11.0 })
+        {
+            var dot = new Avalonia.Controls.Shapes.Ellipse { Width = 2, Height = 2 };
+            dot.Bind(Avalonia.Controls.Shapes.Shape.FillProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            Avalonia.Controls.Canvas.SetLeft(dot, left);
+            Avalonia.Controls.Canvas.SetTop(dot, 6);
+            square.Children.Add(dot);
+        }
+        return square;
+    }
+
     internal static Path Create(string geometryKey)
     {
         var icon = new Path

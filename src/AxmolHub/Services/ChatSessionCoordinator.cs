@@ -820,6 +820,7 @@ internal sealed partial class ChatSessionCoordinator
     internal string SessionFilePath(string conversationId) => _sessions.Store.SessionFilePath(conversationId);
     internal string? StoredImagePath(string conversationId, string file)
         => _sessions.Store.ImagePath(conversationId, file);
+    internal string? PlanFilePath(ChatTurn turn) => PlanStore.PathOf(turn, _dataRoot);
     internal string? PlanBody(ChatTurn turn, out PlanBodyState state) => PlanStore.BodyOf(turn, _dataRoot, out state);
     internal string? ViewedConversationId => _active?.Id;
 

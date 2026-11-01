@@ -12,7 +12,7 @@ using static AxmolHub.ShellCheckSupport;
 using static AxmolHub.ShellCheckFixture;
 
 namespace AxmolHub;
-internal sealed class ShellDecisionsChecks
+internal sealed partial class ShellDecisionsChecks
 {
     private readonly Action<bool, string> Check;
     private readonly ShellCheckFixture Fixture;
@@ -1078,15 +1078,22 @@ internal sealed class ShellDecisionsChecks
         Check(restoredPane?.PlanNoticeForCheck == HubStrings.Get("InspectorPlanEmpty"),
             "这一会话没有计划时那一列说「还没有生成计划」，而不是什么都不说（实际「"
             + (restoredPane?.PlanNoticeForCheck ?? "(没有面板)") + "」）");
+        var restoredWorkspace = ScratchDirectory.Resolve("inspector-restore-workspace", Guid.NewGuid().ToString("N"));
+        var restoredConversation = restored.Chat.ActiveConversation ?? restored.Chat.StartConversation();
+        restored.Chat.SetWorkspaceRoot(restoredConversation.Id, restoredWorkspace);
         var workspaceContent = new TextBlock { Text = "source fixture" };
-        restored.ShowCodeWorkspace("src/main.cpp", workspaceContent);
+        restored.ShowWorkspaceDocument(Path.Combine(restoredWorkspace, "src/main.cpp"), "src/main.cpp", workspaceContent);
         restored.UpdateLayout();
-        Check(restored.CodeWorkspaceVisibleForCheck
-              && restored.CodeWorkspaceTitleForCheck == "src/main.cpp"
-              && ReferenceEquals(restored.CodeWorkspaceContentForCheck, workspaceContent),
-            "文件与 Diff 共用 shell 的代码工作区图层，而不是另开窗口");
-        restored.CloseCodeWorkspace(discard: true);
-        Check(!restored.CodeWorkspaceVisibleForCheck, "关闭代码工作区只收起该图层，不关闭 shell");
+        var workspaceChecks = await CheckWorkspaceDocumentsAsync(restored, restoredWorkspace);
+        Check(workspaceChecks.Commands, "文件 Tab 右键菜单操作被点名的缓冲：保存非活动文件不写错目标，重新加载更新其磁盘基准");
+        Check(restored.WorkspaceDocumentVisibleForCheck
+              && restored.WorkspaceDocumentTitleForCheck == "src/main.cpp"
+              && ReferenceEquals(restored.WorkspaceDocumentContentForCheck, workspaceContent)
+              && workspaceChecks.Documents,
+            "文件 Tab 去重并保留编辑缓冲；动态文件树单独关闭、恢复，不再使用文件覆盖层");
+        restored.CloseWorkspaceDocument(discard: true);
+        Check(!restored.WorkspaceDocumentVisibleForCheck && workspaceChecks.Layout,
+            "Tab 与文件树独立恢复：无 Tab 入口、窄抽屉、宽分栏及整个工作区放大还原");
         restored.ClickInspectorToggleForCheck();
         restored.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
@@ -2705,12 +2712,29 @@ internal sealed class ShellDecisionsChecks
                 + panel.LastNoticeTextForCheck + "」）");
             panel.SetInputForCheck("");
             panel.ClickPlanCardForCheck(0);
+            var olderPlanPath = shell.InspectorPaneForCheck?.PlanFilePathFor?.Invoke();
             Check(shell.InspectorPlanMarkdownForCheck.Contains("The older body", StringComparison.Ordinal),
                 "点旧的那张计划卡，右栏显示的是那一份计划而不是最新的一份（面板里 "
                 + shell.InspectorPlanMarkdownForCheck.Replace('\n', '|') + "）");
             panel.ClickPlanCardForCheck(1);
             Check(shell.InspectorPlanMarkdownForCheck.Contains("The newer body", StringComparison.Ordinal),
                 "点新的那张就换到新的一份：卡片与面板说的始终是同一份文档");
+            var newerPlanPath = shell.InspectorPaneForCheck?.PlanFilePathFor?.Invoke();
+            var planMenu = shell.WorkspaceViewForCheck?.TabMenuForCheck("plan");
+            var locationFixture = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(newerPlanPath) ?? System.IO.Path.GetTempPath(), "reveal 空格,comma #.cpp");
+            var macReveal = FileManagerReveal.CommandFor("macOS", locationFixture);
+            var windowsReveal = FileManagerReveal.CommandFor("Windows", locationFixture);
+            var linuxReveal = FileManagerReveal.CommandFor("Linux", locationFixture);
+            Check(olderPlanPath is not null && newerPlanPath is not null && olderPlanPath != newerPlanPath
+                  && System.IO.File.ReadAllText(olderPlanPath).Contains("The older body", StringComparison.Ordinal)
+                  && System.IO.File.ReadAllText(newerPlanPath).Contains("The newer body", StringComparison.Ordinal)
+                  && planMenu?.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal")) == true
+                  && !planMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "save") || Equals(item.Tag, "reload"))
+                  && PlanStore.PathOf(new ChatTurn(ChatRoles.Assistant, "inline", DateTimeOffset.UtcNow), null) is null
+                  && macReveal.SequenceEqual(new[] { "/usr/bin/open", "-R", locationFixture })
+                  && windowsReveal.SequenceEqual(new[] { "explorer.exe", "/select,", locationFixture })
+                  && linuxReveal.Contains("array:string:" + new Uri(locationFixture).AbsoluteUri.Replace(",", "%2C", StringComparison.Ordinal)),
+                "定位文件：旧新 Plan 分别指向当前展示的正文且无保存入口；三平台使用独立路径参数，支持空格、中文、逗号和 URI 转义");
 
             // A thinking model's plan is the shape this change creates: reasoning on the turn, and no text once
             // the body is filed. That is exactly the silhouette the transcript folds away as machine work, and a

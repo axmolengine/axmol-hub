@@ -22,7 +22,7 @@ public partial class MainWindow
     /// <summary>Inspector width bounds. The floor is what keeps a diff's two columns legible; the ceiling is
     /// what keeps the chat column from being squeezed past its own floor on a narrow window.</summary>
     private const double InspectorMin = 300;
-    private const double InspectorMax = 520;
+    private const double InspectorMax = 1000;
     private const double InspectorCollapseThreshold = 200;
     private const double InspectorDefault = 360;
 
@@ -85,6 +85,12 @@ public partial class MainWindow
         // pane was up. Both are wired here, and the glyph each one swaps between is resolved just below.
         InspectorToggle.Click += (_, _) => ToggleInspectorColumn();
         InspectorExpandToggle.Click += (_, _) => ToggleInspectorExpanded();
+        TitleBarRightActions.SizeChanged += (_, _) => SyncInspectorTabInset();
+        TitleBar.SizeChanged += (_, _) => SyncInspectorTabInset();
+        Inspector.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == WidthProperty) SyncInspectorTabInset();
+        };
 
         // Esc on the window's own tunnel, registered here rather than after the picture viewer's and ordered by
         // an explicit guard instead: which overlay is up is a fact this handler can read, while handler order is
@@ -118,7 +124,8 @@ public partial class MainWindow
             CloseInspector();
             return;
         }
-        OpenInspector(_inspectorTab, _inspectorTurn);
+        BuildWorkspaceContent();
+        ShowWorkspace();
     }
 
     /// <summary>The pane's two possible homes: the column, and the overlay it is lifted into. Exactly one may
@@ -131,14 +138,22 @@ public partial class MainWindow
 
     private void SetInspectorPane(Control? pane)
     {
+        var target = _inspectorExpanded ? InspectorExpandContent : InspectorHost;
+        if (ReferenceEquals(target.Content, pane))
+        {
+            (pane as WorkspaceView)?.RefreshLayout();
+            return;
+        }
         InspectorHost.Content = null;
         InspectorExpandContent.Content = null;
         // The plan/changes strip is the one part of the pane that does not travel with it: both homes put it in the
         // same title-bar slot, so the tabs stay where the reader left them while the pane is lifted. Handing it over
         // here rather than in each of the two calls is what keeps one entry point for "the pane changed hands".
-        InspectorTabSlot.Content = (pane as InspectorPanel)?.TabStrip;
+        InspectorTabSlot.Content = (pane as WorkspaceView)?.TabStrip;
         if (_inspectorExpanded) InspectorExpandContent.Content = pane;
         else InspectorHost.Content = pane;
+        // Visibility-dependent observers must be restored after reparenting, not while the view is detached.
+        (pane as WorkspaceView)?.RefreshLayout();
     }
 
     /// <summary>Opens the inspector on a tab ("plan" or "changes") for one specific plan turn (-1 for the newest)
@@ -150,7 +165,8 @@ public partial class MainWindow
         _inspectorTab = tab;
         _inspectorTurn = turnIndex;
         _inspectorOpen = true;
-        SetInspectorPane(_chatPanel?.BuildInspectorContent(_inspectorTab, turnIndex));
+        SetInspectorPane(BuildWorkspaceContent());
+        _workspaceView?.OpenTool(tab);
         SetInspectorColumnVisible();
         if (_preferences.InspectorOpen != true)
         {
@@ -169,7 +185,7 @@ public partial class MainWindow
     internal void RefreshInspector()
     {
         if (!_inspectorOpen || _currentKey != "Assistant" || _chatPanel is null) return;
-        SetInspectorPane(_chatPanel.BuildInspectorContent(_inspectorTab, _inspectorTurn));
+        SetInspectorPane(BuildWorkspaceContent());
     }
 
     internal void CloseInspector()
@@ -219,7 +235,7 @@ public partial class MainWindow
         InspectorTabSlot.IsVisible = _inspectorOpen && _currentKey == "Assistant";
         Grid.SetColumn(InspectorTabSlot, _inspectorExpanded ? 0 : 2);
         Grid.SetColumnSpan(InspectorTabSlot, _inspectorExpanded ? 3 : 1);
-        InspectorTabSlot.Margin = _inspectorExpanded ? default : new Thickness(5, 0, 0, 0);
+        SyncInspectorTabInset();
         SidebarToggle.IsVisible = !_inspectorExpanded;
         // The bar's two names and the hairline between them ride with the same fact, and SyncTitleZones is their
         // only writer — so it is asked here rather than the three elements being poked from the outside.
@@ -230,6 +246,17 @@ public partial class MainWindow
         InspectorToggle.IsVisible = _currentKey == "Assistant";
         InspectorExpandToggle.IsVisible = show;
         SyncInspectorDrawerChrome();
+    }
+
+    // The sibling tab host must stop before the actual action plates, including platform-specific captions.
+    // Reserving their measured width prevents tabs and menus from painting or receiving clicks over them.
+    private void SyncInspectorTabInset()
+    {
+        var actions = TitleBarRightActions.Bounds.Width;
+        InspectorTabSlot.Margin = new Thickness(_inspectorExpanded ? 0 : 5, 0, actions, 0);
+        // An Auto column otherwise measures the tabs at infinity and lets their desired width widen the
+        // column again after a grip drag. The content pane is the width authority, never the tab captions.
+        InspectorTabSlot.Width = Math.Max(0, (_inspectorExpanded ? TitleBar.Bounds.Width : Inspector.Width) - actions);
     }
 
     /// <summary>
@@ -259,7 +286,7 @@ public partial class MainWindow
     private void EnsureInspectorPane()
     {
         if (InspectorPane is not null || _chatPanel is null) return;
-        SetInspectorPane(_chatPanel.BuildInspectorContent(_inspectorTab, _inspectorTurn));
+        SetInspectorPane(BuildWorkspaceContent());
     }
 
     /// <summary>Called from <see cref="NavigateTo"/>: the inspector follows the assistant page on and off, and
@@ -286,7 +313,7 @@ public partial class MainWindow
         if (_inspectorExpanded || pane is null) return;
         _inspectorExpanded = true;
         SetInspectorPane(pane);
-        (pane as InspectorPanel)?.SetExpanded(true);
+        _workspaceView?.SetExpanded(true);
         InspectorExpandHost.IsVisible = true;
         SetInspectorColumnVisible();
     }
@@ -302,7 +329,7 @@ public partial class MainWindow
         var pane = InspectorPane;
         _inspectorExpanded = false;
         SetInspectorPane(pane);
-        (pane as InspectorPanel)?.SetExpanded(false);
+        _workspaceView?.SetExpanded(false);
         InspectorExpandHost.IsVisible = false;
         SetInspectorColumnVisible();
     }

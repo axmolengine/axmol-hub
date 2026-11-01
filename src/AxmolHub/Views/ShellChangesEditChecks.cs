@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -199,7 +200,7 @@ internal sealed class ShellChangesEditChecks(Action<bool, string> check)
         {
             using var lease = TextFile.AcquireWrite(path);
             return lease.Save(() => WorkspacePaths.ResolveWrite(scope.Sandbox, "probe.cpp", scope.Guards), baseline, text);
-        }, writable: true, discardAndClose: () => { }, owner: null);
+        }, writable: true, owner: null);
         var fullWindow = new Window { Width = 800, Height = 600, Content = fullEditor };
         try
         {
@@ -207,10 +208,10 @@ internal sealed class ShellChangesEditChecks(Action<bool, string> check)
             fullWindow.UpdateLayout();
             var source = fullEditor.GetVisualDescendants().OfType<TextEditor>().Single();
             source.Document.Insert(source.Document.TextLength, "// full file\n");
-            var save = fullEditor.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save"));
-            save.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            source.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.S,
+                KeyModifiers = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control });
             check(!fullEditor.IsDirty && File.ReadAllText(path).Contains("// full file", StringComparison.Ordinal),
-                "完整文件编辑：Open file 保留独立的整文件输入与保存");
+                "完整文件编辑：保存快捷键写入整文件，并更新独立缓冲的磁盘基准");
             diffAlongside.Text += "// diff edit\n";
             var overlap = diffAlongside.Save();
             check(overlap.Verdict == TextReplaceVerdict.ChangedSince && diffAlongside.IsDirty

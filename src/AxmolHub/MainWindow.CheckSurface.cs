@@ -561,7 +561,7 @@ public partial class MainWindow
                 KeyModifiers.None, MouseButton.Left));
     }
     /// <summary>The pane itself, so a check can press the header's own arrow rather than the method behind it.</summary>
-    internal InspectorPanel? InspectorPaneForCheck => InspectorPane as InspectorPanel;
+    internal InspectorPanel? InspectorPaneForCheck => _workspaceView?.SelectedContentForCheck as InspectorPanel;
     /// <summary>Which tab the <em>shell</em> last asked for. The pane's own visibility cannot tell the two routes
     /// apart — a jump that switched tabs inside the panel would leave exactly the same three booleans — so a cell
     /// that means "the ask went out to the shell and the shell landed it" has to read the shell's answer.</summary>
@@ -578,7 +578,7 @@ public partial class MainWindow
     internal bool InspectorTabSlotVisibleForCheck => InspectorTabSlot.IsVisible;
     /// <summary>Whether the slot holds the same object the pane exposes. The pane draws the tabs and the bar only
     /// says where they are, so a slot holding a second strip would look right and press nothing.</summary>
-    internal bool InspectorTabsAreThePaneStripForCheck => InspectorPaneForCheck is { } pane && ReferenceEquals(InspectorTabSlot.Content, pane.TabStrip);
+    internal bool InspectorTabsAreThePaneStripForCheck => InspectorPaneForCheck is { } pane && ReferenceEquals(InspectorTabSlot.Content, _workspaceView?.TabStrip);
     /// <summary>The pane's own border, whose left edge is the line the tabs are aligned to.</summary>
     internal Rect InspectorBorderBoundsForCheck => InClient(Inspector);
     /// <summary>The controls that stand aside while the pane is lifted, read by visibility because no geometry can
@@ -588,7 +588,7 @@ public partial class MainWindow
     internal Rect TitleBarBoundsForCheck => InClient(TitleBar);
     internal Rect PageBoundsForCheck => InClient(PageHost);
     internal Rect ClientBoundsForCheck => InClient(ClientRoot);
-    internal string InspectorPlanMarkdownForCheck => (InspectorPane as InspectorPanel)?.PlanMarkdownForCheck ?? "";
+    internal string InspectorPlanMarkdownForCheck => InspectorPaneForCheck?.PlanMarkdownForCheck ?? "";
 
     /// <summary>Whether the overlay is the layer the design says it is. Nothing here sets <c>ZIndex</c>, so
     /// document order is the whole stacking contract — and an overlay in the wrong slot still covers the shell

@@ -19,7 +19,9 @@ namespace AxmolHub;
 /// {"do":"type","name":"Composer","value":"hi"}, {"do":"wait","ms":300}, {"do":"resize","w":1100,"h":700},
 /// {"do":"language","value":"en-US"}, {"do":"screenshot","file":"a.png"} ] }</code>
 /// <c>click</c>/<c>type</c> (value to enter) locate a control by <c>name</c> (Control.Name) or <c>text</c> (visible text);
-/// <c>menu</c> chooses an item by its stable <c>Tag</c> from a named control's context menu, and
+/// <c>workspace</c> selects a root in the active conversation; <c>inspector-width</c>/<c>inspector-drag</c>
+/// resize the sidebar (value/delta). <c>flyout</c> opens a named button's menu and optionally selects an item
+/// by tag or header. <c>menu</c> chooses an item by its stable <c>Tag</c> from a named control's context menu, and
 /// <c>wait</c> also accepts <c>until</c> (a name or text) with an optional <c>ms</c> timeout. The run exits 0 when
 /// every step succeeded and no shot is blank, and leaves <c>drive.evidence.txt</c> in <c>out</c>. It uses the user's
 /// real data root; settings are protected by the copy made in <see cref="HubHostOptions.Parse"/>.
@@ -123,6 +125,25 @@ internal static class DriveRunner
                 window.UseLanguage(Str(step, "value"));
                 await Settle();
                 return null;
+            case "workspace":
+            {
+                var root = Path.GetFullPath(Str(step, "path"));
+                if (!Directory.Exists(root)) return "workspace directory not found: " + root;
+                var chat = window.Chat;
+                var session = chat.ActiveConversation ?? chat.StartConversation();
+                chat.SetWorkspaceRoot(session.Id, root);
+                window.NavigateTo("Assistant");
+                await Settle();
+                return null;
+            }
+            case "inspector-drag":
+                window.DragInspectorForCheck(step.GetProperty("delta").GetDouble());
+                await Settle();
+                return null;
+            case "inspector-width":
+                window.SetInspectorWidthForCheck(step.GetProperty("value").GetDouble());
+                await Settle();
+                return null;
             case "resize":
                 window.Width = step.GetProperty("w").GetDouble();
                 window.Height = step.GetProperty("h").GetDouble();
@@ -149,14 +170,36 @@ internal static class DriveRunner
                 await Settle();
                 return null;
             }
+            case "flyout":
+            {
+                if (Find(window, Opt(step, "name"), null) is not Button { Flyout: MenuFlyout flyout } owner)
+                    return "menu flyout not found: " + step;
+                flyout.ShowAt(owner);
+                await Settle();
+                if (Opt(step, "item") is { } key)
+                {
+                    var item = flyout.Items.OfType<MenuItem>().FirstOrDefault(candidate =>
+                        string.Equals(candidate.Tag as string, key, StringComparison.Ordinal)
+                        || string.Equals(candidate.Header as string, key, StringComparison.Ordinal));
+                    if (item is null) return "flyout item not found: " + key;
+                    item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    flyout.Hide();
+                    await Settle();
+                }
+                return null;
+            }
             case "menu":
             {
                 var owner = Find(window, Opt(step, "name"), null);
                 if (owner?.ContextMenu is not { } menu) return "context menu not found for: " + step;
-                var key = Str(step, "item");
+                menu.Open(owner);
+                await Settle();
+                if (Opt(step, "item") is not { } key) return null;
                 var item = menu.Items.OfType<MenuItem>().FirstOrDefault(candidate =>
                     string.Equals(candidate.Tag as string, key, StringComparison.Ordinal));
                 if (item is null) return "menu item not found: " + key;
+                if (!item.IsEnabled) return "menu item is disabled: " + key;
+                menu.Close();
                 item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 await Settle();
                 return null;
@@ -183,7 +226,15 @@ internal static class DriveRunner
             {
                 await Settle();
                 var path = Path.Combine(outDir, Str(step, "file"));
-                var stats = SmokeCapture.Capture(window, path);
+                Visual capture = window;
+                if (Opt(step, "menu") is { } menuOwner)
+                {
+                    var anchor = Find(window, menuOwner, null)?.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault();
+                    if (anchor?.GetSelfAndVisualAncestors().OfType<TopLevel>().FirstOrDefault() is not { } popup)
+                        return "context menu popup not open: " + menuOwner;
+                    capture = popup;
+                }
+                var stats = SmokeCapture.Capture(capture, path);
                 digests.Add(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
                 shotTaken();
                 return stats.IsBlank() ? "blank frame: " + path : null;

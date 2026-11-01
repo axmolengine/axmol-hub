@@ -59,9 +59,8 @@ internal sealed partial class InspectorPanel : UserControl
     /// bounces them back to the plan they were not reading.</summary>
     public event Action<string>? TabSelected;
 
-    private readonly Button _planTab;
-    private readonly Button _changesTab;
-    private readonly StackPanel _tabs;
+    internal Action<string>? SelectToolForCheck;
+    private Button? _fileTreeToggle;
     private readonly Button _viewSettings;
     private readonly MenuFlyout _viewMenu;
     private readonly Grid _header;
@@ -139,38 +138,14 @@ internal sealed partial class InspectorPanel : UserControl
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
 
         // ── Header: the page's own gear at the far right, the copy plate beside it, and the changes editing pair
-        //    when it is on. The two tabs left this row for the title bar (see TabStrip): the strip a reader
+        //    when it is on. The two tabs left this row for the title bar's workspace strip: the strip a reader
         //    switches a surface with is one strip, in the same place in both of the pane's homes, and a tab inside
         //    this header would have to be moved between them. The control that used to sit beside them — the
         //    「会话改动 ▾」 scope picker — was a page setting wearing a tab's clothes: it, and the diff layout above
         //    it, answer one question ("how is this page read"), so they are one control with four rows in it now.
         //    (The pane's lift/shut pair left this header even earlier — see MainWindow.axaml.) ──
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"), Margin = new Thickness(12, 10, 8, 8) };
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"), Margin = new Thickness(12, 10, 8, 8) };
         _header = header;
-        _planTab = TabButton("InspectorTabPlan");
-        _changesTab = TabButton("InspectorTabChanges");
-        _planTab.Click += (_, _) => SelectTab("plan");
-        _changesTab.Click += (_, _) =>
-        {
-            SelectTab("repo");
-            RepoRefreshRequested?.Invoke();
-        };
-        // The tabs are not in this header, and not in this pane's tree at all: the shell hosts the strip in the
-        // title bar's row, in the column the pane's own left edge is, so "the tabs start where the pane starts" is
-        // a layout answer rather than a pair of coordinates kept in step by hand. The plate is painted in the bar's
-        // own colour because the strip is drawn *on* that bar, where the page title can otherwise run underneath
-        // it: the plate ends the title at the tabs instead of printing two texts on top of each other, and it is
-        // the only hundred-odd pixels of the bar that stop dragging the window.
-        _tabs = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Bottom,
-        };
-        _tabs.Bind(Panel.BackgroundProperty, new DynamicResourceExtension("Hub.TitleBarBackground"));
-        _tabs.Children.Add(_planTab);
-        _tabs.Children.Add(_changesTab);
         var settingsIcon = HubActionIcon.Create("Hub.Icon.SettingsOutline");
         // The edit and settings actions share the same plate and line up in the header.
         _viewSettings = new Button
@@ -338,20 +313,6 @@ internal sealed partial class InspectorPanel : UserControl
         root.Children.Add(_body);
         Content = root;
         SelectTab("plan");
-    }
-
-    /// <summary>The Plan/Changes strip, handed to the shell once and hosted by it — never drawn inside this pane.
-    /// Both of the pane's homes put it in the same title-bar slot (see <c>InspectorTabSlot</c> in MainWindow.axaml),
-    /// which is what keeps a reader's switch between the two surfaces where it is while the pane is lifted over the
-    /// window, and what keeps the tabs' left edge on the pane's own edge in either state without this file
-    /// measuring anything. The shell reads it through <c>SetInspectorPane</c>, the one place the pane changes
-    /// hands.</summary>
-    public Control TabStrip => _tabs;
-
-    private static Button TabButton(string textKey)
-    {
-        var button = new Button { Classes = { "inspector-tab" }, Content = HubStrings.Get(textKey), Tag = textKey, Name = textKey };
-        return button;
     }
 
     private Control FileActions(string path)
@@ -525,6 +486,9 @@ internal sealed partial class InspectorPanel : UserControl
         Focusable = false,
     };
 
+    internal void SelectWorkspaceTool(string tab) => SelectTab(tab);
+    internal void RefreshWorkspaceRepo() => RepoRefreshRequested?.Invoke();
+
     private void SelectTab(string tab)
     {
         // "changes" and "repo" are both the Changes tab: the older name for it stays a way in, and it lands on
@@ -532,8 +496,6 @@ internal sealed partial class InspectorPanel : UserControl
         // scope is the picker's job, and Last turn is one of its answers.
         var plan = tab is not ("changes" or "repo");
         var selected = plan ? "plan" : "repo";
-        _planTab.Classes.Set("selected", plan);
-        _changesTab.Classes.Set("selected", !plan);
         _planScroll.IsVisible = plan;
         _changesHost.IsVisible = !plan;
         ApplyScopeVisibility();
@@ -1137,12 +1099,23 @@ internal sealed partial class InspectorPanel : UserControl
     /// <summary>Which of the two lists stands for the scope, and that both are gone while the tab is not the one
     /// on screen — a hidden host that still has its inner scroller visible reads as "the changes page is showing"
     /// to anything that asks the scroller, which is how a plan tab once looked like two tabs at once.</summary>
+    internal Func<string?>? PlanFilePathFor { get; set; }
+
+    internal void SetFileTreeToggle(Button button)
+    {
+        _fileTreeToggle = button;
+        Grid.SetColumn(button, 4);
+        _header.Children.Add(button);
+        button.IsVisible = _changesHost.IsVisible;
+    }
+
     private void ApplyScopeVisibility()
     {
         var changes = _changesHost.IsVisible;
         _changesScroll.IsVisible = changes && _scope == GitReviewScope.LastTurn;
         _repoScroll.IsVisible = changes && _scope != GitReviewScope.LastTurn;
         _viewSettings.IsVisible = changes && !EditSession.Editing;
+        if (_fileTreeToggle is not null) _fileTreeToggle.IsVisible = changes;
         RenderScopeBarVisibility();
     }
 
