@@ -195,8 +195,15 @@ internal sealed class ShellDiffSelectionChecks(Action<bool, string> check)
                 Move(Edge(right));
                 var offset = viewer.Offset.X;
                 var endpoint = text.SelectionEnd;
-                await Task.Delay(100);
-                shell.UpdateLayout();
+                // Wait for two scrolling ticks, not a fixed frame budget on a loaded UI thread.
+                var wait = System.Diagnostics.Stopwatch.StartNew();
+                while (wait.ElapsedMilliseconds < 500)
+                {
+                    await Task.Delay(20);
+                    shell.UpdateLayout();
+                    if (Math.Abs(viewer.Offset.X - offset) >= 24
+                        && (right ? text.SelectionEnd > endpoint : text.SelectionEnd < endpoint)) break;
+                }
                 var delta = viewer.Offset.X - offset;
                 var selectionDelta = text.SelectionEnd - endpoint;
                 followsSelection &= right ? delta > 0 && selectionDelta > 0 : delta < 0 && selectionDelta < 0;

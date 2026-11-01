@@ -2387,7 +2387,10 @@ internal sealed partial class InspectorPanel : UserControl
             }
 
             viewer.Offset = new Vector(next, viewer.Offset.Y);
-            var edgeX = _direction < 0 ? EdgeSize : viewer.Bounds.Width - EdgeSize;
+            // Offset is arranged asynchronously. Hit-test after the content has moved, at the actual pointer
+            // rather than the inner edge band: that band can pull the endpoint backwards on the first tick.
+            viewer.UpdateLayout();
+            var edgeX = Math.Clamp(_pointerInViewer.X, 0, viewer.Viewport.Width);
             if (viewer.TranslatePoint(new Point(edgeX, _pointerInViewer.Y), this) is { } point)
             {
                 var hit = TextLayout.HitTestPoint(point - new Point(Padding.Left, Padding.Top));
