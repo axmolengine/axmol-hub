@@ -349,6 +349,8 @@ internal sealed partial class ChatExecutionCoordinator
                 // there, because that is where the grant has to outlive the request.
                 ApplyGrantedFile: path => Sessions.ApplyGrantedFileAsync(conversationId, path))
             {
+                // DuckDuckGo needs no configuration; read the global switch again on each tool call.
+                LocalSearchAllowed = () => IsWebSearchEnabled(),
                 ComputerUse = ComputerUseBridgeProvider is { } inputProvider ? inputProvider() : OperatingSystem.IsWindows()
                     ? new ComputerUseBridge(WindowsScreenCapture.Operate)
                     : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()

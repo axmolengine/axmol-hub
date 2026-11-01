@@ -88,6 +88,9 @@ public sealed record WorkspaceToolScope(
     Func<string, Task<string>>? ApplyGrantedFile = null)
 {
     internal ComputerUseBridge? ComputerUse { get; init; }
+    /// <summary>Read the global search switch per call. Null means no local search host; <see cref="Web"/>
+    /// supplies the HTTPS transport independently of the page-fetch switch.</summary>
+    public Func<bool>? LocalSearchAllowed { get; init; }
     /// <summary>Returns this call's frozen target only while its application grant remains in force.</summary>
     public Func<ComputerUseTarget?>? ApprovedComputerTarget { get; init; }
     /// <summary>Fingerprint of the file shown on a parked fs_write approval card; null on an automatic call.</summary>
@@ -897,14 +900,14 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         }
     }
 
-    [Description("Search the live web using DeepSeek's Search API. Returns ranked titles, URLs, and summaries; use web_fetch to read a selected page.")]
+    [Description("Search the live web. Returns titles, URLs and summaries; use web_fetch to read a selected page.")]
     public async Task<string> SearchWeb(
         [Description("A concise web search query, from 1 to 128 characters.")] string query,
         [Description("The user's original question that led to this search, when available.")] string? original_question = null,
         CancellationToken cancellationToken = default)
     {
         var bridge = context.DeepSeekWeb;
-        if (bridge is null) return "Refused: DeepSeek Search API is not configured for this provider. Do not retry.";
+        if (bridge is null) return await SearchLocal(query, cancellationToken).ConfigureAwait(false);
         if (!bridge.Allowed()) return "Refused: DeepSeek Search/Fetch API is disabled in Hub settings. Do not retry.";
         var normalized = (query ?? "").Trim();
         if (normalized.Length is < 1 or > 128)
@@ -916,18 +919,9 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                     ? null : original_question.Trim()[..Math.Min(original_question.Trim().Length, 128)]),
                 cancellationToken).ConfigureAwait(false);
             if (response.Results.Count == 0) return "No web search results were found.";
-            var output = new System.Text.StringBuilder();
-            foreach (var result in response.Results)
-            {
-                output.Append("- ").Append(result.Title).Append("\n  URL: ").Append(result.Url);
-                if (!string.IsNullOrWhiteSpace(result.SiteName)) output.Append("\n  Site: ").Append(result.SiteName);
-                if (!string.IsNullOrWhiteSpace(result.Date)) output.Append("\n  Date: ").Append(result.Date);
-                if (!string.IsNullOrWhiteSpace(result.Summary)) output.Append("\n  Summary: ").Append(result.Summary);
-                else if (!string.IsNullOrWhiteSpace(result.Snippet)) output.Append("\n  Summary: ").Append(result.Snippet);
-                output.Append("\n  Authority: ").Append(result.Authority).Append("; relevance: ")
-                    .Append(result.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("\n");
-            }
-            return output.ToString();
+            return LocalWebSearch.Format(response.Results.Select(result => new LocalSearchHit(
+                result.Title, result.Url, string.IsNullOrWhiteSpace(result.Summary) ? result.Snippet : result.Summary,
+                result.SiteName, result.Date, result.Authority, result.Score)));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -942,6 +936,24 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         {
             return $"DeepSeek Search API failed ({ex.GetType().Name}: {ex.Message}). Check the endpoint and API key; do not retry immediately.";
         }
+    }
+
+    /// <summary>The zero-configuration DuckDuckGo fallback behind <c>web_search</c>. It shares the DeepSeek
+    /// route's switch and query rules, but records no DeepSeek billable API call.</summary>
+    private async Task<string> SearchLocal(string query, CancellationToken cancellationToken)
+    {
+        if (context.LocalSearchAllowed is not { } allowed || context.Web is not { } web)
+            return "Refused: this build has no local search host, so nothing can be sent. Say you could not search; "
+                   + "do not retry.";
+        if (!allowed())
+            return "Refused: web search is turned off in Hub settings (设置 → 允许联网搜索). Tell the user where the "
+                   + "switch is, or answer from what you already have; do not retry.";
+        var normalized = (query ?? "").Trim();
+        if (normalized.Length is < 1 or > 128)
+            return "Refused: query must contain 1 to 128 characters. Do not retry with the same query.";
+        context.Log?.Write("Assistant searching the web locally");
+        return await LocalWebSearch.SearchAsync(web, normalized, context.SensitiveValues,
+            cancellationToken).ConfigureAwait(false);
     }
 
     [Description("Capture one specifically named application window as an image and attach it to this conversation. "

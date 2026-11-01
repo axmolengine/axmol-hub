@@ -38,10 +38,10 @@ namespace AxmolHub.Core;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
-/// One hop the host is asked to make. The target has already cleared
-/// <see cref="WebFetch.IsAllowedTarget"/>, and <see cref="MaxBytes"/> travels with the request because the host
-/// holds the socket and can stop early — Core stops it again afterwards, since a host that ignores the number
-/// cannot be trusted with the rule that exists to bound it.
+/// One hop the host is asked to make. Page targets clear <see cref="WebFetch.IsAllowedTarget"/>;
+/// search targets use the built-in HTTPS endpoint. <see cref="MaxBytes"/> travels with the
+/// request because the host holds the socket and can stop early — Core stops it again afterwards, since a host
+/// that ignores the number cannot be trusted with the rule that exists to bound it.
 /// </summary>
 public sealed record FetchRequest(Uri Target, int MaxBytes);
 

@@ -645,11 +645,15 @@ internal sealed class ShellApprovalsChecks
                   // exemption would be the narrower mistake: 计划 exists to settle requirements before anything is
                   // built, so it is the mode that most needs to ask — and a question reads no file and writes none,
                   // so nothing about the mode's promise is weakened by it.
-                  && planTools.Where(tool => tool.Name != AskUserTool.ToolName)
+                  && planTools.Where(tool => tool.Name != AskUserTool.ToolName
+                                            && tool.Name is not (ToolNames.WebSearch or ToolNames.WebFetch))
                       .All(tool => ChatTools.RiskOf(tool.Name, null, WorkspaceToolScope.Empty) == ToolRisk.ReadOnly)
+                  && planTools.Count(tool => tool.Name is ToolNames.WebSearch or ToolNames.WebFetch) == 2
+                  && ChatTools.RiskOf(ToolNames.WebSearch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf(ToolNames.WebFetch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
                   && planTools.Any(tool => tool.Name == AskUserTool.ToolName)
                   && ChatTools.RiskOf(AskUserTool.ToolName, null, WorkspaceToolScope.Empty) == ToolRisk.AskUser,
-                "「询问审批」不给任何工具，「计划」除了问一句以外只给只读的那些（空沙箱下判读，说明它们免批与目录无关）");
+                "Ask 不给工作区工具；计划给只读工具和提问，本地 search/fetch 各声明一次且走沙箱命令审批档");
 
             // The agent prompt carries the working discipline the tools cannot enforce: verify with the project's
             // own command before claiming a result, and re-run into a file when the output was cut short. It also
