@@ -1754,6 +1754,27 @@ internal sealed class ShellAssistantChecks
               && panel.GoalCapsuleActionTooltipsForCheck.Contains(HubStrings.Get("ChatGoalPause")),
             "冷却等待持久化且不轮询模型，空响应不消耗 Token、续跑或无进展计数（实际 "
             + goalAttempts + " / " + parkedGoal?.GoalState + "）");
+        // The same parking is what an empty answer spends now: one wait, then a second, then a stop — a broken
+        // endpoint is retried on the budget the provider's own Retry-After is spent against, not forever.
+        var parkProbe = PausedGoal("空响应的退避计入同一份预算");
+        parkProbe.GoalState = ChatGoalStates.Active;
+        var parkPolicy = new GoalPolicy(0, 0, 3, 2);
+        ChatExecutionCoordinator.ParkForProvider(parkProbe, parkPolicy, TimeSpan.FromSeconds(1));
+        var firstPark = parkProbe.GoalState == ChatGoalStates.Waiting
+                        && parkProbe.GoalCooldownCount == 1 && parkProbe.GoalWakeAt is not null;
+        parkProbe.GoalState = ChatGoalStates.Active;
+        parkProbe.GoalWakeAt = null;
+        ChatExecutionCoordinator.ParkForProvider(parkProbe, parkPolicy, TimeSpan.FromSeconds(1));
+        parkProbe.GoalState = ChatGoalStates.Active;
+        parkProbe.GoalWakeAt = null;
+        ChatExecutionCoordinator.ParkForProvider(parkProbe, parkPolicy, TimeSpan.FromSeconds(1));
+        var parkedState = parkProbe.GoalState;
+        var parkedReason = parkProbe.GoalStopReason;
+        Check(firstPark && parkedState == ChatGoalStates.Paused
+              && parkedReason == "provider_retry_exhausted" && parkProbe.GoalWakeAt is null,
+            "空响应的退避与提供方冷却共用一份预算：两次等待之后停止，而不是无限重试（实际 "
+            + parkedState + " / " + parkedReason + "）");
+
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
         if (parkedGoal is not null)
         {

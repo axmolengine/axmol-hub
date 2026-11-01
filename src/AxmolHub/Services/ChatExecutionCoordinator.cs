@@ -3831,7 +3831,13 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.GoalState = ChatGoalStates.Waiting;
                     opened.GoalStopReason = "approval";
                 }
-                if (opened.GoalState == ChatGoalStates.Active && (result != RunResult.Completed
+                // An answer that never arrived is a provider failure, not a finished turn: it goes through the same
+                // empty-run accounting an answer with nothing in it does, and its retry waits the same backoff a
+                // provider-requested one waits. Pausing on it stopped the goal on the one failure a goal exists for
+                // — a flaky endpoint — and did so before the empty-run ceiling could ever bound it.
+                var retryableEmpty = result == RunResult.Incomplete
+                    && noticeKey is "ChatNoResponse" or "ChatReasoningOnly";
+                if (opened.GoalState == ChatGoalStates.Active && ((result != RunResult.Completed && !retryableEmpty)
                     || opened.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User)?.IsGitOperationFallback == true))
                 {
                     opened.GoalState = noticeKey is "ChatUsageExhausted" or "ChatAuthExpired"
@@ -3840,12 +3846,16 @@ internal sealed partial class ChatExecutionCoordinator
                         : noticeKey == "ChatToolSpinStopped" ? "no_progress" : "error";
                 }
                 else if (opened.GoalState == ChatGoalStates.Active && NormalizeMode(opened.Mode) == ChatModes.Agent
-                    && result == RunResult.Completed
+                    && (result == RunResult.Completed || retryableEmpty)
                     && !opened.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending
                         || turn.PlanApprovalState == PlanApprovalStates.Pending))
                 {
-                    var final = opened.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
-                        && turn.ToolCallId is not { Length: > 0 });
+                    // An empty response has no text to parse, and the previous answer's marker is not this turn's:
+                    // a goal that completed three turns ago must not be completed again by history.
+                    var final = result == RunResult.Completed
+                        ? opened.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
+                            && turn.ToolCallId is not { Length: > 0 })
+                        : null;
                     var madeProgress = opened.GoalProgressVersion > run.GoalPriorProgress;
                     var decision = GoalContinuation.Decide(final?.Text, madeProgress,
                         opened.GoalEmptyRunCount, opened.GoalContinuationCount,
@@ -3858,7 +3868,17 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.GoalStopReason = decision.Reason;
                     if (decision.Continue)
                     {
-                        continueGoal = true;
+                        if (retryableEmpty)
+                        {
+                            // The wait is the point: an endpoint that answered with nothing is retried after a
+                            // backoff rather than immediately, on the same budget as a provider's Retry-After.
+                            ParkForProvider(opened, GoalPolicyFor(opened), EmptyAnswerDelay(opened.GoalCooldownCount));
+                            if (opened.GoalWakeAt is { } wake) ScheduleGoalWake(opened.Id, wake);
+                        }
+                        else
+                        {
+                            continueGoal = true;
+                        }
                     }
                     if (final is not null)
                     {

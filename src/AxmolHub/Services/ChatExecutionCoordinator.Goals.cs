@@ -55,15 +55,34 @@ internal sealed partial class ChatExecutionCoordinator
     private Task ParkGoalForProviderAsync(string id, TimeSpan delay)
         => ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(id, opened =>
         {
-            if (opened.GoalState is not (ChatGoalStates.Active or ChatGoalStates.Waiting)) return;
-            if (opened.GoalWakeAt is not null) return;
-            opened.GoalCooldownCount++;
-            var canWait = opened.GoalCooldownCount <= GoalPolicyFor(opened).CooldownLimit;
-            opened.GoalState = canWait ? ChatGoalStates.Waiting : ChatGoalStates.Paused;
-            opened.GoalStopReason = canWait ? "provider_cooldown" : "provider_retry_exhausted";
-            opened.GoalWakeAt = canWait ? DateTimeOffset.UtcNow + delay : null;
+            ParkForProvider(opened, GoalPolicyFor(opened), delay);
             if (opened.GoalWakeAt is { } at && RunFor(id) is null) ScheduleGoalWake(id, at);
         }));
+
+    /// <summary>Puts a goal to sleep before its next request, on the same counters a provider's own
+    /// <c>Retry-After</c> is spent against: a wait is allowed while the cooldown budget holds, and the wait that
+    /// is refused ends the goal instead of retrying it forever. Shared, because a retry Hub decides on itself — an
+    /// answer that never arrived — has to spend the same budget as one the provider asked for, or the two would
+    /// disagree about how many attempts a broken endpoint is worth.</summary>
+    internal static void ParkForProvider(Conversation opened, GoalPolicy policy, TimeSpan delay)
+    {
+        if (opened.GoalState is not (ChatGoalStates.Active or ChatGoalStates.Waiting)) return;
+        if (opened.GoalWakeAt is not null) return;
+        opened.GoalCooldownCount++;
+        var canWait = opened.GoalCooldownCount <= policy.CooldownLimit;
+        opened.GoalState = canWait ? ChatGoalStates.Waiting : ChatGoalStates.Paused;
+        opened.GoalStopReason = canWait ? "provider_cooldown" : "provider_retry_exhausted";
+        opened.GoalWakeAt = canWait ? DateTimeOffset.UtcNow + delay : null;
+    }
+
+    /// <summary>How long an empty answer waits before its retry: the rate-limit base, doubled for each wait this
+    /// goal has already spent, and capped at the same ceiling the transport policy uses. The first wait being the
+    /// rate-limit base is deliberate — an endpoint that stops mid-stream is usually the congestion that produces a
+    /// 429 a moment later.</summary>
+    private static TimeSpan EmptyAnswerDelay(int cooldownsSoFar)
+        => TimeSpan.FromMilliseconds(Math.Min(
+            ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,
+            ProviderRetryDefaults.RateLimitBaseDelay.TotalMilliseconds * Math.Pow(2, Math.Max(0, cooldownsSoFar))));
 
     private void ResetGoal(Conversation conversation)
     {
