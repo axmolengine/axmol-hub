@@ -579,76 +579,83 @@ internal sealed class ShellProvidersChecks
         retainedSecrets.Delete(older.Id);
         retainedSecrets.Delete(newer.Id);
 
+        // macOS keeps every secret in one Keychain item and memoizes that bundle per store instance, so a second
+        // instance in this process answers from its own copy. Anything asserting what is really stored — or
+        // standing in for another process — has to ask a new instance: the copy one already holds is that
+        // process's view of the store, not the store itself.
+        ISecretStore Stored(string root) => AxmolHub.Agent.SecretStoreFactory.Create(root);
+
         var planLogoutRoot = Path.Combine(scratchRoot, "plan-logout");
         using (var setup = new ChatWorkspace(planLogoutRoot)) setup.AddPreset("openai");
-        var planSecrets = AxmolHub.Agent.SecretStoreFactory.Create(planLogoutRoot);
-        var planStore = new CredentialStore(planLogoutRoot, planSecrets);
+        var planStore = new CredentialStore(planLogoutRoot, Stored(planLogoutRoot));
         var planTokens = new OpenAiTokens("fixture-access", "fixture-refresh", null, DateTimeOffset.UtcNow.AddHours(1), null)
         { Version = 1, ClientId = "fixture-client", HostId = "fixture-host", Issuer = "https://auth.openai.com", Subject = "fixture-subject", Scope = "chatgpt.tokens.use.direct" };
         var planCredential = new ProviderCredential { Id = "fixture-plan-logout", ProviderId = "openai", AuthKind = "openaiOAuth", Secret = planTokens.Encode() };
         var unrelatedCredential = new ProviderCredential { Id = "fixture-unrelated-removal", ProviderId = "deepseek", Secret = "fixture-other" };
-        planSecrets.Write(planCredential.Id, planCredential.Secret!);
         planStore.Save([planCredential, unrelatedCredential]);
+        // Already rotated when this process opens, so one copy of the newest token is what it signs out with.
+        var rotated = (planTokens with { RefreshToken = "fixture-rotated" }).Encode();
+        Stored(planLogoutRoot).Write(planCredential.Id, rotated);
         using (var login = new ChatWorkspace(planLogoutRoot))
         {
             Check(login.HasPlanCredentials("openai") && !login.RemoveCredential(planCredential.Id)
-                && !login.DisconnectProvider("openai") && planSecrets.Read(planCredential.Id) == planTokens.Encode(),
+                && !login.DisconnectProvider("openai") && Stored(planLogoutRoot).Read(planCredential.Id) == rotated,
                 "通用凭据删除和断开不会绕过套餐账号的锁与撤销");
-            var provider = login.Providers.Single(candidate => candidate.Id == "openai");
-            var selected = login.CredentialFor("openai")!;
-            var observed = selected.Secret!;
-            var rotated = (planTokens with { RefreshToken = "fixture-rotated" }).Encode();
-            planSecrets.Write(selected.Id, rotated);
-            Check(login.RemoveCredential(unrelatedCredential.Id) && planSecrets.Read(selected.Id) == rotated,
-                "删除其他凭据不会覆写已轮换的套餐令牌");
-            planSecrets.Write(selected.Id, observed);
+            Check(login.RemoveCredential(unrelatedCredential.Id) && Stored(planLogoutRoot).Read(planCredential.Id) == rotated,
+                "删除其他凭据不会覆写别的进程刚轮换的套餐令牌");
+        }
+        using (var stale = new ChatWorkspace(planLogoutRoot))
+        {
+            var provider = stale.Providers.Single(candidate => candidate.Id == "openai");
+            var selected = stale.CredentialFor("openai")!;
+            // The snapshot a sign-in dialog captured before that rotation. Holding it, the save has to wait on
+            // the lock and then refuse rather than overwrite a token this process no longer agrees with.
+            var observed = planTokens.Encode();
             var refreshLock = await AxmolHub.Agent.OpenAiDynamicTokenSession.LockCredentialAsync(planLogoutRoot, selected.Id, default);
-            var pendingLogin = login.SavePlanCredentialForCheckAsync(provider, selected, planTokens, observed, planTokens);
+            var pendingLogin = stale.SavePlanCredentialForCheckAsync(provider, selected, planTokens, observed, planTokens);
             var waited = !pendingLogin.IsCompleted;
-            planSecrets.Write(selected.Id, rotated);
             await refreshLock.DisposeAsync();
             var rejected = false;
             try { await pendingLogin; }
             catch (InvalidOperationException) { rejected = true; }
-            Check(waited && rejected && planSecrets.Read(selected.Id) == rotated,
-                "重新登录等待刷新锁并拒绝覆盖其他进程轮换的凭据");
-            planSecrets.Delete(selected.Id);
+            Check(waited && rejected && Stored(planLogoutRoot).Read(selected.Id) == rotated,
+                "重新登录等待刷新锁并拒绝覆盖已轮换的令牌");
+            Stored(planLogoutRoot).Delete(selected.Id);
             rejected = false;
-            try { await login.SavePlanCredentialForCheckAsync(provider, selected, planTokens, observed, planTokens); }
+            try { await stale.SavePlanCredentialForCheckAsync(provider, selected, planTokens, observed, planTokens); }
             catch (InvalidOperationException) { rejected = true; }
-            Check(rejected && planSecrets.Read(selected.Id) is null,
-                "重新登录不会恢复其他进程已删除的凭据");
-            planSecrets.Write(selected.Id, observed);
+            Check(rejected && Stored(planLogoutRoot).Read(selected.Id) is null,
+                "重新登录不会把已删除的凭据写回存储");
+            Stored(planLogoutRoot).Write(selected.Id, rotated);
         }
         using (var logout = new ChatWorkspace(planLogoutRoot))
         {
             var stoppedBeforeRevoke = false;
             logout.RevokeOpenAiPlan = (tokens, _) =>
             {
-                stoppedBeforeRevoke = tokens.RefreshToken == "fixture-rotated" && planSecrets.Read(planCredential.Id) is null
+                stoppedBeforeRevoke = tokens.RefreshToken == "fixture-rotated" && Stored(planLogoutRoot).Read(planCredential.Id) is null
                     && logout.CredentialFor("openai")?.HasSecret == false;
                 return Task.FromResult(false);
             };
             var refreshLock = await AxmolHub.Agent.OpenAiDynamicTokenSession.LockCredentialAsync(planLogoutRoot, planCredential.Id, default);
             var pendingLogout = logout.DisconnectOpenAiPlanAsync();
-            var waited = !pendingLogout.IsCompleted && planSecrets.Read(planCredential.Id) is not null;
-            planSecrets.Write(planCredential.Id, (planTokens with { RefreshToken = "fixture-rotated" }).Encode());
+            var waited = !pendingLogout.IsCompleted && Stored(planLogoutRoot).Read(planCredential.Id) is not null;
             await refreshLock.DisposeAsync();
             var outcome = await pendingLogout;
             Check(waited && outcome.Removed && !outcome.Revoked && stoppedBeforeRevoke
-                && planSecrets.Read(planCredential.Id) is null,
-                "套餐退出等待并发刷新，清除本地令牌后撤销最新令牌");
+                && Stored(planLogoutRoot).Read(planCredential.Id) is null,
+                "套餐退出等待刷新锁，清除本地令牌后撤销启动时读到的最新令牌");
         }
         using (var afterLogout = new ChatWorkspace(planLogoutRoot))
         {
             var retained = afterLogout.CredentialFor("openai");
             Check(retained?.HasSecret == false && retained.OpenAiRegistration?.ClientId == planTokens.ClientId
-                && planStore.Load().Single().Secret is null,
+                && Stored(planLogoutRoot).Read(planCredential.Id) is null,
                 "套餐退出后重启保留账号注册映射但不恢复令牌");
             var provider = afterLogout.Providers.Single(candidate => candidate.Id == "openai");
             var restored = await afterLogout.SavePlanCredentialForCheckAsync(provider, retained,
                 retained!.OpenAiRegistration!.AuthorizationContext(), null, planTokens);
-            planSecrets.Write(restored.Id, "damaged-json");
+            Stored(planLogoutRoot).Write(restored.Id, "damaged-json");
         }
         using (var damaged = new ChatWorkspace(planLogoutRoot))
         {
@@ -656,41 +663,39 @@ internal sealed class ShellProvidersChecks
             var outcome = await damaged.DisconnectOpenAiPlanAsync();
             Check(outcome.Removed && !outcome.Revoked && !provider.IsCallReady
                 && damaged.CredentialFor("openai")?.OpenAiRegistration?.ClientId == planTokens.ClientId
-                && planSecrets.Read(planCredential.Id) is null,
+                && Stored(planLogoutRoot).Read(planCredential.Id) is null,
                 "损坏凭据可以安全清除并保留再次登录所需注册");
         }
-        planSecrets.Delete(planCredential.Id);
-        planSecrets.Delete(unrelatedCredential.Id);
+        Stored(planLogoutRoot).Delete(planCredential.Id);
+        Stored(planLogoutRoot).Delete(unrelatedCredential.Id);
 
         // ── Migrating a credential that predates registration ──
         // The old row cannot be converted, so it is kept as it is and the user is asked to sign in again. A
         // successful sign-in switches that same row over; a failed save must leave it, and that prompt, intact.
         var migrateRoot = Path.Combine(scratchRoot, "plan-migrate");
         using (var setup = new ChatWorkspace(migrateRoot)) setup.AddPreset("openai");
-        var migrateSecrets = AxmolHub.Agent.SecretStoreFactory.Create(migrateRoot);
         var legacyTokens = new OpenAiTokens("fixture-legacy-access", "fixture-legacy-refresh", null, DateTimeOffset.UtcNow, "fixture-account");
         var legacyCredential = new ProviderCredential { Id = "fixture-legacy", ProviderId = "openai", AuthKind = "openaiOAuth", Secret = legacyTokens.Encode() };
-        migrateSecrets.Write(legacyCredential.Id, legacyCredential.Secret!);
-        new CredentialStore(migrateRoot, migrateSecrets).Save([legacyCredential]);
+        new CredentialStore(migrateRoot, Stored(migrateRoot)).Save([legacyCredential]);
         using (var stale = new ChatWorkspace(migrateRoot))
         {
             var provider = stale.Providers.Single(candidate => candidate.Id == "openai");
             var selected = stale.CredentialFor("openai")!;
             Check(provider.NeedsOpenAiRelogin && !provider.IsCallReady && selected.Secret == legacyTokens.Encode()
-                && migrateSecrets.Read(selected.Id) == legacyTokens.Encode(),
+                && Stored(migrateRoot).Read(selected.Id) == legacyTokens.Encode(),
                 "旧版 ChatGPT 凭据保留但提示重新登录，不会被静默删除");
             // Another process edits the metadata, so this save refuses — the same rollback path a failed write
             // takes. The legacy row, the selection and the sign-in prompt must be exactly as they were.
-            var elsewhere = new CredentialStore(migrateRoot, migrateSecrets).Load();
+            var elsewhere = new CredentialStore(migrateRoot, Stored(migrateRoot)).Load();
             elsewhere.Single().Label = "changed elsewhere";
-            new CredentialStore(migrateRoot, migrateSecrets).Save(elsewhere, writeSecrets: false);
+            new CredentialStore(migrateRoot, Stored(migrateRoot)).Save(elsewhere, writeSecrets: false);
             var refusedSave = false;
             try { await stale.SavePlanCredentialForCheckAsync(provider, selected, null, selected.Secret, planTokens); }
             catch (InvalidOperationException) { refusedSave = true; }
             Check(refusedSave && stale.CredentialFor("openai")?.Id == legacyCredential.Id
                 && stale.CredentialFor("openai")?.Secret == legacyTokens.Encode()
                 && provider.NeedsOpenAiRelogin && !provider.IsCallReady
-                && migrateSecrets.Read(selected.Id) == legacyTokens.Encode(),
+                && Stored(migrateRoot).Read(selected.Id) == legacyTokens.Encode(),
                 "套餐登录保存失败时保留旧凭据、原选择与重新登录提示（拒绝=" + refusedSave
                 + " 需登录=" + provider.NeedsOpenAiRelogin + "）");
         }
@@ -700,10 +705,10 @@ internal sealed class ShellProvidersChecks
             var selected = migrate.CredentialFor("openai")!;
             var switched = await migrate.SavePlanCredentialForCheckAsync(provider, selected, null, selected.Secret, planTokens);
             Check(switched.Id == legacyCredential.Id && provider.IsOpenAiPlan && provider.IsCallReady
-                && CountCredentials(migrate, "openai") == 1 && migrateSecrets.Read(switched.Id) == planTokens.Encode(),
+                && CountCredentials(migrate, "openai") == 1 && Stored(migrateRoot).Read(switched.Id) == planTokens.Encode(),
                 "旧版凭据重新登录成功后原地切换为套餐凭据，不残留第二行");
         }
-        migrateSecrets.Delete(legacyCredential.Id);
+        Stored(migrateRoot).Delete(legacyCredential.Id);
 
         // ── The list shows no credential input, ever ──
         // This is the assertion the whole revision exists for. It is checked on every rendered group rather

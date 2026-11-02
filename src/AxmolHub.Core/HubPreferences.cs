@@ -113,14 +113,20 @@ public sealed class HubPreferences
     public int SettingsVersion { get; set; }
 
     /// <summary>The current layout. Version 1 turned <see cref="GoalTokenBudget"/> from "a million tokens" into
-    /// "no ceiling"; see the migration in <see cref="Load"/> for why the number had to be recognised rather than
-    /// simply changed.</summary>
-    public const int CurrentSettingsVersion = 1;
+    /// "no ceiling"; version 2 raised <see cref="ProviderMaxRetries"/> from the two it shipped with. Both numbers
+    /// were written into every file by the old defaults, so a stored value equal to one of them is a retired
+    /// default rather than a decision — see the migration in <see cref="Load"/>.</summary>
+    public const int CurrentSettingsVersion = 2;
 
     /// <summary>The value <see cref="GoalTokenBudget"/> carried as a shipped default before version 1. Recognised on
     /// load because the field was serialized into every file, so almost every install has it written down whether
     /// or not anybody chose it.</summary>
     public const long RetiredGoalTokenBudget = 1_000_000;
+
+    /// <summary>The retry count <see cref="ProviderMaxRetries"/> shipped with before version 2 raised the default to
+    /// <see cref="ProviderRetryDefaults.MaxRetries"/>. Recognised on load for the same reason as the number above:
+    /// it was serialized into every file, so a stored two says nothing about what anybody wanted.</summary>
+    public const int RetiredProviderMaxRetries = 2;
 
     /// <summary>Ceiling on the tokens a goal may spend in total. <b>Off by default</b> — zero means no ceiling.
     ///
@@ -245,10 +251,19 @@ public sealed class PreferencesStore(string path)
         // because the file wins for the life of the install. Anything that differs from the old number is a
         // deliberate ceiling and is left exactly as written.
         var upgraded = false;
-        if (preferences.SettingsVersion < HubPreferences.CurrentSettingsVersion)
+        if (preferences.SettingsVersion < 1)
         {
             if (preferences.GoalTokenBudget == HubPreferences.RetiredGoalTokenBudget) preferences.GoalTokenBudget = 0;
-            preferences.SettingsVersion = HubPreferences.CurrentSettingsVersion;
+            preferences.SettingsVersion = 1;
+            upgraded = true;
+        }
+        // Version 2: the retry count used to ship as two and now ships as five. A stored two is that retired
+        // default, not a decision; any other number is left alone, including zero, which means "do not retry".
+        if (preferences.SettingsVersion < 2)
+        {
+            if (preferences.ProviderMaxRetries == HubPreferences.RetiredProviderMaxRetries)
+                preferences.ProviderMaxRetries = ProviderRetryDefaults.MaxRetries;
+            preferences.SettingsVersion = 2;
             upgraded = true;
         }
         preferences.GoalTokenBudget = Math.Max(0, preferences.GoalTokenBudget);

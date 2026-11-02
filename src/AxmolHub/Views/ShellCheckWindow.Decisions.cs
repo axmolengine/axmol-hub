@@ -1070,17 +1070,20 @@ internal sealed partial class ShellDecisionsChecks
         var migratedRoot = ScratchDirectory.Resolve("preferences-migration");
         System.IO.Directory.CreateDirectory(migratedRoot);
         var migratedPath = PreferencesPathFor(migratedRoot);
-        System.IO.File.WriteAllText(migratedPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":1000000}");
+        System.IO.File.WriteAllText(migratedPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":1000000,\"ProviderMaxRetries\":2}");
         var migrated = new PreferencesStore(migratedPath).Load();
         var keptRoot = ScratchDirectory.Resolve("preferences-migration-kept");
         System.IO.Directory.CreateDirectory(keptRoot);
         var keptPath = PreferencesPathFor(keptRoot);
-        System.IO.File.WriteAllText(keptPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":500000}");
+        System.IO.File.WriteAllText(keptPath, "{\"SettingsVersion\":0,\"GoalTokenBudget\":500000,\"ProviderMaxRetries\":3}");
         var kept = new PreferencesStore(keptPath).Load();
         Check(migrated.GoalTokenBudget == 0 && migrated.SettingsVersion == HubPreferences.CurrentSettingsVersion
-              && kept.GoalTokenBudget == 500_000 && kept.SettingsVersion == HubPreferences.CurrentSettingsVersion,
-            "旧版设置文件里那个默认目标预算被认成旧默认并迁为「不限」，人选过的预算原样保留（实际 "
-            + migrated.GoalTokenBudget + " / " + kept.GoalTokenBudget + "）");
+              && migrated.ProviderMaxRetries == ProviderRetryDefaults.MaxRetries
+              && kept.GoalTokenBudget == 500_000 && kept.SettingsVersion == HubPreferences.CurrentSettingsVersion
+              && kept.ProviderMaxRetries == 3,
+            "旧版设置文件里那两个旧默认（目标预算一千方、重试两次）迁到新默认，人选过的值原样保留（实际 "
+            + migrated.GoalTokenBudget + "/" + migrated.ProviderMaxRetries + " · "
+            + kept.GoalTokenBudget + "/" + kept.ProviderMaxRetries + "）");
         var restored = new MainWindow(restoreRoot, restoreStore, restoreStore.Load());
         restored.Show();
         restored.NavigateTo("Assistant");
