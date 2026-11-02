@@ -10,14 +10,94 @@ namespace AxmolHub.Core;
 public static class ModelCatalog
 {
     /// <summary>
-    /// Returns explicit reasoning metadata for a provider/model pair. Unknown models fail closed because
-    /// OpenAI-compatible model-list responses generally expose IDs only.
+    /// Returns reasoning metadata for a provider/model pair: what the manifest or the model cache stored for that
+    /// exact id, and failing that <see cref="FamilyReasoningFor"/>.
+    ///
+    /// <para>Stored metadata wins, always and in full: an endpoint that publishes
+    /// <c>effort.supported_levels</c> describes its own models better than any name can.</para>
     /// </summary>
     public static AiModelReasoning? ReasoningFor(ModelProvider? provider, string? modelName)
     {
         if (provider is null || string.IsNullOrWhiteSpace(modelName)) return null;
-        return provider.ReasoningModels.TryGetValue(modelName.Trim(), out var reasoning) ? reasoning : null;
+        var name = modelName.Trim();
+        return provider.ReasoningModels.TryGetValue(name, out var reasoning) ? reasoning : FamilyReasoningFor(name);
     }
+
+    /// <summary>
+    /// The provider-specific body fields that turn this model's reasoning on: what a table entry declared, and
+    /// failing that the family's field.
+    ///
+    /// <para>Asked separately from <see cref="ReasoningFor"/> because the two answers come from different places. An
+    /// endpoint that publishes <c>effort.supported_levels</c> gets an entry carrying the tiers it declared and
+    /// <b>no</b> request fields — it said which strengths it has, not which field switches it on. Reading the fields
+    /// off that entry alone is how one model-list refresh silently took <c>thinking:{"type":"enabled"}</c> back off
+    /// a DeepSeek request that had been carrying it: the ladder stayed, the switch did not.</para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, JsonElement>? RequestOptionsFor(ModelProvider? provider, string? modelName)
+    {
+        if (provider is null || string.IsNullOrWhiteSpace(modelName)) return null;
+        var name = modelName.Trim();
+        if (provider.ReasoningModels.TryGetValue(name, out var declared) && declared.RequestOptions.Count > 0)
+            return declared.RequestOptions;
+        return IsDeepSeekFamily(name) ? DeepSeekThinkingOptions : null;
+    }
+
+    /// <summary>
+    /// The fallback for a DeepSeek model no table entry covers — the case of a custom endpoint serving
+    /// <c>deepseek-v4.1-flash</c>, where the shipped preset's per-id table cannot reach it because which ids an
+    /// endpoint serves is the endpoint's business, not Hub's.
+    ///
+    /// <para>By name, the way <see cref="GptEffortsFor"/> gives GPT families their ladder: the id is where a
+    /// DeepSeek thinking model's tiers live. Without it the composer offers the invented low/medium/high ladder
+    /// while the request never carries the field that makes the model think, so the slider moves and nothing does.
+    /// The cost of being wrong is one visible 400 on the first request, not the silent no-op this replaces.</para>
+    ///
+    /// <para>Matched on the model part of the id rather than on the whole string, because a gateway is free to put
+    /// its own namespace in front (<c>zhongkey/deepseek-v4.1-flash</c>) and a variant marker behind
+    /// (<c>deepseek-v4.1-flash:free</c>), and neither changes what the model is. Anchoring the match at the start —
+    /// which is what the GPT family above does — is why the first version of this missed a custom endpoint's
+    /// models: the id it serves never begins with the family name.</para>
+    ///
+    /// <para>This says nothing about the <i>wire</i>: which protocol a model answers on stays a property of the
+    /// endpoint (<c>ChatClientFactory.ProtocolFor</c>), and a name never re-routes a request.</para>
+    ///
+    /// <para><c>deepseek-chat</c> is the one id in that family that does not think, so it — and any dated variant
+    /// of it — is excluded rather than sent a field its endpoint never asked for.
+    /// <see cref="AiModelReasoning.DefaultEffort"/> stays empty on purpose: "default" is not a strength, and this
+    /// knows no default to name.</para>
+    /// </summary>
+    private static AiModelReasoning? FamilyReasoningFor(string modelName)
+        => IsDeepSeekFamily(modelName) ? DeepSeekThinkingProfile : null;
+
+    /// <summary>Whether this id names a DeepSeek thinking model. Read off the model part of the id, because a
+    /// gateway may put its own namespace in front (<c>zhongkey/deepseek-v4.1-flash</c>) and a variant marker behind
+    /// (<c>deepseek-v4.1-flash:free</c>), and neither changes what the model is. <c>deepseek-chat</c> and its dated
+    /// variants are the one family that does not think.</summary>
+    private static bool IsDeepSeekFamily(string modelName)
+    {
+        var name = modelName[(modelName.LastIndexOf('/') + 1)..];
+        return name.Contains(DeepSeekFamilyMarker, StringComparison.OrdinalIgnoreCase)
+               && !name.StartsWith(DeepSeekChatModel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private const string DeepSeekFamilyMarker = "deepseek-";
+    private const string DeepSeekChatModel = "deepseek-chat";
+
+    /// <summary>The one field that makes a DeepSeek thinking model think. Shared rather than copied, so the ladder
+    /// below and <see cref="RequestOptionsFor"/> cannot drift apart; nothing mutates it, and the caller that puts it
+    /// on a request (<c>ChatPipeline.BuildOptions</c>) clones each value first.</summary>
+    private static readonly Dictionary<string, JsonElement> DeepSeekThinkingOptions = new(StringComparer.Ordinal)
+    {
+        ["thinking"] = JsonDocument.Parse("""{"type":"enabled"}""").RootElement.Clone(),
+    };
+
+    /// <summary>One shared profile, never mutated. <see cref="AiModelReasoning.DefaultEffort"/> stays empty on
+    /// purpose: "default" is not a strength, and this knows no default to name.</summary>
+    private static readonly AiModelReasoning DeepSeekThinkingProfile = new()
+    {
+        Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.High, ChatReasoningEfforts.Max],
+        RequestOptions = DeepSeekThinkingOptions,
+    };
 
     /// <summary>
     /// Whether this (provider, model) pair asks the endpoint to think — read off what the model declared under
@@ -34,7 +114,7 @@ public static class ModelCatalog
     /// </summary>
     public static bool IsThinkingMode(ModelProvider? provider, string? modelName)
     {
-        if (ReasoningFor(provider, modelName)?.RequestOptions is not { Count: > 0 } options) return false;
+        if (RequestOptionsFor(provider, modelName) is not { Count: > 0 } options) return false;
         if (!options.TryGetValue(ThinkingField, out var declared)) return false;
         return declared.ValueKind switch
         {
@@ -72,15 +152,26 @@ public static class ModelCatalog
     public static bool SupportsReasoningEffort(ModelProvider? provider, string? modelName, string effort)
         => EffortsFor(provider, modelName).Contains(effort, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The tiers to offer for one model: what the manifest declared plus what a reply has proved, minus
-    /// what the model itself refused.</summary>
+    /// <summary>The tiers to offer for one model: what the manifest declared — or, when it declared nothing, the
+    /// family's ladder — plus what a reply has proved, minus what the model itself refused.</summary>
     public static IReadOnlyList<string> EffortsFor(ModelProvider? provider, string? modelName)
     {
         var reasoning = ReasoningFor(provider, modelName);
         if (reasoning is null) return [];
         var offered = new List<string>(reasoning.Efforts);
+        // An entry that declared no tier of its own is the evidence-only one Hub writes for a model whose endpoint
+        // publishes none, so starting from what has already been tried would shrink the menu to exactly that list:
+        // a tier the slider cannot reach is never sent, never confirmed, and never comes back. The family's ladder is
+        // that floor — and, being the floor, it is also the fence: a tier outside it stays off the menu, because "a
+        // reply came back thinking while medium was asked for" is evidence that the model thinks, not that medium is
+        // one of its strengths. An endpoint that ignores the tier answers the same way for every value, so a tier the
+        // family does not list could only ever have been produced by Hub asking for it in the first place.
+        var family = offered.Count == 0 && modelName is { } name ? FamilyReasoningFor(name.Trim()) : null;
+        if (family is not null) offered.AddRange(family.Efforts);
         foreach (var effort in reasoning.ObservedEfforts)
-            if (!offered.Contains(effort, StringComparer.OrdinalIgnoreCase)) offered.Add(effort);
+            if (!offered.Contains(effort, StringComparer.OrdinalIgnoreCase)
+                && (family is null || family.Efforts.Contains(effort, StringComparer.OrdinalIgnoreCase)))
+                offered.Add(effort);
         return offered
             .Where(effort => !reasoning.RejectedEfforts.Contains(effort, StringComparer.OrdinalIgnoreCase))
             .ToList();

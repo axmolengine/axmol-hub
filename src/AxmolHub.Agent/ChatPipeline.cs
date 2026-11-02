@@ -832,7 +832,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var options = new ChatOptions();
         var any = false;
         var modelReasoning = ModelCatalog.ReasoningFor(provider, modelName);
-        var requestOptions = modelReasoning?.RequestOptions.ToDictionary(
+        // The switch that turns reasoning on is asked for on its own: a model whose catalog declared its tiers
+        // carries no request fields, and reading them off that entry is what dropped thinking from a request that
+        // had been sending it.
+        var requestOptions = ModelCatalog.RequestOptionsFor(provider, modelName)?.ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Clone(),
             StringComparer.Ordinal);

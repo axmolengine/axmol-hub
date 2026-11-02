@@ -505,6 +505,75 @@ internal static class AiSessionsChecks
         if (reasoningPatch is null || !reasoningPatch.Contains("/reasoning_effort", StringComparison.Ordinal) || !reasoningPatch.Contains("\"max\"", StringComparison.Ordinal) || !reasoningPatch.Contains("/thinking", StringComparison.Ordinal) || !reasoningPatch.Contains("\"enabled\"", StringComparison.Ordinal))
             throw new Exception($"DeepSeek reasoning effort and thinking mode were not sent as raw request fields: {reasoningPatch ?? "<null>"}");
         Console.WriteLine("PASS: DeepSeek effort and thinking settings reach the OpenAI-compatible request.");
+        // The same declaration has to reach a model no table entry names: a custom endpoint serving a DeepSeek id
+        // the shipped preset never lists is exactly the case this fallback exists for, so both the ladder and the
+        // thinking field have to arrive without one — including when the gateway put its own namespace in front of
+        // the id or a variant marker behind it. deepseek-chat, bare or namespaced or dated, is the family's
+        // non-thinking id and gets neither.
+        if (ModelCatalog.SelectableReasoningEfforts(deepSeekProvider, "deepseek-v4.1-flash")
+                is not [ChatReasoningEfforts.Low, ChatReasoningEfforts.High, ChatReasoningEfforts.Max]
+            || !ModelCatalog.IsThinkingMode(deepSeekProvider, "deepseek-v4.1-flash")
+            || !ModelCatalog.IsThinkingMode(deepSeekProvider, "zhongkey/deepseek-v4.1-flash")
+            || !ModelCatalog.IsThinkingMode(deepSeekProvider, "deepseek-v4.1-flash:free")
+            || ModelCatalog.IsThinkingMode(deepSeekProvider, "deepseek-chat")
+            || ModelCatalog.IsThinkingMode(deepSeekProvider, "zhongkey/deepseek-chat")
+            || ModelCatalog.IsThinkingMode(deepSeekProvider, "deepseek-chat-0324"))
+            throw new Exception("An unlisted DeepSeek model did not fall back to its family's ladder and thinking field.");
+        var familyClient = new FakeChatClient(["ok"]);
+        await foreach (var _ in new ChatPipeline(familyClient).SendAsync(deepSeekProvider, [ChatTurn.User("test")], reasoningEffort: ChatReasoningEfforts.High, modelName: "deepseek-v4.1-flash"))
+        {
+        }
+
+#pragma warning disable SCME0001
+        var familyPatch = (familyClient.LastOptions?.RawRepresentationFactory?.Invoke(familyClient) as OpenAI.Chat.ChatCompletionOptions)?.Patch.ToString();
+#pragma warning restore SCME0001
+        if (familyClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.High
+            || familyPatch is null || !familyPatch.Contains("/thinking", StringComparison.Ordinal))
+            throw new Exception($"An unlisted DeepSeek model did not send its thinking field beside the chosen tier ({familyPatch ?? "<null>"}).");
+        Console.WriteLine("PASS: a DeepSeek model with no table entry still travels with its family's tiers and thinking field.");
+        // And the case that made the family fallback necessary in two halves: a model whose own catalog declared its
+        // tiers arrives as an entry with efforts and no request fields, so reading the switch off that entry alone
+        // is what silently took thinking back off a request after one model-list refresh. The declared ladder keeps
+        // the tiers; the family supplies the field they switch on.
+        var tiersOnly = ProviderWith("deepseek-v4-flash", new AiModelReasoning
+        {
+            Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High],
+        });
+        var tiersOnlyClient = new FakeChatClient(["ok"]);
+        await foreach (var _ in new ChatPipeline(tiersOnlyClient).SendAsync(tiersOnly, [ChatTurn.User("test")], reasoningEffort: ChatReasoningEfforts.Medium, modelName: "deepseek-v4-flash"))
+        {
+        }
+
+#pragma warning disable SCME0001
+        var tiersOnlyPatch = (tiersOnlyClient.LastOptions?.RawRepresentationFactory?.Invoke(tiersOnlyClient) as OpenAI.Chat.ChatCompletionOptions)?.Patch.ToString();
+#pragma warning restore SCME0001
+        if (ModelCatalog.SelectableReasoningEfforts(tiersOnly, "deepseek-v4-flash")
+                is not [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High]
+            || tiersOnlyClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.Medium
+            || tiersOnlyPatch is null || !tiersOnlyPatch.Contains("/thinking", StringComparison.Ordinal))
+            throw new Exception($"Tiers a model list declared displaced the field that switches reasoning on ({tiersOnlyPatch ?? "<null>"}).");
+        Console.WriteLine("PASS: tiers a model list declared keep the family's thinking field on the request.");
+        // The entry an endpoint that publishes nothing leaves behind is evidence-only, and evidence must not narrow the
+        // menu: a tier the slider cannot reach is never sent, so it is never confirmed either. The family's ladder is
+        // the floor it joins.
+        var evidenceOnly = ProviderWith("deepseek-v4.1-flash", new AiModelReasoning
+        {
+            ObservedEfforts = [ChatReasoningEfforts.Medium, ChatReasoningEfforts.High],
+        });
+        if (ModelCatalog.SelectableReasoningEfforts(evidenceOnly, "deepseek-v4.1-flash")
+                is not [ChatReasoningEfforts.Low, ChatReasoningEfforts.High, ChatReasoningEfforts.Max]
+            || !ModelCatalog.IsThinkingMode(evidenceOnly, "deepseek-v4.1-flash"))
+            throw new Exception("An evidence-only DeepSeek entry did not settle on the family's three tiers: an observed tier the family does not list was offered as a strength.");
+        Console.WriteLine("PASS: a DeepSeek model's menu is its family's three tiers, whatever tiers replies were asked for.");
+        // Where no family is known, an observed tier is all there is and stays on the menu: the fence above is the
+        // family's, not a rule that evidence never counts.
+        var observedElsewhere = ProviderWith("qwen-max", new AiModelReasoning
+        {
+            ObservedEfforts = [ChatReasoningEfforts.Medium],
+        });
+        if (ModelCatalog.SelectableReasoningEfforts(observedElsewhere, "qwen-max") is not [ChatReasoningEfforts.Medium])
+            throw new Exception("An observed tier was dropped for a model whose family says nothing about tiers.");
+        Console.WriteLine("PASS: where no family ladder exists, a tier a reply proved is the menu.");
         // The same declared fields, read off the options rather than off the connector. The patch above is how a body
         // built by the OpenAI SDK gets a field the SDK never modelled; a wire whose body this app writes itself has no
         // patch to reach, so the declaration has to arrive as data on the request. Both carriers are asserted because
