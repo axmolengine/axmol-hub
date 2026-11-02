@@ -136,7 +136,14 @@ $taskMacPlist = $null
 if ($Runtime -like 'osx-*') {
     # The same custom plist goes into both the installer and Velopack's update payload. Editing only the .pkg after
     # `vpk pack` leaves the .nupkg used by in-app updates without the URL scheme.
-    $taskMacBundleId = "com.Simdsoft_Limited.$PackId"
+    # The bundle id is macOS's identity for this app: TCC (screen recording / accessibility), notification
+    # authorization and the LaunchServices registration of the axmolhub:// scheme are all keyed by it. $PackId is
+    # Velopack's install/update identity instead, and the two are deliberately not derived from each other —
+    # deriving this one from $PackId produced com.Simdsoft_Limited.dev.axmol.hubapp, a company prefix in front of
+    # an id that is already reverse-DNS, with an underscore and capitals Apple's rules do not cover. Changing this
+    # value costs every user one re-grant in System Settings; changing $PackId would cut existing installs off
+    # from updates, which is exactly why the two live apart.
+    $taskMacBundleId = 'dev.axmol.hub'
     $taskMacPlist = Join-Path ([IO.Path]::GetTempPath()) ('axmolhub-' + [Guid]::NewGuid().ToString('N') + '.plist')
     $taskPlistContents = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'HubMacInfo.plist')
     $taskPlistContents = $taskPlistContents.Replace('__PACK_TITLE__', [System.Security.SecurityElement]::Escape($PackTitle))
