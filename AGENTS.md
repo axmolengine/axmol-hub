@@ -120,6 +120,18 @@ report each step; the first failing step stops the run. `click`/`type` locate a 
 (`Control.Name`) first, else by exact visible `text`. Run it through `run_command` with `timeout_seconds: 300` (the first
 build is slow); keep the script and output under ignored `tmp/`. View the PNGs afterwards. See `Services/DriveRunner.cs`.
 
+## A small UI change is finished by a build, and verified by a person
+
+**For a cosmetic tweak — a glyph's size, a gap, a colour, a weight, a label — the assistant's job is the edit and a
+clean build. Then hand it over.** Launch the app (or a `--drive` script whose last step leaves the window up), say what
+changed and where to look, and stop. Do not spend the turn proving a pixel moved: no before/after screenshot tour, no
+measuring a rendered image, no new assertion for a number the person can simply see. The round trip costs more than
+the tweak did and still ends on the same question — does it look right? — which only the person can answer.
+
+The assistant verifies with its own eyes only where a person's cannot reach: geometry a check measures, a surface that
+must not regress, a state the person cannot get to by hand. A launch the person asked for is a window they drive
+themselves, not a script that photographs it and closes.
+
 ## Checks and assertions
 
 **Do not add checks by default. Keep both ShellCheck and headless suites small, including their fixtures.**
