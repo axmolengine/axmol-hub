@@ -902,7 +902,10 @@ public static class HubTexts
         ["ChatStreamInterrupted"] = ("模型请求被客户端流水线中断，不是 Hub 的等待窗口到期。", "The model request was cancelled by the client pipeline, not by a waiting deadline Hub set."),
         // The status line while the pipeline obeys a Retry-After: the wait is the provider's instruction, so it
         // is said as work in progress on the row the tool and the search already use, not as a second label.
-        ["ChatRetryWaitFormat"] = ("模型服务在限流，第 {0}/{1} 次尝试，等待 {2} 秒", "Rate-limited by the provider: attempt {0}/{1}, waiting {2}s"),
+        ["ChatRetryWaitFormat"] = ("请求暂时失败，第 {0}/{1} 次尝试，{2} 秒后重试", "Temporary request failure: attempt {0}/{1}, retrying in {2}s"),
+        ["ChatRetryExhausted"] = ("请求重试次数已用尽，本轮已停止。", "Request retries are exhausted; this turn has stopped."),
+        ["ChatRetryPartial"] = ("响应中途失败；为避免重复输出，未自动重发。", "The response failed after output was delivered; it was not replayed to avoid duplicates."),
+        ["ChatRetryResultFormat"] = ("已重试 {0} 次，等待 {1} 秒。{2}", "Retried {0} times, waited {1}s. {2}"),
         ["ChatNoResponse"] = ("端点这次什么都没返回，也没有给出结束原因——通常是服务端临时故障或连接提前断开，先直接重试。", "The endpoint returned nothing at all, and no finish reason — usually a transient server fault or a connection closed early. Retrying is the first thing to try."),
         ["ChatReasoningOnly"] = ("模型只返回了思考过程，没有给出答复。可以重试。", "The model returned reasoning but no answer. You can retry."),
         // The ending a withheld tool used to produce silently: the response named a call, nothing ran it, and the

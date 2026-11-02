@@ -919,6 +919,8 @@ internal static class ShellCheckSupport
     // that null has to stay a possible answer, and it is the case the caller must not report as a reason.
     string? finish = null, IList<Microsoft.Extensions.AI.AIContent>? reasoning = null, Task? afterAllChunksGate = null, System.Threading.Tasks.TaskCompletionSource<bool>? allChunksReached = null) : Microsoft.Extensions.AI.IChatClient
     {
+        public int Requests { get; private set; }
+        public int FailuresBeforeSuccess { get; init; } = int.MaxValue;
         /// <summary>The options of the request that was just made, so a check can read what would have gone on
         /// the wire. The scripted client answers instead of a gateway, and the field a gateway would have been
         /// asked for has to be asserted on the same object the real request is built from.</summary>
@@ -930,6 +932,7 @@ internal static class ShellCheckSupport
         public Task<Microsoft.Extensions.AI.ChatResponse> GetResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default) => throw new NotSupportedException("The assistant check only uses the streaming path.");
         public async System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate> GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, Microsoft.Extensions.AI.ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken = default)
         {
+            Requests++;
             LastOptions = options;
             LastMessages = messages.ToList();
             if (searchStart is { Count: > 0 } start)
@@ -938,7 +941,7 @@ internal static class ShellCheckSupport
                 searchStartReached?.TrySetResult(true);
             }
 
-            if (reasoning is { Count: > 0 } thought)
+            if (reasoning is { Count: > 0 } thought && Requests <= FailuresBeforeSuccess)
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, thought);
             // A gate lets a check hold the stream open at its first token, so the mid-stream state of the
             // composer button can be asserted instead of only its end state. The wait is cancellation-aware:
@@ -946,7 +949,7 @@ internal static class ShellCheckSupport
             // one of the paths a check has to be able to take.
             if (gate is not null)
                 await gate.WaitAsync(cancellationToken);
-            if (exception is not null)
+            if (exception is not null && Requests <= FailuresBeforeSuccess)
                 throw exception;
             if (searchEnd is { Count: > 0 } end)
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, end);

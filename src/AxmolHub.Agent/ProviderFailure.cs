@@ -58,10 +58,62 @@ public static class ProviderFailure
     }
 
     public static bool Recoverable(Exception exception)
-        => !QuotaExhausted(exception.Message) && !AuthenticationFailed(exception)
-            && (StatusOf(exception) is 408 or 429 or 500 or 502 or 503 or 504
-                || StatusOf(exception) is null && exception is (System.Net.Http.HttpRequestException
-                    or IOException or TimeoutException));
+    {
+        if (exception is OperationCanceledException or RequestRetryException
+            || AuthenticationFailed(exception) || QuotaExhausted(exception.Message)
+            || exception is ProviderResponseException coded && QuotaExhausted(coded.ErrorCode)
+            || Core.ContextOverflow.IsContextOverflow(exception.Message)
+            || ChatPipeline.DeclinedStreamUsage(exception.Message)) return false;
+        if (StatusOf(exception) is { } status) return status is 408 or 429 or 500 or 502 or 503 or 504;
+        if (exception is ProviderResponseException stream)
+            return stream.ErrorCode is "rate_limit_exceeded" or "rate_limit_error" or "too_many_requests"
+                or "server_error" or "internal_server_error" or "service_unavailable" or "overloaded_error"
+                or "timeout" or "request_timeout" or "empty_response"
+                || ChatPipeline.RateLimited(stream.Message)
+                || stream.Message.Contains("different", StringComparison.OrdinalIgnoreCase)
+                   && stream.Message.Contains("OpenAI resource", StringComparison.OrdinalIgnoreCase)
+                || stream.Message.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
+                || stream.Message.Contains("overloaded", StringComparison.OrdinalIgnoreCase);
+        return exception is System.Net.Http.HttpRequestException or IOException or TimeoutException;
+    }
+
+    public static TimeSpan Backoff(int retriesSoFar) => TimeSpan.FromMilliseconds(Math.Min(
+        Core.ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,
+        Core.ProviderRetryDefaults.RateLimitBaseDelay.TotalMilliseconds * Math.Pow(2, Math.Clamp(retriesSoFar, 0, 10))));
+
+    public static TimeSpan? WaitFor(Exception exception) => (exception as ProviderResponseException)?.RetryDelay;
+
+    public static ProviderResponseException FromStream(Microsoft.Extensions.AI.ErrorContent error)
+    {
+        TimeSpan? delay = null;
+        // Adapters may preserve the provider's error envelope as raw data or as additional properties.
+        foreach (var value in new object?[] { error.RawRepresentation, error.AdditionalProperties })
+        {
+            if (value is null) continue;
+            try { delay ??= ReadRetryAfter(JsonSerializer.SerializeToElement(value)); }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException) { }
+        }
+        return new ProviderResponseException(string.IsNullOrWhiteSpace(error.Message)
+            ? "The provider failed the response without saying why." : error.Message, error.ErrorCode, delay);
+    }
+
+    internal static TimeSpan? ReadRetryAfter(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var property in element.EnumerateObject())
+        {
+            var key = property.Name.Replace('_', '-').ToLowerInvariant();
+            if (key is "retry-after" or "retry-after-ms" or "x-ms-retry-after-ms")
+            {
+                var parsed = RetryAfter(property.Value.ToString(), DateTimeOffset.UtcNow, key.EndsWith("-ms"));
+                if (parsed is not null) return parsed;
+            }
+        }
+        foreach (var property in element.EnumerateObject())
+            if (property.Value.ValueKind == JsonValueKind.Object && ReadRetryAfter(property.Value) is { } parsed)
+                return parsed;
+        return null;
+    }
 
     public static TimeSpan? RetryAfter(string? value, DateTimeOffset now, bool milliseconds = false)
     {
@@ -77,9 +129,10 @@ public static class ProviderFailure
 
 /// <summary>A failure explicitly emitted by the model endpoint, not a local execution exception.
 /// Keeping the code separate from the display message prevents stream-level failures from bypassing retry.</summary>
-public sealed class ProviderResponseException(string message, string? errorCode = null) : InvalidOperationException(message)
+public sealed class ProviderResponseException(string message, string? errorCode = null, TimeSpan? retryDelay = null) : InvalidOperationException(message)
 {
     public string? ErrorCode { get; } = errorCode;
+    public TimeSpan? RetryDelay { get; } = retryDelay;
 }
 
 /// <summary>Hands a long provider wait to the persisted goal scheduler instead of occupying a run slot.</summary>

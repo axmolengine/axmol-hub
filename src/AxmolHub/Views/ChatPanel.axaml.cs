@@ -317,6 +317,7 @@ public partial class ChatPanel : UserControl
             if (_live is not { } live || live.Run.ConversationId != conversationId) return;
             live.Status.Text = waiting ? RetryActivityText(live.Run.RetryWaitNotice())
                 : live.ShowedText ? HubStrings.Get("ChatGenerating") : HubStrings.Get("ChatPreparing");
+            RefreshGlyphPhase(live);
         };
         // A compaction is the one stretch of a run where no token arrives and no tool runs, so the line that exists
         // to say the turn is alive would go on claiming tokens are coming. Both brackets write the same line the
@@ -2519,9 +2520,9 @@ public partial class ChatPanel : UserControl
 
     /// <summary>The bubble's status line while the pipeline sits out a provider's retry delay. The denominator is
     /// the policy's own number rather than a guess, so the line cannot drift from how many attempts exist.</summary>
-    private static string RetryActivityText((int Attempt, TimeSpan Delay) wait)
+    private static string RetryActivityText((int Attempt, TimeSpan Delay, int Maximum) wait)
         => string.Format(System.Globalization.CultureInfo.CurrentCulture,
-            HubStrings.Get("ChatRetryWaitFormat"), wait.Attempt, ProviderRetryDefaults.MaxRetries + 1,
+            HubStrings.Get("ChatRetryWaitFormat"), wait.Attempt, wait.Maximum,
             wait.Delay.TotalSeconds < 1 ? wait.Delay.TotalSeconds.ToString("0.#")
                 : Math.Round(wait.Delay.TotalSeconds).ToString("0"));
 
@@ -5312,6 +5313,7 @@ public partial class ChatPanel : UserControl
             if (_live is not { } current) return;
             current.Frame++;
             current.Elapsed.Text = FormatDuration(current.Run.Elapsed);
+            if (current.Run.RetryWaiting) current.Status.Text = RetryActivityText(current.Run.RetryWaitNotice());
             RenderComposerMetrics();
             RefreshGlyphPhase(current);
             // The command card's clock ticks with the bubble's rather than on one of its own: it is a number about
@@ -5514,7 +5516,7 @@ public partial class ChatPanel : UserControl
     /// </summary>
     private static void RefreshGlyphPhase(LiveBubble bubble)
     {
-        var phase = bubble.ShowedText
+        var phase = bubble.Run.RetryWaiting ? ActivityPhase.RunningTool : bubble.ShowedText
             ? ActivityPhase.ShowingText
             : bubble.ToolRunning
                 ? ActivityPhase.RunningTool

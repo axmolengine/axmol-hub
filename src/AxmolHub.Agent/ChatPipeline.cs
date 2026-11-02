@@ -167,6 +167,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<Task<bool>>? canYieldForCompaction = null,
         Func<long, Task>? beforeRequest = null,
         Func<long, long, bool, Task>? afterRequest = null,
+        RequestRetryOptions? retryOptions = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -200,6 +201,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var thinkingSpent = false;
         IChatClient effectiveClient = beforeRequest is null ? client
             : new GoalRequestGuard(client, schemaTokens, window.OutputReserve, beforeRequest, afterRequest);
+        if (retryOptions is not null)
+            effectiveClient = new RequestRetryClient(effectiveClient, retryOptions, onActivity);
         ToolLoopContextGuard? guard = null;
         if (tools is { Count: > 0 })
         {

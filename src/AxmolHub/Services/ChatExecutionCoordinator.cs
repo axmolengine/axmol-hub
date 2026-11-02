@@ -121,10 +121,18 @@ internal sealed partial class ChatExecutionCoordinator
             var trackGoal = await ReadOnUiAsync(() => Sessions.Registry.Peek(conversationId) is
                 { Goal: { Length: > 0 }, GoalState: ChatGoalStates.Active or ChatGoalStates.Waiting or ChatGoalStates.BudgetLimited })
                 .ConfigureAwait(false);
+            var retry = new RequestRetryOptions
+            {
+                MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
+                OnWait = (attempt, delay) =>
+                {
+                    if (RunFor(conversationId) is { } run) NoteRetryWait(run, attempt, delay);
+                },
+            };
+            if (RunFor(conversationId) is { } activeRun) activeRun.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
             var client = ClientOverride?.Invoke(request.Value.Provider, conversationId)
                          ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, null,
-                             maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
-                             maxInlineRetryWait: trackGoal ? ProviderRetryDefaults.GoalMaxInlineWait : ProviderRetryDefaults.MaxInlineWait);
+                             maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait);
             var pipeline = new ChatPipeline(client);
             var summary = new StringBuilder();
             await foreach (var chunk in pipeline.SendAsync(
@@ -134,6 +142,18 @@ internal sealed partial class ChatExecutionCoordinator
                                declaredTools: request.Value.Tools,
                                modelName: request.Value.ModelName,
                                maxOutputTokens: request.Value.MaxOutputTokens,
+                               retryOptions: new RequestRetryOptions
+                               {
+                                   MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries
+                                       ?? ProviderRetryDefaults.MaxRetries,
+                                   OnWait = (attempt, delay) =>
+                                   {
+                                       if (RunFor(conversationId) is { } summaryRun) NoteRetryWait(summaryRun, attempt, delay);
+                                   },
+                                   // A summary that came back empty is a refused compaction, not a transient fault.
+                                   RetryEmpty = false,
+                               },
+                               onActivity: () => RunFor(conversationId)?.Touch(),
                                onUsage: report => Audit(conversationId,
                                    $"Compaction usage: model={request.Value.ModelName} input={report.SummedInputTokens} "
                                    + $"cached={report.SummedCachedInputTokens} output={report.OutputTokens} "
@@ -3150,6 +3170,14 @@ internal sealed partial class ChatExecutionCoordinator
             Audit(run.ConversationId, $"Provider requested a {ex.Delay.TotalSeconds:0.#}s wait; returning the run slot");
             return (RunResult.Incomplete, "ChatProviderRetryLater", false, null);
         }
+        catch (RequestRetryException ex)
+        {
+            Audit(run.ConversationId, $"Request recovery ended: retries={ex.Retries}, waited={ex.Waited.TotalSeconds:0.#}s, "
+                + $"partial={ex.Partial}, cause={ex.InnerException?.GetType().Name}: {ex.Message}");
+            return (RunResult.Incomplete, ex.Partial ? "ChatRetryPartial" : "ChatRetryExhausted", true,
+                string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("ChatRetryResultFormat"), ex.Retries, Math.Round(ex.Waited.TotalSeconds), ex.Message));
+        }
         catch (GoalGuardException ex)
         {
             Audit(run.ConversationId, $"Goal admission stopped: {ex.Reason}");
@@ -3170,20 +3198,6 @@ internal sealed partial class ChatExecutionCoordinator
         {
             Audit(run.ConversationId, "Usage allowance exhausted; transport retries were not attempted");
             return (RunResult.Failed, "ChatUsageExhausted", true, ex.Message);
-        }
-        catch (Exception ex) when (Sessions.Registry.Peek(run.ConversationId)?.GoalState == ChatGoalStates.Active
-            && !ContextOverflow.IsContextOverflow(ex.Message)
-            && !ChatPipeline.DeclinedStreamUsage(ex.Message)
-            && (ProviderFailure.Recoverable(ex) || ChatPipeline.RateLimited(ex.Message)
-                || ProviderFailure.ProviderRefused(ex)))
-        {
-            // HTTP and in-stream provider failures share the goal's bounded wait. Stream errors retain their
-            // origin even without a transport status, rather than being mistaken for local app exceptions.
-            Audit(run.ConversationId, $"Provider failure: {ex.GetType().Name}, status={ProviderFailure.StatusOf(ex)}, "
-                + $"code={(ex as ProviderResponseException)?.ErrorCode}; cooling down: {ex.Message}");
-            var spent = Sessions.Registry.Peek(run.ConversationId)?.GoalCooldownCount ?? 0;
-            var notice = await ParkGoalForProviderAsync(run.ConversationId, CooldownDelay(spent)).ConfigureAwait(false);
-            return (RunResult.Incomplete, notice, false, ex.Message);
         }
         catch (TimeoutException ex)
         {
@@ -3514,11 +3528,15 @@ internal sealed partial class ChatExecutionCoordinator
         var reasoning = new ReasoningTable();
         var trackGoal = Sessions.Registry.Peek(run.ConversationId) is { Goal: { Length: > 0 },
             GoalState: ChatGoalStates.Active or ChatGoalStates.Waiting or ChatGoalStates.BudgetLimited };
+        var retry = new RequestRetryOptions
+        {
+            MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
+            OnWait = (attempt, delay) => NoteRetryWait(run, attempt, delay),
+        };
+        run.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
                      ?? ChatClientFactory.Create(request.Provider, request.ModelName, reasoning,
-                         onRetryWait: (attempt, delay) => NoteRetryWait(run, attempt, delay),
-                maxRetries: PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
-                maxInlineRetryWait: trackGoal ? ProviderRetryDefaults.GoalMaxInlineWait : ProviderRetryDefaults.MaxInlineWait);
+                         onRetryWait: retry.OnWait, maxRetries: retry.MaxRetries);
         var pipeline = new ChatPipeline(client, reasoning);
         // Which tool brackets each response has opened, by batch. A response that parks stops at its head call, and
         // any call the mode allowed *ahead* of it opened its bracket on the way to that decision and is never
@@ -3538,6 +3556,7 @@ internal sealed partial class ChatExecutionCoordinator
             request.Reasoning,
             request.Tools,
             declaredTools: request.DeclaredTools,
+            retryOptions: retry,
             images: request.Images,
             gate: async (info, batch, _) =>
             {
@@ -3847,13 +3866,8 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.GoalState = ChatGoalStates.Waiting;
                     opened.GoalStopReason = "approval";
                 }
-                // An answer that never arrived is a provider failure, not a finished turn: it goes through the same
-                // empty-run accounting an answer with nothing in it does, and its retry waits the same backoff a
-                // provider-requested one waits. Pausing on it stopped the goal on the one failure a goal exists for
-                // — a flaky endpoint — and did so before the empty-run ceiling could ever bound it.
-                var retryableEmpty = result == RunResult.Incomplete
-                    && noticeKey is "ChatNoResponse" or "ChatReasoningOnly";
-                if (opened.GoalState == ChatGoalStates.Active && ((result != RunResult.Completed && !retryableEmpty)
+                // Request recovery is already exhausted here. Goal continuation must not multiply its budget.
+                if (opened.GoalState == ChatGoalStates.Active && ((result != RunResult.Completed)
                     || opened.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User)?.IsGitOperationFallback == true))
                 {
                     opened.GoalState = noticeKey is "ChatUsageExhausted" or "ChatAuthExpired"
@@ -3862,7 +3876,7 @@ internal sealed partial class ChatExecutionCoordinator
                         : noticeKey is "ChatToolSpinStopped" or "ChatGoalNoProgress" ? "no_progress" : "error";
                 }
                 else if (opened.GoalState == ChatGoalStates.Active && NormalizeMode(opened.Mode) == ChatModes.Agent
-                    && (result == RunResult.Completed || retryableEmpty)
+                    && result == RunResult.Completed
                     && !opened.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending
                         || turn.PlanApprovalState == PlanApprovalStates.Pending))
                 {
@@ -3882,20 +3896,7 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.GoalState = decision.State;
                     opened.GoalEmptyRunCount = decision.EmptyRuns;
                     opened.GoalStopReason = decision.Reason;
-                    if (decision.Continue)
-                    {
-                        if (retryableEmpty)
-                        {
-                            // The wait is the point: an endpoint that answered with nothing is retried after a
-                            // backoff rather than immediately, on the same budget as a provider's Retry-After.
-                            ParkForProvider(opened, GoalPolicyFor(opened), CooldownDelay(opened.GoalCooldownCount));
-                            if (opened.GoalWakeAt is { } wake) ScheduleGoalWake(opened.Id, wake);
-                        }
-                        else
-                        {
-                            continueGoal = true;
-                        }
-                    }
+                    if (decision.Continue) continueGoal = true;
                     if (final is not null)
                     {
                         var index = opened.Messages.LastIndexOf(final);

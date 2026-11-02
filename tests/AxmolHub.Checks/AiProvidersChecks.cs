@@ -6,6 +6,7 @@ internal static class AiProvidersChecks
 {
     internal static async Task RunAsync(string root, string[] args)
     {
+        await RequestRetryChecks.RunAsync();
         void AssertRejects(Action action, string name)
         {
             try

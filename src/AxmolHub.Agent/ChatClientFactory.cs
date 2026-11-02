@@ -194,6 +194,7 @@ public static class ChatClientFactory
                 options.AddPolicy(new StatelessResponsesPolicy(), PipelinePosition.BeforeTransport);
             // Last, so the recorded body is the one that leaves: the replay policy above has already rewritten
             // the messages, and a recording taken before that would document an intention rather than a request.
+            options.AddPolicy(new RetryMetadataPolicy(), PipelinePosition.BeforeTransport);
             options.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
             var responses = new ResponsesClient(credential, options).AsIChatClient(model);
             IChatClient client = provider.IsOpenAiPlan ? new OpenAiStreamingChatClient(responses) : responses;
@@ -221,6 +222,7 @@ public static class ChatClientFactory
             chatOptions.AddPolicy(headers, PipelinePosition.BeforeTransport);
         // Added last on purpose: <see cref="ReasoningReplayPolicy"/> rewrites the messages at this same position,
         // and the whole point of the recording is to show the body after that rewrite rather than before it.
+        chatOptions.AddPolicy(new RetryMetadataPolicy(), PipelinePosition.BeforeTransport);
         chatOptions.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
         return new OpenAIClient(credential, chatOptions).GetChatClient(model).AsIChatClient();
     }

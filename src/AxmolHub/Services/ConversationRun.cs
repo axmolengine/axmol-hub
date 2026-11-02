@@ -186,7 +186,6 @@ internal sealed class ConversationRun : IDisposable
     private int _retryWaiting;
     private int _retryWaits;
     private long _retryWaitedTicks;
-    private long _retryDelayTicks;
     private string? _steerText;
     private string? _steerContext;
     private IReadOnlyList<byte[]>? _steerPictures;
@@ -706,13 +705,16 @@ internal sealed class ConversationRun : IDisposable
     /// to be silent about, and a deadline that fired through that wait reported a rate limit as a dead connection
     /// — which is the wrong diagnosis and sends a person to check the wrong thing. The user's stop still cancels
     /// the wait, because it travels on the same token.</summary>
+    internal int RetryLimit { get; set; } = ProviderRetryDefaults.MaxRetries;
+    private long _retryDue;
+
     internal void BeginRetryWait(int attempt, TimeSpan delay)
     {
         if (_parked) return;
         Interlocked.Exchange(ref _retryWaiting, attempt);
         // The wait is not decoding time: close the window here so the attempt that follows opens a fresh one.
         lock (_gate) BankDecode();
-        Interlocked.Exchange(ref _retryDelayTicks, delay.Ticks);
+        Interlocked.Exchange(ref _retryDue, Environment.TickCount64 + (long)Math.Ceiling(delay.TotalMilliseconds));
         Interlocked.Increment(ref _retryWaits);
         Interlocked.Add(ref _retryWaitedTicks, delay.Ticks);
         _idle.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -731,8 +733,9 @@ internal sealed class ConversationRun : IDisposable
     /// remembering it, because a wait that is still happening is still worth saying.</summary>
     internal bool RetryWaiting => Volatile.Read(ref _retryWaiting) != 0;
 
-    internal (int Attempt, TimeSpan Delay) RetryWaitNotice()
-        => (Volatile.Read(ref _retryWaiting), TimeSpan.FromTicks(Interlocked.Read(ref _retryDelayTicks)));
+    internal (int Attempt, TimeSpan Delay, int Maximum) RetryWaitNotice()
+        => (Volatile.Read(ref _retryWaiting),
+            TimeSpan.FromMilliseconds(Math.Max(0, Interlocked.Read(ref _retryDue) - Environment.TickCount64)), RetryLimit + 1);
 
     /// <summary>What the retries cost this run, for the audit line that has to say whether a silence was the
     /// provider's doing.</summary>

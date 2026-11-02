@@ -88,16 +88,6 @@ internal sealed partial class ChatExecutionCoordinator
         opened.GoalWakeAt = canWait ? DateTimeOffset.UtcNow + delay : null;
     }
 
-    /// <summary>How long a parked goal waits before its retry: the rate-limit base, doubled for each wait this goal
-    /// has already spent, and capped at the same ceiling the transport policy uses. The first wait being the
-    /// rate-limit base is deliberate — an endpoint that stops mid-stream is usually the congestion that produces a
-    /// 429 a moment later. A round that comes back at all clears the count, so the next bad patch starts at five
-    /// seconds again rather than wherever the last one ended.</summary>
-    private static TimeSpan CooldownDelay(int cooldownsSoFar)
-        => TimeSpan.FromMilliseconds(Math.Min(
-            ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,
-            ProviderRetryDefaults.RateLimitBaseDelay.TotalMilliseconds * Math.Pow(2, Math.Max(0, cooldownsSoFar))));
-
     private void ResetGoal(Conversation conversation)
     {
         var preferences = PreferencesProvider?.Invoke() ?? new HubPreferences();

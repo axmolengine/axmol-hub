@@ -27,7 +27,8 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
 
     protected override bool ShouldRetry(PipelineMessage message, Exception? exception)
     {
-        if (message.CancellationToken.IsCancellationRequested || exception is OperationCanceledException) return false;
+        if (message.CancellationToken.IsCancellationRequested || exception is OperationCanceledException
+            || RequestRetryScope.Current.Value is { CanRetry: false }) return false;
         if (message.Response is { Status: >= 400 } response)
         {
             response.BufferContent(message.CancellationToken);
@@ -55,6 +56,8 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
                     && ProviderFailure.RetryAfter(value, DateTimeOffset.UtcNow, name.EndsWith("-ms")) is { } delay)
                 { specified = delay; break; }
         }
+        if (RequestRetryScope.Current.Value is { } shared)
+            return shared.Reserve(specified);
         // A token-rate window rarely clears within the SDK's first few seconds. Give 429s a 5s exponential
         // base before jitter; other recoverable errors keep the SDK base. Explicit server delays win exactly.
         var exponential = base.GetNextDelay(message, tryCount).TotalMilliseconds;
@@ -70,6 +73,11 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
 
     protected override void Wait(TimeSpan delay, CancellationToken cancellationToken)
     {
+        if (RequestRetryScope.Current.Value is { } shared)
+        {
+            shared.WaitAsync(delay, cancellationToken).GetAwaiter().GetResult();
+            return;
+        }
         Notice(delay);
         try
         {
@@ -83,6 +91,11 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
 
     protected override async Task WaitAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
+        if (RequestRetryScope.Current.Value is { } shared)
+        {
+            await shared.WaitAsync(delay, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         Notice(delay);
         try
         {

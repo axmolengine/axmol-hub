@@ -1540,6 +1540,8 @@ internal sealed class ShellAssistantChecks
         Check(panel.ScrollToBottomIsSquarePlateForCheck && panel.ScrollToBottomShowsArrowForCheck,
             "回到底部按钮是 28 见方的底板配垂直向下箭头（不再是空心胶囊）");
 
+        var savedRequestRetries = shell.Chat.PreferencesProvider!()!.ProviderMaxRetries;
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 0; // These probes assert terminal notices, not the retry schedule.
         var failureCheckConversation = shell.Chat.StartConversation();
         panel.Reload();
         shell.UpdateLayout();
@@ -1547,7 +1549,7 @@ internal sealed class ShellAssistantChecks
 
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([]);
         await panel.SendForCheckAsync("空回复问题");
-        Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatNoResponse"),
+        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true,
             "模型正常结束但没有文本时显示无回复提示");
 
         // An ending that carried neither an answer nor a thought used to leave no trace anywhere at all: nothing
@@ -1662,25 +1664,27 @@ internal sealed class ShellAssistantChecks
 
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception: new TimeoutException());
         await panel.SendForCheckAsync("超时问题");
-        Check(panel.LastNoticeTextForCheck == HubStrings.Get("ChatTimedOut"),
+        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true,
             "请求超时时显示明确的超时提示");
 
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient(
             [], exception: new System.Net.Http.HttpRequestException("连接被拒绝"));
         await panel.SendForCheckAsync("连接失败问题");
-        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatConnectionFailed"), StringComparison.Ordinal) == true,
+        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true,
             "网络连接异常在流结束重绘后仍显示连接失败提示");
 
         // The exact shape the client model hands back when the pipeline's retries run out, measured from
         // --check-ai-providers rather than imagined. A limit is not a broken assistant: the generic sentence sends
         // a person to settings and credentials that are fine, while the answer here is to wait a moment.
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([],
-            exception: new InvalidOperationException(
-                "HTTP 429 (rate_limit_error: rate_limit_exceeded)\n\nRate limit reached. Slow down."));
+            exception: new System.Net.Http.HttpRequestException(
+                "HTTP 429 (rate_limit_error: rate_limit_exceeded)\n\nRate limit reached. Slow down.", null,
+                System.Net.HttpStatusCode.TooManyRequests));
         await panel.SendForCheckAsync("限流问题");
-        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRateLimited"), StringComparison.Ordinal) == true
+        Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true
               && panel.LastNoticeTextForCheck!.Contains("429", StringComparison.Ordinal),
             "模型服务限流时说「在限流，稍后再试」并带上服务方的原话，而不是通用请求失败");
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = savedRequestRetries;
         // The old capsule checks never ran a goal: they could stay green while automation bypassed admission,
         // polled a cooldown or accepted an unsupported completion. These cases use the real send/finish path.
         Conversation PausedGoal(string text)
@@ -1806,77 +1810,50 @@ internal sealed class ShellAssistantChecks
 
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
 
-        // A rate limit that arrives as an event inside the stream carries no HTTP status, so the transport policy
-        // had nothing to retry and every attempt-level test reads "not recoverable". The message is the only
-        // evidence there is, and a goal that pauses on it stops for the one failure it exists for.
+        // Request recovery works without a goal; enabling a goal must not buy a second retry budget.
         var streamLimited = PausedGoal("流内限流也要退避");
-        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception:
-            new InvalidOperationException("stream error: Your requests to gpt-6.1-sol have exceeded token rate limit"));
-        shell.Chat.ResumeGoal(streamLimited.Id);
-        await panel.WaitForRunToFinishForCheck();
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        var limitedCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
-        shell.Chat.PauseGoal(streamLimited.Id);
-        streamLimited.GoalCooldownCount = GoalPolicy.For(streamLimited, shell.Chat.PreferencesProvider?.Invoke()).CooldownLimit;
-        shell.Chat.ResumeGoal(streamLimited.Id);
-        await panel.WaitForRunToFinishForCheck();
-        var resumedLimit = shell.Chat.StoredCopyForCheck(streamLimited.Id);
-        var resumeRestarted = resumedLimit?.GoalState == ChatGoalStates.Waiting
-                              && resumedLimit.GoalCooldownCount == 1;
-        // Success before a later failure in the SAME tool loop must reset the earlier waiting streak.
-        shell.Chat.PauseGoal(streamLimited.Id);
-        var recoveredToolClient = new ApprovalChatClient
-        {
-            CallsRemaining = 1, ToolName = "fs_read",
-            Arguments = new() { ["path"] = "missing-retry-streak-fixture.txt" },
-            FollowUpException = new InvalidOperationException("stream error: exceeded token rate limit"),
-        };
-        shell.Chat.ClientOverride = (_, _) =>
-        {
-            streamLimited.GoalCooldownCount = 2;
-            return recoveredToolClient;
-        };
+        var savedRetries = shell.Chat.PreferencesProvider!()!.ProviderMaxRetries;
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 1;
+        var limitedClient = new ScriptedChatClient(["Recovered.\n[GOAL_COMPLETE]"], exception:
+            new AxmolHub.Agent.ProviderResponseException("Rate limited", "rate_limit_exceeded", TimeSpan.Zero)) { FailuresBeforeSuccess = 1 };
+        shell.Chat.ClientOverride = (_, _) => limitedClient;
         shell.Chat.ResumeGoal(streamLimited.Id);
         await panel.WaitForRunToFinishForCheck();
         var recoveredCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
+        var plainRetry = shell.Chat.StartConversation();
+        var plainClient = new ScriptedChatClient(["Recovered."], exception:
+            new AxmolHub.Agent.ProviderResponseException("Rate limited", "rate_limit_exceeded", TimeSpan.Zero)) { FailuresBeforeSuccess = 1 };
+        shell.Chat.ClientOverride = (_, _) => plainClient;
+        await panel.SendForCheckAsync("普通请求也恢复");
+        var plainRecovered = !shell.Chat.IsRunning(plainRetry.Id) && plainClient.Requests == 2;
+        var exhaustedClient = new ScriptedChatClient([], exception:
+            new AxmolHub.Agent.ProviderResponseException("Rate limited", "rate_limit_exceeded", TimeSpan.Zero));
+        shell.Chat.OpenConversation(streamLimited.Id);
+        shell.Chat.SelectMode(ChatModes.Agent);
+        shell.Chat.ClientOverride = (_, _) => exhaustedClient;
+        shell.Chat.SeedGoalForCheck(streamLimited.Id, "耗尽请求重试额度");
         shell.Chat.PauseGoal(streamLimited.Id);
-        shell.Chat.ClientOverride = (_, _) =>
-        {
-            streamLimited.GoalCooldownCount = 2;
-            return new ScriptedChatClient([], exception: recoveredToolClient.FollowUpException);
-        };
         shell.Chat.ResumeGoal(streamLimited.Id);
         await panel.WaitForRunToFinishForCheck();
         var exhaustedCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
         var exhaustedNotice = panel.LastNoticeTextForCheck;
-        // The relay's HTTP-400 text is inside a successful SSE transport: preserve ErrorContent's origin.
-        shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], reasoning:
-            [new Microsoft.Extensions.AI.ErrorContent("HTTP 400: The requested item was created under a different OpenAI resource.")
-                { ErrorCode = "invalid_request_error" }]);
-        shell.Chat.ResumeGoal(streamLimited.Id);
-        await panel.WaitForRunToFinishForCheck();
-        var resourceCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
-        shell.Chat.PauseGoal(streamLimited.Id);
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], reasoning:
             [new Microsoft.Extensions.AI.ErrorContent("Account unavailable.") { ErrorCode = "insufficient_quota" }]);
         shell.Chat.ResumeGoal(streamLimited.Id);
         await panel.WaitForRunToFinishForCheck();
         var quotaCopy = shell.Chat.StoredCopyForCheck(streamLimited.Id);
-        Check(limitedCopy?.GoalState == ChatGoalStates.Waiting && limitedCopy.GoalCooldownCount == 1
-              && limitedCopy.GoalWakeAt is not null && resumeRestarted
-              && recoveredToolClient.Requests == 2 && recoveredCopy?.GoalState == ChatGoalStates.Waiting
-              && recoveredCopy.GoalCooldownCount == 1
-              && exhaustedCopy?.GoalState == ChatGoalStates.Paused && exhaustedCopy.GoalWakeAt is null
-              && exhaustedCopy.GoalStopReason == "provider_retry_exhausted"
-              && exhaustedNotice?.StartsWith(HubStrings.Get("ChatGoalRetryExhausted"), StringComparison.Ordinal) == true
-              && resourceCopy?.GoalState == ChatGoalStates.Waiting && resourceCopy.GoalCooldownCount == 1
-              && resourceCopy.GoalWakeAt is not null
-              && quotaCopy?.GoalState == ChatGoalStates.Blocked && quotaCopy.GoalCooldownCount == 0,
-            "流内失败有界退避：成功请求重置，资源错误等待，耗尽明确暂停，真实额度不足不重试（实际 "
-            + limitedCopy?.GoalState + " / recovery=" + recoveredCopy?.GoalCooldownCount
-            + " / exhausted=" + exhaustedCopy?.GoalState + "）");
+        Check(limitedClient.Requests == 2 && recoveredCopy?.GoalState == ChatGoalStates.Complete && plainRecovered
+              && exhaustedClient.Requests == 2 && exhaustedCopy?.GoalState == ChatGoalStates.Paused
+              && exhaustedCopy.GoalWakeAt is null
+              && exhaustedNotice?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true
+              && quotaCopy?.GoalState == ChatGoalStates.Blocked,
+            "普通请求和目标共用流内重试额度：恢复后完成，耗尽后停止，额度不足不重试（实际 "
+            + limitedClient.Requests + "/" + recoveredCopy?.GoalState + " plain=" + plainRecovered
+            + " exhausted=" + exhaustedClient.Requests + "/" + exhaustedCopy?.GoalState + "/" + exhaustedNotice
+            + " quota=" + quotaCopy?.GoalState + "）");
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = savedRetries;
         shell.Chat.DeleteConversation(streamLimited.Id);
+        shell.Chat.DeleteConversation(plainRetry.Id);
         if (parkedGoal is not null)
         {
             parkedGoal.GoalWakeAt = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);

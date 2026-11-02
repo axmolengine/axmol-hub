@@ -941,13 +941,18 @@ internal sealed class ShellSessionsChecks
             Check(await WaitForConditionAsync(() => chat.IsRunning(throttled.Id)),
                 "被限流的会话进入了运行");
             var waitingRun = chat.RunFor(throttled.Id)!;
+            waitingRun.RetryLimit = 2;
             chat.NoteRetryWait(waitingRun, 2, TimeSpan.FromSeconds(3));
             Dispatcher.UIThread.RunJobs();
 
-            Check(waitingRun.RetryWaiting && panel.ChatActivityTextForCheck.Contains($"2/{ProviderRetryDefaults.MaxRetries + 1}", StringComparison.Ordinal),
+            Check(waitingRun.RetryWaiting && panel.ChatActivityTextForCheck.Contains("2/3", StringComparison.Ordinal)
+                  && panel.LiveGlyphPhaseForCheck == ActivityPhase.RunningTool && panel.LiveGlyphTickingForCheck,
                 "限流等待写在气泡既有的一行状态上（实际「" + panel.ChatActivityTextForCheck + "」）");
+            var initialCountdown = panel.ChatActivityTextForCheck;
             await Task.Delay(1200);
-            Check(chat.IsRunning(throttled.Id) && waitingRun.RetryWaiting,
+            Dispatcher.UIThread.RunJobs();
+            Check(chat.IsRunning(throttled.Id) && waitingRun.RetryWaiting
+                  && panel.ChatActivityTextForCheck != initialCountdown,
                 "等待期间两条窗口都不开火，运行记录还活着（等了 1.2s，是首帧窗的三倍）");
 
             chat.NoteRetryWait(waitingRun, 0, TimeSpan.Zero);
