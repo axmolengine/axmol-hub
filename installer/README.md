@@ -136,6 +136,7 @@ Linux 那一行有两个只有把 AppImage 解开才看得见的细节（`unsqua
 
 - **Windows**：尚未接入代码签名，安装包未签名，会触发 SmartScreen 警告。
 - **macOS**：Gatekeeper 只认 Apple 签发的 Developer ID + 公证，`.app` / `.pkg` / `.dmg` 没有免费 OSS 签名通路。macOS 通道接入时只有两条路：Apple Developer Program，或在下载页给出 `xattr -r -d com.apple.quarantine` 的指引。
+- **macOS 本地开发**：`Sign-DevBuild.ps1` 用本机已有身份签开发产物，让钥串授权跨构建沿用（背景见 [building-from-source.md](../docs/building-from-source.md#macos-开发构建钥串提示与本地签名)）。
 - **Linux**：`.rpm` / `.deb` 走 GPG 签名；AppImage 场景没有等价的「未知发布者」拦截，自己生成 GPG 密钥即可。
 
 `Build-Hosts.ps1` 发布各宿主的自包含 CLI；`Build-Icon.ps1` 从源 PNG 一次生成 16–256 像素多尺寸 ICO **与 256 / 512 两档单尺寸 PNG**（Linux 用：512 交给 `vpk` 的 `--icon`，256 随载荷走、给窗口图标与图标主题）。修改图标后先重跑这个脚本再构建应用；脚本用 System.Drawing，**只能在 Windows 上跑**。

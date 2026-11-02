@@ -79,6 +79,18 @@ dotnet run --project src/AxmolHub -- --data-root ./data --preferences ./artifact
 
 `--data-root` 优先于保存的设置；`--preferences` 可用于隔离开发或检查配置。不要将设置、数据目录或下载的工具链提交到 Git。
 
+### macOS 开发构建：钥串提示与本地签名
+
+密钥与登录令牌在登录钥串里只用**一条**条目（服务名 `dev.axmol.hub.<数据根的 sha256>`，账户 `hub-secrets`，值是「凭据 id → 密钥」的 JSON）。旧版本按凭据各存一条，读取时会被折叠进这条并删掉旧的——所以升级后每个凭据第一次被读到时仍会弹一次，之后不再弹。
+
+如果每次重新构建后都再弹一遍，变了的是**签名身份**：未签名的二进制以 cdhash 作为身份，每次构建都不同，「始终允许」记的授权对不上。构建后用证书签一次开发产物，身份就变成「identifier + 证书」，可以跨构建沿用：
+
+```bash
+pwsh installer/Sign-DevBuild.ps1
+```
+
+脚本默认用登录钥串里第一个可用的代码签名身份（开发机通常已有 `Apple Development: …`），签 `src/AxmolHub/bin/Debug/net8.0/AxmolHub` 并打印 designated requirement，好让你确认下次启动匹配到的就是它。一个身份也没有时，脚本会说明怎么建：钥串访问 → 证书助理 → 创建证书…，类型选「代码签名」。
+
 ## 命令行
 
 ```powershell

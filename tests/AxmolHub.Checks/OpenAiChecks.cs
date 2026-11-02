@@ -83,7 +83,14 @@ internal static class OpenAiChecks
         var store = new MacKeychainSecretStore(scratch, api);
         Check(store.Read("a") is null, "missing Keychain item is absent");
         store.Write("a", "first"); store.Write("a", "updated");
-        Check(store.Read("a") == "updated" && api.Adds == 1 && api.Updates == 2, "Keychain creates then updates a generic password");
+        Check(store.Read("a") == "updated" && api.Adds == 1 && api.Updates == 2, "Keychain creates then updates one generic password");
+        store.Write("b", "second");
+        Check(api.Adds == 1 && new MacKeychainSecretStore(scratch, api).Read("b") == "second",
+            "every credential shares the same Keychain item");
+        api.Add(store.Service, "legacy-id", "legacy-secret");
+        Check(new MacKeychainSecretStore(scratch, api).Read("legacy-id") == "legacy-secret"
+            && api.Read(store.Service, "legacy-id").Status == MacKeychainSecretStore.NotFound,
+            "an item left by the previous per-credential layout is folded into the bundle and removed");
         Check(store.Service != new MacKeychainSecretStore(scratch + "-other", api).Service,
             "different data roots use different Keychain services");
         Check(store.Service == new MacKeychainSecretStore(Path.Combine(scratch, "."), api).Service,
@@ -93,7 +100,7 @@ internal static class OpenAiChecks
         var metadata = new ProviderCredential { Id = "a", ProviderId = "openai", AuthKind = "openaiOAuth", Secret = "secret" };
         new CredentialStore(scratch, store).Save([metadata]);
         api.Status = -25308;
-        Check(new CredentialStore(scratch, store).Load().Single() is { Id: "a", Secret: null }, "locked Keychain preserves credential metadata on startup");
+        Check(new CredentialStore(scratch, new MacKeychainSecretStore(scratch, api)).Load().Single() is { Id: "a", Secret: null }, "locked Keychain preserves credential metadata on startup");
         await Fails(() => { store.Write("a", "replacement"); return Task.CompletedTask; }, "locked Keychain writes fail explicitly");
         await Fails(() => { store.Delete("a"); return Task.CompletedTask; }, "denied Keychain deletion fails explicitly");
         api.Status = 0;

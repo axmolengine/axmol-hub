@@ -52,10 +52,17 @@ public sealed class CredentialStore(string root, ISecretStore secrets)
             finally { gate.ReleaseMutex(); }
         }
 
+        // A SecretStoreException is a fact about the store, not about one credential: the keychain is locked, the
+        // OS refused the call. Asking again would repeat the same failure — and on macOS the same password sheet,
+        // once per credential. The rest come back without a secret instead of asking twice.
+        var unreadable = false;
         foreach (var credential in credentials)
         {
-            try { credential.Secret = secrets.Read(credential.Id); }
-            catch (SecretStoreException) { credential.Secret = null; }
+            if (!unreadable)
+            {
+                try { credential.Secret = secrets.Read(credential.Id); }
+                catch (SecretStoreException) { credential.Secret = null; unreadable = true; }
+            }
             if (credential.AuthKind == "openaiOAuth" && credential.HasSecret)
             {
                 var tokens = OpenAiTokens.Decode(credential.Secret!);
