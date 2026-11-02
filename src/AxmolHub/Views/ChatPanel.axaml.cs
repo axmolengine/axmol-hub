@@ -51,15 +51,15 @@ public partial class ChatPanel : UserControl
     /// sub-pixel scroll rounding from flipping the state on every scroll event.</summary>
     private const double StickEpsilon = 6;
     private readonly ChatWorkspace _chat;
-    private readonly List<ContextAttachment> _contextAttachments = [];
-    private string? _replyToId;
+    private List<ContextAttachment> _contextAttachments => _composerDraft.Attachments;
+    private string? _replyToId { get => _composerDraft.ReplyToId; set => _composerDraft.ReplyToId = value; }
 
     /// <summary>
     /// The pictures this composer is holding, in the order they were added, still in memory. A draft that is
     /// abandoned leaves nothing on disk, and the conversation the pictures would be stored into may not exist
     /// yet — Hub creates it when the message is sent, which is also when these bytes get a file name.
     /// </summary>
-    private readonly List<PendingPicture> _pendingPictures = [];
+    private List<PendingPicture> _pendingPictures => _composerDraft.Pictures;
 
     /// <summary>The shell's window-level picture viewer, handed over as a delegate the same way the inspector
     /// is: the viewer covers the whole window, so it cannot live in this page, but the sets it pages through
@@ -452,7 +452,7 @@ public partial class ChatPanel : UserControl
                 // Typing ends the walk: the next Up starts again from the newest thing sent, rather than
                 // continuing to page through history under a sentence the person has begun writing themselves.
                 if (!_recalling) _recallIndex = 0;
-                CapturePlanDraftTarget();
+                ComposerTextChanged();
                 UpdateSendState();
                 UpdateContextRing();
             }
@@ -488,7 +488,8 @@ public partial class ChatPanel : UserControl
             if (e.Key != Key.V) return;
             if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Meta)) return;
             e.Handled = true;
-            if (!await TryPastePictureAsync()) InputBox.Paste();
+            var epoch = _composerEpoch;
+            if (!await TryPastePictureAsync() && epoch == _composerEpoch) InputBox.Paste();
         }, RoutingStrategies.Tunnel);
 
         // Escape stops the reply this composer is watching, and Up walks back through what has already been sent.
@@ -572,8 +573,8 @@ public partial class ChatPanel : UserControl
     public void Reload()
     {
         if (_chat is null) return;
+        SwitchComposerConversation();
         var viewed = _chat.ViewedConversationId;
-        if (viewed != _renderedConversationId && _replyToId is not null) ClearReplyTarget();
         if (_goalDraftSelected && !_startingGoalConversationForSend
             && _goalDraftConversationId != viewed)
             ClearGoalDraftSelection();
@@ -1827,7 +1828,9 @@ public partial class ChatPanel : UserControl
     {
         var owner = TopLevel.GetTopLevel(this);
         if (owner is null) return;
+        var epoch = _composerEpoch;
         var result = await Pickers.PickFolderAsync(owner, HubStrings.Get("ChatPickFolderTitle"));
+        if (epoch != _composerEpoch) return;
         if (result.Outcome == PickOutcome.Cancelled) return;
         if (result.Outcome == PickOutcome.NotLocal)
         {
@@ -1849,7 +1852,9 @@ public partial class ChatPanel : UserControl
     {
         var owner = TopLevel.GetTopLevel(this);
         if (owner is null) return;
+        var epoch = _composerEpoch;
         var result = await Pickers.PickFileAsync(owner, HubStrings.Get("ChatPickFileTitle"));
+        if (epoch != _composerEpoch) return;
         if (result.Outcome == PickOutcome.Cancelled) return;
         if (result.Outcome == PickOutcome.NotLocal)
         {
@@ -1909,6 +1914,7 @@ public partial class ChatPanel : UserControl
 
     private void RenderContextAttachments()
     {
+        if (!_restoringComposer) _composerDraft.Revision++;
         CapturePlanDraftTarget();
         ContextAttachmentPanel.Children.Clear();
         foreach (var attachment in _contextAttachments)
@@ -2156,7 +2162,9 @@ public partial class ChatPanel : UserControl
     {
         var owner = TopLevel.GetTopLevel(this);
         if (owner is null) return;
+        var epoch = _composerEpoch;
         var result = await Pickers.PickFileAsync(owner, HubStrings.Get("ChatPickImageTitle"), PictureFileTypes);
+        if (epoch != _composerEpoch) return;
         if (result.Outcome == PickOutcome.NotLocal)
         {
             AppendNotice(HubStrings.Get("ChatImageNotLocal"), danger: true);
@@ -2183,6 +2191,7 @@ public partial class ChatPanel : UserControl
     private async Task<bool> TryPastePictureAsync()
     {
         if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return false;
+        var epoch = _composerEpoch;
         IAsyncDataTransfer? transfer;
         try
         {
@@ -2193,7 +2202,7 @@ public partial class ChatPanel : UserControl
             return false;
         }
 
-        return await TakeClipboardAsync(transfer);
+        return epoch != _composerEpoch || await TakeClipboardAsync(transfer);
     }
 
     /// <summary>The paste's one decision: did a picture get taken, or should the box paste text as it always
@@ -2201,11 +2210,13 @@ public partial class ChatPanel : UserControl
     private async Task<bool> TakeClipboardAsync(IAsyncDataTransfer? transfer)
     {
         if (transfer is null) return false;
+        var epoch = _composerEpoch;
         foreach (var item in transfer.Items)
         {
             if (!item.Formats.Contains(ChatMessageClipboard.Format)
                 || await item.TryGetRawAsync(ChatMessageClipboard.Format) is not byte[] raw
                 || ChatMessageClipboard.TryDeserialize(raw) is not { } payload) continue;
+            if (epoch != _composerEpoch) return true;
             var currentId = _chat.ViewedConversationId;
             foreach (var image in payload.Images)
             {
@@ -2227,7 +2238,7 @@ public partial class ChatPanel : UserControl
             }
             return true;
         }
-        return await TakePicturesAsync(transfer) > 0;
+        return epoch != _composerEpoch || await TakePicturesAsync(transfer) > 0;
     }
 
     /// <summary>
@@ -2238,17 +2249,20 @@ public partial class ChatPanel : UserControl
     private async Task<int> TakePicturesAsync(IAsyncDataTransfer transfer)
     {
         var taken = 0;
+        var epoch = _composerEpoch;
         foreach (var item in transfer.Items)
         {
             if (item.Formats.Contains(DataFormat.Bitmap)
                 && await item.TryGetRawAsync(DataFormat.Bitmap) is Bitmap bitmap)
             {
+                if (epoch != _composerEpoch) return Math.Max(taken, 1);
                 AddPendingPicture(EncodePng(bitmap), HubStrings.Get("ChatPastedImageName"));
                 taken++;
             }
             else if (item.Formats.Contains(DataFormat.File)
                      && await item.TryGetRawAsync(DataFormat.File) is { } raw)
             {
+                if (epoch != _composerEpoch) return Math.Max(taken, 1);
                 foreach (var path in LocalPathsOf(raw)) AddPictureFromPath(path);
                 taken++;
             }
@@ -2974,6 +2988,19 @@ public partial class ChatPanel : UserControl
         if (target.Role is not (ChatRoles.User or ChatRoles.Assistant) || target.Text.Length == 0
             || target.ToolCallId is not null || target.PlanApprovalState is not null) return;
         _replyToId = target.Id;
+        _composerDraft.Revision++;
+        RenderReplyTarget();
+        InputBox.Focus();
+    }
+
+    private void RenderReplyTarget()
+    {
+        var target = _chat.ActiveConversation?.Messages.FirstOrDefault(turn => turn.Id == _replyToId);
+        if (target is null || target.Text.Length == 0)
+        {
+            ClearReplyTarget();
+            return;
+        }
         var speaker = target.Role == ChatRoles.User ? HubStrings.Get("ReplyUser") : HubStrings.Get("ReplyAssistant");
         var preview = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         preview.Children.Add(new TextBlock
@@ -2986,11 +3013,11 @@ public partial class ChatPanel : UserControl
         preview.Children.Add(IconActionButton("CancelReply", "Hub.Icon.Close", ClearReplyTarget));
         ReplyPreview.Child = preview;
         ReplyPreview.IsVisible = true;
-        InputBox.Focus();
     }
 
     private void ClearReplyTarget()
     {
+        if (_replyToId is not null) _composerDraft.Revision++;
         _replyToId = null;
         ReplyPreview.Child = null;
         ReplyPreview.IsVisible = false;
@@ -4946,7 +4973,7 @@ public partial class ChatPanel : UserControl
         _recallIndex = 0;
     }
 
-    private async Task SendAsync()
+    private async Task SendDraftAsync()
     {
         CapturePlanDraftTarget();
         if (_planDraftTarget is { } target
@@ -4957,6 +4984,10 @@ public partial class ChatPanel : UserControl
             return;
         }
         var sourceConversationId = _chat.ViewedConversationId;
+        var draft = _composerDraft;
+        draft.OwnTurns = _chat.ActiveConversation?.Messages.Count(turn => turn.Role == ChatRoles.User) ?? 0;
+        var epoch = _composerEpoch;
+        var revision = draft.Revision;
         var expectedPlanToken = _planDraftTarget?.Token;
         if (ViewedRun is { IsStreaming: true } run)
         {
@@ -4972,9 +5003,11 @@ public partial class ChatPanel : UserControl
                 }
                 catch (Exception ex)
                 {
-                    AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
+                    if (ComposerStillCurrent(epoch, draft, revision))
+                        AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
                     return;
                 }
+                if (!ValidateComposerSend(epoch, draft, revision, sourceConversationId)) return;
 
                 // A steer is the routing table's strongest signal and it joins a reply already on its way, yet
                 // until now it looked exactly like an ordinary send. The first Enter therefore only shows what
@@ -5009,17 +5042,13 @@ public partial class ChatPanel : UserControl
         }
         catch (Exception ex)
         {
-            AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
+            if (ComposerStillCurrent(epoch, draft, revision))
+                AppendNotice(HubStrings.Get("ChatAttachmentFailed") + ex.Message, danger: true);
             return;
         }
 
-        // Attachment reads can yield. Never send into a different session or silently attach feedback to
-        // a different plan after the await; keep both text and pictures on every refusal.
-        if (sourceConversationId != _chat.ViewedConversationId)
-        {
-            ReportPlanDraftChanged();
-            return;
-        }
+        // Attachment reads can yield. Keep both the source session and the exact draft across the await.
+        if (!ValidateComposerSend(epoch, draft, revision, sourceConversationId)) return;
         if (!SendTextAsync(text, context, pictures, expectedPlanToken, _replyToId, reusedPictures)) return;
         ClearReplyTarget();
         _contextAttachments.Clear();
@@ -5039,8 +5068,17 @@ public partial class ChatPanel : UserControl
         if (_chat.ActiveConversation is null)
         {
             _startingGoalConversationForSend = isGoal;
-            _chat.StartConversation();
-            _startingGoalConversationForSend = false;
+            _creatingConversationForSend = true;
+            try
+            {
+                _chat.StartConversation();
+                SwitchComposerConversation();
+            }
+            finally
+            {
+                _creatingConversationForSend = false;
+                _startingGoalConversationForSend = false;
+            }
             if (isGoal) _goalDraftConversationId = _chat.ActiveConversation?.Id;
         }
         if (_chat.ActiveConversation is not { } conversation) return false;

@@ -715,6 +715,8 @@
     </Style>
     <Style Selector="Grid.activity-row.failed Path.activity-status">
       <Setter Property="Stroke" Value="{DynamicResource Hub.DangerText}" />
+      <Setter Property="RenderTransformOrigin" Value="50%,50%" />
+      <Setter Property="RenderTransform" Value="scale(0.8)" />
     </Style>
     <!-- The thinking row's mark. Every other row's status is a verdict — green for a call that came back, red for
          one that did not — and a thought is neither. Same 10×10 slot so its text column lines up with the rows

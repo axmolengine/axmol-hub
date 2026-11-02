@@ -316,10 +316,15 @@ public partial class ChatPanel
     /// and the transcript's length cannot tell them apart because a write is recorded by replacing a turn.</summary>
 
     // A draft keeps the document it was written against, not whatever happens to be pending at send time.
-    private (string ConversationId, string Token)? _planDraftTarget;
+    private (string ConversationId, string Token)? _planDraftTarget
+    {
+        get => _composerDraft.PlanTarget;
+        set => _composerDraft.PlanTarget = value;
+    }
 
     private void CapturePlanDraftTarget()
     {
+        if (_restoringComposer) return;
         if (string.IsNullOrEmpty(InputBox.Text) && _pendingPictures.Count == 0 && _contextAttachments.Count == 0)
         {
             _planDraftTarget = null;
@@ -332,7 +337,7 @@ public partial class ChatPanel
 
     private void ReportPlanDraftChanged()
     {
-        AppendNotice(HubStrings.Get("ChatPlanChanged"), danger: true);
+        ReportComposerSendChanged(_chat.ViewedConversationId, _composerDraft, "ChatPlanChanged");
         // Retarget only after showing the refusal. The next explicit send follows the person's review;
         // this attempt never silently changes the meaning of the draft.
         _planDraftTarget = null;
@@ -347,7 +352,7 @@ public partial class ChatPanel
     /// must not carry it along, and coming back must not have lost it.</summary>
     private sealed record SteerDraft(string ConversationId, string Text, string? Context, IReadOnlyList<byte[]>? Pictures);
 
-    private SteerDraft? _steerDraft;
+    private SteerDraft? _steerDraft { get => _composerDraft.Steer; set => _composerDraft.Steer = value; }
 
     /// <summary>Set by the shell: how the panel asks for the inspector column, on a tab ("plan" or "changes")
     /// and for one specific plan turn (-1 for the newest). The plan's body lives nowhere else in the UI once the

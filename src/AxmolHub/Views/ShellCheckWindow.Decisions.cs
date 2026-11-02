@@ -2718,6 +2718,31 @@ internal sealed partial class ShellDecisionsChecks
             Check(pictureOnlyRevision is { Text.Length: 0, Images.Count: 1, Plan.File.Length: > 0 }
                   && chat.ActiveMode == ChatModes.Plan && panel.PendingPlanApprovalCardsForCheck == 1,
                 "只发图片也关联原计划，新回复仍然等待批准，没有切到实施模式");
+            panel.AddImageBytesForCheck(PictureFixture(), "session-draft.png");
+            panel.SelectComposerForCheck(2, 4);
+            var draftSelection = panel.ComposerSelectionForCheck;
+            chat.OpenConversation(observer.Id);
+            panel.Reload();
+            var peerWasEmpty = panel.InputTextForCheck.Length == 0 && panel.PendingPictureCountForCheck == 0;
+            chat.SelectMode(ChatModes.Ask);
+            await panel.SendForCheckAsync("新会话首次发送");
+            await WaitForIdleAsync(chat);
+            var peerSent = observer.Messages.Any(turn => turn.Role == ChatRoles.User && turn.Text == "新会话首次发送"
+                && turn.Plan is null && turn.Images.Count == 0);
+            panel.SetInputForCheck("另一个会话自己的草稿");
+            chat.OpenConversation(twoPlanSession.Id);
+            panel.Reload();
+            var sourceRestored = panel.InputTextForCheck == draftUnderPlan && panel.PendingPictureCountForCheck == 1
+                && panel.ComposerSelectionForCheck == draftSelection;
+            chat.OpenConversation(observer.Id);
+            panel.Reload();
+            var peerRestored = panel.InputTextForCheck == "另一个会话自己的草稿" && panel.PendingPictureCountForCheck == 0;
+            panel.SetInputForCheck("");
+            chat.OpenConversation(twoPlanSession.Id);
+            panel.Reload();
+            Check(peerWasEmpty && peerSent && sourceRestored && peerRestored,
+                "未发送草稿按会话隔离：文字图片选区返回恢复，另一会话首次发送不串计划引用");
+            panel.RemovePictureChipForCheck(0);
             // Simulate a replacement while the person is writing. Reusing the same turn index must not let
             // old feedback bind to the new document; this is distinct from cancellation removing the card.
             var replacedIndex = twoPlanSession.Messages.FindIndex(turn => turn.PlanApprovalState == PlanApprovalStates.Pending);

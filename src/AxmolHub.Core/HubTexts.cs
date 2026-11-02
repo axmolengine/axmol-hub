@@ -1078,6 +1078,8 @@ public static class HubTexts
         ["ChatPlanCancel"] = ("取消计划", "Cancel plan"),
         ["ChatPlanFeedbackPlaceholder"] = ("描述要调整的地方，也可以添加图片；发送后只更新计划，不开始实施。", "Describe changes or add images. Sending updates the plan without starting implementation."),
         ["ChatPlanChanged"] = ("待审计划已变化，本条意见尚未发送。请查看当前计划后重新发送。", "The plan under review has changed. Your feedback was not sent. Review the current plan before sending again."),
+        ["ChatComposerSessionChanged"] = ("发送期间切换了会话，本条消息尚未发送，草稿已保留。", "The conversation changed while sending. Your message was not sent and the draft has been retained."),
+        ["ChatComposerDraftChanged"] = ("发送期间草稿已变化，本条消息尚未发送。请重新发送当前草稿。", "The draft changed while sending. Your message was not sent. Send the current draft again."),
         // ── A question the model asked ──
         // The third thing the composer can be parked on. Its own title rather than 「{tool} 想要执行一个操作」
         // because nothing wants to run: the row above the box is a request for information, and reading it as a
