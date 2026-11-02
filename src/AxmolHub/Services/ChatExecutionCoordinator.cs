@@ -67,16 +67,22 @@ internal sealed partial class ChatExecutionCoordinator
         return MeasureContext(Sessions.Active, choice?.Provider, choice?.ModelName, draft);
     }
 
-    internal bool CanCompressContext(string conversationId)
-    {
-        if (_compressingConversations.Contains(conversationId)) return false;
-        var conversation = Sessions.Registry.Peek(conversationId);
-        if (conversation is null || conversation.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending))
-            return false;
+    internal bool CanCompressContext(string conversationId) => ContextCompressionRefusalKey(conversationId) is null;
 
-        var start = SummaryMessageCount(conversation);
-        return ContextCompaction.CanSummarize(conversation.Messages, start)
-               && Providers.ModelFor(conversationId) is not null;
+    internal string? ContextCompressionRefusalKey(string conversationId)
+        => _compressingConversations.Contains(conversationId)
+            ? "ChatCompactingContext"
+            : CompressionPrerequisiteRefusalKey(conversationId);
+
+    private string? CompressionPrerequisiteRefusalKey(string conversationId)
+    {
+        var conversation = Sessions.Registry.Peek(conversationId);
+        if (conversation is null) return "ChatSessionMissing";
+        if (conversation.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending))
+            return "ChatContextCompressPendingApproval";
+        if (!ContextCompaction.CanSummarize(conversation.Messages, SummaryMessageCount(conversation)))
+            return "ChatContextCompressUnavailable";
+        return Providers.ModelFor(conversationId) is null ? "NoAvailableChatModels" : null;
     }
 
     internal bool IsCompressingContext(string conversationId) => _compressingConversations.Contains(conversationId);
@@ -102,9 +108,15 @@ internal sealed partial class ChatExecutionCoordinator
                 conversation.ContextCompactionBlockedCandidates)
             : (0, 0);
 
-    internal async Task<bool> CompressContextAsync(string conversationId, CancellationToken cancellationToken = default)
+    internal async Task<ContextCompressionOutcome> CompressContextAsync(string conversationId, CancellationToken cancellationToken = default)
     {
-        if (!CanCompressContext(conversationId) || !_compressingConversations.Add(conversationId)) return false;
+        var refusal = await ReadOnUiAsync(() =>
+        {
+            var key = ContextCompressionRefusalKey(conversationId);
+            if (key is null) _compressingConversations.Add(conversationId);
+            return key;
+        }).ConfigureAwait(false);
+        if (refusal is not null) return new(false, refusal);
 
         try
         {
@@ -115,9 +127,16 @@ internal sealed partial class ChatExecutionCoordinator
             // would otherwise go on saying tokens are coming. Raised here rather than where the answer lands,
             // because the silence starts the moment this request goes out.
             RaiseOnUi(() => CompactionChanged?.Invoke(conversationId, true));
-            var request = await ReadOnUiAsync(() => PrepareCompressionRequest(conversationId)).ConfigureAwait(false);
-            if (request is null) return false;
+            var prepared = await ReadOnUiAsync(() =>
+            {
+                var request = PrepareCompressionRequest(conversationId, out var key);
+                return (Request: request, RefusalKey: key);
+            }).ConfigureAwait(false);
+            var request = prepared.Request;
+            if (request is null) return new(false, prepared.RefusalKey);
 
+            var summaryRun = RunFor(conversationId);
+            var runOwnsDeadline = summaryRun is not null && cancellationToken == summaryRun.Token;
             var trackGoal = await ReadOnUiAsync(() => Sessions.Registry.Peek(conversationId) is
                 { Goal: { Length: > 0 }, GoalState: ChatGoalStates.Active or ChatGoalStates.Waiting or ChatGoalStates.BudgetLimited })
                 .ConfigureAwait(false);
@@ -128,11 +147,15 @@ internal sealed partial class ChatExecutionCoordinator
                 {
                     if (RunFor(conversationId) is { } run) NoteRetryWait(run, attempt, delay);
                 },
+                // An empty summary is a refused compaction, not a transient endpoint failure.
+                RetryEmpty = false,
             };
             if (RunFor(conversationId) is { } activeRun) activeRun.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
             var client = ClientOverride?.Invoke(request.Value.Provider, conversationId)
                          ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, null,
-                             maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait);
+                             maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait,
+                             // A live run owns the deadline; a manual summary keeps the standalone SDK bound.
+                             networkTimeout: runOwnsDeadline ? Timeout.InfiniteTimeSpan : null);
             var pipeline = new ChatPipeline(client);
             var summary = new StringBuilder();
             await foreach (var chunk in pipeline.SendAsync(
@@ -142,17 +165,7 @@ internal sealed partial class ChatExecutionCoordinator
                                declaredTools: request.Value.Tools,
                                modelName: request.Value.ModelName,
                                maxOutputTokens: request.Value.MaxOutputTokens,
-                               retryOptions: new RequestRetryOptions
-                               {
-                                   MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries
-                                       ?? ProviderRetryDefaults.MaxRetries,
-                                   OnWait = (attempt, delay) =>
-                                   {
-                                       if (RunFor(conversationId) is { } summaryRun) NoteRetryWait(summaryRun, attempt, delay);
-                                   },
-                                   // A summary that came back empty is a refused compaction, not a transient fault.
-                                   RetryEmpty = false,
-                               },
+                               retryOptions: retry,
                                onActivity: () => RunFor(conversationId)?.Touch(),
                                onUsage: report => Audit(conversationId,
                                    $"Compaction usage: model={request.Value.ModelName} input={report.SummedInputTokens} "
@@ -176,17 +189,19 @@ internal sealed partial class ChatExecutionCoordinator
                 // prose lands here as no text at all — the summary stays unset and the boundary unmoved, which
                 // is exactly what the ineffective-compaction counter exists to notice.
                 Audit(conversationId, "Compaction refused: the model returned no summary text.");
-                return false;
+                return new(false, "ChatContextCompressNoSummary", true);
             }
 
             var updated = false;
             await ApplyOnUiAsync(() =>
             {
-                updated = Sessions.Registry.TryUpdate(conversationId, conversation =>
+                Sessions.Registry.TryUpdate(conversationId, conversation =>
                 {
                     if (conversation.Messages.Count < request.Value.SummarizedThrough
                         || !conversation.Messages.Take(request.Value.SummarizedThrough)
-                            .SequenceEqual(request.Value.SourcePrefix)) return;
+                            .SequenceEqual(request.Value.SourcePrefix)
+                        || conversation.ContextSummaryThroughMessageCount != request.Value.SummaryStart
+                        || (conversation.ContextSummary ?? "") != request.Value.PreviousSummary) return;
                     conversation.ContextSummary = request.Value.Fold
                         ? text
                         : ContextCompression.AddSection(request.Value.PreviousSummary, text);
@@ -198,10 +213,12 @@ internal sealed partial class ChatExecutionCoordinator
                     // counting the absence of. The verdict that stopped automatic compaction was measured against
                     // the window before this one, so it goes with it.
                     conversation.ContextCompactionBlocked = false;
+                    updated = true;
                 });
                 if (updated) Changed?.Invoke();
             }).ConfigureAwait(false);
-            return updated;
+            if (!updated) Audit(conversationId, "Compaction discarded: the source session or summarized prefix changed.");
+            return updated ? new(true) : new(false, "ChatContextCompressChanged");
         }
         finally
         {
@@ -216,16 +233,14 @@ internal sealed partial class ChatExecutionCoordinator
         }
     }
 
-    private ContextCompressionRequest? PrepareCompressionRequest(string conversationId)
+    private ContextCompressionRequest? PrepareCompressionRequest(string conversationId, out string? refusalKey)
     {
-        var conversation = Sessions.Registry.Peek(conversationId);
-        var choice = Providers.ModelFor(conversationId);
-        if (conversation is null || choice is null
-            || conversation.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending)) return null;
-
+        refusalKey = CompressionPrerequisiteRefusalKey(conversationId);
+        if (refusalKey is not null) return null;
+        var conversation = Sessions.Registry.Peek(conversationId)!;
+        var choice = Providers.ModelFor(conversationId)!;
         var start = SummaryMessageCount(conversation);
         var end = ContextCompression.CutPoint(conversation.Messages);
-        if (end - start < ContextCompaction.SummarizablePrefixMinimum) return null;
         // The plan's body comes back into its message before the copy is taken — otherwise the summarizer is
         // handed an empty assistant turn and the plan leaves this session's summary for good.
         var archived = MaterializePlans(conversation.Messages.Skip(start).Take(end - start)).ToList();
@@ -246,6 +261,7 @@ internal sealed partial class ChatExecutionCoordinator
             ChatTools.CreateFor(NormalizeMode(conversation.Mode), ScopeFor(conversationId)),
             archived,
             end,
+            start,
             conversation.Messages.Take(end).ToList(),
             ContextBudget.SummaryOutputTokens(window.Tokens),
             ceiling,
@@ -942,7 +958,9 @@ internal sealed partial class ChatExecutionCoordinator
             var summarized = false;
             if (!ContextCompaction.ReachedTarget(used, room))
             {
-                summarized = await CompressContextAsync(conversationId, run.Token).ConfigureAwait(false);
+                var outcome = await CompressContextAsync(conversationId, run.Token).ConfigureAwait(false);
+                summarized = outcome.Compressed;
+                if (!summarized) Audit(conversationId, $"{because} tier two refused: {outcome.NoticeKey}");
                 (used, room, windowRoom) = await ReadOnUiAsync(() => CompactionReading(conversationId)).ConfigureAwait(false);
                 if (summarized)
                     Audit(conversationId, $"{because} tier two: summarized the older prefix, now {used}/{room}");
@@ -3536,7 +3554,9 @@ internal sealed partial class ChatExecutionCoordinator
         run.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
                      ?? ChatClientFactory.Create(request.Provider, request.ModelName, reasoning,
-                         onRetryWait: retry.OnWait, maxRetries: retry.MaxRetries);
+                         onRetryWait: retry.OnWait, maxRetries: retry.MaxRetries,
+                         // The run owns first-frame and idle deadlines. A separate SDK clock must not fire first.
+                         networkTimeout: Timeout.InfiniteTimeSpan);
         var pipeline = new ChatPipeline(client, reasoning);
         // Which tool brackets each response has opened, by batch. A response that parks stops at its head call, and
         // any call the mode allowed *ahead* of it opened its bracket on the way to that decision and is never
@@ -4428,7 +4448,7 @@ internal sealed partial class ChatExecutionCoordinator
     // over a transcript saturated with tool calls, declaring nothing at all, is the shape a model answers
     // in its native call markup instead of prose — a compaction summary came back that way once. Declared,
     // the request is coherent with the history it shows; never passed as `tools`, nothing here can act.
-    IReadOnlyList<AITool> Tools, IReadOnlyList<ChatTurn> History, int SummarizedThrough, IReadOnlyList<ChatTurn> SourcePrefix, // What the summarizing request may spend on its answer, and how long the answer may be stored. Both come
+    IReadOnlyList<AITool> Tools, IReadOnlyList<ChatTurn> History, int SummarizedThrough, int SummaryStart, IReadOnlyList<ChatTurn> SourcePrefix, // What the summarizing request may spend on its answer, and how long the answer may be stored. Both come
     // from the window this session is measured against, and both matter for different reasons: a thinking
     // model with a small output budget can spend all of it thinking and return empty text, while a summary
     // with no ceiling becomes the floor under the window that no later compaction can remove.

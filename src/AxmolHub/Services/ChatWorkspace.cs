@@ -152,14 +152,19 @@ public sealed partial class ChatWorkspace : IDisposable
     /// record of a decision owed, and archiving it behind a summary would answer it by losing it.
     /// </summary>
     public bool CanCompressContext(string conversationId) => _execution.CanCompressContext(conversationId);
+    public string? ContextCompressionRefusalKey(string conversationId) => _execution.ContextCompressionRefusalKey(conversationId);
     /// <summary>Whether the button has something to gain by being pressed: the compaction reading against the
     /// floor a hand-pressed summary is held to. False while the conversation is still short.</summary>
     public bool CanCompactByHand(string conversationId) => _execution.CanCompactByHand(conversationId);
     public bool IsCompressingContext(string conversationId) => _execution.IsCompressingContext(conversationId);
+    /// <summary>Whether a summary was saved, or the reason it was not. Unavailable content and a model's empty
+    /// response are distinct outcomes; neither may be reported as a successful compaction.</summary>
+    public readonly record struct ContextCompressionOutcome(bool Compressed, string? NoticeKey = null, bool Danger = false);
     /// <summary>Summarizes the older part of a conversation with its selected model, keeping the newest four
     /// turns intact. The transcript remains available in storage; requests use the persisted summary in place
     /// of the archived prefix.</summary>
-    public Task<bool> CompressContextAsync(string conversationId, CancellationToken cancellationToken = default) => _execution.CompressContextAsync(conversationId, cancellationToken);
+    public Task<ContextCompressionOutcome> CompressContextAsync(string conversationId, CancellationToken cancellationToken = default)
+        => _execution.CompressContextAsync(conversationId, cancellationToken);
 
     /// <summary>Raised whenever a conversation gains, loses or changes a stall question, in the shape every other
     /// decision event uses: the conversation id, and the panel decides whether it is the one being looked at.</summary>

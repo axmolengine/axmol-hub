@@ -52,7 +52,8 @@ internal static class RequestRetryChecks
             provider.Protocol = protocol;
             var wire = new MixedWire();
             waits.Clear();
-            using var client = ChatClientFactory.Create(provider, "m", null, transport: wire, maxRetries: 2);
+            using var client = ChatClientFactory.Create(provider, "m", null, transport: wire, maxRetries: 2,
+                networkTimeout: Timeout.InfiniteTimeSpan);
             try { await Drain(client, retry); throw new Exception("Exhausted mixed retries returned success."); }
             catch (RequestRetryException ex) when (ex.Retries == 2) { }
             if (wire.Attempts != 3 || !waits.SequenceEqual(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7) }))

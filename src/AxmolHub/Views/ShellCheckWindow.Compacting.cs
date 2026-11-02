@@ -29,8 +29,9 @@ internal sealed class ShellCompactingChecks
             chat.OpenConversation(idle.Id);
             Relayout(shell, panel);
             var idleCompaction = chat.CompressContextAsync(idle.Id);
-            // Both raises are posted rather than invoked, so the row exists only once the dispatcher has run.
-            Dispatcher.UIThread.RunJobs();
+            // Admission and notification are dispatched; wait for the held request's actual visible state.
+            await WaitForConditionAsync(() => chat.IsCompressingContext(idle.Id)
+                && panel.LastNoticeTextForCheck == compacting);
             var rowText = panel.LastNoticeTextForCheck;
             Check(chat.IsCompressingContext(idle.Id) && rowText == compacting,
                 "没有运行的时候压缩，聊天里也留一行「上下文压缩中…」（实际「" + (rowText ?? "无") + "」）");
@@ -38,9 +39,30 @@ internal sealed class ShellCompactingChecks
             idleGate.SetResult(true);
             var idleLanded = await idleCompaction;
             Relayout(shell, panel);
-            Check(idleLanded && !chat.IsCompressingContext(idle.Id) && !panel.NoticeVisibleForCheck,
+            Check(idleLanded.Compressed && !chat.IsCompressingContext(idle.Id) && !panel.NoticeVisibleForCheck,
                 "压缩落地之后那一行自己退场，不留在转录里（成功=" + idleLanded + "，行上「"
                 + (panel.LastNoticeTextForCheck ?? "无") + "」）");
+
+            // Reuse the held summary to cover a source edit: an obsolete summary must not advance the boundary.
+            for (var turn = 0; turn < 6; turn++) chat.SeedTurnForCheck(idle.Id, "New context " + turn);
+            var summaryBeforeEdit = idle.ContextSummary;
+            var boundaryBeforeEdit = idle.ContextSummaryThroughMessageCount;
+            idleGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var summaryStarted = false;
+            chat.ClientOverride = (_, _) =>
+            {
+                summaryStarted = true;
+                return new ScriptedChatClient(["Obsolete summary"], gate: idleGate.Task);
+            };
+            var staleCompaction = chat.CompressContextAsync(idle.Id);
+            await WaitForConditionAsync(() => summaryStarted);
+            idle.Messages[boundaryBeforeEdit] = idle.Messages[boundaryBeforeEdit] with { Text = "Edited context" };
+            idleGate.SetResult(true);
+            var staleOutcome = await staleCompaction;
+            Check(!staleOutcome.Compressed && staleOutcome.NoticeKey == "ChatContextCompressChanged"
+                  && idle.ContextSummary == summaryBeforeEdit
+                  && idle.ContextSummaryThroughMessageCount == boundaryBeforeEdit,
+                "压缩期间源内容改变时丢弃过期摘要、不推进边界，并返回真实原因（实际 " + staleOutcome + "）");
 
             // ── A run in flight: the one line the person is already looking at ──
             // The first request is the reply, held before its first token; the second is the summary this
@@ -64,7 +86,7 @@ internal sealed class ShellCompactingChecks
                     "运行中的气泡在屏幕上，压缩之前的读数是「" + panel.ChatActivityTextForCheck + "」");
 
                 var runCompaction = chat.CompressContextAsync(streaming.Id);
-                Dispatcher.UIThread.RunJobs();
+                await WaitForConditionAsync(() => panel.ChatActivityTextForCheck == compacting);
                 var duringRun = panel.ChatActivityTextForCheck;
                 Check(duringRun == compacting,
                     "运行的会话里压缩时，气泡的状态行走的是压缩而不是生成中（实际「" + duringRun + "」）");
@@ -73,7 +95,7 @@ internal sealed class ShellCompactingChecks
                 var runLanded = await runCompaction;
                 Dispatcher.UIThread.RunJobs();
                 var afterRun = panel.ChatActivityTextForCheck;
-                Check(runLanded && afterRun == HubStrings.Get("ChatPreparing"),
+                Check(runLanded.Compressed && afterRun == HubStrings.Get("ChatPreparing"),
                     "压缩结束后状态行交还给准备中，而不是一直停在压缩上（成功=" + runLanded + "，实际「"
                     + afterRun + "」）");
 

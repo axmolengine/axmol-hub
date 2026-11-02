@@ -2300,7 +2300,7 @@ internal sealed class ShellAssistantChecks
         var leakyCompressed = await shell.Chat.CompressContextAsync(leaky.Id);
         shell.Chat.ClientOverride = null;
         var leakyCopy = shell.Chat.StoredCopyForCheck(leaky.Id);
-        Check(leakyCompressed && leakySummarizer?.LastOptions?.Tools is { Count: > 0 },
+        Check(leakyCompressed.Compressed && leakySummarizer?.LastOptions?.Tools is { Count: > 0 },
             "压缩请求带着会话的工具声明、转录原样送去（声明 "
             + (leakySummarizer?.LastOptions?.Tools?.Count ?? -1) + " 个，成功=" + leakyCompressed + "）");
         Check(leakyCopy?.ContextSummary == "## Task\n压缩任务的正常摘要"
@@ -2319,7 +2319,8 @@ internal sealed class ShellAssistantChecks
         shell.Chat.ClientOverride = null;
         shell.Chat.AuditWrite = savedRefusedAudit;
         var emptyLeakyCopy = shell.Chat.StoredCopyForCheck(emptyLeaky.Id);
-        Check(!emptyLeakyCompressed && string.IsNullOrEmpty(emptyLeakyCopy?.ContextSummary)
+        Check(!emptyLeakyCompressed.Compressed && emptyLeakyCompressed.NoticeKey == "ChatContextCompressNoSummary"
+              && string.IsNullOrEmpty(emptyLeakyCopy?.ContextSummary)
               && emptyLeakyCopy?.ContextSummaryThroughMessageCount == 0
               && refusedAudits.Any(line => line.Contains("Compaction refused", StringComparison.Ordinal)),
             "空摘要被当作压缩失败拒绝掉：压缩边界不推进、不把空摘要记成一次成功，且留下一行说清为什么"

@@ -28,6 +28,9 @@ namespace AxmolHub.Agent;
 /// </summary>
 public static class ChatClientFactory
 {
+    // Standalone requests, including manual summaries, still need a bound when no run owns cancellation.
+    public static readonly TimeSpan DefaultNetworkTimeout = TimeSpan.FromMinutes(8);
+
     public static IChatClient Create(Core.ModelProvider provider, string? modelOverride = null)
         => Create(provider, modelOverride, null);
 
@@ -131,7 +134,8 @@ public static class ChatClientFactory
         System.Net.Http.HttpMessageHandler? transport = null,
         Action<int, TimeSpan>? onRetryWait = null,
         int maxRetries = Core.ProviderRetryDefaults.MaxRetries,
-        TimeSpan? maxInlineRetryWait = null)
+        TimeSpan? maxInlineRetryWait = null,
+        TimeSpan? networkTimeout = null)
     {
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
@@ -175,16 +179,22 @@ public static class ChatClientFactory
             // that changes is a build error at this line, which is the loud failure we want, and a project-wide
             // NoWarn would also be swallowing the next one.
 #pragma warning disable OPENAI001 // OpenAI.Responses is marked experimental in the 2.14 SDK.
-            var options = new ResponsesClientOptions { Endpoint = new Uri(provider.IsOpenAiPlan ? "https://api.openai.com/v1" : provider.BaseUrl) };
+            var options = new ResponsesClientOptions
+            {
+                Endpoint = new Uri(provider.IsOpenAiPlan ? "https://api.openai.com/v1" : provider.BaseUrl),
+                NetworkTimeout = networkTimeout ?? DefaultNetworkTimeout,
+            };
             // The retry decision is stated on both wires from one constant, so the two cannot drift into two
             // different numbers of attempts — and both wrap it in the same policy, so a wait is reported on
             // whichever wire the model answers on.
             options.RetryPolicy = new IdleAwareRetryPolicy(maxRetries, onRetryWait, maxInlineRetryWait);
             if (provider.IsOpenAiPlan)
                 options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(
-                    new OpenAiPlanTransport(provider, transport ?? new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false })));
+                    new OpenAiPlanTransport(provider, transport ?? new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false }))
+                    { Timeout = Timeout.InfiniteTimeSpan });
             else if (transport is not null)
-                options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
+                options.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport)
+                    { Timeout = Timeout.InfiniteTimeSpan });
             if (headers is not null)
                 options.AddPolicy(headers, PipelinePosition.BeforeTransport);
             // Stateless relays reject chaining; the client wrapper below prevents the tool loop from choosing
@@ -202,10 +212,15 @@ public static class ChatClientFactory
 #pragma warning restore OPENAI001
         }
 
-        var chatOptions = new OpenAIClientOptions { Endpoint = new Uri(provider.BaseUrl) };
+        var chatOptions = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(provider.BaseUrl),
+            NetworkTimeout = networkTimeout ?? DefaultNetworkTimeout,
+        };
         chatOptions.RetryPolicy = new IdleAwareRetryPolicy(maxRetries, onRetryWait, maxInlineRetryWait);
         if (transport is not null)
-            chatOptions.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport));
+            chatOptions.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport)
+                { Timeout = Timeout.InfiniteTimeSpan });
         if (reasoning is not null)
             // BeforeTransport: the last thing the pipeline does, so the connector has already built the body and
             // the transport has not yet sent it — the one moment the serialized messages exist and can still be

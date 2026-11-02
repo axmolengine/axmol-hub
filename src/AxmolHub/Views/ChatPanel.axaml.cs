@@ -1246,9 +1246,9 @@ public partial class ChatPanel : UserControl
         if (_chat is null) return;
         var conversation = _chat.ActiveConversation;
         var compressing = conversation is not null && _chat.IsCompressingContext(conversation.Id);
-        // Two refusals kept apart, because they mean different things: "nothing early enough to summarize" and
-        // "too little to be worth a request", the floor the automatic trigger deliberately does not have.
-        var summarizable = conversation is not null && _chat.CanCompressContext(conversation.Id);
+        // Admission says why no summary can run; the separate manual floor says whether one is worth a request.
+        var refusalKey = conversation is null ? null : _chat.ContextCompressionRefusalKey(conversation.Id);
+        var summarizable = conversation is not null && refusalKey is null;
         var aboveFloor = conversation is not null && _chat.CanCompactByHand(conversation.Id);
         CompressContextButton.IsEnabled = summarizable && aboveFloor && !compressing;
         CompressContextButton.Content = HubStrings.Get(
@@ -1258,7 +1258,7 @@ public partial class ChatPanel : UserControl
         ToolTip.SetTip(CompressContextButton, conversation is null
             ? null
             : HubStrings.Get(!summarizable
-                ? "ChatContextCompressUnavailable"
+                ? refusalKey!
                 : aboveFloor ? "ChatContextCompressHint" : "ChatContextCompressBelowFloor"));
     }
 
@@ -1275,8 +1275,9 @@ public partial class ChatPanel : UserControl
         CompressContextButton.Content = HubStrings.Get("ChatCompressingContext");
         try
         {
-            if (!await _chat.CompressContextAsync(conversation.Id))
-                AppendNotice(HubStrings.Get("ChatContextCompressUnavailable"), danger: false);
+            var outcome = await _chat.CompressContextAsync(conversation.Id);
+            if (!outcome.Compressed && outcome.NoticeKey is { } key)
+                AppendNotice(HubStrings.Get(key), danger: outcome.Danger);
         }
         catch (Exception ex)
         {

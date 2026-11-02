@@ -748,6 +748,9 @@ public static class HubTexts
         // run is on screen, and in the strip below the transcript when none is.
         ["ChatCompactingContext"] = ("上下文压缩中…", "Compacting context…"),
         ["ChatContextCompressUnavailable"] = ("当前对话没有足够的早期内容可供压缩。", "There is not enough earlier session content to compress yet."),
+        ["ChatContextCompressPendingApproval"] = ("请先处理待批准的操作，再压缩上下文。", "Resolve the pending tool approval before compressing context."),
+        ["ChatContextCompressNoSummary"] = ("压缩上下文失败：模型没有返回摘要文字，压缩边界未推进。", "Could not compress context: the model returned no summary text; the summary boundary was not advanced."),
+        ["ChatContextCompressChanged"] = ("摘要未保存：会话已被删除或待压缩内容已改变，请重新压缩。", "The summary was not saved: the session was deleted or its source context changed. Compress again."),
         // The button's floor, which the automatic trigger does not have: below half of the room compaction is
         // measured on, the summary would replace text the model can still read.
         ["ChatContextCompressBelowFloor"] = ("上下文还没用到一半，压缩只会把能直接读到的内容换成摘要。",
