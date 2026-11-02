@@ -46,6 +46,8 @@ internal sealed class OpenAiPlanTransport(ModelProvider provider, HttpMessageHan
                 if (!header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
                     outbound.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
             outbound.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+            if (RequestRetryScope.Current.Value is { } scope)
+                await scope.ValidateSelectionAsync().ConfigureAwait(false);
             var response = await base.SendAsync(outbound, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.TooManyRequests
                 && response.Content.Headers.ContentLength is >= 0 and <= 65536)

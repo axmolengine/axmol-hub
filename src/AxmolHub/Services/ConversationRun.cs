@@ -30,6 +30,7 @@ internal enum RunResult
     /// <summary>The response ended without a complete user-facing answer, and needs a person to choose what next.</summary>
     Incomplete,
     ContextBoundary,
+    ModelChanged,
     Cancelled,
     TimedOut,
     Failed,

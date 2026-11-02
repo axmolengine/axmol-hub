@@ -219,6 +219,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 PendingInterjection = pendingInterjection,
                 YieldForCompaction = yieldForCompaction,
                 CanYieldForCompaction = canYieldForCompaction,
+                ValidateSelection = retryOptions?.ValidateSelection,
             };
             IChatClient sending = guard;
             var functionClient = new FunctionInvokingChatClient(sending, null, null)

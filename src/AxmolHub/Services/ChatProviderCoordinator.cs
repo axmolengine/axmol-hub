@@ -1179,29 +1179,27 @@ internal sealed partial class ChatProviderCoordinator
     internal IReadOnlyList<string> SensitiveValues()
         => [.. _credentialList.Select(credential => credential.Secret).Where(secret => secret is { Length: > 0 })!];
 
-    internal async Task<bool> ForgoStreamUsageAsync(ConversationRun run)
+    internal async Task<bool> ForgoStreamUsageAsync(string conversationId, ModelProvider provider)
     {
         var backedOff = false;
         await Execution.ApplyOnUiAsync(() =>
         {
-            if (ModelFor(run.ConversationId) is not { } choice) return;
-            var provider = choice.Provider;
-            if (!provider.WantsStreamUsage) return;
+            if (!_providerList.Contains(provider) || !provider.WantsStreamUsage) return;
             provider.ExtraOptions[ModelProvider.StreamUsageOption] = "false";
             _providers.Save(_providerList);
-            Execution.Audit(run.ConversationId, $"{provider.Name} declined the stream usage report; stopped asking");
+            Execution.Audit(conversationId, $"{provider.Name} declined the stream usage report; stopped asking");
             backedOff = true;
         }).ConfigureAwait(false);
         return backedOff;
     }
 
-    internal async Task NoteReasoningEvidenceAsync(string conversationId, string? effort, bool rejected)
+    internal async Task NoteReasoningEvidenceAsync(string conversationId, ChatModelOption choice, string? effort, bool rejected)
     {
         if (effort is not { Length: > 0 } level || level == ChatReasoningEfforts.Default) return;
         await Execution.ApplyOnUiAsync(() =>
         {
-            if (ModelFor(conversationId) is not { } choice) return;
             var provider = choice.Provider;
+            if (!_providerList.Contains(provider)) return;
             var cache = _modelLists.Load().FirstOrDefault(entry => entry.Id == ModelCacheId(provider.Id));
             var reasoning = new Dictionary<string, AiModelReasoning>(StringComparer.OrdinalIgnoreCase);
             if (cache?.ReasoningModels is { } cached)
@@ -1225,16 +1223,16 @@ internal sealed partial class ChatProviderCoordinator
         }).ConfigureAwait(false);
     }
 
-    internal Task NoteLearnedWindowAsync(string conversationId, int tokens)
-        => NoteWindowAsync(conversationId, tokens, CapabilitySource.LearnedFromRefusal);
-    internal Task NoteObservedWindowAsync(string conversationId, int tokens)
-        => NoteWindowAsync(conversationId, tokens, CapabilitySource.EndpointReported);
-    private async Task NoteWindowAsync(string conversationId, int tokens, CapabilitySource source)
+    internal Task NoteLearnedWindowAsync(string conversationId, ChatModelOption choice, int tokens)
+        => NoteWindowAsync(conversationId, choice, tokens, CapabilitySource.LearnedFromRefusal);
+    internal Task NoteObservedWindowAsync(string conversationId, ChatModelOption choice, int tokens)
+        => NoteWindowAsync(conversationId, choice, tokens, CapabilitySource.EndpointReported);
+    private async Task NoteWindowAsync(string conversationId, ChatModelOption choice, int tokens, CapabilitySource source)
     {
         await Execution.ApplyOnUiAsync(() =>
         {
-            if (ModelFor(conversationId) is not { } choice) return;
             var provider = choice.Provider;
+            if (!_providerList.Contains(provider)) return;
             var cache = _modelLists.Load().FirstOrDefault(entry => entry.Id == ModelCacheId(provider.Id));
             var capabilities = new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase);
             if (cache?.Capabilities is { } cached)

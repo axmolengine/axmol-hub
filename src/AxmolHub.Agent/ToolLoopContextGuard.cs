@@ -31,6 +31,7 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     /// the cached prefix. Standalone callers retain the existing elision fallback unless they opt in.</summary>
     public bool YieldForCompaction { get; init; }
     public Func<Task<bool>>? CanYieldForCompaction { get; init; }
+    public Func<Task>? ValidateSelection { get; init; }
     private int _requests;
 
     /// <summary>The newest results are the ones the model is reasoning about right now.</summary>
@@ -78,6 +79,7 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     /// order, because the budget has to be spent with the new instruction already counted against it.</summary>
     private async Task<List<ChatMessage>> WithInterjectionAsync(IEnumerable<ChatMessage> messages)
     {
+        if (ValidateSelection is { } validate) await validate().ConfigureAwait(false);
         var list = messages.ToList();
         var atToolBoundary = AtToolBoundary(list);
         if (PendingInterjection is { } ask && atToolBoundary && await ask().ConfigureAwait(false) is { } interjection)

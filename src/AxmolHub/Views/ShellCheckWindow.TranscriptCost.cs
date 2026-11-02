@@ -29,6 +29,8 @@ internal sealed class ShellTranscriptCostChecks
                 session.Messages.Add(ChatTurn.Assistant(new string('x', 100_000)));
             session.LastInputTokens = 100;
             session.LastUsageAt = System.DateTimeOffset.MaxValue;
+            session.LastUsageModelId = session.ModelName;
+            session.LastUsageProviderId = session.ProviderId;
             var usage = chat.TranscriptUsageForCheck(session.Id);
             var reading = chat.CompactionReadingForCheck(session.Id);
             Check(usage.DroppedTurns > 0 && usage.Used == 100

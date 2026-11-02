@@ -149,6 +149,7 @@ internal sealed partial class ChatExecutionCoordinator
                 },
                 // An empty summary is a refused compaction, not a transient endpoint failure.
                 RetryEmpty = false,
+                ValidateSelection = () => ValidateRequestSelectionAsync(conversationId, request.Value.Provider.Id, request.Value.ModelName),
             };
             if (RunFor(conversationId) is { } activeRun) activeRun.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
             var reasoning = new ReasoningTable();
@@ -222,6 +223,11 @@ internal sealed partial class ChatExecutionCoordinator
             }).ConfigureAwait(false);
             if (!updated) Audit(conversationId, "Compaction discarded: the source session or summarized prefix changed.");
             return updated ? new(true) : new(false, "ChatContextCompressChanged");
+        }
+        catch (ModelSelectionChangedException)
+        {
+            Audit(conversationId, "Compaction request superseded by a model change; continuing with the latest selection");
+            return new(false, "ChatContextCompressChanged");
         }
         finally
         {
@@ -820,7 +826,7 @@ internal sealed partial class ChatExecutionCoordinator
         string draft)
     {
         var raw = ContextBudget.For(provider, modelName);
-        var drift = DriftFor(conversation, modelName);
+        var drift = DriftFor(conversation, provider, modelName);
         var window = raw.WithDrift(drift);
         // The declarations are part of what goes on the wire, so they are both subtracted from the room the turns
         // get and added to what the meter reports — the same arithmetic ChatPipeline.SendAsync runs.
@@ -849,9 +855,10 @@ internal sealed partial class ChatExecutionCoordinator
         var estimated = ledger.TotalTokens;
         // The measured branch is told about the draft separately: it is not in the transcript the reading covers,
         // and in the estimated branch it already rode in as one of the turns.
-        var used = SentTokens(conversation, estimated,
+        var measuredModel = conversation is not null && MatchesMeasuredModel(conversation, provider, modelName);
+        var used = SentTokens(measuredModel ? conversation : null, estimated,
             hasDraft ? ContextTrimmer.EstimateTokens(ChatTurn.User(draft)) : 0);
-        var measurement = conversation is { LastInputTokens: > 0, LastUsageAt: not null }
+        var measurement = measuredModel && conversation is { LastInputTokens: > 0, LastUsageAt: not null }
             ? conversation.LastInputTokens
             : 0;
         var kept = trimmed.Count(turn => turn.Role != ChatRoles.System);
@@ -876,7 +883,7 @@ internal sealed partial class ChatExecutionCoordinator
         };
     }
 
-    private void NoteContextUsage(string conversationId, string modelName, ContextReport report)
+    private void NoteContextUsage(string conversationId, string providerId, string modelName, ContextReport report)
     {
         if (!report.IsMeasured) return;
         RaiseOnUi(() =>
@@ -892,6 +899,7 @@ internal sealed partial class ChatExecutionCoordinator
                     // the request that was measured did not contain it.
                     opened.LastUsageAt = DateTimeOffset.Now;
                     opened.LastUsageModelId = modelName;
+                    opened.LastUsageProviderId = providerId;
                     opened.ContextEstimateDriftPermille = report.DriftPermille;
                 })) return;
             Changed?.Invoke();
@@ -2948,6 +2956,9 @@ internal sealed partial class ChatExecutionCoordinator
                 prepareSegment = false;
                 (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false);
                 if (result == RunResult.Parked) return;
+                // The old stream finished its tool batch. Rebuild from durable turns without treating a
+                // selection change as a compaction request, an ending, or a new user instruction.
+                if (result == RunResult.ModelChanged) continue;
                 if (result == RunResult.ContextBoundary)
                 {
                     var changed = await CompactIfNeededAsync(run).ConfigureAwait(false);
@@ -3251,7 +3262,8 @@ internal sealed partial class ChatExecutionCoordinator
             // Record that number, compact, and send the turn once more: making someone press the same button
             // twice because Hub sized the model from a default is a worse outcome than one extra request.
             var named = ContextOverflow.TryReadRealLimit(ex.Message);
-            if (named is { } learned) await Providers.NoteLearnedWindowAsync(run.ConversationId, learned);
+            if (named is { } learned) await Providers.NoteLearnedWindowAsync(run.ConversationId,
+                new ChatModelOption(request.Value.Provider, request.Value.ModelName), learned);
             Audit(run.ConversationId, named is { } limit
                 ? $"Context overflow: provider named a {limit} token window; compacting and retrying once"
                 : "Context overflow: the request did not fit and no window was named; compacting and retrying once");
@@ -3260,6 +3272,11 @@ internal sealed partial class ChatExecutionCoordinator
             // The call above put its own reply on the record; this segment's finally must not write it twice.
             replyRecorded = true;
             return retry;
+        }
+        catch (ModelSelectionChangedException)
+        {
+            Audit(run.ConversationId, $"Model selection changed: rebuilding before the next request (previous {request.Value.Provider.Name} · {request.Value.ModelName})");
+            return (RunResult.ModelChanged, null, false, null);
         }
         catch (ToolLoopContextBoundaryException)
         {
@@ -3273,7 +3290,7 @@ internal sealed partial class ChatExecutionCoordinator
             // — then send the turn again. Losing the reply over a billing field nobody agreed to argue about is
             // the worse outcome, and so is failing the same way on every later message.
             if (mayRecover && ChatPipeline.DeclinedStreamUsage(ex.Message)
-                && await Providers.ForgoStreamUsageAsync(run).ConfigureAwait(false))
+                && await Providers.ForgoStreamUsageAsync(run.ConversationId, request.Value.Provider).ConfigureAwait(false))
             {
                 var recovered = await StreamSegmentAsync(run, mayRecover: false).ConfigureAwait(false);
                 replyRecorded = true;
@@ -3281,10 +3298,10 @@ internal sealed partial class ChatExecutionCoordinator
             }
             // A refusal naming the reasoning field and the tier asked for is information about the model, not
             // only a failed turn: recorded, that tier stops being offered, and the fail-open above stays cheap.
-            var effortAsked = await ReadOnUiAsync(
-                () => Sessions.Registry.Peek(run.ConversationId)?.ReasoningEffort).ConfigureAwait(false);
+            var effortAsked = request.Value.Reasoning;
             var refused = ModelCatalog.RejectedEffortOf(ex.Message, [effortAsked]);
-            if (refused is not null) await Providers.NoteReasoningEvidenceAsync(run.ConversationId, refused, rejected: true);
+            if (refused is not null) await Providers.NoteReasoningEvidenceAsync(run.ConversationId,
+                new ChatModelOption(request.Value.Provider, request.Value.ModelName), refused, rejected: true);
             // The catch-all is where a log earns its keep: everything the narrower branches did not name arrives
             // here, and the type is the part the person cannot see on screen.
             Audit(run.ConversationId,
@@ -3302,8 +3319,7 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 // A reply with thinking but no text is a real thing a reasoning model produces, and the thinking
                 // still has to be on the record: the next request that carries tools is rejected without it.
-                var effortAsked = await ReadOnUiAsync(
-                    () => Sessions.Registry.Peek(run.ConversationId)?.ReasoningEffort).ConfigureAwait(false);
+                var effortAsked = request.Value.Reasoning;
                 await ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
                     {
@@ -3317,7 +3333,8 @@ internal sealed partial class ChatExecutionCoordinator
                 // A reply that came back with thinking under it is the strongest evidence there is that this
                 // model can think at this tier — it was asked, and it answered.
                 if (thought.Length > 0)
-                    await Providers.NoteReasoningEvidenceAsync(run.ConversationId, effortAsked, rejected: false);
+                    await Providers.NoteReasoningEvidenceAsync(run.ConversationId,
+                        new ChatModelOption(request.Value.Provider, request.Value.ModelName), effortAsked, rejected: false);
             }
         }
     }
@@ -3368,7 +3385,7 @@ internal sealed partial class ChatExecutionCoordinator
         }
 
         if (window is not > 0 || window >= believed) return;
-        await Providers.NoteObservedWindowAsync(run.ConversationId, window.Value).ConfigureAwait(false);
+        await Providers.NoteObservedWindowAsync(run.ConversationId, choice, window.Value).ConfigureAwait(false);
         Audit(run.ConversationId,
             $"Runtime window: {choice.ModelName} is loaded with {window} tokens on {choice.Provider.Name}, below "
             + $"the {believed} this session assumed; the request is sized to the server's number from here");
@@ -3541,6 +3558,20 @@ internal sealed partial class ChatExecutionCoordinator
         RaiseOnUi(() => RetryWaitChanged?.Invoke(run.ConversationId, attempt != 0));
     }
 
+    private async Task ValidateRequestSelectionAsync(string conversationId, string providerId, string modelName)
+    {
+        // Most requests keep their selection. Read the durable pair under its gate; only legacy/auto
+        // fallback names need catalog resolution on the UI thread.
+        var selected = Sessions.Registry.ModelSelection(conversationId);
+        if (selected is null || selected.Value.ProviderId != providerId)
+            throw new ModelSelectionChangedException();
+        if (string.Equals(selected.Value.ModelName, modelName, StringComparison.OrdinalIgnoreCase)) return;
+        var current = await ReadOnUiAsync(() => Providers.ModelFor(conversationId)).ConfigureAwait(false);
+        if (current is null || current.Provider.Id != providerId
+            || !string.Equals(current.ModelName, modelName, StringComparison.OrdinalIgnoreCase))
+            throw new ModelSelectionChangedException();
+    }
+
     private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)
     {
         // One table per segment. It is rebuilt from the message list before every HTTP request the loop makes,
@@ -3553,6 +3584,7 @@ internal sealed partial class ChatExecutionCoordinator
         {
             MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
             OnWait = (attempt, delay) => NoteRetryWait(run, attempt, delay),
+            ValidateSelection = () => ValidateRequestSelectionAsync(run.ConversationId, request.Provider.Id, request.ModelName),
         };
         run.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
@@ -3722,7 +3754,7 @@ internal sealed partial class ChatExecutionCoordinator
                     loggedCached = report.SummedCachedInputTokens;
                 }
                 run.NoteUsage(report);
-                NoteContextUsage(run.ConversationId, request.ModelName, report);
+                NoteContextUsage(run.ConversationId, request.Provider.Id, request.ModelName, report);
             },
             onFinishReason: reason => run.NoteFinishReason(reason),
             // The name of every call this response asked for, kept on the run whether or not anything runs it. A
@@ -4178,13 +4210,14 @@ internal sealed partial class ChatExecutionCoordinator
         }
     }
     private static ContextWindow SessionWindow(Conversation? conversation, ModelProvider? provider, string? modelName)
-        => ContextBudget.For(provider, modelName).WithDrift(DriftFor(conversation, modelName));
-    private static int DriftFor(Conversation? conversation, string? modelName)
-        => conversation is not null && MatchesMeasuredModel(conversation, modelName)
+        => ContextBudget.For(provider, modelName).WithDrift(DriftFor(conversation, provider, modelName));
+    private static int DriftFor(Conversation? conversation, ModelProvider? provider, string? modelName)
+        => conversation is not null && MatchesMeasuredModel(conversation, provider, modelName)
             ? conversation.ContextEstimateDriftPermille
             : ContextReport.UncalibratedPermille;
-    private static bool MatchesMeasuredModel(Conversation conversation, string? modelName)
+    private static bool MatchesMeasuredModel(Conversation conversation, ModelProvider? provider, string? modelName)
         => conversation.LastInputTokens > 0
+           && (conversation.LastUsageProviderId is null || conversation.LastUsageProviderId == provider?.Id)
            && conversation.LastUsageModelId is { Length: > 0 } measuredModel
            && string.Equals(measuredModel, modelName, StringComparison.OrdinalIgnoreCase);
     private static int SentTokens(Conversation? conversation, int wholeTranscriptEstimate, int beyondTranscript = 0)
@@ -4370,7 +4403,7 @@ internal sealed partial class ChatExecutionCoordinator
         if (room <= 0) return 0;
         // The model's own number where the session has one: a router that escalates on a guess is a router that
         // escalates on the shape of Hub's arithmetic rather than on the size of the conversation.
-        var used = conversation is { LastUsageAt: not null } && MatchesMeasuredModel(conversation, modelName)
+        var used = conversation is { LastUsageAt: not null } && MatchesMeasuredModel(conversation, provider, modelName)
             ? SentTokens(conversation, 0)
             : history.Sum(ContextTrimmer.EstimateTokens);
         return (double)used / room;

@@ -588,6 +588,7 @@ public sealed class Conversation
     /// request contains different text; the historical counts and tokenizer calibration remain valid.</summary>
     public DateTimeOffset? LastUsageAt { get; set; }
     public string? LastUsageModelId { get; set; }
+    public string? LastUsageProviderId { get; set; }
 
     /// <summary>Per mille between what the model reported and what the estimator guessed for the same request,
     /// capped at <see cref="ContextReport.MaximumDriftPermille"/>. Zero means no reading yet, which is the same

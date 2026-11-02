@@ -27,7 +27,7 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
 
     protected override bool ShouldRetry(PipelineMessage message, Exception? exception)
     {
-        if (message.CancellationToken.IsCancellationRequested || exception is OperationCanceledException
+        if (message.CancellationToken.IsCancellationRequested || exception is OperationCanceledException or ModelSelectionChangedException
             || RequestRetryScope.Current.Value is { CanRetry: false }) return false;
         if (message.Response is { Status: >= 400 } response)
         {

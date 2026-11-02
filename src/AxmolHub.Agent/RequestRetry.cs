@@ -12,6 +12,8 @@ public sealed class RequestRetryOptions
     public int MaxRetries { get; init; } = ProviderRetryDefaults.MaxRetries;
     public Action<int, TimeSpan>? OnWait { get; init; }
     public bool RetryEmpty { get; init; } = true;
+    // Checked again at the transport boundary, including SDK and credential-refresh retries.
+    public Func<Task>? ValidateSelection { get; init; }
     // Injected only by offline checks; production always uses cancellable Task.Delay.
     internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
 }
@@ -25,6 +27,7 @@ internal sealed class RequestRetryScope(RequestRetryOptions options)
     public ProviderResponseException? StreamFailure { get; set; }
     public TimeSpan Waited { get; private set; }
     public bool CanRetry => Retries < Maximum;
+    internal Task ValidateSelectionAsync() => options.ValidateSelection?.Invoke() ?? Task.CompletedTask;
 
     public TimeSpan Reserve(TimeSpan? specified)
     {
@@ -78,6 +81,7 @@ internal sealed class RequestRetryClient(IChatClient inner, RequestRetryOptions 
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                await scope.ValidateSelectionAsync().ConfigureAwait(false);
                 scope.TransportDelay = null;
                 scope.StreamFailure = null;
                 var pending = new List<ChatResponseUpdate>();
@@ -100,7 +104,7 @@ internal sealed class RequestRetryClient(IChatClient inner, RequestRetryOptions 
                             if (update.Contents.OfType<ErrorContent>().FirstOrDefault() is { } error)
                                 throw ProviderFailure.FromStream(error);
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        catch (Exception ex) when (ex is not OperationCanceledException and not ModelSelectionChangedException)
                         {
                             failure = scope.StreamFailure ?? ex;
                             break;

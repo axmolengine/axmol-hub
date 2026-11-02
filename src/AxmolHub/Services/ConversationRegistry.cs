@@ -34,6 +34,14 @@ internal sealed class ConversationRegistry(ConversationStore store)
         lock (_maintenance) return _cache.TryGetValue(id, out var conversation) ? conversation : null;
     }
 
+    /// <summary>Reads the pair atomically at a request boundary, without a dispatcher round trip.</summary>
+    internal (string ProviderId, string? ModelName)? ModelSelection(string id)
+    {
+        var conversation = Peek(id);
+        if (conversation is null) return null;
+        lock (Gate(id)) return (conversation.ProviderId, conversation.ModelName);
+    }
+
     /// <summary>The single instance for <paramref name="id"/>, reading it off disk on first use. <c>null</c> when unknown.</summary>
     public Conversation? Load(string id)
     {
