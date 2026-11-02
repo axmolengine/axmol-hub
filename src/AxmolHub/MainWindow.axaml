@@ -1058,8 +1058,13 @@
             <Button Grid.Column="1" x:Name="LogActionsButton" Content="⋯"
                     Classes="strip" Padding="10,4" />
           </Grid>
+          <!-- The band is the reading surface's token rather than the base TextBox's opaque Hub.Accent: the log
+               is read beside the conversation, so selecting in it has to paint what selecting in a turn paints,
+               not the platform's own blue. Its ink stays the log's ink for the same reason the chat's does — a
+               translucent band with the theme's white SelectionForeground is unreadable on the light variant. -->
           <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
-                   SelectionBrush="{DynamicResource Hub.SurfaceHover}"
+                   SelectionBrush="{DynamicResource Hub.Selection}"
+                   SelectionForegroundBrush="{DynamicResource Hub.TextPrimary}"
                    IsReadOnly="True" TextWrapping="NoWrap"
                    AcceptsReturn="True" />
         </Grid>
