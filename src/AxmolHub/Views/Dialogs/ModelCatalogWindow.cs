@@ -168,32 +168,19 @@ public sealed partial class ModelCatalogWindow : Window
         _search.Bind(TextBox.PlaceholderForegroundProperty,
             new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
 
-        Avalonia.Controls.Shapes.Path Icon(string key, double size)
+        Avalonia.Controls.Shapes.Path Icon(string key)
         {
-            var icon = new Avalonia.Controls.Shapes.Path
-            {
-                Width = size,
-                Height = size,
-                Stretch = Stretch.Uniform,
-                Fill = Brushes.Transparent,
-                StrokeThickness = 1.7,
-                StrokeLineCap = PenLineCap.Round,
-                StrokeJoin = PenLineJoin.Round,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                IsHitTestVisible = false,
-            };
+            var icon = new Avalonia.Controls.Shapes.Path();
+            icon.Classes.Add("field-glyph");
             icon.Bind(Avalonia.Controls.Shapes.Path.DataProperty,
                 new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(key));
-            icon.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty,
-                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.TextSecondary"));
             return icon;
         }
 
         var clearSearch = new Button
         {
             Classes = { "quiet" },
-            Content = Icon("Hub.Icon.Close", 14),
+            Content = Icon("Hub.Icon.Close"),
             Padding = new Thickness(0),
             Width = 28,
             Height = 28,
@@ -208,8 +195,10 @@ public sealed partial class ModelCatalogWindow : Window
             _search.Focus();
         };
         _search.TextChanged += (_, _) => clearSearch.IsVisible = !string.IsNullOrEmpty(_search.Text);
-        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("40,*,36") };
-        content.Children.Add(Icon("Hub.Icon.Search", 18));
+        // Same icon slot and clear slot as the engine and project fields: the glyphs themselves come from the
+        // shared Path.field-glyph class, so nothing here restates their size.
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("32,*,36") };
+        content.Children.Add(Icon("Hub.Icon.Search"));
         Grid.SetColumn(_search, 1);
         content.Children.Add(_search);
         Grid.SetColumn(clearSearch, 2);

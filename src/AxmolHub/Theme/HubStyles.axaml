@@ -328,6 +328,24 @@
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
   </Style>
 
+  <!-- The two glyphs inside a search field — the magnifier and the clear plate's cross. The engine, project and
+       model-catalog searches all wear the same pair, and the catalog builds its field in code, so the size and
+       the stroke are stated here once instead of in four places. 11px of ink in a 32px field: at 14 the magnifier
+       was half the field's height and read as a button rather than as the field's caption. -->
+  <Style Selector="Path.field-glyph">
+    <Setter Property="Width" Value="11" />
+    <Setter Property="Height" Value="11" />
+    <Setter Property="Stretch" Value="Uniform" />
+    <Setter Property="Fill" Value="Transparent" />
+    <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    <Setter Property="StrokeThickness" Value="1.4" />
+    <Setter Property="StrokeLineCap" Value="Round" />
+    <Setter Property="StrokeJoin" Value="Round" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+  </Style>
+
   <!-- ==================== DataGrid family ====================
        The WPF version wrote one style each for DataGrid / DataGridColumnHeader / DataGridCell / DataGridRow
        in App.xaml. Here we only override properties and state colors, **without replacing DataGrid's own template**:

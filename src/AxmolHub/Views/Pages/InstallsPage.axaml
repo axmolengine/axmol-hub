@@ -40,10 +40,7 @@
               Background="{DynamicResource Hub.SurfaceSunken}" BorderBrush="{DynamicResource Hub.BorderStrong}"
               BorderThickness="1" CornerRadius="6" Margin="0,0,10,0">
         <Grid ColumnDefinitions="32,*,36">
-          <Path Grid.Column="0" Data="{StaticResource Hub.Icon.Search}" Width="14" Height="14"
-                Stretch="Uniform" Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
-                StrokeThickness="1.5" StrokeLineCap="Round" StrokeJoin="Round"
-                HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+          <Path Grid.Column="0" Classes="field-glyph" Data="{StaticResource Hub.Icon.Search}" />
           <TextBox x:Name="SearchBox" Grid.Column="1" PlaceholderText="{DynamicResource SearchEngines}"
                    Background="Transparent" BorderThickness="0" Padding="0" MinHeight="0" Margin="0"
                    PlaceholderForeground="{DynamicResource Hub.TextSecondary}"
@@ -51,8 +48,7 @@
           <Button x:Name="ClearSearchButton" Grid.Column="2" Classes="quiet" Padding="0"
                   Width="28" Height="28" MinHeight="0" VerticalAlignment="Center" IsVisible="False"
                   ToolTip.Tip="{DynamicResource ClearSearch}">
-            <Path Data="{StaticResource Hub.Icon.Close}" Width="14" Height="14" Stretch="Uniform"
-                  Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7" />
+            <Path Classes="field-glyph" Data="{StaticResource Hub.Icon.Close}" />
           </Button>
         </Grid>
       </Border>
