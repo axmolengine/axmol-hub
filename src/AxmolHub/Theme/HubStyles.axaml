@@ -175,6 +175,19 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
   </Style>
 
+  <!-- An icon-only plate: a square around the glyph. The label plate's 32px floor put a 12px glyph in a
+       26x32 slab, and a box that is taller than it is wide reads as a chunky little tile rather than a
+       button. Margin is zeroed because the base theme's trailing 0,0,8,0 stacks on the cluster's Spacing. -->
+  <Style Selector="Button.icon-square">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Margin" Value="0" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
   <!-- Compact actions in the Changes header. The secondary action stays quiet beside the save plate. -->
   <Style Selector="Button.inspector-edit-action">
     <Setter Property="MinWidth" Value="0" />

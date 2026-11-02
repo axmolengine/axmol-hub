@@ -1516,15 +1516,8 @@ public partial class SettingsPage : UserControl
         if (provider.CanAuthenticate)
         {
             var linked = IsLinked(provider);
-            var auth = new Button
-            {
-                Content = HubStrings.Get(linked ? "DisconnectProvider" : "Authenticate"),
-                Classes = { "quiet" },
-                FontSize = 11,
-                Padding = new Thickness(8, 3),
-                VerticalAlignment = VerticalAlignment.Center,
-                Tag = SectionTags.AuthButton,
-            };
+            var auth = BuildHeaderAction(HubStrings.Get(linked ? "DisconnectProvider" : "Authenticate"));
+            auth.Tag = SectionTags.AuthButton;
             auth.Click += async (_, _) =>
             {
                 if (linked) await DisconnectProviderAsync(provider);
@@ -1533,15 +1526,13 @@ public partial class SettingsPage : UserControl
             actions.Children.Add(auth);
             if (provider.IsOpenAiOAuth && provider.Credential?.Secret is not null && !linked)
             {
-                var clear = new Button { Content = HubStrings.Get("DisconnectProvider"), Classes = { "quiet" },
-                    FontSize = 11, Padding = new Thickness(8, 3), VerticalAlignment = VerticalAlignment.Center };
+                var clear = BuildHeaderAction(HubStrings.Get("DisconnectProvider"));
                 clear.Click += async (_, _) => await DisconnectProviderAsync(provider);
                 actions.Children.Add(clear);
             }
             if (provider.IsOpenAiPlan && provider.Credential is { } planCredential)
             {
-                var resume = new Button { Content = HubStrings.Get("OpenAiResumePlan"), Classes = { "quiet" },
-                    FontSize = 11, Padding = new Thickness(8, 3), VerticalAlignment = VerticalAlignment.Center };
+                var resume = BuildHeaderAction(HubStrings.Get("OpenAiResumePlan"));
                 resume.Click += (_, _) => { planCredential.PlanUsagePaused = false; resume.IsVisible = false; };
                 resume.IsVisible = planCredential.PlanUsagePaused;
                 actions.Children.Add(resume);
@@ -1549,8 +1540,7 @@ public partial class SettingsPage : UserControl
             }
             if (provider.IsOpenAiPlan && linked && !OpenAiTokens.Decode(provider.Credential!.Secret!).HasPlanUsage)
             {
-                var enable = new Button { Content = HubStrings.Get("OpenAiEnablePlan"), Classes = { "quiet" },
-                    FontSize = 11, Padding = new Thickness(8, 3), VerticalAlignment = VerticalAlignment.Center };
+                var enable = BuildHeaderAction(HubStrings.Get("OpenAiEnablePlan"));
                 enable.Click += async (_, _) => await SignInAsync(provider, enable);
                 actions.Children.Add(enable);
             }
@@ -1571,8 +1561,7 @@ public partial class SettingsPage : UserControl
             var edit = new Button
             {
                 Content = BuildEditIcon(),
-                Classes = { "quiet" },
-                Padding = new Thickness(6, 4),
+                Classes = { "quiet", "icon-square" },
                 VerticalAlignment = VerticalAlignment.Center,
                 Tag = SectionTags.EditProvider,
             };
@@ -1588,8 +1577,7 @@ public partial class SettingsPage : UserControl
             var remove = new Button
             {
                 Content = BuildRemoveIcon(),
-                Classes = { "quiet" },
-                Padding = new Thickness(6, 4),
+                Classes = { "quiet", "icon-square" },
                 VerticalAlignment = VerticalAlignment.Center,
                 Tag = SectionTags.RemoveProvider,
             };
@@ -1624,6 +1612,22 @@ public partial class SettingsPage : UserControl
         grid.Children.Add(actions);
         return grid;
     }
+
+    /// <summary>
+    /// A text action on a provider header: the house compact plate at the 11px a crowded header needs. The
+    /// trailing margin the base theme gives every button is zeroed here, because the cluster it lands in
+    /// already spaces its children — the doubled gap was what made the row look loose, and the 32px default
+    /// floor is what made a two-word label a tall slab beside the square icon plates.
+    /// </summary>
+    private static Button BuildHeaderAction(string text)
+        => new()
+        {
+            Content = text,
+            Classes = { "quiet", "compact" },
+            FontSize = 11,
+            Margin = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
 
     /// <summary>
     /// The path this provider's selected model will be posted to, resolved by the same function the client factory
@@ -2056,11 +2060,7 @@ public partial class SettingsPage : UserControl
         var catalog = new Button
         {
             Content = BuildSearchIcon(),
-            Classes = { "quiet" },
-            Width = 30,
-            Height = 28,
-            MinHeight = 0,
-            Padding = new Thickness(0),
+            Classes = { "quiet", "icon-square" },
             VerticalAlignment = VerticalAlignment.Center,
             Tag = SectionTags.ModelCatalog,
         };
@@ -2073,11 +2073,7 @@ public partial class SettingsPage : UserControl
         var add = new Button
         {
             Content = BuildAddIcon(),
-            Classes = { "quiet" },
-            Width = 30,
-            Height = 28,
-            MinHeight = 0,
-            Padding = new Thickness(0),
+            Classes = { "quiet", "icon-square" },
             VerticalAlignment = VerticalAlignment.Center,
             Tag = SectionTags.AddModelButton,
         };
@@ -2090,11 +2086,7 @@ public partial class SettingsPage : UserControl
         var removeAll = new Button
         {
             Content = BuildClearListIcon(),
-            Classes = { "quiet" },
-            Width = 30,
-            Height = 28,
-            MinHeight = 0,
-            Padding = new Thickness(0),
+            Classes = { "quiet", "icon-square" },
             VerticalAlignment = VerticalAlignment.Center,
             IsEnabled = provider.Models.Count > 0,
             Tag = SectionTags.RemoveAllModels,
@@ -2365,8 +2357,7 @@ public partial class SettingsPage : UserControl
         var edit = new Button
         {
             Content = BuildEditIcon(),
-            Classes = { "quiet" },
-            Padding = new Thickness(6, 2),
+            Classes = { "quiet", "icon-square" },
         };
         ToolTip.SetTip(edit, HubStrings.Get("ModelEditTitle"));
         edit.Click += (_, _) => OpenModelEditDraft(provider, model);
@@ -2375,8 +2366,7 @@ public partial class SettingsPage : UserControl
         var remove = new Button
         {
             Content = BuildRemoveIcon(),
-            Classes = { "quiet" },
-            Padding = new Thickness(6, 2),
+            Classes = { "quiet", "icon-square" },
         };
         ToolTip.SetTip(remove, HubStrings.Get("ModelRemove"));
         remove.Click += async (_, _) => await RemoveModelAsync(provider, model);
