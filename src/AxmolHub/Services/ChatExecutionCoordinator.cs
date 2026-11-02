@@ -151,18 +151,21 @@ internal sealed partial class ChatExecutionCoordinator
                 RetryEmpty = false,
             };
             if (RunFor(conversationId) is { } activeRun) activeRun.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
+            var reasoning = new ReasoningTable();
             var client = ClientOverride?.Invoke(request.Value.Provider, conversationId)
-                         ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, null,
+                         ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, reasoning,
                              maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait,
                              // A live run owns the deadline; a manual summary keeps the standalone SDK bound.
                              networkTimeout: runOwnsDeadline ? Timeout.InfiniteTimeSpan : null);
-            var pipeline = new ChatPipeline(client);
+            var pipeline = new ChatPipeline(client, reasoning);
             var summary = new StringBuilder();
             await foreach (var chunk in pipeline.SendAsync(
                                request.Value.Provider,
                                request.Value.History,
                                request.Value.SystemPrompt,
                                declaredTools: request.Value.Tools,
+                               // Keep schemas for the historical calls, but require prose rather than new calls.
+                               toolMode: ChatToolMode.None,
                                modelName: request.Value.ModelName,
                                maxOutputTokens: request.Value.MaxOutputTokens,
                                retryOptions: retry,

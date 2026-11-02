@@ -2300,7 +2300,8 @@ internal sealed class ShellAssistantChecks
         var leakyCompressed = await shell.Chat.CompressContextAsync(leaky.Id);
         shell.Chat.ClientOverride = null;
         var leakyCopy = shell.Chat.StoredCopyForCheck(leaky.Id);
-        Check(leakyCompressed.Compressed && leakySummarizer?.LastOptions?.Tools is { Count: > 0 },
+        Check(leakyCompressed.Compressed && leakySummarizer?.LastOptions?.Tools is { Count: > 0 }
+              && leakySummarizer.LastOptions.ToolMode == Microsoft.Extensions.AI.ChatToolMode.None,
             "压缩请求带着会话的工具声明、转录原样送去（声明 "
             + (leakySummarizer?.LastOptions?.Tools?.Count ?? -1) + " 个，成功=" + leakyCompressed + "）");
         Check(leakyCopy?.ContextSummary == "## Task\n压缩任务的正常摘要"

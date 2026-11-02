@@ -119,12 +119,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         string? systemPrompt = null,
         string? reasoningEffort = null,
         IReadOnlyList<AITool>? tools = null,
-        // Declared for their schema, executed by nothing in this call. Compaction is the caller: its transcript
-        // is saturated with tool calls, and a request over one that declares nothing is the shape a model
-        // answers in its native call markup instead of prose — a compaction summary came back exactly that way
-        // once. With the schemas on the wire the endpoint always has one to decode against; without the
-        // invoking client below, a call that comes back leaves no text, which the caller refuses as an empty
-        // summary rather than running anything.
+        // Declared for their schema, executed by nothing in this call. Compaction keeps these for historical
+        // calls and sets toolMode=None so the endpoint writes a summary rather than asking to continue work.
         IReadOnlyList<AITool>? declaredTools = null,
         ToolGate? gate = null,
         // Which calls of a response may start before their siblings' answers have landed. The caller answers it,
@@ -168,6 +164,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<long, Task>? beforeRequest = null,
         Func<long, long, bool, Task>? afterRequest = null,
         RequestRetryOptions? retryOptions = null,
+        ChatToolMode? toolMode = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -188,7 +185,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // measuring a growing loop against the first request's size would calibrate the wrong number.
         var firstRequestEstimate = trimmed.Sum(ContextTrimmer.EstimateTokens) + schemaTokens;
         var observed = new ContextReport();
-        var options = BuildOptions(provider, modelName, reasoningEffort, wireTools, maxOutputTokens);
+        var options = BuildOptions(provider, modelName, reasoningEffort, wireTools, maxOutputTokens, toolMode);
         var parked = new GateState();
         // Refusals of one signature within this run, so a second one ends the turn instead of buying a third
         // paid round. Per SendAsync, which is per segment: a new question gets a fresh chance.
@@ -199,8 +196,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // is the start of the next one.
         var thinking = new StringBuilder();
         var thinkingSpent = false;
-        IChatClient effectiveClient = beforeRequest is null ? client
-            : new GoalRequestGuard(client, schemaTokens, window.OutputReserve, beforeRequest, afterRequest);
+        // Harvest on every send, including summaries and transport-recovery attempts. Replay consumes its
+        // lookup queues, so a retry must rebuild them from the same history rather than lose the original thought.
+        IChatClient effectiveClient = reasoning is null ? client : new ReasoningHarvestClient(client, reasoning);
+        if (beforeRequest is not null)
+            effectiveClient = new GoalRequestGuard(effectiveClient, schemaTokens, window.OutputReserve, beforeRequest, afterRequest);
         if (retryOptions is not null)
             effectiveClient = new RequestRetryClient(effectiveClient, retryOptions, onActivity);
         ToolLoopContextGuard? guard = null;
@@ -214,9 +214,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // compaction is decided: the loop is the only place that can give control back while the next round
             // still has a complete transcript to compact, and measuring it against "does it still fit" let one
             // measured run send 4 520 397 input tokens in eighteen minutes without ever yielding.
-            guard = new ToolLoopContextGuard(
-                reasoning is null ? effectiveClient : new ReasoningHarvestClient(effectiveClient, reasoning), budget,
-                budget)
+            guard = new ToolLoopContextGuard(effectiveClient, budget, budget)
             {
                 PendingInterjection = pendingInterjection,
                 YieldForCompaction = yieldForCompaction,
@@ -827,7 +825,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// request whose size was worked out against one window should not inherit a cap typed for another.</summary>
     private static ChatOptions? BuildOptions(
         ModelProvider provider, string? modelName, string? reasoningEffort, IReadOnlyList<AITool>? tools,
-        int? maxOutputTokens = null)
+        int? maxOutputTokens = null, ChatToolMode? toolMode = null)
     {
         var options = new ChatOptions();
         var any = false;
@@ -860,6 +858,11 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // either; several calls in one reply is the shape their loops are built around, which is what the
             // batch judge above is for. A check wanting the multi-call shape on purpose is `batchClient.Batch` in
             // the shell checks, and `MultiCallChatClient` in the headless ones.
+            any = true;
+        }
+        if (toolMode is not null)
+        {
+            options.ToolMode = toolMode;
             any = true;
         }
         if (effectiveReasoningEffort is not null)

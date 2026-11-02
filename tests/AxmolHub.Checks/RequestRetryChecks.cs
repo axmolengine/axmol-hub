@@ -46,16 +46,43 @@ internal static class RequestRetryChecks
         await Drain(empty, retry);
         if (empty.Requests != 3) throw new Exception("Empty responses did not recover.");
 
-        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on both wires.
+        IReadOnlyList<ChatTurn> summaryHistory = [ChatTurn.User("summarize this history"),
+            ChatTurn.FunctionCall("prior", "probe", "{}", reasoning: "original reasoning"),
+            ChatTurn.FunctionResult("prior", "read"), ChatTurn.Assistant("prior answer"), ChatTurn.User("continue")];
+        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on both wires. A summary
+        // retains its historical reasoning through recovery and forbids new calls without dropping schemas.
         foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses })
         {
             provider.Protocol = protocol;
+            provider.Model = "deepseek-flash";
             var wire = new MixedWire();
             waits.Clear();
-            using var client = ChatClientFactory.Create(provider, "m", null, transport: wire, maxRetries: 2,
+            var reasoning = new ReasoningTable();
+            using var client = ChatClientFactory.Create(provider, provider.Model, reasoning, transport: wire, maxRetries: 2,
                 networkTimeout: Timeout.InfiniteTimeSpan);
-            try { await Drain(client, retry); throw new Exception("Exhausted mixed retries returned success."); }
+            try
+            {
+                await foreach (var _ in new ChatPipeline(client, reasoning).SendAsync(provider, summaryHistory,
+                    "Summarize only.", declaredTools: [tool], toolMode: ChatToolMode.None, retryOptions: retry)) { }
+                throw new Exception("Exhausted mixed retries returned success.");
+            }
             catch (RequestRetryException ex) when (ex.Retries == 2) { }
+            foreach (var body in wire.Bodies)
+            {
+                using var json = System.Text.Json.JsonDocument.Parse(body);
+                var root = json.RootElement;
+                if (root.GetProperty("tool_choice").GetString() != "none" || root.GetProperty("tools").GetArrayLength() != 1)
+                    throw new Exception("A summary could select new tools or lost its historical tool schemas.");
+                if (protocol == ModelProtocols.Chat)
+                {
+                    var messages = root.GetProperty("messages").EnumerateArray().ToList();
+                    var prior = messages.First(m => m.TryGetProperty("tool_calls", out _));
+                    if (prior.GetProperty("reasoning_content").GetString() != "original reasoning"
+                        || messages.Where(m => m.GetProperty("role").GetString() == "assistant")
+                            .Any(m => !m.TryGetProperty("reasoning_content", out var thought) || string.IsNullOrEmpty(thought.GetString())))
+                        throw new Exception("Summary recovery lost original reasoning or omitted a required thinking field.");
+                }
+            }
             if (wire.Attempts != 3 || !waits.SequenceEqual(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7) }))
                 throw new Exception($"HTTP/SSE budget or Retry-After drifted: {wire.Attempts}, {string.Join(',', waits)}.");
         }
@@ -96,8 +123,10 @@ internal static class RequestRetryChecks
     private sealed class MixedWire : HttpMessageHandler
     {
         public int Attempts;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        public List<string> Bodies { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
+            Bodies.Add(await request.Content!.ReadAsStringAsync(token));
             var first = ++Attempts == 1;
             var error = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"too_many_requests\",\"code\":\"rate_limit_exceeded\",\"message\":\"Your requests have exceeded token rate limit.\",\"headers\":{\"Retry-After\":\"7\"}}}\n\n";
             if (request.RequestUri!.AbsolutePath.EndsWith("/responses", StringComparison.Ordinal))
@@ -109,7 +138,7 @@ internal static class RequestRetryChecks
                     Encoding.UTF8, first ? "application/json" : "text/event-stream"),
             };
             if (first) response.Headers.TryAddWithoutValidation("Retry-After", "1");
-            return Task.FromResult(response);
+            return response;
         }
     }
 }
