@@ -12,7 +12,6 @@ internal static class MacOsComputerUse
 {
     private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
     private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
-    private const string ApplicationServices = "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices";
     private const uint Utf8 = 0x08000100;
     private const uint OnScreenOnly = 1;
     private const uint ExcludeDesktop = 16;
@@ -28,11 +27,7 @@ internal static class MacOsComputerUse
 
     private static IReadOnlyList<CapturableWindow> ListWindows()
     {
-        if (!CGPreflightScreenCaptureAccess())
-        {
-            CGRequestScreenCaptureAccess();
-            throw new UnauthorizedAccessException("Screen Recording permission is required.");
-        }
+        MacOsComputerPermissions.RequireScreenRecording();
         var info = CGWindowListCopyWindowInfo(OnScreenOnly | ExcludeDesktop, 0);
         if (info == 0) return [];
         try
@@ -64,11 +59,7 @@ internal static class MacOsComputerUse
     private static CapturedFrame? CaptureWindow(CapturableWindow? window)
     {
         if (window is null) return null;
-        if (!CGPreflightScreenCaptureAccess())
-        {
-            CGRequestScreenCaptureAccess();
-            throw new UnauthorizedAccessException("Screen Recording permission is required.");
-        }
+        MacOsComputerPermissions.RequireScreenRecording();
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok) return null;
         var path = Path.Combine(Path.GetTempPath(), $"axmolhub-computer-use-{Guid.NewGuid():N}.png");
         try
@@ -116,13 +107,10 @@ internal static class MacOsComputerUse
 
     private static string? Operate(CapturableWindow window, ComputerActionRequest request)
     {
-        if (!AXIsProcessTrusted())
-            return "Refused: macOS Accessibility permission is required for Computer Use. Grant Axmol Hub access in System Settings → Privacy & Security → Accessibility, then retry only after granting it.";
-        if (!CGPreflightScreenCaptureAccess())
-        {
-            CGRequestScreenCaptureAccess();
-            return "Refused: macOS Screen Recording permission is required to verify the selected application. Grant it in System Settings → Privacy & Security → Screen Recording, then retry.";
-        }
+        if (!MacOsComputerPermissions.Require(MacOsComputerPermission.Accessibility))
+            return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.Accessibility);
+        if (!MacOsComputerPermissions.Require(MacOsComputerPermission.ScreenRecording))
+            return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.ScreenRecording);
         if (!IsFrontmost(window.ProcessId))
             return "Refused: the selected application is not frontmost. Bring it to the front and ask before retrying; input is never sent to a different app.";
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok)
@@ -296,8 +284,6 @@ internal static class MacOsComputerUse
     [StructLayout(LayoutKind.Sequential)] private struct CGRect(CGPoint origin, CGSize size) { public CGPoint Origin = origin; public CGSize Size = size; }
 
     [DllImport(CoreGraphics)] private static extern nint CGWindowListCopyWindowInfo(uint option, uint relativeToWindow);
-    [DllImport(CoreGraphics)] private static extern bool CGPreflightScreenCaptureAccess();
-    [DllImport(CoreGraphics)] private static extern bool CGRequestScreenCaptureAccess();
     [DllImport(CoreGraphics)] private static extern bool CGRectMakeWithDictionaryRepresentation(nint dictionary, out CGRect rect);
     [DllImport(CoreGraphics)] private static extern nint CGEventCreateMouseEvent(nint source, uint type, CGPoint point, uint button);
     [DllImport(CoreGraphics)] private static extern nint CGEventCreateKeyboardEvent(nint source, ushort virtualKey, bool keyDown);
@@ -312,5 +298,4 @@ internal static class MacOsComputerUse
     [DllImport(CoreFoundation)] private static extern bool CFNumberGetValue(nint number, int numberType, out int value);
     [DllImport(CoreFoundation)] private static extern bool CFNumberGetValue(nint number, int numberType, out double value);
     [DllImport(CoreFoundation)] private static extern void CFRelease(nint value);
-    [DllImport(ApplicationServices)] private static extern bool AXIsProcessTrusted();
 }

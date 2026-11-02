@@ -178,6 +178,7 @@ public partial class MainWindow : Window
         InitializeInspector();
         InitializePictureViewer();
         InitializeSettings();
+        InitializeMacComputerPermissions();
         InitializeChrome();
         WireWorkspace();
         WireChrome();
@@ -250,6 +251,7 @@ public partial class MainWindow : Window
     /// having genuinely left the foreground, see <see cref="_foregroundHasLeftWindow"/>.</summary>
     private void OnWindowActivated()
     {
+        SyncMacComputerPermissions();
         if (_foregroundHasLeftWindow) _ = ConsumeActivationTarget();
     }
 
@@ -1573,6 +1575,7 @@ public partial class MainWindow : Window
         // Same for the task slot, and for the rows if the popover happens to be open: every one of those
         // strings is composed in code from a key.
         UpdateTaskSlot();
+        SyncMacComputerPermissions();
 
         // The settings card is not in the page cache any more, so it gets told on its own — and told even while
         // it is closed, because its ComboBox labels are written in code and a stale English dropdown would be
