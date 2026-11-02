@@ -21,8 +21,6 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="MinHeight" Value="30" />
     </Style>
     <Style Selector="Border.session-row:pointerover Button.session">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -74,6 +72,11 @@
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
+    <!-- Workspace names and conversation titles share typography and hover-plate height; section headings stay smaller. -->
+    <Style Selector="Button.session, Grid.workspace-row ToggleButton.group-toggle">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="MinHeight" Value="30" />
+    </Style>
     <Style Selector="TextBlock.group-header">
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
@@ -106,8 +109,8 @@
     <Style Selector="Button.group-new:pointerover Path">
       <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
-    <!-- The one line a workspace with no sessions shows under its header. Quieter than a session row and the same
-         size as the header above it, so it reads as that group's state rather than as a third label or as a row
+    <!-- The one line a workspace with no sessions shows under its header. Quieter and smaller than the header
+         above it, so it reads as that group's state rather than as a third label or as a row
          nobody can click. It is NOT hover-gated: the reveal-on-hover rule is about controls, and a state you cannot
          see is the failure this line exists to fix. -->
     <Style Selector="TextBlock.session-empty">
