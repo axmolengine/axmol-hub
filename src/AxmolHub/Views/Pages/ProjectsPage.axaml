@@ -184,7 +184,7 @@
             <ScrollViewer x:Name="OverlayScrollViewer" VerticalScrollBarVisibility="Auto">
               <Grid x:Name="OverlayContent" Margin="24,20">
                 <StackPanel x:Name="CreatePanel" Spacing="14" IsVisible="False">
-                  <TextBlock Text="{DynamicResource Template}" Classes="muted" />
+                  <TextBlock x:Name="TemplateLabel" Text="{DynamicResource Template}" Classes="muted" />
                   <StackPanel Spacing="12">
                     <StackPanel Spacing="6">
                       <TextBlock Text="{DynamicResource ProjectName}" />

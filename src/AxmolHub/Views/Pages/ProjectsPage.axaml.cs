@@ -105,6 +105,7 @@ public partial class ProjectsPage : UserControl
             new ProjectFilterChoice("3d", "3d"),
         };
         CameraModePicker.SelectedIndex = 0;
+        CameraModePicker.SelectionChanged += (_, _) => UpdateTemplateLabel();
         ProjectEnginePicker.SelectionChanged += (_, _) =>
         {
             RefreshPrebuiltChoice();
@@ -461,6 +462,15 @@ public partial class ProjectsPage : UserControl
         CameraModePanel.IsVisible = isCpp && engine is not null
             && EngineReleases.CompareVersions(engine.Version, "3.0.0") >= 0;
         if (!CameraModePanel.IsVisible) CameraModePicker.SelectedIndex = 0;
+        UpdateTemplateLabel();
+    }
+
+    private void UpdateTemplateLabel()
+    {
+        var key = (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value == "3d"
+            ? "Template3D"
+            : "Template";
+        TemplateLabel.Text = HubStrings.Get(key);
     }
 
     private void RefreshPrebuiltChoice()

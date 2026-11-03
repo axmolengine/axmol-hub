@@ -162,6 +162,7 @@ public static class HubTexts
         ["UpgradeEngineNoLongerNewer"] = ("目标引擎已不再是更新版本，请刷新项目后重试。", "The target engine is no longer newer. Refresh the project and try again."),
         ["UpgradeEngineStopPreview"] = ("请先停止此项目的 Web 预览，再升级引擎。", "Stop this project's web preview before upgrading its engine."),
         ["Template"] = ("官方 2D · Hello World 模板", "Official 2D · Hello World template"),
+        ["Template3D"] = ("官方 3D · Hello World 模板", "Official 3D · Hello World template"),
         ["ProjectLanguage"] = ("项目语言", "Project language"),
         ["cpp"] = ("仅 C++", "C++ only"),
         ["lua"] = ("C++ + Lua", "C++ + Lua"),
