@@ -196,17 +196,17 @@ public partial class ChatPanel
     private void OpenTurnReview(Conversation? conversation)
     {
         if (conversation is null) return;
+        BuildInspectorContent("repo", conversation.Messages.Count - 1, refreshChanges: true);
         _inspector?.SetScope(GitReviewScope.LastTurn);
         OpenInspector?.Invoke("repo", conversation.Messages.Count - 1);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _inspector?.SetScope(GitReviewScope.LastTurn));
     }
 
     private void OpenTurnReviewFile(Conversation? conversation, string path)
     {
         if (conversation is null) return;
+        BuildInspectorContent("repo", conversation.Messages.Count - 1, refreshChanges: true);
         OpenInspector?.Invoke("repo", conversation.Messages.Count - 1);
         _inspector?.OpenLastTurnFile(path);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _inspector?.SetScope(GitReviewScope.LastTurn));
     }
 
     private void RefreshTurnChangesPill()

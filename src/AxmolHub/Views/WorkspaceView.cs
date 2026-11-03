@@ -159,7 +159,6 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _state.Selected = tab;
         Render();
         ToolRequested?.Invoke(tab);
-        if (tab == "repo") _inspector.RefreshWorkspaceRepo();
         OpenRequested?.Invoke();
     }
 

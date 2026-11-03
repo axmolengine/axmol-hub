@@ -38,7 +38,7 @@ internal sealed partial class InspectorPanel : UserControl
     private void RequestToolForCheck(string key)
     {
         if (SelectToolForCheck is { } select) select(key);
-        else { SelectTab(key); if (key == "repo") RepoRefreshRequested?.Invoke(); }
+        else SelectTab(key);
     }
 
     /// <summary>Names a scope through the picker, the way a reader does. A scope picked here sticks — entering
@@ -311,7 +311,7 @@ internal sealed partial class InspectorPanel : UserControl
     /// calling the shell method the button happens to end up in.</summary>
     internal void ClickRepoRefreshForCheck()
     {
-        _repoBody.GetLogicalDescendants().OfType<Button>().FirstOrDefault(button => button.Tag as string == "InspectorRepoRefresh")?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        _refreshChanges.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
 
     /// <summary>The empty-scope jump back to the session's own list, which is what the tab ends on right after a

@@ -1172,7 +1172,7 @@ public static class HubTexts
         ["InspectorRepoEmpty"] = ("工作树与 HEAD 一致", "The working tree matches HEAD"),
         ["InspectorRepoTruncatedFormat"] = ("改动太多，这里只列前 {0} 个",
             "Too many changes; only the first {0} are listed"),
-        ["InspectorRepoRefresh"] = ("重新读一次仓库", "Read the repository again"),
+        ["InspectorRepoRefresh"] = ("刷新改动", "Refresh changes"),
         ["InspectorRepoSessionAlsoTouched"] = ("本会话也改过这个文件", "this session touched this file too"),
         ["InspectorRepoNoDiff"] = ("读不到这个文件的改动内容", "No diff could be read for this file"),
         ["InspectorRepoNoWorkspace"] = ("尚未选择工作目录", "No workspace selected yet"),

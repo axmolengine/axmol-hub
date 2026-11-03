@@ -79,7 +79,9 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             chat.SelectWorkspaceRoot(workspace);
             var emptyPanel = new ChatPanel(chat);
             emptyPanel.RefreshInspector = () => emptyPanel.BuildInspectorContent("repo", -1);
-            var emptyInspector = (InspectorPanel?)emptyPanel.BuildInspectorContent("repo", -1);
+            var emptyInspector = (InspectorPanel?)emptyPanel.BuildInspectorContent("plan", -1);
+            // The workspace tab selects the pane already built for Plan rather than building Changes directly.
+            emptyInspector?.SelectWorkspaceTool("repo");
             await WaitForConditionAsync(() => chat.RepositoryFor(workspace)?.State.IsReadable == true);
             Dispatcher.UIThread.RunJobs();
             var workspaceState = chat.RepositoryFor(workspace)?.State;
@@ -88,7 +90,7 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
                 : await chat.ReadActiveWorkspaceGitFileAsync(workspaceState.Root, sentinel, GitFileRange.WorkingTreeAgainstHead);
             check(chat.ActiveConversation is null && emptyInspector?.RepoRowTextForCheck(0).Contains("sentinel.txt") == true
                   && comparison is { IsReadable: true } && comparison.New.Snapshot.Text?.Contains("Do not stage") == true,
-                "没有会话但选中工作目录时，改动列表和文件比较仍能读取（文件数 "
+                "没有会话时从计划标签首次切到改动，列表和文件比较仍能读取（文件数 "
                 + (workspaceState?.Entries.Count ?? -1) + "）");
             var emptyScope = chat.EditorScopeFor("", workspace);
             var missingMessage = CodeFileWindow.ShowEditor(null, "missing.cpp", () => chat.EditorScopeFor("", workspace));

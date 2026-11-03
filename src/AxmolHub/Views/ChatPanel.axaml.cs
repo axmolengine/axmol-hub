@@ -355,11 +355,6 @@ public partial class ChatPanel : UserControl
             if (!viewed) return;
             UpdateSendState();
             ConversationStateChanged?.Invoke();
-            // The repository pill is a live workspace summary, not a transcript tally. A completed run may have
-            // changed files through tools, a build, formatting, or a checkout, so refresh the snapshot even when
-            // the repository tab is closed; RepositoryChanged updates the pill without repainting transcript rows.
-            if (_chat.ActiveConversation?.Id == conversationId)
-                RequestRepositoryRead();
         };
         TurnChangesPill.Click += (_, _) => OpenTurnReview(_chat.ActiveConversation);
         ModelPicker.Click += (_, _) => ShowModelSettings();

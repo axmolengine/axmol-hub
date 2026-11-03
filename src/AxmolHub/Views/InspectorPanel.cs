@@ -27,7 +27,7 @@ namespace AxmolHub;
 /// </summary>
 internal sealed partial class InspectorPanel : UserControl
 {
-    /// <summary>Raised when the repository tab is entered, and by its own ⟳. The panel never reads git itself:
+    /// <summary>Raised by the Changes header's refresh button. The panel never reads git itself:
     /// it has no session, no log and no thread to wait on, and a pane that goes and does I/O is a pane a check
     /// cannot drive from a fixture.</summary>
     public event Action? RepoRefreshRequested;
@@ -37,7 +37,7 @@ internal sealed partial class InspectorPanel : UserControl
     public event Action<GitReviewScope>? ScopeChanged;
     internal Func<GitRepositoryState, GitStatusEntry, GitFileRange, Task<ChatFileSnapshot?>>? ReadComparisonRequested { get; set; }
     internal Func<string, string, ChangesEditBuffer?>? OpenEditBuffer { get; set; }
-    internal event Action? FilesSaved;
+    private bool _changesLoaded;
     private string _conversationId = "";
     private string? _workspaceRoot;
     private readonly Dictionary<(string Conversation, string? Workspace), ChangesEditSession> _editSessions = [];
@@ -62,6 +62,7 @@ internal sealed partial class InspectorPanel : UserControl
     internal Action<string>? SelectToolForCheck;
     private Button? _fileTreeToggle;
     private readonly Button _viewSettings;
+    private readonly Button _refreshChanges;
     private readonly MenuFlyout _viewMenu;
     private readonly Grid _header;
     private readonly ContentControl _planHost;
@@ -117,7 +118,13 @@ internal sealed partial class InspectorPanel : UserControl
     /// <summary>How to redraw each diff that is already open, so a layout change reaches the blocks on screen
     /// instead of only the ones opened afterwards. Registered per row by <see cref="Reload"/> and dropped with the
     /// rows it was drawn from, which is why the list is cleared there rather than filtered here.</summary>
-    private readonly List<Action> _diffRebuilds = [];
+    private readonly Dictionary<Control, Action> _diffRebuilds = [];
+    private readonly HashSet<string> _openedRepoFiles = new(StringComparer.Ordinal);
+    private (string Conversation, string? Workspace, GitReviewScope Scope, string? Reference) _repoComparison;
+    private int _repoRenderVersion;
+    private int _repoRestoreReads;
+    private Vector _repoRestoreOffset;
+    private bool _repoScrollRestorePending;
 
     /// <summary>Paths a person had opened on the changes tab. A repaint clears the list to draw the newest
     /// snapshot, and a pane that folds back everything the reader opened on every streamed token is a pane that
@@ -175,8 +182,22 @@ internal sealed partial class InspectorPanel : UserControl
             BuildViewMenu(_viewMenu);
             FlyoutBase.ShowAttachedFlyout(_viewSettings);
         };
-        Grid.SetColumn(_viewSettings, 3);
-        header.Children.Add(_viewSettings);
+        _refreshChanges = new Button
+        {
+            Name = "InspectorRepoRefresh",
+            Tag = "InspectorRepoRefresh",
+            Content = HubActionIcon.Create("Hub.Icon.Refresh"),
+            Classes = { "viewer-action", "icon-square" },
+            Margin = new Thickness(4, 0, 0, 0),
+        };
+        _refreshChanges.Bind(ToolTip.TipProperty, new DynamicResourceExtension("InspectorRepoRefresh"));
+        _refreshChanges.Click += (_, _) => RepoRefreshRequested?.Invoke();
+        var viewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0,
+            VerticalAlignment = VerticalAlignment.Center };
+        viewActions.Children.Add(_refreshChanges);
+        viewActions.Children.Add(_viewSettings);
+        Grid.SetColumn(viewActions, 3);
+        header.Children.Add(viewActions);
         var editActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         var pencil = HubActionIcon.Create("Hub.Icon.Edit");
         _editDiff = new Button { Content = pencil, Tag = "InspectorEditDiff", Classes = { "viewer-action" }, Width = 28, Height = 28,
@@ -190,14 +211,14 @@ internal sealed partial class InspectorPanel : UserControl
             _viewMenu.Hide();
             EditSession.Begin();
             _editStatus.Text = null;
-            foreach (var rebuild in _diffRebuilds.ToArray()) rebuild();
+            foreach (var rebuild in _diffRebuilds.Values.ToArray()) rebuild();
             UpdateEditActions();
         };
         _cancelEdit.Click += (_, _) =>
         {
             EditSession.Cancel();
             _editStatus.Text = null;
-            foreach (var rebuild in _diffRebuilds.ToArray()) rebuild();
+            foreach (var rebuild in _diffRebuilds.Values.ToArray()) rebuild();
             UpdateEditActions();
         };
         _saveEdit.Click += (_, _) =>
@@ -208,8 +229,7 @@ internal sealed partial class InspectorPanel : UserControl
                 _editStatus.Text = failure is null ? null : HubStrings.Get("InspectorEditSaveFailed") + " " + failure;
                 if (failure is null)
                 {
-                    foreach (var rebuild in _diffRebuilds.ToArray()) rebuild();
-                    FilesSaved?.Invoke();
+                    foreach (var rebuild in _diffRebuilds.Values.ToArray()) rebuild();
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -462,7 +482,7 @@ internal sealed partial class InspectorPanel : UserControl
     {
         if (_splitDiff == split) return;
         _splitDiff = split;
-        foreach (var rebuild in _diffRebuilds) rebuild();
+        foreach (var rebuild in _diffRebuilds.Values.ToArray()) rebuild();
     }
 
     private static MenuItem MenuChoice(string textKey, string tag, bool current, Action pick)
@@ -487,7 +507,10 @@ internal sealed partial class InspectorPanel : UserControl
     };
 
     internal void SelectWorkspaceTool(string tab) => SelectTab(tab);
-    internal void RefreshWorkspaceRepo() => RepoRefreshRequested?.Invoke();
+    internal bool IsChangesTabVisible => _changesHost.IsVisible;
+    internal bool NeedsRepository => _repository is null;
+    internal bool HasContext(string conversationId, string? workspaceRoot)
+        => _changesLoaded && _conversationId == conversationId && _workspaceRoot == workspaceRoot;
 
     private void SelectTab(string tab)
     {
@@ -530,9 +553,10 @@ internal sealed partial class InspectorPanel : UserControl
         string tab,
         Action<string>? quote = null,
         Func<ChangedFile, (ChatFileSnapshot? Snapshot, UndoCopyState State)>? resolveSnapshot = null,
-        string conversationId = "", string? workspaceRoot = null)
+        string conversationId = "", string? workspaceRoot = null, bool refreshChanges = true)
     {
-        if (_conversationId != conversationId || _workspaceRoot != workspaceRoot)
+        var contextChanged = !HasContext(conversationId, workspaceRoot);
+        if (contextChanged)
         {
             _conversationId = conversationId;
             _workspaceRoot = workspaceRoot;
@@ -555,12 +579,21 @@ internal sealed partial class InspectorPanel : UserControl
         }
         else
         {
-            // 引用 from the plan's own right-click menu goes wherever the caller says — the composer, for the one
+            // Quotes from the plan's own right-click menu go wherever the caller says — the composer, for the one
             // caller there is. The pane has no editor and must not grow one: it is a reading surface.
             var viewer = MarkdownMessageRenderer.Render(planMarkdown!, quote);
             MarkdownMessageRenderer.HandScrollingToHost(viewer);
             _planHost.Content = viewer;
         }
+
+        // Chat and plan updates leave the Changes controls standing, including selection, folds and scroll.
+        if (!contextChanged && !refreshChanges)
+        {
+            SelectTab(tab);
+            return;
+        }
+        _changesLoaded = true;
+        var changesOffset = contextChanged ? default : _changesScroll.Offset;
 
         // The rows about to be thrown away were the only holders of how to redraw their diffs; a stale closure
         // here would redraw a control that no longer has a parent.
@@ -582,6 +615,10 @@ internal sealed partial class InspectorPanel : UserControl
 
         ReloadRepository(repository);
         SelectTab(tab);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (HasContext(conversationId, workspaceRoot)) _changesScroll.Offset = changesOffset;
+        }, DispatcherPriority.Loaded);
     }
 
     /// <summary>What the history scopes need from git, and what came back. One request and one answer because the
@@ -622,12 +659,13 @@ internal sealed partial class InspectorPanel : UserControl
     /// what the last one left until it lands; the three status scopes are a filter over the state the shell already
     /// took, so they never wait for anything.
     /// </summary>
-    private void ReloadRepository(GitRepositoryState? repository)
+    internal void ReloadRepository(GitRepositoryState? repository)
     {
         // A new reading is a new tree: the totals cached per scope describe the previous one and would sit beside a
         // list that has already moved. Dropping them makes the next paint ask again, which is the cheap direction.
         if (!ReferenceEquals(_repository, repository))
         {
+            ++_reviewGeneration;
             _statusStats.Clear();
             _commitsFor = null;
             _branchesFor = null;
@@ -644,27 +682,64 @@ internal sealed partial class InspectorPanel : UserControl
 
     private void RenderCurrentScope()
     {
+        var comparison = (_conversationId, _workspaceRoot, _scope,
+            _scope == GitReviewScope.Committed ? _commit : _scope == GitReviewScope.Branch ? _base : null);
+        var sameComparison = comparison == _repoComparison;
+        _repoComparison = comparison;
+        if (!sameComparison) _openedRepoFiles.Clear();
+        ++_repoRenderVersion;
+        _repoRestoreOffset = sameComparison
+            ? _repoScrollRestorePending ? _repoRestoreOffset : _repoScroll.Offset
+            : default;
+        _repoScrollRestorePending = true;
+        _repoRestoreReads = 1;
         _statusCountSlots.Clear();
+        foreach (var row in _repoBody.Children) _diffRebuilds.Remove(row);
         _repoBody.Children.Clear();
-        if (_scope is GitReviewScope.Committed or GitReviewScope.Branch
-            && _repository is { IsReadable: false } unavailable)
+        try
         {
-            _repoBody.Children.Add(EmptyLine(RepositoryWhyKey(unavailable.Outcome)));
-            return;
+            if (_scope is GitReviewScope.Committed or GitReviewScope.Branch
+                && _repository is { IsReadable: false } unavailable)
+            {
+                _repoBody.Children.Add(EmptyLine(RepositoryWhyKey(unavailable.Outcome)));
+                return;
+            }
+            switch (_scope)
+            {
+                case GitReviewScope.Committed:
+                    RenderCommitted();
+                    break;
+                case GitReviewScope.Branch:
+                    RenderBranch();
+                    break;
+                default:
+                    RenderStatusScope(_repository);
+                    break;
+            }
         }
-        switch (_scope)
+        finally
         {
-            case GitReviewScope.Committed:
-                RenderCommitted();
-                break;
-            case GitReviewScope.Branch:
-                RenderBranch();
-                break;
-            default:
-                RenderStatusScope(_repository);
-                break;
+            if (--_repoRestoreReads == 0) RestoreRepositoryScroll(_repoRenderVersion);
         }
     }
+
+    private Action BeginRepositoryRowRestore()
+    {
+        var version = _repoRenderVersion;
+        ++_repoRestoreReads;
+        return () =>
+        {
+            if (version == _repoRenderVersion && --_repoRestoreReads == 0) RestoreRepositoryScroll(version);
+        };
+    }
+
+    private void RestoreRepositoryScroll(int version)
+        => Dispatcher.UIThread.Post(() =>
+        {
+            if (version != _repoRenderVersion) return;
+            _repoScroll.Offset = _repoRestoreOffset;
+            _repoScrollRestorePending = false;
+        }, DispatcherPriority.Loaded);
 
     /// <summary>
     /// One status read, cut to the scope. Uncommitted keeps the whole reading — staged, unstaged and untracked —
@@ -811,7 +886,8 @@ internal sealed partial class InspectorPanel : UserControl
 
         var detail = new ContentControl { IsVisible = false, Margin = new Thickness(0, 4, 0, 6) };
         var generation = 0;
-        void Load(bool whole)
+        var renderVersion = _repoRenderVersion;
+        void Load(bool whole, Action? restored = null)
         {
             var request = ++generation;
             detail.Content = EmptyLine("InspectorRepoReading");
@@ -821,7 +897,7 @@ internal sealed partial class InspectorPanel : UserControl
                 try
                 {
                     var comparison = await read(path, whole);
-                    if (request != generation) return;
+                    if (request != generation || renderVersion != _repoRenderVersion) return;
                     var body = new StackPanel { Spacing = 5 };
                     if (comparison is null || !comparison.IsReadable)
                     {
@@ -849,24 +925,28 @@ internal sealed partial class InspectorPanel : UserControl
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                 {
-                    if (request == generation) detail.Content = new TextBlock { Text = ex.Message, TextWrapping = TextWrapping.Wrap };
+                    if (request == generation && renderVersion == _repoRenderVersion)
+                        detail.Content = new TextBlock { Text = ex.Message, TextWrapping = TextWrapping.Wrap };
                 }
+                finally { restored?.Invoke(); }
             }
         }
-        _diffRebuilds.Add(() =>
+        _diffRebuilds[container] = () =>
         {
             if (detail.Content is not null) Load(_expandedFiles.Contains(path.RelativePath));
-        });
+        };
         header.Click += (_, _) =>
         {
             if (detail.IsVisible)
             {
                 detail.IsVisible = false;
+                _openedRepoFiles.Remove(path.RelativePath);
                 header.Classes.Set("expanded", false);
                 return;
             }
             Load(_expandedFiles.Contains(path.RelativePath));
             detail.IsVisible = true;
+            _openedRepoFiles.Add(path.RelativePath);
             header.Classes.Set("expanded", true);
         };
 
@@ -885,6 +965,12 @@ internal sealed partial class InspectorPanel : UserControl
         }
         container.Children.Add(row);
         container.Children.Add(detail);
+        if (_openedRepoFiles.Contains(path.RelativePath))
+        {
+            detail.IsVisible = true;
+            header.Classes.Set("expanded", true);
+            Load(_expandedFiles.Contains(path.RelativePath), BeginRepositoryRowRestore());
+        }
         return container;
     }
 
@@ -1115,6 +1201,7 @@ internal sealed partial class InspectorPanel : UserControl
         _changesScroll.IsVisible = changes && _scope == GitReviewScope.LastTurn;
         _repoScroll.IsVisible = changes && _scope != GitReviewScope.LastTurn;
         _viewSettings.IsVisible = changes && !EditSession.Editing;
+        _refreshChanges.IsVisible = changes;
         if (_fileTreeToggle is not null) _fileTreeToggle.IsVisible = changes;
         RenderScopeBarVisibility();
     }
@@ -1530,8 +1617,7 @@ internal sealed partial class InspectorPanel : UserControl
         _ => "InspectorRepoFailed",
     };
 
-    /// <summary>The branch line and the one way to ask for the read again. The glyph is git's own idea — a
-    /// branch — and the count only appears when the session is off its upstream, because "0 ahead · 0 behind"
+    /// <summary>The branch line. The count only appears when the session is off its upstream, because "0 ahead · 0 behind"
     /// would be a fact nobody needed telling.</summary>
     private Control RepositoryHead(GitRepositoryState? state)
     {
@@ -1560,21 +1646,6 @@ internal sealed partial class InspectorPanel : UserControl
         ToolTip.SetTip(head, HubStrings.Get("InspectorTabRepo"));
         row.Children.Add(head);
 
-        var icon = new Path
-        {
-            Width = 13,
-            Height = 13,
-            Stretch = Stretch.Uniform,
-            Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round,
-        };
-        icon.Bind(Path.DataProperty, new DynamicResourceExtension("Hub.Icon.Refresh"));
-        var refresh = new Button { Classes = { "viewer-action" }, Tag = "InspectorRepoRefresh", Content = icon };
-        ToolTip.SetTip(refresh, HubStrings.Get("InspectorRepoRefresh"));
-        refresh.Click += (_, _) => RepoRefreshRequested?.Invoke();
-        Grid.SetColumn(refresh, 1);
-        row.Children.Add(refresh);
         return row;
     }
 
@@ -1617,7 +1688,8 @@ internal sealed partial class InspectorPanel : UserControl
         }
         var selectedRange = GitReviewScopes.RangeFor(_scope);
         var generation = 0;
-        void BuildRepoDetail(bool whole)
+        var renderVersion = _repoRenderVersion;
+        void BuildRepoDetail(bool whole, Action? restored = null)
         {
             var request = ++generation;
             if (ReadComparisonRequested is { } read)
@@ -1631,7 +1703,7 @@ internal sealed partial class InspectorPanel : UserControl
                     try
                     {
                         var snapshot = await read(state, entry, range);
-                        if (request != generation || owner != _conversationId) return;
+                        if (request != generation || owner != _conversationId || renderVersion != _repoRenderVersion) return;
                         if (snapshot is null) { ShowDiff(GitRepository.DiffFor(state, entry)); return; }
                         var body = new StackPanel { Spacing = 5 };
                         if (range is GitFileRange.WorkingTreeAgainstHead or GitFileRange.WorkingTree
@@ -1648,15 +1720,17 @@ internal sealed partial class InspectorPanel : UserControl
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
-                        if (request == generation && owner == _conversationId)
+                        if (request == generation && owner == _conversationId && renderVersion == _repoRenderVersion)
                             detail.Content = new TextBlock { Text = ex.Message, TextWrapping = TextWrapping.Wrap };
                     }
+                    finally { restored?.Invoke(); }
                 }
                 return;
             }
             if (!whole || WholeDiffRequested is not { } ask)
             {
                 ShowDiff(GitRepository.DiffFor(state, entry));
+                restored?.Invoke();
                 return;
             }
             // The unread side of a repository file is git's to read, so this is the one row that says what it is
@@ -1666,26 +1740,29 @@ internal sealed partial class InspectorPanel : UserControl
             {
                 // The row may have been redrawn, folded, or repainted while git was reading. Only the row that is
                 // still expanded and still showing this content gets the answer.
-                if (!_expandedFiles.Contains(entry.RelativePath) || detail.Content is null) return;
-                ShowDiff(diff);
+                if (renderVersion == _repoRenderVersion && _expandedFiles.Contains(entry.RelativePath)
+                    && detail.Content is not null) ShowDiff(diff);
+                restored?.Invoke();
             });
         }
         // A layout change reaches this row too, but only once it has been opened: an unopened file has no diff on
         // screen to redraw, and reading one to keep it in step would be a git read nobody asked for.
-        _diffRebuilds.Add(() =>
+        _diffRebuilds[container] = () =>
         {
             if (detail.Content is not null) BuildRepoDetail(_expandedFiles.Contains(entry.RelativePath));
-        });
+        };
         header.Click += (_, _) =>
         {
             if (detail.IsVisible)
             {
                 detail.IsVisible = false;
+                _openedRepoFiles.Remove(entry.RelativePath);
                 header.Classes.Set("expanded", false);
                 return;
             }
             BuildRepoDetail(_expandedFiles.Contains(entry.RelativePath));
             detail.IsVisible = true;
+            _openedRepoFiles.Add(entry.RelativePath);
             header.Classes.Set("expanded", true);
         };
 
@@ -1703,6 +1780,12 @@ internal sealed partial class InspectorPanel : UserControl
         repositoryRow.Children.Add(repositoryFileActions);
         container.Children.Add(repositoryRow);
         container.Children.Add(detail);
+        if (_openedRepoFiles.Contains(entry.RelativePath))
+        {
+            detail.IsVisible = true;
+            header.Classes.Set("expanded", true);
+            BuildRepoDetail(_expandedFiles.Contains(entry.RelativePath), BeginRepositoryRowRestore());
+        }
         return container;
     }
 
@@ -1823,10 +1906,10 @@ internal sealed partial class InspectorPanel : UserControl
             if (detail.IsVisible) _openedChanges.Add(change.RelativePath);
             else _openedChanges.Remove(change.RelativePath);
         };
-        _diffRebuilds.Add(() =>
+        _diffRebuilds[container] = () =>
         {
             if (detail.Content is not null) detail.Content = BuildDiffDetail(change, resolveDiff, resolveSnapshot);
-        });
+        };
 
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
         row.Children.Add(header);
