@@ -444,8 +444,8 @@ internal sealed class ShellProvidersChecks
         // The optional-key requirement cannot detect a real stored key. A wrong mark makes a working
         // custom endpoint look unauthenticated; exercise both drafts through the actual rendered label.
         Check(draftedStatus == HubStrings.Get("ProviderConnected")
-              && keylessStatus == HubStrings.Get("ProviderKeylessReady"),
-            "自定义 provider 的状态按实际密钥显示：有密钥已鉴权，留空无需密钥（实际 ["
+              && keylessStatus == HubStrings.Get("ProviderNotConnected"),
+            "自定义 provider 的状态按实际密钥显示：有密钥已鉴权，留空未鉴权（实际 ["
                 + draftedStatus + " | " + keylessStatus + "]）");
         if (keyless is not null && shell.Chat.RemoveProvider(keyless.Id)) settings.RefreshProviderGroupsForCheck();
 

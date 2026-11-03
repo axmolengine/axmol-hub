@@ -1742,8 +1742,8 @@ public partial class SettingsPage : UserControl
     private Control BuildLinkedStatusMark(ModelProvider provider)
     {
         var linked = IsLinked(provider);
-        var keyless = !provider.RequiresCredential;
-        var ready = !provider.NeedsOpenAiRelogin && (keyless || linked);
+        var keyless = !provider.CanAuthenticate;
+        var authenticated = !provider.NeedsOpenAiRelogin && (keyless || linked);
 
         var status = new StackPanel
         {
@@ -1751,7 +1751,7 @@ public partial class SettingsPage : UserControl
             Spacing = 5,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        status.Children.Add(ready ? BuildCheckIcon() : BuildUnlinkedIcon());
+        status.Children.Add(authenticated ? BuildCheckIcon() : BuildUnlinkedIcon());
 
         var label = new TextBlock
         {
@@ -1765,7 +1765,7 @@ public partial class SettingsPage : UserControl
         };
         label.Bind(TextBlock.ForegroundProperty,
             new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
-                ready ? "Hub.Success" : "Hub.TextTertiary"));
+                authenticated ? "Hub.Success" : "Hub.TextTertiary"));
         status.Children.Add(label);
         return status;
     }
