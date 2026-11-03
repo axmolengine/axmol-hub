@@ -1731,37 +1731,23 @@ internal sealed class ShellProvidersChecks
     {
         var dual = providers.FirstOrDefault(provider => provider.SupportsOAuth
             && provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
-        Check(dual is not null, "存在同时支持登录与密钥的 provider，用它检查第一步的两个选项");
+        Check(dual is not null, "存在同时支持登录与密钥的 provider，用它检查双入口同屏");
 
         if (dual is not null)
         {
-            var stepOne = AuthDialog.ForCheck(dual);
-            Check(stepOne.StepControlCountForCheck > 0,
-                "鉴权对话框第一步建出了控件（实际 " + stepOne.StepControlCountForCheck + " 个；为 0 说明读的是空树，下面几条会空过）");
-            Check(stepOne.BlankTextCountForCheck == 0,
-                "鉴权对话框第一步没有空白文字块（实际 " + stepOne.BlankTextCountForCheck + " 个）");
-            Check(stepOne.MethodOptionsForCheck.Contains(ProviderAuthMethods.OAuth)
-                && stepOne.MethodOptionsForCheck.Contains(ProviderAuthMethods.ApiKey),
-                "第一步按清单列出该 provider 支持的鉴权方式（实际 ["
-                    + string.Join(",", stepOne.MethodOptionsForCheck) + "]）");
-            Check(!stepOne.NextEnabledForCheck, "未选择方式时「下一步」不可用");
-            Check(stepOne.NextTextForCheck == HubStrings.Get("Next"), "第一步的确认键是「下一步」");
-
-            stepOne.SelectForCheck(ProviderAuthMethods.ApiKey);
-            Check(stepOne.NextEnabledForCheck, "选中一种方式后「下一步」才可用");
-
-            // The regression this guards: the bound route used to be read as a step, so a provider already signed
-            // in through the browser — or one whose saved key the store could not hand back — opened a key box and
-            // left the choice one Back click away. Both hints are opened here so neither route can regress alone.
-            var reopened = new[] { ProviderAuthMethods.ApiKey, ProviderAuthMethods.OAuth }
-                .Select(hint => AuthDialog.ForCheck(dual, hint))
-                .ToArray();
-            Check(reopened.All(dialog => !dialog.HasPasswordBoxForCheck
-                    && dialog.MethodOptionsForCheck.Contains(ProviderAuthMethods.OAuth)
-                    && dialog.MethodOptionsForCheck.Contains(ProviderAuthMethods.ApiKey)),
-                "已绑定方式的 provider 再次鉴权仍停在第一步，绑定方式只作预选（实际 ["
-                    + string.Join(" | ", reopened.Select(dialog => "[" + string.Join(",", dialog.MethodOptionsForCheck) + "]"))
-                    + "]，密码框 " + string.Join(",", reopened.Select(dialog => dialog.HasPasswordBoxForCheck)) + "）");
+            var dialog = AuthDialog.ForCheck(dual);
+            Check(dialog.StepControlCountForCheck > 0,
+                "鉴权对话框建出了控件（实际 " + dialog.StepControlCountForCheck + " 个；为 0 说明读的是空树，下面几条会空过）");
+            Check(dialog.BlankTextCountForCheck == 0,
+                "鉴权对话框没有空白文字块（实际 " + dialog.BlankTextCountForCheck + " 个）");
+            Check(dialog.HasLoginButtonForCheck && dialog.HasConnectButtonForCheck && dialog.HasPasswordBoxForCheck,
+                "OAuth 登录入口、API Key 输入框和连接按钮同屏显示");
+            Check(dialog.MethodOptionsForCheck.Contains(ProviderAuthMethods.OAuth)
+                && dialog.MethodOptionsForCheck.Contains(ProviderAuthMethods.ApiKey),
+                "同屏入口标记与 provider 声明的鉴权方式一致（实际 ["
+                    + string.Join(",", dialog.MethodOptionsForCheck) + "]）");
+            Check(dialog.ActionTextForCheck == HubStrings.Get("AuthDo"),
+                "API Key 入口使用「鉴权」操作");
 
             var login = providers.FirstOrDefault(provider => provider.SupportsOAuth);
             if (login is not null)
@@ -1773,27 +1759,25 @@ internal sealed class ShellProvidersChecks
             }
         }
 
-        // A key-only provider opens straight on the key box. Asserted because dressing a one-option choice
-        // up as a decision is the failure mode: the user clicks Next to accept what was already decided. The
-        // step is not forced here — it is the one the dialog chooses from its own route list.
         var keyOnly = providers.FirstOrDefault(provider => !provider.SupportsOAuth
             && provider.EffectiveAuthMethods.Contains(ProviderAuthMethods.ApiKey));
-        Check(keyOnly is not null, "存在只支持密钥的 provider，用它检查单路径时直接进输入步");
+        Check(keyOnly is not null, "存在只支持密钥的 provider，用它检查单一鉴权入口");
 
         if (keyOnly is not null)
         {
-            var keyStep = AuthDialog.ForCheck(keyOnly);
-            Check(keyStep.StepControlCountForCheck > 0,
-                "鉴权对话框单路径一打开就建出了控件（实际 " + keyStep.StepControlCountForCheck + " 个；为 0 说明读的是空树）");
-            Check(keyStep.BlankTextCountForCheck == 0,
-                "鉴权对话框单路径没有空白文字块（实际 " + keyStep.BlankTextCountForCheck + " 个）");
-            Check(keyStep.MethodOptionsForCheck.Length == 0, "密钥步不再重复列鉴权方式");
-            Check(keyStep.NextEnabledForCheck == false, "密钥步没有「下一步」，确认键是「保存」");
-            Check(keyStep.HasPasswordBoxForCheck, "密钥步有一个密码类输入框");
-            Check(keyStep.VisibleTextForCheck.Any(text => text.Contains(keyOnly.Name))
+            var dialog = AuthDialog.ForCheck(keyOnly);
+            Check(dialog.StepControlCountForCheck > 0,
+                "单一鉴权入口建出了控件（实际 " + dialog.StepControlCountForCheck + " 个；为 0 说明读的是空树）");
+            Check(dialog.BlankTextCountForCheck == 0,
+                "单一鉴权入口没有空白文字块（实际 " + dialog.BlankTextCountForCheck + " 个）");
+            Check(dialog.MethodOptionsForCheck.SequenceEqual([ProviderAuthMethods.ApiKey])
+                && !dialog.HasLoginButtonForCheck && dialog.HasConnectButtonForCheck,
+                "API Key-only provider 只显示密钥入口和连接按钮");
+            Check(dialog.HasPasswordBoxForCheck, "API Key 入口使用密码类输入框");
+            Check(dialog.VisibleTextForCheck.Any(text => text.Contains(keyOnly.Name))
                 == (keyOnly.KeyValidation is { IsKnown: true }),
-                "是否说明「会先校验」取决于清单有没有配 keyValidation（实际 ["
-                    + string.Join(" | ", keyStep.VisibleTextForCheck) + "]）");
+                "是否说明会先检查 API Key 取决于 manifest 是否配置 keyValidation（实际 ["
+                    + string.Join(" | ", dialog.VisibleTextForCheck) + "]）");
         }
 
         // The provider that cannot authenticate at all must also never be asked to: this is the negation of the

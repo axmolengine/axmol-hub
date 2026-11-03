@@ -224,13 +224,11 @@ public partial class App : Application
             return;
         }
 
-        // --shot-auth-dialog <png>: the authentication dialog, on the method step or the key step depending on
-        // whether the file name says "key". It is a separate switch for the same reason as the picker shot: a
-        // modal is not part of the settings page, so --smoke-pages cannot photograph it at all.
+        // --shot-auth-dialog <png>: the authentication dialog. It is a separate switch for the same reason as
+        // the picker shot: a modal is not part of the settings page, so --smoke-pages cannot photograph it.
         if (Options.ShotAuthDialogPath is { } authDialogShot)
         {
-            // OrcaRouter is the one provider with both routes, so step one is the only place the two options
-            // appear together; a key-only provider would render a list of one and misrepresent the dialog.
+            // OrcaRouter offers both routes, so the shot shows the combined sign-in and key-entry surface.
             var provider = AiProviderManifest.CreateBuiltIn("orcarouter");
             if (provider is null)
             {
@@ -239,12 +237,9 @@ public partial class App : Application
                 return;
             }
 
-            // Two pictures, because the flow has two halves and only the second one has an input in it: a name
-            // containing "key" photographs the key surface, anything else the method list the dialog actually
-            // opens on — the half the settings page's sign-in button lands on.
-            var authDialog = authDialogShot.Contains("key", StringComparison.OrdinalIgnoreCase)
-                ? AuthDialog.ForCheckKeyStep(provider)
-                : AuthDialog.ForCheck(provider);
+            // Keep the key-named shot option as an alias for existing drive scripts; both paths now show the
+            // same combined surface.
+            var authDialog = AuthDialog.ForCheck(provider);
             desktop.MainWindow = authDialog;
             authDialog.Opened += (_, _) => Dispatcher.UIThread.Post(() =>
             {
