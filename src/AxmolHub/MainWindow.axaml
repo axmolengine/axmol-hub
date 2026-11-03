@@ -249,12 +249,15 @@
          live in Theme/HubStyles.axaml under "Drawn window chrome", because an internal dialog's drawn header
          wears the same plates (Views/HubDialogChrome.cs) — one definition, two wearers. -->
 
-    <!-- Small quiet buttons in the status strip. -->
+    <!-- Small quiet buttons in the status strip. One plate height for every one of them: the strip is 28 tall
+         and its buttons are a row of plates beside each other, so a text plate and the log chevron beside it
+         have to be the same thickness or the chevron reads as a bigger control than the word next to it. A floor
+         rather than a fixed height, because the log drawer's own 「…」 plate sets a taller vertical padding. -->
     <Style Selector="Button.strip">
-      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinHeight" Value="22" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="Padding" Value="8,0" />
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
     </Style>
@@ -1058,12 +1061,17 @@
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
                 Grid.Column="4" Classes="strip"
                 IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
+        <!-- The log drawer's chevron. It is drawn at 1:1 in a box the size of its own ink rather than scaled
+             into a square slot: a stretched Path pins the scaled ink to its slot's top-left, which is what left
+             this triangle high and left of its hover plate. The geometry starts at 0,0 and fills 11x6 exactly,
+             so the box *is* the ink, layout centres that box in the 22x22 plate, and the 180-degree flip for the
+             open state turns about the ink's own centre. -->
         <Button x:Name="LogToggle" Grid.Column="5" Classes="icon-ghost"
-                Width="28" Height="28" MinWidth="0" MinHeight="0"
-                Margin="0" Padding="0" VerticalAlignment="Center">
+                Width="22" Height="22" MinWidth="0" MinHeight="0"
+                Margin="0" Padding="0" VerticalAlignment="Center" HorizontalAlignment="Center">
           <Path x:Name="LogToggleChevron" Classes="stroked"
-                Data="{StaticResource Hub.Icon.Chevron}"
-                Width="13" Height="13" Stretch="Uniform"
+                Data="M0 0H11L5.5 6Z"
+                Width="11" Height="6" Stretch="None"
                 RenderTransformOrigin="50%,50%" />
         </Button>
       </Grid>
