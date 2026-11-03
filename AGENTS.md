@@ -71,46 +71,35 @@ When in doubt, remove chrome first. New UI does not automatically require a new 
 property. Cover new or changed high-impact interactions in the cheapest suitable check; ordinary visual
 details remain a manual review unless an explicit acceptance requirement says otherwise.
 
-## Verify with the project's own data directory
+## Optional shell verification
 
-Always start the app against the repository's own `data/` directory:
-
-```powershell
-dotnet run --project src/AxmolHub -- --data-root ./data
-```
-
-Without it the app falls back to the per-user root (`%LocalAppData%\AxmolHub\data`), and a verification run
-would operate on the user's real engines, projects, toolchains and credentials. `data/` is gitignored and must
-never be committed.
-
-For `--verify-shell`, run the single build-and-check command through Axmol Hub's `run_command` tool so Avalonia
-uses the active desktop session. On Apple Silicon macOS, use `/opt/homebrew/bin/dotnet`; elsewhere use the
-installed `dotnet` executable. Keep `dotnet run` responsible for both building and checking; do not add
-`--no-build`. Give the tool a 900-second timeout because startup, build and UI checks can be
-quiet for a while. Do not infer a hang from silence or stop the process early. Keep the report and captured output
-under ignored `tmp/`, then inspect them only after the command exits. Keep the command itself shell-neutral so the
-runner's exit status is the `dotnet run` exit status; do not append `$?`/`$LASTEXITCODE` capture syntax from a
-different shell:
+Run `--verify-shell` only when a UI shell check is needed. Execute the single build-and-check command through
+Axmol Hub's `run_command` tool so Avalonia uses the active desktop session:
 
 ```sh
-/opt/homebrew/bin/dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/selfcheck-shell.txt > ./tmp/selfcheck-shell-run.log 2>&1
+dotnet run --project src/AxmolHub -- --verify-shell ./tmp/selfcheck-shell.txt > ./tmp/selfcheck-shell-run.log 2>&1
 ```
 
-On other hosts, use the installed `dotnet` executable in the same command. Use the tool's timeout setting
-(`timeout_seconds: 900`); it is not a shell argument. A successful tool exit and the report's final `RESULT:`
-line determine the outcome. Inspect the saved log and report after exit, and preserve and report failures instead
-of deleting checks to make the run green.
+On Apple Silicon macOS, use `/opt/homebrew/bin/dotnet` instead of `dotnet`; use the installed `dotnet` executable
+elsewhere. Keep `dotnet run` responsible for both building and checking—do not add `--no-build`. Set the tool's
+`timeout_seconds` to `900`, because startup, builds and UI checks may be quiet for a while. Do not infer a hang
+from silence or stop the process early.
+
+Keep the report and captured output under ignored `tmp/`, and inspect both only after the command exits. The
+command must remain shell-neutral: do not append `$?` or `$LASTEXITCODE` capture syntax. Determine the outcome
+from the tool exit status and the report's final `RESULT:` line. Preserve and report failures rather than deleting
+checks to make the run green.
 
 ## Screenshot verification (`--drive`, DEBUG builds only)
 
 To look at a specific state of the real window (after a feature or a UI bug fix), use `--drive <script.json>`. It is
 compiled in but inert in release builds, skips the single-instance broker (so it runs beside the user's own Hub), and —
-unlike the automation modes — runs against the **user's real data root** (`--data-root` still overrides) without pinning
-language/theme; settings are edited on a temp copy so the user's file is untouched. This is the one sanctioned exception
-to the `--data-root ./data` rule above; it is for development, packaged installs do not support it.
+unlike the automation modes — runs against the **user's real data root** by default (`--data-root` still overrides)
+without pinning language/theme; settings are edited on a temp copy so the user's file is untouched. It is for
+development; packaged installs do not support it.
 
 ```sh
-/opt/homebrew/bin/dotnet run --project src/AxmolHub -- --drive ./tmp/drive/script.json
+dotnet run --project src/AxmolHub -- --drive ./tmp/drive/script.json
 ```
 
 Script: `{"out":"tmp/drive","steps":[{"do":"navigate","page":"Assistant"},{"do":"click","text":"..."},
