@@ -591,8 +591,9 @@ public sealed partial class ChatWorkspace : IDisposable
 
     public Conversation? OpenConversation(string id) => _sessions.OpenConversation(id);
     /// <summary>Resolves a plan review card. Approval feeds the exact reviewed plan back as a user instruction and
-    /// starts it in Agent mode; revision leaves the composer ready for a new Plan-mode request.</summary>
-    internal bool TryResolvePlanApproval(string conversationId, int turnIndex, string decision, out string? refusalKey) => _sessions.TryResolvePlanApproval(conversationId, turnIndex, decision, out refusalKey);
+    /// starts it in Agent mode, optionally as a goal; revision leaves the composer ready for a new Plan-mode request.</summary>
+    internal bool TryResolvePlanApproval(string conversationId, int turnIndex, string decision, out string? refusalKey,
+        bool isGoal = false) => _sessions.TryResolvePlanApproval(conversationId, turnIndex, decision, out refusalKey, isGoal);
     public void DeleteConversation(string id) => _sessions.DeleteConversation(id);
     /// <summary>Renames a conversation; an empty title is refused so a session can never lose its label.
     /// Renaming writes only the conversation file, so the pin and the messages are untouched. It goes through

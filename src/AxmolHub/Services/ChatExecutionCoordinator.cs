@@ -1531,12 +1531,7 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.Mode = ChatModes.Plan;
                 }
                 if (userTurn.IsGoal)
-                {
-                    ResetGoal(opened);
-                    opened.Goal = text;
-                    opened.GoalState = ChatGoalStates.Active;
-                    opened.GoalTurnAt = userTurn.At;
-                }
+                    InitializeGoal(opened, userTurn);
                 if (!userTurn.IsGoal && opened.GoalState == ChatGoalStates.Active)
                 {
                     opened.GoalEmptyRunCount = opened.GoalNoProgressRequests = 0;

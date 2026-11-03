@@ -88,6 +88,14 @@ internal sealed partial class ChatExecutionCoordinator
         opened.GoalWakeAt = canWait ? DateTimeOffset.UtcNow + delay : null;
     }
 
+    internal void InitializeGoal(Conversation conversation, ChatTurn userTurn)
+    {
+        ResetGoal(conversation);
+        conversation.Goal = userTurn.Text;
+        conversation.GoalState = ChatGoalStates.Active;
+        conversation.GoalTurnAt = userTurn.At;
+    }
+
     private void ResetGoal(Conversation conversation)
     {
         var preferences = PreferencesProvider?.Invoke() ?? new HubPreferences();

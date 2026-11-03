@@ -4372,10 +4372,19 @@ public partial class ChatPanel : UserControl
 
     private void ResolvePlanApproval(string conversationId, int turnIndex, string decision)
     {
-        if (!_chat.TryResolvePlanApproval(conversationId, turnIndex, decision, out var refusalKey))
+        var isGoal = decision == PlanApprovalStates.Approved
+                     && conversationId == _chat.ActiveConversation?.Id
+                     && GoalDraftSelectedForActiveConversation && _chat.ActiveMode == ChatModes.Agent;
+        if (!_chat.TryResolvePlanApproval(conversationId, turnIndex, decision, out var refusalKey, isGoal))
         {
             AppendNotice(HubStrings.Get(refusalKey ?? "ChatApprovalGone"), danger: true);
             return;
+        }
+
+        if (isGoal)
+        {
+            ClearGoalDraftSelection();
+            RefreshComposerChoices();
         }
 
         // Revision goes through the ordinary composer send, not a decision that consumes the plan first.

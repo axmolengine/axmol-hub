@@ -553,7 +553,8 @@ internal sealed partial class ChatSessionCoordinator
         return _active;
     }
 
-    internal bool TryResolvePlanApproval(string conversationId, int turnIndex, string decision, out string? refusalKey)
+    internal bool TryResolvePlanApproval(string conversationId, int turnIndex, string decision, out string? refusalKey,
+        bool isGoal = false)
     {
         refusalKey = null;
         if (decision is not (PlanApprovalStates.Approved or PlanApprovalStates.RevisionRequested or PlanApprovalStates.Rejected))
@@ -594,6 +595,7 @@ internal sealed partial class ChatSessionCoordinator
             }
         }
 
+        var resolved = false;
         var updated = _sessions.TryUpdate(conversationId, opened =>
         {
             if (turnIndex >= opened.Messages.Count || opened.Messages[turnIndex].PlanApprovalState != PlanApprovalStates.Pending)
@@ -605,14 +607,18 @@ internal sealed partial class ChatSessionCoordinator
             if (decision == PlanApprovalStates.Approved)
             {
                 opened.Mode = ChatModes.Agent;
-                opened.Append(ChatTurn.User(PlanApprovalInstruction)with { Plan = pending.Plan });
+                var userTurn = ChatTurn.User(PlanApprovalInstruction, isGoal: isGoal) with { Plan = pending.Plan };
+                if (userTurn.IsGoal)
+                    Execution.InitializeGoal(opened, userTurn);
+                opened.Append(userTurn);
             }
             else if (decision == PlanApprovalStates.RevisionRequested)
             {
                 opened.Mode = ChatModes.Plan;
             }
+            resolved = true;
         });
-        if (!updated)
+        if (!updated || !resolved)
         {
             refusalKey = "ChatApprovalGone";
             return false;
