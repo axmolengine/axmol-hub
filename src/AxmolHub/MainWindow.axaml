@@ -1057,9 +1057,10 @@
                    VerticalAlignment="Center" />
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
                 Grid.Column="4" Classes="strip"
-                IsEnabled="False" Margin="6,0,0,0" />
+                IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
         <Button x:Name="LogToggle" Grid.Column="5" Classes="icon-ghost"
-                Padding="6">
+                Width="28" Height="28" MinWidth="0" MinHeight="0"
+                Margin="0" Padding="0" VerticalAlignment="Center">
           <Path x:Name="LogToggleChevron" Classes="stroked"
                 Data="{StaticResource Hub.Icon.Chevron}"
                 Width="13" Height="13" Stretch="Uniform"
