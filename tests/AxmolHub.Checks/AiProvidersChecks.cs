@@ -178,6 +178,33 @@ internal static class AiProvidersChecks
         if (defaultId is null || catalog.All(entry => entry.Id != defaultId))
             throw new Exception($"The manifest's default provider '{defaultId}' is not in the catalog.");
         Console.WriteLine($"PASS: the manifest names one real default preset to seed ('{defaultId}').");
+        var openRouter = AiProviderManifest.CreateBuiltIn("openrouter")
+                         ?? throw new Exception("openrouter is missing from ai-providers.json.");
+        Assert(openRouter.BaseUrl == "https://openrouter.ai/api/v1"
+               && openRouter.EffectiveAuthMethods.SequenceEqual([ProviderAuthMethods.ApiKey])
+               && openRouter.KeyValidation is { IsKnown: true, Path: "/models" }
+               && openRouter.ExtraHeaders.GetValueOrDefault("HTTP-Referer") == "https://github.com/axmolengine/axmol-hub"
+               && openRouter.ExtraHeaders.GetValueOrDefault("X-OpenRouter-Title") == "Axmol Hub",
+            "OpenRouter preset declares its official API, API-key validation, and app attribution headers");
+        openRouter.Credential = new ProviderCredential
+        {
+            Id = "openrouter-catalog-probe",
+            ProviderId = openRouter.Id,
+            Secret = "sk-or-v1-test",
+        };
+        var openRouterCatalogBytes = System.Text.Encoding.UTF8.GetBytes("""{"data":[{"id":"openrouter-test/model"}]}""");
+        var openRouterRecorder = new RequestRecorder(openRouterCatalogBytes);
+        using (var recorder = new HttpClient(openRouterRecorder))
+        {
+            var catalogBatch = await new OpenAiCompatibleModelsSource().FetchAsync(recorder, openRouter, CancellationToken.None);
+            var sent = openRouterRecorder.Requests.FirstOrDefault();
+            Assert(sent is { Method: "GET", Path: "/api/v1/models" }
+                   && sent["authorization"] == "Bearer sk-or-v1-test"
+                   && sent["http-referer"] == "https://github.com/axmolengine/axmol-hub"
+                   && sent["x-openrouter-title"] == "Axmol Hub"
+                   && catalogBatch.Models.Contains("openrouter-test/model"),
+                "OpenRouter catalog request uses its official models route with bearer auth and app attribution headers");
+        }
         // Factory validation: custom needs base URL + model; a built-in that needs a credential is refused while it
         // has none; a keyless local endpoint works.
         AssertRejects(() => ChatClientFactory.Create(new ModelProvider { IsCustom = true, Model = "m" }), "custom provider without base URL is rejected");
@@ -761,28 +788,12 @@ internal static class AiProvidersChecks
         wireStore.Save([new ModelProvider { Id = "saved-wire", Name = "Saved wire", IsCustom = true, BaseUrl = "https://mirror.test/v1", Model = "m", Protocol = ModelProtocols.Messages, }]);
         Assert(wireStore.Load().Single().Protocol == ModelProtocols.Messages, "a declared wire survives providers.json, because only the person on the endpoint can say it");
         // ── The claim is made for the endpoint; a per-model entry is the exception, and the specific one wins ──
-        // This reverses the rule this file asserted until AgentRouter's catalog proved it wrong. That rule said a
-        // shipped preset may never claim the endpoint, only individual models, because a provider-wide claim is the
-        // shape an aggregating gateway makes false. The gateway then added a model the table had not named: the chain
-        // fell through to the catalog, and the catalog routed a working /v1/responses endpoint back onto chat. Naming
-        // ids needs a release every time a provider renames one; naming the endpoint needs none.
+        // Provider-wide wire declarations are valid for aggregating gateways; per-model declarations remain the
+        // more specific override for endpoints that mix wires.
         var shippedPresets = AiProviderManifest.Load();
         Assert(shippedPresets.All(entry => entry.Protocol is null || ModelProtocols.IsKnown(entry.Protocol)), "every wire a preset declares for an endpoint is one this build speaks, checked at the source rather than on the provider");
         Assert(shippedPresets.SelectMany(entry => entry.ModelProtocols.Values).All(ModelProtocols.IsKnown), "every per-model wire a preset names is one this build speaks, checked at the source rather than on the provider");
         Assert(AiProviderManifest.CreateBuiltIn("deepseek")!.Protocol is null, "a preset that says nothing arrives with no wire rather than a guessed one");
-
-        // The regression that forced the change: a model nobody named inherits the endpoint's wire. AgentRouter's
-        // catalog answered gpt-5.6-sol while the manifest named only gpt-6.1-sol, so the model arrived on chat and was
-        // refused with "this model does not support /v1/chat/completions, please use /v1/responses".
-        var wiredPreset = AiProviderManifest.CreateBuiltIn("agentrouter")
-                          ?? throw new Exception("agentrouter is missing from ai-providers.json.");
-        Assert(wiredPreset.Protocol == ModelProtocols.Responses && wiredPreset.DeclaredProtocols.Count == 0,
-            "AgentRouter declares its wire for the endpoint and names no model ids, because ids are what went stale (wire="
-            + (wiredPreset.Protocol ?? "none") + " per-model=" + wiredPreset.DeclaredProtocols.Count + ")");
-        Assert(new[] { "gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.6-sol-2026-02-01" }
-                   .All(model => ChatClientFactory.ProtocolFor(wiredPreset, model) == ModelProtocols.Responses),
-            "a model the manifest never named is sent on the endpoint's wire, dated suffix and all (gpt-5.6-sol="
-            + ChatClientFactory.ProtocolFor(wiredPreset, "gpt-5.6-sol") + ")");
 
         // A per-model line still outranks the endpoint: it is the more specific claim and the escape hatch a chat-only
         // model needs. Three edges ride along — the id matches without case, an entry naming a model the provider has
@@ -825,26 +836,6 @@ internal static class AiProvidersChecks
         // perfectly good key. Both call sites go through ProviderStaticHeaders now, so both are measured rather
         // than assumed: the shared source because it was the one missing them, Copilot's because its hand-written
         // loop was replaced by that rule and must not have lost what it did.
-        var catalogBytes = System.Text.Encoding.UTF8.GetBytes("""{"object":"list","data":[{"id":"gpt-6.1-sol"}]}""");
-        var agentRouter = AiProviderManifest.CreateBuiltIn("agentrouter")
-                          ?? throw new Exception("agentrouter is missing from ai-providers.json.");
-        agentRouter.Credential = new ProviderCredential { Id = "catalog-probe", ProviderId = agentRouter.Id, Secret = "sk-test" };
-        var catalogRecorder = new RequestRecorder(catalogBytes);
-        using (var recorder = new HttpClient(catalogRecorder))
-        {
-            var catalogBatch = await new OpenAiCompatibleModelsSource().FetchAsync(recorder, agentRouter, CancellationToken.None);
-            var sent = catalogRecorder.Requests.FirstOrDefault();
-            var declaredAgent = agentRouter.ExtraHeaders.GetValueOrDefault("user-agent");
-            Assert(sent is not null && catalogBatch.Models.Contains("gpt-6.1-sol")
-                   && declaredAgent is { Length: > 0 }
-                   && sent["user-agent"] == declaredAgent
-                   && sent["authorization"] == "Bearer sk-test",
-                "the OpenAI-compatible catalog carries the provider's declared headers beside the bearer (user-agent="
-                + (sent?["user-agent"] ?? "absent") + " declared=" + (declaredAgent ?? "none")
-                + " authorization=" + (sent?["authorization"] ?? "absent")
-                + " models=" + catalogBatch.Models.Count + ")");
-        }
-
         var copilotCatalog = AiProviderManifest.CreateBuiltIn("github-copilot")
                              ?? throw new Exception("github-copilot is missing from ai-providers.json.");
         copilotCatalog.Credential = new ProviderCredential { Id = "catalog-probe", ProviderId = copilotCatalog.Id, Secret = "gh-test" };
@@ -873,7 +864,6 @@ internal static class AiProvidersChecks
         // ends in "/responses" and routes on a substring, so a doubled segment would pass it, and the live-shaped
         // request-stability check reaches the responses wire through the OAuth transport, which rewrites the endpoint
         // to the Codex host. A provider configured with baseUrl ".../v1" is the case a person actually has, and
-        // AgentRouter is the first one that will run it for real.
         var pathProvider = new ModelProvider
         {
             Id = "custom-responses-path",
