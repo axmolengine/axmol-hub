@@ -405,6 +405,31 @@ internal static partial class MarkdownMessageRenderer
         content.Children.Add(editor);
         codeBlock.Classes.Add("hub-code-block-layout");
         codeBlock.Child = content;
+
+        // The library treats a fenced block as one selectable unit: MarkdownScrollViewer's own press handler asks
+        // the document to select between two points, and CodeBlockElement ignores those points, so a press that
+        // reached it registered the whole block and painted it as a selection band — one click looked like
+        // "select all". This handler sits on the block itself: above the editor, below the viewer's ScrollViewer
+        // on the bubble route. The code editor has already taken the press (its caret, its drag selection) by the
+        // time this runs, and marking the event handled here is what keeps the document selection from being
+        // armed. A press on the block's padding has no text to place a caret for, so swallowing it costs nothing.
+        codeBlock.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        {
+            if (!e.GetCurrentPoint(codeBlock).Properties.IsLeftButtonPressed) return;
+            if (e.Source is Visual source
+                && source.GetVisualAncestors().Prepend(source).OfType<Button>()
+                    .Any(button => button.Classes.Contains("markdown-code-copy"))) return;
+            e.Handled = true;
+            // Keeping the press from the document also keeps it from clearing what the document had selected, so
+            // this press has to do that part itself: a band left in the prose above must not survive a click in
+            // code, exactly as it would not survive a click in the prose.
+            var blocks = codeBlock.GetVisualAncestors().OfType<MarkdownScrollViewer>().FirstOrDefault()
+                ?.GetVisualDescendants().OfType<CTextBlock>() ?? Enumerable.Empty<CTextBlock>();
+            foreach (var block in blocks)
+            {
+                if (block.Selection is not null) block.ClearSelection();
+            }
+        }, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
     private sealed class CopyFeedbackState(Geometry originalIcon)
