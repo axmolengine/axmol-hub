@@ -15,8 +15,8 @@ internal static class CodeSurface
     /// in a different family than the code it numbers drifts by a pixel a line.</summary>
     internal static readonly FontFamily Mono = FontFamily.Parse("Menlo,Consolas,monospace");
 
-    internal static void ApplySelection(TextEditor editor)
-        => editor.TextArea.Bind(TextArea.SelectionBrushProperty, new DynamicResourceExtension("Hub.CodeSelection"));
+    internal static void ApplySelection(TextEditor editor, string brushKey = "Hub.CodeSelection")
+        => editor.TextArea.Bind(TextArea.SelectionBrushProperty, new DynamicResourceExtension(brushKey));
 
     /// <summary>AvaloniaEdit finds a bare URL by itself and paints that run from a layer of its own: blue, chosen
     /// for a white page, applied on top of whatever the syntax definition said, and therefore out of reach of every

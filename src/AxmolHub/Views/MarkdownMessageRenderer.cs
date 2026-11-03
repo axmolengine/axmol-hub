@@ -291,7 +291,7 @@ internal static partial class MarkdownMessageRenderer
                 editor.SyntaxHighlighting = CodeSyntax.ForLanguage(language);
             // Apply the shared Hub palette to both built-in and Hub-owned language definitions.
             editor.SyntaxHighlighting = DarkSyntax.ForBackdrop(editor.SyntaxHighlighting);
-            CodeSurface.ApplySelection(editor);
+            CodeSurface.ApplySelection(editor, "Hub.Selection");
             CodeSurface.ApplyLinkInk(editor);
             if (!SyntaxThemeHooks.TryGetValue(editor, out _))
             {
@@ -346,7 +346,7 @@ internal static partial class MarkdownMessageRenderer
             .FirstOrDefault(border => border.Classes.Contains("CodeBlock"));
         if (codeBlock is null || codeBlock.Classes.Contains("hub-code-block-layout")) return;
 
-        var content = new Grid { Margin = new Avalonia.Thickness(12, 6, 12, 10) };
+        var content = new Grid { Margin = new Avalonia.Thickness(8, 4, 8, 6) };
         content.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         content.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         // AvaloniaEdit measures the editor to exactly the text's height, but draws its horizontal bar over
