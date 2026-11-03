@@ -400,6 +400,7 @@ public partial class MainWindow : Window
         // buttons, which are wired straight to the two methods here (see InitializeInspector).
         panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
         panel.StatusMessage = SetStatus;
+        panel.OpenLocalFile = (root, file) => _workspace.OpenFileInEditorAsync(root, file);
         panel.OpenInspector = (tab, turnIndex) => OpenInspector(tab, turnIndex);
         panel.RefreshInspector = RefreshInspector;
         // The pane's header tabs are the reader's choice, and this column repaints on a schedule of its own —

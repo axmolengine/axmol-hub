@@ -66,6 +66,7 @@ public partial class ChatPanel : UserControl
     /// are this page's business (the transcript's pictures, or this composer's draft).</summary>
     internal Action<IReadOnlyList<PictureRef>, int>? ShowPictureViewer { get; set; }
     internal Action<string>? StatusMessage { get; set; }
+    internal Action<string, string>? OpenLocalFile { get; set; }
 
     /// <summary>
     /// What this composer has already sent, oldest first, for the Up arrow to walk back through — along with the
@@ -2647,6 +2648,31 @@ public partial class ChatPanel : UserControl
         RenderMessages();
     }
 
+    private void OpenLinkedFile(string conversationId, string path)
+    {
+        var root = _chat.WorkspaceRootFor(conversationId);
+        var rootedPath = Path.IsPathRooted(path) || OperatingSystem.IsWindows()
+            && path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':'
+            && (path[2] == '\\' || path[2] == '/');
+        if (string.IsNullOrWhiteSpace(root) && !rootedPath)
+        {
+            StatusMessage?.Invoke(HubStrings.Get("MarkdownFileLinkNeedsWorkspace"));
+            return;
+        }
+
+        var fullPath = Path.GetFullPath(path, string.IsNullOrWhiteSpace(root) ? Environment.CurrentDirectory : root);
+        if (!File.Exists(fullPath))
+        {
+            StatusMessage?.Invoke(string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("MarkdownFileLinkMissing"), fullPath));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(root)) root = Path.GetDirectoryName(fullPath);
+        if (root is null) return;
+        OpenLocalFile?.Invoke(root, fullPath);
+    }
+
     private void ScheduleMarkdownPromotion()
     {
         if (_markdownPassQueued || _pendingMarkdownRows.Count == 0) return;
@@ -2849,7 +2875,8 @@ public partial class ChatPanel : UserControl
         {
             if (markdown && !IsLiteralTranscriptProse(turn.Text))
             {
-                MarkdownMessageRenderer.RenderInto(body, turn.Text, QuoteIntoComposer);
+                MarkdownMessageRenderer.RenderInto(body, turn.Text, QuoteIntoComposer,
+                    path => OpenLinkedFile(conversationId, path));
             }
             else if (!markdown)
             {
@@ -5475,7 +5502,7 @@ public partial class ChatPanel : UserControl
     /// one thing a painted block still needs from the panel, where a 引用 from its right-click menu goes, arrives
     /// as <paramref name="quote"/> rather than being reached for.</para>
     /// </summary>
-    private static void PaintStreamingMarkdown(LiveBubble bubble, string text, Action<string>? quote = null)
+    private void PaintStreamingMarkdown(LiveBubble bubble, string text, Action<string>? quote = null)
     {
         // A run clears its buffer between tool-loop rounds, so a bubble that survives the switch can be handed a
         // shorter string than the one it last drew from — and a longer one that merely starts the same is the
@@ -5497,7 +5524,8 @@ public partial class ChatPanel : UserControl
             // had guessed at is discarded and the real text, closed or not, is laid down once.
             DropOpenBlock(bubble);
             var finished = text[bubble.Settled..settled];
-            bubble.Prose.Children.Add(MarkdownMessageRenderer.Render(finished, quote));
+            bubble.Prose.Children.Add(MarkdownMessageRenderer.Render(finished, quote,
+                path => OpenLinkedFile(bubble.Run.ConversationId, path)));
             bubble.Builds++;
             bubble.Settled = settled;
             bubble.SettledSource += finished;
@@ -5518,7 +5546,8 @@ public partial class ChatPanel : UserControl
         if (open.Length > 0)
         {
             bubble.Prose.Children.Add(
-                MarkdownMessageRenderer.Render(MarkdownMessageRenderer.CloseOpenConstructs(open), quote));
+                MarkdownMessageRenderer.Render(MarkdownMessageRenderer.CloseOpenConstructs(open), quote,
+                    path => OpenLinkedFile(bubble.Run.ConversationId, path)));
             bubble.Builds++;
         }
         bubble.OpenBlockSource = open;

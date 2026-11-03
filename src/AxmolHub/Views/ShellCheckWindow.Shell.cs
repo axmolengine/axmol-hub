@@ -634,7 +634,10 @@ internal sealed class ShellLayoutChecks
         var editorFolder = System.IO.Path.Combine(scratchRoot, "SampleProject");
         var plainPlan = CodeEditors.LaunchPlan(System.IO.Path.Combine(scratchRoot, "sample-editor.exe"), editorFolder);
         var bundlePlan = CodeEditors.LaunchPlan("/Applications/Visual Studio Code.app", editorFolder);
+        var plainFilePlan = CodeEditors.LaunchFilePlan(System.IO.Path.Combine(scratchRoot, "sample-editor.exe"), System.IO.Path.Combine(editorFolder, "HubTexts.cs"));
+        var bundleFilePlan = CodeEditors.LaunchFilePlan("/Applications/Visual Studio Code.app", System.IO.Path.Combine(editorFolder, "HubTexts.cs"));
         Check(plainPlan.FileName == System.IO.Path.Combine(scratchRoot, "sample-editor.exe") && plainPlan.Arguments.SequenceEqual(new[] { editorFolder }) && bundlePlan.FileName == "/usr/bin/open" && bundlePlan.Arguments.SequenceEqual(new[] { "-a", "/Applications/Visual Studio Code.app", editorFolder }) && !CodeEditors.Accepts(scratchRoot), "启动方式由路径决定：可执行文件直接带目录，应用包交给 open -a（都不带开关，devenv 的 /OpenFolder 会直接报错" + "而不打开），且普通目录不会被当成编辑器（实际 " + string.Join(" ", bundlePlan.Arguments) + "）");
+        Check(plainFilePlan.FileName == System.IO.Path.Combine(scratchRoot, "sample-editor.exe") && plainFilePlan.Arguments.SequenceEqual(new[] { System.IO.Path.Combine(editorFolder, "HubTexts.cs") }) && bundleFilePlan.FileName == "/usr/bin/open" && bundleFilePlan.Arguments.SequenceEqual(new[] { "-a", "/Applications/Visual Studio Code.app", System.IO.Path.Combine(editorFolder, "HubTexts.cs") }), "单文件启动对可执行编辑器和 macOS 应用包都使用一个完整文件路径参数");
         Check(Throws<ArgumentException>(() => shell.NavigateTo("Nope")), "未知页面键抛 ArgumentException（而不是显示一个空宿主）");
         // Go through the real event path: changing IsChecked should trigger navigation. Only this proves the XAML/code wiring works —
         // the assertions above that call NavigateTo directly can't prove it.

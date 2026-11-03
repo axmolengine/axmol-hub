@@ -47,7 +47,8 @@ internal static partial class MarkdownMessageRenderer
     /// renderer's two audiences (the transcript and the inspector's plan tab) both need it, and the inspector lives
     /// outside the panel that owns the composer.</para>
     /// </summary>
-    internal static MarkdownScrollViewer Render(string markdown, Action<string>? quote = null)
+    internal static MarkdownScrollViewer Render(string markdown, Action<string>? quote = null,
+        Action<string>? openLocalFile = null)
     {
         var viewer = new MarkdownScrollViewer
         {
@@ -86,7 +87,7 @@ internal static partial class MarkdownMessageRenderer
         };
         viewer.LayoutUpdated += layoutUpdated;
         var engine = new MarkdownEngine();
-        engine.HyperlinkCommand = new OpenLinkCommand(viewer);
+        engine.HyperlinkCommand = new OpenLinkCommand(viewer, openLocalFile);
         viewer.Engine = engine;
         var markdownStarted = measurement?.ElapsedMs ?? 0;
         viewer.Markdown = RejoinBoldAcrossCode(LinkifyBareUrls(markdown));
@@ -237,10 +238,11 @@ internal static partial class MarkdownMessageRenderer
     /// <summary>The same document, laid into a panel a turn already owns — clearing it first, which is what the
     /// caller's ordering comments depend on. <paramref name="quote"/> travels straight through to
     /// <see cref="Render"/>.</summary>
-    internal static void RenderInto(StackPanel content, string markdown, Action<string>? quote = null)
+    internal static void RenderInto(StackPanel content, string markdown, Action<string>? quote = null,
+        Action<string>? openLocalFile = null)
     {
         content.Children.Clear();
-        content.Children.Add(Render(markdown, quote));
+        content.Children.Add(Render(markdown, quote, openLocalFile));
     }
 
     /// <summary>
@@ -694,7 +696,7 @@ internal static partial class MarkdownMessageRenderer
         return -1;
     }
 
-    private sealed class OpenLinkCommand(MarkdownScrollViewer viewer) : ICommand
+    private sealed class OpenLinkCommand(MarkdownScrollViewer viewer, Action<string>? openLocalFile) : ICommand
     {
         public event EventHandler? CanExecuteChanged
         {
@@ -703,21 +705,44 @@ internal static partial class MarkdownMessageRenderer
         }
 
         public bool CanExecute(object? parameter)
-            => parameter is string value
-               && Uri.TryCreate(value, UriKind.Absolute, out var uri)
-               && uri.Scheme is "http" or "https" or "mailto";
+            => parameter is string value && ClassifyLink(value) is not LinkTarget.Invalid
+               && (ClassifyLink(value) != LinkTarget.LocalFile || openLocalFile is not null);
 
         public async void Execute(object? parameter)
         {
-            if (parameter is not string value
-                || !Uri.TryCreate(value, UriKind.Absolute, out var uri)
-                || uri.Scheme is not ("http" or "https" or "mailto"))
+            if (parameter is not string value) return;
+            switch (ClassifyLink(value))
             {
-                return;
+                case LinkTarget.ExternalUri when Uri.TryCreate(value, UriKind.Absolute, out var uri):
+                    var launcher = TopLevel.GetTopLevel(viewer)?.Launcher;
+                    if (launcher is not null) await launcher.LaunchUriAsync(uri);
+                    break;
+                case LinkTarget.LocalFile:
+                    openLocalFile?.Invoke(LocalFilePath(value));
+                    break;
+            }
+        }
+
+        private enum LinkTarget { Invalid, ExternalUri, LocalFile }
+
+        private static string LocalFilePath(string value)
+        {
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile)
+                return uri.LocalPath;
+            return Uri.UnescapeDataString(value);
+        }
+
+        private static LinkTarget ClassifyLink(string value)
+        {
+            if (Path.IsPathRooted(value)) return LinkTarget.LocalFile;
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            {
+                if (uri.Scheme is "http" or "https" or "mailto") return LinkTarget.ExternalUri;
+                if (uri.IsFile) return LinkTarget.LocalFile;
+                return LinkTarget.Invalid;
             }
 
-            var launcher = TopLevel.GetTopLevel(viewer)?.Launcher;
-            if (launcher is not null) await launcher.LaunchUriAsync(uri);
+            return !value.Contains(':', StringComparison.Ordinal) ? LinkTarget.LocalFile : LinkTarget.Invalid;
         }
     }
 }
