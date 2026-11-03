@@ -1710,23 +1710,6 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public EditorBinding? EffectiveEditor(ProjectEntry? project) => CodeEditors.Resolve(project, DetectedEditors, State);
 
-    /// <summary>Opens a file in the editor selected for the project owning <paramref name="workspaceRoot"/>.</summary>
-    public Task OpenFileInEditorAsync(string workspaceRoot, string file)
-        => ExecuteAsync("Open file in editor", _ =>
-        {
-            var fullRoot = Path.GetFullPath(workspaceRoot);
-            var fullFile = Path.GetFullPath(file);
-            if (!File.Exists(fullFile)) throw new FileNotFoundException("The linked file does not exist.", fullFile);
-            var project = State.Projects.FirstOrDefault(candidate =>
-                string.Equals(Path.GetFullPath(candidate.Path), fullRoot,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
-            var binding = EffectiveEditor(project);
-            if (binding is null) throw new InvalidOperationException(HubStrings.Get("NoEditorFound"));
-            var (fileName, arguments) = CodeEditors.LaunchFilePlan(binding.Path, fullFile);
-            _runner.Launch(fileName, arguments);
-            return Task.CompletedTask;
-        });
-
     /// <summary>Opens the project in the effective editor, or in <paramref name="presetId"/> for this one time.</summary>
     public async Task OpenEditorAsync(string? presetId = null, ProjectEntry? requested = null) => await ExecuteAsync("OpenInEditor", _ =>
     {

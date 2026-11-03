@@ -352,8 +352,6 @@ public static class HubTexts
         ["BrowseEditor"] = ("浏览", "Browse"),
         ["DetectAgain"] = ("重新探测", "Detect again"),
         ["NoEditorFound"] = ("没有可用的编辑器，请在设置中选择。", "No editor available — choose one in Settings."),
-        ["MarkdownFileLinkNeedsWorkspace"] = ("相对文件链接需要会话所属工作区。", "Relative file links require this session to have a workspace."),
-        ["MarkdownFileLinkMissing"] = ("文件链接目标不存在：{0}", "The file link target does not exist: {0}"),
         ["OpenInEditor"] = ("用编辑器打开", "Open in editor"),
         ["NoEditorConfigured"] = ("请先在设置中配置可用的代码编辑器", "Configure an available code editor in Settings first"),
         ["DefaultEditor"] = ("设为默认编辑器", "Set as default editor"),

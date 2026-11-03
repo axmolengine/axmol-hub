@@ -181,5 +181,16 @@ internal sealed class CodeEditorView : Grid
         _status.Text = text;
         _status.IsVisible = !string.IsNullOrEmpty(text);
     }
+    internal void GoToPosition(int? line, int? column)
+    {
+        if (line is not > 0) return;
+        var lineNumber = Math.Min(line.Value, _editor.Document.LineCount);
+        var documentLine = _editor.Document.GetLineByNumber(lineNumber);
+        var columnOffset = Math.Clamp((column ?? 1) - 1, 0, documentLine.Length);
+        _editor.CaretOffset = documentLine.Offset + columnOffset;
+        _editor.TextArea.Caret.BringCaretToView();
+        _editor.Focus();
+    }
+
     internal TextEditor EditorForCheck => _editor;
 }

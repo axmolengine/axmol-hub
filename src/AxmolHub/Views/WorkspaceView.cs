@@ -213,6 +213,13 @@ internal sealed class WorkspaceView : Grid, IDisposable
         return true;
     }
 
+    internal void GoToPosition(string path, int? line, int? column)
+    {
+        if (_state?.Documents.Find(document => WorkspaceFileTree.WorkspacePathComparer.Equals(document.Path, path))?.Content
+            is CodeEditorView editor)
+            editor.GoToPosition(line, column);
+    }
+
     private void Render()
     {
         if (_state is null) return;

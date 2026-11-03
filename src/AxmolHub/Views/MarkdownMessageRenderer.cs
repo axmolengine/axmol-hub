@@ -48,7 +48,7 @@ internal static partial class MarkdownMessageRenderer
     /// outside the panel that owns the composer.</para>
     /// </summary>
     internal static MarkdownScrollViewer Render(string markdown, Action<string>? quote = null,
-        Action<string>? openLocalFile = null)
+        Action<string, int?, int?>? openLocalFile = null)
     {
         var viewer = new MarkdownScrollViewer
         {
@@ -239,10 +239,16 @@ internal static partial class MarkdownMessageRenderer
     /// caller's ordering comments depend on. <paramref name="quote"/> travels straight through to
     /// <see cref="Render"/>.</summary>
     internal static void RenderInto(StackPanel content, string markdown, Action<string>? quote = null,
-        Action<string>? openLocalFile = null)
+        Action<string, int?, int?>? openLocalFile = null)
     {
         content.Children.Clear();
         content.Children.Add(Render(markdown, quote, openLocalFile));
+    }
+
+    internal static (string Path, int? Line, int? Column) ParseLocalFileTarget(string value)
+    {
+        var target = OpenLinkCommand.ParseLocalFileTarget(value);
+        return (target.Path, target.Line, target.Column);
     }
 
     /// <summary>
@@ -696,7 +702,7 @@ internal static partial class MarkdownMessageRenderer
         return -1;
     }
 
-    private sealed class OpenLinkCommand(MarkdownScrollViewer viewer, Action<string>? openLocalFile) : ICommand
+    private sealed class OpenLinkCommand(MarkdownScrollViewer viewer, Action<string, int?, int?>? openLocalFile) : ICommand
     {
         public event EventHandler? CanExecuteChanged
         {
@@ -718,23 +724,85 @@ internal static partial class MarkdownMessageRenderer
                     if (launcher is not null) await launcher.LaunchUriAsync(uri);
                     break;
                 case LinkTarget.LocalFile:
-                    openLocalFile?.Invoke(LocalFilePath(value));
+                    var target = ParseLocalFileTarget(value);
+                    openLocalFile?.Invoke(target.Path, target.Line, target.Column);
                     break;
             }
         }
 
         private enum LinkTarget { Invalid, ExternalUri, LocalFile }
+        internal readonly record struct LocalFileTarget(string Path, int? Line, int? Column);
 
-        private static string LocalFilePath(string value)
+        internal static LocalFileTarget ParseLocalFileTarget(string value)
         {
             if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile)
-                return uri.LocalPath;
-            return Uri.UnescapeDataString(value);
+            {
+                var local = uri.LocalPath;
+                var fragment = uri.Fragment;
+                return new LocalFileTarget(local, ParseFragmentLine(fragment), null);
+            }
+
+            var decoded = Uri.UnescapeDataString(value);
+            var fragmentSeparator = decoded.LastIndexOf('#');
+            int? line = null;
+            int? column = null;
+            if (fragmentSeparator >= 0 && TryParseLineFragment(decoded[(fragmentSeparator + 1)..], out var fragmentLine))
+            {
+                line = fragmentLine;
+                decoded = decoded[..fragmentSeparator];
+            }
+
+            if (TryStripNumericSuffix(decoded, out var path, out var suffixLine, out var suffixColumn))
+            {
+                decoded = path;
+                line ??= suffixLine;
+                column = suffixColumn;
+            }
+
+            return new LocalFileTarget(decoded, line, column);
+        }
+
+        private static int? ParseFragmentLine(string fragment)
+            => TryParseLineFragment(fragment.TrimStart('#'), out var line) ? line : null;
+
+        private static bool TryParseLineFragment(string fragment, out int line)
+        {
+            if (fragment.StartsWith('L') || fragment.StartsWith('l')) fragment = fragment[1..];
+            return int.TryParse(fragment, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out line) && line > 0;
+        }
+
+        private static bool TryStripNumericSuffix(string value, out string path, out int line, out int? column)
+        {
+            path = value;
+            line = 0;
+            column = null;
+            var lastColon = value.LastIndexOf(':');
+            if (lastColon <= 0 || !int.TryParse(value[(lastColon + 1)..], out var lastNumber) || lastNumber <= 0)
+                return false;
+
+            var previousColon = value.LastIndexOf(':', lastColon - 1);
+            if (previousColon > 0 && int.TryParse(value[(previousColon + 1)..lastColon], out var previousNumber)
+                && previousNumber > 0 && !(OperatingSystem.IsWindows() && previousColon == 1))
+            {
+                path = value[..previousColon];
+                line = previousNumber;
+                column = lastNumber;
+                return true;
+            }
+
+            if (OperatingSystem.IsWindows() && lastColon == 1) return false;
+            path = value[..lastColon];
+            line = lastNumber;
+            return path.Length > 0;
         }
 
         private static LinkTarget ClassifyLink(string value)
         {
-            if (Path.IsPathRooted(value)) return LinkTarget.LocalFile;
+            if (Path.IsPathRooted(value) || OperatingSystem.IsWindows() && value.Length >= 3
+                && char.IsAsciiLetter(value[0]) && value[1] == ':' && (value[2] == '\\' || value[2] == '/'))
+                return LinkTarget.LocalFile;
+            if (HasNumericSuffix(value)) return LinkTarget.LocalFile;
             if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
             {
                 if (uri.Scheme is "http" or "https" or "mailto") return LinkTarget.ExternalUri;
@@ -742,7 +810,11 @@ internal static partial class MarkdownMessageRenderer
                 return LinkTarget.Invalid;
             }
 
-            return !value.Contains(':', StringComparison.Ordinal) ? LinkTarget.LocalFile : LinkTarget.Invalid;
+            return !value.Contains(':', StringComparison.Ordinal) || HasNumericSuffix(value)
+                ? LinkTarget.LocalFile : LinkTarget.Invalid;
         }
+
+        private static bool HasNumericSuffix(string value)
+            => TryStripNumericSuffix(value, out _, out _, out _);
     }
 }

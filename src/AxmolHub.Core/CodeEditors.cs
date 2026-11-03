@@ -263,11 +263,6 @@ public static class CodeEditors
             ? ("/usr/bin/open", ["-a", path, folder])
             : (path, [folder]);
 
-    /// <summary>Launches a single file in the selected editor, using the same host-specific convention as folders.</summary>
-    public static (string FileName, string[] Arguments) LaunchFilePlan(string path, string file)
-        => LaunchFor(path) == EditorLaunch.MacBundle
-            ? ("/usr/bin/open", ["-a", path, file])
-            : (path, [file]);
 
     /// <summary>
     /// Which editor a request uses: the project's own choice, then the reserved per-target-family slot, then the

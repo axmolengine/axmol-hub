@@ -381,6 +381,23 @@ public partial class MainWindow : Window
         return page;
     }
 
+    private void OpenMarkdownFile(string path, int? line, int? column)
+    {
+        var conversationId = _chat.ViewedConversationId ?? "";
+        var root = _chat.WorkspaceRootFor(conversationId) ?? _chat.ActiveWorkspaceRoot;
+        var relative = Path.IsPathRooted(path) ? path
+            : Path.GetFullPath(path, root ?? Environment.CurrentDirectory);
+        var scope = _chat.EditorScopeFor(conversationId, root);
+        var failure = CodeFileWindow.ShowEditor(this, relative, () => scope, RefreshInspector);
+        if (failure is not null)
+        {
+            _ = HubDialog.ShowAsync(this, HubStrings.Get("WorkspaceFiles"), HubStrings.Get(failure));
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => _workspaceView?.GoToPosition(relative, line, column), DispatcherPriority.Loaded);
+    }
+
     /// <summary>Builds the assistant page once and keeps the shell's reference to it, so a later
     /// data-root switch can drop and rebuild it (<see cref="ReplaceWorkspace"/>).</summary>
     private ChatPanel CreateChatPanel()
@@ -400,7 +417,7 @@ public partial class MainWindow : Window
         // buttons, which are wired straight to the two methods here (see InitializeInspector).
         panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
         panel.StatusMessage = SetStatus;
-        panel.OpenLocalFile = (root, file) => _workspace.OpenFileInEditorAsync(root, file);
+        panel.OpenLocalFile = OpenMarkdownFile;
         panel.OpenInspector = (tab, turnIndex) => OpenInspector(tab, turnIndex);
         panel.RefreshInspector = RefreshInspector;
         // The pane's header tabs are the reader's choice, and this column repaints on a schedule of its own —
