@@ -381,10 +381,9 @@ public partial class MainWindow : Window
         return page;
     }
 
-    private void OpenMarkdownFile(string path, int? line, int? column)
+    private void OpenMarkdownFile(string conversationId, string path, int? line, int? column)
     {
-        var conversationId = _chat.ViewedConversationId ?? "";
-        var root = _chat.WorkspaceRootFor(conversationId) ?? _chat.ActiveWorkspaceRoot;
+        var root = conversationId.Length > 0 ? _chat.WorkspaceRootFor(conversationId) : _chat.ActiveWorkspaceRoot;
         var relative = Path.IsPathRooted(path) ? path
             : Path.GetFullPath(path, root ?? Environment.CurrentDirectory);
         var scope = _chat.EditorScopeFor(conversationId, root);

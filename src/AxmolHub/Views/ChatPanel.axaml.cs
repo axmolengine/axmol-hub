@@ -66,7 +66,7 @@ public partial class ChatPanel : UserControl
     /// are this page's business (the transcript's pictures, or this composer's draft).</summary>
     internal Action<IReadOnlyList<PictureRef>, int>? ShowPictureViewer { get; set; }
     internal Action<string>? StatusMessage { get; set; }
-    internal Action<string, int?, int?>? OpenLocalFile { get; set; }
+    internal Action<string, string, int?, int?>? OpenLocalFile { get; set; }
 
     /// <summary>
     /// What this composer has already sent, oldest first, for the Up arrow to walk back through — along with the
@@ -2652,7 +2652,7 @@ public partial class ChatPanel : UserControl
     {
         var root = _chat.WorkspaceRootFor(conversationId);
         var fullPath = Path.GetFullPath(path, string.IsNullOrWhiteSpace(root) ? Environment.CurrentDirectory : root);
-        OpenLocalFile?.Invoke(fullPath, line, column);
+        OpenLocalFile?.Invoke(conversationId, fullPath, line, column);
     }
 
     private void ScheduleMarkdownPromotion()

@@ -760,13 +760,21 @@ internal static partial class MarkdownMessageRenderer
 
         internal static LocalFileTarget ParseLocalFileTarget(string value)
         {
+            if (Path.IsPathRooted(value) || OperatingSystem.IsWindows() && value.Length >= 3
+                && char.IsAsciiLetter(value[0]) && value[1] == ':' && (value[2] == '\\' || value[2] == '/'))
+                return ParseLocalPath(value);
+
             if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile)
             {
-                var local = uri.LocalPath;
-                var fragment = uri.Fragment;
-                return new LocalFileTarget(local, ParseFragmentLine(fragment), null);
+                var target = ParseLocalPath(uri.LocalPath);
+                return target with { Line = target.Line ?? ParseFragmentLine(uri.Fragment) };
             }
 
+            return ParseLocalPath(value);
+        }
+
+        private static LocalFileTarget ParseLocalPath(string value)
+        {
             var decoded = Uri.UnescapeDataString(value);
             var fragmentSeparator = decoded.LastIndexOf('#');
             int? line = null;

@@ -638,7 +638,8 @@ internal sealed class ShellLayoutChecks
         var parsedLine = MarkdownMessageRenderer.ParseLocalFileTarget("HubTexts.cs:661");
         var parsedColumn = MarkdownMessageRenderer.ParseLocalFileTarget("HubTexts.cs:661:12");
         var parsedFragment = MarkdownMessageRenderer.ParseLocalFileTarget("HubTexts.cs#L661");
-        Check(parsedLine.Path == "HubTexts.cs" && parsedLine.Line == 661 && parsedColumn.Path == "HubTexts.cs" && parsedColumn.Line == 661 && parsedColumn.Column == 12 && parsedFragment.Path == "HubTexts.cs" && parsedFragment.Line == 661, "Markdown 本地文件链接解析 :行号、:行号:列号 和 #L行号");
+        var parsedAbsolute = MarkdownMessageRenderer.ParseLocalFileTarget(System.IO.Path.Combine(scratchRoot, "HubTexts.cs") + ":661");
+        Check(parsedLine.Path == "HubTexts.cs" && parsedLine.Line == 661 && parsedColumn.Path == "HubTexts.cs" && parsedColumn.Line == 661 && parsedColumn.Column == 12 && parsedFragment.Path == "HubTexts.cs" && parsedFragment.Line == 661 && parsedAbsolute.Path == System.IO.Path.Combine(scratchRoot, "HubTexts.cs") && parsedAbsolute.Line == 661, "Markdown 本地文件链接解析相对/绝对路径、:行号、:行号:列号 和 #L行号");
         Check(Throws<ArgumentException>(() => shell.NavigateTo("Nope")), "未知页面键抛 ArgumentException（而不是显示一个空宿主）");
         // Go through the real event path: changing IsChecked should trigger navigation. Only this proves the XAML/code wiring works —
         // the assertions above that call NavigateTo directly can't prove it.
