@@ -204,14 +204,13 @@
                     </StackPanel>
                   </StackPanel>
                   <StackPanel Spacing="7">
-                    <TextBlock Text="{DynamicResource Scripting}" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <RadioButton x:Name="CppScripting" GroupName="ProjectScripting"
-                                   Content="{DynamicResource cpp}" IsChecked="True" />
-                      <RadioButton x:Name="LuaScripting" GroupName="ProjectScripting"
-                                   Content="{DynamicResource lua}" />
-                    </StackPanel>
-                    <TextBlock Text="{DynamicResource ScriptingHint}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{DynamicResource ProjectLanguage}" />
+                    <ComboBox x:Name="ProjectLanguagePicker" />
+                    <TextBlock Text="{DynamicResource ProjectLanguageHint}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <StackPanel x:Name="CameraModePanel" Spacing="7" IsVisible="False">
+                    <TextBlock Text="{DynamicResource CameraMode}" />
+                    <ComboBox x:Name="CameraModePicker" />
                   </StackPanel>
                   <StackPanel Spacing="7">
                     <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />

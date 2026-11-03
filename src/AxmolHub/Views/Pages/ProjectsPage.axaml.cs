@@ -92,7 +92,25 @@ public partial class ProjectsPage : UserControl
             var folder = await PickFolderAsync(HubStrings.Get("Select parent location"));
             if (folder is not null) ProjectLocationBox.Text = folder;
         };
-        ProjectEnginePicker.SelectionChanged += (_, _) => RefreshPrebuiltChoice();
+        ProjectLanguagePicker.ItemsSource = new[]
+        {
+            new ProjectFilterChoice(HubStrings.Get("cpp"), "cpp"),
+            new ProjectFilterChoice(HubStrings.Get("lua"), "lua"),
+        };
+        ProjectLanguagePicker.SelectedIndex = 0;
+        CameraModePicker.ItemsSource = new[]
+        {
+            new ProjectFilterChoice("classic", "classic"),
+            new ProjectFilterChoice("2d", "2d"),
+            new ProjectFilterChoice("3d", "3d"),
+        };
+        CameraModePicker.SelectedIndex = 0;
+        ProjectEnginePicker.SelectionChanged += (_, _) =>
+        {
+            RefreshPrebuiltChoice();
+            RefreshCameraModeChoice();
+        };
+        ProjectLanguagePicker.SelectionChanged += (_, _) => RefreshCameraModeChoice();
         Reload();
         _ready = true;
     }
@@ -275,9 +293,13 @@ public partial class ProjectsPage : UserControl
     {
         if (_overlayMode == "create")
         {
+            var projectType = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "cpp";
+            var cameraMode = CameraModePanel.IsVisible
+                ? (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "classic"
+                : null;
             var created = await _workspace.CreateProjectAsync(ProjectNameBox.Text ?? "", ProjectLocationBox.Text ?? "",
                 ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
-                LuaScripting.IsChecked == true ? "lua" : "cpp", PrebuiltCheck.IsChecked == true);
+                projectType, PrebuiltCheck.IsChecked == true, cameraMode);
             if (created is null) return;
             ProjectNameBox.Text = "HelloAxmol";
             ProjectLocationBox.Text = _workspace.ProjectDirectory;
@@ -431,6 +453,15 @@ public partial class ProjectsPage : UserControl
         2 => "SortByName",
         _ => "SortRecentDescending",
     });
+
+    private void RefreshCameraModeChoice()
+    {
+        var engine = ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null;
+        var isCpp = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value == "cpp";
+        CameraModePanel.IsVisible = isCpp && engine is not null
+            && EngineReleases.CompareVersions(engine.Version, "3.0.0") >= 0;
+        if (!CameraModePanel.IsVisible) CameraModePicker.SelectedIndex = 0;
+    }
 
     private void RefreshPrebuiltChoice()
     {

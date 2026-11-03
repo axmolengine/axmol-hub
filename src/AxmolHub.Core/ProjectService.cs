@@ -30,9 +30,13 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (projectType is not ("cpp" or "lua")) throw new ArgumentException("Scripting must be cpp or lua.");
     }
 
-    public async Task<ProjectEntry> CreateAsync(string name, string parent, EngineEntry engine, CancellationToken cancellation = default, string projectType = "cpp")
+    public async Task<ProjectEntry> CreateAsync(string name, string parent, EngineEntry engine, CancellationToken cancellation = default, string projectType = "cpp", string? cameraMode = null)
     {
         ValidateProjectType(projectType);
+        if (cameraMode is not null && cameraMode is not ("classic" or "2d" or "3d"))
+            throw new ArgumentException("Camera mode must be classic, 2d or 3d.", nameof(cameraMode));
+        if (projectType != "cpp" || EngineReleases.CompareVersions(engine.Version, "3.0.0") < 0)
+            cameraMode = null;
         if (!File.Exists(Path.Combine(engine.Path, "templates", projectType, "axproj-template.json")))
             throw new InvalidDataException("Selected engine does not contain the requested project template.");
         // The name enters the official template substitution logic, so restrict it to a safe C++ / CMake identifier.
@@ -41,7 +45,10 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         var path = Path.Combine(parent, name);
         if (Directory.Exists(path) || File.Exists(path)) throw new ProjectDestinationExistsException(path);
         Directory.CreateDirectory(parent);
-        await commandLine.RunAsync(engine, new AxmolInvocation("new", ["-p", $"dev.axmol.{name.ToLowerInvariant()}", "-d", parent, "-l", projectType, name]), parent, cancellation);
+        var arguments = new List<string> { "-p", $"dev.axmol.{name.ToLowerInvariant()}", "-d", parent, "-l", projectType };
+        if (cameraMode is not null) arguments.AddRange(["-m", cameraMode]);
+        arguments.Add(name);
+        await commandLine.RunAsync(engine, new AxmolInvocation("new", arguments.ToArray()), parent, cancellation);
         var project = StateStore.ReadProject(path);
         if (project.Version != engine.Version) throw new InvalidDataException("Created project engine version does not match selected engine.");
         if (project.ProjectType != projectType) throw new InvalidDataException("Created project scripting type does not match selection.");

@@ -1022,13 +1022,13 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Projects ─────────────────────────
 
-    public async Task<ProjectEntry?> CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType, bool usePrebuilt = false)
+    public async Task<ProjectEntry?> CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType, bool usePrebuilt = false, string? cameraMode = null)
     {
         ProjectEntry? created = null;
         await ExecuteAsync("Create project", async token =>
         {
             var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
-            var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType);
+            var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType, cameraMode);
             if (usePrebuilt)
             {
                 // Per-project options are written to a standalone file inside the project directory (same family as AndroidReleaseSettings).
