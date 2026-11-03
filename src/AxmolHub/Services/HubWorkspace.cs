@@ -1068,6 +1068,95 @@ public sealed partial class HubWorkspace : IDisposable
         return State.Projects.FirstOrDefault(p => PathEquals(p.Path, fullPath));
     }
 
+    /// <summary>Installed engines newer than the project's exact binding, ordered with same-major upgrades first.</summary>
+    public IReadOnlyList<EngineEntry> ProjectEngineUpgradeCandidates(ProjectEntry project)
+        => State.Engines
+            .Where(engine => EngineIsValid(engine)
+                && EngineReleases.CompareVersions(engine.Version, project.Version) > 0)
+            .DistinctBy(engine => engine.Path, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+            .OrderByDescending(engine => BuildTargets.MajorVersion(engine.Version) == BuildTargets.MajorVersion(project.Version))
+            .ThenByDescending(engine => engine.Version, Comparer<string>.Create(EngineReleases.CompareVersions))
+            .ThenBy(engine => engine.Channel, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static bool EngineIsValid(EngineEntry engine)
+    {
+        try
+        {
+            var actual = StateStore.ValidateEngine(engine.Path, engine.Channel);
+            return actual.Version == engine.Version && actual.Channel == engine.Channel;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Rebinds a registered project to a newer installed engine and invalidates its old build.</summary>
+    public async Task UpgradeProjectEngineAsync(ProjectEntry? requested = null)
+    {
+        if (RefuseIfBusy()) return;
+
+        var project = requested ?? SelectedProject;
+        if (project is null) return;
+        if (_launchedGames.TryGetValue(project.Path, out var pid) && ProcessRunner.IsRunning(pid))
+        {
+            await ReportFailureAsync(new InvalidOperationException("ProjectStillRunning"));
+            return;
+        }
+        if (IsProjectPreviewRunning(project))
+        {
+            await ReportFailureAsync(new InvalidOperationException("UpgradeEngineStopPreview"));
+            return;
+        }
+
+        var candidates = ProjectEngineUpgradeCandidates(project);
+        if (candidates.Count == 0)
+        {
+            await ReportFailureAsync(new InvalidOperationException("UpgradeEngineNoCandidates"));
+            return;
+        }
+
+        var selected = await EngineUpgradeDialog.PickAsync(Owner, project, candidates);
+        if (selected is null) return;
+        if (BuildTargets.MajorVersion(selected.Version) != BuildTargets.MajorVersion(project.Version)
+            && await HubDialog.ShowAsync(Owner, HubStrings.Get("UpgradeEngineTitle"),
+                string.Format(HubStrings.Get("UpgradeEngineCrossMajorPrompt"), project.Version, selected.Version),
+                HubDialogButtons.OkCancel) != HubDialogResult.Ok)
+        {
+            return;
+        }
+
+        await ExecuteAsync("UpgradeEngineTitle", _ =>
+        {
+            var diskProject = StateStore.ReadProject(project.Path);
+            RequireEngineAtRest(selected);
+            if (diskProject.Version != project.Version || diskProject.Channel != project.Channel)
+                throw new InvalidOperationException("Project metadata changed. Reopen the project before upgrading.");
+            if (EngineReleases.CompareVersions(selected.Version, diskProject.Version) <= 0)
+                throw new InvalidOperationException("UpgradeEngineNoLongerNewer");
+            if (!EngineIsValid(selected)) throw new InvalidOperationException("EngineMissing");
+
+            var oldStatus = project.BuildStatus;
+            Action? restore = null;
+            try
+            {
+                restore = ProjectService.UpdateEngineBinding(project, selected);
+                project.BuildStatus = "Not built";
+                Store.Save(State);
+                restore = null;
+            }
+            catch
+            {
+                restore?.Invoke();
+                project.BuildStatus = oldStatus;
+                throw;
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
     public async Task RemoveProjectAsync(ProjectEntry? requested = null) => await ExecuteAsync("Remove project from list", _ =>
     {
         var project = requested ?? RequiredProject();

@@ -223,6 +223,12 @@ internal static class Program
         // network, no installation — so it can run in CI against a real engine tree. The source of truth is the engine's own
         // 1k/build.profiles, and the landing spot is tools/external from the official setup.ps1.
         // ---------------------------------------------------------------------------
+        if (args.Contains("--check-engine-upgrade"))
+        {
+            await EngineUpgradeChecks.RunAsync(root);
+            return;
+        }
+
         if (args.Contains("--check-build-profiles"))
         {
             await BuildProfilesChecks.RunAsync(root, args);

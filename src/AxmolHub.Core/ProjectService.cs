@@ -23,6 +23,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 {
     /// <summary>The marker directory the Hub writes into the project directory (build receipt etc.). Not part of the official project structure.</summary>
     public const string MarkerDirectory = ".hub";
+    private const string ReconfigureMarker = "engine-upgrade.pending";
 
     public static void ValidateProjectType(string projectType)
     {
@@ -50,6 +51,103 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         return project;
     }
 
+    /// <summary>
+    /// Updates the engine binding in the Hub metadata and the engine project profile. The returned action
+    /// restores every touched file and the in-memory entry, so a failed Hub-state save cannot leave the
+    /// project half-upgraded.
+    /// </summary>
+    public static Action UpdateEngineBinding(ProjectEntry project, EngineEntry engine)
+    {
+        var validatedEngine = StateStore.ValidateEngine(engine.Path, engine.Channel);
+        if (validatedEngine.Version != engine.Version || validatedEngine.Channel != engine.Channel)
+            throw new InvalidDataException("Selected engine metadata does not match its installation.");
+        if (EngineReleases.CompareVersions(engine.Version, project.Version) <= 0)
+            throw new InvalidOperationException("UpgradeEngineNoLongerNewer");
+
+        var profile = Path.Combine(project.Path, ".axproj");
+        var metadata = StateStore.MetadataPath(project.Path);
+        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
+        var reconfigure = Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker);
+        var oldProfile = Snapshot(profile);
+        var oldMetadata = Snapshot(metadata);
+        var oldReceipt = Snapshot(receipt);
+        var oldReconfigure = Snapshot(reconfigure);
+        var oldVersion = project.Version;
+        var oldChannel = project.Channel;
+        var restored = false;
+
+        void Restore()
+        {
+            if (restored) return;
+            restored = true;
+            RestoreFile(profile, oldProfile);
+            RestoreFile(metadata, oldMetadata);
+            RestoreFile(receipt, oldReceipt);
+            RestoreFile(reconfigure, oldReconfigure);
+            project.Version = oldVersion;
+            project.Channel = oldChannel;
+        }
+
+        try
+        {
+            if (File.Exists(profile))
+            {
+                var text = File.ReadAllText(profile);
+                var versionLine = new Regex(@"(?m)^engine_version\s*=\s*[^\r\n]+");
+                if (versionLine.IsMatch(text))
+                {
+                    var updated = versionLine.Replace(text, "engine_version=" + engine.Version, 1);
+                    if (updated != text) WriteAtomic(profile, TextEol.ToLf(updated));
+                }
+            }
+
+            project.Version = engine.Version;
+            project.Channel = engine.Channel;
+            StateStore.LockProject(project);
+            if (File.Exists(receipt)) File.Delete(receipt);
+            Directory.CreateDirectory(Path.GetDirectoryName(reconfigure)!);
+            WriteAtomic(reconfigure, "Reconfigure with the upgraded engine before the next build.\n");
+        }
+        catch
+        {
+            Restore();
+            throw;
+        }
+
+        return Restore;
+    }
+
+    private static byte[]? Snapshot(string path) => File.Exists(path) ? File.ReadAllBytes(path) : null;
+
+    private static void RestoreFile(string path, byte[]? bytes)
+    {
+        if (bytes is null)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+
+        WriteAtomic(path, bytes);
+    }
+
+    private static void WriteAtomic(string path, string text)
+        => WriteAtomic(path, System.Text.Encoding.UTF8.GetBytes(text));
+
+    private static void WriteAtomic(string path, byte[] bytes)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllBytes(temporary, bytes);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
     public Task ConfigureAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation = default)
         => BuildAsync(project, engine, true, cancellation);
 
@@ -70,8 +168,10 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
         // The single assembly point for -xc is ProjectBuildOptions — build and plan share it, otherwise plan would omit options.
         var extraCmake = ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: true, prebuiltState);
-        await commandLine.RunAsync(engine, AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly, extraCmake), project.Path, cancellation, onLine: onLine);
+        var reconfigure = File.Exists(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
+        await commandLine.RunAsync(engine, AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly, extraCmake, force: reconfigure), project.Path, cancellation, onLine: onLine);
         WriteBuildReceipt(project, engine);
+        if (reconfigure) File.Delete(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
     }
 
     /// <summary>Build receipt: records which engine installation and target/configuration this build corresponds to, so Run can judge whether the artifacts are still valid.</summary>

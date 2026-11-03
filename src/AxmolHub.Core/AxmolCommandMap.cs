@@ -91,11 +91,12 @@ public static class AxmolCommandMap
         }
     }
 
-    public static AxmolInvocation Build(BuildTarget target, string projectDirectory, string configuration, bool configureOnly, IEnumerable<string>? additionalCmake = null)
+    public static AxmolInvocation Build(BuildTarget target, string projectDirectory, string configuration, bool configureOnly, IEnumerable<string>? additionalCmake = null, bool force = false)
     {
         var arguments = new List<string>();
         AddTarget(arguments, target);
         if (configureOnly) arguments.Add("-c");
+        if (force) arguments.Add("-forceConfig");
         AddConfiguration(arguments, configuration);
         AddCmake(arguments, additionalCmake);
         arguments.Add("-d");
