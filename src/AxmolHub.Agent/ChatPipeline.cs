@@ -455,6 +455,20 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             effectiveClient = functionClient;
         }
 
+        // Some compatible endpoints put reasoning in ordinary text wrapped in these tags rather than in a
+        // TextReasoningContent item. Keep parser state across chunks so a split tag is never shown as prose.
+        var embeddedReasoning = new EmbeddedReasoningParser();
+        void AddThinking(string said)
+        {
+            if (thinkingSpent)
+            {
+                thinking.Clear();
+                thinkingSpent = false;
+            }
+            thinking.Append(said);
+            onReasoning?.Invoke(said);
+        }
+
         // Whether this response has spoken yet: an in-stream provider error is only worth turning into a failure while
         // it is still the first thing that arrived, because after that there is an answer to keep.
         var spoke = false;
@@ -473,24 +487,21 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             {
                 if (content is TextContent text && text.Text.Length > 0)
                 {
-                    // Joining happens in the caller so partial chunks stay partial.
-                    spoke = true;
-                    yield return text.Text;
+                    // Joining happens in the caller so partial chunks stay partial. Embedded reasoning is
+                    // removed first; only text outside its tags reaches the answer.
+                    var visible = embeddedReasoning.Push(text.Text, AddThinking);
+                    if (visible.Length > 0)
+                    {
+                        spoke = true;
+                        yield return visible;
+                    }
                 }
                 else if (content is TextReasoningContent thought && thought.Text is { Length: > 0 } said)
                 {
                     // Not assistant text, so it never reaches the bubble. It is still part of the conversation as
                     // far as a thinking model is concerned, and quietly dropping it is what makes the <i>next</i>
                     // request that carries tools come back rejected.
-                    if (thinkingSpent)
-                    {
-                        // A call has already been filed from what is buffered, so this chunk is the next
-                        // response's thinking, not more of the one that produced it.
-                        thinking.Clear();
-                        thinkingSpent = false;
-                    }
-                    thinking.Append(said);
-                    onReasoning?.Invoke(said);
+                    AddThinking(said);
                 }
                 else if (content is FunctionCallContent asked)
                 {
@@ -554,6 +565,111 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     onUsage?.Invoke(observed);
                 }
             }
+
+            // FinishReason marks the response boundary, including responses ending in tool calls. Flush an
+            // incomplete opening tag as ordinary text, but keep an unterminated thought out of the answer.
+            if (update.FinishReason is not null)
+            {
+                var tail = embeddedReasoning.Complete(AddThinking);
+                if (tail.Length > 0)
+                {
+                    spoke = true;
+                    yield return tail;
+                }
+            }
+        }
+
+        // A client may end the stream without a finish-reason frame.
+        var remaining = embeddedReasoning.Complete(AddThinking);
+        if (remaining.Length > 0)
+        {
+            spoke = true;
+            yield return remaining;
+        }
+    }
+
+    /// <summary>Extracts only the two common embedded reasoning tags while retaining enough trailing text to
+    /// recognize a tag split across streaming chunks. Ordinary XML and non-matching tag names pass through.</summary>
+    private sealed class EmbeddedReasoningParser
+    {
+        private static readonly string[] OpenTags = ["<thinking>", "<think>"];
+        private static readonly string[] CloseTags = ["</thinking>", "</think>"];
+        private readonly StringBuilder _pending = new();
+        private bool _inside;
+
+        public string Push(string chunk, Action<string> reasoning)
+        {
+            _pending.Append(chunk);
+            return Drain(reasoning, flush: false);
+        }
+
+        public string Complete(Action<string> reasoning) => Drain(reasoning, flush: true);
+
+        private string Drain(Action<string> reasoning, bool flush)
+        {
+            var visible = new StringBuilder();
+            while (_pending.Length > 0)
+            {
+                var source = _pending.ToString();
+                var tags = _inside ? CloseTags : OpenTags;
+                var foundAt = -1;
+                string? foundTag = null;
+                foreach (var tag in tags)
+                {
+                    var at = source.IndexOf(tag, StringComparison.OrdinalIgnoreCase);
+                    if (at >= 0 && (foundAt < 0 || at < foundAt))
+                    {
+                        foundAt = at;
+                        foundTag = tag;
+                    }
+                }
+
+                if (foundAt >= 0)
+                {
+                    var before = source[..foundAt];
+                    if (_inside) { if (before.Length > 0) reasoning(before); }
+                    else visible.Append(before);
+                    _pending.Remove(0, foundAt + foundTag!.Length);
+                    _inside = !_inside;
+                    continue;
+                }
+
+                if (flush)
+                {
+                    var rest = _pending.ToString();
+                    _pending.Clear();
+                    if (_inside) { if (rest.Length > 0) reasoning(rest); }
+                    else visible.Append(rest);
+                    break;
+                }
+
+                var keep = LongestTagPrefixSuffix(source, tags);
+                var ready = source.Length - keep;
+                if (ready > 0)
+                {
+                    var rest = source[..ready];
+                    if (_inside) reasoning(rest);
+                    else visible.Append(rest);
+                    _pending.Remove(0, ready);
+                }
+                break;
+            }
+            return visible.ToString();
+        }
+
+        private static int LongestTagPrefixSuffix(string text, IEnumerable<string> tags)
+        {
+            var max = Math.Min(text.Length, tags.Max(tag => tag.Length) - 1);
+            for (var length = max; length > 0; length--)
+            {
+                foreach (var tag in tags)
+                {
+                    if (tag.Length >= length && text.AsSpan(text.Length - length, length)
+                        .Equals(tag.AsSpan(0, length), StringComparison.OrdinalIgnoreCase))
+                        return length;
+                }
+            }
+            return 0;
         }
     }
 

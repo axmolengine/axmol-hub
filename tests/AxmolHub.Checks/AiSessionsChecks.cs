@@ -492,6 +492,16 @@ internal static class AiSessionsChecks
         if (fake.LastMessages is null || fake.LastMessages.Count != 4)
             throw new Exception("Pipeline did not forward the full trimmed history.");
         Console.WriteLine("PASS: ChatPipeline streams assistant text through the fake client.");
+        var embeddedThoughtClient = new FakeChatClient(["<thinking>private thought</thinking><thi", "nk>second thought</think>Visible <widget>xml</widget>"]);
+        var embeddedThought = new StringBuilder();
+        var embeddedVisible = new StringBuilder();
+        await foreach (var chunk in new ChatPipeline(embeddedThoughtClient).SendAsync(provider,
+                           [ChatTurn.User("test")], onReasoning: said => embeddedThought.Append(said)))
+            embeddedVisible.Append(chunk);
+        if (embeddedThought.ToString() != "private thoughtsecond thought"
+            || embeddedVisible.ToString() != "Visible <widget>xml</widget>")
+            throw new Exception($"Embedded reasoning was not separated from visible text (reasoning='{embeddedThought}', text='{embeddedVisible}').");
+        Console.WriteLine("PASS: ChatPipeline separates embedded reasoning tags across streamed chunks.");
         var reasoningClient = new FakeChatClient(["ok"]);
         await foreach (var _ in new ChatPipeline(reasoningClient).SendAsync(deepSeekProvider, [ChatTurn.User("test")], reasoningEffort: ChatReasoningEfforts.Max, modelName: "deepseek-flash"))
         {
