@@ -68,7 +68,7 @@ public static class ProviderFailure
         if (exception is ProviderResponseException stream)
             return stream.ErrorCode is "rate_limit_exceeded" or "rate_limit_error" or "too_many_requests"
                 or "server_error" or "internal_server_error" or "service_unavailable" or "overloaded_error"
-                or "timeout" or "request_timeout" or "empty_response"
+                or "timeout" or "request_timeout" or "empty_response" or "upstream_stream_read_error"
                 || ChatPipeline.RateLimited(stream.Message)
                 || stream.Message.Contains("different", StringComparison.OrdinalIgnoreCase)
                    && stream.Message.Contains("OpenAI resource", StringComparison.OrdinalIgnoreCase)

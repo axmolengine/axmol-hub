@@ -45,6 +45,12 @@ internal static class RequestRetryChecks
         var empty = new SequenceClient(n => n < 3 ? [] : [new(ChatRole.Assistant, "done")]);
         await Drain(empty, retry);
         if (empty.Requests != 3) throw new Exception("Empty responses did not recover.");
+        waits.Clear();
+        var interrupted = new SequenceClient(n => n == 1 ? [Error("upstream_stream_read_error")]
+            : [new(ChatRole.Assistant, "recovered")]);
+        await Drain(interrupted, retry);
+        if (interrupted.Requests != 2 || !waits.SequenceEqual([TimeSpan.FromSeconds(5)]))
+            throw new Exception("An upstream stream interruption did not recover with backoff.");
 
         IReadOnlyList<ChatTurn> summaryHistory = [ChatTurn.User("summarize this history"),
             ChatTurn.FunctionCall("prior", "probe", "{}", reasoning: "original reasoning"),
