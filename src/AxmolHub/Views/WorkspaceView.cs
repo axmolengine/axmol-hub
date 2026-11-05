@@ -38,6 +38,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly ContentControl _treeHost = new();
     private readonly GridSplitter _splitter;
     private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry);
+    private const double AddTabGap = 4;
     private readonly List<Tab> _tabs = [];
     private readonly StackPanel _tabRows = new() { Orientation = Orientation.Horizontal, Spacing = 3, ClipToBounds = true };
     private readonly Grid _tabGrid;
@@ -86,7 +87,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _overflow.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceMoreTabs"));
         Grid.SetColumn(_overflow, 1);
         _tabGrid.Children.Add(_overflow);
-        var plus = new Button { Name = "WorkspaceAddTab", Content = HubActionIcon.Create("Hub.Icon.Plus"), Classes = { "titlebar" }, Margin = default };
+        var plus = new Button { Name = "WorkspaceAddTab", Content = HubActionIcon.Create("Hub.Icon.Plus"),
+            Classes = { "titlebar" }, Margin = new Thickness(AddTabGap, 0, 0, 0) };
         plus.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceAddTab"));
         var menu = new MenuFlyout();
         foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("files", "WorkspaceFiles") })
@@ -312,7 +314,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             tab.Label.Measure(new Size(double.PositiveInfinity, 28));
             return Math.Min(180, Math.Ceiling(tab.Label.DesiredSize.Width) + 9) + 22;
         }).ToArray();
-        var available = Math.Max(0, _tabGrid.Bounds.Width - 28);
+        var available = Math.Max(0, _tabGrid.Bounds.Width - 28 - AddTabGap);
         var total = widths.Sum() + Math.Max(0, _tabs.Count - 1) * _tabRows.Spacing;
         var overflow = total > available;
         var remaining = Math.Max(0, available - (overflow ? 28 : 0));
@@ -512,7 +514,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var plus = _tabGrid.Children.OfType<Button>().Single(button => button.Name == "WorkspaceAddTab");
         var visible = _tabs.Where(tab => tab.Plate.IsVisible).ToArray();
         var hidden = _tabs.Where(tab => !tab.Plate.IsVisible).ToArray();
-        var capacity = _tabGrid.Bounds.Width - 28 - (_overflow.IsVisible ? 28 : 0);
+        var capacity = _tabGrid.Bounds.Width - 28 - AddTabGap - (_overflow.IsVisible ? 28 : 0);
         return Math.Abs(slot.X - (shell.InspectorExpandedForCheck ? shell.ClientBoundsForCheck.X : edge.X)) < 0.5
             && Math.Abs(strip.X - slot.X - 12) < 0.5 && strip.Right <= actions.Left + 0.5
             && Math.Abs(plus.Bounds.Width - plus.Bounds.Height) < 0.5
