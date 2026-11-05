@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/AxmolHub/AxmolHub.csproj" />
+    <Project DefaultStartup="true" Path="src/AxmolHub/AxmolHub.csproj" />
     <Project Path="src/AxmolHub.Agent/AxmolHub.Agent.csproj" />
     <Project Path="src/AxmolHub.Core/AxmolHub.Core.csproj" />
   </Folder>
