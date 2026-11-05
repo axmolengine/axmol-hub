@@ -265,8 +265,6 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("The complete new text of the file.")] string content,
         [Description("Explicitly allow replacing an existing file.")] bool overwrite = false)
     {
-        if (Encoding.UTF8.GetByteCount(content ?? "") > 256L * 1024 * 1024)
-            return "Refused: the replacement exceeds the 256 MiB limit.";
         using var gate = context.TakeChangeGate?.Invoke(ToolNames.FsWrite);
         if (context.TakeChangeGate is not null && gate is null) return ToolApprovalResults.Busy;
         return WriteText(path, original => FileEdit.Overwrite(original, content, overwrite),
@@ -299,9 +297,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         {
             try
             {
-                if (new FileInfo(resolved.Full).Length > 256L * 1024 * 1024)
-                    return "Refused: the file exceeds the 256 MiB backup limit.";
-                originalBytes = ReadBoundedBytes(resolved.Full, 256L * 1024 * 1024);
+                originalBytes = ReadFileBytes(resolved.Full);
                 using var memory = new MemoryStream(originalBytes);
                 using var reader = new StreamReader(memory, new UTF8Encoding(false, true), true);
                 original = reader.ReadToEnd();
@@ -376,9 +372,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (!resolved.IsAllowed) return "invalid";
         try
         {
-            if (File.Exists(resolved.Full) && new FileInfo(resolved.Full).Length > 256L * 1024 * 1024)
-                return "invalid";
-            var bytes = File.Exists(resolved.Full) ? ReadBoundedBytes(resolved.Full, 256L * 1024 * 1024) : null;
+            var bytes = File.Exists(resolved.Full) ? ReadFileBytes(resolved.Full) : null;
             return Fingerprint(resolved.Full, bytes);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -396,18 +390,11 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
     }
 
-    private static byte[] ReadBoundedBytes(string path, long limit)
+    private static byte[] ReadFileBytes(string path)
     {
         using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        if (input.Length > limit) throw new IOException("The file exceeds the backup limit.");
         using var output = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        int count;
-        while ((count = input.Read(buffer, 0, (int)Math.Min(buffer.Length, limit - output.Length + 1))) > 0)
-        {
-            if (output.Length + count > limit) throw new IOException("The file grew beyond the backup limit.");
-            output.Write(buffer, 0, count);
-        }
+        input.CopyTo(output, 64 * 1024);
         return output.ToArray();
     }
 

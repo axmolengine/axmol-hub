@@ -100,8 +100,6 @@ public static class ToolPreviews
                     ? !TextFile.HasTextFilePrefix(resolved.Full)
                     : !TextFile.HasTextContentPrefix(Text(arguments, "content"))))
                 return $"Refused: {resolved.Display} does not begin like text.";
-            if (File.Exists(resolved.Full) && new FileInfo(resolved.Full).Length > 256L * 1024 * 1024)
-                return "Refused: the file exceeds the 256 MiB backup limit.";
             var original = File.Exists(resolved.Full) ? WorkspaceTools.ReadAll(resolved.Full) : null;
             if (File.Exists(resolved.Full) && original is null)
                 return $"Refused: {resolved.Display} is not UTF-8 text.";

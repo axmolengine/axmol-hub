@@ -24,12 +24,10 @@ public sealed partial class WorkspaceTools
         {
             var pending = new Stack<string>();
             pending.Push(resolved.Full);
-            var visited = 0;
             while (pending.Count > 0)
             {
                 foreach (var child in Directory.EnumerateFileSystemEntries(pending.Pop()))
                 {
-                    if (++visited > MaxFsEntries) return true;
                     if (WorkspacePaths.IsProtected(child, scope.Guards)) return false;
                     if (BuildCommandGrades.IsCachePath(child)) return true;
                     var attributes = File.GetAttributes(child);
@@ -49,7 +47,6 @@ public sealed partial class WorkspaceTools
         var src = WorkspacePaths.ResolveManage(scope.Sandbox, source, scope.Guards);
         if (!src.IsAllowed) return Refuse(WorkspacePaths.ResultFor(src.Verdict, src.Display));
         var entries = new List<FsManageEntry>();
-        long totalBytes = 0;
         try
         {
             if (!File.Exists(src.Full) && !Directory.Exists(src.Full)) return Refuse($"Refused: {src.Display} does not exist.");
@@ -65,25 +62,12 @@ public sealed partial class WorkspaceTools
                     return Refuse($"Refused: {full} is a link or a special file.");
                 var isDirectory = (attributes & FileAttributes.Directory) != 0;
                 var relative = Path.GetRelativePath(src.Full, full);
-                byte[]? bytes = null;
-                if (!isDirectory)
-                {
-                    var length = new FileInfo(full).Length;
-                    if (length > MaxFsBackupBytes - totalBytes)
-                        return Refuse($"Refused: the original files contain at least {totalBytes + length} bytes, exceeding the {MaxFsBackupBytes} byte backup limit.");
-                    bytes = ReadBoundedBytes(full, MaxFsBackupBytes - totalBytes);
-                    totalBytes += bytes.Length;
-                }
+                var bytes = isDirectory ? null : ReadFileBytes(full);
                 var mode = OperatingSystem.IsWindows() ? (UnixFileMode?)null : File.GetUnixFileMode(full);
                 entries.Add(new(full, relative, isDirectory, bytes, attributes, mode));
-                if (entries.Count > MaxFsEntries) return Refuse($"Refused: the operation exceeds {MaxFsEntries} entries.");
                 if (!isDirectory) continue;
                 foreach (var child in Directory.EnumerateFileSystemEntries(full))
-                {
-                    if (entries.Count + pending.Count >= MaxFsEntries)
-                        return Refuse($"Refused: the operation contains at least {MaxFsEntries + 1} entries, exceeding the {MaxFsEntries} entry limit.");
                     pending.Push(child);
-                }
             }
             if (destination is null && !recursive && entries.Count > 1)
                 return Refuse("Refused: the directory is not empty. Pass recursive=true to delete its contents.");
@@ -204,7 +188,7 @@ public sealed partial class WorkspaceTools
                 if (entry.IsDirectory) Directory.Delete(entry.Path, false);
                 else
                 {
-                    if (!ReadBoundedBytes(entry.Path, MaxFsBackupBytes).AsSpan().SequenceEqual(entry.Bytes))
+                    if (!ReadFileBytes(entry.Path).AsSpan().SequenceEqual(entry.Bytes))
                         throw new IOException($"The file changed: {entry.Path}");
                     File.Delete(entry.Path);
                 }
@@ -498,7 +482,7 @@ public sealed partial class WorkspaceTools
         if (!File.Exists(path) || entry.ContentHash is null) return false;
         return File.GetAttributes(path) == (FileAttributes)entry.Attributes
             && (OperatingSystem.IsWindows() || entry.UnixMode is null || (int)File.GetUnixFileMode(path) == entry.UnixMode)
-            && string.Equals(Convert.ToHexString(SHA256.HashData(ReadBoundedBytes(path, MaxFsBackupBytes))),
+            && string.Equals(Convert.ToHexString(SHA256.HashData(ReadFileBytes(path))),
             entry.ContentHash, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -506,11 +490,9 @@ public sealed partial class WorkspaceTools
     {
         var parent = Path.GetDirectoryName(path);
         if (parent is null || !Directory.Exists(parent)) return false;
-        var seen = 0;
         foreach (var item in Directory.EnumerateFileSystemEntries(parent))
         {
             if (string.Equals(Path.GetFileName(item), Path.GetFileName(path), StringComparison.Ordinal)) return true;
-            if (++seen >= MaxFsEntries) return true;
         }
         return false;
     }
@@ -520,20 +502,16 @@ public sealed partial class WorkspaceTools
         var expected = operation.Entries.ToDictionary(entry => entry.RelativePath, StringComparer.Ordinal);
         var pending = new Stack<string>();
         pending.Push(operation.Source);
-        var count = 0;
         while (pending.Count > 0)
         {
             var path = pending.Pop();
-            if (++count > MaxFsEntries || !WorkspacePaths.ResolveManage(scope.Sandbox, path, scope.Guards).IsAllowed)
+            if (!WorkspacePaths.ResolveManage(scope.Sandbox, path, scope.Guards).IsAllowed)
                 return false;
             var relative = Path.GetRelativePath(operation.Source, path);
             if (!expected.TryGetValue(relative, out var entry) || !MatchesSavedEntry(path, entry)) return false;
             if (entry.Directory)
                 foreach (var child in Directory.EnumerateFileSystemEntries(path))
-                {
-                    if (count + pending.Count >= MaxFsEntries) return false;
                     pending.Push(child);
-                }
         }
         return true;
     }

@@ -16,20 +16,17 @@ internal sealed record FsReplacePlan(IReadOnlyList<FsTextChange> Changes, string
 
 public sealed partial class WorkspaceTools
 {
-    private const int MaxFsEntries = 1000;
-    private const long MaxFsBackupBytes = 256L * 1024 * 1024;
+    private const int MaxFsReplacementEdits = 1000;
 
     /// <summary>Preflight every replacement before a file is modified.</summary>
     internal static FsReplacePlan PrepareReplacements(WorkspaceToolScope scope, IReadOnlyList<FsReplacement>? edits)
     {
         static FsReplacePlan Refuse(string message) => new([], message, "invalid");
         if (edits is null || edits.Count == 0) return Refuse("Refused: fs_replace needs at least one edit.");
-        if (edits.Count > MaxFsEntries) return Refuse($"Refused: {edits.Count} edits exceed the {MaxFsEntries} entry limit.");
+        if (edits.Count > MaxFsReplacementEdits) return Refuse($"Refused: {edits.Count} edits exceed the {MaxFsReplacementEdits} entry limit.");
         var comparer = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var changes = new Dictionary<string, FsTextChange>(comparer);
-        long bytesRead = 0;
-        long outputBudget = 0;
         for (var index = 0; index < edits.Count; index++)
         {
             var item = edits[index];
@@ -48,34 +45,18 @@ public sealed partial class WorkspaceTools
                 {
                     var info = new FileInfo(path.Full);
                     if (!info.Exists) return Refuse($"Refused: {path.Display} does not exist; use fs_write to create it.");
-                    if (info.Length > MaxFsBackupBytes - bytesRead)
-                        return Refuse($"Refused: the original files contain at least {bytesRead + info.Length} bytes, exceeding the {MaxFsBackupBytes} byte backup limit.");
-                    var bytes = ReadBoundedBytes(path.Full, MaxFsBackupBytes - bytesRead);
-                    bytesRead += bytes.Length;
-                    if (bytesRead > MaxFsBackupBytes) return Refuse("Refused: the files grew beyond the backup limit.");
+                    var bytes = ReadFileBytes(path.Full);
                     using var stream = new MemoryStream(bytes);
                     using var reader = new StreamReader(stream, new UTF8Encoding(false, true), true);
                     var text = reader.ReadToEnd();
                     current = new FsTextChange(path, bytes, text, text);
-                    outputBudget += Encoding.UTF8.GetByteCount(TextEol.ToLf(text));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
                 { return Refuse($"Could not read {path.Display}: {ex.Message}"); }
             }
-            var baseline = TextEol.ToLf(current.After);
-            var anchor = TextEol.ToLf(item.old_string);
-            var replacement = TextEol.ToLf(item.new_string ?? "");
-            var matches = FileEdit.CountMatches(baseline, anchor);
-            var replacements = item.replace_all ? matches : Math.Min(matches, 1);
-            var currentBytes = Encoding.UTF8.GetByteCount(baseline);
-            var outputBytes = (long)currentBytes
-                              + ((long)Encoding.UTF8.GetByteCount(replacement) - Encoding.UTF8.GetByteCount(anchor)) * replacements;
-            if (outputBudget - currentBytes + outputBytes > MaxFsBackupBytes)
-                return Refuse("Refused: the combined replacement output exceeds the 256 MiB limit.");
             var edit = FileEdit.Apply(current.After, item.old_string, item.new_string ?? "", item.replace_all);
             if (edit.Verdict is not (FileEditVerdict.Applied or FileEditVerdict.Unchanged))
                 return Refuse(FileEdit.ResultFor(edit.Verdict, edit.Matches, path.Display));
-            outputBudget += outputBytes - currentBytes;
             changes[path.Full] = current with { After = edit.Updated };
         }
 
