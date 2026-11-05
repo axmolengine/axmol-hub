@@ -103,6 +103,8 @@ dotnet run --project src/AxmolHub.Cli -- <动词> [参数]
 
 界面项目自带几个开关。它们读的是**运行期真实对象**，不是"看代码对不对" —— 原因见 [avalonia-migration-plan.md](avalonia-migration-plan.md) §3.1：Avalonia 的样式与模板写错**不会报错**，只会静默退化。
 
+最常用的启动人工验证命令: `dotnet run --project src/AxmolHub -c Release -- --wire-log /Users/simdsoft/oss/axmol-hub/data/wire-1105`
+
 ```powershell
 # 外壳、本地化与数据根切换的自检
 dotnet run --project src/AxmolHub -- --data-root ./data --verify-shell ./tmp/shell-check.txt
