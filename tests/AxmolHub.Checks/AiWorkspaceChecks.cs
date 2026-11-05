@@ -171,6 +171,7 @@ internal static class AiWorkspaceChecks
             "server/app.cfg",
             "email/welcome.tmpl",
             "assets/icon.svg",
+            "AxmolHub.slnx",
         }
 
         )

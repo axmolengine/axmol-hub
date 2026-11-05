@@ -226,7 +226,7 @@ public static class WorkspacePaths
         ".def", ".dart", ".editorconfig", ".entitlements", ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl",
         ".go", ".gradle", ".groovy", ".h", ".hlsl", ".hpp", ".html", ".in", ".ini", ".ipp", ".java", ".js", ".json", ".jl", ".kt",
         ".lua", ".m", ".md", ".metal", ".mm", ".patch", ".pbxproj", ".php", ".plist", ".pl", ".pm", ".pro", ".props", ".properties",
-        ".ps1", ".py", ".r", ".rb", ".rc", ".rs", ".scala", ".sh", ".sln", ".csproj", ".sql", ".storyboard", ".strings", ".stringsdict", ".swift",
+        ".ps1", ".py", ".r", ".rb", ".rc", ".rs", ".scala", ".sh", ".sln", ".slnx", ".csproj", ".sql", ".storyboard", ".strings", ".stringsdict", ".swift",
         ".svg", ".targets", ".tmpl", ".toml", ".ts", ".tsx", ".txt", ".vb", ".vcxproj", ".vert", ".xaml", ".xcconfig",
         ".xib", ".xml", ".yaml", ".yml",
     };
