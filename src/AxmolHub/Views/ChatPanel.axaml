@@ -852,6 +852,14 @@
     <Style Selector="Border.activity-detail TextBlock.activity-detail-label:first-child">
       <Setter Property="Margin" Value="0,0,0,2" />
     </Style>
+    <Style Selector="Border.activity-detail TextBlock.edit-file-title">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="Normal" />
+      <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Ui}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="TextWrapping" Value="NoWrap" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
     <Style Selector="Border.activity-detail TextBlock.activity-detail-body">
       <Setter Property="FontSize" Value="11" />
       <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />

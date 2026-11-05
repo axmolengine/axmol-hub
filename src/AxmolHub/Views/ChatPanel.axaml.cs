@@ -3780,7 +3780,14 @@ public partial class ChatPanel : UserControl
                 var list = new StackPanel { Spacing = 8 };
                 foreach (var file in files)
                 {
-                    var item = new Expander { Header = file.RelativePath };
+                    var item = new Expander
+                    {
+                        Header = new TextBlock
+                        {
+                            Classes = { "edit-file-title" },
+                            Text = file.RelativePath,
+                        },
+                    };
                     item.PropertyChanged += (_, e) =>
                     {
                         if (e.Property == Expander.IsExpandedProperty && item.IsExpanded && item.Content is null)
