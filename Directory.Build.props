@@ -1,132 +1,16 @@
 <Project>
 
-  <!--
-    Repo-wide MSBuild defaults. There is no .sln here and the five projects build
-    independently, so this file is their only shared configuration point.
-
-    Boundary: only properties that should be identical across all projects. Anything
-    specific to a single project stays in its own csproj — don't turn this into a
-    second dumping ground.
-  -->
-
   <PropertyGroup>
 
-    <!-- Single source of truth for the product version.
-         Before this, 0.1.6 was hand-copied into three csproj files (App / Cli / Avalonia),
-         while Core and Checks carried no Version at all — the result was a single build
-         artifact where Core.dll reported 1.0.0 and Cli.dll reported 0.1.6.
-         installer/Build.ps1 and installer/Test.ps1 also read the version from this file;
-         stop copying extra copies anywhere else. -->
     <Version>0.22.1</Version>
 
     <Company>Simdsoft Limited</Company>
     <Copyright>Copyright &#169; 2026 Simdsoft Limited</Copyright>
 
-    <!-- The NuGet-side equivalent of the repo's existing "version + SHA-256 double pin"
-         philosophy: pin the shipped dependency closure in packages.lock.json so different
-         dev machines don't resolve different versions.
-
-         Spell out the boundary, don't oversell it: what this fixes is **version drift**,
-         not tampering — NuGet global packages already carry SHA-512 checks, and a lock
-         file is not a signature.
-
-         **Policy: one lock file is tracked, the dependency-chain root.**
-           · AxmolHub (the app, shipped) — tracked. Measured shape: a net8.0 node of 9 Direct
-             plus 59 Transitive plus 2 Project entries, then one 9-entry node per declared
-             RuntimeIdentifiers (linux-x64, osx-arm64, osx-x64, win-x64).
-           · AxmolHub.Agent — opted out in its own csproj and untracked. Common code that both
-             App and Checks reference and that is never shipped alone, and NuGet's own wording
-             is that a common code project's lock file has "little say over the packages
-             resolved for projects that depend on it". Measured before deleting it: all 24
-             package entries it carried already sat in the App file at identical versions.
-           · AxmolHub.Checks — opted out and untracked for the same reason: 23 entries, not one
-             of them Direct, every version arriving through Agent, and nothing shipped.
-           · AxmolHub.Core / AxmolHub.Cli — opted out: no PackageReference at all, so a lock
-             file would hold nothing but empty framework and RID nodes.
-         A project that gains its first PackageReference re-decides by this rule rather than
-         copying a version number: is what it builds shipped on its own? If not, opt out.
-
-         Presence outranks the property, and this is the part that gets missed: NuGet consumes
-         a packages.lock.json that exists in a project directory even when
-         RestorePackagesWithLockFile is false, and while that file matches the declared
-         dependencies it restores out of it with no re-evaluation of the graph at all. Opting
-         out therefore stops NuGet from writing the file; it does not stop a leftover copy from
-         pinning. Delete any that reappears in an opted-out directory. The two that used to be
-         tracked are named in .gitignore, so git status will not show such a leftover.
-
-         RestoreLockedMode is deliberately not enabled, and "not enabled" means not enforced,
-         not unused: the tracked file already decides which versions every restore on this
-         machine and in CI resolves. Locked mode would add one guarantee, that a mismatch
-         fails the restore instead of quietly rewriting the file. Two facts keep that a separate
-         decision, and neither is the SDK — build.yml runs DOTNET_SDK_VERSION 10.0.x, the same
-         major as a dev machine:
-           · shape. A committed multi-node file does not match the base-plus-one-RID graph that
-             a publish carrying a RID writes, so enabling locked mode today would fail the four
-             package jobs until the packaging restore path is reworked.
-           · the .NET SDK injects implicit PackageReference items, so a different SDK patch can
-             change the graph and fail a locked restore; the documented mitigation is a
-             global.json, which this repo deliberately does not pin.
-         The order is unchanged: keep the tracked file honest, then decide whether to enforce it.
-
-         **Lock files jitter, and that is deterministic NuGet behavior, not an environment
-         anomaly** (re-measured on 2026-10-11 against this tree). NuGet rewrites a lock file only
-         when its check on the declared dependencies says the file is stale, so an ordinary
-         publish with nothing bumped leaves the tracked file byte-identical. When it does rewrite,
-         the shape depends on whether the restore passed a RID:
-           · without a RID: the base TFM node plus one node per declared RuntimeIdentifiers
-             (5 nodes for the app);
-           · with a RID: the base node plus that single RID node (2 nodes for the app). It reaches
-             the referenced projects on the way too, which is what bolted a stray net8.0/win-x64
-             node onto Agent's file in the middle of the installer change committed as c4564e9.
-             No referenced project writes a lock any more, so that reach has nothing left to land
-             on — until a command-line property turns generation back on: measured, one restore
-             with the property forced on brought both Agent's and Core's file back.
-         So the day a package version is bumped is the day a packaging run leaves a pruned file.
-         installer/Build.ps1 now follows its publish with a RID-less restore of the app project,
-         which rewrites the committed shape before any later step of the run can fail. A manual
-         publish carrying a RID still needs that restore by hand; see docs/building-from-source.md.
-         Do not cure this by suppressing generation during a publish: the file is read whether or
-         not it is written, and an unmaintained pin is worse than a dirty one. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-
+      
   </PropertyGroup>
 
-  <!-- The .NET **runtime floor**, declared once for the whole repo. This is not a version pin: it says
-       "8.0 at the oldest", not "8.0 exactly".
-
-       Without it there is a hard lock on the 8.0 runtime, and it comes from two defaults adding up:
-       TargetFramework is net8.0, and the default roll-forward policy is Minor, which never crosses a
-       major version. A machine carrying only a newer runtime does not run the build at all. Measured
-       2026-10-15 on Ubuntu 26.04.1 (.NET SDK 10.0.112, runtime 10.0.12, no 8.0 installed anywhere):
-
-         $ dotnet src/AxmolHub.Cli/bin/Release/net8.0/AxmolHub.Cli.dll targets
-         You must install or update .NET to run this application.
-         Framework: 'Microsoft.NETCore.App', version '8.0.0' (x64)
-         The following frameworks were found: 10.0.12
-
-       and the same command runs on 10.0.12 with the equivalent DOTNET_ROLL_FORWARD=Major in the
-       environment. Not a Linux-only trap either: the README's own Windows path installs
-       Microsoft.DotNet.SDK.10, which brings the 10.0 runtime and no 8.0, so a fresh dev machine could
-       not run the GUI verification flags or the Checks project.
-
-       Why `Major` rather than `LatestMajor`: Major is exactly "8.0 if it is installed, otherwise the
-       lowest higher major", so a host that has 8.0 keeps running on 8.0 — including the CI verify
-       matrix, whose runners ship 8.0 alongside the 10.0 SDK that setup-dotnet installs. LatestMajor
-       would silently move what CI actually exercises to 10.0.
-
-       Where it lands: the SDK writes "rollForward" into the runtimeconfig.json of every project that
-       produces one (App / Cli / Checks), and all three entry points — `dotnet run`, `dotnet <app>.dll`,
-       and the apphost — honour it. Core and Agent are libraries and emit no runtimeconfig, so declaring
-       it here is a no-op for them. That is also why it lives in this file: one place, no chance of the
-       next Exe project forgetting it.
-
-       Boundary: shipped artifacts are self-contained (installer/Build.ps1, installer/Build-Hosts.ps1 and
-       the publish step in .github/workflows/build.yml all pass the self-contained switch), so they carry
-       their own runtime, ignore this setting, and bundle the same version as before. What it does not
-       remove: building net8.0 still restores the 8.0 targeting pack from NuGet. Only the 8.0 runtime at
-       run time stops being a requirement. If a single project ever needs a different policy, its own
-       RollForward wins; a runtimeconfig.template.json in that project is the fallback if the property is
-       ever found not to land in the emitted runtimeconfig.json. -->
   <PropertyGroup>
     <RollForward>Major</RollForward>
   </PropertyGroup>

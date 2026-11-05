@@ -353,6 +353,16 @@ internal static partial class MarkdownMessageRenderer
         // the bottom of that viewport. Reserve the bar's own height below the glyphs (not extra height on
         // the outer border): otherwise a long one-line command has only 6px visible above a 10px bar.
         editor.Padding = new Avalonia.Thickness(0, 0, 0, HubMetrics.ScrollBarThickness);
+        // AvaloniaEdit rounds the text viewport during measure. Reserve the complete line metrics,
+        // including fractional DPI heights, so the final line is not clipped under the horizontal bar.
+        void ReserveCodeHeight()
+        {
+            var lineHeight = editor.TextArea.TextView.DefaultLineHeight;
+            var scale = TopLevel.GetTopLevel(editor)?.RenderScaling ?? 1;
+            var height = Math.Ceiling((editor.Document.LineCount * lineHeight + HubMetrics.ScrollBarThickness + 1) * scale) / scale;
+            if (lineHeight > 0 && Math.Abs(editor.MinHeight - height) > 0.1) editor.MinHeight = height;
+        }
+        editor.LayoutUpdated += (_, _) => ReserveCodeHeight();
 
         var copyButton = new Button();
         copyButton.Classes.Add("markdown-code-copy");

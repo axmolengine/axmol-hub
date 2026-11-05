@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AxmolHub/AxmolHub.csproj" />
+    <Project Path="src/AxmolHub.Agent/AxmolHub.Agent.csproj" />
+    <Project Path="src/AxmolHub.Core/AxmolHub.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AxmolHub.Checks/AxmolHub.Checks.csproj" />
+  </Folder>
+</Solution>

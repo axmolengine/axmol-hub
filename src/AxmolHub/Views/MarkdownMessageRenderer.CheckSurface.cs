@@ -34,6 +34,7 @@ internal static partial class MarkdownMessageRenderer
             var code = probe.Chip.AsString() ?? "";
             // The range the mark is computed from, answered by the library itself.
             block.Select(probe.Start, probe.Start + probe.Length);
+            block.UpdateLayout();
             var libraryText = block.GetSelectedText() ?? "";
             if (probe.Chip is not ReadingCode reading || reading.Geometries.Count != 1 || TopLevel.GetTopLevel(block)is not { } root)
                 continue;
