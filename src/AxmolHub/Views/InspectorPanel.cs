@@ -88,6 +88,7 @@ internal sealed partial class InspectorPanel : UserControl
     private GitReviewScope _scope = GitReviewScope.Uncommitted;
     private TurnReview _review = TurnReview.Empty;
     private GitRepositoryState? _repository;
+    private bool _repositoryRefreshing;
     private GitCommitList _commits = GitCommitList.Stopped(GitCommitListOutcome.NoUpstream);
     // Whether the commit list has been read at all. The list's default value is "no upstream", which is a fact
     // about the branch and not about whether anybody asked — before the read, the scope says it is reading.
@@ -506,7 +507,16 @@ internal sealed partial class InspectorPanel : UserControl
         Focusable = false,
     };
 
-    internal void SelectWorkspaceTool(string tab) => SelectTab(tab);
+    internal event Action? RepositoryNavigationRequested;
+
+    internal void SelectWorkspaceTool(string tab)
+    {
+        // Reload selects a tab too, but only this entry is workspace navigation. A missing snapshot is loaded
+        // by TabSelected; an existing one must be refreshed rather than silently reused on re-entry.
+        if (tab is "changes" or "repo" && _scope != GitReviewScope.LastTurn && _repository is not null)
+            RepositoryNavigationRequested?.Invoke();
+        SelectTab(tab);
+    }
     internal bool IsChangesTabVisible => _changesHost.IsVisible;
     internal bool NeedsRepository => _repository is null;
     internal bool HasContext(string conversationId, string? workspaceRoot)
@@ -561,6 +571,7 @@ internal sealed partial class InspectorPanel : UserControl
             _conversationId = conversationId;
             _workspaceRoot = workspaceRoot;
             ++_reviewGeneration;
+            _repositoryRefreshing = false;
             _commitsFor = null;
             _branchesFor = null;
             _pathsFor = null;
@@ -654,11 +665,18 @@ internal sealed partial class InspectorPanel : UserControl
            && _changesList.GetLogicalDescendants().OfType<Button>().Any(button => button.Tag as string == path
                && button.Classes.Contains("expanded"));
 
-    /// <summary>
-    /// Lay out whichever list the chosen scope governs. The two history scopes need a read of their own and show
-    /// what the last one left until it lands; the three status scopes are a filter over the state the shell already
-    /// took, so they never wait for anything.
-    /// </summary>
+    /// <summary>Invalidate totals before an explicit read starts. The old rows can stay visible, but a numstat
+    /// must not read today's tree beside yesterday's list while the replacement status is still in flight.</summary>
+    internal void BeginRepositoryRefresh()
+    {
+        _repositoryRefreshing = true;
+        ++_reviewGeneration;
+        _statusStats.Clear();
+        UpdateStatusCounts();
+        RenderScopeChrome();
+    }
+
+    /// <summary>Lay out the chosen scope from the delivered snapshot and start its missing review read.</summary>
     internal void ReloadRepository(GitRepositoryState? repository)
     {
         // A new reading is a new tree: the totals cached per scope describe the previous one and would sit beside a
@@ -666,6 +684,7 @@ internal sealed partial class InspectorPanel : UserControl
         if (!ReferenceEquals(_repository, repository))
         {
             ++_reviewGeneration;
+            _repositoryRefreshing = false;
             _statusStats.Clear();
             _commitsFor = null;
             _branchesFor = null;
@@ -1023,7 +1042,9 @@ internal sealed partial class InspectorPanel : UserControl
     /// </summary>
     private void EnsureReviewRead()
     {
-        if (_repository is { IsReadable: false }) return;
+        if (_repository is { IsReadable: false } || _repositoryRefreshing) return;
+        if (_scope is GitReviewScope.Uncommitted or GitReviewScope.Staged or GitReviewScope.Unstaged
+            && _repository is null) return;
         if (ReadReviewRequested is not { } read) return;
         var root = _root ?? "";
         ReviewReadRequest? request = _scope switch
@@ -1031,8 +1052,8 @@ internal sealed partial class InspectorPanel : UserControl
             // The three status scopes need one number each, from one numstat over the range they name; their lists
             // come from the status reading the shell already took.
             GitReviewScope.Uncommitted or GitReviewScope.Staged or GitReviewScope.Unstaged
-                when !_statusStats.ContainsKey(_scope) =>
-                new ReviewReadRequest(_scope, root, null, null, null, null, false, _repository?.Entries),
+                when !_statusStats.ContainsKey(_scope) && _repository is { IsReadable: true } status =>
+                new ReviewReadRequest(_scope, root, null, null, null, null, false, status.Entries),
             GitReviewScope.Committed when !string.Equals(_commitsFor, root) =>
                 new ReviewReadRequest(_scope, root, null, null, null, null, false),
             GitReviewScope.Committed when _commit is { Length: > 0 } commit
@@ -1162,12 +1183,13 @@ internal sealed partial class InspectorPanel : UserControl
         // A folded file stays folded only while it is the same file in the same comparison; a new comparison starts
         // its rows closed rather than pretending the old folds meant something.
         if (changed) _expandedFiles.Clear();
+        // Let the owner invalidate the cached status before this scope can start its totals read.
+        if (changed) ScopeChanged?.Invoke(scope);
         RenderCurrentScope();
         ApplyScopeVisibility();
         RenderScopeChrome();
         EnsureReviewRead();
         UpdateEditActions();
-        if (changed) ScopeChanged?.Invoke(scope);
     }
 
     /// <summary>Open one turn-review row when navigation comes from a transcript file link.</summary>
@@ -1453,6 +1475,8 @@ internal sealed partial class InspectorPanel : UserControl
         item.Click += (_, _) =>
         {
             menu.Hide();
+            if (_scope == scope && scope != GitReviewScope.LastTurn)
+                RepositoryNavigationRequested?.Invoke();
             SetScope(scope);
         };
         return item;

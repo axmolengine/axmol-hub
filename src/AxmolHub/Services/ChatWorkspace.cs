@@ -845,10 +845,13 @@ public sealed partial class ChatWorkspace : IDisposable
     /// Asked only from the pane — the tab opening, a tab click, the ⟳, and a run that finished while the tab was
     /// up — and never from <see cref = "Changed"/>: that event fires for every streamed token, and the transcript
     /// scan the other tabs do there is I/O-free by contract (<c>ChatChanges.Of</c> says so in its own comment).
-    /// Concurrent asks share one read, because two clicks must not start two gits.
+    /// Concurrent loads share one read. An explicit refresh during a read requests one coalesced follow-up.
+    /// Pass <paramref name="refresh"/> as false only when loading a missing snapshot, not for user navigation.
     /// </summary>
-    public Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId) => _sessions.RefreshRepositoryAsync(conversationId);
-    internal Task<RepositorySnapshot> RefreshActiveWorkspaceRepositoryAsync() => _sessions.RefreshActiveWorkspaceRepositoryAsync();
+    public Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId, bool refresh = true)
+        => _sessions.RefreshRepositoryAsync(conversationId, refresh);
+    internal Task<RepositorySnapshot> RefreshActiveWorkspaceRepositoryAsync(bool refresh = true)
+        => _sessions.RefreshActiveWorkspaceRepositoryAsync(refresh);
     internal Task<GitFileComparison> ReadActiveWorkspaceGitFileAsync(string repositoryRoot,
         GitStatusEntry entry, GitFileRange range, CancellationToken cancellationToken = default)
         => _sessions.ReadActiveWorkspaceGitFileAsync(repositoryRoot, entry, range, cancellationToken);

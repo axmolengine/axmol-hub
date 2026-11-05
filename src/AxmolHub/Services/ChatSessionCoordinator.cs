@@ -841,8 +841,13 @@ internal sealed partial class ChatSessionCoordinator
     internal string? ViewedConversationId => _active?.Id;
 
     private RepositorySnapshot? _repository;
-    private Task<RepositorySnapshot>? _repositoryReading;
-    private string? _repositoryReadingRoot;
+    private sealed class RepositoryRead
+    {
+        internal bool RefreshAgain;
+        internal TaskCompletionSource<RepositorySnapshot> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+    private readonly Dictionary<string, RepositoryRead> _repositoryReads = new(StringComparer.Ordinal);
     /// <summary>Raised when a read lands, so an open pane repaints. Nothing raises it on a timer.</summary>
     internal Action? RepositoryChanged;
     private static bool IsRepositoryForWorkspace(string? workspace, string? repository)
@@ -979,61 +984,81 @@ internal sealed partial class ChatSessionCoordinator
            && string.Equals(RepositoryKey(snapshot.WorkspaceRoot), RepositoryKey(workspaceRoot), StringComparison.Ordinal)
             ? snapshot
             : null;
-    internal Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId)
+    internal Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId, bool refresh = true)
     {
         var scope = Execution.ScopeFor(conversationId).Workspace;
-        return RefreshRepositoryAsync(scope.WorkspaceRoot ?? "", scope.Log, scope.SensitiveValues, conversationId);
+        return RefreshRepositoryAsync(scope.WorkspaceRoot ?? "", scope.Log, scope.SensitiveValues, conversationId, refresh);
     }
 
-    internal Task<RepositorySnapshot> RefreshActiveWorkspaceRepositoryAsync()
+    internal Task<RepositorySnapshot> RefreshActiveWorkspaceRepositoryAsync(bool refresh = true)
         => RefreshRepositoryAsync(ActiveWorkspaceRoot ?? "", Execution.LogProvider?.Invoke(),
-            Providers.SensitiveValues(), null);
+            Providers.SensitiveValues(), null, refresh);
 
     private Task<RepositorySnapshot> RefreshRepositoryAsync(string root, HubLog? log,
-        IReadOnlyList<string> sensitiveValues, string? conversationId)
+        IReadOnlyList<string> sensitiveValues, string? conversationId, bool refresh)
     {
-        if (_repositoryReading is { } inFlight
-            && string.Equals(RepositoryKey(_repositoryReadingRoot), RepositoryKey(root), StringComparison.Ordinal))
-            return inFlight;
-        var task = ReadRepositoryAsync(root, log, sensitiveValues, conversationId);
-        _repositoryReading = task;
-        _repositoryReadingRoot = root;
-        return task;
+        var key = RepositoryKey(root);
+        RepositoryRead reading;
+        lock (_repositoryReads)
+        {
+            if (_repositoryReads.TryGetValue(key, out var inFlight))
+            {
+                // Loading a missing snapshot shares the current read. Explicit refreshes need one more pass;
+                // any number of clicks during that pass coalesce instead of losing the latest filesystem state.
+                if (refresh) inFlight.RefreshAgain = true;
+                return inFlight.Completion.Task;
+            }
+            reading = new RepositoryRead();
+            _repositoryReads.Add(key, reading);
+        }
+        _ = ReadRepositoryAsync(root, log, sensitiveValues, conversationId, key, reading);
+        return reading.Completion.Task;
     }
 
-    private async Task<RepositorySnapshot> ReadRepositoryAsync(string workspaceRoot, HubLog? log,
-        IReadOnlyList<string> sensitiveValues, string? conversationId)
+    private async Task ReadRepositoryAsync(string workspaceRoot, HubLog? log,
+        IReadOnlyList<string> sensitiveValues, string? conversationId, string key, RepositoryRead reading)
     {
-        // Counted where the read is really started, not where it is asked for: the coalesced path above never
-        // gets here, so this number is the difference between a cache and a poll.
-        RepositoryReadsForCheck++;
         try
         {
-            var runner = new ProcessRunner(line => log?.Write(line));
-            var state = await GitRepository.ReadAsync(workspaceRoot, runner, sensitiveValues)
-                .ConfigureAwait(false);
-            var snapshot = new RepositorySnapshot(workspaceRoot, state);
-            await Execution.ApplyOnUiAsync(() =>
+            while (true)
             {
-                _repository = snapshot;
-                RepositoryChanged?.Invoke();
-            }).ConfigureAwait(false);
-            if (conversationId is not null)
-                await Execution.RefreshGitPresentationAsync(conversationId, state, workspaceRoot).ConfigureAwait(false);
-            return snapshot;
-        }
-        finally
-        {
-            // Cleared on the way out either way: a read that threw must not leave the pane waiting on a task
-            // that will never answer, which is how one refused repository becomes a permanently stuck tab. The
-            // root is compared first because a second read for a different directory may have taken the slot
-            // while this one was running, and this one has no business clearing somebody else's.
-            if (string.Equals(RepositoryKey(_repositoryReadingRoot), RepositoryKey(workspaceRoot),
-                    StringComparison.Ordinal))
-            {
-                _repositoryReading = null;
-                _repositoryReadingRoot = null;
+                RepositoryReadsForCheck++;
+                var runner = new ProcessRunner(line => log?.Write(line));
+                var state = await GitRepository.ReadAsync(workspaceRoot, runner, sensitiveValues)
+                    .ConfigureAwait(false);
+                var snapshot = new RepositorySnapshot(workspaceRoot, state);
+                var delivered = false;
+                await Execution.ApplyOnUiAsync(() =>
+                {
+                    // A refresh requested during the read makes this answer obsolete. Do not release the pane's
+                    // totals gate until the follow-up status arrives, or it would read new totals on old rows.
+                    lock (_repositoryReads)
+                    {
+                        if (reading.RefreshAgain) return;
+                        _repository = snapshot;
+                        delivered = true;
+                    }
+                    RepositoryChanged?.Invoke();
+                }).ConfigureAwait(false);
+                if (delivered && conversationId is not null)
+                    await Execution.RefreshGitPresentationAsync(conversationId, state, workspaceRoot).ConfigureAwait(false);
+                lock (_repositoryReads)
+                {
+                    if (reading.RefreshAgain)
+                    {
+                        reading.RefreshAgain = false;
+                        continue;
+                    }
+                    _repositoryReads.Remove(key);
+                    reading.Completion.TrySetResult(snapshot);
+                    return;
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            lock (_repositoryReads) _repositoryReads.Remove(key);
+            reading.Completion.TrySetException(ex);
         }
     }
 

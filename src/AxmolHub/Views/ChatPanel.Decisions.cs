@@ -423,14 +423,14 @@ public partial class ChatPanel
             // for one instead of waiting for a repaint that only a changed conversation signature would trigger.
             _inspector.ResolveRootRequested = () => _chat?.ResolveActiveWorkspaceRepositoryRootAsync()
                 ?? Task.FromResult<string?>(null);
-            // Picking a scope is an explicit navigation. Last turn reads the latest transcript; history scopes
-            // read the repository, while an ordinary shell repaint leaves the current comparison standing.
+            // Explicit scope navigation refreshes Git; ordinary transcript repaints keep the cached comparison.
             _inspector.ScopeChanged += scope =>
             {
                 if (scope == GitReviewScope.LastTurn)
                     BuildInspectorContent(_inspector.IsChangesTabVisible ? "repo" : "plan", -1, refreshChanges: true);
-                if (scope is GitReviewScope.Committed or GitReviewScope.Branch) RequestRepositoryRead();
+                else RequestRepositoryRead();
             };
+            _inspector.RepositoryNavigationRequested += () => RequestRepositoryRead();
             // Repository file rows ask for a single HEAD-to-working-tree snapshot, including staged and unstaged edits.
             _inspector.WholeDiffRequested = async (state, entry) =>
             {
@@ -523,17 +523,18 @@ public partial class ChatPanel
             || !_inspector.HasContext(_chat?.ActiveConversation?.Id ?? "", workspace)) return;
         if (_chat?.RepositoryFor(workspace) is { } cached)
             _inspector.ReloadRepository(cached.State);
-        else RequestRepositoryRead();
+        else RequestRepositoryRead(refresh: false);
     }
 
     /// <summary>Starts a repository read for the workspace on screen without blocking the click. The result
     /// arrives through <see cref="OnRepositoryChanged"/> and updates only the matching repository list.</summary>
-    private void RequestRepositoryRead()
+    private void RequestRepositoryRead(bool refresh = true)
     {
         var conversation = _chat?.ActiveConversation;
         if (_chat is null || _chat.ActiveWorkspaceRoot is not { Length: > 0 }) return;
-        _ = conversation is null ? _chat.RefreshActiveWorkspaceRepositoryAsync()
-            : _chat.RefreshRepositoryAsync(conversation.Id);
+        _inspector?.BeginRepositoryRefresh();
+        _ = conversation is null ? _chat.RefreshActiveWorkspaceRepositoryAsync(refresh)
+            : _chat.RefreshRepositoryAsync(conversation.Id, refresh);
     }
 
     private void RefreshChanges()
