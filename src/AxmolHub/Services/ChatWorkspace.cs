@@ -511,9 +511,20 @@ public sealed partial class ChatWorkspace : IDisposable
     /// <b>a new credential</b>, not as a field on the provider — which is now the same thing
     /// <see cref = "SetApiKey"/> does. Passing one rotates the active credential's secret rather than stacking a
     /// second entry, matching the "leave blank to keep the stored key" contract.</para>
+    /// <para>Custom endpoints may also change their wire API and headers. Null arguments preserve the saved
+    /// values; an empty header dictionary clears the custom headers. Built-in wire and headers stay unchanged.</para>
     /// </summary>
     /// <param name = "problem">The text key of the refusal, or <c>null</c> when it was updated.</param>
-    public bool UpdateProvider(string providerId, string name, string baseUrl, string model, string? apiKey, out string? problem) => _providers.UpdateProvider(providerId, name, baseUrl, model, apiKey, out problem);
+    public bool UpdateProvider(
+        string providerId,
+        string name,
+        string baseUrl,
+        string model,
+        string? apiKey,
+        out string? problem,
+        string? protocol = null,
+        IReadOnlyDictionary<string, string>? customHeaders = null)
+        => _providers.UpdateProvider(providerId, name, baseUrl, model, apiKey, out problem, protocol, customHeaders);
     /// <summary>
     /// Removes a provider <b>and everything that hangs off it</b>: the record, its accounts and their secrets.
     ///

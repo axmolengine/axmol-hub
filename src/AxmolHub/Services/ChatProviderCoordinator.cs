@@ -999,7 +999,15 @@ internal sealed partial class ChatProviderCoordinator
     }
 
     /// <inheritdoc cref = "AddProvider"/>
-    internal bool UpdateProvider(string providerId, string name, string baseUrl, string model, string? apiKey, out string? problem)
+    internal bool UpdateProvider(
+        string providerId,
+        string name,
+        string baseUrl,
+        string model,
+        string? apiKey,
+        out string? problem,
+        string? protocol = null,
+        IReadOnlyDictionary<string, string>? customHeaders = null)
     {
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider is null)
@@ -1009,63 +1017,59 @@ internal sealed partial class ChatProviderCoordinator
             return false;
         }
 
+        if (provider.IsCustom && protocol is not null && !ModelProtocols.IsKnown(protocol))
+        {
+            problem = "ProviderWireApiInvalid";
+            return false;
+        }
+
         var edited = new ModelProvider
         {
             Id = provider.Id,
             Name = provider.IsCustom ? name.Trim() : provider.Name,
             IsCustom = provider.IsCustom,
             BaseUrl = provider.IsCustom ? baseUrl.Trim() : provider.BaseUrl,
-            // Built through the list rather than the Model setter: the validation below reads Model either way,
-            // and this keeps the temporary object from relying on a setter with an insertion side effect.
-            Models = [new ProviderModel { Name = model.Trim(), InUse = true }],
+            Protocol = provider.IsCustom ? protocol ?? provider.Protocol : provider.Protocol,
+            CustomHeaders = provider.IsCustom && customHeaders is not null
+                ? customHeaders.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                : provider.CustomHeaders,
         };
         if ((problem = Validate(edited)) is not null) return false;
         problem = null;
 
+        // Rotate through the existing credential path before changing configuration, so a refused key
+        // cannot leave a half-applied endpoint edit. A blank key deliberately leaves the credential alone.
+        if (!string.IsNullOrEmpty(apiKey)
+            && AddCredential(providerId, "", apiKey, CredentialSources.ApiKey) is null)
+        {
+            problem = "ApiKeyPlatformUnsupported";
+            return false;
+        }
+
         provider.Name = edited.Name;
         provider.BaseUrl = edited.BaseUrl;
+        provider.Protocol = edited.Protocol;
+        provider.CustomHeaders = edited.CustomHeaders;
 
-        // Rename the model in use rather than assigning to Model. The setter inserts, which is right when a
-        // provider is being built and wrong here — editing a provider would otherwise grow the model list by
-        // one on every save.
-        var renamed = edited.Model.Trim();
-        if (provider.ActiveModel is { } current)
+        // Endpoint-only edits must not touch the model list or its activation flags. Legacy callers can
+        // still rename the active model without using Model's inserting setter.
+        var renamed = model.Trim();
+        if (!string.Equals(renamed, provider.Model, StringComparison.Ordinal))
         {
-            // A rename onto a name that already exists would create a duplicate row; the existing entry wins
-            // and the renamed one is dropped.
-            if (provider.Models.Any(model => !ReferenceEquals(model, current)
-                    && string.Equals(model.Name, renamed, StringComparison.OrdinalIgnoreCase)))
+            if (provider.ActiveModel is { } current)
             {
-                provider.Models.Remove(current);
+                // A rename onto an existing name keeps that row rather than creating a duplicate.
+                if (provider.Models.Any(candidate => !ReferenceEquals(candidate, current)
+                        && string.Equals(candidate.Name, renamed, StringComparison.OrdinalIgnoreCase)))
+                    provider.Models.Remove(current);
+                else
+                    current.Name = renamed;
             }
-            else
+            else if (renamed.Length > 0)
             {
-                current.Name = renamed;
+                provider.Models.Add(new ProviderModel { Name = renamed, InUse = true });
             }
-        }
-        else if (renamed.Length > 0)
-        {
-            provider.Models.Add(new ProviderModel { Name = renamed, InUse = true });
-        }
-
-        provider.Normalize();
-
-        if (!string.IsNullOrEmpty(apiKey))
-        {
-            // An edit that replaces the key must not leave the old secret in the store. Under the one-to-one
-            // rule this is the same "rotate" that AddCredential performs, so it is expressed as one call rather
-            // than a second code path that could drift from it.
-            if (!CanStoreSecrets)
-            {
-                problem = "ApiKeyPlatformUnsupported";
-                return false;
-            }
-
-            if (AddCredential(providerId, "", apiKey, CredentialSources.ApiKey) is null)
-            {
-                problem = "ApiKeyPlatformUnsupported";
-                return false;
-            }
+            provider.Normalize();
         }
 
         SaveProviders();

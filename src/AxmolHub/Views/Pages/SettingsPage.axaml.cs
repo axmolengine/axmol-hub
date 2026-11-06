@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -1642,12 +1643,13 @@ public partial class SettingsPage : UserControl
         => provider.IsCallReady ? "Hub.Success" : "Hub.TextTertiary";
 
     /// <summary>
-    /// The edit draft: configuration only. Name and base URL are read-only for a built-in provider (the
-    /// manifest pins them). Authentication never appears here — no key box, no sign-in button — so the form
-    /// cannot contradict the status mark on the header.
+    /// Custom providers share the add form. Built-in name and base URL remain read-only, and their
+    /// authentication stays in the existing auth dialog.
     /// </summary>
     private Control BuildEditDraft(ModelProvider provider)
     {
+        if (provider.IsCustom) return BuildCustomProviderDraft(provider);
+
         var isBuiltIn = provider is { IsCustom: false };
 
         var stack = new StackPanel { Spacing = 8, Tag = SectionTags.ProviderDraft };
@@ -1770,23 +1772,53 @@ public partial class SettingsPage : UserControl
         return status;
     }
 
-    /// <summary>The custom endpoint form inserted in place at the top of the provider list. Each setting gets
-    /// its own full-width row, following GitHub Desktop's custom endpoint fields.</summary>
-    private Control BuildAddProviderDraft()
-    {
-        var stack = new StackPanel { Spacing = 12, Tag = SectionTags.AddProviderDraft };
-        stack.Children.Add(new TextBlock
-        {
-            Text = HubStrings.Get("AddCustomProvider"),
-            FontWeight = FontWeight.SemiBold,
-        });
+    private Control BuildAddProviderDraft() => BuildCustomProviderDraft();
 
-        var name = new TextBox { Tag = SectionTags.AddDraftName, PlaceholderText = HubStrings.Get("ProviderDisplayNameHint") };
-        var baseUrl = new TextBox { Tag = SectionTags.AddDraftBaseUrl, PlaceholderText = "https://api.example.com/v1" };
+    /// <summary>One custom endpoint form for adding and editing, with a full-width row per setting.</summary>
+    private Control BuildCustomProviderDraft(ModelProvider? provider = null)
+    {
+        var stack = new StackPanel
+        {
+            Spacing = 12,
+            Tag = provider is null ? SectionTags.AddProviderDraft : SectionTags.ProviderDraft,
+        };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = HubStrings.Get(provider is null ? "AddCustomProvider" : "EditProviderTitle"),
+            FontWeight = FontWeight.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (provider is not null)
+            titleRow.Children.Add(BuildLinkedStatusMark(provider));
+        stack.Children.Add(titleRow);
+
+        var name = new TextBox
+        {
+            Name = "ProviderDraftName",
+            Tag = SectionTags.AddDraftName,
+            Text = provider?.Name,
+            PlaceholderText = HubStrings.Get("ProviderDisplayNameHint"),
+        };
+        var baseUrl = new TextBox
+        {
+            Name = "ProviderDraftBaseUrl",
+            Tag = SectionTags.AddDraftBaseUrl,
+            Text = provider?.BaseUrl,
+            PlaceholderText = "https://api.example.com/v1",
+        };
+        var selectedProtocol = provider is null ? ModelProtocols.Chat
+            : AxmolHub.Agent.ChatClientFactory.ProtocolFor(provider, provider.Model);
         var wire = new ComboBox
         {
+            Name = "ProviderDraftWire",
             Tag = SectionTags.AddDraftWire,
-            SelectedIndex = 0,
+            SelectedIndex = selectedProtocol switch
+            {
+                ModelProtocols.Chat => 0,
+                ModelProtocols.Responses => 1,
+                _ => -1,
+            },
             ItemsSource = new[]
             {
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireChat"), Tag = ModelProtocols.Chat },
@@ -1795,21 +1827,25 @@ public partial class SettingsPage : UserControl
         };
         var apiKey = new TextBox
         {
+            Name = "ProviderDraftKey",
             Tag = SectionTags.AddDraftKey,
             PasswordChar = '•',
-            PlaceholderText = "sk-…",
+            PlaceholderText = provider is null ? "sk-…" : "Replace key",
             Classes = { "password" },
         };
         var customHeaders = new TextBox
         {
+            Name = "ProviderDraftHeaders",
             Tag = SectionTags.AddDraftHeaders,
+            Text = provider?.CustomHeaders.Count > 0 ? JsonSerializer.Serialize(provider.CustomHeaders) : "",
             PlaceholderText = "{}",
         };
 
         stack.Children.Add(BuildField(HubStrings.Get("ProviderName"), name, HubStrings.Get("ProviderDisplayNameHint")));
         stack.Children.Add(BuildField(HubStrings.Get("ProviderBaseUrl"), baseUrl, HubStrings.Get("ProviderBaseUrlHint")));
         stack.Children.Add(BuildField(HubStrings.Get("ProviderWireApi"), wire, HubStrings.Get("ProviderWireApiHint")));
-        stack.Children.Add(BuildField(HubStrings.Get("ProviderApiKeyOptional"), apiKey, HubStrings.Get("ProviderApiKeyHint")));
+        stack.Children.Add(BuildField(HubStrings.Get("ProviderApiKeyOptional"), apiKey,
+            HubStrings.Get(provider is null ? "ProviderApiKeyHint" : "ProviderApiKeyEditHint")));
         stack.Children.Add(BuildField(HubStrings.Get("ProviderCustomHeaders"), customHeaders, HubStrings.Get("ProviderCustomHeadersHint")));
 
         var buttons = new StackPanel
@@ -1822,7 +1858,7 @@ public partial class SettingsPage : UserControl
         cancel.Click += (_, _) => CloseDraft();
         var save = new Button
         {
-            Content = HubStrings.Get("AddProviderAction"),
+            Content = HubStrings.Get(provider is null ? "AddProviderAction" : "Save"),
             Classes = { "compact", "primary" },
             Margin = new Thickness(0),
             IsDefault = true,
@@ -1830,8 +1866,15 @@ public partial class SettingsPage : UserControl
         };
         save.Click += async (_, _) =>
         {
-            _addProviderCommitTask = CommitAddProviderDraft(name, baseUrl, wire, apiKey, customHeaders);
-            await _addProviderCommitTask;
+            if (provider is null)
+            {
+                _addProviderCommitTask = CommitCustomProviderDraft(null, name, baseUrl, wire, apiKey, customHeaders);
+                await _addProviderCommitTask;
+            }
+            else
+            {
+                await CommitCustomProviderDraft(provider, name, baseUrl, wire, apiKey, customHeaders);
+            }
         };
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
@@ -1840,6 +1883,8 @@ public partial class SettingsPage : UserControl
         void RefreshDraft()
         {
             var problem = ChatWorkspace.ValidateDraft(name.Text ?? "", baseUrl.Text ?? "", customHeaders.Text);
+            if (problem is null && wire.SelectedItem is not ComboBoxItem { Tag: string })
+                problem = "ProviderWireApiInvalid";
             save.IsEnabled = problem is null;
             var entered = !string.IsNullOrWhiteSpace(name.Text) || !string.IsNullOrWhiteSpace(baseUrl.Text)
                           || !string.IsNullOrWhiteSpace(customHeaders.Text);
@@ -1852,11 +1897,13 @@ public partial class SettingsPage : UserControl
         name.TextChanged += (_, _) => RefreshDraft();
         baseUrl.TextChanged += (_, _) => RefreshDraft();
         customHeaders.TextChanged += (_, _) => RefreshDraft();
+        wire.SelectionChanged += (_, _) => RefreshDraft();
         RefreshDraft();
         return stack;
     }
 
-    private async Task CommitAddProviderDraft(
+    private async Task CommitCustomProviderDraft(
+        ModelProvider? provider,
         TextBox name,
         TextBox baseUrl,
         ComboBox wire,
@@ -1870,13 +1917,40 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        var protocol = (wire.SelectedItem as ComboBoxItem)?.Tag as string ?? ModelProtocols.Chat;
-        var secret = string.IsNullOrWhiteSpace(apiKey.Text) ? null : apiKey.Text;
-        var created = _chat.AddProvider(
-            name.Text ?? "", baseUrl.Text ?? "", "", secret, out var problem, protocol, parsedHeaders);
-        if (created is null)
+        if (wire.SelectedItem is not ComboBoxItem { Tag: string protocol })
         {
-            if (problem is not null) SetProviderStatus(true, HubStrings.Get(problem));
+            SetProviderStatus(true, HubStrings.Get("ProviderWireApiInvalid"));
+            return;
+        }
+        var secret = string.IsNullOrWhiteSpace(apiKey.Text) ? null : apiKey.Text;
+        ModelProvider? created;
+        try
+        {
+            if (provider is not null)
+            {
+                if (!_chat.UpdateProvider(provider.Id, name.Text ?? "", baseUrl.Text ?? "", provider.Model,
+                        secret, out var editProblem, protocol, parsedHeaders))
+                {
+                    SetProviderStatus(true, HubStrings.Get(editProblem ?? "ProviderSaveFailed"));
+                    return;
+                }
+                SetProviderStatus(false, HubStrings.Get("ProviderEditSaved"));
+                CloseDraft();
+                return;
+            }
+
+            created = _chat.AddProvider(
+                name.Text ?? "", baseUrl.Text ?? "", "", secret, out var problem, protocol, parsedHeaders);
+            if (created is null)
+            {
+                SetProviderStatus(true, HubStrings.Get(problem ?? "ProviderSaveFailed"));
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecretStoreException
+                                   or InvalidOperationException or TimeoutException or PlatformNotSupportedException)
+        {
+            SetProviderStatus(true, HubStrings.Get("ProviderSaveFailed") + " " + ex.Message);
             return;
         }
 
@@ -1941,25 +2015,20 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// Applies the edit draft. Built-in name/base URL are pinned by the manifest and already read-only. The
-    /// blank key argument is a deliberate no-op: authentication is owned by the auth dialog, and this form
-    /// must never touch the stored credential.
+    /// Applies the built-in edit draft without touching its stored credential. Custom endpoints use
+    /// <see cref="CommitCustomProviderDraft"/> for their additional fields.
     /// </summary>
     private void CommitEditDraft(ModelProvider provider, TextBox name, TextBox baseUrl)
     {
         if (_chat is null) return;
 
         // Keep the existing default-model name; this page no longer edits it.
-        if (_chat.UpdateProvider(provider.Id, name.Text ?? "", baseUrl.Text ?? "", provider.Model, "", out var problem))
+        if (!_chat.UpdateProvider(provider.Id, name.Text ?? "", baseUrl.Text ?? "", provider.Model, "", out var problem))
         {
-            SetProviderStatus(false, HubStrings.Get("ProviderEditSaved"));
+            SetProviderStatus(true, HubStrings.Get(problem ?? "ProviderSaveFailed"));
+            return;
         }
-        else
-        {
-            // Only the gate's own reason is shown: a null problem means the row itself is gone, which is not
-            // something to put in a status line about a field.
-            if (problem is not null) SetProviderStatus(true, HubStrings.Get(problem));
-        }
+        SetProviderStatus(false, HubStrings.Get("ProviderEditSaved"));
         CloseDraft();
     }
 
