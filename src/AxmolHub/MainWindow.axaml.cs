@@ -1457,8 +1457,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The bottom entry's popup: "Settings", the "外观" switchboard, and the License viewer. 外观 opens the two
-    /// questions it answers, "界面语言" and "主题", and each of those opens its own answers. Every row is one
+    /// The bottom entry's popup: Settings, Appearance, License and About. Appearance opens the two
+    /// questions it answers, Language and Theme, and each of those opens its own answers. Every row is one
     /// line: a name, and a tick when it is the answer in force. Built fresh on every open, so the labels follow
     /// the UI language and exactly one tick per question is drawn without any sync machinery.
     ///
@@ -1565,6 +1565,18 @@ public partial class MainWindow : Window
             await LicenseWindow.ShowAsync(this);
         };
         menu.Items.Add(license);
+
+        var about = new MenuItem
+        {
+            Header = MenuRow.Build("Hub.Icon.Info", "About", current: false),
+            Tag = MenuRowTag.About,
+        };
+        about.Click += async (_, _) =>
+        {
+            menu.Hide();
+            await App.ShowAboutAsync(this);
+        };
+        menu.Items.Add(about);
         return menu;
     }
 
@@ -1577,6 +1589,7 @@ public partial class MainWindow : Window
         internal const string Language = "menu:language";
         internal const string Theme = "menu:theme";
         internal const string License = "menu:license";
+        internal const string About = "menu:about";
     }
 
     /// <summary>Recomputes all **imperatively** written copy after a language change (DynamicResource

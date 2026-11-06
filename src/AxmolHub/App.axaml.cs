@@ -64,7 +64,7 @@ public partial class App : Application
         => _ = ShowAboutAsync((ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow);
 
     /// <summary>
-    /// One place for this surface: the menu entry above and <c>--verify-shell</c> both come through here, so the
+    /// One place for this surface: both menu entries and <c>--verify-shell</c> come through here, so the
     /// check reads the same dialog a click opens rather than a re-enactment of it. A null owner is the platform's
     /// own arrangement (HubDialog degrades to a non-modal Show), which is also what lets the check drive it without
     /// blocking the suite.
