@@ -3201,6 +3201,20 @@ internal sealed partial class ChatExecutionCoordinator
         {
             Audit(run.ConversationId, $"Request recovery ended: retries={ex.Retries}, waited={ex.Waited.TotalSeconds:0.#}s, "
                 + $"partial={ex.Partial}, cause={ex.InnerException?.GetType().Name}: {ex.Message}");
+            if (ex.Partial && Sessions.Registry.Peek(run.ConversationId) is
+                { Goal: { Length: > 0 }, GoalState: ChatGoalStates.Active } goal)
+            {
+                // The partial answer is filed below as its own assistant turn. Resume the goal only after
+                // a bounded provider cooldown, so its next request cannot concatenate with the failed stream.
+                var delay = TimeSpan.FromMilliseconds(Math.Min(
+                    ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,
+                    ProviderRetryDefaults.RateLimitBaseDelay.TotalMilliseconds
+                    * Math.Pow(2, Math.Clamp(goal.GoalCooldownCount, 0, 10))));
+                var notice = await ParkGoalForProviderAsync(run.ConversationId, delay).ConfigureAwait(false);
+                return (RunResult.Incomplete, notice, false,
+                    string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                        HubStrings.Get("ChatRetryResultFormat"), ex.Retries, Math.Round(ex.Waited.TotalSeconds), ex.Message));
+            }
             return (RunResult.Incomplete, ex.Partial ? "ChatRetryPartial" : "ChatRetryExhausted", true,
                 string.Format(System.Globalization.CultureInfo.CurrentCulture,
                     HubStrings.Get("ChatRetryResultFormat"), ex.Retries, Math.Round(ex.Waited.TotalSeconds), ex.Message));

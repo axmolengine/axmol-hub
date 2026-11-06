@@ -921,6 +921,7 @@ internal static class ShellCheckSupport
     {
         public int Requests { get; private set; }
         public int FailuresBeforeSuccess { get; init; } = int.MaxValue;
+        public bool FailAfterChunks { get; init; }
         /// <summary>The options of the request that was just made, so a check can read what would have gone on
         /// the wire. The scripted client answers instead of a gateway, and the field a gateway would have been
         /// asked for has to be asserted on the same object the real request is built from.</summary>
@@ -949,7 +950,7 @@ internal static class ShellCheckSupport
             // one of the paths a check has to be able to take.
             if (gate is not null)
                 await gate.WaitAsync(cancellationToken);
-            if (exception is not null && Requests <= FailuresBeforeSuccess)
+            if (exception is not null && Requests <= FailuresBeforeSuccess && !FailAfterChunks)
                 throw exception;
             if (searchEnd is { Count: > 0 } end)
                 yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, end);
@@ -968,6 +969,8 @@ internal static class ShellCheckSupport
 
                 await Task.Yield();
             }
+            if (exception is not null && Requests <= FailuresBeforeSuccess && FailAfterChunks)
+                throw exception;
 
             allChunksReached?.TrySetResult(true);
             if (afterAllChunksGate is not null)

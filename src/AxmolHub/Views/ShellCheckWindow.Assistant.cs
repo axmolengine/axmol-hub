@@ -1810,6 +1810,35 @@ internal sealed class ShellAssistantChecks
 
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
 
+        var partialGoal = PausedGoal("部分响应后退避并续跑");
+        var partialClient = new ScriptedChatClient(["Partial ", "answer.\n[GOAL_COMPLETE]"], exception:
+            new AxmolHub.Agent.ProviderResponseException("Upstream service temporarily unavailable",
+                "upstream_stream_read_error")) { FailuresBeforeSuccess = 1, FailAfterChunks = true };
+        shell.Chat.ClientOverride = (_, _) => partialClient;
+        shell.Chat.ResumeGoal(partialGoal.Id);
+        var partialParked = false;
+        for (var wait = 0; wait < 1600; wait++)
+        {
+            var copy = shell.Chat.StoredCopyForCheck(partialGoal.Id);
+            partialParked |= copy?.GoalState == ChatGoalStates.Waiting && copy.GoalCooldownCount == 1
+                && copy.GoalWakeAt > DateTimeOffset.UtcNow;
+            if (copy?.GoalState == ChatGoalStates.Complete) break;
+            await Task.Delay(5);
+            Dispatcher.UIThread.RunJobs();
+        }
+        var partialCopy = shell.Chat.StoredCopyForCheck(partialGoal.Id);
+        var partialReplies = partialCopy?.Messages.Where(turn => turn.Role == ChatRoles.Assistant
+            && turn.Text.Contains("Partial", StringComparison.Ordinal)).ToArray() ?? [];
+        Check(partialParked && partialClient.Requests == 2 && partialCopy?.GoalState == ChatGoalStates.Complete
+              && partialCopy.GoalCooldownCount == 0 && partialReplies.Length == 2
+              && partialReplies[0].Text == "Partial answer.\n[GOAL_COMPLETE]"
+              && partialReplies[1].Text == "Partial answer.",
+            "目标任务的部分响应失败后进入有界退避并续跑；两次答复各自保留，不拼接（实际 "
+            + partialClient.Requests + " / " + partialCopy?.GoalState + " / cooldown=" + partialCopy?.GoalCooldownCount
+            + " / parked=" + partialParked + " / replies=" + partialReplies.Length + " ["
+            + string.Join(" | ", partialReplies.Select(turn => turn.Text.Replace("\\n", "<LF>", StringComparison.Ordinal))) + "]）");
+        shell.Chat.DeleteConversation(partialGoal.Id);
+
         // Request recovery works without a goal; enabling a goal must not buy a second retry budget.
         var streamLimited = PausedGoal("流内限流也要退避");
         var savedRetries = shell.Chat.PreferencesProvider!()!.ProviderMaxRetries;
