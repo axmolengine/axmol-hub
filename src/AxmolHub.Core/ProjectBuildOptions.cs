@@ -9,11 +9,16 @@ namespace AxmolHub.Core;
 /// </summary>
 public static class ProjectBuildOptions
 {
-    /// <param name="prepareFiles">
-    /// <c>true</c> (build): writing to disk is allowed. <c>false</c> (plan): only compute paths, no side effects,
-    /// but the content is character-for-character identical to build.
-    /// </param>
-    public static string[] CmakeOptions(ProjectEntry project, EngineEntry engine, BuildTarget target, bool prepareFiles, EnginePrebuiltState prebuiltState)
+    /// <summary>Plan and execution use this exact invocation, including pending engine reconfiguration.</summary>
+    public static AxmolInvocation Invocation(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
+    {
+        var extra = ProjectBuildArguments.Parse(project.AdvancedBuildEnabled, project.AdditionalBuildParameters);
+        var target = BuildTargets.Get(project.Platform);
+        return AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly,
+            CmakeOptions(project, engine, target, prebuiltState), force: ProjectService.NeedsReconfigure(project), additionalBuild: extra);
+    }
+
+    private static string[] CmakeOptions(ProjectEntry project, EngineEntry engine, BuildTarget target, EnginePrebuiltState prebuiltState)
     {
         var options = new List<string>();
 

@@ -16,6 +16,13 @@ public sealed class ProjectEntry
     public string Channel { get; set; } = "local";
     public string Platform { get; set; } = "windows-x64";
     public string Configuration { get; set; } = "Debug";
+    public bool AdvancedBuildEnabled { get; set; }
+    private string _additionalBuildParameters = "";
+    public string AdditionalBuildParameters
+    {
+        get => _additionalBuildParameters;
+        set => _additionalBuildParameters = TextEol.ToLf(value ?? "");
+    }
     public string ProjectType { get; set; } = "cpp";
     public DateTimeOffset? LastOpened { get; set; }
     public string BuildStatus { get; set; } = "Not built";
@@ -208,7 +215,8 @@ public sealed class StateStore(string root)
     public static string MetadataPath(string project) => System.IO.Path.Combine(project, ".axmol-hub.json");
     public static void LockProject(ProjectEntry project) => WriteJson(MetadataPath(project.Path), new
     {
-        engine = "axmol", version = project.Version, channel = project.Channel, platform = project.Platform, configuration = project.Configuration, projectType = project.ProjectType
+        engine = "axmol", version = project.Version, channel = project.Channel, platform = project.Platform, configuration = project.Configuration, projectType = project.ProjectType,
+        advancedBuildEnabled = project.AdvancedBuildEnabled, additionalBuildParameters = project.AdditionalBuildParameters
     });
     public static ProjectEntry ReadProject(string path)
     {
@@ -228,6 +236,8 @@ public sealed class StateStore(string root)
             project.Channel = doc.RootElement.GetProperty("channel").GetString() ?? "";
             project.Platform = doc.RootElement.GetProperty("platform").GetString() ?? "";
             project.Configuration = doc.RootElement.TryGetProperty("configuration", out var configuration) ? configuration.GetString() ?? "Debug" : "Debug";
+            project.AdvancedBuildEnabled = doc.RootElement.TryGetProperty("advancedBuildEnabled", out var advanced) && advanced.GetBoolean();
+            project.AdditionalBuildParameters = doc.RootElement.TryGetProperty("additionalBuildParameters", out var parameters) ? parameters.GetString() ?? "" : "";
             if (doc.RootElement.TryGetProperty("projectType", out var projectType))
             {
                 project.ProjectType = projectType.GetString() ?? "cpp";

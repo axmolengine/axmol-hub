@@ -38,8 +38,11 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
-        arguments.AddRange(["-File", wrapper, "-EngineRoot", engine.Path, invocation.SubCommand]);
-        arguments.AddRange(invocation.Arguments);
+        // PowerShell -File can split a dash-prefixed value at ':' even when ArgumentList preserves
+        // its boundary (e.g. -DSEARCH_PATH=C:\\SDK). Encode the argv array, not shell source.
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new[] { invocation.SubCommand }.Concat(invocation.Arguments))));
+        arguments.AddRange(["-File", wrapper, "-EngineRoot", engine.Path, "-InvocationBase64", payload]);
 
         runner.Write("axmol: " + invocation);
         // environment: null = inherit the parent environment plus the shared macOS host PATH. The engine depends

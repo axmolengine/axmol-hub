@@ -5,21 +5,25 @@ using AxmolHub.Core;
 
 namespace AxmolHub;
 
+/// <summary>The build dialog's draft; project metadata is unchanged until a build starts.</summary>
+public sealed record BuildSelection(BuildTarget Target, string Configuration, bool AdvancedBuildEnabled, string AdditionalBuildParameters);
+
 /// <summary>
-/// The "choose build platform" dialog. In the WPF version this window was stacked up inline inside
-/// <c>MainWindow.PickBuildTarget</c>; here it's its own file because both "generate / run" and the
-/// verification programs use it.
-///
-/// Returning <c>null</c> means the user cancelled — same as the WPF version, and **cancelling must
-/// not change project metadata**: choosing a platform itself writes <c>.axmol-hub.json</c>, so the
-/// write is deferred until the build actually starts (see <c>BuildTargets.Select</c> inside
-/// <see cref="HubWorkspace.BuildAsync"/>).
+/// Choose a target, configuration and optional extra engine arguments. Null means cancellation;
+/// metadata writes are deferred until the build starts in <see cref="HubWorkspace.BuildAsync"/>.
 /// </summary>
 public sealed class BuildTargetDialog : Window
 {
     private readonly ComboBox _picker = new() { Margin = new Thickness(0, 12, 0, 12) };
     private readonly ComboBox _configuration = new() { Margin = new Thickness(0, 6, 0, 8) };
     private readonly TextBlock _hint = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly CheckBox _advanced = new() { Name = "AdvancedBuild", Content = HubStrings.Get("AdvancedBuild") };
+    private readonly TextBox _parameters = new()
+    {
+        Name = "AdditionalBuildParameters",
+        PlaceholderText = "-xc \"-DAX_ENABLE_VR=ON,-DAX_ENABLE_OPENXR=ON\"",
+        Margin = new Thickness(0, 6, 0, 8),
+    };
     private readonly ProjectEntry _project;
 
     private BuildTargetDialog(ProjectEntry project)
@@ -45,6 +49,22 @@ public sealed class BuildTargetDialog : Window
             Margin = new Thickness(0, 0, 0, 16),
         });
 
+        body.Children.Add(_advanced);
+        var advancedBody = new StackPanel { IsVisible = false, ClipToBounds = true };
+        advancedBody.Children.Add(new TextBlock { Text = HubStrings.Get("AdditionalBuildParameters"), Margin = new Thickness(0, 8, 0, 0) });
+        advancedBody.Children.Add(_parameters);
+        advancedBody.Children.Add(new TextBlock
+        {
+            Text = HubStrings.Get("AdditionalBuildParametersHint"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 16),
+        });
+        body.Children.Add(advancedBody);
+        _parameters.Text = project.AdditionalBuildParameters;
+        _advanced.IsChecked = project.AdvancedBuildEnabled;
+        _advanced.IsCheckedChanged += (_, _) => advancedBody.IsVisible = _advanced.IsChecked == true;
+        advancedBody.IsVisible = _advanced.IsChecked == true;
+
         var (footer, _, _) = HubDialogChrome.Footer(HubStrings.Get("Continue"), HubStrings.Get("Cancel"),
             () => Close(HubDialogResult.Ok), () => Close(HubDialogResult.Cancel));
         Content = chrome.Wrap(body, footer);
@@ -69,7 +89,7 @@ public sealed class BuildTargetDialog : Window
         _hint.Text = HubStrings.Get(android ? "AndroidReleasePending" : "ConfigurationHint");
     }
 
-    public static async Task<(BuildTarget Target, string Configuration)?> PickAsync(Window? owner, ProjectEntry project)
+    public static async Task<BuildSelection?> PickAsync(Window? owner, ProjectEntry project)
     {
         var dialog = new BuildTargetDialog(project);
         var result = owner is null
@@ -78,7 +98,7 @@ public sealed class BuildTargetDialog : Window
 
         return result == HubDialogResult.Ok && dialog._picker.SelectedItem is BuildTarget target
             && dialog._configuration.SelectedItem is string configuration
-            ? (target, configuration)
+            ? new BuildSelection(target, configuration, dialog._advanced.IsChecked == true, TextEol.ToLf(dialog._parameters.Text ?? ""))
             : null;
     }
 }

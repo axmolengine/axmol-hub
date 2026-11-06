@@ -24,6 +24,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     /// <summary>The marker directory the Hub writes into the project directory (build receipt etc.). Not part of the official project structure.</summary>
     public const string MarkerDirectory = ".hub";
     private const string ReconfigureMarker = "engine-upgrade.pending";
+    internal static bool NeedsReconfigure(ProjectEntry project)
+        => File.Exists(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
 
     public static void ValidateProjectType(string projectType)
     {
@@ -170,13 +172,14 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new PlatformNotSupportedException($"{target.Name} cannot be cross-compiled on {BuildTargets.Host}/{BuildTargets.HostArch} (its target arch is {target.Architecture}).");
         if (project.Version != engine.Version || project.Channel != engine.Channel) throw new InvalidOperationException("Required Axmol version/channel is not installed.");
         var locked = StateStore.ReadProject(project.Path);
-        if (locked.Version != project.Version || locked.Channel != project.Channel || locked.Platform != project.Platform || locked.Configuration != project.Configuration) throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
+        if (locked.Version != project.Version || locked.Channel != project.Channel || locked.Platform != project.Platform || locked.Configuration != project.Configuration
+            || locked.AdvancedBuildEnabled != project.AdvancedBuildEnabled || locked.AdditionalBuildParameters != project.AdditionalBuildParameters)
+            throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
         StateStore.ValidateEngine(engine.Path, engine.Channel);
 
-        // The single assembly point for -xc is ProjectBuildOptions — build and plan share it, otherwise plan would omit options.
-        var extraCmake = ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: true, prebuiltState);
-        var reconfigure = File.Exists(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
-        await commandLine.RunAsync(engine, AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly, extraCmake, force: reconfigure), project.Path, cancellation, onLine: onLine);
+        var invocation = ProjectBuildOptions.Invocation(project, engine, configureOnly, prebuiltState);
+        var reconfigure = NeedsReconfigure(project);
+        await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine);
         WriteBuildReceipt(project, engine);
         if (reconfigure) File.Delete(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
     }
@@ -190,6 +193,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         {
             engine = EngineInstallationToken(engine), platform = project.Platform, configuration = project.Configuration,
             buildDirectory = EngineBuildLayout.FindBuildDirectory(project) ?? "",
+            additionalBuildParameters = project.AdvancedBuildEnabled ? project.AdditionalBuildParameters : "",
         });
     }
 
@@ -263,7 +267,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (!target.CanRunLocally(BuildTargets.HostArch))
             throw new PlatformNotSupportedException($"{target.Name} was built for {target.Architecture}; a {target.Architecture} host is required to run it (current host: {BuildTargets.Host}/{BuildTargets.HostArch}).");
         var locked = StateStore.ReadProject(project.Path);
-        if (locked.Platform != project.Platform || locked.Configuration != project.Configuration || locked.Version != project.Version || locked.Channel != project.Channel)
+        if (locked.Platform != project.Platform || locked.Configuration != project.Configuration || locked.Version != project.Version || locked.Channel != project.Channel
+            || locked.AdvancedBuildEnabled != project.AdvancedBuildEnabled || locked.AdditionalBuildParameters != project.AdditionalBuildParameters)
             throw new InvalidOperationException("Project metadata changed. Reopen the project before Run.");
         if (project.Version != engine.Version || project.Channel != engine.Channel) throw new InvalidOperationException("Required Axmol version/channel is not installed.");
         ValidateBuildReceipt(project, engine);
@@ -283,6 +288,9 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new InvalidOperationException("Engine installation changed. Build again before Run.");
         if (root.GetProperty("platform").GetString() != project.Platform || root.GetProperty("configuration").GetString() != project.Configuration)
             throw new InvalidOperationException("Project target changed. Build again before Run.");
+        var parameters = root.TryGetProperty("additionalBuildParameters", out var saved) ? saved.GetString() ?? "" : "";
+        if (parameters != (project.AdvancedBuildEnabled ? project.AdditionalBuildParameters : ""))
+            throw new InvalidOperationException("Additional build parameters changed. Build again before Run.");
     }
 
     public static string EngineInstallationToken(EngineEntry engine)

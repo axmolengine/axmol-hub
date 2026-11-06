@@ -1274,7 +1274,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// "select build platform" dialog (corresponding to WPF's <c>PickBuildTarget</c>); when a
     /// selection already exists it runs directly.
     /// </summary>
-    public async Task BuildAsync(bool configureOnly, (BuildTarget Target, string Configuration)? selection = null, ProjectEntry? requested = null)
+    public async Task BuildAsync(bool configureOnly, BuildSelection? selection = null, ProjectEntry? requested = null)
     {
         if (RefuseIfBusy())
         {
@@ -1303,7 +1303,17 @@ public sealed partial class HubWorkspace : IDisposable
             return;
         }
 
-        var (target, configuration) = chosen.Value;
+        var target = chosen.Target;
+        var configuration = chosen.Configuration;
+        try
+        {
+            ProjectBuildArguments.Parse(chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
+        }
+        catch (InvalidDataException ex)
+        {
+            await ReportFailureAsync(ex);
+            return;
+        }
 
         // Android Release must first obtain the signing configuration, otherwise the output is an unsigned package.
         if (target.Family == "android" && configuration == "Release" && !await EditAndroidReleaseAsync(selected))
@@ -1320,7 +1330,8 @@ public sealed partial class HubWorkspace : IDisposable
             async (task, token) =>
         {
             var project = selected;
-            BuildTargets.Select(project, target.Id, configuration);
+            token.ThrowIfCancellationRequested();
+            BuildTargets.Select(project, target.Id, configuration, chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
             var engine = RequiredEngine(project);
 
             if (project.Platform == "windows-x64")

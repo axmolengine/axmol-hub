@@ -23,11 +23,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     /// that plan reports is exactly the one build will actually use (including the prebuilt-library option).
     /// </summary>
     public static AxmolInvocation Plan(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
-    {
-        var target = BuildTargets.Get(project.Platform);
-        return AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly,
-            ProjectBuildOptions.CmakeOptions(project, engine, target, prepareFiles: false, prebuiltState));
-    }
+        => ProjectBuildOptions.Invocation(project, engine, configureOnly, prebuiltState);
 
     /// <summary>
     /// The auxiliary tool environment: inherit the parent process, then prepend the tool directories inside

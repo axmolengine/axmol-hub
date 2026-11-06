@@ -87,10 +87,11 @@ internal static class PrebuiltChecks
         //    The fixture project is Debug, so here the engine's own copy must also be back on Debug to count as ready.
         CompleteBuild("Debug");
         SaveRecord("windows-x64", "Debug", token);
-        var options = ProjectBuildOptions.CmakeOptions(fixtureProject, fixtureEngine, windowsTarget, prepareFiles: false, prebuiltState);
-        Check(options.Contains("-DAX_PREBUILT_DIR=build"), "An enabled, ready prebuilt build contributes -DAX_PREBUILT_DIR=build");
+        var options = ProjectBuildOptions.Invocation(fixtureProject, fixtureEngine, configureOnly: false, prebuiltState);
+        var xc = Array.IndexOf(options.Arguments, "-xc");
+        Check(xc >= 0 && options.Arguments[xc + 1] == "-DAX_PREBUILT_DIR=build", "An enabled, ready prebuilt build contributes -DAX_PREBUILT_DIR=build");
         prebuiltState.Clear(fixtureEngine);
-        await Reject<PrebuiltUnavailableException>(() => Task.Run(() => ProjectBuildOptions.CmakeOptions(fixtureProject, fixtureEngine, windowsTarget, prepareFiles: false, prebuiltState)), "An enabled but unavailable prebuilt build fails the build instead of silently compiling from source");
+        await Reject<PrebuiltUnavailableException>(() => Task.Run(() => ProjectBuildOptions.Invocation(fixtureProject, fixtureEngine, configureOnly: false, prebuiltState)), "An enabled but unavailable prebuilt build fails the build instead of silently compiling from source");
         Console.WriteLine($"{count} prebuilt checks passed.");
         return;
     }

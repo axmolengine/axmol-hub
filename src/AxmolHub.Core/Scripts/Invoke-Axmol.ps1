@@ -1,4 +1,4 @@
-param([string]$EngineRoot)
+param([string]$EngineRoot, [string]$InvocationBase64)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $env:AX_ROOT = $EngineRoot
@@ -26,7 +26,10 @@ if (-not (Test-Path (Join-Path $EngineRoot '.git'))) {
 }
 
 try {
-    & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @args
+    # Decode an argv array rather than evaluating command text. This preserves colons, quotes and
+    # spaces that PowerShell's native -File parameter binding would otherwise reinterpret.
+    [string[]]$engineArgs = ConvertFrom-Json ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InvocationBase64)))
+    & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @engineArgs
     exit $LASTEXITCODE
 } catch {
     [Console]::Error.WriteLine($_.Exception.ToString())

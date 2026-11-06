@@ -121,20 +121,36 @@ public static class BuildTargets
         BuildConfigurations.Validate(project.Configuration);
         return Path.Combine(project.Path, (project.Platform == "windows-x64" ? "build-hub" : "build-hub-" + Get(project.Platform).Id) + (project.Configuration == "Release" ? "-release" : ""));
     }
-    public static void Select(ProjectEntry project, string id, string? configuration = null)
+    public static void Select(ProjectEntry project, string id, string? configuration = null,
+        bool? advancedBuildEnabled = null, string? additionalBuildParameters = null)
     {
         var target = Get(id);
         if (target.RequiresMajor(MajorVersion(project.Version)))
             throw new PlatformNotSupportedException($"{target.Name} requires Axmol {target.MinimumMajorVersion}+ (project is on Axmol {project.Version}).");
         configuration ??= project.Configuration;
         BuildConfigurations.Validate(configuration);
-        if (project.Platform == id && project.Configuration == configuration) return;
+        var enabled = advancedBuildEnabled ?? project.AdvancedBuildEnabled;
+        var parameters = TextEol.ToLf(additionalBuildParameters ?? project.AdditionalBuildParameters);
+        ProjectBuildArguments.Parse(enabled, parameters);
+        if (project.Platform == id && project.Configuration == configuration
+            && project.AdvancedBuildEnabled == enabled && project.AdditionalBuildParameters == parameters) return;
         var previous = project.Platform;
         var previousConfiguration = project.Configuration;
+        var previousEnabled = project.AdvancedBuildEnabled;
+        var previousParameters = project.AdditionalBuildParameters;
         project.Platform = id;
         project.Configuration = configuration;
+        project.AdvancedBuildEnabled = enabled;
+        project.AdditionalBuildParameters = parameters;
         try { StateStore.LockProject(project); }
-        catch { project.Platform = previous; project.Configuration = previousConfiguration; throw; }
+        catch
+        {
+            project.Platform = previous;
+            project.Configuration = previousConfiguration;
+            project.AdvancedBuildEnabled = previousEnabled;
+            project.AdditionalBuildParameters = previousParameters;
+            throw;
+        }
         // Success status must not carry over across targets; each target's output is stored independently.
         project.BuildStatus = "Not built";
     }
