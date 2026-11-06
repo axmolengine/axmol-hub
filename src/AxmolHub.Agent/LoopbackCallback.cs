@@ -13,6 +13,7 @@ namespace AxmolHub.Agent;
 /// </summary>
 internal static class LoopbackCallback
 {
+    internal const string ReturnToHubLink = "axmolhub://activate";
     /// <summary>
     /// The one request this callback answers. Requests are served in turn, so a browser's favicon probe arrives
     /// as its own context and rejecting it is the caller's decision.
@@ -44,16 +45,18 @@ internal static class LoopbackCallback
     }
 
     /// <summary>
-    /// Leaves the tab on a line a person can read, and never lets that courtesy mask the sign-in's real outcome:
-    /// a browser that already closed its pipe is ignored, and the response is released either way.
+    /// Leaves the tab on a small page a person can read, with a protocol link that brings the Hub window back.
+    /// The callback contains no credential or authorization code; the app keeps those in memory and completes the
+    /// exchange independently.
     /// </summary>
     public static async Task AnswerAsync(HttpListenerResponse response, int status, string message)
     {
         try
         {
-            var bytes = Encoding.UTF8.GetBytes(message);
+            var body = HtmlPage(message, status < 400);
+            var bytes = Encoding.UTF8.GetBytes(body);
             response.StatusCode = status;
-            response.ContentType = "text/plain; charset=utf-8";
+            response.ContentType = "text/html; charset=utf-8";
             response.ContentLength64 = bytes.Length;
             await response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
         }
@@ -65,5 +68,14 @@ internal static class LoopbackCallback
         {
             response.Close();
         }
+    }
+
+    private static string HtmlPage(string message, bool success)
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(message);
+        var title = success ? "Axmol Hub sign-in" : "Axmol Hub sign-in problem";
+        return $"<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>" +
+            "<style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#202124;color:#e8eaed;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:520px;padding:32px;text-align:center}p{color:#bdc1c6;line-height:1.5}a{display:inline-block;margin-top:16px;padding:10px 18px;border-radius:8px;background:#8ab4f8;color:#202124;text-decoration:none;font-weight:600}</style></head>" +
+            $"<body><main><h1>{(success ? "Sign-in received" : "Sign-in could not be completed")}</h1><p>{escaped}</p><a href=\"{ReturnToHubLink}\">Return to Axmol Hub</a></main></body></html>";
     }
 }

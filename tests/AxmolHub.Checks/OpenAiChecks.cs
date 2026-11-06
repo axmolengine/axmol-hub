@@ -554,7 +554,11 @@ internal static class OpenAiChecks
                     using var unrelated = await browser.GetAsync("http://127.0.0.1:1455/favicon.ico");
                     Check(unrelated.StatusCode == HttpStatusCode.BadRequest, "unrelated loopback requests do not finish the attempt");
                     using var accepted = await browser.GetAsync(redirect + "?code=good-code&state=" + state + "&client_id=oaiapp_test");
-                    Check(accepted.IsSuccessStatusCode, "automatic loopback callback receives a success response");
+                    var page = await accepted.Content.ReadAsStringAsync();
+                    Check(accepted.IsSuccessStatusCode && accepted.Content.Headers.ContentType?.MediaType == "text/html"
+                        && page.Contains("Sign-in received", StringComparison.Ordinal)
+                        && page.Contains("axmolhub://activate", StringComparison.Ordinal),
+                        "automatic loopback callback receives an HTML success page with a Hub activation link");
                 });
             }, _ => { }, CancellationToken.None);
             await callback!;

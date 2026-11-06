@@ -269,6 +269,12 @@ public partial class MainWindow : Window
 
     internal async Task HandleInstallLinkAsync(string value)
     {
+        if (EngineInstallLink.IsActivation(value))
+        {
+            ActivateFromRequest();
+            return;
+        }
+
         if (SystemAttentionService.TryGetConversationId(value, out var conversationId))
         {
             OpenConversationFromAttention(conversationId);

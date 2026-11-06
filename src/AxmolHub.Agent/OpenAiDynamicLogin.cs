@@ -19,15 +19,32 @@ public sealed class OpenAiDynamicLoginAttempt(string authorizationUrl, string re
 
     public bool Submit(string callback)
     {
+        if (!TryRead(callback, out var result, out var declined)) return false;
+        return Complete(result, declined);
+    }
+
+    internal bool TryRead(string callback, out (string Code, string ClientId) result, out bool declined)
+    {
+        result = default;
+        declined = false;
         try
         {
-            var result = OpenAiDynamicRegistration.ReadCallback(callback, redirectUri, state, clientId);
-            return _completion.TrySetResult(result);
+            result = OpenAiDynamicRegistration.ReadCallback(callback, redirectUri, state, clientId);
+            return true;
         }
-        catch (OpenAiAuthorizationDeclinedException ex) { return _completion.TrySetException(ex); }
+        catch (OpenAiAuthorizationDeclinedException)
+        {
+            declined = true;
+            return true;
+        }
         catch (InvalidOperationException) { return false; }
         catch (UriFormatException) { return false; }
     }
+
+    internal bool Complete((string Code, string ClientId) result, bool declined)
+        => declined
+            ? _completion.TrySetException(new OpenAiAuthorizationDeclinedException())
+            : _completion.TrySetResult(result);
 }
 
 /// <summary>Runs the dynamic authorization transaction without replacing a selected credential.</summary>
@@ -84,10 +101,19 @@ internal sealed class OpenAiDynamicLogin(OpenAiDynamicTokenExchange exchange)
             while (!token.IsCancellationRequested)
             {
                 var context = await LoopbackCallback.AcceptAsync(listener, null, token).ConfigureAwait(false);
-                var accepted = context.Request.HttpMethod == "GET" && attempt.Submit(context.Request.Url?.AbsoluteUri ?? "");
-                await LoopbackCallback.AnswerAsync(context.Response, accepted ? 200 : 400,
-                    accepted ? "Sign-in received. You can close this tab." : "This callback does not match the pending sign-in.").ConfigureAwait(false);
-                if (accepted) return;
+                var result = default((string Code, string ClientId));
+                var declined = false;
+                var valid = context.Request.HttpMethod == "GET"
+                    && attempt.TryRead(context.Request.Url?.AbsoluteUri ?? "", out result, out declined);
+                await LoopbackCallback.AnswerAsync(context.Response, valid && !declined ? 200 : 400,
+                    valid
+                        ? declined ? "Sign-in was declined. You can return to Axmol Hub." : "Sign-in received. You can return to Axmol Hub."
+                        : "This callback does not match the pending sign-in.").ConfigureAwait(false);
+                if (valid)
+                {
+                    attempt.Complete(result, declined);
+                    return;
+                }
             }
         }
         catch (Exception ex) when (ex is OperationCanceledException or HttpListenerException or ObjectDisposedException or IOException) { }

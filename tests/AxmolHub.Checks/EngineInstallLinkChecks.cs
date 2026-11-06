@@ -4,6 +4,11 @@ internal static class EngineInstallLinkChecks
 {
     internal static async Task RunAsync(string root, string[] args)
     {
+        if (!EngineInstallLink.IsActivation("axmolhub://activate")
+            || EngineInstallLink.IsActivation("axmolhub://activate?x=1")
+            || EngineInstallLink.IsActivation("axmolhub://install?version=2.11.5&source=github"))
+            throw new Exception("The Hub activation link parser accepted an invalid activation route or rejected the exact route.");
+
         var link = EngineInstallLink.Parse("axmolhub://install?version=2.11.5&source=atomgit");
         if (link.Version != "2.11.5" || link.Source != DownloadSources.AtomGitId)
             throw new Exception("A valid engine install link did not preserve its exact version and source.");

@@ -6,6 +6,18 @@ public sealed record EngineInstallLink(string Version, string Source)
     public const string Scheme = "axmolhub";
     private const int MaximumLength = 2048;
 
+    public static bool IsActivation(string value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            && uri.Scheme.Equals(Scheme, StringComparison.OrdinalIgnoreCase)
+            && uri.Host.Equals("activate", StringComparison.OrdinalIgnoreCase)
+            && uri.AbsolutePath is ("" or "/")
+            && uri.UserInfo.Length == 0
+            && uri.IsDefaultPort
+            && uri.Query.Length == 0
+            && uri.Fragment.Length == 0;
+    }
+
     public static EngineInstallLink Parse(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > MaximumLength
