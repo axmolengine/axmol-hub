@@ -38,10 +38,20 @@
     <Setter Property="SelectionBrush" Value="{DynamicResource Hub.Selection}" />
   </Style>
 
+  <!-- Links. IsUnderline is a plain switch: the library draws that rule itself at a weight nothing in
+       its API exposes (no thickness property exists on the type), so turning it on is thick and turning it
+       off leaves nothing to tune. The rule below is therefore CSpan's own border: one logical pixel along
+       the bottom edge, which is the only place a link can have a thin line at all. IsUnderline stays False
+       so the library does not draw a second rule beside this one. -->
   <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CHyperlink">
     <Setter Property="Foreground" Value="{DynamicResource Hub.Link}" />
     <Setter Property="HoverForeground" Value="{DynamicResource Hub.LinkHover}" />
-    <Setter Property="IsUnderline" Value="True" />
+    <Setter Property="IsUnderline" Value="False" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.Link}" />
+  </Style>
+  <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CHyperlink:pointerover">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.LinkHover}" />
   </Style>
 
   <!--
