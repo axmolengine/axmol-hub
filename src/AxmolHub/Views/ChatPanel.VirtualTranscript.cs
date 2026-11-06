@@ -23,7 +23,7 @@ public partial class ChatPanel
         protected override Size MeasureOverride(Size availableSize)
         {
             var result = base.MeasureOverride(availableSize);
-            if (_prepared) return result;
+            if (_prepared || Children.Count == 0) return result;
             _prepared = true;
             foreach (var viewer in this.GetVisualDescendants().OfType<MarkdownScrollViewer>().ToArray())
                 MarkdownMessageRenderer.ApplySyntaxHighlighting(viewer);
@@ -295,8 +295,16 @@ public partial class ChatPanel
         // Source indices are only hints; identities are resolved at the last possible point.
         if (item.Special is { } special)
         {
-            if (special.Parent is Panel old) old.Children.Remove(special);
-            host.Children.Add(special);
+            // A virtual row may be measured before its presenter joins the chat panel. Mounting the already
+            // built control there applies styles without ChatPanel as a styling parent, and Avalonia caches that
+            // result even after the presenter attaches. Wait until the host is rooted before moving the tail.
+            void MountSpecial(object? sender, VisualTreeAttachmentEventArgs args)
+            {
+                host.AttachedToVisualTree -= MountSpecial;
+                if (special.Parent is Panel old) old.Children.Remove(special);
+                host.Children.Add(special);
+            }
+            host.AttachedToVisualTree += MountSpecial;
             return;
         }
         if (_chat.ActiveConversation is not { } conversation || conversation.Id != item.Session
