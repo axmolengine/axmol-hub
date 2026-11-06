@@ -26,7 +26,7 @@ internal static class CodeSurface
     internal static void ApplyLinkInk(TextEditor editor)
         => editor.TextArea.TextView.Bind(TextView.LinkTextForegroundBrushProperty, new DynamicResourceExtension("Hub.Link"));
 
-    internal static TextEditor ForFile(string? path, string text)
+    internal static TextEditor ForFile(string? path, string text, string? syntaxSource = null, bool manageSyntax = true)
     {
         var editor = new TextEditor
         {
@@ -53,11 +53,19 @@ internal static class CodeSurface
         }
         ApplySelection(editor);
         ApplyLinkInk(editor);
-        // The file name, not the fence tag: this is the caller that makes <see cref="CodeSyntax.ForFile"/> and the
-        // transcript's blocks one answer instead of two.
-        void RefreshSyntax() => editor.SyntaxHighlighting = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(path));
-        editor.ActualThemeVariantChanged += (_, _) => { if (editor.IsReadOnly) RefreshSyntax(); };
-        RefreshSyntax();
+        if (manageSyntax)
+        {
+            // Fragments receive their full source for detection; ordinary editors follow their current text.
+            void RefreshSyntax()
+            {
+                var prefix = syntaxSource ?? editor.Document.GetText(0, Math.Min(editor.Document.TextLength, 4096));
+                var definition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(path, prefix));
+                if (!ReferenceEquals(editor.SyntaxHighlighting, definition)) editor.SyntaxHighlighting = definition;
+            }
+            editor.ActualThemeVariantChanged += (_, _) => RefreshSyntax();
+            editor.TextChanged += (_, _) => RefreshSyntax();
+            RefreshSyntax();
+        }
         return editor;
     }
 }

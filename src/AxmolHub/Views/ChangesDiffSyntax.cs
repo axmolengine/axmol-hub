@@ -47,10 +47,11 @@ internal sealed class ChangesDiffSyntax : IDisposable
         }
         _old = new TextDocument(TextEol.ToLf(snapshot?.Before ?? string.Join('\n', before)));
         _new = new TextDocument(TextEol.ToLf(snapshot?.After ?? string.Join('\n', after)));
-        var definition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(path));
-        if (definition is null) return;
-        _oldColors = new DocumentHighlighter(_old, definition);
-        _newColors = new DocumentHighlighter(_new, definition);
+        // Only snapshots contain full source: reconstructed hunks cannot establish a document prefix.
+        var oldDefinition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(path, snapshot?.Before));
+        var newDefinition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(path, snapshot?.After));
+        if (oldDefinition is not null) _oldColors = new DocumentHighlighter(_old, oldDefinition);
+        if (newDefinition is not null) _newColors = new DocumentHighlighter(_new, newDefinition);
     }
 
     internal IReadOnlyList<Span> Line(bool old, int number)

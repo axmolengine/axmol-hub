@@ -45,17 +45,44 @@ internal static class CodeSyntax
     }
 
     /// <summary>The definition for a file, answered the same way a fence tag is: <c>main.cpp</c> and a
-    /// <c>cpp</c> block are one answer, not two.</summary>
-    public static IHighlightingDefinition? ForFile(string? path)
+    /// <c>cpp</c> block are one answer, not two. Ambiguous .props files use a bounded source prefix;
+    /// an XML declaration also supplies the fallback for otherwise unknown file names.</summary>
+    public static IHighlightingDefinition? ForFile(string? path, string? text = null)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
         var name = Path.GetFileName(path);
         // CMake's build file is named, not extensioned: mapping ".txt" to CMake would paint every plain text file.
         if (string.Equals(name, "CMakeLists.txt", StringComparison.OrdinalIgnoreCase)) return ForLanguage("cmake");
         var extension = Path.GetExtension(name);
-        if (IsXmlAlias(extension)) return HighlightingManager.Instance.GetDefinition("XML");
+        if (string.Equals(name, "Directory.Build.props", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".slnx", StringComparison.OrdinalIgnoreCase)
+            || IsXmlAlias(extension)) return HighlightingManager.Instance.GetDefinition("XML");
+        var isProps = string.Equals(extension, ".props", StringComparison.OrdinalIgnoreCase);
+        if (isProps && HasXmlPrefix(text, allowProject: true)) return HighlightingManager.Instance.GetDefinition("XML");
         if (Shipped.Value.FirstOrDefault(entry => Extends(entry, extension)) is { } owned) return owned.Definition;
-        return HighlightingManager.Instance.GetDefinitionByExtension(extension) ?? ByNormalizedName(name);
+        var definition = HighlightingManager.Instance.GetDefinitionByExtension(extension) ?? ByNormalizedName(name);
+        // An extension-only XML mapping cannot disambiguate properties files.
+        if (isProps && definition?.Name == "XML") definition = null;
+        return definition ?? (HasXmlPrefix(text, allowProject: false) ? HighlightingManager.Instance.GetDefinition("XML") : null);
+    }
+
+    private static bool HasXmlPrefix(string? text, bool allowProject)
+    {
+        // Do not parse the whole document: an unfinished edit is still eligible for highlighting.
+        var prefix = text.AsSpan(0, Math.Min(text?.Length ?? 0, 4096));
+        if (!prefix.IsEmpty && prefix[0] == '\uFEFF') prefix = prefix[1..];
+        while (true)
+        {
+            prefix = prefix.TrimStart();
+            if (!prefix.StartsWith("<!--", StringComparison.Ordinal)) break;
+            var end = prefix.IndexOf("-->", StringComparison.Ordinal);
+            if (end < 0) return false;
+            prefix = prefix[(end + 3)..];
+        }
+        if (prefix.StartsWith("<?xml", StringComparison.Ordinal)
+            && prefix.Length > 5 && char.IsWhiteSpace(prefix[5])) return true;
+        return allowProject && prefix.StartsWith("<Project", StringComparison.Ordinal)
+               && prefix.Length > 8 && (char.IsWhiteSpace(prefix[8]) || prefix[8] is '>' or '/');
     }
 
     /// <summary>A definition Hub ships, with the extensions its own file claims — the loaded definition keeps

@@ -21,7 +21,6 @@ internal sealed class ChangesDiffEditView : Grid
     private TextEditor? _beforeEditor;
     private HashSet<int> _deletions = [];
     private readonly TextDocument _source;
-    private IHighlightingDefinition? _definition;
     private DocumentHighlighter? _highlighter;
     private HashSet<int> _insertions = [];
     private readonly Action _changed;
@@ -32,7 +31,6 @@ internal sealed class ChangesDiffEditView : Grid
         _before = beforeText;
         _changed = changed;
         _source = new TextDocument(buffer.Text);
-        _definition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(buffer.Path));
         if (split)
         {
             ColumnDefinitions = new ColumnDefinitions("*,*");
@@ -57,7 +55,7 @@ internal sealed class ChangesDiffEditView : Grid
                 {
                     var start = before.GetLineByNumber(group[0].OriginalLine!.Value).Offset;
                     var last = before.GetLineByNumber(group[^1].OriginalLine!.Value);
-                    var removed = Surface(buffer.Path, before.GetText(start, last.EndOffset - start));
+                    var removed = Surface(buffer.Path, before.GetText(start, last.EndOffset - start), syntaxSource: _before);
                     removed.IsReadOnly = true;
                     removed.Bind(BackgroundProperty, new DynamicResourceExtension("Hub.DiffDeleteSurface"));
                     body.Children.Add(removed);
@@ -71,17 +69,13 @@ internal sealed class ChangesDiffEditView : Grid
             Children.Add(body);
         }
         RefreshSource();
-        ActualThemeVariantChanged += (_, _) =>
-        {
-            _definition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(_buffer.Path));
-            RefreshSource();
-        };
+        ActualThemeVariantChanged += (_, _) => RefreshSource();
         DetachedFromVisualTree += (_, _) => { _highlighter?.Dispose(); _highlighter = null; };
     }
 
-    private static TextEditor Surface(string path, string text)
+    private static TextEditor Surface(string path, string text, string? syntaxSource = null, bool manageSyntax = true)
     {
-        var editor = CodeSurface.ForFile(path, text);
+        var editor = CodeSurface.ForFile(path, text, syntaxSource, manageSyntax);
         editor.FontSize = 11.5;
         // The Changes page owns vertical scrolling, including when several files are being edited.
         editor.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
@@ -92,10 +86,9 @@ internal sealed class ChangesDiffEditView : Grid
 
     private TextEditor Editable(string text)
     {
-        var editor = Surface(_buffer.Path, text);
+        var editor = Surface(_buffer.Path, text, manageSyntax: false);
         editor.Tag = "InspectorDiffEditor";
         editor.IsReadOnly = false;
-        editor.SyntaxHighlighting = null;
         var index = _fragments.Count;
         _fragments.Add(editor);
         var colors = new FragmentColors(this, index);
@@ -116,7 +109,8 @@ internal sealed class ChangesDiffEditView : Grid
     {
         _highlighter?.Dispose();
         _source.Text = _buffer.Text;
-        _highlighter = _definition is null ? null : new DocumentHighlighter(_source, _definition);
+        var definition = DarkSyntax.ForBackdrop(CodeSyntax.ForFile(_buffer.Path, _buffer.Text));
+        _highlighter = definition is null ? null : new DocumentHighlighter(_source, definition);
         var rows = FileDiff.Rows(_before, _buffer.Text).Rows;
         _insertions = rows.Where(row => row.Kind == DiffRowKind.Insert).Select(row => row.UpdatedLine!.Value).ToHashSet();
         _deletions = rows.Where(row => row.Kind == DiffRowKind.Delete).Select(row => row.OriginalLine!.Value).ToHashSet();
