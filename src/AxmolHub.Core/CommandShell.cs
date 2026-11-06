@@ -47,7 +47,13 @@ public static class CommandShells
     /// matches its <c>.exe</c>, because that is how <c>pwsh</c> is actually installed.</summary>
     public static string? Resolve(string executable)
     {
-        var path = Environment.GetEnvironmentVariable("PATH");
+        var path = HostEnvironment.PathValue;
+        return Resolve(executable, path);
+    }
+
+    /// <summary>Resolves against exactly the caller's PATH, including an isolated child environment.</summary>
+    internal static string? Resolve(string executable, string? path)
+    {
         if (string.IsNullOrEmpty(path)) return null;
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {

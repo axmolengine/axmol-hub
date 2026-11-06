@@ -450,6 +450,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     private async Task<string> RunInShellAsync(string command, string cwd, int timeout_seconds,
         CancellationToken cancellationToken)
     {
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var shell = CommandShells.ForCurrent();
         var seconds = Math.Clamp(timeout_seconds, 1, MaxCommandTimeoutSeconds);
         var header = $"shell: {shell.Label} · cwd: {cwd}";

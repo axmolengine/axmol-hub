@@ -101,7 +101,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
             }
         }
 
-        var existing = environment.TryGetValue("PATH", out var path) ? path : "";
+        var existing = HostEnvironment.PathValue;
         environment["PATH"] = string.Join(Path.PathSeparator, paths.Concat(existing.Split(Path.PathSeparator).Where(part => part.Length > 0)));
         return environment;
     }
@@ -194,6 +194,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     /// </summary>
     public async Task<WebPreview> StartWebPreviewAsync(ProjectEntry project, EngineEntry engine, bool openBrowser, CancellationToken cancellation)
     {
+        await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         var artifact = FindArtifact(project);
         var emscripten = Path.Combine(EngineToolchain.ToolRoot(engine), "emsdk", "upstream", "emscripten");
         var python = OperatingSystem.IsWindows() ? "python" : "python3";

@@ -52,6 +52,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
 
     public async Task<List<ToolchainComponent>> InspectAsync(EngineEntry engine, string targetId, CancellationToken cancellation = default)
     {
+        await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         var target = BuildTargets.Get(targetId);
         if (!target.CanBuildOn(BuildTargets.Host))
         {
@@ -155,7 +156,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
     /// <summary>Find executables via PATH + PATHEXT (equivalent to <c>Get-Command</c> resolution).</summary>
     private static IEnumerable<string> ExecutablesOnPath(string command)
     {
-        var path = Environment.GetEnvironmentVariable("PATH");
+        var path = HostEnvironment.PathValue;
         if (string.IsNullOrEmpty(path)) yield break;
         foreach (var entry in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {

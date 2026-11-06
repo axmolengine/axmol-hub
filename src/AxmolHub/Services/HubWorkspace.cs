@@ -1879,28 +1879,28 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Fills in the one thing a filesystem walk cannot know off Windows: the version of the pwsh it found.
+    /// Completes asynchronous host discovery: macOS login PATH, then the PowerShell version.
+    /// Filesystem probes use the resulting cached PATH without spawning a shell on the UI thread.
     ///
     /// Never awaited and hard-bounded, for the same reasons as <see cref="RefreshEngineIndexAsync"/>: the window
     /// must come up without waiting on a child process, and a pwsh that hangs must not hang the shell with it.
     /// The result is applied only if nothing else changed the verdict meanwhile — a user who pressed Re-check or
     /// installed in the meantime must not be overwritten by a stale answer, which is why the guard compares both
-    /// the state and the path it asked about.
+    /// the state it asked about.
     /// </summary>
     private async void CompleteHostShellVersionAsync()
     {
-        if (HostShell.State != HostShellState.Unknown || HostShell.Executable is not { } probed)
-        {
-            return;
-        }
+        var initial = HostShell;
+        if (!OperatingSystem.IsMacOS() && initial.State != HostShellState.Unknown) return;
 
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var refined = await HostPowerShell.ProbeVersionAsync(_runner, HostShell, deadline.Token);
+            await Task.Run(() => HostEnvironment.EnsureAsync(deadline.Token), deadline.Token);
+            var refined = await HostPowerShell.ProbeVersionAsync(_runner, HostPowerShell.Probe(), deadline.Token);
             Dispatcher.UIThread.Post(() =>
             {
-                if (HostShell.State != HostShellState.Unknown || HostShell.Executable != probed) return;
+                if (HostShell != initial) return;
                 HostShell = refined;
                 HostShellChanged?.Invoke();
                 Log.Write(refined.Describe());
@@ -1924,6 +1924,7 @@ public sealed partial class HubWorkspace : IDisposable
     {
         await ExecuteAsync("Check PowerShell 7", async token =>
         {
+            await HostEnvironment.EnsureAsync(token);
             var probed = HostPowerShell.Probe();
             Log.Write(probed.Describe());
             HostShell = await HostPowerShell.ProbeVersionAsync(_runner, probed, token);
@@ -1943,6 +1944,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public async Task InstallHostShellAsync()
     {
+        await HostEnvironment.EnsureAsync();
         // Re-probe first: the card may be showing the state as of app start, and the user might have installed
         // pwsh in a terminal since then. This is the filesystem walk, not a spawn.
         HostShell = HostPowerShell.Probe();

@@ -34,6 +34,7 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyDictionary<string, string>? environment = null,
         Action<string>? onLine = null)
     {
+        await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
@@ -41,7 +42,7 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         arguments.AddRange(invocation.Arguments);
 
         runner.Write("axmol: " + invocation);
-        // environment: null = inherit the parent process environment. This is deliberate: the engine depends
+        // environment: null = inherit the parent environment plus the shared macOS host PATH. The engine depends
         // on system VS / its own tools/external. When environment is passed it acts only as an **override**
         // (e.g. ANDROID_SERIAL to select a device), not as a rebuilt environment.
         // The timeout semantics = how long with no output before judging a stall (default 10 minutes), not a
@@ -67,16 +68,17 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     /// while setup downloads a GB-scale toolchain it never times out as long as it keeps printing progress,
     /// so no total time cap is set.
     /// </summary>
-    public Task<ProcessResult> RunSetupAsync(EngineEntry engine, SetupOptions options, CancellationToken cancellation = default,
+    public async Task<ProcessResult> RunSetupAsync(EngineEntry engine, SetupOptions options, CancellationToken cancellation = default,
         Action<string>? onLine = null)
     {
+        await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
         arguments.AddRange(SetupScriptArguments(SetupWrapper, engine.Path, options));
 
         runner.Write($"axmol setup: {string.Join(' ', arguments)}");
-        return runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation, onLine: onLine);
+        return await runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation, onLine: onLine).ConfigureAwait(false);
     }
 
     /// <summary>Builds the engine setup-wrapper arguments, including the Hub-specific no-persistent-AX_ROOT switch.</summary>

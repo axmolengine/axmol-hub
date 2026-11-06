@@ -314,25 +314,7 @@ public static class CodeEditors
                 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..])
                 : path);
 
-    private static string? OnPath(string command)
-    {
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(directory, command);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe"))
-            {
-                return candidate + ".exe";
-            }
-        }
-
-        return null;
-    }
+    private static string? OnPath(string command) => CommandShells.Resolve(command);
 
     private static string? VisualStudioDevEnv()
     {

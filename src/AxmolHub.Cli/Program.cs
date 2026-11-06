@@ -132,6 +132,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
         throw new ArgumentException("Missing arguments. Run help.");
     }
 
+    await HostEnvironment.EnsureAsync(stop.Token);
     var store = new StateStore(arguments[1]);
     Directory.CreateDirectory(Path.Combine(store.Root, "tools"));
     var log = new HubLog(Path.Combine(store.Root, "logs"));

@@ -256,6 +256,10 @@ public sealed class ProcessRunner(Action<string> log)
         IReadOnlyDictionary<string, string>? overrides = null, bool firstLineOnly = false,
         Action<string>? onLine = null, RawStdoutCapture? rawStdout = null)
     {
+        // Only an inherited environment gets the host login PATH. Explicit overrides (including PATH)
+        // and complete isolated environments remain authoritative.
+        if (environment is null && OperatingSystem.IsMacOS() && overrides?.ContainsKey("PATH") != true)
+            await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         var start = new ProcessStartInfo(executable)
         {
             WorkingDirectory = workingDirectory, UseShellExecute = false,
@@ -263,6 +267,7 @@ public sealed class ProcessRunner(Action<string> log)
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        if (environment is null && OperatingSystem.IsMacOS()) start.Environment["PATH"] = HostEnvironment.PathValue;
         if (environment != null)
         {
             // A passed environment is the complete environment; implicitly inheriting dev-machine paths like DXSDK_DIR is forbidden.
@@ -276,6 +281,15 @@ public sealed class ProcessRunner(Action<string> log)
         if (overrides != null)
         {
             foreach (var entry in overrides) start.Environment[entry.Key] = entry.Value;
+        }
+        // On Unix Process.Start resolves bare names using the parent's PATH, not StartInfo.Environment.
+        // Resolve explicitly on macOS so command discovery and the child use the same PATH, and an isolated
+        // environment cannot accidentally execute a tool from Hub's inherited PATH.
+        if (OperatingSystem.IsMacOS() && !executable.Contains(Path.DirectorySeparatorChar))
+        {
+            start.Environment.TryGetValue("PATH", out var childPath);
+            start.FileName = CommandShells.Resolve(executable, childPath)
+                ?? throw new System.ComponentModel.Win32Exception(2, $"Executable '{executable}' was not found in the child process PATH.");
         }
         // One rule, in SecretRedaction, shared with the fetch tool and the approval card. The prepared list is
         // hoisted because this redactor runs per output line, and rebuilding it there would make the cost of a
