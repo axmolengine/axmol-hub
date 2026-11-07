@@ -492,7 +492,51 @@ public partial class MainWindow : Window
         }
     }
 
-    internal void SetStatus(string text) => Status.Text = text;
+    private long? _activeTaskStatusToken;
+    private long _latestTaskStatusToken;
+    private long _lastFinishedTaskStatusToken;
+
+    internal void SetStatus(string text)
+    {
+        // A transient result is useful only when the bottom strip is not currently owned by a task.
+        // The task itself remains visible until it publishes its terminal state.
+        if (_activeTaskStatusToken is null)
+        {
+            Status.Text = text;
+        }
+    }
+
+    private void ApplyWorkspaceStatus(HubWorkspace.StatusUpdate update)
+    {
+        if (update.TaskToken is { } taskToken)
+        {
+            // A late progress or completion callback from an older task must never become the new owner
+            // after the current task has finished. Tokens are monotonic across workspace instances.
+            if (taskToken < _latestTaskStatusToken
+                || !update.TaskFinished && taskToken <= _lastFinishedTaskStatusToken) return;
+
+            if (update.TaskFinished)
+            {
+                if (_activeTaskStatusToken != taskToken) return;
+                Status.Text = update.Text;
+                _activeTaskStatusToken = null;
+                _latestTaskStatusToken = taskToken;
+                _lastFinishedTaskStatusToken = taskToken;
+                return;
+            }
+
+            if (_activeTaskStatusToken is null || _activeTaskStatusToken == taskToken)
+            {
+                _activeTaskStatusToken = taskToken;
+                _latestTaskStatusToken = taskToken;
+                Status.Text = update.Text;
+            }
+
+            return;
+        }
+
+        SetStatus(update.Text);
+    }
 
     /// <summary>
     /// Puts how many sessions are answering right now on the strip. Called for every <see cref="ChatWorkspace"/>
@@ -1699,7 +1743,7 @@ public partial class MainWindow : Window
         };
         _logDrain.Tick += (_, _) => DrainActivityLog();
 
-        _workspace.StatusChanged += text => Status.Text = text;
+        _workspace.StatusChanged += ApplyWorkspaceStatus;
 
         // The rail's bottom-left line names the default engine, and every gated change ends in a Refresh that
         // raises this. Without the subscription the line kept the version it was built with until the next

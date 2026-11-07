@@ -223,8 +223,11 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>State/lists changed and pages should repaint. Equivalent to the WPF version's trailing <c>Refresh()</c>.</summary>
     public event Action? Changed;
 
+    /// <summary>A status update for the shell's bottom status text.</summary>
+    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished);
+
     /// <summary>Status bar text.</summary>
-    public event Action<string>? StatusChanged;
+    public event Action<StatusUpdate>? StatusChanged;
 
     /// <summary>An operation failed: the main window expands the log panel in response.</summary>
     public event Action? Failed;
@@ -302,6 +305,8 @@ public sealed partial class HubWorkspace : IDisposable
     private int _assistantChanges;
 
     public string StatusText { get; private set; } = "";
+    private static long _nextTaskStatusToken;
+    private readonly AsyncLocal<long?> _taskStatusContext = new();
 
     /// <summary>The second line of the "recent build platform" card at the top of the projects page.</summary>
     public string BuildHostHint { get; private set; } = "";
@@ -311,15 +316,26 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Common shell ─────────────────────────
 
-    private void SetStatus(string text)
+    private void SetStatus(string text, long? taskToken = null, bool taskFinished = false)
     {
+        var owner = taskToken ?? _taskStatusContext.Value;
         StatusText = text;
-        StatusChanged?.Invoke(text);
+        StatusChanged?.Invoke(new StatusUpdate(text, owner, taskFinished));
     }
 
-    private IProgress<DownloadProgress> DownloadProgress() => new Progress<DownloadProgress>(p =>
-        SetStatus(string.Create(CultureInfo.InvariantCulture,
-            $"{HubStrings.Get("Download")} {p.Bytes / 1048576.0:F1} / {(p.Total.HasValue ? (p.Total.Value / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) : "?")} MB · {p.BytesPerSecond / 1048576.0:F1} MB/s")));
+    private void SetTaskStatus(string text, long taskToken, bool finished = false)
+        => SetStatus(text, taskToken, finished);
+
+    private IProgress<DownloadProgress> DownloadProgress()
+    {
+        var taskToken = _taskStatusContext.Value;
+        return new Progress<DownloadProgress>(p =>
+        {
+            if (taskToken is not { } owner) return;
+            SetTaskStatus(string.Create(CultureInfo.InvariantCulture,
+                $"{HubStrings.Get("Download")} {p.Bytes / 1048576.0:F1} / {(p.Total.HasValue ? (p.Total.Value / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) : "?")} MB · {p.BytesPerSecond / 1048576.0:F1} MB/s"), owner);
+        });
+    }
 
     /// <summary>
     /// The full lifecycle of one gated change: the exclusive slot, the busy flag, the status line, the log,
@@ -417,12 +433,34 @@ public sealed partial class HubWorkspace : IDisposable
         }
 
         LastError = "";
+        if (_tasks.FindActive(identity) is not null)
+        {
+            // The task already on screen owns the status line; do not create an abandoned owner for
+            // a duplicate request that the queue is about to reject.
+            Refresh();
+            return;
+        }
+
         var statusTitle = FormatTaskTitle(titleKey, subject);
-        SetStatus(statusTitle);
+        var taskToken = Interlocked.Increment(ref _nextTaskStatusToken);
+        SetTaskStatus(statusTitle, taskToken);
         Log.Write(titleKey);
 
-        var item = _tasks.Enqueue(identity, titleKey, subject, work,
-            onFinished: settled => FinishGated(settled), kind: TaskQueue.TaskKind.Mutating, listed: listed);
+        var item = _tasks.Enqueue(identity, titleKey, subject,
+            async (queuedItem, cancellationToken) =>
+            {
+                var previous = _taskStatusContext.Value;
+                _taskStatusContext.Value = taskToken;
+                try
+                {
+                    await work(queuedItem, cancellationToken);
+                }
+                finally
+                {
+                    _taskStatusContext.Value = previous;
+                }
+            },
+            onFinished: settled => FinishGated(settled, taskToken), kind: TaskQueue.TaskKind.Mutating, listed: listed);
         if (item is null)
         {
             // Already running under this identity: the row on screen is the answer, and the repaint the first
@@ -445,21 +483,21 @@ public sealed partial class HubWorkspace : IDisposable
             ? HubStrings.Get(titleKey) + " " + subject
             : HubStrings.Get(titleKey);
 
-    private void FinishGated(TaskQueue.Item item)
+    private void FinishGated(TaskQueue.Item item, long taskToken)
     {
         var title = item.Title;
         if (item.Fault is { } error)
         {
-            _ = ReportFailureAsync(error);
+            _ = ReportFailureAsync(error, taskToken);
         }
         else if (item.State == TaskQueue.Phase.Done)
         {
             Store.Save(State);
-            SetStatus(title + " · " + HubStrings.Get("Done"));
+            SetTaskStatus(title + " · " + HubStrings.Get("Done"), taskToken, finished: true);
         }
         else
         {
-            SetStatus(title + " · " + HubStrings.Get("Cancelled"));
+            SetTaskStatus(title + " · " + HubStrings.Get("Cancelled"), taskToken, finished: true);
             Log.Write(StatusText);
         }
 
@@ -471,11 +509,11 @@ public sealed partial class HubWorkspace : IDisposable
     /// gated operations and by the launch path, which runs outside the gate and so has no <c>catch</c> above
     /// it — a refusal must not be able to land quieter than an operation.
     /// </summary>
-    private async Task ReportFailureAsync(Exception error)
+    private async Task ReportFailureAsync(Exception error, long? taskToken = null)
     {
         LastError = error.ToString();
         Log.Write(LastError);
-        SetStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]));
+        SetStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]), taskToken, taskFinished: taskToken is not null);
         Failed?.Invoke();
         // In verification mode don't pop up: ExpectedFailure is the norm for this group (e.g.
         // importing an incomplete engine), and a dialog would make the await never return (see
