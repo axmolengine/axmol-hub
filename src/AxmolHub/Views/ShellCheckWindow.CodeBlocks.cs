@@ -68,7 +68,8 @@ internal sealed class ShellCodeBlocksChecks
 
     internal async Task VerifyStreamingCodeBlockAsync(MainWindow shell, ChatPanel panel)
     {
-        const string command = "grep -h \"Completed without a final answer\" ~/Library/Application\\ Support/AxmolHub/data/logs/*.log | tail -20";
+        // Keep the command wider than the full 820px chat column, not just the narrower standalone fixture.
+        const string command = "grep -h \"Completed without a final answer\" ~/Library/Application\\ Support/AxmolHub/data/logs/*.log | tail -20 | sort | uniq -c | sort -nr | head -20";
         var before = shell.Chat.ActiveConversation?.Id;
         var session = shell.Chat.StartConversation();
         shell.Chat.OpenConversation(session.Id);

@@ -1203,7 +1203,7 @@ internal sealed partial class ShellDecisionsChecks
             "计划页代码块的复制按钮画出图标：复制图标跟渲染器走，不是只写在聊天面板作用域里的样式");
         Check(iconPane is { } copyPlacement && copyPlacement.PlanCopyButtonInHeaderForCheck
               && copyPlacement.PlanCopyButtonVisibleForCheck && !copyPlacement.ViewSettingsVisibleForCheck,
-            "计划 Markdown 复制按钮位于标签栏右侧且计划页隐藏改动设置");
+            "计划 Markdown 复制按钮位于页眉右侧且计划页隐藏改动设置");
         iconPane?.ClickChangesTabForCheck();
         Check(iconPane is { } changesActions && !changesActions.PlanCopyButtonVisibleForCheck
               && changesActions.ViewSettingsVisibleForCheck,

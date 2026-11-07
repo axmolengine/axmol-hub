@@ -1384,17 +1384,17 @@ internal sealed class ShellProvidersChecks
         using (var probeHttp = new System.Net.Http.HttpClient(probeHandler))
         using (var probeWorkspace = new ChatWorkspace(probeRoot))
         {
-            var probePreset = probeWorkspace.AddPreset("agentrouter");
+            var probePreset = probeWorkspace.AddPreset("openrouter");
             probeWorkspace.OAuthHttp = probeHttp;
-            var probeOutcome = await probeWorkspace.CheckApiKeyAsync("agentrouter", "sk-probe");
-            var probeUserAgent = probeHandler.Requests
-                .Select(sent => sent.Headers.TryGetValues("user-agent", out var values) ? string.Join(", ", values) : null)
-                .FirstOrDefault();
-            Check(probePreset is not null
+            var probeOutcome = await probeWorkspace.CheckApiKeyAsync("openrouter", "sk-probe");
+            var sentHeaders = probeHandler.Requests.FirstOrDefault()?.Headers;
+            Check(probePreset is not null && probePreset.ExtraHeaders.Count > 0
                   && probeOutcome == KeyCheckOutcome.Accepted
-                  && probeUserAgent == "codex_cli_rs/0.101.0",
-                "密钥探测带上 provider 声明的静态头（outcome=" + probeOutcome + " user-agent=「"
-                    + (probeUserAgent ?? "无") + "」）");
+                  && probePreset.ExtraHeaders.All(header => sentHeaders is not null
+                      && sentHeaders.TryGetValues(header.Key, out var values)
+                      && string.Join(", ", values) == header.Value),
+                "密钥探测带上 provider 声明的静态头（outcome=" + probeOutcome + " headers=「"
+                    + string.Join(", ", sentHeaders?.Select(header => header.Key + "=" + string.Join(", ", header.Value)) ?? []) + "」）");
         }
         // ── A catalog refresh must not move a declared endpoint off its wire ──
         //
@@ -1406,21 +1406,27 @@ internal sealed class ShellProvidersChecks
         var wireMergeRoot = Path.Combine(scratchRoot, "endpoint-wire-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(wireMergeRoot);
         var wireMergeHandler = new ModelListProbeHandler(
-            """{"object":"list","data":[{"id":"gpt-6.1-sol","context_length":400000,"supported_endpoint_types":["openai"]},{"id":"gpt-5.6-sol","supported_endpoint_types":["chat"]}]}""");
+            """{"object":"list","data":[{"id":"existing-model","context_length":400000,"supported_endpoint_types":["openai"]},{"id":"catalog-model","supported_endpoint_types":["chat"]}]}""");
         using (var wireMergeHttp = new System.Net.Http.HttpClient(wireMergeHandler))
         using (var wireMergeWorkspace = new ChatWorkspace(wireMergeRoot))
         {
-            wireMergeWorkspace.AddPreset("agentrouter");
-            wireMergeWorkspace.AddCredential("agentrouter", "", "sk-wire-merge", CredentialSources.ApiKey);
+            var mergedProvider = wireMergeWorkspace.AddProvider("Endpoint wire fixture", "https://offline.invalid/v1",
+                "existing-model", null, out var problem, protocol: ModelProtocols.Responses);
+            if (mergedProvider is null)
+            {
+                Check(false, "夹具：无法添加端点线路提供商（" + problem + "）");
+                return;
+            }
             wireMergeWorkspace.ModelListHttp = wireMergeHttp;
-            await wireMergeWorkspace.RefreshModelsAsync("agentrouter");
-            var mergedProvider = wireMergeWorkspace.Providers.First(provider => provider.Id == "agentrouter");
-            var namedWire = AxmolHub.Agent.ChatClientFactory.ProtocolFor(mergedProvider, "gpt-6.1-sol");
-            var addedWire = AxmolHub.Agent.ChatClientFactory.ProtocolFor(mergedProvider, "gpt-5.6-sol");
-            var mergedWindow = ContextBudget.CapabilitiesOf(mergedProvider, "gpt-6.1-sol")?.ContextTokens;
-            Check(namedWire == ModelProtocols.Responses && addedWire == ModelProtocols.Responses && mergedWindow == 400000,
-                "目录发布端点家族名与窗口后，提供商声明的请求线路不变，目录新加的模型也走同一条（gpt-6.1-sol="
-                    + namedWire + " gpt-5.6-sol=" + addedWire
+            var mergeResult = await wireMergeWorkspace.RefreshModelsAsync(mergedProvider.Id);
+            var namedWire = AxmolHub.Agent.ChatClientFactory.ProtocolFor(mergedProvider, "existing-model");
+            var addedWire = AxmolHub.Agent.ChatClientFactory.ProtocolFor(mergedProvider, "catalog-model");
+            var mergedWindow = ContextBudget.CapabilitiesOf(mergedProvider, "existing-model")?.ContextTokens;
+            Check(mergeResult.Reachable && namedWire == ModelProtocols.Responses
+                  && addedWire == ModelProtocols.Responses && mergedWindow == 400000
+                  && mergedProvider.ModelCapabilities.ContainsKey("catalog-model"),
+                "目录发布端点家族名与窗口后，提供商声明的请求线路不变，目录新加的模型也走同一条（existing-model="
+                    + namedWire + " catalog-model=" + addedWire + " reachable=" + mergeResult.Reachable
                     + " window=" + (mergedWindow?.ToString(CultureInfo.InvariantCulture) ?? "无") + "）");
         }
         // ── What a fresh provider looks like before anything is fetched ──

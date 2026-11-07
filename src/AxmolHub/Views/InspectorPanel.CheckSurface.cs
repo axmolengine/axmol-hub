@@ -69,10 +69,19 @@ internal sealed partial class InspectorPanel : UserControl
     /// reached: the button fell back to the base Button theme and showed an empty plate with only its tooltip.
     /// The icon being there is therefore a property worth asserting on its own.</summary>
     internal bool PlanCopyIconForCheck => _planHost.Content is MarkdownScrollViewer viewer && MarkdownMessageRenderer.HasCopyToolbar(viewer);
-    /// <summary>Whether the copy sits in the header, immediately left of the page's gear. Read as "immediately
-    /// left" rather than as a column number: what matters is that the two buttons share the header's right end,
-    /// and a check pinned to an index goes stale the moment a column is added between them.</summary>
-    internal bool PlanCopyButtonInHeaderForCheck => ReferenceEquals(_planCopyButton.Parent, _header) && Grid.GetColumn(_planCopyButton) < Grid.GetColumn(_viewSettings);
+    /// <summary>Whether the copy shares the header's right end with the page's view actions. Read the grid
+    /// column of the container that owns the gear: the button itself is nested inside it, so its own attached
+    /// column no longer names a slot in the header.</summary>
+    internal bool PlanCopyButtonInHeaderForCheck
+    {
+        get
+        {
+            var viewActions = _viewSettings.GetLogicalAncestors().OfType<Control>()
+                .FirstOrDefault(control => ReferenceEquals(control.Parent, _header));
+            return ReferenceEquals(_planCopyButton.Parent, _header) && viewActions is not null
+                && Grid.GetColumn(_planCopyButton) < Grid.GetColumn(viewActions);
+        }
+    }
     internal bool PlanCopyButtonVisibleForCheck => _planCopyButton.IsVisible;
     internal bool FileTreeToggleAlignedForCheck => _fileTreeToggle is { IsVisible: true } button
         && ReferenceEquals(button.Parent, _header) && Grid.GetColumn(button) > Grid.GetColumn(_viewSettings)
