@@ -707,6 +707,8 @@ internal sealed class ConversationRun : IDisposable
     /// — which is the wrong diagnosis and sends a person to check the wrong thing. The user's stop still cancels
     /// the wait, because it travels on the same token.</summary>
     internal int RetryLimit { get; set; } = ProviderRetryDefaults.MaxRetries;
+    // Retry allowance of the last model request, not the audit tally spanning the whole run.
+    internal int RequestRetriesUsed { get; set; }
     private long _retryDue;
 
     internal void BeginRetryWait(int attempt, TimeSpan delay)

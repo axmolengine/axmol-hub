@@ -12,17 +12,21 @@ public sealed class RequestRetryOptions
     public int MaxRetries { get; init; } = ProviderRetryDefaults.MaxRetries;
     public Action<int, TimeSpan>? OnWait { get; init; }
     public bool RetryEmpty { get; init; } = true;
+    // Only the first request of a rebuilt segment resumes the prior failed request's allowance.
+    internal int RetriesUsed { get; init; }
+    internal Action<int>? OnRequestEnded { get; init; }
     // Checked again at the transport boundary, including SDK and credential-refresh retries.
     public Func<Task>? ValidateSelection { get; init; }
     // Injected only by offline checks; production always uses cancellable Task.Delay.
     internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
 }
 
-internal sealed class RequestRetryScope(RequestRetryOptions options)
+internal sealed class RequestRetryScope(RequestRetryOptions options, int retriesUsed = 0)
 {
     internal static readonly AsyncLocal<RequestRetryScope?> Current = new();
     public int Maximum { get; } = Math.Clamp(options.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
-    public int Retries { get; private set; }
+    public int Retries { get; private set; } = Math.Clamp(retriesUsed, 0,
+        Math.Clamp(options.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit));
     public TimeSpan? TransportDelay { get; set; }
     public ProviderResponseException? StreamFailure { get; set; }
     public TimeSpan Waited { get; private set; }
@@ -68,12 +72,14 @@ public sealed class RequestRetryException(Exception cause, int retries, TimeSpan
 internal sealed class RequestRetryClient(IChatClient inner, RequestRetryOptions options, Action? activity)
     : DelegatingChatClient(inner)
 {
+    private int _retriesUsed = options.RetriesUsed;
+
     public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? chatOptions = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var history = messages.ToList();
-        var scope = new RequestRetryScope(options);
+        var scope = new RequestRetryScope(options, Interlocked.Exchange(ref _retriesUsed, 0));
         var previous = RequestRetryScope.Current.Value;
         RequestRetryScope.Current.Value = scope;
         try
@@ -127,7 +133,7 @@ internal sealed class RequestRetryClient(IChatClient inner, RequestRetryOptions 
                 failure ??= scope.StreamFailure;
                 // Filtering and output-budget stops are not transient endpoint failures.
                 if (failure is null && !answered && !exposed && options.RetryEmpty
-                    && finish is not ("length" or "max_tokens" or "content_filter"))
+                    && ProviderFailure.RetryableMissingAnswer(finish, askedForTool: false, spinStopped: false))
                     failure = new ProviderResponseException("The endpoint returned no answer or tool call.", "empty_response");
                 if (failure is null)
                 {
@@ -144,6 +150,7 @@ internal sealed class RequestRetryClient(IChatClient inner, RequestRetryOptions 
         finally
         {
             RequestRetryScope.Current.Value = previous;
+            options.OnRequestEnded?.Invoke(scope.Retries);
         }
     }
 }

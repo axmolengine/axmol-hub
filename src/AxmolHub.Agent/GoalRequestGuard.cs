@@ -22,7 +22,9 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
         var completed = false;
         var hasUsage = false;
         var hasContent = false;
+        var hasAnswer = false;
         var hasError = false;
+        var embeddedReasoning = new ChatPipeline.EmbeddedReasoningParser();
         try
         {
             await foreach (var update in base.GetStreamingResponseAsync(list, options, cancellationToken).ConfigureAwait(false))
@@ -30,6 +32,11 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
                 hasError |= update.Contents.Any(content => content is ErrorContent);
                 hasContent |= update.Contents.Any(content => content is not (UsageContent or ErrorContent)
                     && content is not TextContent { Text: null or "" });
+                hasAnswer |= update.Contents.Any(content => content is FunctionCallContent);
+                // The same parser the visible reply uses: <thinking> in TextContent is not an answer.
+                foreach (var text in update.Contents.OfType<TextContent>())
+                    if (text.Text is { Length: > 0 })
+                        hasAnswer |= embeddedReasoning.Push(text.Text, _ => { }).Length > 0;
                 foreach (var usage in update.Contents.OfType<UsageContent>())
                 {
                     hasUsage = true;
@@ -38,6 +45,7 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
                 }
                 yield return update;
             }
+            hasAnswer |= embeddedReasoning.Complete(_ => { }).Length > 0;
             completed = true;
         }
         finally
@@ -46,7 +54,7 @@ internal sealed class GoalRequestGuard(IChatClient inner, int schemaTokens, int 
             // partially streamed response without usage keeps an estimate; reported usage always wins.
             if (afterRequest is not null)
                 await afterRequest(estimate, hasUsage ? reported : !completed && !hasContent ? 0 : -1,
-                        completed && hasContent && !hasError)
+                        completed && hasAnswer && !hasError)
                     .ConfigureAwait(false);
         }
     }

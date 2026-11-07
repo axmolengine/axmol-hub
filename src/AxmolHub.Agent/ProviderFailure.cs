@@ -17,13 +17,14 @@ public static class ProviderFailure
             foreach (var key in new[] { "type", "code" })
                 if (error.ValueKind == JsonValueKind.Object && error.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
                     && value.GetString() is "insufficient_quota" or "usage_limit_reached" or "quota_exceeded"
-                        or "billing_hard_limit_reached") return true;
+                        or "billing_hard_limit_reached" or "subscription_sharing_usage_limit_exceeded") return true;
         }
         catch (JsonException) { }
         return body.Contains("insufficient_quota", StringComparison.OrdinalIgnoreCase)
             || body.Contains("usage_limit_reached", StringComparison.OrdinalIgnoreCase)
             || body.Contains("quota_exceeded", StringComparison.OrdinalIgnoreCase)
             || body.Contains("billing_hard_limit_reached", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("subscription_sharing_usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
             || body.Contains("usage limit has been reached", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -57,6 +58,8 @@ public static class ProviderFailure
         return StatusOf(exception) is >= 400 || exception is ProviderResponseException;
     }
 
+    public static bool RetryableStatus(int status) => status is 408 or 429 or >= 500 and <= 599 and not (501 or 505);
+
     public static bool Recoverable(Exception exception)
     {
         if (exception is OperationCanceledException or RequestRetryException
@@ -64,18 +67,24 @@ public static class ProviderFailure
             || exception is ProviderResponseException coded && QuotaExhausted(coded.ErrorCode)
             || Core.ContextOverflow.IsContextOverflow(exception.Message)
             || ChatPipeline.DeclinedStreamUsage(exception.Message)) return false;
-        if (StatusOf(exception) is { } status) return status is 408 or 429 or 500 or 502 or 503 or 504;
+        if (StatusOf(exception) is { } status) return RetryableStatus(status);
         if (exception is ProviderResponseException stream)
-            return stream.ErrorCode is "rate_limit_exceeded" or "rate_limit_error" or "too_many_requests"
-                or "server_error" or "internal_server_error" or "service_unavailable" or "overloaded_error"
-                or "timeout" or "request_timeout" or "empty_response" or "upstream_stream_read_error"
-                || ChatPipeline.RateLimited(stream.Message)
-                || stream.Message.Contains("different", StringComparison.OrdinalIgnoreCase)
-                   && stream.Message.Contains("OpenAI resource", StringComparison.OrdinalIgnoreCase)
-                || stream.Message.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
-                || stream.Message.Contains("overloaded", StringComparison.OrdinalIgnoreCase);
+            // An endpoint error without an HTTP status is transient unless it explicitly identifies a
+            // permanent refusal. Unknown local exceptions are never treated as provider errors.
+            return stream.ErrorCode is not ("invalid_request_error" or "invalid_api_key" or "authentication_error"
+                or "permission_denied" or "unauthorized" or "forbidden" or "model_not_found" or "not_found"
+                or "content_filter" or "context_length_exceeded");
         return exception is System.Net.Http.HttpRequestException or IOException or TimeoutException;
     }
+
+    /// <summary>A completed response with no answer can be tried again only when no tool was requested and
+    /// the endpoint did not explicitly stop for filtering or an output limit. This is separate from transport
+    /// recovery: reasoning was already shown and must not be silently replayed inside one request.</summary>
+    public static bool RetryableMissingAnswer(string? finishReason, bool askedForTool, bool spinStopped)
+        => !askedForTool && !spinStopped
+            && !string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(finishReason, "max_tokens", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(finishReason, "content_filter", StringComparison.OrdinalIgnoreCase);
 
     public static TimeSpan Backoff(int retriesSoFar) => TimeSpan.FromMilliseconds(Math.Min(
         Core.ProviderRetryDefaults.BackoffCeiling.TotalMilliseconds,

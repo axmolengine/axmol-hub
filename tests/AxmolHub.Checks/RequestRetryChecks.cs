@@ -31,13 +31,18 @@ internal static class RequestRetryChecks
             || !waits.SequenceEqual(new[] { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5) }))
             throw new Exception("Request recovery replayed a tool, leaked a failed call, or failed to reset backoff.");
 
-        foreach (var code in new[] { "insufficient_quota", "invalid_api_key", "invalid_request_error" })
+        foreach (var code in new[] { "insufficient_quota", "subscription_sharing_usage_limit_exceeded",
+            "invalid_api_key", "invalid_request_error", "model_not_found" })
         {
             var refused = new SequenceClient(_ => [Error(code)]);
             try { await Drain(refused, retry); throw new Exception("Permanent error returned success."); }
             catch (ProviderResponseException) { }
             if (refused.Requests != 1) throw new Exception("A permanent failure was retried.");
         }
+        var unknownProviderError = new SequenceClient(n => n == 1 ? [Error("gateway_unexpected_fault")]
+            : [new(ChatRole.Assistant, "recovered")]);
+        await Drain(unknownProviderError, retry);
+        if (unknownProviderError.Requests != 2) throw new Exception("Unknown provider error did not back off.");
         var partial = new SequenceClient(_ => [new(ChatRole.Assistant, "partial"), Error()]);
         try { await Drain(partial, retry); throw new Exception("Partial response returned success."); }
         catch (RequestRetryException ex) when (ex.Partial && ex.Retries == 0) { }
@@ -45,6 +50,11 @@ internal static class RequestRetryChecks
         var empty = new SequenceClient(n => n < 3 ? [] : [new(ChatRole.Assistant, "done")]);
         await Drain(empty, retry);
         if (empty.Requests != 3) throw new Exception("Empty responses did not recover.");
+        if (!ProviderFailure.RetryableMissingAnswer("stop", false, false)
+            || ProviderFailure.RetryableMissingAnswer("CONTENT_FILTER", false, false)
+            || ProviderFailure.RetryableMissingAnswer("length", false, false)
+            || ProviderFailure.RetryableMissingAnswer("stop", true, false))
+            throw new Exception("A terminal or tool-requesting empty answer was treated as retryable.");
         waits.Clear();
         var interrupted = new SequenceClient(n => n == 1 ? [Error("upstream_stream_read_error")]
             : [new(ChatRole.Assistant, "recovered")]);
@@ -92,6 +102,27 @@ internal static class RequestRetryChecks
             if (wire.Attempts != 3 || !waits.SequenceEqual(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7) }))
                 throw new Exception($"HTTP/SSE budget or Retry-After drifted: {wire.Attempts}, {string.Join(',', waits)}.");
         }
+        // A rebuilt reasoning-only segment must not buy a fresh HTTP/SSE allowance. The same client resets
+        // that allowance only for the next model request after a successful tool-call response.
+        var carriedWaits = new List<TimeSpan>();
+        var carriedRetries = -1;
+        var carried = new RequestRetryOptions { MaxRetries = 2, RetriesUsed = 1,
+            OnRequestEnded = used => carriedRetries = used, Delay = (delay, _) =>
+            { carriedWaits.Add(delay); return Task.CompletedTask; } };
+        var carriedWire = new MixedWire();
+        using (var carriedClient = ChatClientFactory.Create(provider, provider.Model, null, transport: carriedWire))
+            try { await Drain(carriedClient, carried); throw new Exception("A carried retry budget returned success."); }
+            catch (RequestRetryException ex) when (ex.Retries == 2) { }
+        if (carriedWire.Attempts != 2 || carriedRetries != 2 || !carriedWaits.SequenceEqual([TimeSpan.FromSeconds(1)]))
+            throw new Exception("Rebuilding a request granted a second transport/stream retry budget.");
+        carriedWaits.Clear();
+        var nextRequest = new SequenceClient(n => n switch
+        { 1 => [Call("carried")], 2 => [Error()], _ => [new(ChatRole.Assistant, "done")] });
+        await foreach (var _ in new ChatPipeline(nextRequest).SendAsync(provider, [ChatTurn.User("go")],
+            tools: [tool], retryOptions: carried)) { }
+        if (nextRequest.Requests != 3 || carriedRetries != 1 || !carriedWaits.SequenceEqual([TimeSpan.FromSeconds(5)]))
+            throw new Exception("A successful tool round kept the preceding request's exhausted budget.");
+
         using var stop = new CancellationTokenSource();
         var cancelWait = new RequestRetryOptions { MaxRetries = 2, OnWait = (attempt, _) => { if (attempt > 0) stop.Cancel(); } };
         var longWait = new SequenceClient(_ => [new(ChatRole.Assistant, new List<AIContent> { new ErrorContent("busy")

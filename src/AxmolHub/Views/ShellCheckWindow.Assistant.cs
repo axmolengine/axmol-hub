@@ -1662,6 +1662,67 @@ internal sealed class ShellAssistantChecks
               && panel.NoticeActionNameForCheck == "RetryMessage",
             "只有思考过程时不显示为正常完成，并提供重试入口");
 
+        // A visible thinking block cannot be replayed by the transport. Retry as a new segment instead,
+        // preserving the first block as a separate turn rather than concatenating two responses.
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 1;
+        var thoughtAttempts = 0;
+        ScriptedChatClient? thoughtRetryClient = null;
+        shell.Chat.ClientOverride = (_, _) => ++thoughtAttempts == 1
+            ? new ScriptedChatClient([], finish: "stop",
+                reasoning: [new Microsoft.Extensions.AI.TextReasoningContent("第一次思考")])
+            : thoughtRetryClient = new ScriptedChatClient(["退避后回答"], finish: "stop");
+        var recoveredThought = shell.Chat.StartConversation();
+        await panel.SendForCheckAsync("思考后请给出答案");
+        // SendForCheckAsync stops pumping after one second; the deliberate backoff is five seconds.
+        for (var wait = 0; wait < 1600 && shell.Chat.IsRunning(recoveredThought.Id); wait++)
+        {
+            await Task.Delay(5);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Check(thoughtAttempts == 2 && recoveredThought.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                  && turn.Text.Length == 0 && turn.Reasoning == "第一次思考")
+              && recoveredThought.Messages.Any(turn => turn.Role == ChatRoles.Assistant && turn.Text == "退避后回答")
+              && recoveredThought.LastNotice is null
+              && thoughtRetryClient?.LastMessages?.LastOrDefault()?.Role == Microsoft.Extensions.AI.ChatRole.User
+              && thoughtRetryClient.LastMessages.All(message => !message.Contents
+                  .OfType<Microsoft.Extensions.AI.TextReasoningContent>().Any(thought => thought.Text == "第一次思考")),
+            "思考但无答案会退避再试，两次答复不拼接且最终提示清除（实际 attempts=" + thoughtAttempts
+            + " / replies=" + string.Join(" | ", recoveredThought.Messages.Where(turn => turn.Role == ChatRoles.Assistant)
+                .Select(turn => "text=" + turn.Text + ", reasoning=" + turn.Reasoning))
+            + " / notice=" + recoveredThought.LastNotice?.Key + "）");
+        shell.Chat.DeleteConversation(recoveredThought.Id);
+
+        // A completed tool belongs to the previous model request. The unanswered follow-up must be
+        // recoverable without replaying that call, even though the run-wide tool counter is nonzero.
+        var afterTool = StartAgentSession(shell.Chat);
+        var afterToolClient = new ApprovalChatClient
+        {
+            ToolName = "project_list", CallsRemaining = 1, ReasoningOnlyAfterCall = true,
+        };
+        shell.Chat.ClientOverride = (_, _) => afterToolClient;
+        panel.Reload();
+        await panel.SendForCheckAsync("列出项目后作出答复");
+        for (var wait = 0; wait < 1600 && shell.Chat.IsRunning(afterTool.Id); wait++)
+        {
+            await Task.Delay(5);
+            Dispatcher.UIThread.RunJobs();
+        }
+        var listedCalls = afterTool.Messages.Where(turn => turn.Role == ChatRoles.Assistant
+            && turn.ToolName == "project_list" && turn.ToolCallId is { Length: > 0 })
+            .Select(turn => turn.ToolCallId).ToHashSet(StringComparer.Ordinal);
+        var listedResults = afterTool.Messages.Count(turn => turn.Role == ChatRoles.Tool
+            && turn.ToolCallId is not null && listedCalls.Contains(turn.ToolCallId));
+        Check(afterToolClient.Requests == 3 && listedCalls.Count == 1 && listedResults == 1
+              && afterTool.Messages.Any(turn => turn.Role == ChatRoles.Assistant
+                  && turn.Text.Length == 0 && turn.Reasoning == "Thinking after the tool result")
+              && afterTool.Messages.Any(turn => turn.Role == ChatRoles.Assistant && turn.Text == ApprovalChatClient.Answer)
+              && afterTool.LastNotice is null,
+            "工具已执行后只重问没有答案的后续请求，工具结果仅保留一次（实际请求 "
+            + afterToolClient.Requests + "，结果 "
+            + listedResults + "）");
+        shell.Chat.DeleteConversation(afterTool.Id);
+        shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 0;
+
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception: new TimeoutException());
         await panel.SendForCheckAsync("超时问题");
         Check(panel.LastNoticeTextForCheck?.StartsWith(HubStrings.Get("ChatRetryExhausted"), StringComparison.Ordinal) == true,
@@ -1809,6 +1870,21 @@ internal sealed class ShellAssistantChecks
             + parkedState + " / " + parkedReason + "）");
 
         shell.Chat.PauseGoal(coolingGoal.Id); // Retire this workspace's timer before simulating a new process.
+
+        var thinkingGoal = PausedGoal("思考后仍需最终回答");
+        // Some gateways place reasoning inside TextContent; it must not reset the goal cooldown.
+        var thinkingClient = new ScriptedChatClient(["<thinking>尚无答案</thinking>"], finish: "stop");
+        shell.Chat.ClientOverride = (_, _) => thinkingClient;
+        shell.Chat.ResumeGoal(thinkingGoal.Id);
+        await panel.WaitForRunToFinishForCheck();
+        var thinkingCopy = shell.Chat.StoredCopyForCheck(thinkingGoal.Id);
+        Check(thinkingClient.Requests == 1 && thinkingCopy?.GoalState == ChatGoalStates.Waiting
+              && thinkingCopy.GoalCooldownCount == 1 && thinkingCopy.GoalWakeAt > DateTimeOffset.UtcNow
+              && thinkingCopy.GoalNoProgressRequests == 0
+              && thinkingCopy.Messages.Any(turn => turn.Role == ChatRoles.Assistant && turn.Reasoning == "尚无答案"),
+            "目标任务思考但无最终答复时持久化冷却，不把思考当成功来清零退避预算");
+        shell.Chat.PauseGoal(thinkingGoal.Id);
+        shell.Chat.DeleteConversation(thinkingGoal.Id);
 
         var partialGoal = PausedGoal("部分响应后退避并续跑");
         var partialClient = new ScriptedChatClient(["Partial ", "answer.\n[GOAL_COMPLETE]"], exception:

@@ -24,6 +24,7 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
     /// <see cref="ClientRetryPolicy.GetNextDelay"/> so the wait can name the attempt that follows it. The base
     /// class passes the delay and the count to separate methods, and only the count arrives first.</summary>
     private readonly AsyncLocal<int> _tried = new();
+    private sealed class RetryCountMarker { }
 
     protected override bool ShouldRetry(PipelineMessage message, Exception? exception)
     {
@@ -33,9 +34,16 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
         {
             response.BufferContent(message.CancellationToken);
             if (ProviderFailure.QuotaExhausted(response.Content.ToString())) return false;
-            if (response.Status is not (408 or 429 or 500 or 502 or 503 or 504)) return false;
+            if (!ProviderFailure.RetryableStatus(response.Status)) return false;
         }
-        return base.ShouldRetry(message, exception);
+        // The SDK's classifier omits some transient 5xx (for example 507). Its retry-count check lives
+        // inside base.ShouldRetry, so extending the classifier must enforce that same bound explicitly.
+        // GetNextDelay records the count on this message; an AsyncLocal would leak it between requests.
+        if (base.ShouldRetry(message, exception)) return true;
+        var retries = message.TryGetProperty(typeof(RetryCountMarker), out var count) && count is int used
+            ? used : 0;
+        return message.Response is { Status: >= 500 }
+            && retries < Math.Clamp(maxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
     }
 
     protected override async ValueTask<bool> ShouldRetryAsync(PipelineMessage message, Exception? exception)
@@ -48,6 +56,7 @@ public sealed class IdleAwareRetryPolicy(int maxRetries, Action<int, TimeSpan>? 
     protected override TimeSpan GetNextDelay(PipelineMessage message, int tryCount)
     {
         _tried.Value = tryCount;
+        message.SetProperty(typeof(RetryCountMarker), tryCount);
         TimeSpan? specified = null;
         if (message.Response is { } response)
         {

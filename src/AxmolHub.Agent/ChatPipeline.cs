@@ -590,7 +590,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
 
     /// <summary>Extracts only the two common embedded reasoning tags while retaining enough trailing text to
     /// recognize a tag split across streaming chunks. Ordinary XML and non-matching tag names pass through.</summary>
-    private sealed class EmbeddedReasoningParser
+    internal sealed class EmbeddedReasoningParser
     {
         private static readonly string[] OpenTags = ["<thinking>", "<think>"];
         private static readonly string[] CloseTags = ["</thinking>", "</think>"];

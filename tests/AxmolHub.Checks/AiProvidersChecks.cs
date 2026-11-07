@@ -404,6 +404,19 @@ internal static class AiProvidersChecks
             if (transient.Attempts != 3 || backoff.Count != 2
                 || backoff[0].TotalSeconds is < 0.6 or > 1.0 || backoff[1].TotalSeconds is < 1.2 or > 2.0)
                 throw new Exception("Exponential jitter did not stay inside the retry envelope.");
+            var otherServerError = new RateLimitWire(1, status: System.Net.HttpStatusCode.InsufficientStorage,
+                omitRetryAfter: true);
+            await ChatClientFactory.Create(probeProvider, "m", null, transport: otherServerError)
+                .GetResponseAsync(retryMessages);
+            if (otherServerError.Attempts != 2) throw new Exception("An unknown 5xx escaped transport backoff.");
+            var persistentServerError = new RateLimitWire(0, always: true,
+                status: System.Net.HttpStatusCode.InsufficientStorage, omitRetryAfter: true);
+            // A broken retry-count guard must fail this check promptly instead of hanging the suite forever.
+            using var retryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try { await ChatClientFactory.Create(probeProvider, "m", null, transport: persistentServerError,
+                    maxRetries: 1).GetResponseAsync(retryMessages, cancellationToken: retryDeadline.Token); }
+            catch (System.ClientModel.ClientResultException) { }
+            if (persistentServerError.Attempts != 2) throw new Exception("An unknown 5xx escaped the retry budget.");
             using var cancel = new CancellationTokenSource();
             var cancelWire = new RateLimitWire(1, retryAfterSeconds: 3);
             try

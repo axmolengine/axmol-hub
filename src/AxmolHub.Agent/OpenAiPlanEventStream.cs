@@ -83,25 +83,30 @@ internal sealed class OpenAiPlanEventStream(Stream inner, HttpContent owner, Act
                 case "response.completed": _completed = true; break;
                 case "response.incomplete": throw new IOException("The ChatGPT plan response was incomplete. Retry the request.");
                 case "response.failed":
-                    var code = root.TryGetProperty("response", out var response) && response.ValueKind == JsonValueKind.Object
-                        && response.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object
-                        && error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String
-                        ? value.GetString() : null;
-                    if (code == "subscription_sharing_usage_limit_exceeded")
-                    {
-                        onUsageLimit?.Invoke();
-                        throw new IOException("ChatGPT plan usage limit reached. Manage usage in ChatGPT settings, then resume plan requests in provider settings.");
-                    }
-                    if (code == "subscription_sharing_usage_unavailable")
-                        throw new IOException("ChatGPT plan usage is temporarily unavailable. Retry later.");
-                    throw new IOException("The ChatGPT plan response failed" + (IsSafeCode(code) ? " (" + code + ")" : "") + ".");
-                case "error": throw new IOException("The ChatGPT plan response stream reported an error.");
+                    var error = root.TryGetProperty("response", out var response) && response.ValueKind == JsonValueKind.Object
+                        && response.TryGetProperty("error", out var detail) ? detail : root;
+                    ThrowFailure(error, root);
+                    break;
+                case "error":
+                    ThrowFailure(root.TryGetProperty("error", out var nested) ? nested : root, root);
+                    break;
             }
         }
     }
 
-    private static bool IsSafeCode(string? code) => code is { Length: > 0 and <= 100 }
-        && code.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-');
+    private void ThrowFailure(JsonElement error, JsonElement envelope)
+    {
+        static string? String(JsonElement item, string key) => item.ValueKind == JsonValueKind.Object
+            && item.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        var code = String(error, "code") ?? String(error, "type");
+        var message = String(error, "message") ?? (ProviderFailure.QuotaExhausted(code)
+            ? "ChatGPT plan usage limit reached. Manage usage in ChatGPT settings, then resume plan requests in provider settings."
+            : "The ChatGPT plan response failed.");
+        if (ProviderFailure.QuotaExhausted(code) || ProviderFailure.QuotaExhausted(message)) onUsageLimit?.Invoke();
+        // An error event can precede response.failed or be the only terminal event. Preserve the provider's
+        // classification here: a generic IOException makes a spent allowance look like a broken connection.
+        throw new ProviderResponseException(message, code, ProviderFailure.ReadRetryAfter(envelope));
+    }
 
     protected override void Dispose(bool disposing)
     {

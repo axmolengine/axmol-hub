@@ -178,6 +178,9 @@ internal static class ShellCheckSupport
         public int Requests { get; private set; }
         /// <summary>Optional provider failure after the first tool-call response, for retry-streak checks.</summary>
         public Exception? FollowUpException { get; set; }
+        /// <summary>End the first post-tool response after reasoning, without an answer or another call.
+        /// The next request must use the filed tool result instead of re-executing the call.</summary>
+        public bool ReasoningOnlyAfterCall { get; set; }
         /// <summary>What the response says before it asks, emitted as text ahead of the call — the shape a model
         /// writes an answer in: the prose and the call arrive as one assistant message and Hub files both on one
         /// turn. Said once, on the response that carries the call.</summary>
@@ -246,6 +249,15 @@ internal static class ShellCheckSupport
                 AnswerReached?.TrySetResult(true);
                 if (ParkBeforeAnswer is { } park)
                     await park.WaitAsync(cancellationToken);
+            }
+
+            if (ReasoningOnlyAfterCall && Requests == 2)
+            {
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant,
+                    [new Microsoft.Extensions.AI.TextReasoningContent("Thinking after the tool result")]);
+                yield return new Microsoft.Extensions.AI.ChatResponseUpdate(Microsoft.Extensions.AI.ChatRole.Assistant, "")
+                { FinishReason = new Microsoft.Extensions.AI.ChatFinishReason("stop") };
+                yield break;
             }
 
             if (Thinking.Count > 0)

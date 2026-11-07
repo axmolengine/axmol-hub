@@ -25,7 +25,8 @@ internal sealed class OpenAiPlanTransport(ModelProvider provider, HttpMessageHan
             throw new InvalidOperationException("Refusing to send a ChatGPT plan token to an unsupported endpoint.");
         var credential = provider.Credential ?? throw new InvalidOperationException("OpenAI credential service is unavailable.");
         if (credential.PlanUsagePaused)
-            throw new InvalidOperationException("ChatGPT plan requests are paused after a usage limit. Manage usage in ChatGPT settings, then resume in provider settings.");
+            throw new ProviderResponseException("ChatGPT plan requests are paused after a usage limit. Manage usage in ChatGPT settings, then resume in provider settings.",
+                "subscription_sharing_usage_limit_exceeded");
         var get = provider.OpenAiTokenProvider ?? throw new InvalidOperationException("OpenAI credential service is unavailable.");
         var body = request.Content is null ? throw new InvalidOperationException("A ChatGPT plan request must contain JSON.")
             : PrepareRequest(await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false));
@@ -63,8 +64,9 @@ internal sealed class OpenAiPlanTransport(ModelProvider provider, HttpMessageHan
                         credential.PlanUsagePaused = true;
                         var requestId = response.Headers.TryGetValues("x-request-id", out var ids) ? ids.FirstOrDefault() : null;
                         response.Dispose();
-                        throw new InvalidOperationException("ChatGPT plan usage limit reached. Manage usage in ChatGPT settings, then resume in provider settings."
-                            + (requestId is { Length: > 0 and <= 128 } && requestId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? " Request ID: " + requestId : ""));
+                        throw new ProviderResponseException("ChatGPT plan usage limit reached. Manage usage in ChatGPT settings, then resume in provider settings."
+                            + (requestId is { Length: > 0 and <= 128 } && requestId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? " Request ID: " + requestId : ""),
+                            code.GetString());
                     }
                 }
                 catch (JsonException) { }

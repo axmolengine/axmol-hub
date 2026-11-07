@@ -2962,9 +2962,14 @@ internal sealed partial class ChatExecutionCoordinator
                 if (result == RunResult.Parked) return;
                 // The old stream finished its tool batch. Rebuild from durable turns without treating a
                 // selection change as a compaction request, an ending, or a new user instruction.
-                if (result == RunResult.ModelChanged) continue;
+                if (result == RunResult.ModelChanged)
+                {
+                    run.RequestRetriesUsed = 0;
+                    continue;
+                }
                 if (result == RunResult.ContextBoundary)
                 {
+                    run.RequestRetriesUsed = 0;
                     var changed = await CompactIfNeededAsync(run).ConfigureAwait(false);
                     compacted |= changed;
                     run.ContextYieldSuppressed = !changed;
@@ -2982,6 +2987,7 @@ internal sealed partial class ChatExecutionCoordinator
                         result = RunResult.Cancelled;
                         break;
                     }
+                    run.RequestRetriesUsed = 0;
                     prepareSegment = true;
                     continue;
                 }
@@ -2990,6 +2996,40 @@ internal sealed partial class ChatExecutionCoordinator
                 // instead, so it is asked only once the queue is empty.
                 if (result == RunResult.Completed
                     && await ShouldCorrectLimitationsAsync(run).ConfigureAwait(false)) continue;
+                // Reasoning is already visible and filed as a turn, so the request-level replay guard cannot
+                // replay it. A fresh segment reads the durable history, including any completed tool results:
+                // tools from earlier rounds are not executed again. Judge only what this final response asked
+                // for; a tool used earlier in the run must not strand its unanswered follow-up forever.
+                // A hosted search in this run stays excluded because the provider may repeat billable work.
+                if (result == RunResult.Incomplete && noticeKey == "ChatReasoningOnly"
+                    && run.StoredSearches() is null
+                    && ProviderFailure.RetryableMissingAnswer(run.FinishReason,
+                        run.SegmentCallNames.Count > 0, run.SpinStopped))
+                {
+                    if (Sessions.Registry.Peek(run.ConversationId) is
+                        { Goal: { Length: > 0 }, GoalState: ChatGoalStates.Active } goal)
+                    {
+                        var notice = await ParkGoalForProviderAsync(run.ConversationId,
+                            ProviderFailure.Backoff(goal.GoalCooldownCount)).ConfigureAwait(false);
+                        noticeKey = notice;
+                        noticeDanger = false;
+                        break;
+                    }
+                    var limit = Math.Clamp(PreferencesProvider?.Invoke().ProviderMaxRetries
+                        ?? ProviderRetryDefaults.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
+                    // Continue the failed request's allowance; successful earlier tool rounds have their own.
+                    if (run.RequestRetriesUsed < limit)
+                    {
+                        var delay = ProviderFailure.Backoff(run.RequestRetriesUsed);
+                        var attempt = ++run.RequestRetriesUsed + 1;
+                        Audit(run.ConversationId, $"Reasoning without an answer; retrying after {delay.TotalSeconds:0.#}s "
+                            + $"(attempt {attempt}/{limit + 1})");
+                        NoteRetryWait(run, attempt, delay);
+                        try { await Task.Delay(delay, run.Token).ConfigureAwait(false); }
+                        finally { NoteRetryWait(run, 0, TimeSpan.Zero); }
+                        continue;
+                    }
+                }
                 // A response that asked for a tool this request never declared is corrected once and carried on:
                 // nothing ran, so the transcript holds no call and no result, and a plain retry would replay the
                 // very request that produced the wrong name.
@@ -3002,6 +3042,12 @@ internal sealed partial class ChatExecutionCoordinator
         {
             result = RunResult.Incomplete;
             noticeKey = "ChatProviderRetryLater";
+        }
+        catch (OperationCanceledException) when (run.StopRequested || run.DeadlineFired)
+        {
+            result = run.StopRequested ? RunResult.Cancelled : RunResult.TimedOut;
+            noticeKey = run.StopRequested ? "ChatCancelled" : "ChatTimedOut";
+            noticeDanger = !run.StopRequested;
         }
         catch (GoalGuardException ex)
         {
@@ -3335,8 +3381,8 @@ internal sealed partial class ChatExecutionCoordinator
             var thoughtFor = run.ReasoningElapsed;
             if (!replyRecorded && (reply.Length > 0 || thought.Length > 0))
             {
-                // A reply with thinking but no text is a real thing a reasoning model produces, and the thinking
-                // still has to be on the record: the next request that carries tools is rejected without it.
+                // Preserve thinking even when no answer arrived. A retry's wire copy may omit this failed
+                // tail, but recorded tool-call messages retain the reasoning a thinking gateway requires.
                 var effortAsked = request.Value.Reasoning;
                 await ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
@@ -3455,7 +3501,14 @@ internal sealed partial class ChatExecutionCoordinator
         }
 
         var mode = NormalizeMode(conversation.Mode);
-        var history = MaterializePlans(conversation.Messages.Skip(SummaryMessageCount(conversation)));
+        var history = MaterializePlans(conversation.Messages.Skip(SummaryMessageCount(conversation))
+            .Where(turn => turn.Role != ChatRoles.Notice));
+        // A failed reasoning-only tail is not a completed assistant answer or a supported assistant prefill.
+        // Keep it on disk and on screen, but retry from the last real input/tool result. Removing only these
+        // trailing non-call turns never replays an executed tool or loses the reasoning attached to its call.
+        while (history.LastOrDefault() is { Role: ChatRoles.Assistant, Text.Length: 0,
+                   Reasoning.Length: > 0, ToolCallId: null or "" })
+            history.RemoveAt(history.Count - 1);
         var modelName = choice.ModelName;
         var effort = ModelCatalog.ResolveReasoningEffort(choice.Provider, modelName, conversation.ReasoningEffort);
         string? reasoning = effort == ChatReasoningEfforts.Default ? null : effort;
@@ -3602,6 +3655,8 @@ internal sealed partial class ChatExecutionCoordinator
         {
             MaxRetries = PreferencesProvider?.Invoke().ProviderMaxRetries ?? ProviderRetryDefaults.MaxRetries,
             OnWait = (attempt, delay) => NoteRetryWait(run, attempt, delay),
+            RetriesUsed = run.RequestRetriesUsed,
+            OnRequestEnded = used => run.RequestRetriesUsed = used,
             ValidateSelection = () => ValidateRequestSelectionAsync(run.ConversationId, request.Provider.Id, request.ModelName),
         };
         run.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);

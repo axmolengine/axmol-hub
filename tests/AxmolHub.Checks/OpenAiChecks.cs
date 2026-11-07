@@ -739,19 +739,45 @@ internal static class OpenAiChecks
             Check(credential.PlanUsagePaused && limitedCalls == 1, "usage limit pauses further requests without switching billing");
             credential.PlanUsagePaused = false;
         }
-        var pausedByStream = false;
-        using (var failureContent = new StringContent("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n"))
-        using (var failureStream = new OpenAiPlanEventStream(await failureContent.ReadAsStreamAsync(), failureContent, () => pausedByStream = true))
+        // The plan stream must preserve quota errors even when event:error arrives before response.failed.
+        // Run through the SDK and request retry wrapper: testing only the pause callback missed the replay.
+        var legacySecret = credential.Secret;
+        credential.Secret = exchanged.Encode();
+        foreach (var events in new[]
         {
-            try { await failureStream.CopyToAsync(Stream.Null); } catch (IOException) { }
-            Check(pausedByStream, "streamed usage limit triggers the same pause");
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"The ChatGPT user has reached their Subscription Sharing usage limit.\"}}\n\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n",
+        })
+        {
+            credential.PlanUsagePaused = false;
+            var quotaRequests = 0;
+            var quotaWaits = 0;
+            using var quotaClient = ChatClientFactory.Create(provider, "fixture-model", null, transport: new Handler((_, _) =>
+            {
+                quotaRequests++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent(events, Encoding.UTF8, "text/event-stream") });
+            }));
+            var quotaRetry = new RequestRetryOptions { MaxRetries = 2, Delay = (_, _) =>
+            { quotaWaits++; return Task.CompletedTask; } };
+            async Task RequestQuotaAsync()
+            {
+                await foreach (var _ in new ChatPipeline(quotaClient).SendAsync(provider, [ChatTurn.User("probe")],
+                    retryOptions: quotaRetry)) { }
+                throw new Exception("A spent plan allowance returned success.");
+            }
+            for (var attempt = 0; attempt < 2; attempt++)
+                try { await RequestQuotaAsync(); }
+                catch (ProviderResponseException ex) when (ProviderFailure.QuotaExhausted(ex.ErrorCode)
+                    && !ProviderFailure.Recoverable(ex)) { }
+            Check(credential.PlanUsagePaused && quotaRequests == 1 && quotaWaits == 0,
+                "plan quota error stops before any retry wait and blocks subsequent requests locally");
         }
+        credential.PlanUsagePaused = false;
 
         // Exercise SDK serialization through the plan transport, not just hand-written request JSON.
         var planSdkBodies = new List<string>();
         provider.OpenAiTokenProvider = (_, _) => Task.FromResult(exchanged);
-        var legacySecret = credential.Secret;
-        credential.Secret = exchanged.Encode();
         using (var planSdk = ChatClientFactory.Create(provider, "fixture-model", null, transport: new Handler(async (request, token) =>
         {
             if (request.RequestUri?.AbsoluteUri != "https://api.openai.com/v1/responses"
@@ -794,7 +820,7 @@ internal static class OpenAiChecks
             using var stream = new OpenAiPlanEventStream(await content.ReadAsStreamAsync(), content);
             var buffer = new byte[7];
             try { while (await stream.ReadAsync(buffer.AsMemory()) != 0) { } return null; }
-            catch (IOException ex) { return ex.Message; }
+            catch (Exception ex) when (ex is IOException or ProviderResponseException) { return ex.Message; }
         }
         Check(await PlanStreamFailure("data: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n") is null
             && (await PlanStreamFailure("data: {\"type\":\"response.output_text.delta\"}\n\n"))?.Contains("before response.completed") == true
@@ -803,6 +829,31 @@ internal static class OpenAiChecks
         Check((await PlanStreamFailure("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n"))?.Contains("usage limit") == true
             && (await PlanStreamFailure("data: {\"type\":\"response.incomplete\"}\n\n"))?.Contains("incomplete") == true,
             "plan stream reports failed usage limits and incomplete responses");
+
+        // A token rate limit on the same plan wire must retry rather than pause the account. Exercise
+        // temporary unavailability too: neither error means the subscription allowance is exhausted.
+        credential.Secret = exchanged.Encode();
+        foreach (var code in new[] { "rate_limit_exceeded", "subscription_sharing_usage_unavailable" })
+        {
+            var transientRequests = 0;
+            var transientWaits = 0;
+            using var transientClient = ChatClientFactory.Create(provider, "fixture-model", null, transport: new Handler((_, _) =>
+            {
+                var events = ++transientRequests == 1
+                    ? $"event: error\ndata: {{\"type\":\"error\",\"error\":{{\"code\":\"{code}\",\"message\":\"temporarily limited\"}}}}\n\n"
+                    : StreamEvents(false, namespaced: true);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent(events, Encoding.UTF8, "text/event-stream") });
+            }));
+            var transientRetry = new RequestRetryOptions { MaxRetries = 1, Delay = (_, _) =>
+            { transientWaits++; return Task.CompletedTask; } };
+            var recovered = new StringBuilder();
+            await foreach (var chunk in new ChatPipeline(transientClient).SendAsync(provider, [ChatTurn.User("probe")],
+                retryOptions: transientRetry)) recovered.Append(chunk);
+            Check(!credential.PlanUsagePaused && transientRequests == 2 && transientWaits == 1 && recovered.ToString() == "done",
+                "plan " + code + " backs off and recovers without pausing the subscription");
+        }
+        credential.Secret = legacySecret;
 
         // Exercise the real tool loop: deleting previous_response_id after the loop has already sent an
         // increment is not stateless replay. The relay and plan need both calls and both results by round three.
