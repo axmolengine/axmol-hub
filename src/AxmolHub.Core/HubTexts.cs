@@ -585,11 +585,10 @@ public static class HubTexts
         // as the measured column does it.
         ["TaskEstimateSize"] = ("约 ", "About "),
         // ── The strip's download slot and the queue popover ──
-        // The slot is one sentence in a 28px strip, so it counts rather than narrates. The percentage only
-        // appears when a single transfer is moving: averaging two rates into one number would be a figure
-        // that describes neither download.
+        // The slot is one sentence in a 28px strip, so it counts rather than narrates. The progress bar
+        // owns the percentage, because one number beside the bar is enough and multiple tasks cannot make
+        // one percentage look like a total for the whole queue.
         ["TaskSlotFormat"] = ("任务 {0}/{1}", "Tasks {0}/{1}"),
-        ["TaskSlotPercentFormat"] = ("任务 {0}/{1} · {2}%", "Tasks {0}/{1} · {2}%"),
         ["TaskSlotFailed"] = ("{0} 个任务失败", "{0} task(s) failed"),
         ["TaskListTitle"] = ("任务列表", "Tasks"),
         ["TaskSlotTip"] = ("查看正在跑的任务", "Show what is running"),

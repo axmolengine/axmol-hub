@@ -700,9 +700,31 @@ public partial class MainWindow : Window
         // ended up disabled for every operation when the busy flag was raised before the task existed.
         CancelButton.IsEnabled = _workspace.CanCancel;
 
-        var (visible, label, action) = TaskSlotStateFor(TaskQueue.Instance.Items);
+        var items = TaskQueue.Instance.Items;
+        var (visible, label, action) = TaskSlotStateFor(items);
         TaskSlot.IsVisible = visible;
         TaskSlotText.Text = visible ? label : "";
+
+        var active = items.FirstOrDefault(item => item.IsMoving);
+        StatusProgress.IsVisible = active is not null;
+        if (active is { } running)
+        {
+            var fill = running.Fill;
+            var determinate = running.State != TaskQueue.Phase.Finalizing && fill is not null;
+            StatusProgress.IsIndeterminate = !determinate;
+            StatusProgress.Value = fill ?? 0;
+            StatusProgressPercent.IsVisible = determinate;
+            StatusProgressPercent.Text = determinate
+                ? ((int)Math.Clamp(fill!.Value, 0, 100)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "%"
+                : "";
+        }
+        else
+        {
+            StatusProgress.IsIndeterminate = false;
+            StatusProgress.Value = 0;
+            StatusProgressPercent.IsVisible = false;
+            StatusProgressPercent.Text = "";
+        }
         // The slot speaks for the queue and nothing else: the update's decisions (fetch, restart) live on
         // the sidebar's update button, so the slot's tooltip is the queue's own sentence in every state it
         // can still show — it no longer holds a version, which is what the button's tip carries instead.
@@ -755,15 +777,11 @@ public partial class MainWindow : Window
         if (active.Count > 0)
         {
             var moving = active.Count(item => item.IsMoving);
-            // The percentage rides only when exactly one transfer is moving. Averaging two of them into one
-            // number would produce a figure that describes neither download, and the row inside the popover
-            // is where each one's own progress belongs.
-            var single = moving == 1 ? active.Single(item => item.IsMoving) : null;
-            return single?.Report.Percent is { } percent
-                ? (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                    HubStrings.Get("TaskSlotPercentFormat"), moving, active.Count, percent), TaskSlotAction.OpenQueue)
-                : (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                    HubStrings.Get("TaskSlotFormat"), moving, active.Count), TaskSlotAction.OpenQueue);
+            // The progress bar and its percentage belong to the strip's main status lane. The task button
+            // only reports the queue shape, so one task cannot repeat the same percentage beside the bar and
+            // multiple tasks cannot make one percentage look like a total for the whole queue.
+            return (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("TaskSlotFormat"), moving, active.Count), TaskSlotAction.OpenQueue);
         }
 
         var failed = items.Count(item => item.State == TaskQueue.Phase.Failed);

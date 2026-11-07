@@ -203,6 +203,20 @@
     <Style Selector="Button.icon-ghost:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
+    <Style Selector="ProgressBar.status-progress">
+      <Setter Property="Height" Value="3" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Margin" Value="12,0,6,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.AccentBorder}" />
+    </Style>
+    <Style Selector="TextBlock.status-progress-percent">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
     <Style Selector="Button.icon-ghost Path.stroked">
       <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="StrokeThickness" Value="1.7" />
@@ -1030,23 +1044,27 @@
 
       <!-- Slim status strip. -->
       <Grid x:Name="StatusStrip" Grid.Row="1" Height="28" Margin="18,0,18,0"
-            ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+            ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
         <Ellipse Grid.Column="0" Width="6" Height="6"
                  Fill="{DynamicResource Hub.Success}"
                  VerticalAlignment="Center" />
         <TextBlock x:Name="Status" Grid.Column="1"
                    Text="{DynamicResource Ready}"
                    Foreground="{DynamicResource Hub.TextSecondary}"
-                   FontSize="11" Margin="8,0,0,0"
+                   FontSize="11" Margin="8,0,0,0" MaxWidth="280"
                    TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center" />
+        <ProgressBar x:Name="StatusProgress" Grid.Column="2" Classes="status-progress"
+                     IsVisible="False" Minimum="0" Maximum="100" />
+        <TextBlock x:Name="StatusProgressPercent" Grid.Column="3"
+                   Classes="status-progress-percent" IsVisible="False" />
         <!-- The task queue's one line. It stays dark unless something is moving, failed and unread, or
              waiting on a decision, because the strip's job is what needs acting on and nothing else — a
              progress bar for its own sake would be chrome. Pressing it lifts the popover that holds the
              rows, the measurements and the per-item cancel: the list does not live in the strip, only its
              count does. Its own Auto column for the same reason as the repository slot above, because a
              second sentence inside the * column would take trimming room from the operation status. -->
-        <Button x:Name="TaskSlot" Grid.Column="2" Classes="strip"
+        <Button x:Name="TaskSlot" Grid.Column="4" Classes="strip"
                 IsVisible="False" Margin="6,0,0,0" MaxWidth="220"
                 VerticalAlignment="Center">
           <TextBlock x:Name="TaskSlotText" TextTrimming="CharacterEllipsis"
@@ -1056,20 +1074,20 @@
              streaming is not a Hub operation, and neither should erase the other. Hidden while nothing is
              answering, so the strip is as bare as it was. It is the only sign of a running reply outside the
              assistant page, where the conversation list — and its per-session dot — is not shown. -->
-        <TextBlock x:Name="ChatRuns" Grid.Column="3"
+        <TextBlock x:Name="ChatRuns" Grid.Column="5"
                    IsVisible="False"
                    Foreground="{DynamicResource Hub.TextSecondary}"
                    FontSize="11" Margin="8,0,0,0"
                    VerticalAlignment="Center" />
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
-                Grid.Column="4" Classes="strip"
+                Grid.Column="6" Classes="strip"
                 IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
         <!-- The log drawer's chevron. It is drawn at 1:1 in a box the size of its own ink rather than scaled
              into a square slot: a stretched Path pins the scaled ink to its slot's top-left, which is what left
              this triangle high and left of its hover plate. The geometry starts at 0,0 and fills 11x6 exactly,
              so the box *is* the ink, layout centres that box in the 22x22 plate, and the 180-degree flip for the
              open state turns about the ink's own centre. -->
-        <Button x:Name="LogToggle" Grid.Column="5" Classes="icon-ghost"
+        <Button x:Name="LogToggle" Grid.Column="7" Classes="icon-ghost"
                 Width="22" Height="22" MinWidth="0" MinHeight="0"
                 Margin="0" Padding="0" VerticalAlignment="Center" HorizontalAlignment="Center">
           <Path x:Name="LogToggleChevron" Classes="stroked"

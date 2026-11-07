@@ -417,11 +417,12 @@ public sealed partial class HubWorkspace : IDisposable
         }
 
         LastError = "";
-        SetStatus(HubStrings.Get(titleKey));
+        var statusTitle = FormatTaskTitle(titleKey, subject);
+        SetStatus(statusTitle);
         Log.Write(titleKey);
 
         var item = _tasks.Enqueue(identity, titleKey, subject, work,
-            onFinished: settled => FinishGated(settled, titleKey), kind: TaskQueue.TaskKind.Mutating, listed: listed);
+            onFinished: settled => FinishGated(settled), kind: TaskQueue.TaskKind.Mutating, listed: listed);
         if (item is null)
         {
             // Already running under this identity: the row on screen is the answer, and the repaint the first
@@ -439,9 +440,14 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>What a settled change leaves behind. Mirrors the success / cancel / failure arms the WPF
     /// port carried sentence-for-sentence, including the reason a failure keeps its exception <b>type</b>:
     /// <see cref="ShowOperationErrorAsync"/> chooses the advice the user can act on from that type.</summary>
-    private void FinishGated(TaskQueue.Item item, string titleKey)
+    private static string FormatTaskTitle(string titleKey, string? subject)
+        => subject is { Length: > 0 }
+            ? HubStrings.Get(titleKey) + " " + subject
+            : HubStrings.Get(titleKey);
+
+    private void FinishGated(TaskQueue.Item item)
     {
-        var title = HubStrings.Get(titleKey);
+        var title = item.Title;
         if (item.Fault is { } error)
         {
             _ = ReportFailureAsync(error);

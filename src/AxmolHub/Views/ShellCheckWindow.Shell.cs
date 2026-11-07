@@ -1018,13 +1018,12 @@ internal sealed class ShellLayoutChecks
                   HubTexts.Get("TaskSlotFormat", HubStrings.Language), 2, 3),
             "两路在跑、第三路等待时槽说 任务 2/3，并且它不是一个动作（实际 " + twoMovingState.Label + "）");
 
-        // One number per download, never an average of two: with a single transfer moving its own
-        // percentage is the honest aggregate, and with two the count stands alone.
+        // The strip's progress bar owns the percentage; the task slot only reports the queue shape.
         var oneMoving = new[] { Moving("9.9.9", percent: 37) };
         var oneMovingState = MainWindow.TaskSlotStateFor(oneMoving);
         Check(oneMovingState.Label == string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                  HubTexts.Get("TaskSlotPercentFormat", HubStrings.Language), 1, 1, 37),
-            "只有一路在跑时槽带上它自己的百分比（实际 " + oneMovingState.Label + "）");
+                  HubTexts.Get("TaskSlotFormat", HubStrings.Language), 1, 1),
+            "只有一路在跑时槽只说 任务 1/1，百分比留在细进度条（实际 " + oneMovingState.Label + "）");
 
         // A failure does not steal the label while something is still moving: the count is the live fact,
         // and the failed row is inside the popover where it can be read next to the one still running.
