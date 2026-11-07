@@ -7,7 +7,7 @@ using AxmolHub.Core;
 
 namespace AxmolHub.Agent;
 
-/// <summary>The OAuth endpoints, as advertised by the provider's discovery document.</summary>
+/// <summary>The browser and exchange endpoints, discovered or declared by the provider.</summary>
 public sealed record OAuthEndpoints(string AuthorizationEndpoint, string TokenEndpoint);
 
 /// <summary>The result of a successful sign-in: the minted key plus the identity the provider reported.</summary>
@@ -29,15 +29,16 @@ public enum CallbackState
     NoCode,
 }
 
-/// <summary>What <see cref="OrcaRouterOAuthFlow.ReadCallback"/> made of a callback.</summary>
+/// <summary>What <see cref="BrowserKeyOAuthFlow.ReadCallback"/> made of a callback.</summary>
 public sealed record CallbackOutcome(CallbackState State, string? Code, string? Error);
 
 /// <summary>
-/// "Sign in with OrcaRouter" — OAuth 2.0 Authorization Code + PKCE with a loopback redirect.
+/// Browser sign-in that mints an API key using PKCE and a loopback redirect.
 ///
-/// <para><b>The shape of the result is the whole design.</b> OrcaRouter does not issue access/refresh tokens:
-/// the exchange returns a durable API key (<c>sk-yoex-…</c>) and there is no refresh grant. So a sign-in is a
-/// one-shot act that produces a credential of exactly the same kind a user could paste, and nothing here has to
+/// <para>OrcaRouter discovers its endpoints and validates the granted scope. OpenRouter declares fixed
+/// endpoints and requires the challenge method in the exchange body. Both return durable API keys rather
+/// than renewable token bundles. A sign-in produces a credential of exactly the same kind a user could paste,
+/// and nothing here has to
 /// run on a timer afterwards. That is why <see cref="OAuthSignInResult"/> carries a key rather than a token set,
 /// and why there is no refresh path anywhere in this file.</para>
 ///
@@ -45,7 +46,7 @@ public sealed record CallbackOutcome(CallbackState State, string? Code, string? 
 /// and the clock. The parts that must not be got wrong (state validation, scope validation, endpoint discovery)
 /// are therefore assertable with no network, no browser and no real OrcaRouter account.</para>
 /// </summary>
-public sealed class OrcaRouterOAuthFlow
+public sealed class BrowserKeyOAuthFlow
 {
     /// <summary>
     /// How long the wait for the browser callback gets — the one figure the sign-in is budgeted, transport
@@ -67,7 +68,7 @@ public sealed class OrcaRouterOAuthFlow
     /// <paramref name="openBrowser"/> is injected so the self-check never launches anything, and because a
     /// machine with no browser has to be reported to the user as a link to open by hand rather than a hang.
     /// </summary>
-    public OrcaRouterOAuthFlow(
+    public BrowserKeyOAuthFlow(
         HttpClient http,
         Action<string> openBrowser,
         TimeSpan? timeout = null)
@@ -152,7 +153,13 @@ public sealed class OrcaRouterOAuthFlow
         AiProviderOAuth oauth,
         CancellationToken cancellationToken = default)
     {
-        var endpoints = await DiscoverAsync(oauth, cancellationToken).ConfigureAwait(false);
+        if (!oauth.IsUsableFlow
+            || oauth.EffectiveFlow is not (ProviderOAuthFlows.Discovery or ProviderOAuthFlows.OpenRouter))
+            throw new InvalidOperationException("The provider does not declare a usable browser key sign-in.");
+
+        var endpoints = oauth.EffectiveFlow == ProviderOAuthFlows.OpenRouter
+            ? new OAuthEndpoints(oauth.AuthorizationUrl!, oauth.TokenUrl!)
+            : await DiscoverAsync(oauth, cancellationToken).ConfigureAwait(false);
 
         var verifier = OAuthPkce.NewCodeVerifier();
         var challenge = OAuthPkce.CodeChallenge(verifier);
@@ -187,7 +194,8 @@ public sealed class OrcaRouterOAuthFlow
     /// omitted method means <c>plain</c>, which would silently downgrade the flow to one where the challenge and
     /// the verifier are the same value.
     ///
-    /// <c>app_id</c> and <c>ref</c> are sent only when the manifest supplies them. They are the partner half of
+    /// OpenRouter uses <c>key_label</c>; OrcaRouter uses <c>app_name</c>, scope and optional partner fields.
+    /// OrcaRouter's <c>app_id</c> and <c>ref</c> are sent only when the manifest supplies them. They are the partner half of
     /// the arrangement — the badge on the consent screen and the attribution of the minted key's usage — and an
     /// unregistered or unknown value simply falls back to an unverified consent rather than failing the flow.
     /// </summary>
@@ -204,12 +212,19 @@ public sealed class OrcaRouterOAuthFlow
             "code_challenge=" + Uri.EscapeDataString(challenge),
             "code_challenge_method=S256",
             "state=" + Uri.EscapeDataString(state),
-            "app_name=" + Uri.EscapeDataString(oauth.AppName),
-            "scope=" + Uri.EscapeDataString(oauth.Scope),
         };
 
-        if (oauth.AppId is { Length: > 0 } appId) query.Add("app_id=" + Uri.EscapeDataString(appId));
-        if (oauth.ReferralCode is { Length: > 0 } referral) query.Add("ref=" + Uri.EscapeDataString(referral));
+        if (oauth.EffectiveFlow == ProviderOAuthFlows.OpenRouter)
+        {
+            query.Add("key_label=" + Uri.EscapeDataString(oauth.AppName));
+        }
+        else
+        {
+            query.Add("app_name=" + Uri.EscapeDataString(oauth.AppName));
+            query.Add("scope=" + Uri.EscapeDataString(oauth.Scope));
+            if (oauth.AppId is { Length: > 0 } appId) query.Add("app_id=" + Uri.EscapeDataString(appId));
+            if (oauth.ReferralCode is { Length: > 0 } referral) query.Add("ref=" + Uri.EscapeDataString(referral));
+        }
 
         // A callback URL must not carry a fragment, and the provider rejects one — so the query is assembled
         // by hand rather than with UriBuilder, which would be tempted to preserve parts of the base.
@@ -332,7 +347,7 @@ public sealed class OrcaRouterOAuthFlow
     /// of possession in a flow with no client secret, so putting it in a query string would leak it into logs
     /// and referrers.</para>
     ///
-    /// <para><b>The granted scope is compared against the requested one and a wider grant is refused.</b> This
+    /// <para><b>For OrcaRouter, the granted scope is compared against the requested one and a wider grant is refused.</b> This
     /// is the provider's own instruction ("compare it with what you asked for and refuse to use the key if it is
     /// wider than expected"), and it is a real hazard rather than a formality: <c>connector</c> is a broader,
     /// workspace-scoped key that requires an Admin or Owner to approve, so a client that quietly accepted one
@@ -345,7 +360,10 @@ public sealed class OrcaRouterOAuthFlow
         string verifier,
         CancellationToken cancellationToken)
     {
-        var body = JsonSerializer.Serialize(new { code, code_verifier = verifier });
+        var openRouter = oauth.EffectiveFlow == ProviderOAuthFlows.OpenRouter;
+        var body = openRouter
+            ? JsonSerializer.Serialize(new { code, code_verifier = verifier, code_challenge_method = "S256" })
+            : JsonSerializer.Serialize(new { code, code_verifier = verifier });
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
         using var response = await _http.PostAsync(tokenEndpoint, content, cancellationToken).ConfigureAwait(false);
 
@@ -366,14 +384,14 @@ public sealed class OrcaRouterOAuthFlow
             throw new InvalidOperationException("The sign-in exchange returned no key.");
         }
 
-        if (result.Scope is { Length: > 0 } granted && !ScopeMatches(oauth.Scope, granted))
+        if (!openRouter && result.Scope is { Length: > 0 } granted && !ScopeMatches(oauth.Scope, granted))
         {
             throw new InvalidOperationException(
                 "The provider granted scope '" + granted + "' but '" + oauth.Scope +
                 "' was requested; the key was refused.");
         }
 
-        return new OAuthSignInResult(result.Key, result.UserId, result.Scope);
+        return new OAuthSignInResult(result.Key, result.UserId, openRouter ? null : result.Scope);
     }
 
     /// <summary>

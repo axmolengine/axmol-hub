@@ -729,9 +729,8 @@ internal sealed partial class ChatProviderCoordinator
             // which ChatPanel.Reload consumes by mutating Avalonia controls. Keep it on the captured UI context
             // (same rule as RefreshModelsAsync), or the sign-in would touch the visual tree from a worker thread.
             //
-            // The two flows are chosen by the manifest's declared shape rather than by provider id: which
-            // endpoints a preset talks to is a fact about the service, and a device-code provider has no
-            // discovery document to find on its own.
+            // The manifest chooses the protocol rather than a provider-id branch. Browser key sign-ins
+            // share the loopback exchange; device codes and renewable ChatGPT sessions keep their own flows.
             if (oauth.EffectiveFlow == ProviderOAuthFlows.OpenAi)
             {
                 var selected = provider.Credential;
@@ -752,7 +751,7 @@ internal sealed partial class ChatProviderCoordinator
             var result = oauth.EffectiveFlow == ProviderOAuthFlows.DeviceCode
                 ? await new DeviceCodeOAuthFlow(http, OpenOrReport, DeviceCodeWait)
                     .SignInAsync(oauth, deviceProgress, cancellationToken)
-                : await new OrcaRouterOAuthFlow(http, OpenOrReport, OAuthTimeout).SignInAsync(oauth, cancellationToken);
+                : await new BrowserKeyOAuthFlow(http, OpenOrReport, OAuthTimeout).SignInAsync(oauth, cancellationToken);
             var credential = AddOAuthCredential(providerId, result.AccountId, result.Scope, result.Key);
             return credential is null
                 ? new OAuthSignInOutcome(Error: "The credential could not be stored.")
@@ -926,7 +925,7 @@ internal sealed partial class ChatProviderCoordinator
 
     private HttpClient? _webFetchHttp;
     internal HttpClient? DeepSeekWebApiHttp { get; set; }
-    internal TimeSpan OAuthTimeout { get; set; } = OrcaRouterOAuthFlow.DefaultTimeout;
+    internal TimeSpan OAuthTimeout { get; set; } = BrowserKeyOAuthFlow.DefaultTimeout;
     internal TimeSpan DeviceCodeWait { get; set; } = DeviceCodeOAuthFlow.DefaultWait;
 
     private HttpClient? _oauthHttp;

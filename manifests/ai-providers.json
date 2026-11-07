@@ -36,10 +36,16 @@
     {
       "id": "openrouter",
       "name": "OpenRouter",
-      "description": "OpenRouter provides one OpenAI-compatible API for models from many providers. Add an API key from openrouter.ai; Hub fetches the available models after you authenticate.",
-      "descriptionZh": "OpenRouter 通过一个 OpenAI 兼容接口调用多家服务商的模型。在 openrouter.ai 创建 API 密钥，鉴权后 Hub 会拉取可用模型列表。",
+      "description": "OpenRouter provides one OpenAI-compatible API for models from many providers. Sign in with your OpenRouter account, or paste an existing API key; Hub fetches the available models after you authenticate.",
+      "descriptionZh": "OpenRouter 通过一个 OpenAI 兼容接口调用多家服务商的模型。可用 OpenRouter 账号登录，也可粘贴已有 API 密钥；鉴权后 Hub 会拉取可用模型列表。",
       "baseUrl": "https://openrouter.ai/api/v1",
-      "authMethods": ["apiKey"],
+      "authMethods": ["oauth", "apiKey"],
+      "oauth": {
+        "flow": "openrouterPkce",
+        "authorizationUrl": "https://openrouter.ai/auth",
+        "tokenUrl": "https://openrouter.ai/api/v1/auth/keys",
+        "appName": "Axmol Hub"
+      },
       "keyValidation": { "type": "httpGetModels", "path": "/models" },
       "extraHeaders": {
         "HTTP-Referer": "https://github.com/axmolengine/axmol-hub",

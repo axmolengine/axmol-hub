@@ -1,3 +1,6 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
 using AxmolHub.Core;
 using AxmolHub.Agent;
 using Microsoft.Extensions.AI;
@@ -181,11 +184,16 @@ internal static class AiProvidersChecks
         var openRouter = AiProviderManifest.CreateBuiltIn("openrouter")
                          ?? throw new Exception("openrouter is missing from ai-providers.json.");
         Assert(openRouter.BaseUrl == "https://openrouter.ai/api/v1"
-               && openRouter.EffectiveAuthMethods.SequenceEqual([ProviderAuthMethods.ApiKey])
+               && openRouter.EffectiveAuthMethods.SequenceEqual([ProviderAuthMethods.OAuth, ProviderAuthMethods.ApiKey])
+               && openRouter.SupportsOAuth
+               && openRouter.OAuth is { EffectiveFlow: ProviderOAuthFlows.OpenRouter,
+                   AuthorizationUrl: "https://openrouter.ai/auth", TokenUrl: "https://openrouter.ai/api/v1/auth/keys" }
                && openRouter.KeyValidation is { IsKnown: true, Path: "/models" }
                && openRouter.ExtraHeaders.GetValueOrDefault("HTTP-Referer") == "https://github.com/axmolengine/axmol-hub"
                && openRouter.ExtraHeaders.GetValueOrDefault("X-OpenRouter-Title") == "Axmol Hub",
-            "OpenRouter preset declares its official API, API-key validation, and app attribution headers");
+            "OpenRouter preset declares browser sign-in, API-key validation, and app attribution headers");
+        await CheckBrowserKeySignInAsync(orca.OAuth!);
+        await CheckBrowserKeySignInAsync(openRouter.OAuth!);
         openRouter.Credential = new ProviderCredential
         {
             Id = "openrouter-catalog-probe",
@@ -694,13 +702,6 @@ internal static class AiProvidersChecks
         // The load-bearing property is the negative one: a provider with no declaration must report
         // "unsupported" rather than "rejected", because a gateway that closes /models would otherwise have a
         // working key refused. Asserting only the positive case would let a fail-closed default through.
-        void Assert(bool condition, string name)
-        {
-            if (!condition)
-                throw new Exception("FAILED: " + name);
-            Console.WriteLine("PASS: " + name);
-        }
-
         var manifest = AiProviderManifest.Load();
         Assert(manifest.Count > 0, "the built-in provider manifest loads");
         var probed = manifest.Where(entry => entry.KeyValidation is not null).ToArray();
@@ -892,5 +893,87 @@ internal static class AiProvidersChecks
             "a provider on the responses wire posts to its own base URL plus /responses, once (path="
             + (responsesPath ?? "none") + " requests=" + pathRecorder.Requests.Count + ")");
         return;
+    }
+
+    private static void Assert(bool condition, string name)
+    {
+        if (!condition) throw new Exception("FAILED: " + name);
+        Console.WriteLine("PASS: " + name);
+    }
+
+    // Exercise the new provider dialect through the same listener used by OrcaRouter, without real accounts.
+    private static async Task CheckBrowserKeySignInAsync(AiProviderOAuth oauth)
+    {
+        var openRouter = oauth.EffectiveFlow == ProviderOAuthFlows.OpenRouter;
+        foreach (var rejectState in new[] { false, true })
+        {
+            var exchanges = 0;
+            var discoveries = 0;
+            var challenge = "";
+            var authorization = openRouter ? oauth.AuthorizationUrl! : "https://orca.test/auth";
+            var exchange = openRouter ? oauth.TokenUrl! : "https://orca.test/keys";
+            using var transport = new BrowserKeyHandler(async (request, token) =>
+            {
+                if (request.Method == HttpMethod.Get)
+                {
+                    Assert(!openRouter && request.RequestUri!.AbsoluteUri == oauth.DiscoveryUrl,
+                        "only the discovery flow fetches its declared discovery document");
+                    discoveries++;
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                        JsonSerializer.Serialize(new { authorization_endpoint = authorization, token_endpoint = exchange }),
+                        Encoding.UTF8, "application/json") };
+                }
+                exchanges++;
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
+                var fields = body.RootElement;
+                Assert(request.Method == HttpMethod.Post && request.RequestUri!.AbsoluteUri == exchange
+                       && fields.GetProperty("code").GetString() == "fixture-code"
+                       && OAuthPkce.CodeChallenge(fields.GetProperty("code_verifier").GetString()!) == challenge
+                       && (openRouter
+                           ? fields.GetProperty("code_challenge_method").GetString() == "S256"
+                           : !fields.TryGetProperty("code_challenge_method", out _)),
+                    oauth.EffectiveFlow + " exchanges its code and original verifier with the provider-specific body");
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                    JsonSerializer.Serialize(new { key = "fixture-key", scope = openRouter ? "provider-specific" : "api" }),
+                    Encoding.UTF8, "application/json") };
+            });
+            using var http = new HttpClient(transport);
+            using var browser = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            Task<HttpResponseMessage>? callback = null;
+            var flow = new BrowserKeyOAuthFlow(http, url =>
+            {
+                var query = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query);
+                challenge = query["code_challenge"]!;
+                Assert(url.StartsWith(authorization + "?", StringComparison.Ordinal)
+                       && query["code_challenge_method"] == "S256"
+                       && (openRouter
+                           ? query["key_label"] == oauth.AppName && query["scope"] is null
+                             && query["app_name"] is null && query["app_id"] is null && query["ref"] is null
+                           : query["app_name"] == oauth.AppName && query["scope"] == oauth.Scope
+                             && query["app_id"] == oauth.AppId && query["ref"] == oauth.ReferralCode),
+                    oauth.EffectiveFlow + " sends only its own authorization parameters");
+                callback = browser.GetAsync(query["callback_url"] + "?code=fixture-code&state="
+                    + Uri.EscapeDataString(rejectState ? "wrong-state" : query["state"]!));
+            }, TimeSpan.FromSeconds(5));
+            OAuthSignInResult? result = null;
+            try { result = await flow.SignInAsync(oauth); }
+            catch (InvalidOperationException exception) when (rejectState && exception.Message.Contains("state mismatch")) { }
+            using var page = await callback!;
+            var html = await page.Content.ReadAsStringAsync();
+            Assert(discoveries == (openRouter ? 0 : 1)
+                   && exchanges == (rejectState ? 0 : 1)
+                   && (rejectState ? result is null && page.StatusCode == HttpStatusCode.BadRequest
+                       : result?.Key == "fixture-key" && result.Scope == (openRouter ? null : "api") && page.IsSuccessStatusCode)
+                   && html.Contains("href=\"axmolhub://activate\"", StringComparison.Ordinal)
+                   && !html.Contains("fixture-code", StringComparison.Ordinal),
+                oauth.EffectiveFlow + (rejectState ? " rejects a mismatched state before exchange" : " returns a key and a safe Hub return page"));
+        }
+    }
+
+    private sealed class BrowserKeyHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+            => send(request, token);
     }
 }

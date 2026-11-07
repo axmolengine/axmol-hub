@@ -38,15 +38,16 @@ public static class ProviderAuthMethods
 /// <summary>
 /// The browser sign-in shapes a manifest entry can declare, named in <c>oauth.flow</c>.
 ///
-/// <para>Two rather than a grant registry, because each one is a different *interaction for the person signing
-/// in*: one opens a tab that redirects back to this machine, the other hands out a short code to type into any
-/// device. An interaction nobody has to render has nothing to assert, so the third shape arrives with the
-/// provider that needs it instead of being reserved now.</para>
+/// Each value names an implemented provider protocol, not a generic grant registry. Browser key flows share
+/// their loopback mechanics while keeping discovery and exchange parameters specific to the provider.
 /// </summary>
 public static class ProviderOAuthFlows
 {
     /// <summary>Authorization Code + PKCE: endpoints read from an RFC 8414 discovery document, callback on loopback.</summary>
     public const string Discovery = "discovery";
+
+    /// <summary>OpenRouter PKCE: fixed endpoints, yielding a durable API key.</summary>
+    public const string OpenRouter = "openrouterPkce";
 
     /// <summary>Codex-compatible OpenAI authorization code flow.</summary>
     public const string OpenAi = "openaiPkce";
@@ -76,11 +77,10 @@ public static class ProviderRequestSemantics
 /// to (a self-hosted relay would otherwise silently send users to the wrong site). The document is fetched at
 /// sign-in time, not at load time, so a manifest entry costs nothing until someone actually signs in.</para>
 ///
-/// <para><b>A device flow declares its endpoints instead</b>, because there is no discovery document to ask:
-/// GitHub publishes the device-code and token URLs as fixed addresses alongside the public client id. The two
-/// shapes are not interchangeable, which is what <see cref="Flow"/> is for — and see
-/// <see cref="IsUsableFlow"/> for the one rule that keeps a half-declared entry from being offered as a
-/// button.</para>
+/// <para><b>Fixed-endpoint flows declare their URLs instead.</b> OpenRouter publishes its browser and key
+/// exchange URLs; GitHub publishes its device-code and token URLs alongside the public client id.
+/// <see cref="Flow"/> selects the protocol, and <see cref="IsUsableFlow"/> keeps a half-declared entry
+/// from being offered as a button.</para>
 /// </summary>
 public sealed class AiProviderOAuth
 {
@@ -96,7 +96,7 @@ public sealed class AiProviderOAuth
     /// </summary>
     public string Scope { get; set; } = "api";
 
-    /// <summary>Shown on the consent screen so the user knows who is asking. Also the name used to revoke.</summary>
+    /// <summary>OrcaRouter consent name, or OpenRouter's prefilled API key label.</summary>
     public string AppName { get; set; } = "Axmol Hub";
 
     /// <summary>
@@ -131,7 +131,10 @@ public sealed class AiProviderOAuth
     /// <summary>Where to POST to ask for a device code (<c>verification_uri</c> comes back in the answer).</summary>
     public string? DeviceAuthorizationUrl { get; set; }
 
-    /// <summary>Where to poll for the token once the code has been approved on some other device.</summary>
+    /// <summary>Where to open the browser for a fixed-endpoint OpenRouter key sign-in.</summary>
+    public string? AuthorizationUrl { get; set; }
+
+    /// <summary>Where to exchange an authorization code for a key, or poll for a device token.</summary>
     public string? TokenUrl { get; set; }
 
     /// <summary>
@@ -145,13 +148,14 @@ public sealed class AiProviderOAuth
     /// entry written before device sign-in existed is describing.</summary>
     [JsonIgnore]
     public string EffectiveFlow
-        => Flow is ProviderOAuthFlows.DeviceCode or ProviderOAuthFlows.OpenAi ? Flow : ProviderOAuthFlows.Discovery;
+        => Flow is ProviderOAuthFlows.DeviceCode or ProviderOAuthFlows.OpenAi or ProviderOAuthFlows.OpenRouter
+            ? Flow : ProviderOAuthFlows.Discovery;
 
     /// <summary>
     /// Whether this entry declares enough to finish a sign-in, rather than declaring an <c>oauth</c> method and
     /// failing halfway through.
     ///
-    /// <para>Both branches require an absolute https URL, with loopback excepted: these are the addresses a
+    /// <para>Declared endpoints require an absolute https URL, with loopback excepted: these are the addresses a
     /// credential is handed over at, so a hand-edited manifest that allowed plain http would let whoever owns
     /// the path read back the device code and take the account's token with it. Loopback http stays legal
     /// because that is how a self-hosted relay presents itself, and it is the one case where the user typed the
@@ -161,6 +165,7 @@ public sealed class AiProviderOAuth
     public bool IsUsableFlow => EffectiveFlow switch
     {
         ProviderOAuthFlows.OpenAi => true,
+        ProviderOAuthFlows.OpenRouter => IsSafeEndpoint(AuthorizationUrl) && IsSafeEndpoint(TokenUrl),
         ProviderOAuthFlows.DeviceCode => ClientId is { Length: > 0 }
                                          && IsSafeEndpoint(DeviceAuthorizationUrl)
                                          && IsSafeEndpoint(TokenUrl),
@@ -581,6 +586,7 @@ public static class AiProviderManifest
                         Flow = oauth.Flow,
                         ClientId = oauth.ClientId,
                         DeviceAuthorizationUrl = oauth.DeviceAuthorizationUrl,
+                        AuthorizationUrl = oauth.AuthorizationUrl,
                         TokenUrl = oauth.TokenUrl,
                         MinIntervalSeconds = oauth.MinIntervalSeconds,
                     }

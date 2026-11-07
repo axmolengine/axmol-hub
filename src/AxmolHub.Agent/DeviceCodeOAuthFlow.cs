@@ -23,7 +23,7 @@ public sealed record DeviceCodeChallenge(
 /// <summary>
 /// "Sign in with GitHub" — RFC 8628 device code.
 ///
-/// <para><b>Why this shape exists at all.</b> The loopback redirect in <see cref="OrcaRouterOAuthFlow"/> needs a
+/// <para><b>Why this shape exists at all.</b> The loopback redirect in <see cref="BrowserKeyOAuthFlow"/> needs a
 /// port on this machine that the browser can reach. That is exactly the assumption that fails for the users this
 /// app is written for: a WSL or container session, a remote desktop, a machine whose browser is on another host.
 /// A device code inverts it — the proof of approval travels through the provider's own servers, so Hub only ever

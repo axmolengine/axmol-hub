@@ -152,7 +152,7 @@ internal static class SecretStoreChecks
             Assert(((ISecretStore)new BareSecretStore()).Descriptor.Kind == SecretStoreKind.None, "a store that does not declare a backend is reported as no backend, not as a secure one");
             // ── the OAuth callback, both routes through one parser ──
             const string expectedState = "test-state-value";
-            Assert(OrcaRouterOAuthFlow.BuildAuthorizationUrl("https://www.orcarouter.ai/auth", new AiProviderOAuth
+            Assert(BrowserKeyOAuthFlow.BuildAuthorizationUrl("https://www.orcarouter.ai/auth", new AiProviderOAuth
             {
                 AppName = "Axmol Hub",
                 AppId = "app-test",
@@ -161,15 +161,15 @@ internal static class SecretStoreChecks
             }, "http://127.0.0.1:56450/", "challenge", expectedState)
                 .Contains("callback_url=http%3A%2F%2F127.0.0.1%3A56450%2F", StringComparison.Ordinal),
                 "OrcaRouter authorization uses the registered loopback root callback");
-            Assert(OrcaRouterOAuthFlow.ReadCallback($"?code=abc123&state={expectedState}", expectedState)is { State: CallbackState.Accepted, Code: "abc123" }, "a matching callback yields its code");
-            Assert(OrcaRouterOAuthFlow.ReadCallback("http://127.0.0.1:9/?code=abc123&state=" + expectedState, expectedState).State == CallbackState.Accepted, "the registered loopback root callback goes through the same state check");
-            Assert(OrcaRouterOAuthFlow.ReadCallback($"code=abc123&state={expectedState}", expectedState).State == CallbackState.Accepted, "with or without the leading question mark");
-            Assert(OrcaRouterOAuthFlow.ReadCallback("http://127.0.0.1:9/?code=ab%20c&state=" + expectedState, expectedState).Code == "ab c", "percent escapes are decoded, so a code copied from a browser bar matches one from the listener");
-            Assert(OrcaRouterOAuthFlow.ReadCallback("?code=abc&state=other", expectedState).State == CallbackState.StateMismatch, "a state that does not match is refused");
-            Assert(OrcaRouterOAuthFlow.ReadCallback("?code=abc", expectedState).State == CallbackState.StateMismatch, "and so is a callback with no state at all — the check runs before the code is even looked at");
-            Assert(OrcaRouterOAuthFlow.ReadCallback($"?error=access_denied&state={expectedState}", expectedState)is { State: CallbackState.Declined, Error: "access_denied" }, "a declined consent is its own outcome, not a missing code");
-            Assert(OrcaRouterOAuthFlow.ReadCallback($"?state={expectedState}", expectedState).State == CallbackState.NoCode, "a matching state with no code says so rather than handing back an empty token");
-            Assert(OrcaRouterOAuthFlow.ReadCallback(null, expectedState).State == CallbackState.StateMismatch, "nothing pasted at all is not a sign-in");
+            Assert(BrowserKeyOAuthFlow.ReadCallback($"?code=abc123&state={expectedState}", expectedState)is { State: CallbackState.Accepted, Code: "abc123" }, "a matching callback yields its code");
+            Assert(BrowserKeyOAuthFlow.ReadCallback("http://127.0.0.1:9/?code=abc123&state=" + expectedState, expectedState).State == CallbackState.Accepted, "the registered loopback root callback goes through the same state check");
+            Assert(BrowserKeyOAuthFlow.ReadCallback($"code=abc123&state={expectedState}", expectedState).State == CallbackState.Accepted, "with or without the leading question mark");
+            Assert(BrowserKeyOAuthFlow.ReadCallback("http://127.0.0.1:9/?code=ab%20c&state=" + expectedState, expectedState).Code == "ab c", "percent escapes are decoded, so a code copied from a browser bar matches one from the listener");
+            Assert(BrowserKeyOAuthFlow.ReadCallback("?code=abc&state=other", expectedState).State == CallbackState.StateMismatch, "a state that does not match is refused");
+            Assert(BrowserKeyOAuthFlow.ReadCallback("?code=abc", expectedState).State == CallbackState.StateMismatch, "and so is a callback with no state at all — the check runs before the code is even looked at");
+            Assert(BrowserKeyOAuthFlow.ReadCallback($"?error=access_denied&state={expectedState}", expectedState)is { State: CallbackState.Declined, Error: "access_denied" }, "a declined consent is its own outcome, not a missing code");
+            Assert(BrowserKeyOAuthFlow.ReadCallback($"?state={expectedState}", expectedState).State == CallbackState.NoCode, "a matching state with no code says so rather than handing back an empty token");
+            Assert(BrowserKeyOAuthFlow.ReadCallback(null, expectedState).State == CallbackState.StateMismatch, "nothing pasted at all is not a sign-in");
             // ── the Linux browser route's argument order, asserted without a browser ──
             var order = UrlLauncher.LinuxCommandOrder("/usr/bin/firefox:-custom %s --kiosk: :xdg-browser", "https://x/y?z=1").Select(argv => string.Join(' ', argv)).ToArray();
             Assert(order[0] == "/usr/bin/firefox https://x/y?z=1", "the first $BROWSER entry wins, with the url appended");
