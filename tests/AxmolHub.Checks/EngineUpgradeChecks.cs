@@ -1,9 +1,10 @@
+using System.Text.Json;
 using AxmolHub.Core;
 using static CheckSupport;
 
 internal static class EngineUpgradeChecks
 {
-    internal static Task RunAsync(string root)
+    internal static async Task RunAsync(string root)
     {
         var fixture = Path.Combine(root, "engine-upgrade-" + Guid.NewGuid().ToString("N"));
         var engineRoot = Path.Combine(fixture, "engine");
@@ -49,6 +50,59 @@ internal static class EngineUpgradeChecks
         var forcedBuild = AxmolCommandMap.Build(BuildTargets.Get("windows-x64"), projectRoot, "Debug", false, force: true);
         Check(forcedBuild.Arguments.Contains("-forceConfig"), "Upgraded projects force regeneration through the engine build option");
         Check(EngineReleases.CompareVersions("2.11.10", "2.11.9") > 0, "Engine upgrade versions compare numerically");
-        return Task.CompletedTask;
+        // Exercise the real Base64 wrapper and the engine's two array-forwarding hops. A map-only
+        // assertion misses switches becoming plain strings (or stray booleans) before plugin binding.
+        File.WriteAllText(Path.Combine(engineRoot, "tools", "cmdline", "axmol.ps1"), """
+            param([switch]$help, [switch]$wait)
+            $Global:LASTEXITCODE = 0
+            function axmol_build {
+                $sub_args = $args
+                . (Join-Path $PSScriptRoot 'build.ps1') @sub_args
+            }
+            $sub_args = $args[1..($args.Count - 1)]
+            $plugin = @{ proc = ${function:axmol_build} }
+            . $plugin.proc @sub_args
+            exit $LASTEXITCODE
+            """);
+        File.WriteAllText(Path.Combine(engineRoot, "tools", "cmdline", "build.ps1"), """
+            param([switch]$configOnly, [switch]$forceConfig)
+            if ($env:HUB_FIXTURE_EXIT) { exit ([int]$env:HUB_FIXTURE_EXIT) }
+            [Console]::WriteLine((ConvertTo-Json -Compress @{
+                configOnly = [bool]$configOnly
+                forceConfig = [bool]$forceConfig
+                configuration = $(if ($args -contains '-O3') { 'Release' } elseif ($args -contains '-O0') { 'Debug' } else { 'RelWithDebInfo' })
+                built = !$configOnly
+                argv = @($args)
+            }))
+            """);
+        var extra = ProjectBuildArguments.Parse(true, "-j 2 -xc '-DSEARCH_PATH=C:\\SDK path,-DQUOTED=\"value\"' -xb '--target,Hello3D'");
+        var cli = EngineCli(new ProcessRunner(_ => { }));
+        foreach (var configureOnly in new[] { false, true })
+        foreach (var force in new[] { false, true })
+        {
+            var configuration = configureOnly ? "Release" : "Debug";
+            var invocation = AxmolCommandMap.Build(BuildTargets.Get("wasm64"), projectRoot, configuration,
+                configureOnly, force: force, additionalBuild: extra);
+            var result = await cli.RunAsync(engine, invocation, projectRoot);
+            using var output = JsonDocument.Parse(result.Output);
+            var data = output.RootElement;
+            var expected = invocation.Arguments.Where(arg => arg is not ("-configOnly" or "-forceConfig")).ToArray();
+            Check(data.GetProperty("configOnly").GetBoolean() == configureOnly
+                && data.GetProperty("forceConfig").GetBoolean() == force
+                && data.GetProperty("built").GetBoolean() == !configureOnly
+                && data.GetProperty("configuration").GetString() == configuration
+                && data.GetProperty("argv").EnumerateArray().Select(arg => arg.GetString()).SequenceEqual(expected),
+                $"Build wrapper binds mode switches and preserves optimization/advanced argv (configure={configureOnly}, force={force})");
+        }
+        try
+        {
+            await cli.RunAsync(engine, AxmolCommandMap.Build(BuildTargets.Get("wasm64"), projectRoot, "Release", false),
+                projectRoot, environment: new Dictionary<string, string> { ["HUB_FIXTURE_EXIT"] = "7" });
+            throw new Exception("Build wrapper lost the failing exit code.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("failed (exit 7)"))
+        {
+            Check(true, "Build wrapper preserves a real plugin failure");
+        }
     }
 }

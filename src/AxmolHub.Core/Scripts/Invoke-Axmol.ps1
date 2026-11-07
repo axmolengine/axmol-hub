@@ -44,6 +44,22 @@ try {
             }
         }
         & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @newArgs @newOptions
+    } elseif ($engineArgs[0] -eq 'build') {
+        $configOnly = $engineArgs -contains '-configOnly'
+        $forceConfig = $engineArgs -contains '-forceConfig'
+        $buildArgs = @($engineArgs | Where-Object { $_ -notin @('-configOnly', '-forceConfig') })
+        # Literal named switches keep their binding through axmol.ps1's array forwarding.
+        # Hashtable values (or -switch:$true) leave stray booleans in the plugin's argv.
+        $entry = Join-Path $EngineRoot 'tools/cmdline/axmol.ps1'
+        if ($configOnly -and $forceConfig) {
+            & $entry @buildArgs -configOnly -forceConfig
+        } elseif ($configOnly) {
+            & $entry @buildArgs -configOnly
+        } elseif ($forceConfig) {
+            & $entry @buildArgs -forceConfig
+        } else {
+            & $entry @buildArgs
+        }
     } else {
         & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @engineArgs
     }

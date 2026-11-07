@@ -95,7 +95,7 @@ public static class AxmolCommandMap
     {
         var arguments = new List<string>();
         AddTarget(arguments, target);
-        if (configureOnly) arguments.Add("-c");
+        if (configureOnly) arguments.Add("-configOnly");
         if (force) arguments.Add("-forceConfig");
         AddConfiguration(arguments, configuration);
         AddCmake(arguments, (additionalCmake ?? []).Concat(additionalBuild?.CmakeOptions ?? []));
