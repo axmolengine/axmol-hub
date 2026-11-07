@@ -33,7 +33,8 @@ internal sealed class ToastPanel : Panel, ICustomHitTest
         foreach (var child in Children)
         {
             var desired = child.DesiredSize;
-            child.Arrange(new Rect(0, y, finalSize.Width, desired.Height));
+            var x = Math.Max(0, (finalSize.Width - desired.Width) / 2);
+            child.Arrange(new Rect(x, y, desired.Width, desired.Height));
             y += desired.Height + Spacing;
         }
         return finalSize;

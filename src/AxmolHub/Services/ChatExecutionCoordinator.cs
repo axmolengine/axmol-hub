@@ -1326,7 +1326,7 @@ internal sealed partial class ChatExecutionCoordinator
                     result.FailureKey == "commit-succeeded-push-failed" ? "push" : action).ConfigureAwait(false);
             var kind = result.FailureKey switch
             {
-                "nothing-staged" or "nothing-to-push" => UserFeedbackKind.Info,
+                "nothing-staged" or "nothing-to-push" or "invalid-summary" => UserFeedbackKind.Info,
                 "commit-succeeded-push-failed" => UserFeedbackKind.Warning,
                 "workspace-changed" or "git-missing" or "branch-unavailable" or "conflict" or "stage-failed" => UserFeedbackKind.Warning,
                 _ => UserFeedbackKind.Error,

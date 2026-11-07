@@ -320,10 +320,10 @@
       <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="12,9,8,9" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="8,5,5,5" />
       <Setter Property="MaxWidth" Value="560" />
-      <Setter Property="BoxShadow" Value="0 4 18 0 #55000000" />
+      <Setter Property="BoxShadow" Value="0 2 10 0 #44000000" />
     </Style>
     <Style Selector="Border.toast.success">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.SuccessText}" />
@@ -335,14 +335,14 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerText}" />
     </Style>
     <Style Selector="TextBlock.toast-text">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="11" />
       <Setter Property="TextWrapping" Value="Wrap" />
       <Setter Property="MaxWidth" Value="480" />
     </Style>
     <Style Selector="Button.toast-close">
       <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Width" Value="24" />
-      <Setter Property="Height" Value="24" />
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Background" Value="Transparent" />
