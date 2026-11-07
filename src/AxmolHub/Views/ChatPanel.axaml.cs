@@ -4547,7 +4547,8 @@ public partial class ChatPanel : UserControl
                                 ? await _chat.CommitSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At)
                                 : await _chat.PushSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At,
                                     commitFirst: action == GitActions.CommitAndPush);
-                            StatusMessage?.Invoke(outcome.Feedback);
+                            if (outcome.Feedback.Key != "git-invalid-summary")
+                                StatusMessage?.Invoke(outcome.Feedback);
                         }
                         finally { button.IsEnabled = true; }
                     };
