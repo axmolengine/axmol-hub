@@ -483,7 +483,7 @@ public partial class ChatPanel
                 var workspace = _chat.ActiveWorkspaceRoot;
                 var failure = CodeFileWindow.ShowEditor(TopLevel.GetTopLevel(this) as Window, relativePath,
                     () => _chat.EditorScopeFor(conversationId, workspace));
-                if (failure is not null) StatusMessage?.Invoke(HubStrings.Get(failure));
+                if (failure is not null) StatusMessage?.Invoke(UserFeedback.Error(HubStrings.Get(failure), "assistant-file-error"));
             };
         }
 

@@ -36,6 +36,16 @@ public partial class MainWindow : Window
     private string? _attentionDiagnosticConversationId;
     private bool _windowIsOpen;
     private bool _trayCloseEnabled;
+    private readonly List<ToastEntry> _toasts = [];
+    private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    private bool _toastPointerInside;
+
+    private sealed class ToastEntry(UserFeedback feedback, DateTimeOffset expiresAt)
+    {
+        public UserFeedback Feedback { get; } = feedback;
+        public DateTimeOffset ExpiresAt { get; set; } = expiresAt;
+        public Border? View { get; set; }
+    }
 
     /// <summary>Whether this window has lost the foreground at least once since it was shown. A notification click
     /// arrives as a *return* to the foreground, and a window that never left cannot be returning: without this,
@@ -159,6 +169,7 @@ public partial class MainWindow : Window
         _attention.Diagnostic += message => Dispatcher.UIThread.Post(
             () => WriteLog("[System attention] " + message));
         _attention.NotificationActivated += NotificationActivated;
+        _toastTimer.Tick += (_, _) => ExpireToasts();
         _attention.Initialize(id => NotificationActivated(id));
         // The route GNOME gives a click on a notification's body: the shell raises the already-running window
         // instead of re-running the desktop entry, so no deeplink and no second instance ever reach the broker.
@@ -421,7 +432,7 @@ public partial class MainWindow : Window
         // whether the column is up at all, is not asked of the panel: both now live on the title bar's own
         // buttons, which are wired straight to the two methods here (see InitializeInspector).
         panel.ShowPictureViewer = (set, index) => OpenPictureViewer(set, index);
-        panel.StatusMessage = SetStatus;
+        panel.StatusMessage = ShowFeedback;
         panel.OpenLocalFile = OpenMarkdownFile;
         panel.OpenInspector = (tab, turnIndex) => OpenInspector(tab, turnIndex);
         panel.RefreshInspector = RefreshInspector;
@@ -498,12 +509,89 @@ public partial class MainWindow : Window
 
     internal void SetStatus(string text)
     {
-        // A transient result is useful only when the bottom strip is not currently owned by a task.
-        // The task itself remains visible until it publishes its terminal state.
-        if (_activeTaskStatusToken is null)
+        // Kept for task-independent shell callers that have not yet moved to structured feedback.
+        if (_activeTaskStatusToken is null) Status.Text = text;
+    }
+
+    internal void ShowFeedback(UserFeedback feedback) => ShowToast(feedback);
+
+    private void ShowToast(UserFeedback feedback)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            Status.Text = text;
+            Dispatcher.UIThread.Post(() => ShowFeedback(feedback));
+            return;
         }
+
+        var existing = _toasts.FirstOrDefault(toast => toast.Feedback.Key == feedback.Key);
+        if (existing is not null)
+        {
+            existing.ExpiresAt = DateTimeOffset.UtcNow + ToastDuration(feedback.Kind);
+            return;
+        }
+
+        while (_toasts.Count >= 2)
+        {
+            RemoveToast(_toasts[0]);
+        }
+
+        var entry = new ToastEntry(feedback, DateTimeOffset.UtcNow + ToastDuration(feedback.Kind));
+        entry.View = BuildToast(entry);
+        _toasts.Add(entry);
+        ToastStack.Children.Add(entry.View);
+        _toastTimer.Start();
+    }
+
+    private Border BuildToast(ToastEntry entry)
+    {
+        var border = new Border { Classes = { "toast", entry.Feedback.Kind.ToString().ToLowerInvariant() }, IsHitTestVisible = true };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 10 };
+        var mark = new Avalonia.Controls.Shapes.Ellipse { Width = 7, Height = 7, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        mark.Bind(Avalonia.Controls.Shapes.Shape.FillProperty, new DynamicResourceExtension(entry.Feedback.Kind switch
+        {
+            UserFeedbackKind.Success => "Hub.Success",
+            UserFeedbackKind.Warning => "Hub.WarningText",
+            UserFeedbackKind.Error => "Hub.DangerText",
+            _ => "Hub.AccentBorder",
+        }));
+        row.Children.Add(mark);
+
+        var text = new TextBlock { Text = entry.Feedback.Text, Classes = { "toast-text" }, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+
+        var close = new Button { Content = "×", Classes = { "toast-close" }, Tag = entry };
+        close.Click += (_, _) => RemoveToast(entry);
+        Grid.SetColumn(close, 2);
+        row.Children.Add(close);
+        border.Child = row;
+        border.PointerEntered += (_, _) => _toastPointerInside = true;
+        border.PointerExited += (_, _) => _toastPointerInside = _toasts.Any(toast => toast.View?.IsPointerOver == true);
+        border.GotFocus += (_, _) => _toastPointerInside = true;
+        border.LostFocus += (_, _) => _toastPointerInside = _toasts.Any(toast => toast.View?.IsPointerOver == true || toast.View?.IsFocused == true);
+        return border;
+    }
+
+    private static TimeSpan ToastDuration(UserFeedbackKind kind) => kind switch
+    {
+        UserFeedbackKind.Success or UserFeedbackKind.Info => TimeSpan.FromSeconds(3),
+        UserFeedbackKind.Warning => TimeSpan.FromSeconds(5),
+        _ => TimeSpan.FromSeconds(8),
+    };
+
+    private void ExpireToasts()
+    {
+        if (_toastPointerInside) return;
+        foreach (var toast in _toasts.Where(toast => toast.ExpiresAt <= DateTimeOffset.UtcNow).ToArray())
+            RemoveToast(toast);
+        if (_toasts.Count == 0) _toastTimer.Stop();
+    }
+
+    private void RemoveToast(ToastEntry entry)
+    {
+        _toasts.Remove(entry);
+        if (entry.View is not null) ToastStack.Children.Remove(entry.View);
+        if (_toasts.Count == 0) _toastTimer.Stop();
     }
 
     private void ApplyWorkspaceStatus(HubWorkspace.StatusUpdate update)
@@ -543,6 +631,12 @@ public partial class MainWindow : Window
                 Status.Text = update.Text;
             }
 
+            return;
+        }
+
+        if (update.Feedback is { } feedback)
+        {
+            ShowToast(feedback);
             return;
         }
 
@@ -1357,7 +1451,7 @@ public partial class MainWindow : Window
         }
 
         ReplaceWorkspace(new HubWorkspace(path, _preferences, _preferencesStore));
-        SetStatus(HubStrings.Get("DataChanged"));
+        ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));
         return true;
     }
 
@@ -1624,7 +1718,7 @@ public partial class MainWindow : Window
                 // A switch that failed and rolled back must leave the menu up: the reader asked for something
                 // that did not happen, and closing the surface they asked from hides the reason. The tick stays
                 // on the theme that is actually current, because this whole menu is rebuilt on the next open.
-                SetStatus(error);
+                ShowFeedback(UserFeedback.Error(error, "theme-change"));
             };
             theme.Items.Add(item);
         }
@@ -1919,7 +2013,7 @@ public partial class MainWindow : Window
     /// dialog was open — and that answer belongs in the strip rather than in a card.
     /// </summary>
     private ChatSidebar BuildChatSidebar()
-        => new(_chat, _preferencesStore, _preferences) { StatusReporter = SetStatus };
+        => new(_chat, _preferencesStore, _preferences) { StatusReporter = ShowFeedback };
 
     /// <summary>
     /// Builds the conversation sidebar section, applies persisted sidebar state, and wires the collapse
@@ -2646,7 +2740,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message);
+            ShowFeedback(UserFeedback.Error(ex.Message, "open-folder-error"));
         }
     }
 private static bool ShouldHideOnClose(bool isWindows, bool isMacOS, bool isAutomation, bool quitConfirmed, bool trayAvailable) => !isAutomation && !quitConfirmed && (isMacOS || (isWindows && trayAvailable));

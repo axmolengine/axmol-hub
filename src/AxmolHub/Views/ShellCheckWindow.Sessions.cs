@@ -300,23 +300,23 @@ internal sealed class ShellSessionsChecks
         var copiedUpper = sidebar.CopiedConversationIdFromMenuForCheck(aUpper.Id);
         Check(copiedA == aOne.Id && copiedUpper == aUpper.Id && copiedA != copiedUpper,
             "每行的操作菜单复制的就是这一行自己的会话 ID，不是别人的（实际「" + copiedA + "」/「" + copiedUpper + "」）");
-        Check(shell.StatusTextForCheck == HubStrings.Get("ConversationIdCopied"),
-            "复制会话 ID 在底部状态条留下一句话，剪贴板写入不是无声的（实际「" + shell.StatusTextForCheck + "」）");
+        Check(shell.ToastTextForCheck.Contains(HubStrings.Get("ConversationIdCopied"), StringComparison.Ordinal),
+            "复制会话 ID 通过 Toast 留下一句话，剪贴板写入不是无声的（实际「" + shell.ToastTextForCheck + "」）");
         var deepLinkA = sidebar.CopiedConversationTextFromMenuForCheck(aOne.Id, "CopyConversationDeepLink");
         var deepLinkUpper = sidebar.CopiedConversationTextFromMenuForCheck(aUpper.Id, "CopyConversationDeepLink");
         Check(deepLinkA == $"axmolhub://sessions/{Uri.EscapeDataString(aOne.Id)}"
               && deepLinkUpper == $"axmolhub://sessions/{Uri.EscapeDataString(aUpper.Id)}"
               && deepLinkA != deepLinkUpper,
             "每行菜单复制的深度链接包含该行自己的转义会话 ID");
-        Check(shell.StatusTextForCheck == HubStrings.Get("ConversationDeepLinkCopied"),
-            "复制深度链接在底部状态条报告成功");
+        Check(shell.ToastTextForCheck.Contains(HubStrings.Get("ConversationDeepLinkCopied"), StringComparison.Ordinal),
+            "复制深度链接通过 Toast 报告成功");
         var pathA = sidebar.CopiedConversationTextFromMenuForCheck(aOne.Id, "CopyConversationFilePath");
         var pathUpper = sidebar.CopiedConversationTextFromMenuForCheck(aUpper.Id, "CopyConversationFilePath");
         Check(pathA == chat.SessionFilePath(aOne.Id) && pathUpper == chat.SessionFilePath(aUpper.Id)
               && pathA != pathUpper,
             "每行菜单复制的文件路径来自会话存储层并指向该行自己的会话文件");
-        Check(shell.StatusTextForCheck == HubStrings.Get("ConversationFilePathCopied"),
-            "复制会话文件路径在底部状态条报告成功");
+        Check(shell.ToastTextForCheck.Contains(HubStrings.Get("ConversationFilePathCopied"), StringComparison.Ordinal),
+            "复制会话文件路径通过 Toast 报告成功");
 
         // ── Archive: a single conversation ──
         Check(sidebar.SessionHasArchiveMenu(bOne.Id),
@@ -452,13 +452,13 @@ internal sealed class ShellSessionsChecks
         var activeBeforeMissing = chat.ActiveConversation?.Id;
         var sessionsBeforeMissing = chat.Conversations.Select(session => session.Id).ToArray();
         sidebar.NewSessionFromGroupForCheck(keyMoved);
-        var missingStatus = shell.StatusTextForCheck;
+        var missingStatus = shell.ToastTextForCheck;
         Check(!Directory.Exists(movedAway)
               && sidebar.GroupOfForCheck(goneOne.Id) == keyMoved
               && chat.ActiveConversation?.Id == activeBeforeMissing
               && sessionsBeforeMissing.SequenceEqual(chat.Conversations.Select(session => session.Id))
               && chat.WorkspaceRootFor(goneOne.Id) == System.IO.Path.GetFullPath(movedAway)
-              && missingStatus == HubStrings.Get("ChatWorkspaceRejected") + movedAway,
+              && missingStatus.Contains(HubStrings.Get("ChatWorkspaceRejected") + movedAway, StringComparison.Ordinal),
             "目录已不存在的分组 ＋ 明确拒绝，不建草稿或切换工作区，原会话仍保存原路径（实际提示「"
             + missingStatus + "」，当前目录 " + RootOf(chat.ActiveConversation?.Id) + "）");
 

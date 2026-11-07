@@ -108,6 +108,11 @@ public partial class MainWindow
     internal bool SettingsHostEnabledForCheck => SettingsHost.IsEnabled;
     /// <summary>What the strip's own line says — where a refused press leaves its reason.</summary>
     internal string StatusTextForCheck => Status.Text ?? "";
+    internal string ToastTextForCheck => string.Join(" / ", ToastStack.Children.OfType<Border>()
+        .SelectMany(border => border.GetLogicalDescendants().OfType<TextBlock>())
+        .Where(block => block.Classes.Contains("toast-text"))
+        .Select(block => block.Text ?? "")
+        .Where(text => text.Length > 0));
     /// <summary>The strip's cancel, as the user can press it. An unlisted second-scale change has no row to
     /// cancel from, so this button is the only answer it gets — and it had better be enabled.</summary>
     internal bool CanCancelForCheck => CancelButton.IsEnabled;

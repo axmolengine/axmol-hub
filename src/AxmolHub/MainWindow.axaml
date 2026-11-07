@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:AxmolHub"
         x:Class="AxmolHub.MainWindow"
         Title="Axmol Hub"
         Width="1280" Height="880" MinWidth="900" MinHeight="640"
@@ -314,6 +315,45 @@
       <Setter Property="FontSize" Value="11" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
       <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Border.toast">
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,9,8,9" />
+      <Setter Property="MaxWidth" Value="560" />
+      <Setter Property="BoxShadow" Value="0 4 18 0 #55000000" />
+    </Style>
+    <Style Selector="Border.toast.success">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.SuccessText}" />
+    </Style>
+    <Style Selector="Border.toast.warning">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="Border.toast.error">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="TextBlock.toast-text">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="MaxWidth" Value="480" />
+    </Style>
+    <Style Selector="Button.toast-close">
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.toast-close:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
     <!-- The viewer's prev/next. Visible at rest, in tertiary ink, brightening on hover: navigation that only
@@ -1257,6 +1297,9 @@
       </Grid>
     </Border>
   </Grid>
+  <local:ToastPanel x:Name="ToastStack" Grid.Row="1" Margin="0,10,0,28" IsVisible="True"
+                    IsHitTestVisible="True" ClipToBounds="True"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Top" Spacing="8" />
   </Grid>
   </Border>
   <!-- Eight invisible grips along the window's edges. They exist because Linux asks for no platform decorations

@@ -709,9 +709,9 @@ public sealed partial class ChatWorkspace : IDisposable
     internal string? PlanBody(ChatTurn turn, out PlanBodyState state) => _sessions.PlanBody(turn, out state);
     public bool IsRunning(string conversationId) => _execution.IsRunning(conversationId);
     internal Task RefreshGitPresentationAsync(string conversationId) => _execution.RefreshGitPresentationAsync(conversationId);
-    internal Task<(bool Success, string Message)> CommitSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt)
+    internal Task<GitActionOutcome> CommitSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt)
         => _execution.CommitSuggestedAsync(conversationId, expectedWorkspaceRoot, summary, turnAt);
-    internal Task<(bool Success, string Message)> PushSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, bool commitFirst)
+    internal Task<GitActionOutcome> PushSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, bool commitFirst)
         => _execution.PushSuggestedAsync(conversationId, expectedWorkspaceRoot, summary, turnAt, commitFirst);
     public bool PauseGoal(string conversationId) => _execution.PauseGoal(conversationId);
     public bool ResumeGoal(string conversationId) => _execution.ResumeGoal(conversationId);

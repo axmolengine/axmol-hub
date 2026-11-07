@@ -223,8 +223,9 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>State/lists changed and pages should repaint. Equivalent to the WPF version's trailing <c>Refresh()</c>.</summary>
     public event Action? Changed;
 
-    /// <summary>A status update for the shell's bottom status text.</summary>
-    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished, bool TaskActivated);
+    /// <summary>A status update for the shell's bottom status text or a transient feedback item.</summary>
+    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished, bool TaskActivated,
+        UserFeedback? Feedback = null);
 
     /// <summary>Status bar text.</summary>
     public event Action<StatusUpdate>? StatusChanged;
@@ -331,6 +332,9 @@ public sealed partial class HubWorkspace : IDisposable
         StatusChanged?.Invoke(new StatusUpdate(text, null, false, false));
     }
 
+    private void SetFeedback(UserFeedback feedback)
+        => StatusChanged?.Invoke(new StatusUpdate(feedback.Text, null, false, false, feedback));
+
     private long BeginTaskStatus(string text)
     {
         var token = Interlocked.Increment(ref _nextTaskStatusToken);
@@ -430,7 +434,8 @@ public sealed partial class HubWorkspace : IDisposable
         var sentence = HubStrings.Get(_tasks.ActiveMutating is null
             ? "DeepLinkBusyAssistant"
             : "DeepLinkBusy");
-        SetStatus(sentence);
+        SetFeedback(UserFeedback.Warning(sentence,
+            _tasks.ActiveMutating is null ? "workspace-busy-assistant" : "workspace-busy-operation"));
         Log.Write(sentence);
         return true;
     }
@@ -563,7 +568,11 @@ public sealed partial class HubWorkspace : IDisposable
     {
         LastError = error.ToString();
         Log.Write(LastError);
-        SetStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]), taskToken, taskFinished: taskToken is not null);
+        var message = HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]);
+        if (taskToken is { } owner)
+            SetTaskStatus(message, owner, finished: true);
+        else
+            SetStatus(message);
         Failed?.Invoke();
         // In verification mode don't pop up: ExpectedFailure is the norm for this group (e.g.
         // importing an incomplete engine), and a dialog would make the await never return (see
@@ -1874,7 +1883,7 @@ public sealed partial class HubWorkspace : IDisposable
             // and a silent refusal is what made browsing for an editor look like a button that does nothing.
             var folded = CodeEditors.ApplicationBundle(path) ?? path;
             Log.Write($"Editor selection rejected: {id} · {path} (bundle: {folded}, on disk: {File.Exists(folded) || Directory.Exists(folded)})");
-            SetStatus(HubStrings.Get("NoEditorFound"));
+            SetFeedback(UserFeedback.Error(HubStrings.Get("NoEditorFound"), "editor-not-found"));
             return false;
         }
 
@@ -2166,7 +2175,7 @@ public sealed partial class HubWorkspace : IDisposable
 
         ProjectDirectory = path;
         Refresh();
-        SetStatus(HubStrings.Get("DefaultProjectsChanged"));
+        SetFeedback(UserFeedback.Success(HubStrings.Get("DefaultProjectsChanged"), "project-directory-changed"));
     }
 
     public void Dispose()

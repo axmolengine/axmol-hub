@@ -59,7 +59,7 @@ public partial class ChatSidebar : UserControl
     /// typed is not there — and the bottom strip is where the shell says such a thing without interrupting with
     /// a card. Left unsettable because a sidebar built without a shell still has to work.
     /// </summary>
-    internal Action<string>? StatusReporter { get; init; }
+    internal Action<UserFeedback>? StatusReporter { get; init; }
 
     /// <summary>
     /// Where a text copy lands, when a check wants it. <see cref="CopyConversationIdAsync"/> writes the real clipboard
@@ -470,12 +470,12 @@ public partial class ChatSidebar : UserControl
         if (result.Outcome == PickOutcome.Cancelled) return;
         if (result.Outcome == PickOutcome.NotLocal)
         {
-            StatusReporter?.Invoke(HubStrings.Get("ChatFolderNotLocal"));
+            StatusReporter?.Invoke(UserFeedback.Warning(HubStrings.Get("ChatFolderNotLocal"), "workspace-path"));
             return;
         }
         if (result.Path is not { Length: > 0 } path)
         {
-            StatusReporter?.Invoke(HubStrings.Get("LocalPathRequired"));
+            StatusReporter?.Invoke(UserFeedback.Warning(HubStrings.Get("LocalPathRequired"), "workspace-path"));
             return;
         }
 
@@ -560,8 +560,8 @@ public partial class ChatSidebar : UserControl
     private void ForgetWorkspace(SessionBucket bucket, string root)
     {
         if (!_chat.ForgetWorkspace(root)) return;
-        StatusReporter?.Invoke(string.Format(CultureInfo.CurrentCulture,
-            HubStrings.Get("WorkspaceRemovedFormat"), bucket.Label));
+        StatusReporter?.Invoke(UserFeedback.Success(string.Format(CultureInfo.CurrentCulture,
+            HubStrings.Get("WorkspaceRemovedFormat"), bucket.Label), "workspace-changed"));
     }
 
     /// <summary>Menus opened from a group header are the only ones this section shows, so one field is enough to
@@ -589,11 +589,11 @@ public partial class ChatSidebar : UserControl
 
         // A workspace with no sessions left has no conversations to count, so the strip says what changed instead
         // of reporting zero of them: the group's own path is what the person just corrected.
-        StatusReporter?.Invoke(moved > 0
+        StatusReporter?.Invoke(UserFeedback.Success(moved > 0
             ? string.Format(CultureInfo.CurrentCulture, HubStrings.Get("WorkspaceMovedFormat"),
                 SessionGroupKey.LabelFor(typed), moved, typed)
             : string.Format(CultureInfo.CurrentCulture, HubStrings.Get("WorkspacePathUpdatedFormat"),
-                SessionGroupKey.LabelFor(currentRoot), typed));
+                SessionGroupKey.LabelFor(currentRoot), typed), "workspace-changed"));
     }
 
     private async System.Threading.Tasks.Task ArchiveWorkspaceAsync(SessionBucket bucket)
@@ -623,7 +623,7 @@ public partial class ChatSidebar : UserControl
             WorkspacePathVerdict.OutsideRoots => HubStrings.Get("ChatWorkspaceOutside"),
             _ => HubStrings.Get("ChatWorkspaceRejected") + path,
         };
-        StatusReporter?.Invoke(message);
+        StatusReporter?.Invoke(UserFeedback.Warning(message, "workspace-path"));
     }
 
     private static Geometry? GeometryAt(string key)
@@ -787,7 +787,7 @@ public partial class ChatSidebar : UserControl
             }
             else return;
 
-            StatusReporter?.Invoke(HubStrings.Get(copiedMessageKey));
+            StatusReporter?.Invoke(UserFeedback.Success(HubStrings.Get(copiedMessageKey), copiedMessageKey));
         }
         catch (Exception)
         {

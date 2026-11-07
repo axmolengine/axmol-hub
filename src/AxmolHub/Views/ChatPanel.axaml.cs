@@ -65,7 +65,7 @@ public partial class ChatPanel : UserControl
     /// is: the viewer covers the whole window, so it cannot live in this page, but the sets it pages through
     /// are this page's business (the transcript's pictures, or this composer's draft).</summary>
     internal Action<IReadOnlyList<PictureRef>, int>? ShowPictureViewer { get; set; }
-    internal Action<string>? StatusMessage { get; set; }
+    internal Action<UserFeedback>? StatusMessage { get; set; }
     internal Action<string, string, int?, int?>? OpenLocalFile { get; set; }
 
     /// <summary>
@@ -4547,7 +4547,7 @@ public partial class ChatPanel : UserControl
                                 ? await _chat.CommitSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At)
                                 : await _chat.PushSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At,
                                     commitFirst: action == GitActions.CommitAndPush);
-                            StatusMessage?.Invoke(outcome.Message);
+                            StatusMessage?.Invoke(outcome.Feedback);
                         }
                         finally { button.IsEnabled = true; }
                     };

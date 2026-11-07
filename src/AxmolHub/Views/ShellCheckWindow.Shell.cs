@@ -1507,9 +1507,9 @@ internal sealed class ShellLayoutChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.Workspace.IsBusy
-              && shell.StatusTextForCheck == HubTexts.Get("DeepLinkBusy", HubStrings.Language)
+              && shell.ToastTextForCheck.Contains(HubTexts.Get("DeepLinkBusy", HubStrings.Language), StringComparison.Ordinal)
               && HubDialogWindows().Length == dialogsBeforeChange,
-            "被闸挡住的动手给的是状态条一句话，不弹窗（实际 " + shell.StatusTextForCheck + "）");
+            "被闸挡住的动手给的是 Toast 一句话，不弹窗（实际 " + shell.ToastTextForCheck + "）");
 
         // The row's measure when the work can prove only that it is still going. The clock is what a compile
         // can honestly report, where 「—」 would read as a task that stopped saying anything.
@@ -1563,9 +1563,9 @@ internal sealed class ShellLayoutChecks
         await shell.Workspace.UninstallEngineAsync();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.StatusTextForCheck == HubTexts.Get("DeepLinkBusyAssistant", HubStrings.Language)
+        Check(shell.ToastTextForCheck.Contains(HubTexts.Get("DeepLinkBusyAssistant", HubStrings.Language), StringComparison.Ordinal)
               && shell.PageEnabledForCheck && HubDialogWindows().Length == dialogsBeforeAssistant,
-            "助手占闸时被挡住的动手给的是点名助手的一句话，不弹窗也不置灰（实际 " + shell.StatusTextForCheck + "）");
+            "助手占闸时被挡住的动手给的是点名助手的一句话，不弹窗也不置灰（实际 " + shell.ToastTextForCheck + "）");
 
         // The road out the tool body owes the queue: the command's own finally hands the gate back. Left held, Hub
         // would report itself busy for the rest of the session with nothing running — which is the same silence
@@ -1643,9 +1643,9 @@ internal sealed class ShellLayoutChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         var mutatingRows = TaskQueue.Instance.Items.Count(item => item.Kind == TaskQueue.TaskKind.Mutating);
-        Check(mutatingRows == 1 && shell.StatusTextForCheck == HubTexts.Get("DeepLinkBusy", HubStrings.Language)
+        Check(mutatingRows == 1 && shell.ToastTextForCheck.Contains(HubTexts.Get("DeepLinkBusy", HubStrings.Language), StringComparison.Ordinal)
               && HubDialogWindows().Length == dialogsBeforeSecond,
-            "第二条变更被拒绝而不是排队，拒绝只花状态条一句话（面板里 " + mutatingRows + " 条变更）");
+            "第二条变更被拒绝而不是排队，拒绝只花 Toast 一句话（面板里 " + mutatingRows + " 条变更）");
         await second;
 
         // The strip's cancel and the row's cancel cannot be allowed to disagree: one item, and whichever

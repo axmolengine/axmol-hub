@@ -1230,20 +1230,21 @@ internal sealed partial class ChatExecutionCoordinator
         }
     }
 
-    internal async Task<(bool Success, string Message)> CommitSuggestedAsync(
+    internal async Task<GitActionOutcome> CommitSuggestedAsync(
         string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt)
         => await RunCommitActionAsync(conversationId, expectedWorkspaceRoot, summary, turnAt, "commit").ConfigureAwait(false);
 
-    internal async Task<(bool Success, string Message)> PushSuggestedAsync(
+    internal async Task<GitActionOutcome> PushSuggestedAsync(
         string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, bool commitFirst)
         => await RunCommitActionAsync(conversationId, expectedWorkspaceRoot, summary, turnAt,
             commitFirst ? "commit-push" : "push").ConfigureAwait(false);
 
-    private async Task<(bool Success, string Message)> RunCommitActionAsync(
+    private async Task<GitActionOutcome> RunCommitActionAsync(
         string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, string action,
         bool explicitText = false)
     {
-        if (!_localGitActions.TryAdd(conversationId, 0)) return (false, HubStrings.Get("CommitSummaryBusy"));
+        if (!_localGitActions.TryAdd(conversationId, 0))
+            return new(false, UserFeedback.Warning(HubStrings.Get("CommitSummaryBusy"), "git-busy"));
         try
         {
             return await ExecuteGitActionAsync(conversationId, expectedWorkspaceRoot, summary, turnAt, action, explicitText)
@@ -1252,7 +1253,7 @@ internal sealed partial class ChatExecutionCoordinator
         catch (Exception ex)
         {
             Audit(conversationId, "Local Git operation failed: " + ex.Message);
-            return (false, HubStrings.Get("CommitSummaryFailed"));
+            return new(false, UserFeedback.Error(HubStrings.Get("CommitSummaryFailed"), "git-failed"));
         }
         finally
         {
@@ -1261,7 +1262,7 @@ internal sealed partial class ChatExecutionCoordinator
         }
     }
 
-    private async Task<(bool Success, string Message)> ExecuteGitActionAsync(
+    private async Task<GitActionOutcome> ExecuteGitActionAsync(
         string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, string action,
         bool explicitText)
     {
@@ -1277,18 +1278,18 @@ internal sealed partial class ChatExecutionCoordinator
         }).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(facts.Root)
             || !string.Equals(WorkspacePaths.CanonicalRoot(facts.Root), WorkspacePaths.CanonicalRoot(expectedWorkspaceRoot), StringComparison.Ordinal))
-            return (false, HubStrings.Get("CommitSummaryWorkspaceChanged"));
+            return new(false, UserFeedback.Warning(HubStrings.Get("CommitSummaryWorkspaceChanged"), "git-workspace"));
         if (!facts.ValidSource || facts.Busy)
-            return (false, HubStrings.Get("GitActionExpired"));
+            return new(false, UserFeedback.Warning(HubStrings.Get("GitActionExpired"), "git-expired"));
         GitCommitResult result;
         using (var gate = ChangeGateProvider?.Invoke("git " + action))
         {
             if (ChangeGateProvider is not null && gate is null)
-                return (false, HubStrings.Get("CommitSummaryBusy"));
+                return new(false, UserFeedback.Warning(HubStrings.Get("CommitSummaryBusy"), "git-busy"));
             var runner = new ProcessRunner(line => LogProvider?.Invoke()?.Write(line));
             var current = await GitRepository.ReadAsync(facts.Root, runner, Providers.SensitiveValues()).ConfigureAwait(false);
             if (!current.IsReadable || current.Root is not { Length: > 0 } repositoryRoot)
-                return (false, HubStrings.Get("CommitSummaryRepoUnavailable"));
+                return new(false, UserFeedback.Error(HubStrings.Get("CommitSummaryRepoUnavailable"), "git-repository"));
             result = action switch
             {
                 "push" => await GitRepository.PushAsync(facts.Root, repositoryRoot, runner,
@@ -1323,18 +1324,26 @@ internal sealed partial class ChatExecutionCoordinator
             if (result.FailureKey is not ("workspace-changed" or "git-missing" or "nothing-staged" or "nothing-to-push"))
                 await StartGitOperationFallbackAsync(conversationId,
                     result.FailureKey == "commit-succeeded-push-failed" ? "push" : action).ConfigureAwait(false);
-            return (noOp, HubStrings.Get(messageKey));
+            var kind = result.FailureKey switch
+            {
+                "nothing-staged" or "nothing-to-push" => UserFeedbackKind.Info,
+                "commit-succeeded-push-failed" => UserFeedbackKind.Warning,
+                "workspace-changed" or "git-missing" or "branch-unavailable" or "conflict" or "stage-failed" => UserFeedbackKind.Warning,
+                _ => UserFeedbackKind.Error,
+            };
+            var feedback = new UserFeedback(HubStrings.Get(messageKey), kind, "git-" + result.FailureKey);
+            return new(noOp, feedback);
         }
         Audit(conversationId, action == "push"
             ? "Hub-triggered git push succeeded"
             : action == "commit-push" ? "Hub-triggered local git commit and push succeeded: " + summary
             : "Hub-triggered local git commit succeeded: " + summary);
-        return (true, HubStrings.Get(action switch
+        return new(true, UserFeedback.Success(HubStrings.Get(action switch
         {
             "push" => "PushSummarySucceeded",
             "commit-push" => "CommitPushSummarySucceeded",
             _ => "CommitSummarySucceeded",
-        }));
+        }), "git-succeeded"));
     }
 
     internal bool IsCurrentGoalTurn(string conversationId, DateTimeOffset at)
@@ -1570,7 +1579,7 @@ internal sealed partial class ChatExecutionCoordinator
         {
             Sessions.Registry.TryUpdate(conversationId, conversation =>
             {
-                conversation.Append(ChatTurn.Notice(outcome.Message));
+                conversation.Append(ChatTurn.Notice(outcome.Feedback.Text));
                 conversation.MarkEngaged();
             });
             Changed?.Invoke();
