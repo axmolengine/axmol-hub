@@ -29,7 +29,24 @@ try {
     # Decode an argv array rather than evaluating command text. This preserves colons, quotes and
     # spaces that PowerShell's native -File parameter binding would otherwise reinterpret.
     [string[]]$engineArgs = ConvertFrom-Json ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InvocationBase64)))
-    & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @engineArgs
+    if ($engineArgs[0] -eq 'new') {
+        # Array splatting loses option-name semantics. Hashtable splatting preserves named options
+        # through axmol.ps1's forwarding to the official project template script.
+        $newOptions = @{}
+        $newArgs = @('new')
+        for ($index = 1; $index -lt $engineArgs.Count; ++$index) {
+            $argument = $engineArgs[$index]
+            if ($argument -in @('-p', '-d', '-l', '-m')) {
+                if ($index + 1 -ge $engineArgs.Count) { throw "Missing value for axmol new option $argument." }
+                $newOptions[$argument.Substring(1)] = $engineArgs[++$index]
+            } else {
+                $newArgs += $argument
+            }
+        }
+        & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @newArgs @newOptions
+    } else {
+        & (Join-Path $EngineRoot 'tools/cmdline/axmol.ps1') @engineArgs
+    }
     exit $LASTEXITCODE
 } catch {
     [Console]::Error.WriteLine($_.Exception.ToString())
