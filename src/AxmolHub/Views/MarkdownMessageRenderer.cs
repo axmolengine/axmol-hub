@@ -178,8 +178,8 @@ internal static partial class MarkdownMessageRenderer
     /// <para>The range is what a selection's offsets are measured in, and it is reconstructed from the document's
     /// own text here rather than asked of the library: every inline contributes its own text and a span
     /// contributes its children's, which is the same arithmetic the library's own <c>Text</c> is built from.
-    /// <see cref="ProbeChipSelectionForCheck"/> is what keeps that a claim instead of a belief — it compares the
-    /// reconstruction against the library's answer for the same range.</para>
+    /// <see cref="ProbeChipSelectionForCheck"/> compares the reconstructed range against the text the copy
+    /// action actually selects, since the library's extractor skips inline-code runs.</para>
     /// </summary>
     private static List<(CCode Chip, int Start, int Length)> ChipsOf(CTextBlock block)
     {

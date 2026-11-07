@@ -321,13 +321,13 @@ internal sealed class ShellLayoutChecks
         var next = ScratchDirectory.Resolve("shell-check-switch", Guid.NewGuid().ToString("N"));
         var nextRoot = new StateStore(next).Root;
 
-        // Captured before the switch. The point is that the *previous* root's log leaves the screen, not that
-        // the box ends up empty: building the new root's chrome can legitimately write a first line while the
-        // switch settles, and demanding an empty box turns that into a failure roughly one run in ten. Lines
-        // carry an ISO timestamp, so a surviving one cannot be a coincidence of wording. The retained tail is
-        // read rather than the box, because the box is only painted while the drawer is open.
-        var previousLogLines = shell.ActivityLogTextForCheck
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // Use one unique log entry from the old workspace. A retained tail can start mid-line, and a
+        // multi-line tool result includes unprefixed words such as "the" that may also occur in the new log.
+        // Comparing those fragments by substring produces false leaks unrelated to data-root isolation.
+        var previousLogMarker = "data-root-switch-" + Guid.NewGuid().ToString("N");
+        shell.Workspace.Log.Write(previousLogMarker);
+        var previousLogLine = shell.ActivityLogTextForCheck.Split('\n')
+            .Single(line => line.Contains(previousLogMarker, StringComparison.Ordinal));
 
         var changed = shell.SwitchDataRoot(next);
         shell.UpdateLayout();
@@ -368,11 +368,8 @@ internal sealed class ShellLayoutChecks
             + (NamedDescendant<TextBox>(rebuilt, "DataLocation")?.Text ?? "页面为空") + "）");
 
         var logAfterSwitch = shell.ActivityLogTextForCheck;
-        var survived = previousLogLines.Where(line => logAfterSwitch.Contains(line, StringComparison.Ordinal)).ToArray();
-        Check(previousLogLines.Length > 0 && survived.Length == 0,
-            "切换后上一个根的日志行都不再摆在界面上（切换前 " + previousLogLines.Length
-            + " 行，残留 " + survived.Length + " 行"
-            + (survived.Length > 0 ? "，例如「" + survived[0] + "」" : "") + "）");
+        Check(!logAfterSwitch.Contains(previousLogMarker, StringComparison.Ordinal),
+            "切换后上一个根的唯一日志记录不再摆在界面上（旧根记录「" + previousLogLine + "」）");
 
         // The state really comes from the new root: the new root is empty, so if the old root's two engines are still visible, the switch only changed a string.
         var installs = (InstallsPage)shell.NavigateTo("Installs");

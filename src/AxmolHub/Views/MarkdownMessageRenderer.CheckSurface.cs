@@ -32,10 +32,11 @@ internal static partial class MarkdownMessageRenderer
                 continue;
             var probe = chips[0];
             var code = probe.Chip.AsString() ?? "";
-            // The range the mark is computed from, answered by the library itself.
+            // Use the same text extraction as the shipped copy action: the library's extractor skips
+            // inline-code runs and intermittently returns the punctuation after the code instead.
             block.Select(probe.Start, probe.Start + probe.Length);
             block.UpdateLayout();
-            var libraryText = block.GetSelectedText() ?? "";
+            var selectedText = SelectionText(viewer);
             if (probe.Chip is not ReadingCode reading || reading.Geometries.Count != 1 || TopLevel.GetTopLevel(block)is not { } root)
                 continue;
             var geometry = reading.Geometries[0];
@@ -67,7 +68,7 @@ internal static partial class MarkdownMessageRenderer
             var noWholeChipTint = !Marked(probe.Chip);
             pointer.Capture(null);
             block.ClearSelection();
-            return new(true, libraryText == code, acrossSelected, draggedCopied, internalSelected, clickEmpty, noWholeChipTint, code, libraryText, draggedText);
+            return new(true, selectedText == code, acrossSelected, draggedCopied, internalSelected, clickEmpty, noWholeChipTint, code, selectedText, draggedText);
         }
 
         return new(false, false, false, false, false, false, false, "", "", "");
@@ -91,8 +92,8 @@ internal static partial class MarkdownMessageRenderer
         return "";
     }
 
-    /// <summary>Readings from real pointer gestures, plus the library's index-coordinate sanity check.</summary>
-    internal readonly record struct InlineCodeProbe(bool Found, bool RangeAgrees, bool AcrossSelected, bool DraggedCopied, bool InternalSelected, bool ClickEmpty, bool NoWholeChipTint, string Code, string LibraryText, string DraggedText);
+    /// <summary>Readings from real pointer gestures and the same selection text the copy action uses.</summary>
+    internal readonly record struct InlineCodeProbe(bool Found, bool RangeAgrees, bool AcrossSelected, bool DraggedCopied, bool InternalSelected, bool ClickEmpty, bool NoWholeChipTint, string Code, string SelectedText, string DraggedText);
     /// <summary>Every run in the document that still carries a raw asterisk. The engine's own decoration
     /// scanner advances past a closing <c>**</c> one character short, and the leftover is handed back to the
     /// text — so the proof that a bold parsed is that no delimiter survived to be drawn.</summary>

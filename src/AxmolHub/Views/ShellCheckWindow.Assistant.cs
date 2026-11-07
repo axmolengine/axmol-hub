@@ -473,7 +473,7 @@ internal sealed class ShellAssistantChecks
         // GithubLike applies nothing at all.
         var chipProbe = panel.ProbeMarkdownChipSelection();
         Check(chipProbe.Found && chipProbe.RangeAgrees,
-            "行内代码块的字符区间与库自己的选区索引一致（库读到「" + chipProbe.LibraryText + "」，代码是「"
+            "行内代码块的字符区间与复制所用选区一致（读到「" + chipProbe.SelectedText + "」，代码是「"
             + chipProbe.Code + "」）");
         Check(chipProbe.Found && chipProbe.AcrossSelected && chipProbe.InternalSelected,
             "会话行内代码支持跨边界和内部逐字鼠标拖选，不给整块染色（跨边界="
