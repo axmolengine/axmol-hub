@@ -10,7 +10,7 @@ using AxmolHub.Core;
 namespace AxmolHub;
 
 /// <summary>The same browser is docked or drawn as a drawer. Hiding it stops observation, not its browse state.
-/// Only the root and explicitly expanded directories are watched; a query searches authorized descendants.</summary>
+/// Only expanded folders are listed; a search builds one path catalog, watched while the browser is visible.</summary>
 internal sealed class WorkspaceFileTree : Grid, IDisposable
 {
     private readonly Func<WorkspaceToolScope> _scopeFor;
@@ -23,6 +23,11 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     private readonly DispatcherTimer _searchTimer;
     private CancellationTokenSource? _searchCancellation;
     private WorkspaceFileSearch? _searchResults;
+    private WorkspaceFileCatalog? _catalog;
+    private Task<WorkspaceFileCatalog>? _catalogTask;
+    private CancellationTokenSource? _catalogCancellation;
+    private string? _catalogScope;
+    private FileSystemWatcher? _searchWatcher;
     private readonly TextBox _filter;
     private string Query => _filter.Text?.Trim() ?? "";
     private readonly Button _close;
@@ -133,6 +138,7 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
             ++_generation;
             _refreshTimer.Stop();
             CancelSearch();
+            InvalidateCatalog();
             StopWatchers();
         }
     }
@@ -156,37 +162,65 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
             }
         }
         RenderRows();
-        if (_active && !_searching) _ = RefreshAsync();
+        if (_active && !_searching)
+        {
+            if (_searchWatcher is null) InvalidateCatalog();
+            _ = RefreshRowsAsync();
+        }
     }
 
-    internal async Task RefreshAsync()
+    internal void RefreshScope()
     {
-        if (!_active) return;
+        if (_catalogScope is null || _catalogScope == ScopeKey(_scopeFor())) return;
+        StopWatchers();
+        _directories.Clear();
+        _searchResults = null;
+        _ = RefreshAsync();
+    }
+
+    internal Task RefreshAsync()
+    {
+        InvalidateCatalog();
+        return RefreshRowsAsync();
+    }
+
+    private async Task RefreshRowsAsync()
+    {
+        if (!_active || _root is not { Length: > 0 }) return;
         CancelSearch();
         _searchResults = null;
         if (Query.Length > 0) RenderRows();
+        if (Query.Length > 0) EnsureSearchWatcher();
         var generation = ++_generation;
         var expanded = _expanded.ToHashSet(WorkspacePathComparer);
-        var scope = _scopeFor();
         // Observe before enumerating. A cached listing can already contain the selected file on reopen,
         // and writes made while the new asynchronous read is in flight must not fall into a watch gap.
         SyncWatchers(_root is { Length: > 0 } ? expanded.Append(_root) : []);
         if (_directories.Count == 0) Notice("WorkspaceReadingFiles");
-        var listings = await Task.Run(() =>
+        var listings = new Dictionary<string, WorkspaceDirectoryListing>(WorkspacePathComparer);
+        try
         {
-            var result = new Dictionary<string, WorkspaceDirectoryListing>(WorkspacePathComparer);
-            if (_root is not { Length: > 0 }) return result;
-            var pending = new Stack<string>();
-            pending.Push(_root);
-            while (pending.TryPop(out var directory))
+            var catalog = await CatalogAsync();
+            if (_root is not { Length: > 0 }) return;
+            if (!_active || generation != _generation || _catalogCancellation is null) return;
+            var lifetime = _catalogCancellation.Token;
+            listings = await Task.Run(() =>
             {
-                var listing = WorkspaceDirectoryReader.Read(scope, directory);
-                result[directory] = listing;
-                foreach (var child in listing.Entries)
-                    if (child.IsDirectory && expanded.Contains(child.Path)) pending.Push(child.Path);
-            }
-            return result;
-        });
+                var result = new Dictionary<string, WorkspaceDirectoryListing>(WorkspacePathComparer);
+                var pending = new Stack<string>();
+                pending.Push(_root);
+                while (pending.TryPop(out var directory))
+                {
+                    lifetime.ThrowIfCancellationRequested();
+                    var listing = catalog.Read(directory, lifetime);
+                    result[directory] = listing;
+                    foreach (var child in listing.Entries)
+                        if (child.IsDirectory && expanded.Contains(child.Path)) pending.Push(child.Path);
+                }
+                return result;
+            });
+        }
+        catch (OperationCanceledException) { return; }
         if (!_active || generation != _generation) return;
         _directories.Clear();
         foreach (var listing in listings) _directories.Add(listing.Key, listing.Value);
@@ -207,21 +241,83 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         CancelSearch();
         if (!_active || _root is not { Length: > 0 } || Query.Length == 0) return;
         var query = Query;
-        var scope = _scopeFor();
         using var cancellation = new CancellationTokenSource();
         _searchCancellation = cancellation;
         try
         {
-            var results = await Task.Run(() => WorkspaceDirectoryReader.Search(scope, _root, query, cancellation.Token));
-            if (!_active || _searchCancellation != cancellation || Query != query) return;
+            EnsureSearchWatcher();
+            var catalog = await CatalogAsync().WaitAsync(cancellation.Token);
+            if (!_active || _searchCancellation != cancellation || _catalogCancellation is null) return;
+            var lifetime = _catalogCancellation.Token;
+            var files = await catalog.FilesAsync(lifetime).WaitAsync(cancellation.Token);
+            var results = catalog.Error is { } error ? new WorkspaceFileSearch([], error, false)
+                : await Task.Run(() => WorkspaceFileCatalog.Search(files, query, cancellation.Token));
+            if (!_active || _searchCancellation != cancellation || Query != query
+                || _catalogScope != ScopeKey(_scopeFor())) return;
             _searchResults = results;
             RenderRows();
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (OperationCanceledException) { }
         finally
         {
             if (_searchCancellation == cancellation) _searchCancellation = null;
         }
+    }
+
+    private static string ScopeKey(WorkspaceToolScope scope)
+        => System.Text.Json.JsonSerializer.Serialize(new { scope.Sandbox, scope.Guards });
+
+    private void InvalidateCatalog()
+    {
+        _catalogCancellation?.Cancel();
+        _catalogCancellation?.Dispose();
+        _catalogCancellation = null;
+        _catalog = null;
+        _catalogTask = null;
+        _catalogScope = null;
+    }
+
+    private Task<WorkspaceFileCatalog> CatalogAsync()
+    {
+        var scope = _scopeFor();
+        var key = ScopeKey(scope);
+        if (_catalogScope != key) InvalidateCatalog();
+        if (_catalogTask is not null) return _catalogTask;
+        _catalogScope = key;
+        var lifetime = new CancellationTokenSource();
+        _catalogCancellation = lifetime;
+        var token = lifetime.Token;
+        return _catalogTask = LoadAsync();
+
+        async Task<WorkspaceFileCatalog> LoadAsync()
+        {
+            var catalog = await Task.Run(() => WorkspaceFileCatalog.CreateAsync(scope, _root!, token));
+            if (_catalogCancellation == lifetime) _catalog = catalog;
+            return catalog;
+        }
+    }
+
+    private void EnsureSearchWatcher()
+    {
+        if (_searchWatcher is not null || _root is not { Length: > 0 }
+            || !WorkspacePaths.ResolveDirectory(_scopeFor().Sandbox, _root, _scopeFor().Guards).IsAllowed) return;
+        try
+        {
+            var watcher = new FileSystemWatcher(_root)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
+            };
+            watcher.Created += OnChanged;
+            watcher.Deleted += OnChanged;
+            watcher.Renamed += OnChanged;
+            watcher.Changed += OnChanged;
+            watcher.Error += (_, _) => QueueRefresh();
+            watcher.EnableRaisingEvents = true;
+            _searchWatcher = watcher;
+            InvalidateCatalog();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { }
     }
 
     private void SyncWatchers(IEnumerable<string> directories)
@@ -256,7 +352,18 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         }
     }
 
-    private void OnChanged(object sender, FileSystemEventArgs args) => QueueRefresh();
+    private void OnChanged(object sender, FileSystemEventArgs args)
+    {
+        var name = Path.GetFileName(args.FullPath);
+        var relative = _root is null ? "" : Path.GetRelativePath(_root, args.FullPath).Replace('\\', '/');
+        var rulesChanged = name == ".gitignore" || relative is ".git/index" or ".git/info/exclude" or ".git/config"
+            or ".git/HEAD";
+        if (args.ChangeType == WatcherChangeTypes.Changed && !rulesChanged) return;
+        if (relative.StartsWith(".git/", StringComparison.Ordinal) && !rulesChanged) return;
+        if (!rulesChanged && args.ChangeType != WatcherChangeTypes.Renamed
+            && _catalog?.IgnoresChange(args.FullPath) == true) return;
+        QueueRefresh();
+    }
     private void QueueRefresh() => Dispatcher.UIThread.Post(() =>
     {
         if (!_active) return;
@@ -360,7 +467,8 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
             if (entry.IsDirectory)
             {
                 if (!_expanded.Add(entry.Path)) _expanded.Remove(entry.Path);
-                _ = RefreshAsync();
+                if (_searchWatcher is null) InvalidateCatalog();
+                _ = RefreshRowsAsync();
             }
             else
             {
@@ -422,6 +530,8 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
 
     private void StopWatchers()
     {
+        _searchWatcher?.Dispose();
+        _searchWatcher = null;
         foreach (var watcher in _watchers.Values) watcher.Dispose();
         _watchers.Clear();
     }

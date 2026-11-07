@@ -15,6 +15,10 @@ internal sealed partial class ShellDecisionsChecks
     private static async Task<(bool Documents, bool Layout, bool Commands)> CheckWorkspaceDocumentsAsync(MainWindow shell, string root)
     {
         var view = shell.WorkspaceViewForCheck!;
+        // The host repository ignores tmp/. Give this isolated workspace its own Git view so browser fixtures
+        // are visible under the same ignore policy as a real project, without changing the host's rules.
+        if (CommandShells.Resolve("git") is { } git)
+            await new ProcessRunner(_ => { }).RunAsync(git, ["init", "--quiet"], root);
         var folder = Path.Combine(root, "browser-fixture-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, "buffer.cs");

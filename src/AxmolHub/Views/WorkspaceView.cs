@@ -134,6 +134,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         if (_state is not null && WorkspaceFileTree.WorkspacePathComparer.Equals(key, _key))
         {
             _state.ScopeFor = scopeFor;
+            _state.Tree.RefreshScope();
             return;
         }
         _state?.Tree.SetActive(false);

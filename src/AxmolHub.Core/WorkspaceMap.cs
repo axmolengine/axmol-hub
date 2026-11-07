@@ -103,26 +103,8 @@ public static class WorkspaceMap
     private static async Task<Walked?> ListedFilesAsync(WorkspaceToolScope scope, ProcessRunner runner, string root,
         CancellationToken cancellation)
     {
-        if (CommandShells.Resolve("git") is not { } git) return null;
-        IReadOnlyList<string> names;
-        try
-        {
-            // Measured: with no pathspec git lists only below its working directory and names the results relative
-            // to it, so the directory being mapped is both the cwd and the prefix — which is what makes a workspace
-            // that is a subfolder of a repository map as that subfolder rather than as the whole repository.
-            var listed = await runner.RunAsync(git,
-                    ["-c", "core.quotepath=false", "--no-optional-locks", "--no-pager", "ls-files",
-                     "--cached", "--others", "--exclude-standard", "-z"],
-                    root, timeout: GitRepository.ReadIdleTimeout, sensitiveValues: scope.SensitiveValues,
-                    cancellation: cancellation)
-                .ConfigureAwait(false);
-            if (listed.ExitCode != 0) return null;
-            names = GitRepository.SplitNulFields(listed.Output);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return null;
-        }
+        var names = await WorkspaceGitFiles.ReadAsync(scope, runner, root, cancellation).ConfigureAwait(false);
+        if (names is null) return null;
 
         var paths = new List<string>();
         var directories = new HashSet<string>(StringComparer.Ordinal) { root };
