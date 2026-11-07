@@ -511,9 +511,20 @@ public partial class MainWindow : Window
         if (update.TaskToken is { } taskToken)
         {
             // A late progress or completion callback from an older task must never become the new owner
-            // after the current task has finished. Tokens are monotonic across workspace instances.
-            if (taskToken < _latestTaskStatusToken
-                || !update.TaskFinished && taskToken <= _lastFinishedTaskStatusToken) return;
+            // after the current task has finished. Tokens are monotonic across workspace instances. A
+            // fallback task is the one exception: it can have a lower token because a newer task just ended.
+            if (update.TaskActivated)
+            {
+                if (_activeTaskStatusToken is not null && taskToken < _latestTaskStatusToken) return;
+                _activeTaskStatusToken = taskToken;
+                _latestTaskStatusToken = Math.Max(_latestTaskStatusToken, taskToken);
+                Status.Text = update.Text;
+                return;
+            }
+
+            if (_activeTaskStatusToken != taskToken
+                && (taskToken < _latestTaskStatusToken
+                    || !update.TaskFinished && taskToken <= _lastFinishedTaskStatusToken)) return;
 
             if (update.TaskFinished)
             {

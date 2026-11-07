@@ -224,7 +224,7 @@ public sealed partial class HubWorkspace : IDisposable
     public event Action? Changed;
 
     /// <summary>A status update for the shell's bottom status text.</summary>
-    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished);
+    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished, bool TaskActivated);
 
     /// <summary>Status bar text.</summary>
     public event Action<StatusUpdate>? StatusChanged;
@@ -307,6 +307,8 @@ public sealed partial class HubWorkspace : IDisposable
     public string StatusText { get; private set; } = "";
     private static long _nextTaskStatusToken;
     private readonly AsyncLocal<long?> _taskStatusContext = new();
+    private readonly Dictionary<long, string> _taskStatuses = [];
+    private readonly object _taskStatusGate = new();
 
     /// <summary>The second line of the "recent build platform" card at the top of the projects page.</summary>
     public string BuildHostHint { get; private set; } = "";
@@ -319,12 +321,60 @@ public sealed partial class HubWorkspace : IDisposable
     private void SetStatus(string text, long? taskToken = null, bool taskFinished = false)
     {
         var owner = taskToken ?? _taskStatusContext.Value;
+        if (owner is { } taskOwner)
+        {
+            SetTaskStatus(text, taskOwner, taskFinished);
+            return;
+        }
+
         StatusText = text;
-        StatusChanged?.Invoke(new StatusUpdate(text, owner, taskFinished));
+        StatusChanged?.Invoke(new StatusUpdate(text, null, false, false));
+    }
+
+    private long BeginTaskStatus(string text)
+    {
+        var token = Interlocked.Increment(ref _nextTaskStatusToken);
+        lock (_taskStatusGate) _taskStatuses[token] = text;
+        StatusText = text;
+        StatusChanged?.Invoke(new StatusUpdate(text, token, false, true));
+        return token;
+    }
+
+    private void DiscardTaskStatus(long taskToken)
+    {
+        lock (_taskStatusGate) _taskStatuses.Remove(taskToken);
     }
 
     private void SetTaskStatus(string text, long taskToken, bool finished = false)
-        => SetStatus(text, taskToken, finished);
+    {
+        StatusUpdate[] updates;
+        lock (_taskStatusGate)
+        {
+            if (!_taskStatuses.ContainsKey(taskToken)) return;
+            var currentToken = _taskStatuses.Keys.Max();
+            var wasCurrent = currentToken == taskToken;
+            _taskStatuses[taskToken] = text;
+            if (finished) _taskStatuses.Remove(taskToken);
+
+            var next = new List<StatusUpdate>();
+            if (wasCurrent)
+            {
+                next.Add(new StatusUpdate(text, taskToken, finished, false));
+                if (finished && _taskStatuses.Count > 0)
+                {
+                    var fallbackToken = _taskStatuses.Keys.Max();
+                    next.Add(new StatusUpdate(_taskStatuses[fallbackToken], fallbackToken, false, true));
+                }
+            }
+            updates = [.. next];
+        }
+
+        StatusText = text;
+        foreach (var update in updates)
+        {
+            StatusChanged?.Invoke(update);
+        }
+    }
 
     private IProgress<DownloadProgress> DownloadProgress()
     {
@@ -442,8 +492,7 @@ public sealed partial class HubWorkspace : IDisposable
         }
 
         var statusTitle = FormatTaskTitle(titleKey, subject);
-        var taskToken = Interlocked.Increment(ref _nextTaskStatusToken);
-        SetTaskStatus(statusTitle, taskToken);
+        var taskToken = BeginTaskStatus(statusTitle);
         Log.Write(titleKey);
 
         var item = _tasks.Enqueue(identity, titleKey, subject,
@@ -465,6 +514,7 @@ public sealed partial class HubWorkspace : IDisposable
         {
             // Already running under this identity: the row on screen is the answer, and the repaint the first
             // one owed must not be skipped because the second request was turned away.
+            DiscardTaskStatus(taskToken);
             Refresh();
             return;
         }
@@ -540,9 +590,8 @@ public sealed partial class HubWorkspace : IDisposable
     /// the parts of <see cref="ExecuteAsync"/>'s lifecycle that still apply: a log line for the title, a
     /// state save and a page refresh when it lands, and the typed error dialog when it does not.
     ///
-    /// What it deliberately does **not** get is the busy flag and the status line. A download that
-    /// disables the page it was started from is the exact thing this queue exists to stop, and its
-    /// progress now belongs to its own row rather than to the one sentence the strip can say.
+    /// Downloads do not take the exclusive busy gate, but they still own the bottom status line while
+    /// they are active. Their progress belongs to the same task-owned status channel as builds.
     /// </summary>
     /// <returns>A task that completes when the transfer settles — the same thing
     /// <see cref="ExecuteAsync"/> awaited, so a caller that needs "is it installed yet" (the deep link,
@@ -555,10 +604,31 @@ public sealed partial class HubWorkspace : IDisposable
         string logTitleKey,
         Func<TaskQueue.Item, CancellationToken, Task> work)
     {
-        var item = _tasks.Enqueue(identity, titleKey, subject, work,
-            onFinished: finished => FinishTask(finished, logTitleKey));
+        if (_tasks.FindActive(identity) is not null)
+        {
+            return Task.CompletedTask;
+        }
+
+        long taskToken = 0;
+        var item = _tasks.Enqueue(identity, titleKey, subject,
+            async (queuedItem, cancellationToken) =>
+            {
+                taskToken = BeginTaskStatus(FormatTaskTitle(titleKey, subject));
+                var previous = _taskStatusContext.Value;
+                _taskStatusContext.Value = taskToken;
+                try
+                {
+                    await work(queuedItem, cancellationToken);
+                }
+                finally
+                {
+                    _taskStatusContext.Value = previous;
+                }
+            },
+            onFinished: finished => FinishTask(finished, logTitleKey, taskToken));
         if (item is null)
         {
+            DiscardTaskStatus(taskToken);
             return Task.CompletedTask;
         }
 
@@ -569,13 +639,14 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>What a settled transfer leaves behind. Mirrors the success / cancel / failure arms of
     /// <see cref="ExecuteAsync"/> one-for-one, including the reason a failure keeps its exception **type**:
     /// <see cref="ShowOperationErrorAsync"/> chooses the advice the user can act on from that type.</summary>
-    private void FinishTask(TaskQueue.Item item, string logTitleKey)
+    private void FinishTask(TaskQueue.Item item, string logTitleKey, long taskToken)
     {
         var title = HubStrings.Get(logTitleKey);
         if (item.Fault is { } error)
         {
             LastError = error.ToString();
             Log.Write(LastError);
+            SetTaskStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]), taskToken, finished: true);
             Failed?.Invoke();
             if (!SuppressDialogs)
             {
@@ -585,10 +656,12 @@ public sealed partial class HubWorkspace : IDisposable
         else if (item.State == TaskQueue.Phase.Done)
         {
             Store.Save(State);
+            SetTaskStatus(title + " · " + HubStrings.Get("Done"), taskToken, finished: true);
             Log.Write(title + " · " + HubStrings.Get("Done"));
         }
         else
         {
+            SetTaskStatus(title + " · " + HubStrings.Get("Cancelled"), taskToken, finished: true);
             Log.Write(title + " · " + HubStrings.Get("Cancelled"));
         }
 
