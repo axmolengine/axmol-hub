@@ -10,7 +10,7 @@ using AxmolHub.Core;
 namespace AxmolHub;
 
 /// <summary>The same browser is docked or drawn as a drawer. Hiding it stops observation, not its browse state.
-/// Only the root and explicitly expanded directories are listed and watched.</summary>
+/// Only the root and explicitly expanded directories are watched; a query searches authorized descendants.</summary>
 internal sealed class WorkspaceFileTree : Grid, IDisposable
 {
     private readonly Func<WorkspaceToolScope> _scopeFor;
@@ -20,9 +20,15 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     private readonly HashSet<string> _expanded = new(WorkspacePathComparer);
     private readonly Dictionary<string, FileSystemWatcher> _watchers = new(WorkspacePathComparer);
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _searchTimer;
+    private CancellationTokenSource? _searchCancellation;
+    private WorkspaceFileSearch? _searchResults;
     private readonly TextBox _filter;
+    private string Query => _filter.Text?.Trim() ?? "";
     private readonly Button _close;
     private string? _selected;
+    private string? _browseSelected;
+    private bool _searching;
     private bool _active;
     private int _generation;
 
@@ -57,9 +63,22 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         header.Children.Add(_close);
         Children.Add(header);
         _filter = new TextBox { Name = "WorkspaceFileFilter", Margin = default, Height = 28, MinHeight = 0,
-            FontSize = 12, Padding = new Thickness(26, 3, 8, 3), VerticalContentAlignment = VerticalAlignment.Center };
+            FontSize = 12, CornerRadius = new CornerRadius(8), Padding = new Thickness(26, 3, 28, 3),
+            VerticalContentAlignment = VerticalAlignment.Center };
         _filter.Bind(TextBox.PlaceholderTextProperty, new DynamicResourceExtension("WorkspaceFilterFiles"));
-        _filter.TextChanged += (_, _) => RenderRows();
+        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); _ = SearchAsync(); };
+        _filter.TextChanged += (_, _) =>
+        {
+            var searching = Query.Length > 0;
+            if (searching && !_searching) _browseSelected = _selected;
+            else if (!searching && _searching) _selected = _browseSelected;
+            _searching = searching;
+            CancelSearch();
+            _searchResults = null;
+            RenderRows();
+            if (_active && Query.Length > 0) _searchTimer.Start();
+        };
         var search = new Grid { Margin = new Thickness(8, 0, 8, 8) };
         search.Children.Add(_filter);
         var searchIcon = HubActionIcon.Create("Hub.Icon.Search");
@@ -68,6 +87,17 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         searchIcon.VerticalAlignment = VerticalAlignment.Center;
         searchIcon.Margin = new Thickness(8, 0, 0, 0);
         search.Children.Add(searchIcon);
+        var clear = ActionButton("ClearSearch", "Hub.Icon.Close");
+        clear.Name = "WorkspaceClearFileSearch";
+        clear.Width = clear.Height = 24;
+        clear.Padding = default;
+        clear.IsVisible = false;
+        clear.HorizontalAlignment = HorizontalAlignment.Right;
+        clear.VerticalAlignment = VerticalAlignment.Center;
+        clear.Margin = new Thickness(0, 0, 3, 0);
+        clear.Click += (_, _) => { _filter.Text = ""; FocusFilter(); };
+        _filter.TextChanged += (_, _) => clear.IsVisible = !string.IsNullOrEmpty(_filter.Text);
+        search.Children.Add(clear);
         Grid.SetRow(search, 1);
         Children.Add(search);
         var scroll = new ScrollViewer
@@ -102,6 +132,7 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         {
             ++_generation;
             _refreshTimer.Stop();
+            CancelSearch();
             StopWatchers();
         }
     }
@@ -111,7 +142,7 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     internal void Reveal(string path)
     {
         _selected = path;
-        if (_root is { Length: > 0 })
+        if (!_searching && _root is { Length: > 0 })
         {
             var relative = Path.GetRelativePath(_root, path);
             if (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
@@ -125,12 +156,15 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
             }
         }
         RenderRows();
-        if (_active) _ = RefreshAsync();
+        if (_active && !_searching) _ = RefreshAsync();
     }
 
     internal async Task RefreshAsync()
     {
         if (!_active) return;
+        CancelSearch();
+        _searchResults = null;
+        if (Query.Length > 0) RenderRows();
         var generation = ++_generation;
         var expanded = _expanded.ToHashSet(WorkspacePathComparer);
         var scope = _scopeFor();
@@ -158,6 +192,36 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         foreach (var listing in listings) _directories.Add(listing.Key, listing.Value);
         RenderRows();
         SyncWatchers(listings.Where(item => item.Value.Error is null).Select(item => item.Key));
+        if (Query.Length > 0) await SearchAsync();
+    }
+
+    private void CancelSearch()
+    {
+        _searchTimer.Stop();
+        _searchCancellation?.Cancel();
+        _searchCancellation = null;
+    }
+
+    private async Task SearchAsync()
+    {
+        CancelSearch();
+        if (!_active || _root is not { Length: > 0 } || Query.Length == 0) return;
+        var query = Query;
+        var scope = _scopeFor();
+        using var cancellation = new CancellationTokenSource();
+        _searchCancellation = cancellation;
+        try
+        {
+            var results = await Task.Run(() => WorkspaceDirectoryReader.Search(scope, _root, query, cancellation.Token));
+            if (!_active || _searchCancellation != cancellation || Query != query) return;
+            _searchResults = results;
+            RenderRows();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        finally
+        {
+            if (_searchCancellation == cancellation) _searchCancellation = null;
+        }
     }
 
     private void SyncWatchers(IEnumerable<string> directories)
@@ -204,6 +268,15 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     {
         _rows.Children.Clear();
         if (_root is not { Length: > 0 }) { Notice("WorkspaceNoRoot"); return; }
+        if (Query.Length > 0)
+        {
+            if (_searchResults is null) { Notice("WorkspaceSearchingFiles"); return; }
+            if (_searchResults.Error is { } error) { AddError(error, 0); return; }
+            foreach (var entry in _searchResults.Entries) AddEntry(entry, 0);
+            if (_rows.Children.Count == 0) Notice("WorkspaceNoFileMatches");
+            else if (_searchResults.Truncated) AddNotice("WorkspaceFileSearchLimit");
+            return;
+        }
         if (!_directories.ContainsKey(_root)) return;
         AddDirectory(_root, 0);
         if (_rows.Children.Count == 0) Notice("WorkspaceNoFiles");
@@ -212,71 +285,138 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     private void AddDirectory(string directory, int depth)
     {
         if (!_directories.TryGetValue(directory, out var listing)) return;
-        if (listing.Error is { } error)
-        {
-            _rows.Children.Add(new TextBlock { Text = HubStrings.Get("WorkspaceFilesUnavailable") + error,
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap, Margin = new Thickness(8 + depth * 14, 4, 8, 4) });
-            return;
-        }
-        var filter = _filter.Text?.Trim() ?? "";
+        if (listing.Error is { } error) { AddError(error, depth); return; }
         foreach (var entry in listing.Entries)
         {
-            if (!entry.IsDirectory && filter.Length > 0 && !entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("18,*"), ClipToBounds = true };
-            if (entry.IsDirectory)
-            {
-                // Reuse the sidebar group's geometry, reduced to an eight-unit arrow. Matching its aspect
-                // ratio keeps the ink centered before rotation rather than stretching it into a square.
-                var arrow = new Avalonia.Controls.Shapes.Path
-                {
-                    Width = 40.0 / 7, Height = 8, Stretch = Stretch.Uniform,
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                    RenderTransform = new RotateTransform(_expanded.Contains(entry.Path) ? 90 : 0),
-                    RenderTransformOrigin = RelativePoint.Center, IsHitTestVisible = false,
-                };
-                arrow.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension("Hub.Icon.ChevronRight"));
-                arrow.Bind(Avalonia.Controls.Shapes.Path.FillProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-                row.Children.Add(arrow);
-            }
-            var label = new TextBlock
-            {
-                Text = entry.Name, VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            Grid.SetColumn(label, 1);
-            row.Children.Add(label);
-            var button = new Button
-            {
-                Content = row, HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Padding = new Thickness(6 + depth * 14, 4, 6, 4), Classes = { "workspace-file-row" },
-            };
-            button.Classes.Set("selected", WorkspacePathComparer.Equals(_selected, entry.Path));
-            ToolTip.SetTip(button, entry.Path);
-            button.Click += (_, _) =>
-            {
-                if (entry.IsDirectory)
-                {
-                    if (!_expanded.Add(entry.Path)) _expanded.Remove(entry.Path);
-                    _ = RefreshAsync();
-                }
-                else
-                {
-                    _selected = entry.Path;
-                    RenderRows();
-                    FileRequested?.Invoke(entry.Path);
-                }
-            };
-            _rows.Children.Add(button);
+            AddEntry(entry, depth);
             if (entry.IsDirectory && _expanded.Contains(entry.Path)) AddDirectory(entry.Path, depth + 1);
         }
+    }
+
+    private void AddError(string error, int depth)
+    {
+        _rows.Children.Add(new TextBlock { Text = HubStrings.Get("WorkspaceFilesUnavailable") + error,
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8 + depth * 14, 4, 8, 4) });
+    }
+
+    private void AddEntry(WorkspaceDirectoryEntry entry, int depth)
+    {
+        var searching = Query.Length > 0;
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions(searching ? "22,Auto,*" : "18,*"), ClipToBounds = true };
+        if (entry.IsDirectory)
+        {
+            // Match the arrow's aspect ratio so stretching does not pin spare ink to the slot's top-left.
+            var arrow = new Avalonia.Controls.Shapes.Path
+            {
+                Width = 40.0 / 7, Height = 8, Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                RenderTransform = new RotateTransform(_expanded.Contains(entry.Path) ? 90 : 0),
+                RenderTransformOrigin = RelativePoint.Center, IsHitTestVisible = false,
+            };
+            arrow.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension("Hub.Icon.ChevronRight"));
+            arrow.Bind(Avalonia.Controls.Shapes.Path.FillProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            row.Children.Add(arrow);
+        }
+        else if (searching) row.Children.Add(FileTypeIcon(entry.Name));
+        var label = new TextBlock
+        {
+            Text = entry.Name, VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+        if (searching)
+        {
+            label.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextPrimary"));
+            var directory = Path.GetDirectoryName(Path.GetRelativePath(_root!, entry.Path)) ?? "";
+            var location = new TextBlock
+            {
+                Text = directory.Replace('\\', '/'), Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            location.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            Grid.SetColumn(location, 2);
+            row.Children.Add(location);
+            // A short basename gets its natural width; a long one yields a small, bounded slot to its directory.
+            row.SizeChanged += (_, _) =>
+            {
+                var width = Math.Max(0, row.Bounds.Width - 22);
+                var maximum = directory.Length == 0 ? width : width * 0.72;
+                if (Math.Abs(label.MaxWidth - maximum) > 0.1) label.MaxWidth = maximum;
+            };
+        }
+        var button = new Button
+        {
+            Content = row, HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(searching ? 8 : 6 + depth * 14, searching ? 5 : 4, 6, searching ? 5 : 4),
+            Margin = searching ? new Thickness(4, 0) : default,
+            CornerRadius = new CornerRadius(6), Classes = { "workspace-file-row" },
+        };
+        button.Classes.Set("selected", WorkspacePathComparer.Equals(_selected, entry.Path));
+        ToolTip.SetTip(button, entry.Path);
+        button.Click += (_, _) =>
+        {
+            if (entry.IsDirectory)
+            {
+                if (!_expanded.Add(entry.Path)) _expanded.Remove(entry.Path);
+                _ = RefreshAsync();
+            }
+            else
+            {
+                _selected = entry.Path;
+                RenderRows();
+                FileRequested?.Invoke(entry.Path);
+            }
+        };
+        _rows.Children.Add(button);
+    }
+
+    private static Control FileTypeIcon(string name)
+    {
+        var caption = Path.GetExtension(name).ToLowerInvariant() switch
+        {
+            ".cs" => "C#", ".cpp" or ".cc" or ".cxx" or ".hpp" or ".hxx" => "C+",
+            ".c" or ".h" => "C", ".js" or ".jsx" => "JS", ".ts" or ".tsx" => "TS",
+            ".py" => "Py", ".lua" => "Lu", ".json" => "{}", ".sh" or ".ps1" => ">_",
+            _ => null,
+        };
+        Control icon;
+        if (caption is not null)
+        {
+            var code = new TextBlock { Text = caption, FontSize = 10, FontWeight = FontWeight.SemiBold };
+            code.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.Accent"));
+            icon = code;
+        }
+        else
+        {
+            var document = new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse("M0 0H6L10 4V13H0Z M6 0V4H10 M2 7H8 M2 10H8"),
+                Width = 10, Height = 13, Stretch = Stretch.None,
+                StrokeThickness = 1, StrokeJoin = PenLineJoin.Round,
+            };
+            document.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            icon = document;
+        }
+        icon.HorizontalAlignment = HorizontalAlignment.Center;
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        icon.IsHitTestVisible = false;
+        return new Grid { Width = 18, Height = 16, VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false, Children = { icon } };
     }
 
     private void Notice(string key)
     {
         _rows.Children.Clear();
-        var text = new TextBlock { Margin = new Thickness(8), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        AddNotice(key);
+    }
+
+    private void AddNotice(string key)
+    {
+        var text = new TextBlock { Margin = new Thickness(8), TextWrapping = TextWrapping.Wrap, FontSize = 12 };
         text.Bind(TextBlock.TextProperty, new DynamicResourceExtension(key));
+        text.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
         _rows.Children.Add(text);
     }
 

@@ -488,9 +488,12 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="12" />
     </Style>
-    <Style Selector="Button.workspace-file-row.selected">
+    <Style Selector="Button.workspace-file-row.selected, Button.workspace-file-row:pointerover, Button.workspace-file-row:focus-visible">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.workspace-file-row:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style Selector="Button.workspace-entry">
       <Setter Property="Background" Value="Transparent" />
