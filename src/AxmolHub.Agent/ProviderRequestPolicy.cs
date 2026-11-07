@@ -66,14 +66,14 @@ public sealed class ProviderRequestPolicy(
     }
 
     /// <summary>
-    /// The headers one request should carry: the declared ones first, then the ones that describe the body about
-    /// to go out. Pure — no pipeline, no request object — because there are now two shells that need exactly this
+    /// The headers one request should carry: the effective static headers first, then the ones that describe the
+    /// body about to go out. Pure — no pipeline, no request object — because there are now two shells that need exactly this
     /// answer and a rule kept in two shells is the drift this repository keeps having to undo.
     /// </summary>
     public static IEnumerable<(string Name, string Value)> Headers(
         IReadOnlyDictionary<string, string> statics, string? semantics, string? interactionId, string? bodyJson)
     {
-        foreach (var (name, value) in ProviderStaticHeaders.Of(statics)) yield return (name, value);
+        foreach (var (name, value) in ProviderStaticHeaders.Effective(statics)) yield return (name, value);
 
         // No family semantics declared: the static headers above are the whole job. Every provider shipping
         // today lands here, so this path must stay free of a JSON round trip.

@@ -39,7 +39,7 @@ internal static class OutboundFetch
         var client = injected ?? owned!;
 
         using var message = new HttpRequestMessage(HttpMethod.Get, request.Target);
-        message.Headers.UserAgent.ParseAdd(UserAgent);
+        message.Headers.UserAgent.ParseAdd(AxmolHubUserAgent.Value);
         message.Headers.Accept.ParseAdd(
             "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.8,application/xml;q=0.7,*/*;q=0.1");
 
@@ -110,10 +110,4 @@ internal static class OutboundFetch
         })
         { Timeout = WebFetch.Timeout + TimeSpan.FromSeconds(5) };
 
-    /// <summary>Honest, versioned, and not pretending to be a browser. A page that refuses Hub for it gets a
-    /// refusal in the result, which is better than the alternative: spoofing a desktop UA to get past a bot check
-    /// the user never agreed to.</summary>
-    private static string UserAgent { get; } =
-        $"AxmolHub/{typeof(OutboundFetch).Assembly.GetName().Version?.ToString(3) ?? "0.0.0"} "
-        + "(desktop AI assistant; +https://axmol.dev/hub)";
 }

@@ -39,8 +39,22 @@ public static class ProviderStaticHeaders
                 yield return (name, value);
     }
 
+    /// <summary>The headers a provider request carries. An explicitly declared <c>user-agent</c> wins; otherwise
+    /// Hub identifies itself with its stable major/minor product version.</summary>
+    public static IEnumerable<(string Name, string Value)> Effective(IReadOnlyDictionary<string, string>? headers)
+    {
+        var hasUserAgent = false;
+        foreach (var (name, value) in Of(headers))
+        {
+            if (name.Equals("user-agent", StringComparison.OrdinalIgnoreCase)) hasUserAgent = true;
+            yield return (name, value);
+        }
+
+        if (!hasUserAgent) yield return ("user-agent", AxmolHubUserAgent.Value);
+    }
+
     /// <summary>
-    /// Writes them onto a request Hub assembles itself.
+    /// Writes the effective provider headers onto a request Hub assembles itself.
     ///
     /// <para>Remove-then-add rather than add outright: <see cref="HttpRequestHeaders"/> has no setter,
     /// <c>TryAddWithoutValidation</c> appends a second value to a name already present, and a gateway that asked
@@ -50,7 +64,7 @@ public static class ProviderStaticHeaders
     /// </summary>
     public static void ApplyTo(HttpRequestMessage request, IReadOnlyDictionary<string, string>? headers)
     {
-        foreach (var (name, value) in Of(headers))
+        foreach (var (name, value) in Effective(headers))
         {
             request.Headers.Remove(name);
             request.Headers.TryAddWithoutValidation(name, value);

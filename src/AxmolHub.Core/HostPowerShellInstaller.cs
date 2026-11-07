@@ -317,7 +317,7 @@ public sealed class HostPowerShellInstaller(HttpClient http, ProcessRunner runne
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases/latest");
         // api.github.com answers 403 to every request without a User-Agent.
-        request.Headers.UserAgent.ParseAdd("AxmolHub/1");
+        request.Headers.UserAgent.ParseAdd(AxmolHubUserAgent.Value);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         try
@@ -338,7 +338,7 @@ public sealed class HostPowerShellInstaller(HttpClient http, ProcessRunner runne
     private static async Task<(byte[]? Bytes, IReadOnlyList<string> Problems)> FetchBytesAsync(HttpClient client, string url, CancellationToken cancellation)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("AxmolHub/1");
+        request.Headers.UserAgent.ParseAdd(AxmolHubUserAgent.Value);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try

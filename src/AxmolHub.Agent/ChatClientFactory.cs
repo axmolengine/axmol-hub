@@ -159,12 +159,11 @@ public static class ChatClientFactory
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.
         var credential = new ApiKeyCredential(provider.ApiKey ?? "not-needed");
-        // Built only for a provider that asked for it: an ordinary OpenAI-compatible endpoint must not start
-        // carrying headers from a different family.
+        // Every provider request gets the stable Hub User-Agent. Provider-specific headers still flow through the
+        // same policy, so an explicitly configured provider User-Agent replaces Hub's default rather than being
+        // appended to it.
         var providerHeaders = provider.Headers;
-        var headers = providerHeaders.Count > 0 || provider.RequestSemantics is { Length: > 0 }
-            ? new ProviderRequestPolicy(providerHeaders, provider.RequestSemantics, interactionId)
-            : null;
+        var headers = new ProviderRequestPolicy(providerHeaders, provider.RequestSemantics, interactionId);
 
         if (ProtocolFor(provider, model) == Core.ModelProtocols.Responses)
         {
