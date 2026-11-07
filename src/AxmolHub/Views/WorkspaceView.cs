@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Threading;
@@ -19,8 +20,9 @@ internal sealed class WorkspaceView : Grid, IDisposable
         internal Control Content { get; } = content;
         internal Func<bool> Dirty { get; } = dirty;
     }
-    private sealed class State(WorkspaceFileTree tree)
+    private sealed class State(string? root, WorkspaceFileTree tree)
     {
+        internal string? Root { get; } = root;
         internal WorkspaceFileTree Tree { get; } = tree;
         internal List<Document> Documents { get; } = [];
         internal HashSet<string> Tools { get; } = ["plan", "repo"];
@@ -142,7 +144,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         {
             State? created = null;
             var tree = new WorkspaceFileTree(root, () => created!.ScopeFor());
-            created = new State(tree) { ScopeFor = scopeFor };
+            created = new State(root, tree) { ScopeFor = scopeFor };
             tree.CloseRequested += HideFiles;
             tree.FileRequested += path => FileRequested?.Invoke(path);
             _states[key] = state = created;
@@ -352,6 +354,11 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var menu = new ContextMenu();
         if (editor is not null) editor.AddFileReveal(menu);
         else if (id == "plan") FileRevealMenu.Add(menu, _owner, () => _inspector.PlanFilePathFor?.Invoke());
+        if (state.Documents.Any(document => document.Path == id))
+        {
+            AddPathCopy(relative: false);
+            AddPathCopy(relative: true);
+        }
         if (menu.Items.Count > 0) menu.Items.Add(new Separator());
         foreach (var (scope, tag, caption) in new[]
                  {
@@ -369,6 +376,34 @@ internal sealed class WorkspaceView : Grid, IDisposable
                 && CloseTargets(state, id, scope).Length > 0;
         }
         return menu;
+
+        void AddPathCopy(bool relative)
+        {
+            string? PathFor()
+            {
+                if (!relative) return id;
+                if (state.Root is not { Length: > 0 } root) return null;
+                var path = Path.GetRelativePath(root, id);
+                return Path.IsPathRooted(path) ? null : path;
+            }
+            var item = new MenuItem { Tag = relative ? "copyRelativePath" : "copyPath" };
+            item.Bind(HeaderedSelectingItemsControl.HeaderProperty,
+                new DynamicResourceExtension(relative ? "WorkspaceCopyRelativePath" : "WorkspaceCopyPath"));
+            menu.Opened += (_, _) =>
+            {
+                var path = PathFor();
+                item.IsEnabled = path is not null && _owner.Clipboard is not null;
+                ToolTip.SetTip(item, path);
+            };
+            item.Click += async (_, _) =>
+            {
+                if (PathFor() is not { } path || _owner.Clipboard is not { } clipboard) return;
+                var data = new DataTransfer();
+                data.Add(DataTransferItem.Create(DataFormat.Text, path));
+                await clipboard.SetDataAsync(data);
+            };
+            menu.Items.Add(item);
+        }
     }
 
     private static string[] CloseTargets(State state, string id, TabCloseScope scope)

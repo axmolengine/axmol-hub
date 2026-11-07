@@ -55,6 +55,8 @@ public static class HubTexts
         ["WorkspaceCloseFiles"] = ("关闭文件树", "Close file tree"),
         ["WorkspaceAddTab"] = ("打开工作区面板", "Open workspace panel"),
         ["WorkspaceMoreTabs"] = ("更多标签页", "More tabs"),
+        ["WorkspaceCopyPath"] = ("复制路径", "Copy Path"),
+        ["WorkspaceCopyRelativePath"] = ("复制相对路径", "Copy Relative Path"),
         ["WorkspaceCloseTab"] = ("关闭页签", "Close tab"),
         ["WorkspaceCloseAllTabs"] = ("关闭全部页签", "Close all tabs"),
         ["WorkspaceCloseOtherTabs"] = ("关闭其他页签", "Close other tabs"),
