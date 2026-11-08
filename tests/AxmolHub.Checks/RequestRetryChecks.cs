@@ -21,7 +21,8 @@ internal static class RequestRetryChecks
             1 => [Error()],
             2 => [Call("discarded"), Error()],
             3 => [Call("valid")],
-            4 => [Error()],
+            4 => throw new AggregateException(new HttpIOException(HttpRequestError.ResponseEnded,
+                "The response ended prematurely. (ResponseEnded)")),
             _ => [new(ChatRole.Assistant, "done")],
         });
         var answer = new StringBuilder();
@@ -61,6 +62,24 @@ internal static class RequestRetryChecks
         await Drain(interrupted, retry);
         if (interrupted.Requests != 2 || !waits.SequenceEqual([TimeSpan.FromSeconds(5)]))
             throw new Exception("An upstream stream interruption did not recover with backoff.");
+
+        var ended = new HttpIOException(HttpRequestError.ResponseEnded, "The response ended prematurely. (ResponseEnded)");
+        foreach (var failure in new Exception[] { ended, new AggregateException(new AggregateException(ended)) })
+        {
+            waits.Clear();
+            var disconnected = new SequenceClient(n => n == 1 ? throw failure : [new(ChatRole.Assistant, "recovered")]);
+            await Drain(disconnected, retry);
+            if (disconnected.Requests != 2 || !waits.SequenceEqual([TimeSpan.FromSeconds(5)]))
+                throw new Exception("A direct or aggregated transport interruption did not recover with backoff.");
+        }
+        foreach (var permanent in new Exception[] { new OperationCanceledException(), new InvalidOperationException("local bug"),
+            new ProviderResponseException("quota exhausted", "insufficient_quota"),
+            new HttpRequestException("unauthorized", null, HttpStatusCode.Unauthorized),
+            new RequestRetryException(ended, 2, TimeSpan.Zero, partial: true) })
+            if (ProviderFailure.Recoverable(new AggregateException(ended, permanent)))
+                throw new Exception("A mixed aggregate hid a non-retryable failure.");
+        if (ProviderFailure.Recoverable(new AggregateException()))
+            throw new Exception("An empty aggregate was treated as a transport failure.");
 
         IReadOnlyList<ChatTurn> summaryHistory = [ChatTurn.User("summarize this history"),
             ChatTurn.FunctionCall("prior", "probe", "{}", reasoning: "original reasoning"),

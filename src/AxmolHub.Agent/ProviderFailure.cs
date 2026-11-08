@@ -62,6 +62,10 @@ public static class ProviderFailure
 
     public static bool Recoverable(Exception exception)
     {
+        // Streaming SDKs can aggregate transport failures. Every cause must be safe to retry;
+        // inspecting only InnerException could hide cancellation or a permanent sibling failure.
+        if (exception is AggregateException aggregate)
+            return aggregate.InnerExceptions.Count > 0 && aggregate.InnerExceptions.All(Recoverable);
         if (exception is OperationCanceledException or RequestRetryException
             || AuthenticationFailed(exception) || QuotaExhausted(exception.Message)
             || exception is ProviderResponseException coded && QuotaExhausted(coded.ErrorCode)
