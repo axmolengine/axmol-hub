@@ -183,53 +183,6 @@
           <Border Grid.Row="1" BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,1,0,0">
             <ScrollViewer x:Name="OverlayScrollViewer" VerticalScrollBarVisibility="Auto">
               <Grid x:Name="OverlayContent" Margin="24,20">
-                <StackPanel x:Name="CreatePanel" Spacing="14" IsVisible="False">
-                  <TextBlock x:Name="TemplateLabel" Text="{DynamicResource Template}" Classes="muted" />
-                  <StackPanel Spacing="12">
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{DynamicResource ProjectName}" />
-                      <TextBox x:Name="ProjectNameBox" Text="HelloAxmol" />
-                    </StackPanel>
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{DynamicResource Location}" />
-                      <DockPanel>
-                        <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
-                                DockPanel.Dock="Right" Margin="6,0,0,0" Classes="compact more" />
-                        <TextBox x:Name="ProjectLocationBox" Margin="0" />
-                      </DockPanel>
-                    </StackPanel>
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{DynamicResource EngineVersion}" />
-                      <ComboBox x:Name="ProjectEnginePicker" />
-                    </StackPanel>
-                  </StackPanel>
-                  <StackPanel Spacing="7">
-                    <TextBlock Text="{DynamicResource ProjectLanguage}" />
-                    <ComboBox x:Name="ProjectLanguagePicker" />
-                    <TextBlock Text="{DynamicResource ProjectLanguageHint}" Classes="muted" TextWrapping="Wrap" />
-                  </StackPanel>
-                  <StackPanel x:Name="CameraModePanel" Spacing="7" IsVisible="False">
-                    <TextBlock Text="{DynamicResource CameraMode}" />
-                    <ComboBox x:Name="CameraModePicker" />
-                  </StackPanel>
-                  <StackPanel Spacing="7">
-                    <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
-                    <TextBlock x:Name="PrebuiltHint" Classes="muted" TextWrapping="Wrap" />
-                  </StackPanel>
-                  <CheckBox x:Name="PortraitCheck" Content="{DynamicResource CreatePortrait}" />
-                  <Expander x:Name="CreateAdvancedExpander" Header="{DynamicResource CreateAdvanced}" IsExpanded="False">
-                    <StackPanel Spacing="8" Margin="0,8,0,0">
-                      <CheckBox x:Name="IsolatedCheck" Content="{DynamicResource CreateIsolated}" />
-                      <TextBlock Text="{DynamicResource CreateIsolatedHint}" Classes="muted" TextWrapping="Wrap" />
-                      <CheckBox x:Name="RepairCheck" Content="{DynamicResource CreateRepair}" />
-                      <TextBlock Text="{DynamicResource CreateRepairHint}" Classes="muted" TextWrapping="Wrap" />
-                      <CheckBox x:Name="ForceOverwriteCheck" Content="{DynamicResource CreateForceOverwrite}" IsEnabled="False" />
-                      <TextBlock Text="{DynamicResource CreateForceOverwriteHint}" Classes="muted" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Expander>
-                  <TextBlock Text="{DynamicResource BuildPlatformHint}" Classes="muted" TextWrapping="Wrap" />
-                  <TextBlock x:Name="CreateStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
-                </StackPanel>
                 <StackPanel x:Name="TrashConfirmPanel" Spacing="12" IsVisible="False">
                   <TextBlock x:Name="TrashConfirmMessage" TextWrapping="Wrap" />
                   <TextBlock x:Name="TrashProjectName" FontWeight="SemiBold" TextWrapping="Wrap" />

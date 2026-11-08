@@ -1,0 +1,66 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AxmolHub.NewProjectDialog"
+        Width="760" Height="720" MinWidth="480" MinHeight="400"
+        CanResize="True" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        Title="New project">
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <ContentControl x:Name="ChromeHost" Grid.Row="0" />
+    <TextBlock Grid.Row="1" Text="{DynamicResource NewProject}" FontSize="20" FontWeight="SemiBold"
+               Margin="24,18,24,0" />
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="24,20" Spacing="14">
+        <TextBlock x:Name="TemplateLabel" Text="{DynamicResource Template}" Classes="muted" />
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource ProjectName}" />
+            <TextBox x:Name="ProjectNameBox" Text="HelloAxmol" />
+          </StackPanel>
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource Location}" />
+            <DockPanel>
+              <Button x:Name="BrowseLocationButton" Content="{DynamicResource Browse}"
+                      DockPanel.Dock="Right" Margin="6,0,0,0" Classes="compact more" />
+              <TextBox x:Name="ProjectLocationBox" Margin="0" />
+            </DockPanel>
+          </StackPanel>
+          <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource EngineVersion}" />
+            <ComboBox x:Name="ProjectEnginePicker" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Spacing="7">
+          <TextBlock Text="{DynamicResource ProjectLanguage}" />
+          <ComboBox x:Name="ProjectLanguagePicker" />
+          <TextBlock Text="{DynamicResource ProjectLanguageHint}" Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel x:Name="CameraModePanel" Spacing="7" IsVisible="False">
+          <TextBlock Text="{DynamicResource CameraMode}" />
+          <ComboBox x:Name="CameraModePicker" />
+        </StackPanel>
+        <StackPanel Spacing="7">
+          <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
+          <TextBlock x:Name="PrebuiltHint" Classes="muted" TextWrapping="Wrap" />
+        </StackPanel>
+        <CheckBox x:Name="PortraitCheck" Content="{DynamicResource CreatePortrait}" />
+        <Expander x:Name="CreateAdvancedExpander" Header="{DynamicResource CreateAdvanced}" IsExpanded="False">
+          <StackPanel Spacing="8" Margin="0,8,0,0">
+            <CheckBox x:Name="IsolatedCheck" Content="{DynamicResource CreateIsolated}" />
+            <TextBlock Text="{DynamicResource CreateIsolatedHint}" Classes="muted" TextWrapping="Wrap" />
+            <CheckBox x:Name="RepairCheck" Content="{DynamicResource CreateRepair}" />
+            <TextBlock Text="{DynamicResource CreateRepairHint}" Classes="muted" TextWrapping="Wrap" />
+            <CheckBox x:Name="ForceOverwriteCheck" Content="{DynamicResource CreateForceOverwrite}" IsEnabled="False" />
+            <TextBlock Text="{DynamicResource CreateForceOverwriteHint}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Expander>
+        <TextBlock Text="{DynamicResource BuildPlatformHint}" Classes="muted" TextWrapping="Wrap" />
+        <TextBlock x:Name="CreateStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
+      </StackPanel>
+    </ScrollViewer>
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"
+                Margin="16,12,20,16" Spacing="8">
+      <Button x:Name="CancelButton" Content="{DynamicResource Cancel}" Classes="compact quiet" Margin="0" />
+      <Button x:Name="CreateButton" Content="{DynamicResource Create}" Classes="compact primary" Margin="0" />
+    </StackPanel>
+  </Grid>
+</Window>

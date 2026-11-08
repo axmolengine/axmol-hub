@@ -608,11 +608,13 @@ internal sealed class ShellLayoutChecks
         projects.SyncColumnsForCheck();
         Check(projects.GridForCheck.Columns[5].IsVisible == (projects.GridForCheck.Bounds.Width < 840), "项目列表窄于 840px 时切换到含全部元数据的紧凑布局");
         projects.NewProjectForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        projects.ProjectNameForCheck.Text = "Draft retained on close";
-        projects.CloseOverlayForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        projects.CreateDialogForCheck!.ProjectNameForCheck.Text = "Draft retained on close";
+        projects.CreateDialogForCheck.CloseForCheck();
+        Dispatcher.UIThread.RunJobs();
         projects.NewProjectForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Check(projects.OverlayVisibleForCheck && projects.ProjectNameForCheck.Text == "Draft retained on close", "关闭并重新打开新建覆盖层会保留草稿");
-        projects.CancelOverlayForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(projects.CreateDialogForCheck is { IsVisible: true } dialog && dialog.ProjectNameForCheck.Text == "Draft retained on close", "关闭并重新打开新建窗口会保留草稿");
+        projects.CreateDialogForCheck!.CancelForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
         Directory.CreateDirectory(projectA.Path);
         projects.ShowTrashConfirmationForCheck(projectA);
         projects.UpdateLayout();

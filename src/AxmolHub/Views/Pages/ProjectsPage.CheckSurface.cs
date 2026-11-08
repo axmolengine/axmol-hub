@@ -13,7 +13,7 @@ public partial class ProjectsPage : UserControl
     internal Button NewProjectForCheck => NewProjectButton;
     internal Button CloseOverlayForCheck => OverlayCloseButton;
     internal Button CancelOverlayForCheck => OverlayCancelButton;
-    internal TextBox ProjectNameForCheck => ProjectNameBox;
+    internal NewProjectDialog? CreateDialogForCheck => _createDialog;
     internal TextBlock TrashNameForCheck => TrashProjectName;
     internal TextBlock TrashPathForCheck => TrashProjectPath;
 

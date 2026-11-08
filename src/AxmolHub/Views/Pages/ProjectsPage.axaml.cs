@@ -45,7 +45,9 @@ public partial class ProjectsPage : UserControl
     private int _sortMode;
     private ProjectEntry? _pendingTrash;
     private string _overlayMode = "";
-    private bool _creating;
+    private NewProjectDialog? _createDialog;
+    private string _draftName = "HelloAxmol";
+    private string _draftLocation = "";
 
     public ProjectsPage() { _workspace = null!; InitializeComponent(); }
 
@@ -88,51 +90,8 @@ public partial class ProjectsPage : UserControl
         AddHandler(InputElement.KeyDownEvent, OnOverlayKeyDown, RoutingStrategies.Tunnel);
         OpenExistingButton.Click += OnOpenExisting;
         NewProjectButton.Click += OnNewProject;
-        BrowseLocationButton.Click += async (_, _) =>
-        {
-            var folder = await PickFolderAsync(HubStrings.Get("Select parent location"));
-            if (folder is not null) ProjectLocationBox.Text = folder;
-        };
-        ProjectLanguagePicker.ItemsSource = new[]
-        {
-            new ProjectFilterChoice(HubStrings.Get("cpp"), "cpp"),
-            new ProjectFilterChoice(HubStrings.Get("lua"), "lua"),
-        };
-        ProjectLanguagePicker.SelectedIndex = 0;
-        CameraModePicker.ItemsSource = new[]
-        {
-            new ProjectFilterChoice("classic", "classic"),
-            new ProjectFilterChoice("2d", "2d"),
-            new ProjectFilterChoice("3d", "3d"),
-        };
-        CameraModePicker.SelectedIndex = 0;
-        CameraModePicker.SelectionChanged += (_, _) => UpdateTemplateLabel();
-        ProjectEnginePicker.SelectionChanged += (_, _) =>
-        {
-            RefreshPrebuiltChoice();
-            RefreshCameraModeChoice();
-        };
-        ProjectLanguagePicker.SelectionChanged += (_, _) => RefreshCameraModeChoice();
-        CreateAdvancedExpander.PropertyChanged += (_, e) =>
-        {
-            if (e.Property != Expander.IsExpandedProperty || CreateAdvancedExpander.IsExpanded) return;
-            IsolatedCheck.IsChecked = false;
-            RepairCheck.IsChecked = false;
-            ForceOverwriteCheck.IsChecked = false;
-        };
-        RepairCheck.IsCheckedChanged += (_, _) =>
-        {
-            ForceOverwriteCheck.IsEnabled = RepairCheck.IsChecked == true;
-            if (!ForceOverwriteCheck.IsEnabled) ForceOverwriteCheck.IsChecked = false;
-            RefreshPrebuiltChoice();
-        };
         Reload();
         _ready = true;
-    }
-
-    private sealed record ProjectEngineChoice(EngineEntry Engine, string Label)
-    {
-        public override string ToString() => Label;
     }
 
     private async void OnOpenExisting(object? sender, RoutedEventArgs e)
@@ -146,27 +105,33 @@ public partial class ProjectsPage : UserControl
         Reload();
     }
 
-    private void OnNewProject(object? sender, RoutedEventArgs e)
+    private async void OnNewProject(object? sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(ProjectLocationBox.Text)) ProjectLocationBox.Text = _workspace.ProjectDirectory;
-        PortraitCheck.IsChecked = false;
-        CreateAdvancedExpander.IsExpanded = false;
-        IsolatedCheck.IsChecked = false;
-        RepairCheck.IsChecked = false;
-        ForceOverwriteCheck.IsChecked = false;
-        CreateStatus.IsVisible = false;
-        _overlayMode = "create";
-        _pendingTrash = null;
-        CreatePanel.IsVisible = true;
-        TrashConfirmPanel.IsVisible = false;
-        OverlayTitle.Text = HubStrings.Get("NewProject");
-        OverlayPrimaryButton.Content = HubStrings.Get("Create");
-        OverlayPrimaryButton.Classes.Remove("danger");
-        OverlayPrimaryButton.IsEnabled = true;
-        OverlayCancelButton.IsEnabled = true;
-        ProjectOverlay.IsVisible = true;
-        SyncOverlaySize();
-        ProjectNameBox.Focus();
+        if (_createDialog is not null || TopLevel.GetTopLevel(this) is not Window owner) return;
+        var dialog = new NewProjectDialog(_workspace, _draftName, _draftLocation);
+        _createDialog = dialog;
+        dialog.FitToScreen(owner);
+        try
+        {
+            await dialog.ShowDialog(owner);
+            if (dialog.CreatedProject is { } created)
+            {
+                _draftName = "HelloAxmol";
+                _draftLocation = _workspace.ProjectDirectory;
+                ClearSearchAndFilters();
+                _workspace.SelectedProject = created;
+                Reload();
+            }
+            else
+            {
+                _draftName = dialog.DraftName;
+                _draftLocation = dialog.DraftLocation;
+            }
+        }
+        finally
+        {
+            _createDialog = null;
+        }
     }
 
     private async void OnOpenProject(object? sender, RoutedEventArgs e)
@@ -295,7 +260,6 @@ public partial class ProjectsPage : UserControl
         catch (Exception ex) { _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("MoveProjectToTrash"), ex.Message); return; }
         _pendingTrash = project;
         _overlayMode = "trash";
-        CreatePanel.IsVisible = false;
         TrashConfirmPanel.IsVisible = true;
         OverlayTitle.Text = HubStrings.Get("MoveProjectToTrash");
         TrashConfirmMessage.Text = HubStrings.Get("MoveProjectToTrashPrompt");
@@ -312,54 +276,6 @@ public partial class ProjectsPage : UserControl
 
     private async void OnOverlayPrimary(object? sender, RoutedEventArgs e)
     {
-        if (_overlayMode == "create")
-        {
-            if (_creating || _workspace.RefuseIfBusy()) return;
-            var advanced = CreateAdvancedExpander.IsExpanded;
-            var repair = advanced && RepairCheck.IsChecked == true;
-            var forceOverwrite = repair && ForceOverwriteCheck.IsChecked == true;
-            var name = (ProjectNameBox.Text ?? "").Trim();
-            if (forceOverwrite && await HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window,
-                    HubStrings.Get("CreateForceOverwrite"), string.Format(HubStrings.Get("CreateForceOverwritePrompt"), name),
-                    HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok) return;
-            if (_workspace.RefuseIfBusy()) return;
-            var projectType = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "cpp";
-            var cameraMode = CameraModePanel.IsVisible
-                ? (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "classic"
-                : null;
-            _creating = true;
-            OverlayPrimaryButton.IsEnabled = false;
-            OverlayCloseButton.IsEnabled = false;
-            CreateStatus.Text = HubStrings.Get("CreateRunning");
-            CreateStatus.IsVisible = true;
-            ProjectEntry? created;
-            try
-            {
-                created = await _workspace.CreateProjectAsync(name, ProjectLocationBox.Text ?? "",
-                    ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
-                    projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
-                    PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite);
-            }
-            finally
-            {
-                _creating = false;
-                OverlayPrimaryButton.IsEnabled = true;
-                OverlayCloseButton.IsEnabled = true;
-                OverlayCancelButton.IsEnabled = true;
-            }
-            if (created is null)
-            {
-                CreateStatus.Text = HubStrings.Get(_workspace.LastError.Length > 0 ? "CreateFailed" : "CreateCancelled");
-                return;
-            }
-            ProjectNameBox.Text = "HelloAxmol";
-            ProjectLocationBox.Text = _workspace.ProjectDirectory;
-            CloseOverlay();
-            ClearSearchAndFilters();
-            _workspace.SelectedProject = created;
-            Reload();
-            return;
-        }
         if (_overlayMode != "trash" || _pendingTrash is not { } project) return;
         OverlayPrimaryButton.IsEnabled = false;
         OverlayCancelButton.IsEnabled = false;
@@ -383,16 +299,7 @@ public partial class ProjectsPage : UserControl
         }
     }
 
-    private void OnCloseOverlay(object? sender, RoutedEventArgs e)
-    {
-        if (_creating)
-        {
-            _workspace.Cancel();
-            OverlayCancelButton.IsEnabled = false;
-            return;
-        }
-        CloseOverlay();
-    }
+    private void OnCloseOverlay(object? sender, RoutedEventArgs e) => CloseOverlay();
 
     private void CloseOverlay()
     {
@@ -406,13 +313,7 @@ public partial class ProjectsPage : UserControl
     private void OnOverlayKeyDown(object? sender, KeyEventArgs e)
     {
         if (!ProjectOverlay.IsVisible || e.Key != Key.Escape) return;
-        if (ProjectEnginePicker.IsDropDownOpen) return;
-        if (_creating)
-        {
-            _workspace.Cancel();
-            OverlayCancelButton.IsEnabled = false;
-        }
-        else CloseOverlay();
+        CloseOverlay();
         e.Handled = true;
     }
 
@@ -442,14 +343,6 @@ public partial class ProjectsPage : UserControl
     public void Reload()
     {
         if (_workspace is null) return;
-        var engineItems = _workspace.State.Engines
-            .OrderBy(engine => engine.Version, StringComparer.OrdinalIgnoreCase)
-            .Select(engine => new ProjectEngineChoice(engine, engine.Version + " · " + engine.Channel)).ToArray();
-        ProjectEnginePicker.ItemsSource = engineItems;
-        ProjectEnginePicker.SelectedItem = engineItems.FirstOrDefault(e => e.Engine.Path == _workspace.State.DefaultEnginePath)
-                                           ?? engineItems.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(ProjectLocationBox.Text)) ProjectLocationBox.Text = _workspace.ProjectDirectory;
-
         var previousEngine = (EngineFilter.SelectedItem as ProjectFilterChoice)?.Value ?? "";
         var previousPlatform = (PlatformFilter.SelectedItem as ProjectFilterChoice)?.Value ?? "";
         EngineFilter.ItemsSource = new[] { new ProjectFilterChoice(HubStrings.Get("AllEngines"), "") }
@@ -463,7 +356,6 @@ public partial class ProjectsPage : UserControl
         PlatformFilter.SelectedItem = PlatformFilter.Items.Cast<ProjectFilterChoice>().FirstOrDefault(x => x.Value == previousPlatform) ?? PlatformFilter.Items[0];
         UpdateSortCaption();
         ApplyView();
-        RefreshPrebuiltChoice();
         SyncColumns();
     }
 
@@ -519,40 +411,6 @@ public partial class ProjectsPage : UserControl
         2 => "SortByName",
         _ => "SortRecentDescending",
     });
-
-    private void RefreshCameraModeChoice()
-    {
-        var engine = ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null;
-        var isCpp = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value == "cpp";
-        CameraModePanel.IsVisible = isCpp && engine is not null
-            && EngineReleases.CompareVersions(engine.Version, "3.0.0") >= 0;
-        if (!CameraModePanel.IsVisible) CameraModePicker.SelectedIndex = 0;
-        UpdateTemplateLabel();
-    }
-
-    private void UpdateTemplateLabel()
-    {
-        var key = (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value == "3d"
-            ? "Template3D"
-            : "Template";
-        TemplateLabel.Text = HubStrings.Get(key);
-    }
-
-    private void RefreshPrebuiltChoice()
-    {
-        var hint = HubStrings.Get("PrebuiltHint");
-        if (_workspace.PrebuiltHostTarget is null)
-        {
-            PrebuiltCheck.IsChecked = false;
-            PrebuiltCheck.IsEnabled = false;
-            PrebuiltHint.Text = hint + "\n" + HubStrings.Get("PrebuiltUnsupportedHost");
-            return;
-        }
-        PrebuiltCheck.IsEnabled = RepairCheck.IsChecked != true;
-        var selected = ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null;
-        var availability = _workspace.PrebuiltStatusOf(selected);
-        PrebuiltHint.Text = hint + "\n" + HubStrings.Get(availability?.Usable == true ? "PrebuiltReadyHint" : "PrebuiltNotBuiltHint");
-    }
 
     private void ReloadDevices() { }
 
