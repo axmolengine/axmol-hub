@@ -78,6 +78,13 @@ public partial class MainWindow : Window
     private double _grabStartWidth;
     private bool _grabbing;
 
+    private const double LogMinHeight = 100;
+    private const double LogMinPageHeight = 200;
+    private double _logPreferredHeight = 190;
+    private double _logGrabStartY;
+    private double _logGrabStartHeight;
+    private bool _logGrabbing;
+
     /// <summary>Sidebar width bounds (also enforced in the XAML-facing logic).</summary>
     private const double SidebarMin = 240;
     private const double SidebarMax = 420;
@@ -2032,6 +2039,11 @@ public partial class MainWindow : Window
         ResizeGrip.PointerReleased += OnGripReleased;
 
         LogToggle.Click += (_, _) => ShowLog(!LogBody.IsVisible);
+        LogResizeGrip.PointerPressed += OnLogGripPressed;
+        LogResizeGrip.PointerMoved += OnLogGripMoved;
+        LogResizeGrip.PointerReleased += OnLogGripReleased;
+        LogResizeGrip.PointerCaptureLost += (_, _) => _logGrabbing = false;
+        ContentArea.SizeChanged += (_, _) => ApplyLogHeight();
 
         // Apply persisted state: width first, then collapsed so a collapsed sidebar really starts at zero.
         Sidebar.Width = Math.Clamp(_preferences.SidebarWidth, SidebarMin, SidebarMax);
@@ -2582,12 +2594,53 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnLogGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(LogResizeGrip).Properties.IsLeftButtonPressed) return;
+        _logGrabbing = true;
+        _logGrabStartY = e.GetPosition(this).Y;
+        _logGrabStartHeight = LogContent.Height;
+        e.Pointer.Capture(LogResizeGrip);
+        e.Handled = true;
+    }
+
+    private void OnLogGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_logGrabbing) return;
+        _logPreferredHeight = Math.Max(LogMinHeight, _logGrabStartHeight + _logGrabStartY - e.GetPosition(this).Y);
+        ApplyLogHeight();
+        _logPreferredHeight = LogContent.Height;
+    }
+
+    private void OnLogGripReleased(object? sender, PointerEventArgs e)
+    {
+        if (!_logGrabbing) return;
+        _logGrabbing = false;
+        e.Pointer.Capture(null);
+    }
+
+    private void ApplyLogHeight()
+    {
+        if (!LogBody.IsVisible || ContentArea.Bounds.Height <= 0) return;
+
+        // Leave room for the page and the strip, grip, and drawer chrome at the window's current size.
+        var chrome = LogBody.Margin.Top + LogBody.Margin.Bottom
+            + LogBody.BorderThickness.Top + LogBody.BorderThickness.Bottom
+            + LogBody.Padding.Top + LogBody.Padding.Bottom
+            + LogContent.Margin.Top + LogContent.Margin.Bottom;
+        var maxHeight = Math.Max(LogMinHeight, ContentArea.Bounds.Height - StatusStrip.Height
+            - LogResizeGrip.Height - chrome - LogMinPageHeight);
+        LogContent.Height = Math.Clamp(_logPreferredHeight, LogMinHeight, maxHeight);
+    }
+
     /// <summary>Shows/hides the log body and flips the strip chevron. The drain belongs to the body: while nobody
     /// is looking at the drawer a flood costs the UI thread nothing at all, and the retained tail is painted the
     /// moment it opens.</summary>
     internal void ShowLog(bool show)
     {
         LogBody.IsVisible = show;
+        LogResizeGrip.IsVisible = show;
+        if (show) ApplyLogHeight();
         LogToggleChevron.RenderTransform = new RotateTransform(show ? 180 : 0);
         if (!show)
         {

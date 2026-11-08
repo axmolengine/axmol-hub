@@ -1053,7 +1053,7 @@
     </Grid>
 
     <!-- ==================== Content ==================== -->
-    <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="*,Auto,Auto">
+    <Grid x:Name="ContentArea" Grid.Row="1" Grid.Column="1" RowDefinitions="*,Auto,Auto,Auto">
 
       <Grid Grid.Row="0" RowDefinitions="Auto,*">
         <!-- An on-demand system permission hint takes its own row, never covering the composer. -->
@@ -1137,13 +1137,17 @@
         </Button>
       </Grid>
 
+      <!-- Drag the top edge of the open log drawer to resize it without grabbing its text. -->
+      <Border x:Name="LogResizeGrip" Grid.Row="2" IsVisible="False"
+              Height="6" Margin="18,0" Background="Transparent" Cursor="SizeNorthSouth" />
+
       <!-- Log body, shown by the strip chevron or auto-expanded on failure. -->
-      <Border x:Name="LogBody" Grid.Row="2" IsVisible="False"
-              Margin="18,6,18,10"
+      <Border x:Name="LogBody" Grid.Row="3" IsVisible="False"
+              Margin="18,0,18,10"
               BorderBrush="{DynamicResource Hub.Border}"
               BorderThickness="1" CornerRadius="6"
               Background="{DynamicResource Hub.SurfaceAlt}" Padding="12,8">
-        <Grid Height="190" Margin="0,6,0,0" RowDefinitions="Auto,*">
+        <Grid x:Name="LogContent" Height="190" Margin="0,6,0,0" RowDefinitions="Auto,*">
           <!-- Named, and named with the copy key that existed before anything read it: the drawer is where a
                task row's 看日志 lands, so it has to say what it holds. -->
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
@@ -1158,6 +1162,7 @@
                not the platform's own blue. Its ink stays the log's ink for the same reason the chat's does — a
                translucent band with the theme's white SelectionForeground is unreadable on the light variant. -->
           <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
+                   VerticalContentAlignment="Top"
                    SelectionBrush="{DynamicResource Hub.Selection}"
                    SelectionForegroundBrush="{DynamicResource Hub.TextPrimary}"
                    IsReadOnly="True" TextWrapping="NoWrap"
