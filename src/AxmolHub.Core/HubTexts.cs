@@ -91,7 +91,7 @@ public static class HubTexts
         ["BuildConfiguration"] = ("构建配置", "Build configuration"),
         ["AdvancedBuild"] = ("高级", "Advanced"),
         ["AdditionalBuildParameters"] = ("附加构建参数", "Additional build parameters"),
-        ["AdditionalBuildParametersHint"] = ("可用：-xc（-D/-P 定义）、-j、-cc、-t、-ide、-minsdk、-dll、-xb（--parallel/--target/--verbose）。含空格的值请加引号。Debug/Release、目标、目录、预编译库和操作模式由 Hub 管理。取消勾选会保留文本。", "Supported: -xc (-D/-P definitions), -j, -cc, -t, -ide, -minsdk, -dll, -xb (--parallel/--target/--verbose). Quote values containing spaces. Hub manages Debug/Release, target, directory, prebuilt libraries and operation mode. Uncheck to retain the text."),
+        ["AdditionalBuildParametersHint"] = ("可用：-xc（-D/-P 定义）、-j、-cc、-t、-ide、-minsdk、-dll、-xb（--parallel/--target/--verbose）。含空格的值请加引号。Debug/Release、目标、目录、预编译库和操作模式由 Hub 管理。收起高级选项会保留文本，但不会应用附加参数。", "Supported: -xc (-D/-P definitions), -j, -cc, -t, -ide, -minsdk, -dll, -xb (--parallel/--target/--verbose). Quote values containing spaces. Hub manages Debug/Release, target, directory, prebuilt libraries and operation mode. Collapse Advanced to retain the text without applying the extra arguments."),
         ["ConfigurationHint"] = ("Debug：调试、断言与详细日志。Release：优化构建。两种配置的产物分别保存。", "Debug: debugging, assertions and detailed logs. Release: optimized build. Outputs are stored separately."),
         ["AndroidReleasePending"] = ("Release 使用项目发行密钥，生成已签名 APK/AAB；继续后配置包名、版本和密钥。", "Release uses your project key to produce signed APK/AAB. Configure application ID, version and signing after continuing."),
         ["AndroidReleaseSettings"] = ("Android 发行设置", "Android release settings"),

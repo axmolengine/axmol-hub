@@ -17,7 +17,7 @@ public sealed class BuildTargetDialog : Window
     private readonly ComboBox _picker = new() { Margin = new Thickness(0, 12, 0, 12) };
     private readonly ComboBox _configuration = new() { Margin = new Thickness(0, 6, 0, 8) };
     private readonly TextBlock _hint = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
-    private readonly CheckBox _advanced = new() { Name = "AdvancedBuild", Content = HubStrings.Get("AdvancedBuild") };
+    private readonly Expander _advanced = new() { Name = "AdvancedBuild", Header = HubStrings.Get("AdvancedBuild") };
     private readonly TextBox _parameters = new()
     {
         Name = "AdditionalBuildParameters",
@@ -49,8 +49,7 @@ public sealed class BuildTargetDialog : Window
             Margin = new Thickness(0, 0, 0, 16),
         });
 
-        body.Children.Add(_advanced);
-        var advancedBody = new StackPanel { IsVisible = false, ClipToBounds = true };
+        var advancedBody = new StackPanel { ClipToBounds = true };
         advancedBody.Children.Add(new TextBlock { Text = HubStrings.Get("AdditionalBuildParameters"), Margin = new Thickness(0, 8, 0, 0) });
         advancedBody.Children.Add(_parameters);
         advancedBody.Children.Add(new TextBlock
@@ -59,11 +58,10 @@ public sealed class BuildTargetDialog : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 16),
         });
-        body.Children.Add(advancedBody);
+        _advanced.Content = advancedBody;
+        _advanced.IsExpanded = project.AdvancedBuildEnabled;
+        body.Children.Add(_advanced);
         _parameters.Text = project.AdditionalBuildParameters;
-        _advanced.IsChecked = project.AdvancedBuildEnabled;
-        _advanced.IsCheckedChanged += (_, _) => advancedBody.IsVisible = _advanced.IsChecked == true;
-        advancedBody.IsVisible = _advanced.IsChecked == true;
 
         var (footer, _, _) = HubDialogChrome.Footer(HubStrings.Get("Continue"), HubStrings.Get("Cancel"),
             () => Close(HubDialogResult.Ok), () => Close(HubDialogResult.Cancel));
@@ -98,7 +96,7 @@ public sealed class BuildTargetDialog : Window
 
         return result == HubDialogResult.Ok && dialog._picker.SelectedItem is BuildTarget target
             && dialog._configuration.SelectedItem is string configuration
-            ? new BuildSelection(target, configuration, dialog._advanced.IsChecked == true, TextEol.ToLf(dialog._parameters.Text ?? ""))
+            ? new BuildSelection(target, configuration, dialog._advanced.IsExpanded, TextEol.ToLf(dialog._parameters.Text ?? ""))
             : null;
     }
 }
