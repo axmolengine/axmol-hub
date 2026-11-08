@@ -1,59 +1,24 @@
-using System.Text.RegularExpressions;
-
 namespace AxmolHub.Core;
 
 /// <summary>
 /// Build directory and artifact locations.
 ///
-/// **The build directory is decided by the engine, not the Hub** — so this only "discovers" it and
-/// never assumes a name. The authoritative source is the <c>run.bat</c> the engine generates in the
-/// project directory: it contains <c>set BUILD_DIR=&lt;CMAKE_BUILD_RELATIVE_DIR&gt;</c>, i.e. the path of
-/// <c>PROJECT_BINARY_DIR</c> relative to the project directory (see <c>templates/common/run.bat.in</c> and
-/// <c>templates/common/cmake/modules/AXGamePlatformSetup.cmake</c>). Only as a fallback do we scan for
-/// <c>build*</c> under the project directory.
+/// **The build directory is decided by the engine, not the Hub.** This discovers it by locating the
+/// artifact for the selected target and configuration; it does not depend on Hub-assigned names or a
+/// platform-specific helper script.
 ///
-/// The artifact layout is likewise the engine's (<c>run.bat</c>): <c>&lt;buildDir&gt;/bin/&lt;App&gt;/&lt;Config&gt;/&lt;App&gt;[.exe]</c>;
-/// the engine's own build (<c>&lt;engine&gt;/build</c>) is observed to use the same shape.
+/// The artifact layout is likewise the engine's: <c>&lt;buildDir&gt;/bin/&lt;App&gt;/&lt;Config&gt;/&lt;App&gt;[.exe]</c>.
 /// </summary>
 public static class EngineBuildLayout
 {
-    // `set BUILD_DIR=xxx` (Windows template) and `BUILD_DIR=xxx` (Unix template).
-    private static readonly Regex BuildDirectory = new(@"(?i)^\s*(?:set\s+)?BUILD_DIR\s*=\s*(.+?)\s*$", RegexOptions.Compiled);
-
     /// <summary>Discovers the project's build directory; returns <c>null</c> when not found (the caller decides whether that is an error).</summary>
     public static string? FindBuildDirectory(ProjectEntry project)
     {
-        if (DeclaredBuildDirectory(project.Path) is { } declared) return declared;
-
         if (!Directory.Exists(project.Path)) return null;
         var family = BuildTargets.Get(project.Platform).Family;
-        var builds = Directory.EnumerateDirectories(project.Path)
-            .Where(directory => Path.GetFileName(directory).StartsWith("build", StringComparison.OrdinalIgnoreCase))
+        return Directory.EnumerateDirectories(project.Path)
             .OrderByDescending(Directory.GetLastWriteTimeUtc)
-            .ToArray();
-        return builds.FirstOrDefault(build => FindArtifact(build, project.Name, project.Configuration, family) is not null)
-            ?? builds.FirstOrDefault();
-    }
-
-    /// <summary>Reads <c>BUILD_DIR</c> from the engine-generated run script.</summary>
-    private static string? DeclaredBuildDirectory(string projectPath)
-    {
-        foreach (var name in new[] { "run.bat", "run.sh" })
-        {
-            var file = Path.Combine(projectPath, name);
-            if (!File.Exists(file)) continue;
-            foreach (var line in File.ReadLines(file))
-            {
-                var match = BuildDirectory.Match(line);
-                if (!match.Success) continue;
-                var value = match.Groups[1].Value.Trim().Trim('"').TrimEnd('\\', '/');
-                if (value.Length == 0) continue;
-                var resolved = Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(projectPath, value));
-                if (Directory.Exists(resolved)) return resolved;
-            }
-        }
-
-        return null;
+            .FirstOrDefault(build => FindArtifact(build, project.Name, project.Configuration, family) is not null);
     }
 
     /// <summary>Finds the artifact in the given build directory; returns <c>null</c> when not found.</summary>

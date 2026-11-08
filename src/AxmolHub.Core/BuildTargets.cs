@@ -116,11 +116,6 @@ public static class BuildTargets
             ?? throw new PlatformNotSupportedException($"Axmol {version} has no {host} target for host architecture {hostArch}.");
     }
 
-    public static string BuildDirectory(ProjectEntry project)
-    {
-        BuildConfigurations.Validate(project.Configuration);
-        return Path.Combine(project.Path, (project.Platform == "windows-x64" ? "build-hub" : "build-hub-" + Get(project.Platform).Id) + (project.Configuration == "Release" ? "-release" : ""));
-    }
     public static void Select(ProjectEntry project, string id, string? configuration = null,
         bool? advancedBuildEnabled = null, string? additionalBuildParameters = null)
     {

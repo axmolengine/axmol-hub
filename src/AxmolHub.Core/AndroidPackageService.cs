@@ -19,7 +19,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
 {
     private string Tool(string path) => Path.GetFullPath(Path.Combine(toolsRoot, path));
     public string Java => Tool(OperatingSystem.IsWindows() ? "jdk/bin/java.exe" : "jdk/bin/java");
-    public static string StageDirectory(ProjectEntry project) => Path.Combine(BuildTargets.BuildDirectory(project), "android");
+    public static string StageDirectory(ProjectEntry project) => Path.Combine(project.Path, ProjectService.MarkerDirectory, "android");
     public static string ApkPath(ProjectEntry project) => Path.Combine(StageDirectory(project), "app/build/outputs/apk", project.Configuration.ToLowerInvariant(), "app-" + project.Configuration.ToLowerInvariant() + ".apk");
     public static string BundlePath(ProjectEntry project) => Path.Combine(StageDirectory(project), "app/build/outputs/bundle", project.Configuration.ToLowerInvariant(), "app-" + project.Configuration.ToLowerInvariant() + ".aab");
     private string BuildTools => Tool("adt/sdk/build-tools/" + (BuildToolsVersion() ?? "36.0.0"));
@@ -126,7 +126,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         var jni = Path.Combine(stage, "app/src/main/jniLibs", target.Architecture);
         var library = NativeLibrary(project);
         Directory.CreateDirectory(jni);
-        var nativeFiles = new[] { library, Path.Combine(BuildTargets.BuildDirectory(project), "lib/libopenal.so"),
+        var nativeFiles = new[] { library, Path.Combine(ProjectService.BuildDirectory(project), "lib/libopenal.so"),
             Tool("adt/sdk/ndk/" + (NewestNdk() ?? "27.3.13750724") + "/toolchains/llvm/prebuilt/" + (BuildTargets.Host == "macos" ? "darwin-x86_64" : BuildTargets.Host + "-x86_64") + "/sysroot/usr/lib/" + (target.Architecture == "arm64-v8a" ? "aarch64-linux-android" : "x86_64-linux-android") + "/libc++_shared.so") };
         foreach (var file in nativeFiles)
         {
@@ -138,7 +138,7 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     }
     public static string NativeLibrary(ProjectEntry project)
     {
-        var root = BuildTargets.BuildDirectory(project);
+        var root = ProjectService.BuildDirectory(project);
         return new[] { Path.Combine(root, "lib" + project.Name + ".so"), Path.Combine(root, "lib", "lib" + project.Name + ".so") }.FirstOrDefault(File.Exists)
             ?? throw new FileNotFoundException("Android native library is missing.");
     }

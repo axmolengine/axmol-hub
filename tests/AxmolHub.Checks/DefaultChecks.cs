@@ -116,9 +116,7 @@ internal static class DefaultChecks
         Check(preferencesStore.Load().Language == "en-US", "Unknown language falls back to the default (English)");
         Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable, "Unknown update channel falls back to Stable");
         Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
-        // The build directory is now decided by the engine (no longer Hub's build-hub*), so what is asserted here is the
-        // **discovery rule**: the run script the engine generates inside the project spells out BUILD_DIR, which is the
-        // authoritative source; only without it do we scan build*.
+        // Build discovery follows the selected target's actual artifact and does not depend on a Hub directory convention or helper script.
         var buildFixture = Path.Combine(root, "engine-layout-" + Guid.NewGuid().ToString("N"));
         var layoutProject = new ProjectEntry
         {
@@ -133,7 +131,7 @@ internal static class DefaultChecks
         Check(EngineBuildLayout.FindBuildDirectory(layoutProject) == scannedBuild && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "windows")is not null, "Engine build directory and artifact are discovered from the engine's own layout");
         File.WriteAllText(Path.Combine(buildFixture, "run.bat"), "set BUILD_DIR=build_declared\n");
         Directory.CreateDirectory(Path.Combine(buildFixture, "build_declared"));
-        Check(EngineBuildLayout.FindBuildDirectory(layoutProject)!.EndsWith("build_declared"), "The engine's run script BUILD_DIR is the authoritative build directory");
+        Check(EngineBuildLayout.FindBuildDirectory(layoutProject) == scannedBuild, "Build discovery ignores legacy run.bat and follows the selected target artifact");
         Check(EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Release", "windows")is null && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "wasm")is null, "Artifact discovery never borrows another configuration's or target's output");
         var macBuild = Path.Combine(buildFixture, "build", "build");
         var macBundleExecutable = Path.Combine(macBuild, "Debug", "Fixture.app", "Contents", "MacOS", "Fixture");
@@ -244,14 +242,14 @@ internal static class DefaultChecks
                 BuildStatus = "Succeeded"
             };
             StateStore.LockProject(entry);
-            var directories = new HashSet<string>();
+            var targets = new HashSet<string>(StringComparer.Ordinal);
             // Walking every target needs a v3 engine (only v3 carries its exclusive targets, arm64/wasm64 included).
             entry.Version = "3.0.0";
             StateStore.LockProject(entry);
             foreach (var target in BuildTargets.All)
             {
                 BuildTargets.Select(entry, target.Id);
-                Check(StateStore.ReadProject(platformRoot).Platform == target.Id && directories.Add(BuildTargets.BuildDirectory(entry)), "Target persists and build directory is isolated: " + target.Id);
+                Check(StateStore.ReadProject(platformRoot).Platform == target.Id && targets.Add(entry.Platform), "Target persists independently: " + target.Id);
             }
 
             // A v2 engine must not select a v3-only target (win32 arm64 / linux arm64 / wasm64).
@@ -269,11 +267,9 @@ internal static class DefaultChecks
             Check(BuildTargets.Get("windows-x64").CanRunLocally("x64") && BuildTargets.Get("android-arm64").CanCrossBuild("x64"), "Windows x64 runs locally; Android cross-compiles regardless of host arch");
             Check(entry.BuildStatus == "Not built", "Target switch never reuses another target success status");
             BuildTargets.Select(entry, "windows-x64", "Debug");
-            var debugDirectory = BuildTargets.BuildDirectory(entry);
             entry.BuildStatus = "Succeeded";
             BuildTargets.Select(entry, "windows-x64", "Release");
             Check(StateStore.ReadProject(platformRoot).Configuration == "Release" && entry.BuildStatus == "Not built", "Configuration persists and switching resets success status");
-            Check(BuildTargets.BuildDirectory(entry) != debugDirectory && debugDirectory.EndsWith("build-hub"), "Release output is isolated while legacy Debug output remains compatible");
             await Reject<InvalidDataException>(() => Task.Run(() => BuildTargets.Select(entry, "windows-x64", "../../outside")), "Invalid build configuration cannot escape output directory");
             StateStore.WriteJson(StateStore.MetadataPath(platformRoot), new { engine = "axmol", version = "2.11.5", channel = "official-lts", platform = "windows-x64" });
             Check(StateStore.ReadProject(platformRoot).Configuration == "Debug", "Legacy project metadata defaults to Debug");
@@ -370,8 +366,10 @@ internal static class DefaultChecks
             File.WriteAllText(Path.Combine(androidRoot, ".axproj"), "package_name=bad'; injected\n");
             await Reject<InvalidDataException>(() => Task.Run(() => AndroidPackageService.PackageName(entry)), "Invalid Android application ID rejected before Gradle generation");
             File.WriteAllText(Path.Combine(androidRoot, ".axproj"), "package_name=dev.axmol.fixture\n");
-            Directory.CreateDirectory(BuildTargets.BuildDirectory(entry));
-            File.WriteAllText(Path.Combine(BuildTargets.BuildDirectory(entry), "libFixture.so"), "native only");
+            var engineBuild = Path.Combine(androidRoot, "build");
+            var nativeOutput = Path.Combine(engineBuild, "bin", "Fixture", "Debug", "libFixture.so");
+            Directory.CreateDirectory(Path.GetDirectoryName(nativeOutput)!);
+            File.WriteAllText(nativeOutput, "native only");
             await Reject<FileNotFoundException>(() => Task.Run(() => PlatformBuildService.FindArtifact(entry)), "Native library alone cannot satisfy an Android APK build");
             byte[] Elf(ushort machine, ulong alignment)
             {

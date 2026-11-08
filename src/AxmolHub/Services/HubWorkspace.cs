@@ -1505,13 +1505,7 @@ public sealed partial class HubWorkspace : IDisposable
                 return;
             }
 
-            // No completion dialog: the row already says 完成 and the drawer holds the detail — a modal that
-            // appears after minutes of waiting is the same shape this round deleted the progress window for.
-            // Opening the output directory stays, because that is the next thing the user does with a build,
-            // and it is written to the log so 看日志 leads somewhere with the path in it.
-            var output = BuildOutputDirectory(project);
-            Log.Write(output);
-            _runner.Open(output);
+            // No completion dialog or output-directory guess: the row reports completion and the drawer holds the build detail.
         });
     }
 
@@ -1658,17 +1652,6 @@ public sealed partial class HubWorkspace : IDisposable
         SetStatus(HubStrings.Get("Stop") + " · " + preview.Url);
     }
 
-    private string BuildOutputDirectory(ProjectEntry project)
-    {
-        if (BuildTargets.Get(project.Platform).Family == "android")
-        {
-            // The engine produces the APK via Gradle into the project's build directory (no longer Hub's staging directory).
-            return EngineBuildLayout.FindBuildDirectory(project) ?? AndroidPackageService.StageDirectory(project);
-        }
-
-        return Path.GetDirectoryName(_projects.FindExecutable(project))!;
-    }
-
     /// <summary>Opens the Android release settings. The projects page's "Android release settings" button calls it directly.</summary>
     public async Task<bool> EditAndroidReleaseAsync(ProjectEntry project)
     {
@@ -1702,21 +1685,6 @@ public sealed partial class HubWorkspace : IDisposable
     public async Task OpenProjectFolderAsync(ProjectEntry? requested = null) => await ExecuteAsync("Open project folder", _ =>
     {
         Open((requested ?? RequiredProject()).Path);
-        return Task.CompletedTask;
-    });
-
-    public async Task OpenBuildOutputsAsync(ProjectEntry? requested = null) => await ExecuteAsync("Open build outputs", _ =>
-    {
-        var project = requested ?? RequiredProject();
-        var directory = BuildTargets.Get(project.Platform).Family == "android"
-            ? Path.Combine(AndroidPackageService.StageDirectory(project), "app/build/outputs")
-            : BuildTargets.BuildDirectory(project);
-        if (!Directory.Exists(directory))
-        {
-            throw new DirectoryNotFoundException(directory);
-        }
-
-        Open(directory);
         return Task.CompletedTask;
     });
 

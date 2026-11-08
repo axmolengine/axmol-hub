@@ -218,7 +218,6 @@ public partial class ProjectsPage : UserControl
         Add("Configure", async () => await _workspace.BuildAsync(configureOnly: true, requested: project));
         Add("UpgradeEngine", async () => await _workspace.UpgradeProjectEngineAsync(project));
         Add("OpenFolder", async () => await _workspace.OpenProjectFolderAsync(project));
-        Add("OpenOutputs", async () => await _workspace.OpenBuildOutputsAsync(project));
         Add("PrebuiltSettings", async () => await _workspace.EditPrebuiltAsync(project));
         if (BuildTargets.Get(project.Platform).Family == "android")
         {
