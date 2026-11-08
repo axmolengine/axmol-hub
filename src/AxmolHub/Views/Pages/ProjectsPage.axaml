@@ -216,7 +216,19 @@
                     <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
                     <TextBlock x:Name="PrebuiltHint" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
+                  <CheckBox x:Name="PortraitCheck" Content="{DynamicResource CreatePortrait}" />
+                  <Expander x:Name="CreateAdvancedExpander" Header="{DynamicResource CreateAdvanced}" IsExpanded="False">
+                    <StackPanel Spacing="8" Margin="0,8,0,0">
+                      <CheckBox x:Name="IsolatedCheck" Content="{DynamicResource CreateIsolated}" />
+                      <TextBlock Text="{DynamicResource CreateIsolatedHint}" Classes="muted" TextWrapping="Wrap" />
+                      <CheckBox x:Name="RepairCheck" Content="{DynamicResource CreateRepair}" />
+                      <TextBlock Text="{DynamicResource CreateRepairHint}" Classes="muted" TextWrapping="Wrap" />
+                      <CheckBox x:Name="ForceOverwriteCheck" Content="{DynamicResource CreateForceOverwrite}" IsEnabled="False" />
+                      <TextBlock Text="{DynamicResource CreateForceOverwriteHint}" Classes="muted" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Expander>
                   <TextBlock Text="{DynamicResource BuildPlatformHint}" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock x:Name="CreateStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
                 </StackPanel>
                 <StackPanel x:Name="TrashConfirmPanel" Spacing="12" IsVisible="False">
                   <TextBlock x:Name="TrashConfirmMessage" TextWrapping="Wrap" />

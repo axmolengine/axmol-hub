@@ -1395,7 +1395,7 @@ public partial class MainWindow : Window
             // A cancelled row used to get *neither* button — no retry and no dismiss — which left it as a
             // row nothing could act on or remove (it only ever left on the next Enqueue's cleanup). Cancel
             // settles work the same way failure does, and both settle states offer the same two ways out.
-            _retry.IsVisible = _item.State is TaskQueue.Phase.Failed or TaskQueue.Phase.Cancelled;
+            _retry.IsVisible = _item.Retryable && _item.State is (TaskQueue.Phase.Failed or TaskQueue.Phase.Cancelled);
             _dismiss.IsVisible = _item.State is TaskQueue.Phase.Failed or TaskQueue.Phase.Cancelled;
         }
 

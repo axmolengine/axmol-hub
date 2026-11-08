@@ -410,8 +410,8 @@ public sealed partial class HubWorkspace : IDisposable
     /// engine host build, the engine's setup script.
     /// </summary>
     private Task RunTaskAsync(string identity, string titleKey, string? subject,
-        Func<TaskQueue.Item, CancellationToken, Task> work)
-        => RunGated(identity, titleKey, subject, work, listed: true);
+        Func<TaskQueue.Item, CancellationToken, Task> work, bool retryable = true)
+        => RunGated(identity, titleKey, subject, work, listed: true, retryable: retryable);
 
     /// <summary>
     /// The question an entry point asks <b>before</b> it shows a dialog it would then have to take back: is
@@ -478,7 +478,7 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     private async Task RunGated(string identity, string titleKey, string? subject,
-        Func<TaskQueue.Item, CancellationToken, Task> work, bool listed)
+        Func<TaskQueue.Item, CancellationToken, Task> work, bool listed, bool retryable = true)
     {
         // A change does not queue behind another change: two of them interleaving can leave the disk in a
         // state no sentence describes. It is refused — out loud, in the one place every entry point asks.
@@ -514,7 +514,8 @@ public sealed partial class HubWorkspace : IDisposable
                     _taskStatusContext.Value = previous;
                 }
             },
-            onFinished: settled => FinishGated(settled, taskToken), kind: TaskQueue.TaskKind.Mutating, listed: listed);
+            onFinished: settled => FinishGated(settled, taskToken), kind: TaskQueue.TaskKind.Mutating,
+            listed: listed, retryable: retryable);
         if (item is null)
         {
             // Already running under this identity: the row on screen is the answer, and the repaint the first
@@ -1148,23 +1149,28 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Projects ─────────────────────────
 
-    public async Task<ProjectEntry?> CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType, bool usePrebuilt = false, string? cameraMode = null)
+    public async Task<ProjectEntry?> CreateProjectAsync(string name, string parent, EngineEntry? engine, string projectType,
+        bool usePrebuilt = false, string? cameraMode = null, bool portrait = false, bool isolated = false,
+        bool repair = false, bool forceOverwrite = false)
     {
         ProjectEntry? created = null;
-        await ExecuteAsync("Create project", async token =>
+        await RunTaskAsync($"project:create:{parent}:{name}", "Create project", name.Trim(), async (task, token) =>
         {
             var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
-            var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType, cameraMode);
-            if (usePrebuilt)
+            var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType, cameraMode,
+                portrait, isolated, repair, forceOverwrite, OwnLines(task));
+            token.ThrowIfCancellationRequested();
+            if (usePrebuilt && !repair)
             {
                 // Per-project options are written to a standalone file inside the project directory (same family as AndroidReleaseSettings).
                 new PrebuiltSettings { Enabled = true }.Save(project);
             }
 
-            State.Projects.Add(project);
-            SelectedProject = project;
-            created = project;
-        });
+            var registered = State.Projects.FirstOrDefault(entry => PathEquals(entry.Path, project.Path));
+            if (registered is null) State.Projects.Add(project);
+            SelectedProject = registered ?? project;
+            created = SelectedProject;
+        }, retryable: false);
         return created;
     }
 

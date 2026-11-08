@@ -45,6 +45,7 @@ public partial class ProjectsPage : UserControl
     private int _sortMode;
     private ProjectEntry? _pendingTrash;
     private string _overlayMode = "";
+    private bool _creating;
 
     public ProjectsPage() { _workspace = null!; InitializeComponent(); }
 
@@ -112,6 +113,19 @@ public partial class ProjectsPage : UserControl
             RefreshCameraModeChoice();
         };
         ProjectLanguagePicker.SelectionChanged += (_, _) => RefreshCameraModeChoice();
+        CreateAdvancedExpander.PropertyChanged += (_, e) =>
+        {
+            if (e.Property != Expander.IsExpandedProperty || CreateAdvancedExpander.IsExpanded) return;
+            IsolatedCheck.IsChecked = false;
+            RepairCheck.IsChecked = false;
+            ForceOverwriteCheck.IsChecked = false;
+        };
+        RepairCheck.IsCheckedChanged += (_, _) =>
+        {
+            ForceOverwriteCheck.IsEnabled = RepairCheck.IsChecked == true;
+            if (!ForceOverwriteCheck.IsEnabled) ForceOverwriteCheck.IsChecked = false;
+            RefreshPrebuiltChoice();
+        };
         Reload();
         _ready = true;
     }
@@ -135,6 +149,12 @@ public partial class ProjectsPage : UserControl
     private void OnNewProject(object? sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(ProjectLocationBox.Text)) ProjectLocationBox.Text = _workspace.ProjectDirectory;
+        PortraitCheck.IsChecked = false;
+        CreateAdvancedExpander.IsExpanded = false;
+        IsolatedCheck.IsChecked = false;
+        RepairCheck.IsChecked = false;
+        ForceOverwriteCheck.IsChecked = false;
+        CreateStatus.IsVisible = false;
         _overlayMode = "create";
         _pendingTrash = null;
         CreatePanel.IsVisible = true;
@@ -294,14 +314,44 @@ public partial class ProjectsPage : UserControl
     {
         if (_overlayMode == "create")
         {
+            if (_creating || _workspace.RefuseIfBusy()) return;
+            var advanced = CreateAdvancedExpander.IsExpanded;
+            var repair = advanced && RepairCheck.IsChecked == true;
+            var forceOverwrite = repair && ForceOverwriteCheck.IsChecked == true;
+            var name = (ProjectNameBox.Text ?? "").Trim();
+            if (forceOverwrite && await HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window,
+                    HubStrings.Get("CreateForceOverwrite"), string.Format(HubStrings.Get("CreateForceOverwritePrompt"), name),
+                    HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok) return;
+            if (_workspace.RefuseIfBusy()) return;
             var projectType = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "cpp";
             var cameraMode = CameraModePanel.IsVisible
                 ? (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "classic"
                 : null;
-            var created = await _workspace.CreateProjectAsync(ProjectNameBox.Text ?? "", ProjectLocationBox.Text ?? "",
-                ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
-                projectType, PrebuiltCheck.IsChecked == true, cameraMode);
-            if (created is null) return;
+            _creating = true;
+            OverlayPrimaryButton.IsEnabled = false;
+            OverlayCloseButton.IsEnabled = false;
+            CreateStatus.Text = HubStrings.Get("CreateRunning");
+            CreateStatus.IsVisible = true;
+            ProjectEntry? created;
+            try
+            {
+                created = await _workspace.CreateProjectAsync(name, ProjectLocationBox.Text ?? "",
+                    ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
+                    projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
+                    PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite);
+            }
+            finally
+            {
+                _creating = false;
+                OverlayPrimaryButton.IsEnabled = true;
+                OverlayCloseButton.IsEnabled = true;
+                OverlayCancelButton.IsEnabled = true;
+            }
+            if (created is null)
+            {
+                CreateStatus.Text = HubStrings.Get(_workspace.LastError.Length > 0 ? "CreateFailed" : "CreateCancelled");
+                return;
+            }
             ProjectNameBox.Text = "HelloAxmol";
             ProjectLocationBox.Text = _workspace.ProjectDirectory;
             CloseOverlay();
@@ -333,7 +383,16 @@ public partial class ProjectsPage : UserControl
         }
     }
 
-    private void OnCloseOverlay(object? sender, RoutedEventArgs e) => CloseOverlay();
+    private void OnCloseOverlay(object? sender, RoutedEventArgs e)
+    {
+        if (_creating)
+        {
+            _workspace.Cancel();
+            OverlayCancelButton.IsEnabled = false;
+            return;
+        }
+        CloseOverlay();
+    }
 
     private void CloseOverlay()
     {
@@ -341,13 +400,19 @@ public partial class ProjectsPage : UserControl
         _overlayMode = "";
         _pendingTrash = null;
         OverlayPrimaryButton.Classes.Remove("danger");
+        OverlayCancelButton.IsEnabled = true;
     }
 
     private void OnOverlayKeyDown(object? sender, KeyEventArgs e)
     {
         if (!ProjectOverlay.IsVisible || e.Key != Key.Escape) return;
         if (ProjectEnginePicker.IsDropDownOpen) return;
-        CloseOverlay();
+        if (_creating)
+        {
+            _workspace.Cancel();
+            OverlayCancelButton.IsEnabled = false;
+        }
+        else CloseOverlay();
         e.Handled = true;
     }
 
@@ -483,7 +548,7 @@ public partial class ProjectsPage : UserControl
             PrebuiltHint.Text = hint + "\n" + HubStrings.Get("PrebuiltUnsupportedHost");
             return;
         }
-        PrebuiltCheck.IsEnabled = true;
+        PrebuiltCheck.IsEnabled = RepairCheck.IsChecked != true;
         var selected = ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null;
         var availability = _workspace.PrebuiltStatusOf(selected);
         PrebuiltHint.Text = hint + "\n" + HubStrings.Get(availability?.Usable == true ? "PrebuiltReadyHint" : "PrebuiltNotBuiltHint");

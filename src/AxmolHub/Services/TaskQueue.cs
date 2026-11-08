@@ -143,6 +143,9 @@ internal sealed partial class TaskQueue
         /// </summary>
         public bool Listed { get; init; } = true;
 
+        /// <summary>Some changes require fresh user confirmation or inspection of partial files before another attempt.</summary>
+        public bool Retryable { get; init; } = true;
+
         /// <summary>
         /// The stage the work itself named, as a copy key — a compile saying 编译代码 or 打包应用. Set from
         /// <see cref="ApplyProgress"/> out of the task's own output, and it outranks the phase word in
@@ -520,7 +523,8 @@ internal sealed partial class TaskQueue
         Func<Item, CancellationToken, Task> work,
         Action<Item>? onFinished = null,
         TaskKind kind = TaskKind.Transfer,
-        bool listed = true)
+        bool listed = true,
+        bool retryable = true)
     {
         if (FindActive(identity) is not null)
         {
@@ -546,6 +550,7 @@ internal sealed partial class TaskQueue
             OnFinished = onFinished,
             Kind = kind,
             Listed = listed,
+            Retryable = retryable,
         };
         _items.Add(item);
         Publish();
@@ -588,7 +593,7 @@ internal sealed partial class TaskQueue
     /// </summary>
     public void Retry(Item item)
     {
-        if (item.State is not (Phase.Failed or Phase.Cancelled))
+        if (!item.Retryable || item.State is not (Phase.Failed or Phase.Cancelled))
         {
             return;
         }

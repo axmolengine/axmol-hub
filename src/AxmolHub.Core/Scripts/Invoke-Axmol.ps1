@@ -39,6 +39,10 @@ try {
             if ($argument -in @('-p', '-d', '-l', '-m')) {
                 if ($index + 1 -ge $engineArgs.Count) { throw "Missing value for axmol new option $argument." }
                 $newOptions[$argument.Substring(1)] = $engineArgs[++$index]
+            } elseif ($argument -in @('-isolated', '-repair', '-forceOverwrite')) {
+                # Literal switches inside an array become positional strings when axmol.ps1
+                # splats them into axmol_new.ps1. Named splatting binds the switches there.
+                $newOptions[$argument.Substring(1)] = $true
             } else {
                 $newArgs += $argument
             }

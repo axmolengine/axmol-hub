@@ -32,7 +32,9 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (projectType is not ("cpp" or "lua")) throw new ArgumentException("Scripting must be cpp or lua.");
     }
 
-    public async Task<ProjectEntry> CreateAsync(string name, string parent, EngineEntry engine, CancellationToken cancellation = default, string projectType = "cpp", string? cameraMode = null)
+    public async Task<ProjectEntry> CreateAsync(string name, string parent, EngineEntry engine, CancellationToken cancellation = default,
+        string projectType = "cpp", string? cameraMode = null, bool portrait = false, bool isolated = false,
+        bool repair = false, bool forceOverwrite = false, Action<string>? onLine = null)
     {
         ValidateProjectType(projectType);
         if (cameraMode is not null && cameraMode is not ("classic" or "2d" or "3d"))
@@ -43,20 +45,54 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new InvalidDataException("Selected engine does not contain the requested project template.");
         // The name enters the official template substitution logic, so restrict it to a safe C++ / CMake identifier.
         if (!Regex.IsMatch(name, @"^[A-Za-z][A-Za-z0-9_]{0,63}$")) throw new ArgumentException("Project name must start with a letter and contain only letters, digits or underscores (max 64).");
+        if (forceOverwrite && !repair) throw new ArgumentException("Overwrite requires repair.", nameof(forceOverwrite));
         parent = Path.GetFullPath(parent);
         var path = Path.Combine(parent, name);
-        if (Directory.Exists(path) || File.Exists(path)) throw new ProjectDestinationExistsException(path);
+        var packageName = $"dev.axmol.{name.ToLowerInvariant()}";
+        if (repair)
+        {
+            // Never let the engine's repair mode turn an arbitrary folder into a project or silently
+            // rebind a project to another engine/language. The engine may still modify project files.
+            if (!Directory.Exists(path) || !File.Exists(Path.Combine(path, ".axproj")))
+                throw new InvalidDataException("Repair requires an existing Axmol project with .axproj.");
+            var existing = StateStore.ReadProject(path);
+            if (existing.Version != engine.Version || existing.ProjectType != projectType
+                || (File.Exists(StateStore.MetadataPath(path)) && existing.Channel != engine.Channel))
+                throw new InvalidDataException("Repair requires the same engine version, channel and project language.");
+            var profile = File.ReadAllText(Path.Combine(path, ".axproj"));
+            var profileVersion = Regex.Match(profile, @"(?m)^engine_version\s*=\s*(\d+\.\d+\.\d+)(?:-[0-9a-fA-F]{7,})?\s*$");
+            if (!profileVersion.Success || profileVersion.Groups[1].Value != engine.Version)
+                throw new InvalidDataException("Repair requires .axproj to match the selected engine version.");
+            packageName = Regex.Match(profile, @"(?m)^package_name\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
+            if (packageName.Length == 0)
+                throw new InvalidDataException("Repair requires an Axmol project with a package name in .axproj.");
+        }
+        else if (Directory.Exists(path) || File.Exists(path)) throw new ProjectDestinationExistsException(path);
+
         Directory.CreateDirectory(parent);
-        var arguments = new List<string> { "-p", $"dev.axmol.{name.ToLowerInvariant()}", "-d", parent, "-l", projectType };
+        var arguments = new List<string> { "-p", packageName, "-d", parent, "-l", projectType };
         if (cameraMode is not null) arguments.AddRange(["-m", cameraMode]);
         arguments.Add(name);
-        await commandLine.RunAsync(engine, new AxmolInvocation("new", arguments.ToArray()), parent, cancellation);
+        if (portrait) arguments.Add("--portrait");
+        if (isolated) arguments.Add("-isolated");
+        if (repair) arguments.Add("-repair");
+        if (forceOverwrite) arguments.Add("-forceOverwrite");
+        await commandLine.RunAsync(engine, new AxmolInvocation("new", arguments.ToArray()), parent, cancellation, onLine: onLine);
+        cancellation.ThrowIfCancellationRequested();
         var project = StateStore.ReadProject(path);
         if (project.Version != engine.Version) throw new InvalidDataException("Created project engine version does not match selected engine.");
         if (project.ProjectType != projectType) throw new InvalidDataException("Created project scripting type does not match selection.");
         project.Channel = engine.Channel;
-        project.Platform = BuildTargets.DefaultForHost(engine.Version).Id;
-        StateStore.LockProject(project);
+        if (!repair)
+        {
+            project.Platform = BuildTargets.DefaultForHost(engine.Version).Id;
+            StateStore.LockProject(project);
+        }
+        else if (!File.Exists(StateStore.MetadataPath(path)))
+        {
+            project.Platform = BuildTargets.DefaultForHost(engine.Version).Id;
+            StateStore.LockProject(project);
+        }
         return project;
     }
 
