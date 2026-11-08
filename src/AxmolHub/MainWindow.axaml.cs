@@ -192,6 +192,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         ConfigureLinuxWindowSurface();
         InitializeSidebar();
+        InitializeNavigationView();
         InitializeTitleBar();
         InitializeInspector();
         InitializePictureViewer();
@@ -231,8 +232,8 @@ public partial class MainWindow : Window
         // machinery.
         BottomMenuButton.Click += (_, _) => ToggleBottomMenu();
 
-        // Default to the "Projects" page, matching the WPF version (WPF uses NavProjects IsChecked="True").
-        NavigateTo("Projects");
+        // A fresh or upgraded install keeps the full navigation and starts on Projects.
+        NavigateTo(NavigationViews.ShowsWorkbench(_preferences.NavigationView) ? "Projects" : "Assistant");
 
         // Font conclusions must be handled only after the window is on screen: a modal's owner
         // must be shown first.
@@ -491,8 +492,8 @@ public partial class MainWindow : Window
     /// at binding time, only catchable by screenshot review.
     ///
     /// Settings is not in this loop because it is not a page any more — it is the overlay layer, and an overlay
-    /// has no nav item to light up. The four radio buttons are the whole navigation, and exactly one of them is
-    /// ever checked.
+    /// has no nav item to light up. The four radio buttons are the full navigation; the chosen sidebar view
+    /// determines which of them are visible, and exactly one is checked.
     /// </summary>
     private void SyncNavigation(string name)
     {
@@ -1572,6 +1573,72 @@ public partial class MainWindow : Window
             ThemeService.Apply(previous);
             return ex.Message;
         }
+    }
+
+    private void InitializeNavigationView()
+    {
+        NavigationViewButton.Click += (_, _) =>
+        {
+            if (FlyoutBase.GetAttachedFlyout(NavigationViewButton) is MenuFlyout { IsOpen: true } open)
+            {
+                open.Hide();
+                return;
+            }
+
+            var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+            foreach (var (view, label, description) in new[]
+                     {
+                         (NavigationViews.Workbench, "NavigationWorkbench", "NavigationWorkbenchDescription"),
+                         (NavigationViews.WorkbenchPlus, "NavigationWorkbenchPlus", "NavigationWorkbenchPlusDescription"),
+                         (NavigationViews.GeneralAi, "NavigationGeneralAi", "NavigationGeneralAiDescription"),
+                     })
+            {
+                var header = new StackPanel { Spacing = 2, MinWidth = 210 };
+                header.Children.Add(new TextBlock { Text = HubStrings.Get(label), FontWeight = FontWeight.SemiBold });
+                var detail = new TextBlock { Text = HubStrings.Get(description), FontSize = 11 };
+                detail.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+                header.Children.Add(detail);
+                var item = new MenuItem { Header = header, IsChecked = _preferences.NavigationView == view,
+                    ToggleType = MenuItemToggleType.CheckBox };
+                item.Click += (_, _) =>
+                {
+                    menu.Hide();
+                    SelectNavigationView(view);
+                };
+                menu.Items.Add(item);
+            }
+            FlyoutBase.SetAttachedFlyout(NavigationViewButton, menu);
+            FlyoutBase.ShowAttachedFlyout(NavigationViewButton);
+        };
+        SyncNavigationView();
+    }
+
+    private void SelectNavigationView(string view)
+    {
+        view = NavigationViews.Normalize(view);
+        if (_preferences.NavigationView == view) return;
+        _preferences.NavigationView = view;
+        SyncNavigationView();
+        if (!NavigationViews.ShowsWorkbench(view) && _currentKey != "Assistant") NavigateTo("Assistant");
+        else if (!NavigationViews.ShowsAssistant(view) && _currentKey == "Assistant") NavigateTo("Projects");
+        _preferencesStore.Save(_preferences);
+    }
+
+    private void SyncNavigationView()
+    {
+        var view = NavigationViews.Normalize(_preferences.NavigationView);
+        var workbench = NavigationViews.ShowsWorkbench(view);
+        NavProjects.IsVisible = workbench;
+        NavInstalls.IsVisible = workbench;
+        NavToolchains.IsVisible = workbench;
+        AssistantNavRow.IsVisible = NavigationViews.ShowsAssistant(view);
+        NavigationViewLabel.Text = HubStrings.Get(view switch
+        {
+            NavigationViews.Workbench => "NavigationWorkbench",
+            NavigationViews.GeneralAi => "NavigationGeneralAi",
+            _ => "NavigationWorkbenchPlus",
+        });
+        ToolTip.SetTip(NavigationViewButton, HubStrings.Get("NavigationViewTip"));
     }
 
     /// <summary>
@@ -2734,6 +2801,7 @@ public partial class MainWindow : Window
         // The settings gear is icon-only, so its tooltip is the only place the name "Settings" appears for it.
         // Set here rather than in ApplyLanguage so it is also in place at construction time.
         ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
+        SyncNavigationView();
         ToolTip.SetTip(LogActionsButton, HubStrings.Get("LogActions"));
         // The update button's tip and pill label are state-dependent, so re-resolving the current state is the
         // whole language switch for them: SyncUpdateAction reads HubStrings fresh on every call, and a label

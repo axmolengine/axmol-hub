@@ -14,7 +14,7 @@
       title bar (32px) = ☰ sidebar drawer at the leading edge / page title / the review column's two controls
       (⤢ lift the pane over the window, ▯ open or shut the column) / the three caption plates (drawn by
       MainWindow.TitleBar);
-      left = collapsible sidebar (brand mark + "Axmol Hub" + version + four nav items + conversation list as a
+      left = collapsible sidebar (brand/view picker + visible nav items + conversation list as a
       child of the "AI 助手" item + a bottom block whose text part opens the settings/appearance popup menu,
       with the update's own button and the gear shortcut beside it), with a 5px drag grip on its right edge;
       right = content: page / 28px status strip / log body.
@@ -105,6 +105,19 @@
     </Style>
     <Style Selector="Button.assistant-action:pointerover Path">
       <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+
+    <Style Selector="Button.navigation-view">
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="4,5" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Button.navigation-view:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
 
     <!-- The bottom popup-menu entry: the brand/host text block is one quiet button. -->
@@ -967,27 +980,39 @@
           </StackPanel>
 
           <StackPanel DockPanel.Dock="Top">
-            <!-- The brand block: the app's own mark, the product name, the release-channel marker, and the
-                 version line under them. The mark is the one gradient in this app (Hub.Image.Brand); the title
-                 text stays flat ink so the two never read as competing marks. -->
-            <StackPanel x:Name="BrandHeader" Margin="2,0,0,16" VerticalAlignment="Center">
-              <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-                <Image x:Name="BrandLogo" Source="{StaticResource Hub.Image.Brand}"
-                       Width="18" Height="18" Stretch="Uniform"
-                       VerticalAlignment="Center" />
-                <TextBlock x:Name="BrandTitle" Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
-                <Border x:Name="PreviewBadge" IsVisible="False"
-                        Background="{DynamicResource Hub.PreviewBadgeBackground}"
-                        BorderBrush="{DynamicResource Hub.PreviewBadgeBorder}"
-                        BorderThickness="1" CornerRadius="4" Padding="5,1"
-                        VerticalAlignment="Center">
-                  <TextBlock Text="Preview" Foreground="{DynamicResource Hub.PreviewBadgeForeground}"
-                             FontSize="9" FontWeight="SemiBold" />
-                </Border>
-              </StackPanel>
-              <TextBlock x:Name="BrandVersion" Foreground="{DynamicResource Hub.TextSecondary}"
-                         FontSize="10" Margin="0,2,0,0" />
-            </StackPanel>
+            <!-- The brand and view picker share one quiet press surface. The mark and product name lead;
+                 the selected view and version sit together beneath the title, not as a separate nav row. -->
+            <Button x:Name="NavigationViewButton" Classes="navigation-view" Margin="0,0,0,12">
+              <Grid x:Name="BrandHeader" ColumnDefinitions="18,*" RowDefinitions="Auto,Auto"
+                    ColumnSpacing="7" RowSpacing="2">
+                <Image x:Name="BrandLogo" Grid.Column="0" Grid.Row="0"
+                       Source="{StaticResource Hub.Image.Brand}"
+                       Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Grid.Row="0" Orientation="Horizontal" Spacing="7"
+                            VerticalAlignment="Center">
+                  <TextBlock x:Name="BrandTitle" Text="Axmol Hub" FontSize="14" FontWeight="SemiBold" />
+                  <Border x:Name="PreviewBadge" IsVisible="False"
+                          Background="{DynamicResource Hub.PreviewBadgeBackground}"
+                          BorderBrush="{DynamicResource Hub.PreviewBadgeBorder}"
+                          BorderThickness="1" CornerRadius="4" Padding="5,1"
+                          VerticalAlignment="Center">
+                    <TextBlock Text="Preview" Foreground="{DynamicResource Hub.PreviewBadgeForeground}"
+                               FontSize="9" FontWeight="SemiBold" />
+                  </Border>
+                  <Path Data="M0 0L4 4L8 0" Width="8" Height="4"
+                        Stretch="None" Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"
+                        StrokeThickness="1.5" StrokeLineCap="Round" StrokeJoin="Round"
+                        VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Grid.Row="1" Orientation="Horizontal" Spacing="5">
+                  <TextBlock x:Name="NavigationViewLabel" FontSize="10"
+                             Foreground="{DynamicResource Hub.TextSecondary}" />
+                  <TextBlock Text="·" FontSize="10" Foreground="{DynamicResource Hub.TextSecondary}" />
+                  <TextBlock x:Name="BrandVersion" FontSize="10"
+                             Foreground="{DynamicResource Hub.TextSecondary}" />
+                </StackPanel>
+              </Grid>
+            </Button>
 
             <RadioButton x:Name="NavProjects" Classes="nav" GroupName="Navigation">
               <StackPanel Orientation="Horizontal">
@@ -1016,7 +1041,7 @@
               </StackPanel>
             </RadioButton>
 
-            <Grid ColumnDefinitions="*,Auto,Auto">
+            <Grid x:Name="AssistantNavRow" ColumnDefinitions="*,Auto,Auto">
               <RadioButton x:Name="NavAssistant" Grid.ColumnSpan="3"
                            Classes="nav" GroupName="Navigation" Padding="9,10,64,10">
                 <StackPanel Orientation="Horizontal">

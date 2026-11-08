@@ -72,6 +72,9 @@ public sealed class HubPreferences
     [System.Text.Json.Serialization.JsonPropertyName("trustedComputerApplications")]
     internal List<ComputerApplication> TrustedComputerApps { get; set; } = [];
 
+    /// <summary>Which navigation entries appear. Older settings without this value keep the full sidebar.</summary>
+    public string NavigationView { get; set; } = NavigationViews.Default;
+
     /// <summary>Expanded width of the left navigation/session sidebar in px, range 240–420; adjusted by the sidebar's drag handle.</summary>
     public double SidebarWidth { get; set; } = 300;
 
@@ -222,6 +225,7 @@ public sealed class PreferencesStore(string path)
         // edited, or written by a newer Hub) must not become "download from nowhere".
         preferences.DownloadSource = DownloadSources.Normalize(preferences.DownloadSource);
         preferences.UpdateChannel = UpdateChannels.Normalize(preferences.UpdateChannel);
+        preferences.NavigationView = NavigationViews.Normalize(preferences.NavigationView);
         // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
         // has to come back as "ask", never as "let it through".
         preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);
