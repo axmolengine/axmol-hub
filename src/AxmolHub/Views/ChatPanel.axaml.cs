@@ -3343,7 +3343,8 @@ public partial class ChatPanel : UserControl
     /// <summary>The stored form of the row: this turn's thinking, folded as the reader left it.</summary>
     private Control? BuildThoughtRowForTurn(string conversationId, int index, ChatTurn turn, bool inGroup)
     {
-        if (!_chat.ShowThinking || turn.Reasoning is not { Length: > 0 } thought) return null;
+        if (!_chat.ShowThinking || string.IsNullOrWhiteSpace(turn.Reasoning)) return null;
+        var thought = turn.Reasoning;
 
         // The thought facet belongs to this occurrence, so a rebuild or an inserted result cannot hand its
         // fold state to the turn that happens to occupy the old source index.
@@ -5448,7 +5449,7 @@ public partial class ChatPanel : UserControl
         // view — unless a hand has opened the row, which is a standing request to keep seeing it. The later rounds
         // are not a dead screen either: the glyph and the elapsed line keep moving, and their words go straight to
         // the row inside the group.
-        var showRow = _chat.ShowThinking && thought.Length > 0
+        var showRow = _chat.ShowThinking && !string.IsNullOrWhiteSpace(thought)
                       && (!bubble.Run.ThoughtFiledBefore || bubble.Thought.TouchedByUser);
         bubble.Thought.Shell.IsVisible = showRow;
         if (showRow)

@@ -198,7 +198,7 @@ public static class TranscriptProjection
                         turn.Text.Length > 0 && visible[at].Source >= visible.Count - eagerMarkdownLimit,
                         visible[at].Key));
                 }
-                else if (showThinking && turn.Reasoning is { Length: > 0 })
+                else if (showThinking && !string.IsNullOrWhiteSpace(turn.Reasoning))
                 {
                     rows.Add(new TranscriptRow(TranscriptRowKind.Thought, visible[at].Source, null, false,
                         visible[at].Key));
@@ -219,7 +219,7 @@ public static class TranscriptProjection
                 continue;
             }
 
-            if (showThinking && turn.Reasoning is { Length: > 0 })
+            if (showThinking && !string.IsNullOrWhiteSpace(turn.Reasoning))
                 rows.Add(new TranscriptRow(TranscriptRowKind.Thought, visible[at].Source, null, false,
                     visible[at].Key));
         }
