@@ -303,17 +303,22 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await Git("config", "remote.origin.pushurl", Path.Combine(root, "missing-remote.git"));
             var partialRequests = 0;
             chat.ClientOverride = (_, _) => { partialRequests++; return new ScriptedChatClient(["Push retry needs user attention."]); };
-            chat.TryEnqueueSend(partial.Id, "@hub commit+push", null, out _);
-            await WaitForConditionAsync(() => chat.StoredCopyForCheck(partial.Id)?.Messages.LastOrDefault()?.Role == ChatRoles.Notice);
+            var partialSent = chat.TryEnqueueSend(partial.Id, "@hub commit+push", null, out var partialRefusal);
+            // Local Git work has no model run slot. Wait for its terminal notice before reading the
+            // handoff or restoring pushurl; restoring it while Git still runs turns failure into success.
+            var partialFinished = await WaitForConditionAsync(() =>
+                chat.StoredCopyForCheck(partial.Id)?.Messages.LastOrDefault()?.Role == ChatRoles.Notice,
+                TimeSpan.FromSeconds(20));
             await WaitForIdleAsync(chat);
             var partialCopy = chat.StoredCopyForCheck(partial.Id);
             var handoff = partialCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User);
             var retained = (await Git("rev-parse", "HEAD")).Output;
-            check(partialRequests == 1 && handoff?.Text == HubStrings.Get("PushSummaryAction")
+            check(partialSent && partialFinished && partialRequests == 1 && handoff?.Text == HubStrings.Get("PushSummaryAction")
                   && handoff.IsGitOperationFallback && retained != afterLocalHead
                   && (await Git("status", "--porcelain")).Output.Length == 0,
                 "提交并推送部分成功后只用简单推送消息交接一次，保留本地提交（请求=" + partialRequests
-                + "，消息=" + handoff?.Text + "）");
+                + "，消息=" + handoff?.Text + "，完成=" + partialFinished + "，拒绝=" + partialRefusal
+                + "，结果=" + partialCopy?.Messages.LastOrDefault()?.Text + "）");
             await Git("config", "--unset", "remote.origin.pushurl");
             await Git("push");
 

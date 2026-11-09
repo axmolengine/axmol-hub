@@ -37,10 +37,12 @@ public partial class ShellCheckWindow : Window
         // one self-check stay in a single wholly-deletable place.
         var scratchRoot = ScratchDirectory.Resolve("shell-check", Guid.NewGuid().ToString("N"));
 
-        // The run's own clock, reported on the RESULT line: the suite's cost is a budget (SuiteCeiling), and a
-        // number read off the report is the only way to see it approaching that budget without timing a run by
-        // hand. Started before the window is built so the figure covers everything the ceiling covers.
+        // Include setup and cleanup in the recorded duration. Progress, not total elapsed time,
+        // determines whether a live suite has stalled.
         var runClock = System.Diagnostics.Stopwatch.StartNew();
+        var progressClock = System.Diagnostics.Stopwatch.StartNew();
+        var lastProgress = _report.Lines.Count;
+        DispatcherTimer? watchdog = null;
 
         var finished = false;
 
@@ -52,9 +54,10 @@ public partial class ShellCheckWindow : Window
             }
 
             finished = true;
+            watchdog?.Stop();
             _report.Line(string.Format(CultureInfo.InvariantCulture,
-                "RESULT: {0}/{1} passed in {2:0.0} s (ceiling {3:0} s)",
-                _report.Passed, _report.Passed + _report.Failures, runClock.Elapsed.TotalSeconds, SuiteCeiling.TotalSeconds));
+                "RESULT: {0}/{1} passed in {2:0.0} s (progress timeout {3:0} s)",
+                _report.Passed, _report.Passed + _report.Failures, runClock.Elapsed.TotalSeconds, ProgressTimeout.TotalSeconds));
 
             try
             {
@@ -93,29 +96,29 @@ public partial class ShellCheckWindow : Window
             Finish();
         }, DispatcherPriority.Background);
 
-        // Fallback: don't let the process hang forever. Two different failures look the same from here — a window
-        // that never shows, and an assertion waiting on something that never arrives — and they used to be
-        // reported as one, which turned a slow-but-complete run into a lie about the window.
-        //
-        // The ceiling has to clear the suite's own length, not just a stuck assertion's: measured 2026-10-08 the
-        // full run finishes in 26–27 s warm and 37 s as a cold first run of a freshly built binary, and at 30 s it
-        // reported "an assertion is stuck" for a suite that was merely finishing. A genuinely stuck check waits
-        // forever, so headroom costs only the time before a real hang is named — and the constant below is what
-        // the message quotes, so the two cannot drift apart again.
-        DispatcherTimer.RunOnce(() =>
+        // A moving window is not proof of progress; a newly recorded assertion is. Direct report
+        // checks and skips count too. A failure stays in the report while subsequent checks continue.
+        watchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        watchdog.Tick += (_, _) =>
         {
             if (finished) return;
+            if (_report.Lines.Count != lastProgress)
+            {
+                lastProgress = _report.Lines.Count;
+                progressClock.Restart();
+            }
+            if (progressClock.Elapsed < ProgressTimeout) return;
+            var last = _report.Lines.LastOrDefault() ?? "尚无检查结果";
             Check(false, checksStarted
-                ? $"自检在 {(int)SuiteCeiling.TotalSeconds} 秒内没有跑完：有断言卡在等待上，请检查最近加入的断言组"
-                : $"窗口在 {(int)SuiteCeiling.TotalSeconds} 秒内没有触发 Opened，断言未执行");
+                ? $"自检连续 {(int)ProgressTimeout.TotalSeconds} 秒没有新检查结果；最后进展：{last}"
+                : $"窗口在 {(int)ProgressTimeout.TotalSeconds} 秒内没有触发 Opened，断言未执行");
             Finish();
-        }, SuiteCeiling);
+        };
+        watchdog.Start();
     }
 
-    /// <summary>How long the whole check run may take before it is called stuck, rather than merely slow. Three
-    /// times the slowest completed run on record; raise it with the suite, because a ceiling the suite can brush
-    /// produces a failure that names the wrong cause.</summary>
-    private static readonly TimeSpan SuiteCeiling = TimeSpan.FromSeconds(180);
+    /// <summary>Maximum silence between recorded results, independent of the full suite's duration.</summary>
+    private static readonly TimeSpan ProgressTimeout = TimeSpan.FromSeconds(60);
 
     private void Check(bool ok, string message)
     {

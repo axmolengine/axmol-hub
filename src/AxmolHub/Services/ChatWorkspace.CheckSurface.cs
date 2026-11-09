@@ -18,6 +18,12 @@ public sealed partial class ChatWorkspace : IDisposable
     internal (IReadOnlyList<ChatTurn> History, string SystemPrompt, IReadOnlyList<AITool> Tools)? PreparedRequestForCheck(string conversationId)
         => _execution.PreparedRequestForCheck(conversationId);
 
+    internal Func<TimeSpan, CancellationToken, Task>? ProviderDelayForCheck
+    {
+        get => _execution.ProviderDelayForCheck;
+        set => _execution.ProviderDelayForCheck = value;
+    }
+
     internal int PreparedHistoryCountForCheck(string conversationId) => PreparedRequestForCheck(conversationId)?.History.Count ?? -1;
     internal IReadOnlyList<AITool> PreparedToolsForCheck(string conversationId) => PreparedRequestForCheck(conversationId)?.Tools ?? [];
     /// <summary>How many of the attachment names this session's transcript carries resolve back to bytes in the

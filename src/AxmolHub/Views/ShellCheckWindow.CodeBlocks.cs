@@ -155,14 +155,22 @@ internal sealed class ShellCodeBlocksChecks
             .Single(candidate => candidate.Orientation == Avalonia.Layout.Orientation.Horizontal);
         var button = grid.GetVisualDescendants().OfType<Button>()
             .Single(candidate => candidate.Classes.Contains("markdown-code-copy"));
-        var lines = editor.Text.Split('\n').Length;
+        // Read the laid-out text metrics, not the default font estimate; the editor may select a fallback
+        // font. Parent and child extents can round to adjacent physical pixels on fractional-DPI displays.
+        view.EnsureVisualLines();
+        var lines = view.VisualLines;
+        var textHeight = lines.Sum(line => line.Height);
+        var scale = TopLevel.GetTopLevel(editor)?.RenderScaling ?? 1;
+        var tolerance = 1 / scale;
         var geometry = $"border={border.Bounds} grid={grid.Bounds} editor={editor.Bounds} "
-            + $"view={view.Bounds} bar={bar.Bounds} copy={button.Bounds}";
-        Check(lines >= 1 && view.Bounds.Height >= lines * view.DefaultLineHeight - 0.5
+            + $"view={view.Bounds} bar={bar.Bounds} copy={button.Bounds} visualLines={lines.Count} textHeight={textHeight} "
+            + $"barVisible={bar.IsVisible} range={bar.Minimum}/{bar.Maximum} row={grid.RowDefinitions[1].ActualHeight}";
+        Check(lines.Count > 0 && lines.Sum(line => line.LastDocumentLine.LineNumber - line.FirstDocumentLine.LineNumber + 1)
+                  == editor.Document.LineCount && view.Bounds.Height >= textHeight - tolerance
               && bar.IsVisible && bar.Maximum > bar.Minimum
               && bar.Bounds.Top >= view.Bounds.Bottom - 0.5
               && editor.Bounds.Height >= view.Bounds.Height + bar.Bounds.Height - 0.5
-              && grid.RowDefinitions[1].ActualHeight >= editor.Bounds.Height
+              && grid.RowDefinitions[1].ActualHeight >= editor.Bounds.Height - tolerance
               && button.Bounds.Bottom <= editor.Bounds.Top + 0.5,
             name + "：文字完整、横向滚动条不盖最后一行、复制按钮占独立行（" + geometry + "）");
     }

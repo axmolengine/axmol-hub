@@ -115,7 +115,8 @@ internal static class ShellCheckSupport
     internal static string LeakedCallAfter(string prose) => prose + "\n\n" + LeakedCall;
     internal static async Task<string?> WaitForPendingCallAsync(Conversation session)
     {
-        for (var wait = 0; wait < 400; wait++)
+        var deadline = Environment.TickCount64 + 1000;
+        while (Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
             var callId = session.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
@@ -130,26 +131,28 @@ internal static class ShellCheckSupport
 
     internal static async Task<bool> WaitForStaleDeadlineAsync(ChatWorkspace chat, string conversationId)
     {
-        for (var wait = 0; wait < 400; wait++)
+        var until = Environment.TickCount64 + 4000;
+        while (Environment.TickCount64 < until)
         {
             Dispatcher.UIThread.RunJobs();
-            if (chat.RunFor(conversationId)?.Token.IsCancellationRequested == true) return true;
-            await Task.Delay(2);
+            if (chat.RunFor(conversationId)?.DeadlineFired == true) return true;
+            await Task.Delay(10);
         }
 
         return false;
     }
 
-    internal static async Task<bool> WaitForConditionAsync(Func<bool> condition)
+    internal static async Task<bool> WaitForConditionAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
-        for (var wait = 0; wait < 500; wait++)
+        var deadline = Environment.TickCount64 + (long)(timeout ?? TimeSpan.FromSeconds(5)).TotalMilliseconds;
+        while (Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
             if (condition()) return true;
-            await Task.Delay(2);
+            await Task.Delay(10);
         }
 
-        return false;
+        return condition();
     }
 
     internal static int SummaryBoundary(Conversation conversation)
@@ -310,26 +313,37 @@ internal static class ShellCheckSupport
 
     internal static async Task WaitForRunAsync(ChatWorkspace chat, string conversationId)
     {
-        for (var wait = 0; wait < 200 && chat.IsRunning(conversationId); wait++)
+        var deadline = Environment.TickCount64 + 1000;
+        while (chat.IsRunning(conversationId) && Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
-            await Task.Delay(5);
+            await Task.Delay(10);
         }
     }
 
     internal static Task WaitForSignalAsync(Task signal) => Task.WhenAny(signal, Task.Delay(TimeSpan.FromSeconds(3)));
     internal static async Task WaitForIdleAsync(ChatWorkspace chat)
     {
-        for (var wait = 0; wait < 200 && chat.RunningCount > 0; wait++)
+        bool ExecutingOrResuming() => chat.HasExecutingRuns || chat.Conversations.Any(summary =>
+            chat.RunFor(summary.Id) is { Phase: RunPhase.AwaitingApproval }
+            && chat.StoredCopyForCheck(summary.Id) is { } session
+            && session.Messages.Any(turn => turn.ApprovalState is ChatApprovalStates.Approved or ChatApprovalStates.Answered
+                && turn.ToolCallId is { } callId && !session.Messages.Any(result =>
+                    result.Role == ChatRoles.Tool && result.ToolCallId == callId)));
+        // Parked decisions intentionally retain run slots. Waiting on RunningCount spent the whole polling
+        // allowance on each such call, even though no request was running. Approved continuations still wait.
+        var deadline = Environment.TickCount64 + 3000;
+        while (ExecutingOrResuming() && Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
-            await Task.Delay(5);
+            await Task.Delay(10);
         }
     }
 
     internal static async Task WaitUntilPostedAsync(Func<bool> landed)
     {
-        for (var tick = 0; tick < 100 && !landed(); tick++)
+        var deadline = Environment.TickCount64 + 1000;
+        while (!landed() && Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
             await Task.Delay(10);
@@ -340,10 +354,13 @@ internal static class ShellCheckSupport
 
     internal static async Task WaitUntilAsync(Func<bool> settled, int maxTicks = 400)
     {
-        for (var wait = 0; wait < maxTicks && !settled(); wait++)
+        // Task.Delay may round to the host timer quantum. A wall-clock budget avoids multiplying that
+        // rounding by hundreds of iterations; maxTicks retains the callers' nominal five-ms allowance.
+        var deadline = Environment.TickCount64 + maxTicks * 5L;
+        while (!settled() && Environment.TickCount64 < deadline)
         {
             Dispatcher.UIThread.RunJobs();
-            await Task.Delay(5);
+            await Task.Delay(10);
         }
     }
 
@@ -1239,6 +1256,38 @@ internal static class ShellCheckSupport
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public void Dispose()
         {
+        }
+    }
+
+    internal static async Task DeleteFixtureConversationAsync(ChatWorkspace chat, string id)
+    {
+        var deadline = Environment.TickCount64 + 2000;
+        while (true)
+        {
+            try { chat.DeleteConversation(id); return; }
+            catch (IOException) when (Environment.TickCount64 < deadline)
+            {
+                await Task.Delay(20);
+                Dispatcher.UIThread.RunJobs();
+            }
+        }
+    }
+
+    internal static async Task DeleteFixtureDirectoryAsync(string path)
+    {
+        var deadline = Environment.TickCount64 + 2000;
+        while (true)
+        {
+            try
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (IOException) when (Environment.TickCount64 < deadline)
+            {
+                await Task.Delay(20);
+                Dispatcher.UIThread.RunJobs();
+            }
         }
     }
 

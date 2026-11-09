@@ -11,6 +11,9 @@ using AxmolHub.Agent;
 namespace AxmolHub;
 internal sealed partial class ChatExecutionCoordinator
 {
+    // A controllable clock for offline recovery checks. Normal execution always uses Task.Delay.
+    internal Func<TimeSpan, CancellationToken, Task>? ProviderDelayForCheck { get; set; }
+
     internal string? PlansDirectoryForCheck => PlanStore.DirectoryFor(_dataRoot);
 
     // A typed snapshot keeps checks independent of the coordinator's private request representation.

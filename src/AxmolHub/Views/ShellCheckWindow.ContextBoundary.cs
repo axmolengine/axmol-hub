@@ -40,6 +40,7 @@ internal sealed class ShellContextBoundaryChecks
             };
             chat.OpenConversation(session.Id);
             await panel.SendForCheckAsync("Read all eight fixture parts, then finish.");
+            await WaitForIdleAsync(chat);
             var results = session.Messages.Where(turn => turn.Role == ChatRoles.Tool).ToArray();
             Check(summaries > 0 && burst.Executed == 8 && results.Length == 8
                   && results.Select(turn => turn.ToolCallId).Distinct().Count() == 8
@@ -53,7 +54,9 @@ internal sealed class ShellContextBoundaryChecks
             chat.RemoveProvider(provider.Id);
             if (before is not null) chat.OpenConversation(before);
             panel.Reload();
-            Directory.Delete(workspace, recursive: true);
+            // Native decoders, repository reads and background memory logging may still own fixture files.
+            // Retry only fixture cleanup, with a finite deadline; a persistent handle remains a check failure.
+            await DeleteFixtureDirectoryAsync(workspace);
         }
     }
 }

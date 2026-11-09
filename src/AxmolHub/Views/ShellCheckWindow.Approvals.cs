@@ -255,9 +255,29 @@ internal sealed class ShellApprovalsChecks
             // A real workspace under the repo's tmp/, with a real file in it: the call the fixture asks for is a
             // genuine file_write, so the gate, the frozen diff on the card and the edit that lands on approval are
             // all the production path rather than a stand-in for one.
-            var workspace = ScratchDirectory.Resolve("approval-workspace");
+            var workspace = ScratchDirectory.Resolve("approval-workspace", Guid.NewGuid().ToString("N"));
             var target = System.IO.Path.Combine(workspace, "note.txt");
             System.IO.File.WriteAllText(target, "第一行\n第二行\n");
+            // Keep repository reads and memory writes inside this fixture, never in the checkout under test.
+            // Otherwise every send refreshes the parent repository and unrelated diffs dominate this UI suite.
+            if (CommandShells.Resolve("git") is { } git)
+            {
+                var runner = new ProcessRunner(_ => { });
+                System.IO.File.WriteAllText(System.IO.Path.Combine(workspace, ".gitignore"), ".agents/\n");
+                foreach (var arguments in new[]
+                {
+                    new[] { "init", "-b", "main" },
+                    new[] { "config", "user.name", "Hub approval fixture" },
+                    new[] { "config", "user.email", "hub-check@example.invalid" },
+                    new[] { "config", "commit.gpgsign", "false" },
+                    new[] { "add", "--", ".gitignore", "note.txt" },
+                    new[] { "-c", "core.hooksPath=", "commit", "-m", "misc: create approval fixture" },
+                })
+                {
+                    var result = await runner.RunAsync(git, arguments, workspace);
+                    if (result.ExitCode != 0) throw new InvalidOperationException("Approval repository fixture: " + result.Error);
+                }
+            }
             var editArguments = new Dictionary<string, object?>
             {
                 ["path"] = "note.txt",
@@ -628,9 +648,9 @@ internal sealed class ShellApprovalsChecks
                 var card = ToolPreviews.PreviewFor("capture_screen", """{"fullscreen":true}""",
                     new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "capture-check", [], null,
                         null, null, Screen: WindowsScreenCapture.Bridge()));
-                Check(card.Contains("capture_screen · fullscreen", StringComparison.Ordinal)
-                      && card.Contains("PrintWindow", StringComparison.Ordinal),
-                    "抓屏的审批卡先说是整屏，再说是哪个后端（实际「" + card + "」）");
+                Check(card.Contains("Refused:", StringComparison.Ordinal)
+                      && card.Contains("whole-display capture is disabled", StringComparison.Ordinal),
+                    "整屏抓取预览明确拒绝，并提示改用应用窗口（实际「" + card + "」）");
                 var titled = ToolPreviews.PreviewFor("capture_screen", """{"target":"P5 shell"}""",
                     new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "capture-check", [], null,
                         null, null, Screen: WindowsScreenCapture.Bridge()));
@@ -1673,12 +1693,10 @@ internal sealed class ShellApprovalsChecks
             // Parking is what the mode asks for, and the pending call turn is the record of it: read off disk,
             // because a decision made after a restart is made against the file, not against memory.
             chat.OpenConversation(parkSession.Id);
-            chat.IdleTimeout = TimeSpan.FromMilliseconds(150);
-            // Both windows, not the one that used to exist: a call that arrived and then parked leaves the run
-            // armed with the *round's* window, because the tool bracket's release is what re-armed it. Shortening
-            // only the silence one would make the deadline below never fire, and the assertion would be waiting
-            // for an event that the product no longer produces at 150ms.
-            chat.FirstFrameTimeout = TimeSpan.FromMilliseconds(150);
+            // Leave enough time for the real preview, persistence and UI dispatch before testing a stale timer.
+            // A 150ms deadline raced that setup and killed the run before there was a card to inspect.
+            chat.IdleTimeout = TimeSpan.FromSeconds(2);
+            chat.FirstFrameTimeout = TimeSpan.FromSeconds(2);
             chat.TryEnqueueSend(parkSession.Id, "写一个文件", null, out _);
             var parkedCallId = await WaitForPendingCallAsync(parkSession);
             var parked = chat.StoredCopyForCheck(parkSession.Id);
@@ -1806,8 +1824,8 @@ internal sealed class ShellApprovalsChecks
                 + (panel.ComposerDragOverForCheck ? "亮了" : "没亮") + "）");
             panel.RaiseComposerDragLeaveForCheck();
 
-            // Waiting for a person is not stalling: the inactivity deadline is allowed to fire (150ms above) and
-            // the decision still has to be answerable afterwards.
+            // Waiting for a person is not stalling: the actual inactivity source must expire while the
+            // decision remains answerable. Approval suspension cancels a different source immediately.
             var deadlineFired = await WaitForStaleDeadlineAsync(chat, parkSession.Id);
             Check(deadlineFired && chat.RunFor(parkSession.Id) is not null
                   && chat.StoredCopyForCheck(parkSession.Id)?.Messages.Any(turn =>

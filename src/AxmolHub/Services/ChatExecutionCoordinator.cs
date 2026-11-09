@@ -3035,7 +3035,7 @@ internal sealed partial class ChatExecutionCoordinator
                         Audit(run.ConversationId, $"Reasoning without an answer; retrying after {delay.TotalSeconds:0.#}s "
                             + $"(attempt {attempt}/{limit + 1})");
                         NoteRetryWait(run, attempt, delay);
-                        try { await Task.Delay(delay, run.Token).ConfigureAwait(false); }
+                        try { await (ProviderDelayForCheck ?? Task.Delay)(delay, run.Token).ConfigureAwait(false); }
                         finally { NoteRetryWait(run, 0, TimeSpan.Zero); }
                         continue;
                     }

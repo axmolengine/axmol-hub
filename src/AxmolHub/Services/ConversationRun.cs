@@ -131,10 +131,11 @@ internal sealed class ConversationRun : IDisposable
 
     internal bool TryTakeDecodeCommit() => Interlocked.Exchange(ref _decodeCommitted, 1) == 0;
 
+    internal Func<long>? DecodeTimestampForCheck { get; init; }
     private void SampleOutput(string chunk)
     {
         if (chunk.Length == 0) return;
-        var now = Stopwatch.GetTimestamp();
+        var now = DecodeTimestampForCheck?.Invoke() ?? Stopwatch.GetTimestamp();
         var units = TokenWeighing.Units(chunk);
         if (_segmentStartedAt == 0)
         {

@@ -1195,7 +1195,7 @@ internal sealed class ShellTranscriptChecks
                 + (pictureOnly?.Text.Length ?? -1) + "）");
 
             var directory = panel.SessionImageDirectoryForCheck(session.Id);
-            chat.DeleteConversation(session.Id);
+            await DeleteFixtureConversationAsync(chat, session.Id);
             Check(!System.IO.Directory.Exists(directory),
                 "删掉会话时它的图片目录一起没了，不会留下谁也找不回的截图");
 
@@ -1319,7 +1319,7 @@ internal sealed class ShellTranscriptChecks
                   && chat.RunningCount == 0,
                 "回答进行到一半时拖进来的图，跟着那条引导一起进会话，composer 随后清空（实际 "
                 + (steered?.Images.Count ?? -1) + " 张）");
-            chat.DeleteConversation(entrance.Id);
+            await DeleteFixtureConversationAsync(chat, entrance.Id);
 
             // ── One gesture, two channels: a picture becomes a picture, a text file becomes context ──
             // An .svg is the case that proves the split. A person wants to show what it draws, no picture admission

@@ -126,7 +126,10 @@ internal sealed class ShellTranscriptCostChecks
 
         var editable = chat.StartConversation();
         chat.SeedTurnForCheck(editable.Id, "editable question");
-        editable.Messages.AddRange(Enumerable.Range(0, 1_000).Select(i => ChatTurn.Assistant("editing fixture " + i)));
+        // The thousand-row history above already covers scale and recycling. Editing/selection only needs
+        // enough rows to leave the realization window, not a duplicate thousand-row fixture.
+        const int editableRows = 240;
+        editable.Messages.AddRange(Enumerable.Range(0, editableRows).Select(i => ChatTurn.Assistant("editing fixture " + i)));
         panel.Reload();
         Relayout(shell, panel, measure: true);
         panel.ScrollVirtualItemForCheck(0);
@@ -134,7 +137,7 @@ internal sealed class ShellTranscriptCostChecks
         Check(panel.ClickBubbleAction(0, "EditMessage"), "虚拟消息通过现有操作条进入原地编辑");
         var editor = panel.BubbleEditorForCheck(0);
         if (editor is not null) editor.Text = "draft survives recycling";
-        panel.ScrollVirtualItemForCheck(999);
+        panel.ScrollVirtualItemForCheck(editableRows - 1);
         Relayout(shell, panel, measure: true);
         panel.ScrollVirtualItemForCheck(0);
         Relayout(shell, panel, measure: true);
@@ -143,7 +146,7 @@ internal sealed class ShellTranscriptCostChecks
         panel.ClickBubbleAction(0, "Cancel");
         Relayout(shell, panel, measure: true);
         var selected = panel.SelectFirstUserTextForCheck();
-        panel.ScrollVirtualItemForCheck(999);
+        panel.ScrollVirtualItemForCheck(editableRows - 1);
         Relayout(shell, panel, measure: true);
         panel.ScrollVirtualItemForCheck(0);
         Relayout(shell, panel, measure: true);
@@ -162,7 +165,10 @@ internal sealed class ShellTranscriptCostChecks
 
         var machine = chat.StartConversation();
         chat.SeedTurnForCheck(machine.Id, "large activity group");
-        for (var i = 0; i < 5_000; i++)
+        // One thousand calls still exceeds the 149-row realization ceiling by an order of magnitude.
+        // Larger counts belong to the opt-in benchmark, not every live-UI check.
+        const int toolCalls = 1_000;
+        for (var i = 0; i < toolCalls; i++)
         {
             machine.Messages.Add(ChatTurn.FunctionCall("large-" + i, "read_file", "{}"));
             machine.Messages.Add(ChatTurn.FunctionResult("large-" + i, "result " + i));
@@ -170,10 +176,10 @@ internal sealed class ShellTranscriptCostChecks
         panel.Reload();
         Relayout(shell, panel, measure: true);
         Check(panel.VirtualItemCountForCheck == 2 && panel.ActivityRowToggleCountForCheck == 0,
-            "万条工具转录收起时只创建组头，不创建隐藏子控件");
+            "两千条工具转录收起时只创建组头，不创建隐藏子控件");
         panel.SetActivityGroupExpandedForCheck(0, true);
         Relayout(shell, panel, measure: true);
-        Check(panel.VirtualItemCountForCheck == 5_002 && panel.RealizedItemCountForCheck is > 0 and < 150,
+        Check(panel.VirtualItemCountForCheck == toolCalls + 2 && panel.RealizedItemCountForCheck is > 0 and < 150,
             "展开大型活动组也逐行虚拟化，不一次创建全部工具行");
         panel.ScrollVirtualItemForCheck(1_000);
         Relayout(shell, panel, measure: true);

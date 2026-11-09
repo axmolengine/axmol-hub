@@ -160,20 +160,23 @@ internal sealed class ShellAssistantChecks
               && ChatPanel.CompactTokenCountForCheck(5_974_032, CultureInfo.InvariantCulture) == "5.97M"
               && ChatPanel.CompactTokenCountForCheck(1_000_000_000, CultureInfo.InvariantCulture) == "1B",
             "底部 token 数用 K/M/B 缩写，小于千保留整数，进位边界不显示 1000K");
-        using (var rateRun = new ConversationRun("rate-check", TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2)))
+        var decodeTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        using (var rateRun = new ConversationRun("rate-check", TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2))
+               { DecodeTimestampForCheck = () => decodeTimestamp })
         {
             Check(rateRun.DecodeCost is null,
                 "还没有输出时没有解码读数，界面留空而不是写一句占位的话");
             rateRun.AppendReasoning(new string('a', 80));
             Check(rateRun.DecodeCost is null,
                 "单个输出块没有区间，不算出一个凭空的速度");
+            decodeTimestamp += System.Diagnostics.Stopwatch.Frequency / 100;
             rateRun.AppendText(new string('b', 80));
             rateRun.AppendText(new string('c', 80));
             var decoded = rateRun.DecodeCost;
             Check(decoded is { Tokens: > 0 } && decoded.Value.Decode > TimeSpan.Zero,
                 "密集输出块之间即可得出累计解码量与时耗，不等 350ms 间隔");
             var firstRead = decoded!.Value;
-            await Task.Delay(2200);
+            decodeTimestamp += System.Diagnostics.Stopwatch.Frequency * 3;
             Check(rateRun.DecodeCost == firstRead,
                 "没有新输出时读数冻结在原地，而不是随时间滑落或退回等待状态");
             rateRun.AppendText(new string('d', 80));
@@ -192,10 +195,10 @@ internal sealed class ShellAssistantChecks
         // interval longer than two seconds and so never produced a number for it, while fast DeepSeek streams
         // always did; this pins the reading that no longer depends on how chatty the provider is.
         using (var slowRun = new ConversationRun("slow-rate-check", TimeSpan.FromMinutes(2),
-                   TimeSpan.FromMinutes(2)))
+                   TimeSpan.FromMinutes(2)) { DecodeTimestampForCheck = () => decodeTimestamp })
         {
             slowRun.AppendText("先给出第一段答案");
-            await Task.Delay(2500);
+            decodeTimestamp += System.Diagnostics.Stopwatch.Frequency * 3;
             slowRun.AppendText("几秒之后才来的第二段");
             Check(slowRun.DecodeCost is { Tokens: > 0 } slow && slow.Decode.TotalSeconds >= 2,
                 "块间隔超过两秒的慢速模型也能得到速度读数（实际 "
@@ -1665,6 +1668,13 @@ internal sealed class ShellAssistantChecks
         // A visible thinking block cannot be replayed by the transport. Retry as a new segment instead,
         // preserving the first block as a separate turn rather than concatenating two responses.
         shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 1;
+        var recoveryWaits = new List<TimeSpan>();
+        var savedProviderDelay = shell.Chat.ProviderDelayForCheck;
+        shell.Chat.ProviderDelayForCheck = (delay, token) =>
+        {
+            recoveryWaits.Add(delay);
+            return Task.Delay(20, token); // Exercise the wait lifecycle without sleeping through production backoff.
+        };
         var thoughtAttempts = 0;
         ScriptedChatClient? thoughtRetryClient = null;
         shell.Chat.ClientOverride = (_, _) => ++thoughtAttempts == 1
@@ -1721,6 +1731,9 @@ internal sealed class ShellAssistantChecks
             + afterToolClient.Requests + "，结果 "
             + listedResults + "）");
         shell.Chat.DeleteConversation(afterTool.Id);
+        shell.Chat.ProviderDelayForCheck = savedProviderDelay;
+        Check(recoveryWaits.Count == 2 && recoveryWaits.All(delay => delay == AxmolHub.Agent.ProviderFailure.Backoff(0)),
+            "思考恢复的两条路径仍请求真实退避时长，夹具仅替换等待时钟");
         shell.Chat.PreferencesProvider!()!.ProviderMaxRetries = 0;
 
         shell.Chat.ClientOverride = (_, _) => new ScriptedChatClient([], exception: new TimeoutException());
@@ -1891,6 +1904,8 @@ internal sealed class ShellAssistantChecks
             new AxmolHub.Agent.ProviderResponseException("Upstream service temporarily unavailable",
                 "upstream_stream_read_error")) { FailuresBeforeSuccess = 1, FailAfterChunks = true };
         shell.Chat.ClientOverride = (_, _) => partialClient;
+        var partialWake = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        shell.Chat.ProviderDelayForCheck = (_, token) => partialWake.Task.WaitAsync(token);
         shell.Chat.ResumeGoal(partialGoal.Id);
         var partialParked = false;
         for (var wait = 0; wait < 1600; wait++)
@@ -1898,10 +1913,13 @@ internal sealed class ShellAssistantChecks
             var copy = shell.Chat.StoredCopyForCheck(partialGoal.Id);
             partialParked |= copy?.GoalState == ChatGoalStates.Waiting && copy.GoalCooldownCount == 1
                 && copy.GoalWakeAt > DateTimeOffset.UtcNow;
+            if (partialParked) partialWake.TrySetResult(true);
             if (copy?.GoalState == ChatGoalStates.Complete) break;
             await Task.Delay(5);
             Dispatcher.UIThread.RunJobs();
         }
+        partialWake.TrySetResult(true);
+        shell.Chat.ProviderDelayForCheck = savedProviderDelay;
         var partialCopy = shell.Chat.StoredCopyForCheck(partialGoal.Id);
         var partialReplies = partialCopy?.Messages.Where(turn => turn.Role == ChatRoles.Assistant
             && turn.Text.Contains("Partial", StringComparison.Ordinal)).ToArray() ?? [];

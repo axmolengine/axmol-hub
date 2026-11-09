@@ -188,7 +188,7 @@ internal sealed partial class ChatExecutionCoordinator
     {
         try
         {
-            await Task.Delay(at > DateTimeOffset.UtcNow ? at - DateTimeOffset.UtcNow : TimeSpan.Zero,
+            await (ProviderDelayForCheck ?? Task.Delay)(at > DateTimeOffset.UtcNow ? at - DateTimeOffset.UtcNow : TimeSpan.Zero,
                 cancellationToken).ConfigureAwait(false);
             await ApplyOnUiAsync(() =>
             {

@@ -1890,11 +1890,10 @@ internal sealed partial class ShellDecisionsChecks
         // The fixtures above stop at "there is no upstream". Everything past that — the order, the timestamp, the
         // commit's own file list — is git's answer, so it is asserted against a repository this check builds and
         // pushes to itself. Nothing here is on a network: the remote is a bare directory two levels up.
-        var reviewRepo = ScratchDirectory.Resolve("review-commits");
-        if (Directory.Exists(reviewRepo)) Directory.Delete(reviewRepo, true);
+        var reviewRoot = ScratchDirectory.Resolve("review-commits", Guid.NewGuid().ToString("N"));
+        var reviewRepo = System.IO.Path.Combine(reviewRoot, "repository");
+        var reviewRemote = System.IO.Path.Combine(reviewRoot, "remote.git");
         Directory.CreateDirectory(reviewRepo);
-        var reviewRemote = ScratchDirectory.Resolve("review-remote.git");
-        if (Directory.Exists(reviewRemote)) Directory.Delete(reviewRemote, true);
         Directory.CreateDirectory(reviewRemote);
         var gitRunner = new ProcessRunner(_ => { });
         async Task<bool> GitIn(string cwd, params string[] args)

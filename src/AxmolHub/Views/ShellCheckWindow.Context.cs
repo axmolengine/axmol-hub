@@ -20,7 +20,7 @@ internal sealed class ShellContextChecks
         var memoryGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var memoryClient = new ScriptedChatClient(["### 问题\n- 读取大文件\n### 调查与结论\n- 已读取文件\n### 修复\n- 无改动\n### 验证\n- 读取完成\n### 未决事项\n- 未记录"], gate: memoryGate.Task);
         chat.MemoryClientOverride = (_, _) => memoryClient;
-        var workspace = ScratchDirectory.Resolve("compaction-workspace");
+        var workspace = ScratchDirectory.Resolve("compaction-workspace", Guid.NewGuid().ToString("N"));
         var logFile = MemoryLog.FileFor(workspace, DateTimeOffset.Now);
         if (System.IO.File.Exists(logFile)) System.IO.File.Delete(logFile);
         // Five files, not one path asked five times: the spin guard refuses the third byte-identical call inside
@@ -371,8 +371,16 @@ internal sealed class ShellContextChecks
                     shell.UpdateLayout();
                     Dispatcher.UIThread.RunJobs();
                     var layout = panel.ComposerStatusBoundsForCheck;
-                    Check(layout.SpeedWidth >= 50 && layout.SpeedRight < layout.ContextRight
-                          && layout.ContextRight <= layout.RowWidth + 1,
+                    var speedLabel = panel.FindControl<TextBlock>("RequestSpeedLabel")!;
+                    var readableSpeed = new TextBlock
+                    {
+                        Text = "0 tok/s", FontFamily = speedLabel.FontFamily,
+                        FontSize = speedLabel.FontSize, FontWeight = speedLabel.FontWeight,
+                    };
+                    readableSpeed.Measure(new Avalonia.Size(double.PositiveInfinity, double.PositiveInfinity));
+                    var pixel = 1 / shell.RenderScaling;
+                    Check(layout.SpeedWidth >= readableSpeed.DesiredSize.Width - pixel && layout.SpeedRight < layout.ContextRight
+                          && layout.ContextRight <= layout.RowWidth + pixel,
                         "窗口最窄时 TPS 仍有可读宽度，三个状态靠右且上下文按钮留在行内（"
                         + $"speed={layout.SpeedWidth:0.#}, contextRight={layout.ContextRight:0.#}, row={layout.RowWidth:0.#}）");
                 }

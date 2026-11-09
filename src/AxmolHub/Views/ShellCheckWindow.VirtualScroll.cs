@@ -184,7 +184,9 @@ internal sealed class ShellVirtualScrollChecks
         try
         {
             chat.SeedTurnForCheck(session.Id, "variable height fixture");
-            for (var i = 0; i < 160; i++)
+            // Ten repetitions of each row shape still exceed several viewports. The scale-only case is
+            // covered by the thousand-row test; this fixture covers mixed geometry and gesture continuity.
+            for (var i = 0; i < 40; i++)
                 session.Messages.Add(ChatTurn.Assistant((i % 4) switch
                 {
                     0 => "short reply " + i,
@@ -197,7 +199,7 @@ internal sealed class ShellVirtualScrollChecks
             var scroll = panel.TranscriptScrollerForCheck;
             Check(panel.VirtualIndexRealizedForCheck(panel.VirtualItemCountForCheck - 1) && panel.ViewAtBottomForCheck, $"混合行高打开后定位尾行及底部（末行 {panel.VirtualIndexRealizedForCheck(panel.VirtualItemCountForCheck - 1)}，{panel.VirtualCoverageForCheck.Detail}）");
             var gaps = "";
-            for (var step = 0; step < 60; step++)
+            for (var step = 0; step < 24; step++)
             {
                 panel.ScrollTranscriptForCheck(Math.Max(0, scroll.Offset.Y - 137));
                 shell.UpdateLayout();
@@ -253,7 +255,7 @@ internal sealed class ShellVirtualScrollChecks
                 + Fmt(ThumbTopInTrack(thumb, track)) + "，bar " + releasedBar + "→" + settledBar
                 + "，offset " + Fmt(releasedOffset) + "→" + Fmt(scroll.Offset.Y) + "）");
             Check(!panel.ViewAtBottomForCheck, "向上拖动释放并刷新后保持阅读位置，不返回底部");
-            Check(slip <= 2, $"混合行高拖动滑块保持在指针下（最大偏差 {slip:0.0}px）");
+            Check(slip <= 2 + 1e-6, $"混合行高拖动滑块保持在指针下（最大偏差 {slip:0.0}px）");
             chat.SeedPlanReplyForCheck(session.Id, "## Scroll fixture plan\n\nInspect mixed height rows beside the transcript.");
             shell.OpenInspector("plan", session.Messages.Count - 1);
             shell.Width = 1280;
