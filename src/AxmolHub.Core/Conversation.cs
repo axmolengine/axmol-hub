@@ -247,6 +247,10 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// </summary>
     public string? Reasoning { get; init; }
 
+    /// <summary>Signed Messages thinking blocks, in wire order. Never synthesize a signature from displayed
+    /// reasoning: a tool round and a restored session must replay the exact opaque data received from Claude.</summary>
+    public List<ClaudeThinkingBlock>? ClaudeThinking { get; init; }
+
     /// <summary>How long the thinking behind <see cref="Reasoning"/> took, measured on the run's own clock — the
     /// one that does not charge a wait for an approval card to the model's reasoning — and frozen where the
     /// thinking stopped rather than where the turn was filed.
@@ -441,13 +445,15 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// turn for the same reason — it belongs to that one assistant message, and a gateway that wants it back
     /// wants it on the message that earned it.</summary>
     public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null,
-        string? reasoning = null, string? batchId = null, TimeSpan? reasoningElapsed = null) =>
+        string? reasoning = null, string? batchId = null, TimeSpan? reasoningElapsed = null,
+        List<ClaudeThinkingBlock>? claudeThinking = null) =>
         new(ChatRoles.Assistant, text ?? "", DateTimeOffset.Now)
         {
             ToolCallId = callId,
             ToolName = name,
             ToolArguments = arguments,
             Reasoning = reasoning,
+            ClaudeThinking = claudeThinking,
             ReasoningElapsed = reasoningElapsed,
             ApprovalBatchId = batchId,
         };

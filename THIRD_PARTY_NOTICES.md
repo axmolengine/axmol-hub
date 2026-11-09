@@ -9,12 +9,13 @@ The License dialog displays the following files, also shipped in the application
 | File | Contents |
 | --- | --- |
 | `PackageLicenses.txt` | Resolved NuGet package names, versions, license mappings, and shared license texts |
+| `Anthropic.txt` | Anthropic SDK Apache-2.0 license and attribution |
 | `ANGLE.txt` | ANGLE's BSD-3-Clause variant |
 | `Velopack.txt` | Velopack's MIT license |
 | `SkiaSharp-THIRD-PARTY-NOTICES.txt` | Upstream notices bundled with SkiaSharp and HarfBuzzSharp native assets, including Skia, FreeType, ICU, and image codecs |
 | `Microsoft-THIRD-PARTY-NOTICES.txt` | Shared upstream notices supplied by Microsoft .NET packages |
 
-Package versions are pinned in `src/AxmolHub/packages.lock.json`. Licenses include MIT, BSD-2-Clause (Markdig), MS-PL (Svg.Custom), and the ANGLE BSD variant; embedded components have additional terms in the upstream notices. `AvaloniaUI.DiagnosticsSupport` is development-only and excluded from Release assets; its package metadata does not specify a license.
+Package versions are pinned in `src/AxmolHub/packages.lock.json`. Licenses include Apache-2.0 (Anthropic), MIT, BSD-2-Clause (Markdig), MS-PL (Svg.Custom), and the ANGLE BSD variant; embedded components have additional terms in the upstream notices. `AvaloniaUI.DiagnosticsSupport` is development-only and excluded from Release assets; its package metadata does not specify a license.
 
 Self-contained .NET distributions also retain the runtime's license and third-party notices. Velopack packaging tools are pinned in `installer/packaging-manifest.json`.
 

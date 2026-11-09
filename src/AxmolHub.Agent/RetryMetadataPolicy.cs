@@ -34,7 +34,7 @@ internal sealed class RetryMetadataPolicy : PipelinePolicy
             response.ContentStream = new ErrorMetadataStream(stream, scope);
     }
 
-    private sealed class ErrorMetadataStream(Stream inner, RequestRetryScope scope) : Stream
+    internal sealed class ErrorMetadataStream(Stream inner, RequestRetryScope scope) : Stream
     {
         private readonly List<byte> line = [];
         private bool overflow;

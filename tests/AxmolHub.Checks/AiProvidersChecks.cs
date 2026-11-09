@@ -9,6 +9,7 @@ internal static class AiProvidersChecks
 {
     internal static async Task RunAsync(string root, string[] args)
     {
+        await ClaudeMessagesChecks.RunAsync();
         await RequestRetryChecks.RunAsync();
         void AssertRejects(Action action, string name)
         {
@@ -776,22 +777,9 @@ internal static class AiProvidersChecks
         Assert(ChatClientFactory.ProtocolFor(wirePlain, "quiet") == ModelProtocols.Chat, "a model nobody described stays on chat, which is every provider but Copilot");
         wirePlain.Protocol = "anthropic";
         Assert(ChatClientFactory.ProtocolFor(wirePlain, "quiet") == ModelProtocols.Chat, "a hand-typed wire name Hub does not know is nothing declared, not a fourth protocol");
-        // The refusal is the point of naming a wire this build does not speak. Before it, a messages-only model
-        // resolved to chat and posted an OpenAI body at the endpoint, which came back as the provider's own 404 page
-        // — indistinguishable from a bad key or a dead gateway, and the one failure the settings screen could not
-        // explain. The sentence has to name the wire, the provider and the way out, because it is what the transcript
-        // prints after "助手请求失败：".
-        string? wireRefusal = null;
-        try
-        {
-            ChatClientFactory.Create(wireMarked, "claude-sonnet");
-        }
-        catch (InvalidOperationException exception)
-        {
-            wireRefusal = exception.Message;
-        }
-
-        Assert(wireRefusal is not null && wireRefusal.Contains("/v1/messages", StringComparison.Ordinal) && wireRefusal.Contains("OpenAI", StringComparison.Ordinal) && wireRefusal.Contains("Marked", StringComparison.Ordinal), "a provider on the messages wire is refused by name instead of sent an OpenAI body");
+        // A named Messages wire now builds the official connector instead of routing an OpenAI body.
+        using (var messagesClient = ChatClientFactory.Create(wireMarked, "claude-sonnet"))
+            Assert(messagesClient is not null, "a provider on the messages wire builds the native client");
         Assert(ChatClientFactory.Create(wirePlain, "quiet")is not null, "nothing else changed: an undeclared provider still builds a client on chat");
         // Persisted, not derived: this is the one manifest-shaped wire fact a person must be able to state about an
         // endpoint Hub does not ship. The round trip through the real store is what separates it from ExtraHeaders

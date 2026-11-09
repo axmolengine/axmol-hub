@@ -1,3 +1,4 @@
+using Anthropic;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using Microsoft.Extensions.AI;
@@ -9,19 +10,12 @@ namespace AxmolHub.Agent;
 /// <summary>
 /// Turns a <see cref="Core.ModelProvider"/> into a ready <c>IChatClient</c>.
 ///
-/// <para>Every provider this app talks to speaks OpenAI's protocol, so there is one client stack and one place
-/// that decides the request shape — which is what keeps "add a provider" a manifest entry rather than a new
-/// branch. The one thing that is genuinely two things is the <b>wire</b>: a model answers on
-/// <c>chat/completions</c> or on <c>responses</c>, and the answer comes from a wire declared on the provider
+/// <para>The client stack is selected by wire: OpenAI chat/completions, Responses, or Anthropic Messages.
+/// The answer comes from a wire declared on the provider
 /// first and the provider's own catalog second — see <see cref="ProtocolFor"/>. That choice is made here, from
 /// the model's capabilities, rather than being threaded in from the callers — the model is what determines it,
 /// the callers already know which model they asked for, and a rule passed through five signatures is a rule
 /// that will be passed wrong in one of them.</para>
-///
-/// <para>The third name in <c>ModelProtocols</c> — Anthropic's <c>messages</c> — has no client in this file yet,
-/// and <see cref="Create"/> refuses it by name instead of defaulting it to chat. A wire that is recognized but
-/// not spoken is still worth naming: it is what turns a catalog row into an explanation rather than into a
-/// request that fails somewhere else.</para>
 ///
 /// <para>Validation lives here and throws, rather than silently producing a client that fails on first call:
 /// the error message names the provider and the missing field, which is what the settings UI surfaces.</para>
@@ -102,9 +96,8 @@ public static class ChatClientFactory
 
     /// <summary>
     /// <paramref name="reasoning"/> is what makes a thinking model's chain of thought go back out on the wire.
-    /// It is optional because it is per-request rather than per-provider: the caller that owns the conversation
-    /// owns the table, and a client built without one simply never replays anything — which is the right answer
-    /// for a model that does not think, and for the scripted clients the self-checks drive.
+    /// It is optional because it is per-request rather than per-provider: the conversation's owner supplies
+    /// the table for OpenAI reasoning replay. Messages carries signed blocks directly in the SDK message history.
     ///
     /// <para><paramref name="interactionId"/> is the conversation's own id, for the providers that group the
     /// rounds of one tool run under it. Optional for the same reason the headers are: most providers want
@@ -147,15 +140,26 @@ public static class ChatClientFactory
         if (provider.RequiresCredential && string.IsNullOrEmpty(provider.ApiKey))
             throw new InvalidOperationException($"Provider '{provider.Name}' is not authenticated yet.");
 
-        // Refused here, at the one place that decides the wire, rather than sent and watched to fail. A model that
-        // answers only on Anthropic's /v1/messages is a real row in a real catalog today, and before this line it
-        // resolved silently to chat — which posted an OpenAI body at the endpoint and came back as a provider's
-        // 404 page, indistinguishable from a broken key or a dead gateway. Saying which wire the model wants is
-        // the whole fix, and it is why the protocol has a name even though only two of the three have a client.
         if (ProtocolFor(provider, model) == Core.ModelProtocols.Messages)
-            throw new InvalidOperationException(
-                $"Provider '{provider.Name}' model '{model}' answers on Anthropic's /v1/messages wire, which this build does not speak: "
-                + "Hub sends OpenAI chat/completions or responses. Point the provider at its OpenAI-compatible base URL instead.");
+        {
+            // The Anthropic SDK appends /v1/messages itself; Hub's provider URLs normally end in /v1.
+            var baseUrl = provider.BaseUrl.TrimEnd('/');
+            if (baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)) baseUrl = baseUrl[..^3];
+            var anthropic = new AnthropicClient
+            {
+                ApiKey = provider.RequestSemantics == Core.ProviderRequestSemantics.Copilot ? null : provider.ApiKey ?? "not-needed",
+                AuthToken = provider.RequestSemantics == Core.ProviderRequestSemantics.Copilot ? provider.ApiKey : null,
+                BaseUrl = baseUrl,
+                Timeout = networkTimeout ?? DefaultNetworkTimeout,
+                // Hub's request retry owns the allowance; a second invisible SDK retry loop would double it.
+                MaxRetries = 0,
+                Handlers = [new AnthropicRequestHandler(provider.Headers, provider.RequestSemantics,
+                    interactionId, maxRetries, onRetryWait, maxInlineRetryWait)],
+                HttpClient = new System.Net.Http.HttpClient(transport ?? new System.Net.Http.HttpClientHandler(),
+                    disposeHandler: transport is null) { Timeout = Timeout.InfiniteTimeSpan },
+            };
+            return new AnthropicChatClient(anthropic.AsIChatClient(model));
+        }
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.
         var credential = new ApiKeyCredential(provider.ApiKey ?? "not-needed");

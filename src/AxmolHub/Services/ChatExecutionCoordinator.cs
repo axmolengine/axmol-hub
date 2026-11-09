@@ -3379,7 +3379,7 @@ internal sealed partial class ChatExecutionCoordinator
             // Read alongside the text rather than inside the update: this is the segment's own thinking clock, and
             // the row that displays it has to carry the number the reader watched, not one taken later.
             var thoughtFor = run.ReasoningElapsed;
-            if (!replyRecorded && (reply.Length > 0 || thought.Length > 0))
+            if (!replyRecorded && (reply.Length > 0 || thought.Length > 0 || run.LiveClaudeThinking is { Count: > 0 }))
             {
                 // Preserve thinking even when no answer arrived. A retry's wire copy may omit this failed
                 // tail, but recorded tool-call messages retain the reasoning a thinking gateway requires.
@@ -3388,6 +3388,7 @@ internal sealed partial class ChatExecutionCoordinator
                     opened.Append(new ChatTurn(ChatRoles.Assistant, reply, DateTimeOffset.Now)
                     {
                         Reasoning = thought.Length > 0 ? thought : null,
+                        ClaudeThinking = run.LiveClaudeThinking,
                         ReasoningElapsed = thought.Length > 0 ? thoughtFor : null,
                         // What the endpoint searched for this answer, on the answer itself: the reply's text is
                         // what it produced, and the searches are where it came from. Kept off the wire on purpose
@@ -3739,7 +3740,8 @@ internal sealed partial class ChatExecutionCoordinator
                 // thinking before it asked. Every call in the batch can therefore say the same honest number.
                 var thoughtFor = run.ReasoningElapsed;
                 var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson,
-                    said.Length > 0 ? said : null, info.Reasoning, info.BatchId, thoughtFor);
+                    said.Length > 0 ? said : null, info.Reasoning, info.BatchId, thoughtFor,
+                    info.ClaudeThinking);
                 await ApplyOnUiAsync(() =>
                 {
                     run.BeginSegment();
@@ -3810,6 +3812,7 @@ internal sealed partial class ChatExecutionCoordinator
                 run.AppendReasoning(thought);
                 SchedulePaint(run);
             },
+            onClaudeThinking: blocks => run.LiveClaudeThinking = blocks,
             // The measurement lands while the reply is still streaming, which is the point: the ring the person
             // is watching has to be reading the model's numbers before they decide whether to keep typing.
             onUsage: report =>

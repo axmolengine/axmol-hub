@@ -213,7 +213,8 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
                     // states so in its own docs — so it needs its own arm. Before it had one, a 30k-character
                     // chain of thought was free inside the loop that grows it: the guard would decide it had
                     // room while the request was already past the window.
-                    TextReasoningContent thought => TokenWeighing.Units(thought.Text),
+                    TextReasoningContent thought => TokenWeighing.Units(thought.Text)
+                        + TokenWeighing.Units(thought.ProtectedData),
                     TextContent text => TokenWeighing.Units(text.Text),
                     FunctionResultContent result => TokenWeighing.Units(TextOf(result)),
                     FunctionCallContent call => call.Arguments is null

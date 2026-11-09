@@ -84,9 +84,9 @@ internal static class RequestRetryChecks
         IReadOnlyList<ChatTurn> summaryHistory = [ChatTurn.User("summarize this history"),
             ChatTurn.FunctionCall("prior", "probe", "{}", reasoning: "original reasoning"),
             ChatTurn.FunctionResult("prior", "read"), ChatTurn.Assistant("prior answer"), ChatTurn.User("continue")];
-        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on both wires. A summary
+        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on all three wires. A summary
         // retains its historical reasoning through recovery and forbids new calls without dropping schemas.
-        foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses })
+        foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses, ModelProtocols.Messages })
         {
             provider.Protocol = protocol;
             provider.Model = "deepseek-flash";
@@ -106,7 +106,9 @@ internal static class RequestRetryChecks
             {
                 using var json = System.Text.Json.JsonDocument.Parse(body);
                 var root = json.RootElement;
-                if (root.GetProperty("tool_choice").GetString() != "none" || root.GetProperty("tools").GetArrayLength() != 1)
+                var toolChoice = root.GetProperty("tool_choice");
+                if ((protocol == ModelProtocols.Messages ? toolChoice.GetProperty("type").GetString() : toolChoice.GetString()) != "none"
+                    || root.GetProperty("tools").GetArrayLength() != 1)
                     throw new Exception("A summary could select new tools or lost its historical tool schemas.");
                 if (protocol == ModelProtocols.Chat)
                 {
@@ -123,6 +125,7 @@ internal static class RequestRetryChecks
         }
         // A rebuilt reasoning-only segment must not buy a fresh HTTP/SSE allowance. The same client resets
         // that allowance only for the next model request after a successful tool-call response.
+        provider.Protocol = ModelProtocols.Chat;
         var carriedWaits = new List<TimeSpan>();
         var carriedRetries = -1;
         var carried = new RequestRetryOptions { MaxRetries = 2, RetriesUsed = 1,

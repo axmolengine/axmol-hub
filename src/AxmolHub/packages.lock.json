@@ -99,6 +99,16 @@
         "resolved": "1.2.161",
         "contentHash": "OpHNacIumnkhaaX3ZlQ/TCR4YPOJvud2/PAOoWb6o+mIrLwIVA275I5wAgt4q/1O2VrJeDwR1qFQyqzG4lUArg=="
       },
+      "Anthropic": {
+        "type": "Transitive",
+        "resolved": "13.6.0",
+        "contentHash": "KPmqMhlU3Q2hOlslb4TgRMgQGDzf5v4qW/1bgE+D8dK5BbB1v3Ml40eMGmktmwm+5FPL9arV5MgXWoMBJLHniw==",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "10.5.1",
+          "System.Net.ServerSentEvents": "10.0.1",
+          "System.Text.Json": "10.0.6"
+        }
+      },
       "Avalonia.Angle.Windows.Natives": {
         "type": "Transitive",
         "resolved": "2.1.27548.20260419",
@@ -591,7 +601,8 @@
       "axmolhub.agent": {
         "type": "Project",
         "dependencies": {
-          "AxmolHub.Core": "[0.22.0, )",
+          "Anthropic": "[13.6.0, )",
+          "AxmolHub.Core": "[0.25.1, )",
           "Microsoft.Extensions.AI": "[10.10.0, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.1, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",

@@ -324,6 +324,13 @@ internal sealed class ConversationRun : IDisposable
         get { lock (_gate) return _reasoning.ToString(); }
     }
 
+    private List<ClaudeThinkingBlock>? _claudeThinking;
+    internal List<ClaudeThinkingBlock>? LiveClaudeThinking
+    {
+        get { lock (_gate) return _claudeThinking is null ? null : [.. _claudeThinking]; }
+        set { lock (_gate) _claudeThinking = value is null ? null : [.. value]; }
+    }
+
     public bool HasQueuedSteer
     {
         get { lock (_gate) return _steerText is not null; }
@@ -413,6 +420,7 @@ internal sealed class ConversationRun : IDisposable
             _filedReasoning += _reasoning.Length;
             _text.Clear();
             _reasoning.Clear();
+            _claudeThinking = null;
             BankDecode();
             // The next segment thinks again, so its thinking is measured from here and not from the run's start.
             // <see cref="ThoughtFiledBefore"/> is deliberately not re-armed by this line — it answers "has this run

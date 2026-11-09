@@ -89,6 +89,8 @@ public sealed class ContextLedger
         AddPart(ContextCostKind.Attachments, turn.AttachedContext);
         AddPart(ContextCostKind.Messages, turn.ToolArguments);
         AddPart(ContextCostKind.Messages, turn.Reasoning);
+        if (turn.ClaudeThinking is { } blocks)
+            foreach (var block in blocks) AddPart(ContextCostKind.Messages, block.ProtectedData);
         EndMessage(ContextCostKind.Messages);
         if (turn.Plan is { File: { Length: > 0 } } filed) Add(ContextCostKind.Messages, filed.Tokens);
         if (turn.Images.Count > 0)

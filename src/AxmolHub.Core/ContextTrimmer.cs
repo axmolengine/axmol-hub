@@ -69,7 +69,8 @@ public static class ContextTrimmer
         var units = TokenWeighing.Units(turn.Text)
                     + TokenWeighing.Units(turn.AttachedContext)
                     + TokenWeighing.Units(turn.ToolArguments)
-                    + TokenWeighing.Units(turn.Reasoning);
+                    + TokenWeighing.Units(turn.Reasoning)
+                    + (turn.ClaudeThinking?.Sum(block => TokenWeighing.Units(block.ProtectedData)) ?? 0);
         var filed = turn.Plan is { File: { Length: > 0 } } ? turn.Plan.Tokens : 0;
         return ToTokens(units) + MessageOverheadTokens + filed + turn.Images.Count * ImageTokenCost;
     }

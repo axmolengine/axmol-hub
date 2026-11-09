@@ -38,6 +38,7 @@ public partial class LicenseWindow : Window
         var licensesDirectory = Path.Combine(AppContext.BaseDirectory, "licenses");
         var content = new StringBuilder();
         AppendFile(content, licensesDirectory, "PackageLicenses.txt", null);
+        AppendFile(content, licensesDirectory, "Anthropic.txt", "Anthropic — Apache-2.0 license text");
         AppendFile(content, licensesDirectory, "ANGLE.txt", "ANGLE — BSD-3-Clause license text");
         AppendFile(content, licensesDirectory, "Velopack.txt", "Velopack — MIT license text");
         AppendFile(content, licensesDirectory, "SkiaSharp-THIRD-PARTY-NOTICES.txt",

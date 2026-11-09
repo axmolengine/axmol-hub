@@ -34,6 +34,7 @@ public static class ProviderFailure
         {
             var status = current switch
             {
+                Anthropic.Exceptions.AnthropicApiException result => (int?)result.StatusCode,
                 System.ClientModel.ClientResultException result => (int?)result.Status,
                 System.Net.Http.HttpRequestException request => (int?)request.StatusCode,
                 _ => null,
@@ -78,7 +79,8 @@ public static class ProviderFailure
             return stream.ErrorCode is not ("invalid_request_error" or "invalid_api_key" or "authentication_error"
                 or "permission_denied" or "unauthorized" or "forbidden" or "model_not_found" or "not_found"
                 or "content_filter" or "context_length_exceeded");
-        return exception is System.Net.Http.HttpRequestException or IOException or TimeoutException;
+        return exception is System.Net.Http.HttpRequestException or IOException or TimeoutException
+            or Anthropic.Exceptions.AnthropicIOException;
     }
 
     /// <summary>A completed response with no answer can be tried again only when no tool was requested and

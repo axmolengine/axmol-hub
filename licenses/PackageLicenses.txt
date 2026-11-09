@@ -6,6 +6,7 @@ DEVELOPMENT-ONLY PACKAGE
 AvaloniaUI.DiagnosticsSupport 2.2.3 — excluded from Release assets by the project configuration. Its NuGet package metadata does not declare a license expression. It is not included in the runtime license list below.
 
 RELEASE PACKAGE INVENTORY
+• Anthropic 13.6.0 — Apache-2.0 (see Anthropic.txt)
 • Avalonia 12.1.4 — MIT
 • Avalonia.Controls.DataGrid 12.1.2 — MIT
 • Avalonia.Desktop 12.1.4 — MIT

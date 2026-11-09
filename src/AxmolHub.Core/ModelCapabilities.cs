@@ -137,10 +137,8 @@ public sealed class ModelCapabilities
 }
 
 /// <summary>
-/// The request wires Hub can tell apart. Two of the three it actually speaks: <see cref="Chat"/> and
-/// <see cref="Responses"/> are both OpenAI's and both ride an SDK connector, while <see cref="Messages"/> is
-/// Anthropic's — recognized and named out of a catalog, and answered with a sentence rather than with a request
-/// built against a body nobody writes here yet.
+/// The three request wires Hub speaks through SDK connectors: OpenAI chat/completions and Responses,
+/// and Anthropic Messages. Their bodies and authentication differ; the provider's declaration chooses them.
 ///
 /// <para>The choice belongs next to the <b>model</b> because GitHub Copilot serves its gpt-5 class models on
 /// <c>/responses</c> while keeping others on <c>/chat/completions</c>, and a model can appear on both. What

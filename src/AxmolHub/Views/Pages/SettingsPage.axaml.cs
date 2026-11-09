@@ -1817,12 +1817,14 @@ public partial class SettingsPage : UserControl
             {
                 ModelProtocols.Chat => 0,
                 ModelProtocols.Responses => 1,
+                ModelProtocols.Messages => 2,
                 _ => -1,
             },
             ItemsSource = new[]
             {
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireChat"), Tag = ModelProtocols.Chat },
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireResponses"), Tag = ModelProtocols.Responses },
+                new ComboBoxItem { Content = HubStrings.Get("ProviderWireMessages"), Tag = ModelProtocols.Messages },
             },
         };
         var apiKey = new TextBox

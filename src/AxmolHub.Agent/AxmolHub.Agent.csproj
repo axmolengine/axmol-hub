@@ -26,6 +26,7 @@
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.10.0" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
+    <PackageReference Include="Anthropic" Version="13.6.0" />
     <!-- Windows-specific (DPAPI); macOS Keychain / Linux Secret Service use P/Invoke and need no package. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
   </ItemGroup>

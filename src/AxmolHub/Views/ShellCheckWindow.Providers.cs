@@ -364,8 +364,8 @@ internal sealed class ShellProvidersChecks
               && rows.All(rect => Math.Abs(rect.X - rows[0].X) < 1 && Math.Abs(rect.Width - rows[0].Width) < 1)
               && rows.Zip(rows.Skip(1), (first, next) => next.Y > first.Y && !first.Intersects(next)).All(valid => valid),
             "自定义 provider 的五个设置各占一行、左边界和宽度一致（实际 [" + string.Join("; ", rows) + "]）");
-        Check(options.Count == 2 && options.SelectedProtocol == ModelProtocols.Chat && options.KeyIsMasked,
-            "Wire API 只列 Chat Completions 与 Responses、默认 Chat，API key 输入受遮蔽（实际 count="
+        Check(options.Count == 3 && options.SelectedProtocol == ModelProtocols.Chat && options.KeyIsMasked,
+            "Wire API 列 Chat Completions、Responses 与 Anthropic Messages、默认 Chat，API key 输入受遮蔽（实际 count="
             + options.Count + " selected=" + (options.SelectedProtocol ?? "none") + " masked=" + options.KeyIsMasked + ")");
 
         var badUrlTyped = settings.FillAddProviderDraftForCheck("AgentRouterCustom", "agentrouter.org/v1");

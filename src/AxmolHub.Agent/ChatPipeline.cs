@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.ClientModel.Primitives;
+using Anthropic.Models.Messages;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
 
@@ -63,7 +64,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // several calls, and the decisions over that group belong together: the id is what lets the caller show one
         // card for a batch and run what is left of it when the person answers. Stable, and recomputable from the
         // transcript, because the head of a response never moves.
-        string? BatchId = null);
+        string? BatchId = null, List<ClaudeThinkingBlock>? ClaudeThinking = null);
 
     /// <summary>The answer to "may this call run now".</summary>
     public enum ToolGateOutcome
@@ -165,6 +166,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<long, long, bool, Task>? afterRequest = null,
         RequestRetryOptions? retryOptions = null,
         ChatToolMode? toolMode = null,
+        Action<List<ClaudeThinkingBlock>>? onClaudeThinking = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -195,6 +197,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // every call of one response reads the same block, and the first reasoning chunk that arrives afterwards
         // is the start of the next one.
         var thinking = new StringBuilder();
+        var claudeThinking = new List<ClaudeThinkingBlock>();
         var thinkingSpent = false;
         // Harvest on every send, including summaries and transport-recovery attempts. Replay consumes its
         // lookup queues, so a retry must rebuild them from the same history rather than lose the original thought.
@@ -269,7 +272,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     verdicts.Clear();
                     batch.Clear();
                     batch.AddRange(asked
-                        .Select(content => InfoOf(content, said, asked[0].CallId)));
+                        .Select(content => InfoOf(content, said, asked[0].CallId,
+                            claudeThinking.Count > 0 ? [.. claudeThinking] : null)));
+                    claudeThinking.Clear();
                     // Recorded first, every call of the response, and only then judged. The order is not tidiness:
                     // a decision that spans the group writes a waiting state onto each call in it, and a call that
                     // is not in the transcript yet has nowhere for that state to land — the card would then be
@@ -496,12 +501,14 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                         yield return visible;
                     }
                 }
-                else if (content is TextReasoningContent thought && thought.Text is { Length: > 0 } said)
+                else if (content is ClaudeThinkingContent signed)
                 {
-                    // Not assistant text, so it never reaches the bubble. It is still part of the conversation as
-                    // far as a thinking model is concerned, and quietly dropping it is what makes the <i>next</i>
-                    // request that carries tools come back rejected.
-                    AddThinking(said);
+                    claudeThinking.Add(signed.Block);
+                    onClaudeThinking?.Invoke([.. claudeThinking]);
+                }
+                else if (content is TextReasoningContent thought)
+                {
+                    if (thought.Text is { Length: > 0 } said) AddThinking(said);
                 }
                 else if (content is FunctionCallContent asked)
                 {
@@ -753,9 +760,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
 
     /// <summary>One call of a response, as the callbacks and the gate see it. The arguments are serialized here
     /// once so the transcript, the card and the tool all read the same text.</summary>
-    private static ToolCallInfo InfoOf(FunctionCallContent content, string? reasoning, string batchId)
+    private static ToolCallInfo InfoOf(FunctionCallContent content, string? reasoning, string batchId,
+        List<ClaudeThinkingBlock>? claudeThinking)
         => new(content.Name, content.CallId,
-            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId);
+            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId, claudeThinking);
 
     /// <summary>The declared function carrying this name, or null. The batch starter needs a sibling's function
     /// before the invoking client has been asked for it, and the request's own tool list is the only place a name
@@ -883,14 +891,15 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // Text recorded on the call turn was streamed before the model asked for it, and belongs ahead of
             // the call in the same assistant message — replaying it as a separate message is not what was sent.
             var contents = new List<AIContent>();
-            // The thinking comes first because that is the order it arrived in, and because a gateway that wants
-            // it back wants it as what the model said <i>before</i> producing this call. The connector drops it
-            // from the serialized body — this is the carrier that <see cref="ReasoningTable"/> reads, not the
-            // wire field itself; see <see cref="ReasoningReplayPolicy"/> for that.
-            if (turn.Reasoning is { Length: > 0 } thoughtOnCall) contents.Add(new TextReasoningContent(thoughtOnCall));
+            // OpenAI replay harvests this content; Messages serializes its signed blocks through the SDK.
+            AddThinkingContent(turn, contents);
             if (turn.Text.Length > 0) contents.Add(new TextContent(turn.Text));
             contents.Add(new FunctionCallContent(callId, name, arguments));
-            return new ChatMessage(ChatRole.Assistant, contents);
+            return new ChatMessage(ChatRole.Assistant, contents)
+            {
+                AdditionalProperties = turn.ApprovalBatchId is { Length: > 0 } batch
+                    ? new AdditionalPropertiesDictionary { ["hub:tool-batch"] = batch } : null,
+            };
         }
 
         if (turn.Role == ChatRoles.Tool && turn.ToolCallId is { Length: > 0 } resultId)
@@ -912,9 +921,13 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // The same reasoning rides an ordinary answer: a thinking model that both reasoned and replied owes
             // that reasoning back too, and DeepSeek's rule says so even for the turns in which it asked for
             // nothing. Only the contents constructor can carry it — the string one has nowhere to put it.
-            return turn is { Role: ChatRoles.Assistant, Reasoning: { Length: > 0 } thought }
-                ? new ChatMessage(ToRole(turn.Role), [new TextReasoningContent(thought), new TextContent(text)])
-                : new ChatMessage(ToRole(turn.Role), text);
+        {
+            if (turn.Role != ChatRoles.Assistant) return new ChatMessage(ToRole(turn.Role), text);
+            var contents = new List<AIContent>();
+            AddThinkingContent(turn, contents);
+            contents.Add(new TextContent(text));
+            return new ChatMessage(ChatRole.Assistant, contents);
+        }
 
         // A picture rides the same user-role message as its question, which is why a frame the user pasted is
         // materialized here rather than stored as the answer to a call.
@@ -925,6 +938,21 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // should look on the wire: the pictures are the message, so nothing is inserted before them.
         if (text.Length > 0) media.Insert(0, new TextContent(text));
         return new ChatMessage(ToRole(turn.Role), media);
+    }
+
+    private static void AddThinkingContent(ChatTurn turn, List<AIContent> contents)
+    {
+        if (turn.ClaudeThinking is { Count: > 0 } blocks)
+        {
+            foreach (var block in blocks)
+            {
+                var content = new TextReasoningContent(block.Text ?? "") { ProtectedData = block.ProtectedData };
+                if (block.Redacted) content.RawRepresentation = new RedactedThinkingBlock(block.ProtectedData);
+                contents.Add(content);
+            }
+        }
+        else if (turn.Reasoning is { Length: > 0 } thought)
+            contents.Add(new TextReasoningContent(thought));
     }
 
     private static ChatRole ToRole(string role) => role switch
@@ -945,6 +973,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         int? maxOutputTokens = null, ChatToolMode? toolMode = null)
     {
         var options = new ChatOptions();
+        var messagesWire = ChatClientFactory.ProtocolFor(provider, modelName) == ModelProtocols.Messages;
         var any = false;
         var modelReasoning = ModelCatalog.ReasoningFor(provider, modelName);
         // The switch that turns reasoning on is asked for on its own: a model whose catalog declared its tiers
@@ -1004,6 +1033,30 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
         }
 
+        if (messagesWire)
+        {
+            options.Reasoning = options.Reasoning is { } requested
+                ? new ReasoningOptions { Effort = requested.Effort, Output = ReasoningOutput.Full } : null;
+            var fields = requestOptions ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            if (fields.Remove("reasoning_effort", out var rawEffort))
+            {
+                fields["thinking"] = JsonSerializer.SerializeToElement(new { type = "adaptive", display = "summarized" });
+                fields["output_config"] = JsonSerializer.SerializeToElement(new { effort = rawEffort.GetString() });
+            }
+            if (fields.Count > 0)
+            {
+                options.RawRepresentationFactory = _ => MessageCreateParams.FromRawUnchecked(
+                    new Dictionary<string, JsonElement>(), new Dictionary<string, JsonElement>(),
+                    new Dictionary<string, JsonElement>(fields)
+                    {
+                        ["model"] = JsonSerializer.SerializeToElement(modelName ?? provider.Model),
+                        ["messages"] = JsonSerializer.SerializeToElement(Array.Empty<object>()),
+                        ["max_tokens"] = JsonSerializer.SerializeToElement(options.MaxOutputTokens ?? 8192),
+                    });
+                any = true;
+            }
+        }
+
         // One factory, one patch, both fields written into it. The pinned OpenAI SDK has no public
         // <c>StreamOptions</c> property on <c>ChatCompletionOptions</c> — measured, not assumed: reflection over
         // the assembly's public instance properties finds <c>Patch</c> and nothing stream-shaped, while its own
@@ -1011,7 +1064,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // goes through the same JSON patch as the reasoning fields that were never modelled either, and the two
         // have to share one assignment: a second factory would silently throw the reasoning patch away.
         var askForStreamUsage = provider.WantsStreamUsage;
-        if (requestOptions is { Count: > 0 } || askForStreamUsage)
+        if (!messagesWire && (requestOptions is { Count: > 0 } || askForStreamUsage))
         {
             // The same declared fields, handed to whichever wire ends up building the body. The patch below is the
             // only way to reach an OpenAI chat body's top level from a connector-built client — which is why it

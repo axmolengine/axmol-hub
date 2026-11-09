@@ -189,7 +189,7 @@ public sealed class WireLogPolicy : PipelinePolicy
     /// how many of those carry it as an empty string. A drift between those and the previous turn is the
     /// mis-pairing this is looking for.
     /// </summary>
-    private static void Summarize(int pair, string? url, string json)
+    internal static void Summarize(int pair, string? url, string json)
     {
         if (json.Length == 0) return;
         try
@@ -217,6 +217,13 @@ public sealed class WireLogPolicy : PipelinePolicy
 
                     if (message.TryGetProperty("tool_calls", out var calls) && calls.ValueKind == JsonValueKind.Array)
                         withToolCalls += calls.GetArrayLength();
+                    if (message.TryGetProperty("content", out var blocks) && blocks.ValueKind == JsonValueKind.Array)
+                        foreach (var block in blocks.EnumerateArray())
+                        {
+                            if (!block.TryGetProperty("type", out var type)) continue;
+                            if (type.GetString() is "thinking" or "redacted_thinking") has = true;
+                            if (type.GetString() == "tool_use") withToolCalls++;
+                        }
                     withReasoning += has ? 1 : 0;
                     lastAssistantHasReasoning = has;
                 }
@@ -226,7 +233,9 @@ public sealed class WireLogPolicy : PipelinePolicy
                 ? declared.GetArrayLength()
                 : 0;
             var maxTokens = root.TryGetProperty("max_tokens", out var cap) ? cap.ToString() : "-";
-            var effort = root.TryGetProperty("reasoning_effort", out var tier) ? tier.GetString() : "-";
+            var effort = root.TryGetProperty("reasoning_effort", out var tier) ? tier.GetString()
+                : root.TryGetProperty("output_config", out var output) && output.TryGetProperty("effort", out tier)
+                    ? tier.GetString() : "-";
             var thinking = root.TryGetProperty("thinking", out var think) ? think.GetRawText() : "-";
             WireLog.TryAppendIndex(
                 $"{pair:D4} {Path.GetFileName(url ?? "")} model={Prop(root, "model")} effort={effort} "
@@ -248,7 +257,7 @@ public sealed class WireLogPolicy : PipelinePolicy
 /// Forwards every byte read from an inner stream and appends them to a file, closing the file when the reader
 /// finishes. Deliberately not a seekable or writable stream: the pipeline only ever reads a response.
 /// </summary>
-file sealed class TeeStream(Stream inner, string fileName) : Stream
+internal sealed class TeeStream(Stream inner, string fileName) : Stream
 {
     private readonly MemoryStream captured = new();
     private bool flushed;
@@ -269,14 +278,16 @@ file sealed class TeeStream(Stream inner, string fileName) : Stream
         return read;
     }
 
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        var read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        if (read > 0) captured.Write(buffer.Span[..read]);
+        else FlushToFile();
+        return read;
+    }
+
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        => inner.ReadAsync(buffer, offset, count, cancellationToken).ContinueWith(
-            task =>
-            {
-                if (!task.IsFaulted && task.Result > 0) captured.Write(buffer, offset, task.Result);
-                if (!task.IsFaulted && task.Result == 0) FlushToFile();
-                return task.Result;
-            }, cancellationToken);
+        => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -284,7 +295,11 @@ file sealed class TeeStream(Stream inner, string fileName) : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) FlushToFile();
+        if (disposing)
+        {
+            FlushToFile();
+            inner.Dispose();
+        }
         base.Dispose(disposing);
     }
 
