@@ -235,12 +235,30 @@ internal static class AiMemoryChecks
         var logFile = MemoryLog.FileFor(projectDir, logDay);
         if (!logFile.EndsWith(Path.Combine(".agents", "memory", "2026-10-06.md"), StringComparison.OrdinalIgnoreCase))
             throw new Exception($"The daily log path is wrong: {logFile}");
-        var runLines = MemoryLog.LinesForRun(new MemoryRunSummary("abcdef12-3456", "修构建", "auto", ["read_file（允许）", "file_write（批准）"], "完成", Compacted: true), logDay);
+        var task = MemoryLog.Capture("abcdef12-3456", "修构建", [
+            ChatTurn.User("修复编译失败 known-private-value"),
+            ChatTurn.FunctionCall("write", ToolNames.FsWrite, "{\"path\":\"src/Fix.cs\"}"),
+            ChatTurn.FunctionResult("write", "Created src/Fix.cs"),
+            ChatTurn.FunctionCall("build", ToolNames.RunCommand, "{\"command\":\"dotnet build\"}"),
+            ChatTurn.FunctionResult("build", "Build failed\r\npassword=hidden", true, facts: new ToolRunFacts(1, null)),
+            ChatTurn.Assistant("尚未修复；下一步检查引用。", reasoning: "private reasoning must not reach memory"),
+        ], "Failed", "编译失败", ["known-private-value"]);
+        const string generated = "### 问题\r\n- 编译失败\r\n### 调查与结论\r\n- 缺少引用，尚待核实\r\n### 修复\r\n- 未完成\r\n### 验证\r\n- dotnet build 失败\r\n### 未决事项\r\n- 补充引用";
+        var runLines = MemoryLog.LinesForRun(task, logDay, generated);
         if (!MemoryLog.Append(logFile, runLines).Written)
-            throw new Exception("The first log append failed.");
-        var quietLines = MemoryLog.LinesForRun(new MemoryRunSummary("99999999-0000", "闲聊", "ask", [], null, false), logDay);
-        if (!quietLines.Any(line => line.Contains("没有调用工具")))
-            throw new Exception("A run with no tools logged nothing about itself.");
+            throw new Exception("The first memory append failed.");
+        var input = MemoryLog.InputFor(task);
+        var fallback = string.Join('\n', MemoryLog.LinesForRun(task, logDay, "unstructured model response"));
+        if (input.Contains("known-private-value") || input.Contains("hidden") || input.Contains("private reasoning")
+            || !input.Contains("dotnet build") || !task.ChangedFiles.Any(file => file.Contains("src/Fix.cs"))
+            || !fallback.Contains("记忆总结未生成")
+            || MemoryLog.ValidateSummary(generated + "\n- known-private-value", ["known-private-value"])?.Contains("known-private-value") != false
+            || !fallback.Contains("Failed") || fallback.Contains("- 工具：")
+            || MemoryLog.ValidateSummary(generated) is null
+            || MemoryLog.ValidateSummary(new string('x', MemoryLog.MaxSummaryCharacters + 1)) is not null
+            || MemoryLog.ValidateSummary("### 问题\n- incomplete") is not null
+            || File.ReadAllText(logFile).Contains('\r'))
+            throw new Exception("Task memory lost evidence, leaked private input, accepted invalid output or failed its factual fallback.");
         // Two sessions share one daily file, so the append has to survive being concurrent rather than merely sequential.
         await Task.WhenAll(Task.Run(() =>
         {
@@ -255,20 +273,13 @@ internal static class AiMemoryChecks
         var lost = Enumerable.Range(0, 20).SelectMany(index => new[] { $"A{index:D3}", $"B{index:D3}" }).Where(marker => !logged.Contains(marker, StringComparison.Ordinal)).ToList();
         if (lost.Count > 0)
             throw new Exception($"Parallel appends lost {lost.Count} lines, for example {lost[0]}.");
-        // A compaction is recorded when it happens rather than only in the run's closing block, and as a plain line
-        // rather than a header: a session may compact several times, and the header count is what tells one run's
-        // block from another's.
-        var compactionLine = MemoryLog.LinesForCompaction("abcdef12-3456", logDay).Single();
-        MemoryLog.Append(logFile, MemoryLog.LinesForCompaction("abcdef12-3456", logDay));
-        if (compactionLine.StartsWith("## ", StringComparison.Ordinal) || !File.ReadAllText(logFile).Contains(compactionLine, StringComparison.Ordinal))
-            throw new Exception("A compaction was not appended as a plain line of its own.");
         var capped = Path.Combine(memoryRoot, "capped.md");
         MemoryLogAppend last = default;
         for (var index = 0; index < 400; index++)
             last = MemoryLog.Append(capped, [new string ('z', 200)], 4096);
-        if (last.Written || !File.ReadAllText(capped).Contains("上限") || new FileInfo(capped).Length > 4096 + 200)
+        if (last.Written || !last.Message.Contains("cap") || new FileInfo(capped).Length > 4096)
             throw new Exception($"The log cap did not hold (written={last.Written}, size={new FileInfo(capped).Length}).");
-        Console.WriteLine("PASS: the daily log survives parallel sessions and stops at its cap.");
+        Console.WriteLine("PASS: structured task memory keeps evidence private, falls back honestly, uses LF and survives concurrent appends within its cap.");
         Directory.Delete(memoryRoot, recursive: true);
         return;
     }

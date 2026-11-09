@@ -984,10 +984,6 @@ internal sealed partial class ChatExecutionCoordinator
                 .ConfigureAwait(false);
             if (!changed) return false;
 
-            var facts = await ReadOnUiAsync(() => LogFactsFor(conversationId)).ConfigureAwait(false);
-            if (facts.Root is { Length: > 0 } root)
-                MemoryLog.Append(MemoryLog.FileFor(root, DateTimeOffset.Now),
-                    MemoryLog.LinesForCompaction(conversationId, DateTimeOffset.Now));
             return true;
         }
         catch (ProviderCooldownException ex)
@@ -1125,34 +1121,6 @@ internal sealed partial class ChatExecutionCoordinator
                 opened.ContextCompactionBlockedCandidates = 0;
             });
         }).ConfigureAwait(false);
-    }
-
-    private async Task WriteRunLogAsync(ConversationRun run, RunResult result, bool compacted)
-    {
-        try
-        {
-            var facts = await ReadOnUiAsync(() => LogFactsFor(run.ConversationId)).ConfigureAwait(false);
-            if (facts.Root is not { Length: > 0 } root) return;
-
-            var at = DateTimeOffset.Now;
-            var summary = new MemoryRunSummary(run.ConversationId, facts.Title, facts.Mode,
-                run.ToolOutcomes, StopReasonFor(result), compacted);
-            MemoryLog.Append(MemoryLog.FileFor(root, at), MemoryLog.LinesForRun(summary, at));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Audit(run.ConversationId, $"Daily log write failed: {ex.Message}");
-        }
-    }
-
-    private RunLogFacts LogFactsFor(string conversationId)
-    {
-        var conversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
-        return conversation is null
-            ? default
-            : new RunLogFacts(conversation.WorkspaceRoot,
-                conversation.Title is { Length: > 0 } titled ? titled : conversationId,
-                ApprovalModeFor(conversationId));
     }
 
     internal TimeSpan IdleTimeout = TimeSpan.FromSeconds(300);
@@ -2318,6 +2286,7 @@ internal sealed partial class ChatExecutionCoordinator
         }
 
         run = new ConversationRun(conversationId, IdleTimeout, FirstFrameTimeout);
+        SetMemoryStart(run, Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId));
         run.ParkForApproval();
         _runs[conversationId] = run;
         RunsChanged?.Invoke(conversationId);
@@ -2406,7 +2375,7 @@ internal sealed partial class ChatExecutionCoordinator
             return ContextBudget.For(selected?.Provider, selected?.ModelName).Tokens;
         }).ConfigureAwait(false);
         var result = ToolResultCap.Apply(answer, budget);
-        run.RecordToolOutcome($"{name}（{(skipped ? "跳过" : "回答")}）");
+        run.RecordToolCompletion();
 
         await ApplyOnUiAsync(() =>
         {
@@ -2574,9 +2543,7 @@ internal sealed partial class ChatExecutionCoordinator
         var lines = TakeWriteTally(run.ConversationId, call.Name, result);
         var turn = ChatTurn.FunctionResult(call.CallId, result, failed, TakeFrames(run.ConversationId),
             CommandFacts(run.ConversationId, call.Name, elapsed));
-        // "批准" and not "允许": this call was answered by a person, and the daily log is the only record that
-        // keeps the two apart once the card has folded into a line.
-        run.RecordToolOutcome($"{call.Name}（{(failed ? "失败" : "批准")}）");
+        run.RecordToolCompletion();
         try
         {
             await ApplyOnUiAsync(() =>
@@ -2934,6 +2901,7 @@ internal sealed partial class ChatExecutionCoordinator
 
         var run = new ConversationRun(conversationId, IdleTimeout, FirstFrameTimeout);
         var startingConversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
+        SetMemoryStart(run, startingConversation);
         if (startingConversation is not null)
             run.GoalPriorProgress = startingConversation.GoalProgressVersion;
         _runs[conversationId] = run;
@@ -3071,11 +3039,14 @@ internal sealed partial class ChatExecutionCoordinator
             detail = ex.Message;
         }
 
-        await WriteRunLogAsync(run, result, compacted).ConfigureAwait(false);
+        // Freeze the task boundary before the next send can append to this conversation. Generation and I/O
+        // run separately after completion, so neither can hold the reply or its continuation open.
+        var memory = await ReadOnUiAsync(() => PrepareTaskMemory(run, result, detail)).ConfigureAwait(false);
         // Compaction is reported only when nothing more important happened: a failure the user has to act on
         // must not be replaced by an informational line.
         CompleteRun(run, result, run.SaidAnything,
             noticeKey ?? (compacted ? "ChatContextCompacted" : null), noticeDanger, detail);
+        if (memory is not null) _ = Task.Run(() => WriteTaskMemoryAsync(memory));
     }
 
     private Task StartGitOperationFallbackAsync(string conversationId, string action)
@@ -3768,7 +3739,7 @@ internal sealed partial class ChatExecutionCoordinator
                         calls.TryDequeue(out webApiCall);
                 var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId),
                     CommandFacts(run.ConversationId, info.Name, elapsed), webApiCall);
-                run.RecordToolOutcome($"{info.Name}（{OutcomeWord(failed, result)}）");
+                run.RecordToolCompletion();
                 // The refusal that ended the loop says so in its own first words — the one place that knows
                 // while it is still true. The stream ends with no text after it, and the ending branch reads
                 // the flag to name the reason instead of blaming the model's silence.
@@ -4189,6 +4160,7 @@ internal sealed partial class ChatExecutionCoordinator
         // A run outlives the workspace that started it only by accident: switching data roots or closing the
         // window must not leave a stream writing turns into a session the shell has already let go of.
         _disposed = true;
+        _memoryStop.Cancel();
         foreach (var id in _goalWakes.Keys.ToArray()) CancelGoalWake(id);
         foreach (var run in _runs.Values) run.RequestStop();
     }
@@ -4310,22 +4282,6 @@ internal sealed partial class ChatExecutionCoordinator
                + Math.Max(0, beyondTranscript);
     }
 
-    private readonly record struct RunLogFacts(string? Root, string Title, string Mode);
-    private static string? StopReasonFor(RunResult result) => result switch
-    {
-        RunResult.Cancelled => "用户停止",
-        RunResult.TimedOut => "空闲超时",
-        RunResult.Incomplete => "答复未完成",
-        RunResult.Failed => "失败",
-        _ => null,
-    };
-    private static string OutcomeWord(bool failed, string result)
-        => !failed ? "允许"
-            : string.Equals(result, ToolApprovalResults.Denied, StringComparison.Ordinal) ? "拒绝"
-            // A refused repeat is not a failed tool: the tool was never run, the model was told to stop
-            // asking. The daily log has to keep the two apart, or a spinning model reads as a broken tool.
-            : result.Contains(AxmolHub.Agent.ToolSpinGuard.RefusalMarker, StringComparison.Ordinal) ? "重复"
-            : "失败";
     private static string ImageRefusalKey(ChatImageVerdict verdict) => verdict switch
     {
         ChatImageVerdict.Empty => "ChatImageEmpty",

@@ -190,7 +190,7 @@ internal sealed class ConversationRun : IDisposable
     private string? _steerText;
     private string? _steerContext;
     private IReadOnlyList<byte[]>? _steerPictures;
-    private readonly List<string> _toolOutcomes = [];
+    private int _completedToolCalls;
     private readonly List<ServerSearchNotice> _searches = [];
     private int _paintQueued;
     private int _compactionRequested;
@@ -230,6 +230,8 @@ internal sealed class ConversationRun : IDisposable
 
     // Snapshot of existing tool-result identities at run start; compaction can change message indexes.
     internal long GoalPriorProgress { get; set; }
+    internal string? MemoryStartTurnId { get; set; }
+    internal string? MemoryWorkspaceRoot { get; set; }
     public RunPhase Phase { get; private set; } = RunPhase.Streaming;
     public RunResult Result { get; private set; } = RunResult.Completed;
 
@@ -924,12 +926,8 @@ internal sealed class ConversationRun : IDisposable
 
     internal bool TryTakeCompactionRequest() => Interlocked.Exchange(ref _compactionRequested, 0) == 1;
 
-    /// <summary>What each tool call did, in order, for the project's daily log. Recorded rather than derived from
-    /// the transcript because the transcript does not say whether a call was allowed, approved or refused.</summary>
-    internal void RecordToolOutcome(string outcome)
-    {
-        lock (_gate) _toolOutcomes.Add(outcome);
-    }
+    /// <summary>Counts completed calls for the live activity indicator, without keeping a duplicate audit trail.</summary>
+    internal void RecordToolCompletion() => Interlocked.Increment(ref _completedToolCalls);
 
     /// <summary>How many other sessions this run has started answering. Counted on the run, not on the pair of
     /// sessions, because the loop that has to stop is one assistant waking others — and a run that survives its
@@ -955,11 +953,6 @@ internal sealed class ConversationRun : IDisposable
     internal void SpendSpawn()
     {
         lock (_gate) _spawnsUsed++;
-    }
-
-    internal IReadOnlyList<string> ToolOutcomes
-    {
-        get { lock (_gate) return [.. _toolOutcomes]; }
     }
 
     /// <summary>An endpoint-side search this answer reported, folded into the one entry for its call id.
@@ -1023,7 +1016,7 @@ internal sealed class ConversationRun : IDisposable
     /// after a conversation switch has to be able to say the same thing the one it replaced was saying.</summary>
     internal int CompletedToolCalls
     {
-        get { lock (_gate) return _toolOutcomes.Count; }
+        get => Volatile.Read(ref _completedToolCalls);
     }
 
     /// <summary>Whether a tool owns the run right now — the one phase the glyph cannot infer from the text.</summary>

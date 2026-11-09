@@ -16,6 +16,10 @@ internal sealed class ShellContextChecks
     {
         var chat = shell.Chat;
         var savedOverride = chat.ClientOverride;
+        var savedMemoryOverride = chat.MemoryClientOverride;
+        var memoryGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var memoryClient = new ScriptedChatClient(["### 问题\n- 读取大文件\n### 调查与结论\n- 已读取文件\n### 修复\n- 无改动\n### 验证\n- 读取完成\n### 未决事项\n- 未记录"], gate: memoryGate.Task);
+        chat.MemoryClientOverride = (_, _) => memoryClient;
         var workspace = ScratchDirectory.Resolve("compaction-workspace");
         var logFile = MemoryLog.FileFor(workspace, DateTimeOffset.Now);
         if (System.IO.File.Exists(logFile)) System.IO.File.Delete(logFile);
@@ -73,6 +77,10 @@ internal sealed class ShellContextChecks
                 + (copy?.ContextSummaryThroughMessageCount ?? -1) + "，共 " + (copy?.Messages.Count ?? -1)
                 + " 条，占用 " + used + "/" + budget + " tokens，首个工具结果「"
                 + firstResult[..Math.Min(160, firstResult.Length)] + "」）");
+            // The task must become idle even while its separate memory stream is held open.
+            var memoryDidNotBlock = !chat.IsRunning(session.Id) && !System.IO.File.Exists(logFile);
+            memoryGate.TrySetResult(true);
+            await WaitUntilAsync(() => System.IO.File.Exists(logFile));
             var logged = System.IO.File.Exists(logFile) ? System.IO.File.ReadAllText(logFile) : "";
             // Pure decision, no window involved: a summary that exists is added to, and only one that has outgrown
             // its ceiling is rewritten whole. Both halves are asserted because the loss this guards against — a
@@ -128,19 +136,17 @@ internal sealed class ShellContextChecks
                   && notice != "ChatContextCompacted",
                 "自动压缩有一行用户可见的提示文案，而不是把键名显示出来");
 
-            Check(logged.Contains("fs_read（允许）", StringComparison.Ordinal)
-                  && logged.Contains("自动压缩了上下文", StringComparison.Ordinal)
-                  && logged.Contains("## ", StringComparison.Ordinal),
-                "运行收尾把这一次的工具与压缩写进当天的项目日志（" + logFile + "）");
+            Check(memoryDidNotBlock && memoryClient.Requests == 1
+                  && memoryClient.LastOptions?.ToolMode == Microsoft.Extensions.AI.ChatToolMode.None
+                  && logged.Contains("### 问题", StringComparison.Ordinal)
+                  && logged.Contains("### 验证", StringComparison.Ordinal)
+                  && !logged.Contains("- 工具：", StringComparison.Ordinal),
+                "运行收尾后台写入结构化任务记忆，不再重复工具和压缩流水（" + logFile + "）");
 
-            // A second run appends to the same day's file. Overwriting instead would be silent: the log would
-            // look right until the second session of a day erased the first.
-            var twice = System.IO.File.ReadAllText(logFile);
-            Check(twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) == 2
-                  && twice.Contains(logged.Split('\n').First(line => line.StartsWith("## ", StringComparison.Ordinal)),
-                      StringComparison.Ordinal),
-                "第二次运行追加到同一天的日志，第一次的记录仍在（实际 "
-                + twice.Split('\n').Count(line => line.StartsWith("## ", StringComparison.Ordinal)) + " 段）");
+            // The second send was tool-less: it must not pay for a summary or overwrite the first task's memory.
+            var twice = System.IO.File.Exists(logFile) ? System.IO.File.ReadAllText(logFile) : "";
+            Check(twice == logged && memoryClient.Requests == 1,
+                "无工具的成功对话不重复生成记忆，已有任务总结保持不变（" + logFile + "）");
 
             // Anti-thrash: when the window is too small to fit even the floor of "system prompt + tool
             // declarations + newest turn", no number of compression tiers will reach the target. The three-pass
@@ -195,6 +201,8 @@ internal sealed class ShellContextChecks
         }
         finally
         {
+            memoryGate.TrySetResult(true);
+            chat.MemoryClientOverride = savedMemoryOverride;
             chat.ClientOverride = savedOverride;
             if (fixtureProvider is not null) fixtureProvider.MaxContextTokens = savedWindow;
             chat.DeleteConversation(session.Id);

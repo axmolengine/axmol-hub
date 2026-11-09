@@ -989,6 +989,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// It is handed the conversation id because parallel runs need one script and one gate per session —
     /// dispatching by call order would make those checks flaky in a way that looks like a product bug.</summary>
     internal Func<ModelProvider, string, IChatClient>? ClientOverride { get => _execution.ClientOverride; set => _execution.ClientOverride = value; }
+    internal Func<ModelProvider, string, IChatClient>? MemoryClientOverride { get => _execution.MemoryClientOverride; set => _execution.MemoryClientOverride = value; }
 
     /// <summary>The provider/model a given session will use.
     ///
