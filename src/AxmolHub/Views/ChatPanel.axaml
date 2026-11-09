@@ -84,23 +84,10 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
     </Style>
-    <Style Selector="StackPanel.chat-activity">
-      <Setter Property="Spacing" Value="7" />
-      <Setter Property="Margin" Value="0,2,0,0" />
-    </Style>
-    <!-- The three blinking dots are gone: ActivityGlyph draws the phase the run is actually in, and hides
-         itself once prose arrives. What remains here is the label and the elapsed counter, which are
-         information rather than rhythm. -->
-    <Style Selector="TextBlock.chat-activity-label">
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style Selector="TextBlock.chat-activity-elapsed">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
+    <!-- The live status row (glyph, phase label, elapsed counter) is styled in code (AttachLive): it is a
+         tail row built while its host can be off the tree, and a style resolved before ChatPanel is above
+         it never reapplies — the label stayed at the inherited 14px in white. The three classes stay
+         because the checks find the row by them. -->
 
     <!-- Per-message action row: hidden until the message row is hovered. Both row kinds are Borders now
          (BuildMessageRow returns one container type), so the reveal is two rules rather than the four it took

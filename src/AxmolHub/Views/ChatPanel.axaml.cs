@@ -5372,10 +5372,18 @@ public partial class ChatPanel : UserControl
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(thought.Shell);
         body.Children.Add(prose);
+        // The look is set here rather than through the chat-activity styles in XAML, for the same reason
+        // BuildNoticeRow carries its own: this row is a tail, built while its host can still be off the
+        // logical tree, and a style resolved before ChatPanel is above it never reapplies — the status
+        // line stayed at the inherited 14px in white (bug: "the tail's live status text turns white and
+        // large"). Local values cannot be missed that way; the classes stay because the checks find the
+        // row by them.
         var activity = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 7,
+            Margin = new Thickness(0, 2, 0, 0),
         };
         activity.Classes.Add("chat-activity");
         // The glyph replaces the three blinking dots: it draws the phase the run is actually in rather than a
@@ -5384,21 +5392,34 @@ public partial class ChatPanel : UserControl
         glyph.Bind(ActivityGlyph.TrackBrushProperty, new DynamicResourceExtension("Hub.Border"));
         glyph.Bind(ActivityGlyph.DotBrushProperty, new DynamicResourceExtension("Hub.Accent"));
         activity.Children.Add(glyph);
-        var status = new TextBlock { Text = HubStrings.Get("ChatPreparing") };
+        var status = new TextBlock
+        {
+            Text = HubStrings.Get("ChatPreparing"),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        status.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
         status.Classes.Add("chat-activity-label");
         activity.Children.Add(status);
-        activity.Children.Add(new TextBlock
+        var middot = new TextBlock
         {
             Text = "·",
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
             Classes = { "chat-activity-elapsed" },
-        });
+        };
+        middot.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextTertiary"));
+        activity.Children.Add(middot);
         // Seeded from the run rather than started at "0s": a bubble rebuilt a minute into a reply has to say a
         // minute, and it should say it on the frame it appears, not after the next tick.
         var elapsed = new TextBlock
         {
             Text = FormatDuration(run.Elapsed),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
             Classes = { "chat-activity-elapsed" },
         };
+        elapsed.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextTertiary"));
         activity.Children.Add(elapsed);
         body.Children.Add(activity);
 
