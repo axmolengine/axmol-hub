@@ -60,7 +60,12 @@ internal sealed class AnthropicRequestHandler(IReadOnlyDictionary<string, string
             {
                 var error = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
                 if (pair >= 0) WireLog.TryWrite($"{pair:D4}.response.log", error);
-                if (scope.CanRetry && ProviderFailure.RetryableStatus((int)response.StatusCode)
+                // A relay that refuses with no error type is having an upstream moment, not reading the body:
+                // the identical request was captured returning 200, 400 and 200 again. Two retries, then it stays
+                // a failure, so a genuinely wrong parameter cannot turn into a paid loop.
+                var transient = (int)response.StatusCode == 400
+                    && scope.Retries < 2 && ProviderFailure.TransientRefusalWithoutType(error);
+                if (scope.CanRetry && (transient || ProviderFailure.RetryableStatus((int)response.StatusCode))
                     && !ProviderFailure.QuotaExhausted(error))
                 {
                     var wait = scope.Reserve(scope.TransportDelay);

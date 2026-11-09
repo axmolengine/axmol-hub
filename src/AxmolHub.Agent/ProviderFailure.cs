@@ -61,6 +61,17 @@ public static class ProviderFailure
 
     public static bool RetryableStatus(int status) => status is 408 or 429 or >= 500 and <= 599 and not (501 or 505);
 
+    /// <summary>A relay answered 400 with no error type at all — the <c>&lt;nil&gt;</c> its own Go error value
+    /// carries — after Hub had sent text it had already streamed successfully. The same bytes were captured
+    /// returning 200, then 400, then 200 again on the Messages wire, so this refusal is the relay's upstream
+    /// hiccup and not something the request says. Only that exact shape is retried; every other 400 stays final,
+    /// because a real parameter mistake must surface instead of being paid for repeatedly.</summary>
+    public static bool TransientRefusalWithoutType(string? body)
+        => body is not null
+           && body.Contains("The request could not be processed", StringComparison.Ordinal)
+           && (body.Contains("\"type\":\"<nil>\"", StringComparison.Ordinal)
+               || body.Contains("\"type\":\"\\u003cnil\\u003e\"", StringComparison.Ordinal));
+
     public static bool Recoverable(Exception exception)
     {
         // Streaming SDKs can aggregate transport failures. Every cause must be safe to retry;

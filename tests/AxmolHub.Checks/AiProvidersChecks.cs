@@ -494,6 +494,25 @@ internal static class AiProvidersChecks
             if (ChatPipeline.UsageExhausted(notExhausted))
                 throw new Exception($"Something that only looks like a spent allowance was labelled one: {notExhausted}");
         Console.WriteLine("PASS: a spent plan allowance is named apart from a rate limit, so the ending can ask for the reset instead of a retry.");
+        // The relay's type-less 400 is retried because the identical bytes came back 200 either side of it, and a
+        // retry is paid for: a body that does name its error type has to stay final, or a parameter mistake loops.
+        foreach (var hiccup in new[]
+        {
+            """{"type":"error","error":{"type":"<nil>","message":"The request could not be processed"}}""",
+            """{"type":"error","error":{"type":"\u003cnil\u003e","message":"The request could not be processed"}}""",
+        })
+            if (!ProviderFailure.TransientRefusalWithoutType(hiccup))
+                throw new Exception($"The relay's type-less refusal was not recognised: {hiccup}");
+        foreach (var final in new string?[]
+        {
+            null,
+            "The request could not be processed",
+            """{"type":"error","error":{"type":"invalid_request_error","message":"The request could not be processed"}}""",
+            """{"type":"error","error":{"type":"invalid_api_key","message":"The request could not be processed"}}""",
+        })
+            if (ProviderFailure.TransientRefusalWithoutType(final))
+                throw new Exception($"A refusal that names its own error type was treated as the relay's hiccup: {final}");
+        Console.WriteLine("PASS: only the relay's unnamed 400 is retried; a body that names its error type stays final.");
         // ProviderStore keeps keys out of JSON; CredentialStore owns the key and rehydrates it from the
         // secret store. The split is the whole point: a provider is a declaration, an account is a secret.
         var secretStore = new InMemorySecretStore();
