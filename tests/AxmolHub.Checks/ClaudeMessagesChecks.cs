@@ -39,25 +39,29 @@ internal static class ClaudeMessagesChecks
             using var doc = JsonDocument.Parse(spy.Requests[index]);
             var root = doc.RootElement;
             var blocks = root.GetProperty("messages")[1].GetProperty("content");
-            if (index == 2 && root.GetProperty("messages")[3].GetProperty("content")[0].GetProperty("text").GetString() != "done")
-                throw new Exception("Restored final response lost its ordered content.");
-            if (root.GetProperty("messages").GetArrayLength() != (index == 2 ? 5 : 3)
-                || !blocks.EnumerateArray().Select(block => block.GetProperty("type").GetString())
-                    .SequenceEqual(new[] { "thinking", "redacted_thinking", "tool_use", "text", "thinking", "tool_use" })
-                || blocks[3].GetProperty("text").GetString() != "between calls \n"
-                || blocks[4].GetProperty("thinking").GetString() != "after the first call"
-                || blocks[4].GetProperty("signature").GetString() != "late-signature"
-                || blocks.EnumerateArray().Count(block => block.GetProperty("type").GetString() == "tool_use") != 2
-                || blocks[0].GetProperty("thinking").GetString() != "original thought"
-                || blocks[0].GetProperty("signature").GetString() != "opaque-signature"
-                || blocks[1].GetProperty("data").GetString() != "opaque-redacted"
-                || root.GetProperty("thinking").GetProperty("type").GetString() != "adaptive"
-                || root.GetProperty("output_config").GetProperty("effort").GetString() != "low")
-                throw new Exception("Messages signed/redacted blocks or reasoning parameters changed on replay.");
+            static string? Text(JsonElement block, string name) => block.TryGetProperty(name, out var value) ? value.GetString() : null;
+            var messages = root.GetProperty("messages");
+            if (messages.GetArrayLength() != (index == 2 ? 5 : 3)
+                || (index == 2 && Text(messages[3].GetProperty("content")[0], "text") != "done"))
+                throw new Exception("Restored history lost a turn or the answer it ended on.");
+            var types = blocks.EnumerateArray().Select(block => Text(block, "type")).ToArray();
+            if (!types.SequenceEqual(new[] { "thinking", "redacted_thinking", "tool_use", "text", "thinking", "tool_use" }))
+                throw new Exception("Replayed blocks lost the order the model sent: " + string.Join(',', types));
+            var calls = blocks.EnumerateArray().Where(block => Text(block, "type") == "tool_use").ToArray();
+            if (calls.Length != 2 || Text(calls[0], "id") != "call_1" || Text(calls[1], "id") != "call_2")
+                throw new Exception("Replayed calls lost their identity.");
+            if (Text(blocks[0], "thinking") != "original thought" || Text(blocks[0], "signature") != "opaque-signature"
+                || Text(blocks[1], "data") != "opaque-redacted"
+                || Text(blocks[4], "thinking") != "after the first call" || Text(blocks[4], "signature") != "late-signature"
+                || Text(blocks[3], "text") != "between calls \n")
+                throw new Exception("Replayed signed or text blocks changed their bytes.");
+            if (Text(root.GetProperty("thinking"), "type") != "adaptive"
+                || Text(root.GetProperty("output_config"), "effort") != "low")
+                throw new Exception("Messages reasoning parameters are not the Claude form.");
         }
         if (finalContent is not { Count: 1 } || answer.ToString() != "between calls \ndone")
             throw new Exception("Ordered capture changed the visible streaming answer.");
-        Console.WriteLine("PASS: Messages preserves interleaved signed/redacted/text/tool blocks through live and restored history.");
+        Console.WriteLine("PASS: Messages replays signed thinking in the order the model sent it, bytes unchanged.");
     }
 
     private sealed class Spy : HttpMessageHandler
