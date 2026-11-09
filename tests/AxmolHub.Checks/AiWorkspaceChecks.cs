@@ -384,14 +384,14 @@ internal static class AiWorkspaceChecks
         Console.WriteLine("PASS: a frame is blank by luminance variance, and a two-colour UI is not.");
         // Capture backends dispatch the same pure way the shells do, so the platform answer is assertable here even
         // though only one of these hosts is the machine running the check.
-        var windowsCapture = CaptureBackends.For("windows", grimAvailable: false);
-        var macCapture = CaptureBackends.For("macos", grimAvailable: false);
-        var linuxGrim = CaptureBackends.For("linux", grimAvailable: true);
-        var linuxBare = CaptureBackends.For("linux", grimAvailable: false);
-        var unknownCapture = CaptureBackends.For("qnx", grimAvailable: false);
-        if (windowsCapture.Id != CaptureBackends.GdiPrintWindow || !windowsCapture.Available || macCapture.Id != CaptureBackends.MacOsScreenshot || !macCapture.Available || linuxGrim.Id != CaptureBackends.LinuxGrim || !linuxGrim.Available)
+        var windowsCapture = CaptureBackends.For("windows", x11ToolsAvailable: false);
+        var macCapture = CaptureBackends.For("macos", x11ToolsAvailable: false);
+        var linuxGrim = CaptureBackends.For("linux", x11ToolsAvailable: true);
+        var linuxBare = CaptureBackends.For("linux", x11ToolsAvailable: false);
+        var unknownCapture = CaptureBackends.For("qnx", x11ToolsAvailable: false);
+        if (windowsCapture.Id != CaptureBackends.GdiPrintWindow || !windowsCapture.Available || macCapture.Id != CaptureBackends.MacOsScreenshot || !macCapture.Available || linuxGrim.Id != CaptureBackends.LinuxX11 || !linuxGrim.Available)
             throw new Exception($"A host was not dispatched to its capture backend: {windowsCapture} · {macCapture} · {linuxGrim}");
-        // A Linux session without grim, or an unknown host, answers with a sentence about the missing tool rather
+        // An X11 session without its tools, or an unknown host, answers about missing capability rather
         // than spawning a process that cannot start: the model has to be told what the user can actually install.
         if (linuxBare.Available || unknownCapture.Available)
             throw new Exception("A host with no capture tool offered a backend it cannot use.");
@@ -405,7 +405,12 @@ internal static class AiWorkspaceChecks
             if (string.IsNullOrEmpty(unusable.Refusal) || !unusable.Refusal.Contains("retry", StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"A capture refusal does not tell the model to stop retrying: {unusable.Refusal}");
         var currentCapture = CaptureBackends.ForCurrent();
-        var expectedCapture = CaptureBackends.For(BuildTargets.Host, CommandShells.Resolve("grim")is not null);
+        var expectedCapture = CaptureBackends.For(BuildTargets.Host,
+            CommandShells.Resolve("wmctrl") is not null
+                && (CommandShells.Resolve("maim") is not null || CommandShells.Resolve("import") is not null),
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"))
+                || string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase),
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")));
         if (currentCapture.Id != expectedCapture.Id || currentCapture.Label != expectedCapture.Label)
             throw new Exception($"ForCurrent disagreed with the host it is running on: {currentCapture.Id}.");
         Console.WriteLine("PASS: each host picks one capture backend, and an unusable one says so in a refusal.");

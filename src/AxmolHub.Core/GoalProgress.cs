@@ -53,6 +53,7 @@ public static class GoalProgress
             LegacyFileToolNames.RequestDirectory or LegacyFileToolNames.RequestFile or ToolNames.FsRequestAccess =>
                 result.StartsWith("Granted", StringComparison.Ordinal),
             ToolNames.MemoryWrite => result.StartsWith("Saved ", StringComparison.Ordinal),
+            ToolNames.ComputerUse => result.StartsWith("Input delivered (", StringComparison.Ordinal),
             _ => false,
         };
     }

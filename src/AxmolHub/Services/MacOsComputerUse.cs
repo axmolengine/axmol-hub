@@ -49,7 +49,8 @@ internal static class MacOsComputerUse
                 var height = (int)Math.Round(rect.Size.Height);
                 if (width < 32 || height < 32) continue;
                 windows.Add(new CapturableWindow((nint)windowId, title, checked((int)pid), width, height)
-                    { Owner = DesktopApplicationIdentity.Resolve(checked((int)pid)) });
+                    { Owner = DesktopApplicationIdentity.Resolve(checked((int)pid)),
+                        Left = (int)Math.Round(rect.Origin.X), Top = (int)Math.Round(rect.Origin.Y) });
             }
             return windows;
         }
@@ -71,6 +72,7 @@ internal static class MacOsComputerUse
                 CreateNoWindow = true,
             };
             start.ArgumentList.Add("-x");
+            start.ArgumentList.Add("-o"); // Exclude the shadow so the image maps to window bounds.
             start.ArgumentList.Add("-l");
             start.ArgumentList.Add(((long)window.Handle).ToString(System.Globalization.CultureInfo.InvariantCulture));
             start.ArgumentList.Add(path);
@@ -92,7 +94,8 @@ internal static class MacOsComputerUse
             var bytes = new byte[locked.RowBytes * locked.Size.Height];
             Marshal.Copy(locked.Address, bytes, 0, bytes.Length);
             return new CapturedFrame(png, locked.Size.Width, locked.Size.Height,
-                FrameAnalysis.Analyze(bytes, locked.Size.Width, locked.Size.Height, locked.RowBytes));
+                FrameAnalysis.Analyze(bytes, locked.Size.Width, locked.Size.Height, locked.RowBytes))
+                { ContentFingerprint = FrameAnalysis.Fingerprint(bytes) };
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or ExternalException
                                       or System.ComponentModel.Win32Exception)
@@ -107,40 +110,61 @@ internal static class MacOsComputerUse
 
     private static string? Operate(CapturableWindow window, ComputerActionRequest request)
     {
+        request.Cancellation.ThrowIfCancellationRequested();
         if (!MacOsComputerPermissions.Require(MacOsComputerPermission.Accessibility))
             return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.Accessibility);
         if (!MacOsComputerPermissions.Require(MacOsComputerPermission.ScreenRecording))
             return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.ScreenRecording);
-        if (!IsFrontmost(window.ProcessId))
+        if (request.VerifyObservation?.Invoke() != true)
+            return "Refused: the application image changed or cannot be verified. Capture again before input.";
+        if (!IsFrontmost(window.Handle) && (FrontmostPid() != Environment.ProcessId || !Activate(window.ProcessId) || !IsFrontmost(window.Handle)))
             return "Refused: the selected application is not frontmost. Bring it to the front and ask before retrying; input is never sent to a different app.";
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok)
             return "Refused: the selected window's application identity changed before input.";
         if (!GetWindowBounds(window.Handle, out var bounds))
             return "Refused: the selected application window is no longer available.";
+        if ((int)Math.Round(bounds.Origin.X) != window.Left || (int)Math.Round(bounds.Origin.Y) != window.Top
+            || (int)Math.Round(bounds.Size.Width) != window.Width || (int)Math.Round(bounds.Size.Height) != window.Height)
+            return "Refused: the target window moved or resized before input. Capture again.";
 
+        request.Cancellation.ThrowIfCancellationRequested();
         switch (request.Action)
         {
             case "click":
                 if (request.X < 0 || request.Y < 0 || request.X >= bounds.Size.Width || request.Y >= bounds.Size.Height)
                     return "Refused: click coordinates must be inside the selected application window.";
                 var point = new CGPoint(bounds.Origin.X + request.X, bounds.Origin.Y + request.Y);
-                PostMouse(point, 1);
-                PostMouse(point, 2);
-                return null;
+                if (!IsFrontmost(window.Handle)) return "Refused: the selected window lost focus before input.";
+                var pressed = PostMouse(point, 1);
+                var released = PostMouse(point, 2);
+                return pressed && released ? null : "Refused: macOS could not create the mouse events.";
             case "type":
-                foreach (var character in request.Text ?? "") PostUnicode(character);
+                var pointer = PointerLocation();
+                if (pointer is null) return "Refused: macOS could not read the pointer position.";
+                foreach (var character in (request.Text ?? "").EnumerateRunes())
+                {
+                    request.Cancellation.ThrowIfCancellationRequested();
+                    var currentPointer = PointerLocation();
+                    if (currentPointer is null || currentPointer.Value.X != pointer.Value.X || currentPointer.Value.Y != pointer.Value.Y)
+                        return "Refused: pointer activity detected; user takeover paused typing.";
+                    if (!IsFrontmost(window.Handle)) return "Refused: the selected window lost focus during input.";
+                    if (!PostUnicode(character.ToString().ToCharArray())) return "Refused: macOS could not create the text events.";
+                }
                 return null;
             case "press_key":
+                if (!IsFrontmost(window.Handle)) return "Refused: the selected window lost focus before input.";
                 if (!TryKeyCode(request.Key, out var keyCode))
                     return "Refused: unsupported key name. Use a letter, digit, Enter, Tab, Escape, arrows, Backspace, Delete, or Space.";
-                PostKey(keyCode, down: true);
-                PostKey(keyCode, down: false);
-                return null;
+                var keyDown = PostKey(keyCode, down: true);
+                var keyUp = PostKey(keyCode, down: false);
+                return keyDown && keyUp ? null : "Refused: macOS could not create the key events.";
             case "scroll":
+                if (!IsFrontmost(window.Handle)) return "Refused: the selected window lost focus before input.";
                 var center = new CGPoint(bounds.Origin.X + bounds.Size.Width / 2,
                     bounds.Origin.Y + bounds.Size.Height / 2);
                 var move = CGEventCreateMouseEvent(0, 5, center, 0);
-                if (move != 0) { CGEventPost(0, move); CFRelease(move); }
+                if (move == 0) return "Refused: macOS could not create the pointer event.";
+                CGEventPost(0, move); CFRelease(move);
                 var scroll = CGEventCreateScrollWheelEvent(0, 0, 1, request.Scroll);
                 if (scroll == 0) return "Refused: macOS could not create the scroll event.";
                 CGEventPost(0, scroll);
@@ -151,7 +175,46 @@ internal static class MacOsComputerUse
         }
     }
 
-    private static bool IsFrontmost(int expectedPid)
+    private static CGPoint? PointerLocation()
+    {
+        var value = CGEventCreate(0);
+        if (value == 0) return null;
+        try { return CGEventGetLocation(value); }
+        finally { CFRelease(value); }
+    }
+
+    private static int FrontmostPid()
+    {
+        var workspace = ObjectMessage(objc_getClass("NSWorkspace"), sel_registerName("sharedWorkspace"));
+        if (workspace == 0) return 0;
+        var app = ObjectMessage(workspace, sel_registerName("frontmostApplication"));
+        return app == 0 ? 0 : IntMessage(app, sel_registerName("processIdentifier"));
+    }
+
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern nint ObjectMessage(nint receiver, nint selector);
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern int IntMessage(nint receiver, nint selector);
+
+    [DllImport(CoreGraphics)] private static extern nint CGEventCreate(nint source);
+    [DllImport(CoreGraphics)] private static extern CGPoint CGEventGetLocation(nint value);
+
+    private static bool Activate(int pid)
+    {
+        var cls = objc_getClass("NSRunningApplication");
+        var app = RunningApplication(cls, sel_registerName("runningApplicationWithProcessIdentifier:"), pid);
+        return app != 0 && ActivateApplication(app, sel_registerName("activateWithOptions:"), 0);
+    }
+
+    [DllImport("/usr/lib/libobjc.A.dylib")] private static extern nint objc_getClass(string name);
+    [DllImport("/usr/lib/libobjc.A.dylib")] private static extern nint sel_registerName(string name);
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern nint RunningApplication(nint receiver, nint selector, int pid);
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool ActivateApplication(nint receiver, nint selector, ulong options);
+
+    private static bool IsFrontmost(nint expectedWindow)
     {
         var info = CGWindowListCopyWindowInfo(OnScreenOnly | ExcludeDesktop, 0);
         if (info == 0) return false;
@@ -161,7 +224,8 @@ internal static class MacOsComputerUse
             {
                 var item = CFArrayGetValueAtIndex(info, index);
                 if (item == 0 || Number(item, WindowLayerKey, 3) != 0) continue;
-                return Number(item, OwnerPidKey, 3) == expectedPid;
+                return Number(item, WindowNumberKey, 3) == (long)expectedWindow
+                    && Number(item, OwnerPidKey, 3) == FrontmostPid();
             }
             return false;
         }
@@ -187,23 +251,25 @@ internal static class MacOsComputerUse
         finally { CFRelease(info); }
     }
 
-    private static void PostMouse(CGPoint point, uint type)
+    private static bool PostMouse(CGPoint point, uint type)
     {
         var value = CGEventCreateMouseEvent(0, type, point, 0);
-        if (value == 0) return;
+        if (value == 0) return false;
         CGEventPost(0, value);
         CFRelease(value);
+        return true;
     }
 
-    private static void PostKey(ushort keyCode, bool down)
+    private static bool PostKey(ushort keyCode, bool down)
     {
         var value = CGEventCreateKeyboardEvent(0, keyCode, down);
-        if (value == 0) return;
+        if (value == 0) return false;
         CGEventPost(0, value);
         CFRelease(value);
+        return true;
     }
 
-    private static void PostUnicode(char character)
+    private static bool PostUnicode(char[] characters)
     {
         var down = CGEventCreateKeyboardEvent(0, 0, true);
         var up = CGEventCreateKeyboardEvent(0, 0, false);
@@ -211,14 +277,15 @@ internal static class MacOsComputerUse
         {
             if (down != 0) CFRelease(down);
             if (up != 0) CFRelease(up);
-            return;
+            return false;
         }
-        CGEventKeyboardSetUnicodeString(down, 1, [character]);
-        CGEventKeyboardSetUnicodeString(up, 1, [character]);
+        CGEventKeyboardSetUnicodeString(down, (uint)characters.Length, characters);
+        CGEventKeyboardSetUnicodeString(up, (uint)characters.Length, characters);
         CGEventPost(0, down);
         CGEventPost(0, up);
         CFRelease(down);
         CFRelease(up);
+        return true;
     }
 
     private static bool TryKeyCode(string? value, out ushort key)
@@ -250,6 +317,10 @@ internal static class MacOsComputerUse
             "RIGHT" => 124,
             "DOWN" => 125,
             "UP" => 126,
+            "HOME" => 115,
+            "END" => 119,
+            "PAGEUP" => 116,
+            "PAGEDOWN" => 121,
             _ => ushort.MaxValue,
         };
         return key != ushort.MaxValue;

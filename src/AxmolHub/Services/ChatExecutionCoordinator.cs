@@ -423,6 +423,19 @@ internal sealed partial class ChatExecutionCoordinator
                     ? new ComputerUseBridge(WindowsScreenCapture.Operate)
                     : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()
                     : OperatingSystem.IsLinux() ? LinuxComputerUse.InputBridge() : null,
+                ComputerObservation = _computerObservations.GetOrAdd(conversationId, _ => new ComputerUseObservation()),
+                ComputerInputApproved = () =>
+                {
+                    var callId = ToolInvocation.CallId;
+                    bool Read()
+                    {
+                        var call = Sessions.Registry.Peek(conversationId)?.Messages
+                            .LastOrDefault(turn => turn.ToolCallId == callId && turn.Role == ChatRoles.Assistant);
+                        return call?.ApprovalComputerInput == true && call.ApprovalState == ChatApprovalStates.Approved;
+                    }
+                    return Dispatcher.UIThread.CheckAccess() ? Read()
+                        : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
+                },
                 ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
                 // Read from the session's own record rather than the screen: a parked call answered after a
                 // restart acts on the directories its card was shown for. Normalized here, with the guards in
@@ -480,6 +493,7 @@ internal sealed partial class ChatExecutionCoordinator
         return $"Plan task {taskNumber} status set to {status}.";
     }
 
+    private readonly ConcurrentDictionary<string, ComputerUseObservation> _computerObservations = new();
     private readonly ConcurrentDictionary<string, ConcurrentQueue<ChatImage>> _frames = new();
     private void RecordFrames(string conversationId, IReadOnlyList<ChatImage> frames)
     {
@@ -1973,6 +1987,7 @@ internal sealed partial class ChatExecutionCoordinator
                 // refuse a call before any verb is consulted — a missing sandbox root and a cache break are not verbs.
                 var verbGrant = ChatTools.GrantedCommandVerb(member.Name, member.ArgumentsJson, TrustedCommands);
                 var computerUse = ComputerUseGrants.IsComputerUseTool(member.Name);
+                var computerInput = ComputerUseGrants.IsInput(member.Name, member.ArgumentsJson);
                 var target = computerUse
                     ? ComputerUseGrants.ResolveTarget(scope.Workspace.Screen, member.Name, member.ArgumentsJson) : null;
                 var computerGrant = HasComputerGrant(conversation, target?.Application);
@@ -1980,7 +1995,7 @@ internal sealed partial class ChatExecutionCoordinator
                     Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     {
                         var at = opened.IndexOfToolCall(member.CallId);
-                        if (at >= 0) opened.Messages[at] = opened.Messages[at] with { ApprovalComputerTarget = target };
+                        if (at >= 0) opened.Messages[at] = opened.Messages[at] with { ApprovalComputerTarget = target, ApprovalComputerInput = computerInput };
                     });
                 var granted = computerGrant || verbGrant || (ToolApprovalPolicy.IsGrantable(risk)
                               && (sessionGrant || ToolTrust.Contains(TrustedTools, member.Name)));
@@ -1995,7 +2010,7 @@ internal sealed partial class ChatExecutionCoordinator
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
                 var parks = computerUse
-                    ? target is not null && !computerGrant
+                    ? target is not null && (!computerGrant || computerInput)
                     : !granted && !malformed
                       && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
                 return new CallVerdict(member, risk, asks, malformed, granted, sessionGrant, verbGrant, parks,
@@ -2178,6 +2193,12 @@ internal sealed partial class ChatExecutionCoordinator
         var toolName = conversation.Messages[index].ToolName ?? "tool";
         var computerApp = conversation.Messages[index].ApprovalComputerTarget?.Application;
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
+        var inputConfirmation = ComputerUseGrants.IsInput(toolName, conversation.Messages[index].ToolArguments);
+        if (inputConfirmation && alwaysAllow)
+        {
+            refusalKey = "ChatApprovalGone";
+            return false;
+        }
         if (isComputerUse && computerApp is null)
         {
             refusalKey = "ChatApprovalGone";
@@ -2200,6 +2221,8 @@ internal sealed partial class ChatExecutionCoordinator
             foreach (var owed in opened.UnansweredCallsOfBatch(batchId))
             {
                 if (owed.ApprovalState != ChatApprovalStates.Pending) continue;
+                if ((inputConfirmation || ComputerUseGrants.IsInput(owed.ToolName, owed.ToolArguments))
+                    && owed.ToolCallId != callId) continue;
                 var owedIsComputerUse = ComputerUseGrants.IsComputerUseTool(owed.ToolName);
                 if (owedIsComputerUse && (!isComputerUse
                     || computerApp?.IsSameApplication(owed.ApprovalComputerTarget?.Application) != true)) continue;
@@ -2210,6 +2233,7 @@ internal sealed partial class ChatExecutionCoordinator
                 opened.Messages[at] = opened.Messages[at] with
                 {
                     ApprovalState = ChatApprovalStates.Approved,
+                    ApprovalComputerInput = inputConfirmation,
                 };
             }
 
@@ -2223,7 +2247,7 @@ internal sealed partial class ChatExecutionCoordinator
             // was shown beside it.
             if (alwaysAllow && grantable && !ToolTrust.Contains(opened.AutoApprovedTools, toolName))
                 opened.AutoApprovedTools.Add(toolName);
-            if (isComputerUse && !alwaysAllow)
+            if (isComputerUse && !alwaysAllow && !inputConfirmation)
                 ComputerUseGrants.Add(opened.AllowedComputerApps, computerApp);
         });
         // Outside the session gate: the app-wide half is a different file, with a different owner, and the registry
@@ -2253,7 +2277,10 @@ internal sealed partial class ChatExecutionCoordinator
             var conversation = Sessions.Registry.Peek(conversationId);
             var at = callId is null ? -1 : conversation?.IndexOfToolCall(callId) ?? -1;
             var target = at < 0 ? null : conversation!.Messages[at].ApprovalComputerTarget;
-            return HasComputerGrant(conversation, target?.Application) ? target : null;
+            var turn = at < 0 ? null : conversation!.Messages[at];
+            return turn?.ApprovalComputerInput == true
+                ? turn.ApprovalState == ChatApprovalStates.Approved ? target : null
+                : HasComputerGrant(conversation, target?.Application) ? target : null;
         }
         // Grants can be revoked while a call is queued. Read the registry on its owning thread immediately
         // before capture or input rather than caching a permission in the scope assembled for a model round.
@@ -2487,6 +2514,21 @@ internal sealed partial class ChatExecutionCoordinator
 
     private async Task RunApprovedCallAsync(ConversationRun run, ApprovedCall call, int budget, ChatToolScope scope)
     {
+        if (call.Name == ToolNames.ComputerUse && ComputerUseGrants.IsInput(call.Name, call.ArgumentsJson))
+        {
+            var confirmed = await ReadOnUiAsync(() => Sessions.Registry.Peek(run.ConversationId)?.Messages
+                .Any(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId == call.CallId
+                    && turn.ApprovalComputerInput && turn.ApprovalState == ChatApprovalStates.Approved) == true)
+                .ConfigureAwait(false);
+            if (!confirmed)
+            {
+                await ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(run.ConversationId, opened =>
+                    opened.AppendFunctionResult(ChatTurn.FunctionResult(call.CallId,
+                        "Refused: this saved input has no individual confirmation. Observe again and confirm a new action.", failed: true))))
+                    .ConfigureAwait(false);
+                return;
+            }
+        }
         if (call.Name is ToolNames.FsWrite or ToolNames.FsReplace or ToolNames.FsDelete or ToolNames.FsMove)
             scope = scope with { Workspace = scope.Workspace with { ApprovedWriteFingerprint = call.WriteFingerprint ?? "invalid",
                 ApprovedCacheBreak = call.CacheBreak } };
@@ -3648,6 +3690,7 @@ internal sealed partial class ChatExecutionCoordinator
         // The call ids rather than a count: a bracket is now also the clock a running command is measured on, so
         // closing one has to name the call it belongs to — a counter cannot say which of the batch was abandoned.
         var brackets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var liveFrames = new ConcurrentDictionary<string, IReadOnlyList<ChatImage>>(StringComparer.Ordinal);
         long loggedInput = 0, loggedCached = 0;
         var loggedRequests = 0;
         return pipeline.SendAsync(
@@ -3659,6 +3702,7 @@ internal sealed partial class ChatExecutionCoordinator
             declaredTools: request.DeclaredTools,
             retryOptions: retry,
             images: request.Images,
+            toolImages: callId => liveFrames.TryGetValue(callId, out var frames) ? frames : [],
             gate: async (info, batch, _) =>
             {
                 // The bracket opens on the verdict rather than in onToolStarted: that event fires before the gate,
@@ -3739,6 +3783,7 @@ internal sealed partial class ChatExecutionCoordinator
                         calls.TryDequeue(out webApiCall);
                 var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId),
                     CommandFacts(run.ConversationId, info.Name, elapsed), webApiCall);
+                if (turn.Images.Count > 0) liveFrames[info.CallId] = turn.Images;
                 run.RecordToolCompletion();
                 // The refusal that ended the loop says so in its own first words — the one place that knows
                 // while it is still true. The stream ends with no text after it, and the ending branch reads
@@ -3884,6 +3929,7 @@ internal sealed partial class ChatExecutionCoordinator
         // the next run's first result would put a picture in front of the model that nothing in the transcript
         // asked for.
         _frames.TryRemove(run.ConversationId, out _);
+        if (result != RunResult.Completed) _computerObservations.TryRemove(run.ConversationId, out _);
         // One hop, in this order: the run leaves the registry so nothing can attach to a finished reply, the
         // transcript's owner repaints, the indicator goes out, and only then does the view get told how it ended.
         // The token sources are released last — a stop pressed on the final chunk is still being unwound here.
@@ -4168,6 +4214,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal void StopRunFor(string id)
     {
+        _computerObservations.TryRemove(id, out _);
         CancelGoalWake(id);
         // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses
         // those writes — but it should not spend the rest of a reply finding that out.

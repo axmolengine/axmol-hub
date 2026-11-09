@@ -157,6 +157,62 @@ internal static class AiImagesChecks
         if (ChatPipeline.ToChatMessages([ChatTurn.User("问题"), ChatTurn.FunctionResult("c0", "ok")]).Count != 2)
             throw new Exception("A tool result with no attachment gained a message of its own.");
         Console.WriteLine("PASS: a captured frame reaches the model as a user message beside the result that names it.");
+        // A live tool loop must see the bytes before any replay or approval restart.
+        var live = new ToolLoopChatClient(callName: "capture_screen");
+        await foreach (var _ in new ChatPipeline(live).SendAsync(wireProvider,
+            [ChatTurn.User("Inspect the app")],
+            tools: [AIFunctionFactory.Create(() => "captured", "capture_screen")],
+            images: _ => BinaryData.FromBytes(png), toolImages: _ => [first])) { }
+        if (live.SecondRequest.SelectMany(message => message.Contents).OfType<DataContent>().SingleOrDefault()
+                is not { } liveImage || !liveImage.Data.Span.SequenceEqual(png))
+            throw new Exception("The live follow-up request did not contain the captured image bytes.");
+        Console.WriteLine("PASS: live capture bytes reach the next model request without replay.");
+        // Frame consumption is an isolation boundary, not a cosmetic coordinate detail.
+        var observation = new ComputerUseObservation();
+        var observedWindow = new CapturableWindow(1, "Fixture", 1, 100, 50)
+        { Owner = new ComputerProcessIdentity(new ComputerApplication(Path.GetFullPath("fixture-app")), 1) };
+        var observedFrame = new CapturedFrame(png, 200, 100, new FrameStats(200, 100, 2, 100));
+        var frameId = observation.Record(observedWindow, observedFrame);
+        if (!observation.MatchesContent(observedFrame)
+            || observation.MatchesContent(observedFrame with { ContentFingerprint = "changed" }))
+            throw new Exception("Changed image content was admitted as the original observation.");
+        var cx = 150; var cy = 80;
+        if (observation.Consume(frameId, observedWindow, ref cx, ref cy, true) is not null || cx != 75 || cy != 40
+            || observation.Consume(frameId, observedWindow, ref cx, ref cy, true) is null)
+            throw new Exception("Frame scaling or single-use isolation failed.");
+        frameId = observation.Record(observedWindow, observedFrame);
+        if (observation.Consume(frameId, observedWindow with { Left = 10 }, ref cx, ref cy, false) is null)
+            throw new Exception("A moved window accepted stale input.");
+        if (!GoalProgress.StateChanged(ToolNames.ComputerUse, "Input delivered (click); outcome unverified")
+            || GoalProgress.StateChanged(ToolNames.ComputerUse, "frame_id=example; image=200×100"))
+            throw new Exception("Input and observation must have different progress semantics.");
+        frameId = observation.Record(observedWindow, observedFrame);
+        using (var desktop = ComputerDesktop.TryEnter())
+        {
+            using var competing = ComputerDesktop.TryEnter();
+            if (desktop is null || competing is not null)
+                throw new Exception("Concurrent desktop operations were admitted.");
+            ComputerDesktop.Invalidate();
+            if (observation.Consume(frameId, observedWindow, ref cx, ref cy, false) is null)
+                throw new Exception("Another desktop action did not invalidate an old observation.");
+        }
+        using var cancelledInput = new CancellationTokenSource();
+        cancelledInput.Cancel();
+        var neverOperated = false;
+        var cancelledTools = new WorkspaceTools(WorkspaceToolScope.Empty with
+        {
+            ComputerUse = new ComputerUseBridge((_, _) => { neverOperated = true; return null; }),
+        });
+        try
+        {
+            cancelledTools.ComputerUse("Fixture", "type", text: "not sent", cancellationToken: cancelledInput.Token);
+            throw new Exception("Cancelled input was admitted.");
+        }
+        catch (OperationCanceledException) when (!neverOperated) { }
+        if (!ComputerUseGrants.IsInput(ToolNames.ComputerUse, "{\"action\":\"click\"}")
+            || ComputerUseGrants.IsInput(ToolNames.ComputerUse, "{\"action\":\"screenshot\"}"))
+            throw new Exception("Input confirmation classification failed.");
+        Console.WriteLine("PASS: screenshot coordinates scale once and stale observations refuse input.");
         // ── Intake: a file a person hands in is first read by the rules, then stored by the rules ──
         // The composer's three entrances all end in the same two calls, so the rules they share are asserted here
         // rather than through a UI that cannot be automated: a file is measured before it is read, a picture is

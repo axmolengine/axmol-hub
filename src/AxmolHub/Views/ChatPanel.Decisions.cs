@@ -945,6 +945,7 @@ public partial class ChatPanel
     private Control BuildComputerUseApprovalCard(string conversationId, string callId, ChatTurn turn)
     {
         if (turn.ApprovalComputerTarget is not { } target) return BuildApprovalPendingLine(turn);
+        var input = turn.ApprovalComputerInput || ComputerUseGrants.IsInput(turn.ToolName, turn.ToolArguments);
         var app = target.WindowTitle;
         var card = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 10 };
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
@@ -979,7 +980,7 @@ public partial class ChatPanel
         title.Children.Add(new TextBlock
         {
             Name = "ComputerUseQuestion",
-            Text = HubStrings.Get("ComputerUseApprovalTitle"),
+            Text = HubStrings.Get(input ? "ComputerUseInputTitle" : "ComputerUseApprovalTitle"),
             FontSize = 14,
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -988,7 +989,9 @@ public partial class ChatPanel
         {
             Name = "ComputerUseGrantDescription",
             Classes = { "muted" },
-            Text = target.Application.ExecutablePath + "\n" + HubStrings.Get("ComputerUseGrantHint"),
+            Text = target.Application.ExecutablePath + "\n" + (input
+                ? HubStrings.Get("ComputerUseInputHint") + "\n" + turn.ToolArguments
+                : HubStrings.Get("ComputerUseGrantHint")),
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Left,
         });
@@ -1005,6 +1008,7 @@ public partial class ChatPanel
             Tag = "ComputerUseAlwaysAllow",
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = !input,
         };
         always.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true);
         footer.Children.Add(always);
@@ -1028,7 +1032,7 @@ public partial class ChatPanel
         {
             Name = "ComputerUseAllowConversationButton",
             Classes = { "approval-action", "approval-allow" },
-            Content = HubStrings.Get("ComputerUseAllowConversation"),
+            Content = HubStrings.Get(input ? "ApprovalAllow" : "ComputerUseAllowConversation"),
             Tag = "ComputerUseAllowConversation",
         };
         allow.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false);

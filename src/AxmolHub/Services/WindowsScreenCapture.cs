@@ -43,18 +43,28 @@ public static class WindowsScreenCapture
 
     internal static string? Operate(CapturableWindow window, ComputerActionRequest request)
     {
+        request.Cancellation.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows()) return "Refused: Windows input is unavailable on this host.";
         if (!IsWindow(window.Handle) || !IsWindowVisible(window.Handle))
             return "Refused: the authorized application window has closed. Do not retry until it is visible again.";
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(List()).Ok)
             return "Refused: the selected window's application identity changed before input.";
+        if (request.VerifyObservation?.Invoke() != true)
+            return "Refused: the application image changed or cannot be verified. Capture again before input.";
+        var foreground = GetForegroundWindow();
+        if (foreground != window.Handle && !Owns(foreground))
+            return "Refused: another app has the foreground. User takeover pauses input; capture again after selecting the target.";
         if (!SetForegroundWindow(window.Handle) || GetForegroundWindow() != window.Handle)
             return "Refused: Windows did not give the target app keyboard focus. Select the app and ask before retrying.";
         if (!GetWindowRect(window.Handle, out var rect))
             return "Refused: Windows could not read the target window bounds.";
+        if (rect.Left != window.Left || rect.Top != window.Top
+            || rect.Right - rect.Left != window.Width || rect.Bottom - rect.Top != window.Height)
+            return "Refused: the target window moved or resized before input. Capture again.";
         if (!target.Find(List()).Ok || GetForegroundWindow() != window.Handle)
             return "Refused: the selected application's identity or focus changed before input.";
 
+        request.Cancellation.ThrowIfCancellationRequested();
         switch (request.Action)
         {
             case "click":
@@ -64,24 +74,39 @@ public static class WindowsScreenCapture
                     return $"Refused: click coordinates must be inside the {width}×{height} target window.";
                 if (!SetCursorPos(rect.Left + request.X, rect.Top + request.Y))
                     return "Refused: Windows could not move the pointer to the target window.";
-                return SendMouseButton(MouseLeftDown) && SendMouseButton(MouseLeftUp)
-                    ? null : InputRefusal();
+                if (GetForegroundWindow() != window.Handle
+                    || GetAncestor(WindowFromPoint(new PointerPoint { X = rect.Left + request.X, Y = rect.Top + request.Y }), 2) != window.Handle)
+                    return "Refused: the target is occluded or lost focus at the click point.";
+                var mouseDown = SendMouseButton(MouseLeftDown);
+                var mouseUp = SendMouseButton(MouseLeftUp);
+                return mouseDown && mouseUp ? null : InputRefusal();
             case "type":
+                if (!GetCursorPos(out var pointer)) return "Refused: Windows could not read the pointer position.";
                 foreach (var character in request.Text ?? "")
                 {
-                    if (!SendUnicode(character, keyUp: false) || !SendUnicode(character, keyUp: true))
-                        return InputRefusal();
+                    request.Cancellation.ThrowIfCancellationRequested();
+                    if (!GetCursorPos(out var currentPointer) || currentPointer.X != pointer.X || currentPointer.Y != pointer.Y)
+                        return "Refused: pointer activity detected during input; user takeover paused typing.";
+                    if (GetForegroundWindow() != window.Handle || !target.Find(List()).Ok)
+                        return "Refused: the selected application's identity or focus changed during input.";
+                    var down = SendUnicode(character, keyUp: false);
+                    var up = SendUnicode(character, keyUp: true);
+                    if (!down || !up) return InputRefusal();
                 }
                 return null;
             case "press_key":
                 if (!TryVirtualKey(request.Key, out var virtualKey))
                     return "Refused: this key name is not supported. Use a letter, digit, Enter, Tab, Escape, arrows, Backspace, Delete, or Space.";
-                return SendVirtualKey(virtualKey, keyUp: false) && SendVirtualKey(virtualKey, keyUp: true)
-                    ? null : InputRefusal();
+                var keyDown = SendVirtualKey(virtualKey, keyUp: false);
+                var keyUp = SendVirtualKey(virtualKey, keyUp: true);
+                return keyDown && keyUp ? null : InputRefusal();
             case "scroll":
                 if (!SetCursorPos(rect.Left + Math.Max(1, (rect.Right - rect.Left) / 2),
                         rect.Top + Math.Max(1, (rect.Bottom - rect.Top) / 2)))
                     return "Refused: Windows could not move the pointer into the target window.";
+                if (!GetCursorPos(out var scrollPoint) || GetForegroundWindow() != window.Handle
+                    || GetAncestor(WindowFromPoint(scrollPoint), 2) != window.Handle)
+                    return "Refused: the target is occluded or lost focus at the scroll point.";
                 var wheel = new MouseInput(0, 0, unchecked((uint)(request.Scroll * 120)), 0x0800, 0, 0);
                 return Send(wheel) ? null : InputRefusal();
             default:
@@ -166,7 +191,7 @@ public static class WindowsScreenCapture
             if (width < 32 || height < 32) return true;
             GetWindowThreadProcessId(handle, out var processId);
             found.Add(new CapturableWindow(handle, title.ToString(), processId, width, height)
-                { Owner = DesktopApplicationIdentity.Resolve(processId) });
+                { Owner = DesktopApplicationIdentity.Resolve(processId), Left = rect.Left, Top = rect.Top });
             return true;
         }, IntPtr.Zero);
         return found;
@@ -184,6 +209,12 @@ public static class WindowsScreenCapture
             return Dispatcher.UIThread.Invoke(() => GrabCore(target));
         return GrabCore(window);
     }
+
+    [DllImport("user32.dll")] private static extern nint WindowFromPoint(PointerPoint point);
+    [DllImport("user32.dll")] private static extern nint GetAncestor(nint window, uint flags);
+    [StructLayout(LayoutKind.Sequential)] private struct PointerPoint { public int X; public int Y; }
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out PointerPoint point);
 
     private static bool Owns(nint handle)
     {
@@ -264,7 +295,8 @@ public static class WindowsScreenCapture
             for (var offset = 3; offset < pixels.Length; offset += 4) pixels[offset] = 0xFF;
 
             var stats = FrameAnalysis.Analyze(pixels, width, height, width * 4);
-            return new CapturedFrame(Encode(pixels, width, height), width, height, stats);
+            return new CapturedFrame(Encode(pixels, width, height), width, height, stats)
+                { ContentFingerprint = FrameAnalysis.Fingerprint(pixels) };
         }
         catch (ExternalException)
         {

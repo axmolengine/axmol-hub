@@ -1655,8 +1655,8 @@ internal static class AiToolsChecks
         if (!card.Contains("window \"Outlook\"", StringComparison.Ordinal) || !card.Contains("pid 300", StringComparison.Ordinal) || !card.Contains("1000×700", StringComparison.Ordinal))
             throw new Exception($"The approval card does not name the window: {card}");
         var both = ToolPreviews.PreviewFor("capture_screen", """{"target":"Demo","fullscreen":true}""", new WorkspaceToolScope(workspace, guards, dataRoot, session.Id, [], null, Screen: host));
-        if (!both.Contains("window \"Axmol Demo\"", StringComparison.Ordinal))
-            throw new Exception($"Fullscreen did not defer to the named target: {both}");
+        if (!both.Contains("whole-display capture is disabled", StringComparison.Ordinal))
+            throw new Exception($"The preview offered forbidden fullscreen capture: {both}");
         // A refusal that lists nothing leaves the model to invent a title, and it does so with confidence.
         var bare = ScreenCapture.Find([], "Notes");
         if (bare.Ok || !bare.Refusal!.Contains("no visible window title", StringComparison.Ordinal))

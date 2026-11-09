@@ -134,6 +134,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         Func<ToolCallInfo, string, bool, Task>? onToolCompleted = null,
         string? modelName = null,
         Func<ChatImage, BinaryData?>? images = null,
+        Func<string, IReadOnlyList<ChatImage>>? toolImages = null,
         Action<string>? onReasoning = null,
         Action<ContextReport>? onUsage = null,
         // Why the endpoint ended a response, in its own words: `stop`, `length`, `content_filter`, `tool_calls`,
@@ -223,6 +224,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             guard = new ToolLoopContextGuard(effectiveClient, budget, budget)
             {
                 PendingInterjection = pendingInterjection,
+                ToolFrame = callId => toolImages?.Invoke(callId) is { Count: > 0 } frames
+                    ? CapturedFrame(ChatTurn.FunctionResult(callId, "Captured application frame", images: frames), images)
+                    : null,
                 YieldForCompaction = yieldForCompaction,
                 CanYieldForCompaction = canYieldForCompaction,
                 ValidateSelection = retryOptions?.ValidateSelection,
@@ -864,7 +868,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         media.Insert(0, new TextContent(text));
         return new ChatMessage(ChatRole.User, media)
         {
-            AdditionalProperties = new AdditionalPropertiesDictionary { [ToolSpinGuard.CapturedFrameKey] = true },
+            AdditionalProperties = new AdditionalPropertiesDictionary { [ToolSpinGuard.CapturedFrameKey] = turn.ToolCallId },
         };
     }
 

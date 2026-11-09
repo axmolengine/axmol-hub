@@ -8,6 +8,8 @@ namespace AxmolHub.Core;
 public sealed record CapturableWindow(nint Handle, string Title, int ProcessId, int Width, int Height)
 {
     public ComputerProcessIdentity? Owner { get; init; }
+    public int Left { get; init; }
+    public int Top { get; init; }
 }
 
 /// <summary>
@@ -16,7 +18,10 @@ public sealed record CapturableWindow(nint Handle, string Title, int ProcessId, 
 /// plausible byte count and a valid header, so everything downstream reads it as a successful capture — which is
 /// exactly the false green <see cref="FrameStats.IsBlank"/> exists to refuse.
 /// </summary>
-public sealed record CapturedFrame(byte[] Png, int Width, int Height, FrameStats Stats);
+public sealed record CapturedFrame(byte[] Png, int Width, int Height, FrameStats Stats)
+{
+    public string? ContentFingerprint { get; init; }
+}
 
 /// <summary>
 /// The host's side of a capture: which windows are on screen, and how to turn one of them — or the whole display,
@@ -29,7 +34,8 @@ public sealed record ScreenCaptureBridge(
     Func<CapturableWindow?, CapturedFrame?> Grab);
 
 internal sealed record ComputerActionRequest(string Action, int X = 0, int Y = 0, string? Text = null,
-    string? Key = null, int Scroll = 0);
+    string? Key = null, int Scroll = 0, CancellationToken Cancellation = default,
+    Func<bool>? VerifyObservation = null);
 
 /// <summary>Host operations bound to a previously resolved top-level window.</summary>
 internal sealed record ComputerUseBridge(
@@ -68,7 +74,7 @@ public static class ScreenCapture
         var wanted = (target ?? "").Trim();
         if (wanted.Length == 0 && processId <= 0)
             return new Match(null,
-                "Refused: capture_screen needs a window title, or fullscreen=true to take the whole display. Say "
+                "Refused: capture_screen needs a named application window title. Say "
                 + "which one; do not call it with no target.");
 
         var hits = windows.Where(window =>
@@ -79,7 +85,7 @@ public static class ScreenCapture
             return new Match(null,
                 $"Refused: no visible window title contains the target {Addressed(wanted, processId)}. On screen "
                 + $"now: {Named(windows)}. Name one of those, narrow it with more of its title, or pass its process "
-                + "id as process_id; or capture the whole display with fullscreen=true. Do not retry this target.");
+                + "id as process_id. Whole-display capture is disabled. Do not retry this target.");
 
         return new Match(null,
             $"Refused: {Addressed(wanted, processId)} matches {hits.Count} windows: {Named(hits)}. Narrow it to one "

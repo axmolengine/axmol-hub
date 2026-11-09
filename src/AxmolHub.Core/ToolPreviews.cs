@@ -332,8 +332,8 @@ public static class ToolPreviews
         if (!backend.Available) return $"capture_screen · {backend.Refusal}";
         var target = Text(arguments, "target");
         var processId = Integer(arguments, "process_id");
-        if (string.IsNullOrWhiteSpace(target) && processId <= 0 && Flag(arguments, "fullscreen"))
-            return $"capture_screen · fullscreen · {backend.Label}";
+        if (Flag(arguments, "fullscreen"))
+            return "capture_screen · Refused: whole-display capture is disabled; name an application window.";
         if (scope.Screen is not { } host)
             return $"capture_screen · {Addressed(target, processId)} · this build has no capture host for "
                    + $"{backend.Label}, so the call will be refused";

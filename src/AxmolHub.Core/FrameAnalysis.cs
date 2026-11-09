@@ -30,6 +30,9 @@ public sealed record FrameStats(int Width, int Height, int DistinctColors, doubl
 /// </summary>
 public static class FrameAnalysis
 {
+    public static string Fingerprint(byte[] pixels)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pixels));
+
     /// <summary>
     /// Measures a BGRA pixel buffer. A **pure function**, so the blank criterion itself can be
     /// asserted with a synthetic buffer — otherwise "will the criterion misjudge" could only be

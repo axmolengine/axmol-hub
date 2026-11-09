@@ -348,6 +348,7 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// <summary>The OS-resolved application and window bound at the gate, including already-granted calls.
     /// Without this identity a call cannot authorize or control an application.</summary>
     public ComputerUseTarget? ApprovalComputerTarget { get; init; }
+    public bool ApprovalComputerInput { get; init; }
 
     /// <summary>The file name of the pre-image this write left in <see cref="ChatUndoStore"/>, kept by name rather
     /// than as a full path so a session file still means the same thing after the data root moves. Null when the

@@ -7,6 +7,19 @@ internal static class ComputerUseGrants
 {
     public static bool IsComputerUseTool(string? name) => name is ToolNames.ComputerUse or ToolNames.CaptureScreen;
 
+    // Conservatively confirm every input. Pixels cannot reliably classify a destructive final submission.
+    public static bool IsInput(string? tool, string? json)
+    {
+        if (tool != ToolNames.ComputerUse) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json ?? "{}");
+            return !doc.RootElement.TryGetProperty("action", out var action)
+                || !string.Equals(action.GetString()?.Trim(), "screenshot", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return true; }
+    }
+
     public static string NormalizeTitle(string? value)
         => (value ?? "").Trim().Normalize(System.Text.NormalizationForm.FormC);
 

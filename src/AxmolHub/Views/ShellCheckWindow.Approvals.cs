@@ -1169,13 +1169,16 @@ internal sealed class ShellApprovalsChecks
                 { Owner = new ComputerProcessIdentity(foreignApplication, 2000) };
             var capturedWindows = new List<CapturableWindow?>();
             var operatedWindows = new List<CapturableWindow>();
+            CapturedFrame? fixtureFrame = null;
             chat.ScreenCaptureBridgeProvider = () => new ScreenCaptureBridge(() => [previewWindow, foreignWindow], window =>
             {
                 capturedWindows.Add(window);
-                return null;
+                return fixtureFrame;
             });
-            chat.ComputerUseBridgeProvider = () => new ComputerUseBridge((window, _) =>
+            chat.ComputerUseBridgeProvider = () => new ComputerUseBridge((window, request) =>
             {
+                request.Cancellation.ThrowIfCancellationRequested();
+                if (request.VerifyObservation?.Invoke() != true) return "Refused: fixture observation changed.";
                 operatedWindows.Add(window);
                 return null;
             });
@@ -1284,10 +1287,47 @@ internal sealed class ShellApprovalsChecks
             reuse.Add(capturedWindows.Count == beforeAlternate + 1);
             DenyComputer(screenSession, alternating);
             var inputTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key");
-            reuse.Add(operatedWindows.Count == 1 && operatedWindows[0].Owner?.Application == previewApplication);
+            reuse.Add(inputTurn?.ApprovalState == ChatApprovalStates.Pending && inputTurn.ApprovalComputerInput
+                && operatedWindows.Count == 0);
+            panel.Reload();
+            shell.UpdateLayout();
+            var inputCard = panel.ApprovalCardForCheck;
+            Check(inputCard is not null
+                  && NamedDescendant<Button>(inputCard, "ComputerUseAlwaysAllowButton")?.IsVisible == false
+                  && NamedDescendant<TextBlock>(inputCard, "ComputerUseQuestion")?.Text == HubStrings.Get("ComputerUseInputTitle"),
+                "已授权应用的输入仍逐次确认，不能永久授权最终提交");
+            // A confirmed input runs exactly once and returns a fresh frame. The fixture never touches the desktop.
+            using (var bitmap = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(2, 2), new Vector(96, 96),
+                       Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque))
+            using (var stream = new System.IO.MemoryStream())
+            {
+                using (var buffer = bitmap.Lock())
+                    System.Runtime.InteropServices.Marshal.Copy(new byte[]
+                        { 0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255 }, 0, buffer.Address, 16);
+                bitmap.Save(stream, Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
+                fixtureFrame = new CapturedFrame(stream.ToArray(), 2, 2, new FrameStats(2, 2, 2, 100));
+            }
             DenyComputer(screenSession, inputTurn);
+            await WaitForIdleAsync(chat);
+            await ComputerRound(screenSession, ToolNames.CaptureScreen, previewWindow.Title);
+            var frameResult = screenSession.Messages.Last(turn => turn.Role == ChatRoles.Tool && turn.Images.Count > 0);
+            var fixtureFrameId = frameResult.Text.Split(';')[0].Split('=')[1];
+            screenClient.CallsRemaining = 1;
+            screenClient.ToolName = ToolNames.ComputerUse;
+            screenClient.Arguments = new() { ["application"] = previewWindow.Title, ["action"] = "press_key",
+                ["key"] = "Tab", ["frame_id"] = fixtureFrameId };
+            chat.TryEnqueueSend(screenSession.Id, "Confirm one observed input", null, out _);
+            var confirmedInput = await WaitForPendingCallAsync(screenSession);
+            Check(confirmedInput is not null && chat.TryResolveApproval(screenSession.Id, confirmedInput,
+                approved: true, alwaysAllow: false, out _), "逐次输入确认可恢复原调用");
+            await WaitForIdleAsync(chat);
+            Check(operatedWindows.Count == 1 && screenSession.Messages.Any(turn => turn.Role == ChatRoles.Tool
+                    && turn.ToolCallId == confirmedInput && turn.Images.Count == 1
+                    && turn.Text.StartsWith("Input delivered (", StringComparison.Ordinal)),
+                "单次确认只执行一次输入并附上新截图，不把输入送达当成任务成功");
+            fixtureFrame = null;
             Check(reuse.All(value => value),
-                $"同一应用授权复用：重复截图、标题变化、两工具交替和输入均不再审批（实际 {string.Join(',', reuse)}）");
+                $"应用授权复用截图，输入仍需独立确认（实际 {string.Join(',', reuse)}）");
 
             // A peer has no conversation grant. Global trust is reused, never copied into its local grants.
             var peerPending = await ComputerRound(screenPeerSession, ToolNames.CaptureScreen, previewWindow.Title);

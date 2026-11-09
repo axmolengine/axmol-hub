@@ -50,6 +50,8 @@ internal static class DesktopApplicationIdentity
             var end = Array.IndexOf(buffer, (byte)0);
             return Encoding.UTF8.GetString(buffer, 0, end < 0 ? length : end);
         }
+        if (OperatingSystem.IsLinux())
+            return File.ResolveLinkTarget($"/proc/{processId}/exe", returnFinalTarget: true)?.FullName;
         return null;
     }
 

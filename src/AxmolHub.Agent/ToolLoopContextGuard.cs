@@ -34,6 +34,9 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     public Func<Task>? ValidateSelection { get; init; }
     private int _requests;
 
+    // Rebuild carriers at every live boundary, not only when a saved conversation is replayed.
+    public Func<string, ChatMessage?>? ToolFrame { get; init; }
+
     /// <summary>The newest results are the ones the model is reasoning about right now.</summary>
     public const int KeepRecentResults = 4;
 
@@ -82,6 +85,19 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
         if (ValidateSelection is { } validate) await validate().ConfigureAwait(false);
         var list = messages.ToList();
         var atToolBoundary = AtToolBoundary(list);
+        if (ToolFrame is { } frameFor)
+        {
+            var carried = list.Where(message => message.AdditionalProperties?.ContainsKey(ToolSpinGuard.CapturedFrameKey) == true)
+                .Select(message => message.AdditionalProperties![ToolSpinGuard.CapturedFrameKey] as string)
+                .ToHashSet(StringComparer.Ordinal);
+            for (var index = list.Count - 1; index >= 0; index--)
+            {
+                var frames = list[index].Contents.OfType<FunctionResultContent>()
+                    .Where(result => !carried.Contains(result.CallId))
+                    .Select(result => frameFor(result.CallId)).OfType<ChatMessage>().ToList();
+                list.InsertRange(index + 1, frames);
+            }
+        }
         if (PendingInterjection is { } ask && atToolBoundary && await ask().ConfigureAwait(false) is { } interjection)
             list.Add(interjection);
         // Never yield the first request: an owner whose compaction cannot shrink the prompt must still have
