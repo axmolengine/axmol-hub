@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
+using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -23,7 +24,9 @@ namespace AxmolHub;
 /// <c>workspace</c> selects a root in the active conversation; <c>inspector-width</c>/<c>inspector-drag</c>
 /// resize the sidebar (value/delta). <c>flyout</c> opens a named button's menu and optionally selects an item
 /// by tag or header. <c>menu</c> chooses an item by its stable <c>Tag</c> from a named control's context menu, and
-/// <c>wait</c> also accepts <c>until</c> (a name or text) with an optional <c>ms</c> timeout. The run exits 0 when
+/// <c>wait</c> also accepts <c>until</c> (a name or text) with an optional <c>ms</c> timeout. <c>wheel</c> raises a
+/// real wheel gesture on the transcript's scroll bar (<c>dy</c> positive scrolls up), and <c>fold</c> toggles the first
+/// tool group head (<c>open</c>) — the two gestures a transcript bug usually needs. The run exits 0 when
 /// every step succeeded and no shot is blank, and leaves <c>drive.evidence.txt</c> in <c>out</c>. It uses the user's
 /// real data root; settings are protected by the copy made in <see cref="HubHostOptions.Parse"/>.
 /// </summary>
@@ -150,6 +153,50 @@ internal static class DriveRunner
                 window.Height = step.GetProperty("h").GetDouble();
                 await Settle();
                 return null;
+            case "wheel":
+            {
+                // A real wheel gesture over the transcript scroll bar: the panel's own tunnel handler owns the
+                // offset, the stick-to-bottom flag and the repair request, so scrolling away behaves exactly
+                // as it does under a hand. Positive dy scrolls up (away from the tail).
+                var dy = step.TryGetProperty("dy", out var wheelDelta) ? wheelDelta.GetDouble() : 3;
+                if (!RaiseWheel(window, dy)) return "transcript scroll bar not found";
+                await Settle();
+                return null;
+            }
+            case "fold":
+            {
+                // Toggles a tool group head by class (plus `text` to pick the group), because the caption changes
+                // with the fold state: the repro recipe needs "expand", "collapse", "expand" exactly.
+                var wanted = Opt(step, "text");
+                ToggleButton? FindHead()
+                {
+                    foreach (var candidate in window.GetVisualDescendants().OfType<ToggleButton>()
+                                 .Where(b => b.Classes.Contains("activity-group-head")))
+                    {
+                        if (wanted is null) return candidate;
+                        var caption = string.Concat(candidate.GetVisualDescendants().OfType<TextBlock>()
+                            .Select(t => t.Text));
+                        if (caption.Contains(wanted, StringComparison.Ordinal)) return candidate;
+                    }
+
+                    return null;
+                }
+
+                var head = FindHead();
+                // A fold changes the content height, so the head can end up outside the realized range: walk back
+                // towards it (positive dy scrolls up, and a head sits above the rows it folds).
+                for (var attempt = 0; head is null && attempt < 30; attempt++)
+                {
+                    if (!RaiseWheel(window, 2)) return "transcript scroll bar not found";
+                    await Settle();
+                    head = FindHead();
+                }
+
+                if (head is null) return "activity group head not found";
+                head.IsChecked = step.TryGetProperty("open", out var open) ? open.GetBoolean() : true;
+                await Settle();
+                return null;
+            }
             case "wait":
             {
                 var ms = step.TryGetProperty("ms", out var m) ? m.GetInt32() : 5000;
@@ -279,6 +326,18 @@ internal static class DriveRunner
         await Task.Delay(50);
         Dispatcher.UIThread.RunJobs();
         await Task.Delay(50);
+    }
+
+    /// <summary>Raises a wheel gesture on the transcript's scroll bar, so the panel's own handlers run.</summary>
+    private static bool RaiseWheel(Window window, double dy)
+    {
+        var bar = window.GetVisualDescendants().OfType<ScrollBar>()
+            .FirstOrDefault(b => b.Name == "TranscriptScrollBar");
+        if (bar is null) return false;
+        var pointer = new Pointer(0, PointerType.Mouse, true);
+        bar.RaiseEvent(new PointerWheelEventArgs(bar, pointer, bar, default, 0, new PointerPointProperties(),
+            KeyModifiers.None, new Vector(0, dy)) { RoutedEvent = InputElement.PointerWheelChangedEvent });
+        return true;
     }
 
     /// <summary>A Popup is not in the visual tree, so it is found through the logical tree.</summary>
