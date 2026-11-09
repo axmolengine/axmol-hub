@@ -2135,13 +2135,13 @@ internal sealed partial class InspectorPanel : UserControl
         return _splitDiff ? BuildSplitDiffBlock(diff, syntax) : BuildUnifiedDiffBlock(diff, syntax, compact: true);
     }
 
-    private static ScrollViewer DiffViewport() => new()
+    private static ScrollViewer DiffViewport(ScrollBarVisibility verticalScrollBarVisibility = ScrollBarVisibility.Disabled) => new()
     {
-        // Keep horizontal scrolling for long source lines, but let this viewer measure the full diff height.
-        // Vertical scrolling belongs to _changesScroll so several expanded files share one page scrollbar.
+        // Inspector diffs measure their full height and share _changesScroll; bounded transcript diffs
+        // opt into vertical scrolling here. Both keep horizontal scrolling for long source lines.
         AllowAutoHide = false,
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        VerticalScrollBarVisibility = verticalScrollBarVisibility,
         ClipToBounds = true,
     };
 
@@ -2198,10 +2198,11 @@ internal sealed partial class InspectorPanel : UserControl
     /// <para>Also the renderer the transcript folds a patch edit open with, which is why the gutters can be left
     /// out: a patch envelope anchors its hunks on context instead of positions, so numbers beside it would be
     /// invented here rather than read from anywhere.</para></summary>
-    internal static Control BuildUnifiedDiffBlock(string diff, ChangesDiffSyntax syntax, bool numbered = true, bool compact = false)
+    internal static Control BuildUnifiedDiffBlock(string diff, ChangesDiffSyntax syntax, bool numbered = true, bool compact = false,
+        ScrollBarVisibility verticalScrollBarVisibility = ScrollBarVisibility.Disabled)
     {
         var lines = new StackPanel { Spacing = 0 };
-        var viewer = DiffViewport();
+        var viewer = DiffViewport(verticalScrollBarVisibility);
         var oldLine = 0;
         var newLine = 0;
         var inHunk = false;

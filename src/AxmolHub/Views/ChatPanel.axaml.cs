@@ -3853,9 +3853,10 @@ public partial class ChatPanel : UserControl
 
         var snapshot = _chat?.SnapshotForChange(change, change.SelectedRevisionId, out _);
         using var syntax = new ChangesDiffSyntax(change.RelativePath, diff, snapshot);
-        var block = InspectorPanel.BuildUnifiedDiffBlock(diff, syntax, compact: true);
-        // The bound is the fold's, not the diff's: a six-hundred-line change inside a transcript row would push
-        // every row after it off the screen, and the box already scrolls both ways.
+        var block = InspectorPanel.BuildUnifiedDiffBlock(diff, syntax, compact: true,
+            verticalScrollBarVisibility: ScrollBarVisibility.Auto);
+        // Bound the transcript fold so a long change does not push every later row away;
+        // this viewport owns both scroll directions to keep all of the diff reachable.
         block.MaxHeight = 320;
         body.Children.Add(block);
         return body;
@@ -3894,7 +3895,8 @@ public partial class ChatPanel : UserControl
             // rows keep the tint and the marker and go without a lexer, rather than colouring a file nobody read.
             var diff = string.Join('\n', section.Lines);
             using var syntax = new ChangesDiffSyntax(section.Path, diff, null);
-            var block = InspectorPanel.BuildUnifiedDiffBlock(diff, syntax, numbered: false);
+            var block = InspectorPanel.BuildUnifiedDiffBlock(diff, syntax, numbered: false,
+                verticalScrollBarVisibility: ScrollBarVisibility.Auto);
             block.MaxHeight = 320;
             card.Children.Add(block);
         }
