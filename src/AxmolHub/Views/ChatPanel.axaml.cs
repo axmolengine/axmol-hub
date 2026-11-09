@@ -4795,11 +4795,20 @@ public partial class ChatPanel : UserControl
 
     private static Grid BuildNoticeRow(string text, bool danger, string? actionName, string? actionIcon, Action? action)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*" + (action is null ? "" : ",Auto")) };
+        // The look is set here rather than through `Grid.notice` styles in XAML. This row is a tail: the transcript
+        // builds it while its strip is parked, then mounts, unmounts and mounts it again as the reader scrolls, and
+        // Avalonia resolves styles as an element joins the tree — a row that joins before ChatPanel is above it is
+        // marked styled with nothing applied and keeps the default 14px text and the button's template ellipsis
+        // until something else invalidates it (bug: "tail text bigger and whiter, retry button oversized"). A local
+        // value cannot be missed that way, and the class is kept because the checks look rows up by it.
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*" + (action is null ? "" : ",Auto")),
+            Margin = new Thickness(0, 6),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MaxWidth = 820,
+        };
         row.Classes.Add("notice");
-        row.HorizontalAlignment = HorizontalAlignment.Center;
-        row.MaxWidth = 820;
-        if (danger) row.Classes.Add("danger");
 
         var icon = new Avalonia.Controls.Shapes.Path
         {
@@ -4808,14 +4817,24 @@ public partial class ChatPanel : UserControl
             Stretch = Stretch.Uniform,
             Data = ThemeGeometry("Hub.Icon.Notice"),
         };
-        icon.Classes.Add("notice-icon");
+        icon.Bind(Avalonia.Controls.Shapes.Shape.FillProperty,
+            new DynamicResourceExtension(danger ? "Hub.DangerText" : "Hub.TextTertiary"));
         // The row declares "Auto,*", and a child without an explicit column lands in column 0 — both of
         // them there meant the text sat on top of the icon, which in a real run read like "the tip is
         // smudged over something". Icon owns column 0, text column 1.
         Grid.SetColumn(icon, 0);
         row.Children.Add(icon);
 
-        var label = new TextBlock { Text = text };
+        var label = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(7, 0, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        label.Bind(TextBlock.ForegroundProperty,
+            new DynamicResourceExtension(danger ? "Hub.DangerText" : "Hub.TextSecondary"));
         Grid.SetColumn(label, 1);
         row.Children.Add(label);
 
@@ -4826,11 +4845,44 @@ public partial class ChatPanel : UserControl
             && actionIcon is { Length: > 0 } actionGlyph)
         {
             var button = IconActionButton(name, actionGlyph, action);
+            TailActionPlate(button);
             Grid.SetColumn(button, 2);
             row.Children.Add(button);
         }
 
         return row;
+    }
+
+    /// <summary>The plate and size of a tail row's action button. The same facts live in the
+    /// <c>Button.message-action</c> styles (keep the two in step), but a tail row can be styled while it joins the
+    /// tree before this panel is above it, and then those styles never land — the button keeps the theme default
+    /// (wide, padded, with the template's ellipsis). Values set here cannot be missed; the ellipsis lives inside the
+    /// template, so it is switched off as soon as the template exists.</summary>
+    private static void TailActionPlate(Button button)
+    {
+        button.Background = Brushes.Transparent;
+        button.BorderBrush = Brushes.Transparent;
+        button.BorderThickness = new Thickness(0);
+        button.CornerRadius = new CornerRadius(4);
+        button.Margin = new Thickness(0);
+        button.Padding = new Thickness(2);
+        button.Width = 20;
+        button.Height = 20;
+        button.MinWidth = 20;
+        button.MinHeight = 20;
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
+        button.Cursor = new Cursor(StandardCursorType.Hand);
+        button.TemplateApplied += (_, _) =>
+        {
+            foreach (var part in button.GetVisualDescendants().OfType<TextBlock>())
+                if (part.Name == "PART_MoreAffordance") part.IsVisible = false;
+        };
+        button.PointerEntered += (_, _) =>
+            button.Background = button.TryFindResource("Hub.SurfaceHover", out var hover) && hover is IBrush brush
+                ? brush
+                : Brushes.Transparent;
+        button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
     }
 
     // ───────────────────────── Actions ─────────────────────────

@@ -153,26 +153,10 @@
       <Setter Property="Margin" Value="0,0,5,0" />
     </Style>
 
-    <!-- Neutral notice rows (model changed, cancellation): small icon + one muted line. -->
-    <Style Selector="Grid.notice">
-      <Setter Property="Margin" Value="0,6" />
-    </Style>
-    <Style Selector="Grid.notice Path.notice-icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
-    </Style>
-    <Style Selector="Grid.notice TextBlock">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="Margin" Value="7,0,0,0" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-    <Style Selector="Grid.notice.danger TextBlock">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
-    </Style>
-    <Style Selector="Grid.notice.danger Path.notice-icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
-    </Style>
+    <!-- Neutral notice rows (model changed, cancellation) are built entirely in code (BuildNoticeRow): a tail row is
+         built off screen, mounted, unmounted and mounted again as the reader scrolls, and a style can be resolved
+         while the row has no ChatPanel above it — leaving the line at the default 14px and the action button with its
+         template ellipsis for good. The class name stays because the checks look the row up by it. -->
 
     <!-- A call that needs permission stays on screen until it is answered. Hover-reveal would be exactly
          wrong here: an actionable request you cannot see is a reply that appears to have stalled. The card is
