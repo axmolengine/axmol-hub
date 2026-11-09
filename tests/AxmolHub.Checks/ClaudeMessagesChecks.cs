@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI;
 
 internal static class ClaudeMessagesChecks
 {
-    // One offline round-trip covers the consequential failure: signed blocks lost at the storage boundary.
+    // One offline round-trip covers the consequential failure: ordered signed blocks lost at storage.
     internal static async Task RunAsync()
     {
         using var spy = new Spy();
@@ -17,14 +17,18 @@ internal static class ClaudeMessagesChecks
         var pipeline = new ChatPipeline(client);
         var function = AIFunctionFactory.Create(() => "ok", "inspect");
         var turns = new List<ChatTurn> { ChatTurn.User("check") };
-        await foreach (var _ in pipeline.SendAsync(provider, turns.ToArray(), tools: [function], reasoningEffort: "low",
+        List<JsonElement>? finalContent = null;
+        var answer = new StringBuilder();
+        await foreach (var text in pipeline.SendAsync(provider, turns.ToArray(), tools: [function], reasoningEffort: "low",
             maxOutputTokens: 100, onToolStarted: call => {
                 turns.Add(ChatTurn.FunctionCall(call.CallId, call.Name, call.ArgumentsJson, reasoning: call.Reasoning,
-                    batchId: call.BatchId, claudeThinking: call.ClaudeThinking));
+                    batchId: call.BatchId, claudeThinking: call.ClaudeThinking, claudeContent: call.ClaudeContent));
+                finalContent = null;
                 return Task.CompletedTask;
             }, onToolCompleted: (call, result, failed) => {
                 turns.Add(ChatTurn.FunctionResult(call.CallId, result, failed)); return Task.CompletedTask;
-            })) { }
+            }, onClaudeContent: blocks => finalContent = blocks)) answer.Append(text);
+        turns.Add(ChatTurn.Assistant("done") with { ClaudeContent = finalContent });
         var restored = JsonSerializer.Deserialize<List<ChatTurn>>(JsonSerializer.Serialize(turns))!;
         restored.Add(ChatTurn.User("continue"));
         await foreach (var _ in pipeline.SendAsync(provider, restored, tools: [function], reasoningEffort: "low",
@@ -35,7 +39,14 @@ internal static class ClaudeMessagesChecks
             using var doc = JsonDocument.Parse(spy.Requests[index]);
             var root = doc.RootElement;
             var blocks = root.GetProperty("messages")[1].GetProperty("content");
-            if (root.GetProperty("messages").GetArrayLength() != (index == 2 ? 4 : 3)
+            if (index == 2 && root.GetProperty("messages")[3].GetProperty("content")[0].GetProperty("text").GetString() != "done")
+                throw new Exception("Restored final response lost its ordered content.");
+            if (root.GetProperty("messages").GetArrayLength() != (index == 2 ? 5 : 3)
+                || !blocks.EnumerateArray().Select(block => block.GetProperty("type").GetString())
+                    .SequenceEqual(new[] { "thinking", "redacted_thinking", "tool_use", "text", "thinking", "tool_use" })
+                || blocks[3].GetProperty("text").GetString() != "between calls \n"
+                || blocks[4].GetProperty("thinking").GetString() != "after the first call"
+                || blocks[4].GetProperty("signature").GetString() != "late-signature"
                 || blocks.EnumerateArray().Count(block => block.GetProperty("type").GetString() == "tool_use") != 2
                 || blocks[0].GetProperty("thinking").GetString() != "original thought"
                 || blocks[0].GetProperty("signature").GetString() != "opaque-signature"
@@ -44,7 +55,9 @@ internal static class ClaudeMessagesChecks
                 || root.GetProperty("output_config").GetProperty("effort").GetString() != "low")
                 throw new Exception("Messages signed/redacted blocks or reasoning parameters changed on replay.");
         }
-        Console.WriteLine("PASS: Messages thinking survives tool invocation and persisted history restoration.");
+        if (finalContent is not { Count: 1 } || answer.ToString() != "between calls \ndone")
+            throw new Exception("Ordered capture changed the visible streaming answer.");
+        Console.WriteLine("PASS: Messages preserves interleaved signed/redacted/text/tool blocks through live and restored history.");
     }
 
     private sealed class Spy : HttpMessageHandler
@@ -72,9 +85,15 @@ internal static class ClaudeMessagesChecks
                 frames.Add(new { type = "content_block_start", index = 2, content_block = new { type = "tool_use", id = "call_1", name = "inspect", input = new { } } });
                 frames.Add(new { type = "content_block_delta", index = 2, delta = new { type = "input_json_delta", partial_json = "{}" } });
                 frames.Add(new { type = "content_block_stop", index = 2 });
-                frames.Add(new { type = "content_block_start", index = 3, content_block = new { type = "tool_use", id = "call_2", name = "inspect", input = new { } } });
-                frames.Add(new { type = "content_block_delta", index = 3, delta = new { type = "input_json_delta", partial_json = "{}" } });
+                frames.Add(new { type = "content_block_start", index = 3, content_block = new { type = "text", text = "between " } });
+                frames.Add(new { type = "content_block_delta", index = 3, delta = new { type = "text_delta", text = "calls \n" } });
                 frames.Add(new { type = "content_block_stop", index = 3 });
+                frames.Add(new { type = "content_block_start", index = 4, content_block = new { type = "thinking", thinking = "after the first call", signature = "" } });
+                frames.Add(new { type = "content_block_delta", index = 4, delta = new { type = "signature_delta", signature = "late-signature" } });
+                frames.Add(new { type = "content_block_stop", index = 4 });
+                frames.Add(new { type = "content_block_start", index = 5, content_block = new { type = "tool_use", id = "call_2", name = "inspect", input = new { } } });
+                frames.Add(new { type = "content_block_delta", index = 5, delta = new { type = "input_json_delta", partial_json = "{}" } });
+                frames.Add(new { type = "content_block_stop", index = 5 });
             }
             else
             {

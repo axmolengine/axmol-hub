@@ -251,6 +251,11 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// reasoning: a tool round and a restored session must replay the exact opaque data received from Claude.</summary>
     public List<ClaudeThinkingBlock>? ClaudeThinking { get; init; }
 
+    /// <summary>The complete Messages response blocks in original order. Stored on each batch member so a
+    /// resumed approval can reconstruct the response; older records retain their signed-thinking fallback.</summary>
+    [global::System.Text.Json.Serialization.JsonIgnore(Condition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public List<System.Text.Json.JsonElement>? ClaudeContent { get; init; }
+
     /// <summary>How long the thinking behind <see cref="Reasoning"/> took, measured on the run's own clock — the
     /// one that does not charge a wait for an approval card to the model's reasoning — and frozen where the
     /// thinking stopped rather than where the turn was filed.
@@ -446,7 +451,8 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// wants it on the message that earned it.</summary>
     public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null,
         string? reasoning = null, string? batchId = null, TimeSpan? reasoningElapsed = null,
-        List<ClaudeThinkingBlock>? claudeThinking = null) =>
+        List<ClaudeThinkingBlock>? claudeThinking = null,
+        List<System.Text.Json.JsonElement>? claudeContent = null) =>
         new(ChatRoles.Assistant, text ?? "", DateTimeOffset.Now)
         {
             ToolCallId = callId,
@@ -454,6 +460,7 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
             ToolArguments = arguments,
             Reasoning = reasoning,
             ClaudeThinking = claudeThinking,
+            ClaudeContent = claudeContent,
             ReasoningElapsed = reasoningElapsed,
             ApprovalBatchId = batchId,
         };

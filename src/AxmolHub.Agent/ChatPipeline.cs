@@ -64,7 +64,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // several calls, and the decisions over that group belong together: the id is what lets the caller show one
         // card for a batch and run what is left of it when the person answers. Stable, and recomputable from the
         // transcript, because the head of a response never moves.
-        string? BatchId = null, List<ClaudeThinkingBlock>? ClaudeThinking = null);
+        string? BatchId = null, List<ClaudeThinkingBlock>? ClaudeThinking = null,
+        List<JsonElement>? ClaudeContent = null);
 
     /// <summary>The answer to "may this call run now".</summary>
     public enum ToolGateOutcome
@@ -167,6 +168,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         RequestRetryOptions? retryOptions = null,
         ChatToolMode? toolMode = null,
         Action<List<ClaudeThinkingBlock>>? onClaudeThinking = null,
+        Action<List<JsonElement>>? onClaudeContent = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -198,6 +200,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // is the start of the next one.
         var thinking = new StringBuilder();
         var claudeThinking = new List<ClaudeThinkingBlock>();
+        List<JsonElement>? claudeContent = null;
         var thinkingSpent = false;
         // Harvest on every send, including summaries and transport-recovery attempts. Replay consumes its
         // lookup queues, so a retry must rebuild them from the same history rather than lose the original thought.
@@ -273,8 +276,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     batch.Clear();
                     batch.AddRange(asked
                         .Select(content => InfoOf(content, said, asked[0].CallId,
-                            claudeThinking.Count > 0 ? [.. claudeThinking] : null)));
+                            claudeThinking.Count > 0 ? [.. claudeThinking] : null, claudeContent)));
                     claudeThinking.Clear();
+                    claudeContent = null;
                     // Recorded first, every call of the response, and only then judged. The order is not tidiness:
                     // a decision that spans the group writes a waiting state onto each call in it, and a call that
                     // is not in the transcript yet has nowhere for that state to land — the card would then be
@@ -501,10 +505,16 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                         yield return visible;
                     }
                 }
-                else if (content is ClaudeThinkingContent signed)
+                else if (content is ClaudeResponseContent response)
                 {
-                    claudeThinking.Add(signed.Block);
+                    claudeContent = response.Blocks;
+                    claudeThinking = response.Blocks.Where(block => block.GetProperty("type").GetString() is "thinking" or "redacted_thinking")
+                        .Select(block => block.GetProperty("type").GetString() == "redacted_thinking"
+                            ? new ClaudeThinkingBlock(null, block.GetProperty("data").GetString()!, true)
+                            : new ClaudeThinkingBlock(block.GetProperty("thinking").GetString(), block.GetProperty("signature").GetString()!, false))
+                        .ToList();
                     onClaudeThinking?.Invoke([.. claudeThinking]);
+                    onClaudeContent?.Invoke([.. response.Blocks]);
                 }
                 else if (content is TextReasoningContent thought)
                 {
@@ -761,9 +771,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// <summary>One call of a response, as the callbacks and the gate see it. The arguments are serialized here
     /// once so the transcript, the card and the tool all read the same text.</summary>
     private static ToolCallInfo InfoOf(FunctionCallContent content, string? reasoning, string batchId,
-        List<ClaudeThinkingBlock>? claudeThinking)
+        List<ClaudeThinkingBlock>? claudeThinking, List<JsonElement>? claudeContent)
         => new(content.Name, content.CallId,
-            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId, claudeThinking);
+            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId, claudeThinking, claudeContent);
 
     /// <summary>The declared function carrying this name, or null. The batch starter needs a sibling's function
     /// before the invoking client has been asked for it, and the request's own tool list is the only place a name
@@ -897,8 +907,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             contents.Add(new FunctionCallContent(callId, name, arguments));
             return new ChatMessage(ChatRole.Assistant, contents)
             {
-                AdditionalProperties = turn.ApprovalBatchId is { Length: > 0 } batch
-                    ? new AdditionalPropertiesDictionary { ["hub:tool-batch"] = batch } : null,
+                AdditionalProperties = ClaudeMessageProperties(turn),
             };
         }
 
@@ -926,7 +935,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             var contents = new List<AIContent>();
             AddThinkingContent(turn, contents);
             contents.Add(new TextContent(text));
-            return new ChatMessage(ChatRole.Assistant, contents);
+            return new ChatMessage(ChatRole.Assistant, contents) { AdditionalProperties = ClaudeMessageProperties(turn) };
         }
 
         // A picture rides the same user-role message as its question, which is why a frame the user pasted is
@@ -938,6 +947,16 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // should look on the wire: the pictures are the message, so nothing is inserted before them.
         if (text.Length > 0) media.Insert(0, new TextContent(text));
         return new ChatMessage(ToRole(turn.Role), media);
+    }
+
+    private static AdditionalPropertiesDictionary? ClaudeMessageProperties(ChatTurn turn)
+    {
+        AdditionalPropertiesDictionary? properties = null;
+        if (turn.ApprovalBatchId is { Length: > 0 } batch)
+            (properties ??= new())["hub:tool-batch"] = batch;
+        if (turn.ClaudeContent is { Count: > 0 } blocks)
+            (properties ??= new())[ClaudeResponseContent.HistoryKey] = blocks;
+        return properties;
     }
 
     private static void AddThinkingContent(ChatTurn turn, List<AIContent> contents)

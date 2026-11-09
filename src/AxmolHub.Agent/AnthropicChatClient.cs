@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using Anthropic.Helpers;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
 
@@ -16,24 +18,30 @@ internal sealed class AnthropicChatClient(IChatClient inner) : DelegatingChatCli
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var thinking = new ClaudeThinkingAccumulator();
-        await foreach (var update in InnerClient.GetStreamingResponseAsync(Replay(messages), options, cancellationToken))
+        var aggregator = new MessageContentAggregator();
+        var trailing = new List<ChatResponseUpdate>();
+        ChatResponseUpdate? current = null;
+        async IAsyncEnumerable<RawMessageStreamEvent> Events()
         {
-            // MEAI merges one trailing signature with its preceding text, but multiple signature deltas
-            // become separate blocks. Emit the completed signature once, at the original block boundary.
-            if (update.RawRepresentation is RawMessageStreamEvent { Value: RawContentBlockDeltaEvent { Delta.Value: SignatureDelta } })
-                foreach (var part in update.Contents.OfType<TextReasoningContent>()) part.ProtectedData = null;
-            if (thinking.Push(update.RawRepresentation) is { } block)
+            await foreach (var update in InnerClient.GetStreamingResponseAsync(Replay(messages), options, cancellationToken))
             {
-                if (!block.Redacted)
-                    update.Contents.Add(new TextReasoningContent(null) { ProtectedData = block.ProtectedData });
-                update.Contents.Add(new ClaudeThinkingContent(block));
+                current = update;
+                if (update.RawRepresentation is RawMessageStreamEvent raw) yield return raw;
+                else trailing.Add(update);
             }
+        }
+        await foreach (var raw in aggregator.CollectAsync(Events()))
+        {
+            var update = current!;
+            if (raw.Value is RawMessageStopEvent)
+                update.Contents.Add(new ClaudeResponseContent(aggregator.Message().Content
+                    .Select(block => block.Json.Clone()).ToList()));
             // The SDK does not turn an error SSE frame into ErrorContent. The transport observer records
             // its provider code in the shared retry scope without changing the bytes.
             if (RequestRetryScope.Current.Value?.StreamFailure is { } failure) throw failure;
             yield return update;
         }
+        foreach (var update in trailing) yield return update;
     }
 
     private static IEnumerable<ChatMessage> Replay(IEnumerable<ChatMessage> messages)
@@ -65,6 +73,18 @@ internal sealed class AnthropicChatClient(IChatClient inner) : DelegatingChatCli
                 foreach (var part in contents) result[^1].Contents.Add(part);
             }
             else result.Add(copy);
+        }
+        foreach (var message in result.Where(message => message.Role == ChatRole.Assistant))
+        {
+            var blocks = message.Contents.OfType<ClaudeResponseContent>().LastOrDefault()?.Blocks;
+            if (blocks is null && message.AdditionalProperties?.TryGetValue(ClaudeResponseContent.HistoryKey, out var stored) == true)
+                blocks = stored as List<JsonElement>;
+            if (blocks is { Count: > 0 })
+                message.Contents = blocks.Select(block => (AIContent)new ClaudeWireContent
+                {
+                    RawRepresentation = JsonSerializer.Deserialize<ContentBlockParam>(block)
+                        ?? throw new InvalidOperationException("Stored Messages block is invalid."),
+                }).ToList();
         }
         return result;
     }

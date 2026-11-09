@@ -3389,6 +3389,7 @@ internal sealed partial class ChatExecutionCoordinator
                     {
                         Reasoning = thought.Length > 0 ? thought : null,
                         ClaudeThinking = run.LiveClaudeThinking,
+                        ClaudeContent = run.LiveClaudeContent,
                         ReasoningElapsed = thought.Length > 0 ? thoughtFor : null,
                         // What the endpoint searched for this answer, on the answer itself: the reply's text is
                         // what it produced, and the searches are where it came from. Kept off the wire on purpose
@@ -3741,7 +3742,7 @@ internal sealed partial class ChatExecutionCoordinator
                 var thoughtFor = run.ReasoningElapsed;
                 var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson,
                     said.Length > 0 ? said : null, info.Reasoning, info.BatchId, thoughtFor,
-                    info.ClaudeThinking);
+                    info.ClaudeThinking, info.ClaudeContent);
                 await ApplyOnUiAsync(() =>
                 {
                     run.BeginSegment();
@@ -3813,6 +3814,7 @@ internal sealed partial class ChatExecutionCoordinator
                 SchedulePaint(run);
             },
             onClaudeThinking: blocks => run.LiveClaudeThinking = blocks,
+            onClaudeContent: blocks => run.LiveClaudeContent = blocks,
             // The measurement lands while the reply is still streaming, which is the point: the ring the person
             // is watching has to be reading the model's numbers before they decide whether to keep typing.
             onUsage: report =>
