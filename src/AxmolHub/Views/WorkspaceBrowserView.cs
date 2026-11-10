@@ -24,6 +24,8 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     private readonly Grid _surface = new() { ClipToBounds = true };
     private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16),
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 480 };
+    private readonly Action<string> _log;
+    private readonly string _logId = Guid.NewGuid().ToString("N")[..8];
     private NativeWebView? _web;
     private bool _loading;
     private bool _disposed;
@@ -34,8 +36,9 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal Task Ready => _initializing ? _initialized.Task : Task.CompletedTask;
     private Uri? _requested;
 
-    internal WorkspaceBrowserView()
+    internal WorkspaceBrowserView(Action<string> log)
     {
+        _log = log;
         RowDefinitions = new RowDefinitions("Auto,*");
         ClipToBounds = true;
         var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto"), Margin = new Thickness(6), ColumnSpacing = 4 };
@@ -98,7 +101,9 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         if (!EnsureWebView()) return;
         _message.IsVisible = false;
         _web!.IsVisible = _active;
+        Log("navigation requested");
         _web.Navigate(uri);
+        Log("navigation request returned");
     }
 
     private static bool IsWebAddress(Uri? uri) => uri is { Scheme: "http" or "https", Host.Length: > 0 };
@@ -111,11 +116,14 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             : OperatingSystem.IsMacOS() ? WebViewAdapterType.WkWebView : WebViewAdapterType.WebKitGtk;
         try
         {
+            Log($"runtime detection started: adapter={type}");
             var info = WebViewAdapterInfo.GetAdapterInfo(type);
+            Log($"runtime detection returned: installed={info.IsInstalled}, supported={info.IsSupported}");
             if (!info.IsInstalled || !info.IsSupported) { ShowMessage(MissingRuntimeKey()); return false; }
             var web = _web = new NativeWebView { Name = "WorkspaceBrowserWebView", AdapterPreference = [type], IsVisible = _active };
             web.EnvironmentRequested += (_, args) =>
             {
+                Log($"environment requested: {args.GetType().Name}");
                 args.EnableDevTools = false;
                 // Never borrow a user's browser profile. All browsing state is transient to this tab.
                 if (args is WindowsWebView2EnvironmentRequestedEventArgs windows)
@@ -139,10 +147,13 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 _requested = args.Request;
                 _address.Text = args.Request!.AbsoluteUri;
                 _loading = true;
-                SyncNavigation();
+                // GTK's policy callback waits for this handler. Reading native history here waits for
+                // GTK in turn, so refresh the toolbar only after the synchronous decision returns.
+                Dispatcher.UIThread.Post(() => { if (!_disposed) SyncNavigation(); });
             };
             web.NavigationCompleted += (_, args) =>
             {
+                Log("navigation completed: success=" + args.IsSuccess);
                 _loading = false;
                 if (IsWebAddress(args.Request)) _address.Text = args.Request!.AbsoluteUri;
                 if (!args.IsSuccess) ShowMessage("WorkspaceBrowserLoadFailed");
@@ -157,8 +168,9 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             };
             _initialized = new TaskCompletionSource();
             _initializing = true;
-            WebViewInitialization.Watch(web, _ =>
+            WebViewInitialization.Watch(web, error =>
             {
+                Log("asynchronous initialization failed: " + error);
                 _initializing = false;
                 _initialized.TrySetResult();
                 _surface.Children.Remove(web);
@@ -168,17 +180,21 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             });
             web.AdapterCreated += (_, _) =>
             {
+                Log("adapter created");
                 WebViewInitialization.Finished(web);
                 _initializing = false;
                 _initialized.TrySetResult();
                 SyncNavigation();
                 if (_disposed) Dispatcher.UIThread.Post(Release);
             };
+            Log("native host attachment started");
             _surface.Children.Insert(0, web);
+            Log("native host attachment returned");
             return true;
         }
-        catch (Exception)
+        catch (Exception error)
         {
+            Log("initialization failed: " + error);
             if (_web is not null) { WebViewInitialization.Finished(_web); _surface.Children.Remove(_web); }
             _initializing = false;
             _initialized.TrySetResult();
@@ -187,6 +203,9 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             return false;
         }
     }
+
+    // Log stages, never addresses: URLs can carry credentials or private query strings.
+    private void Log(string message) => _log($"Workspace browser {_logId}: {message}");
 
     private static string MissingRuntimeKey() => OperatingSystem.IsWindows() ? "WorkspaceBrowserMissingWindows"
         : OperatingSystem.IsMacOS() ? "WorkspaceBrowserMissingMac" : "WorkspaceBrowserMissingLinux";

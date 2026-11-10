@@ -36,6 +36,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly Dictionary<string, State> _states = new(WorkspaceFileTree.WorkspacePathComparer);
     private readonly InspectorPanel _inspector;
     private readonly Window _owner;
+    private readonly Action<string> _log;
     private readonly Grid _body;
     private readonly ContentControl _content = new();
     private readonly ContentControl _treeHost = new();
@@ -62,9 +63,10 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal event Action<string>? ToolRequested;
     internal event Action? OpenRequested;
 
-    internal WorkspaceView(Window owner, InspectorPanel inspector)
+    internal WorkspaceView(Window owner, InspectorPanel inspector, Action<string> log)
     {
         _owner = owner;
+        _log = log;
         _inspector = inspector;
         _inspector.SelectToolForCheck = ClickToolForCheck;
         ClipToBounds = true;
@@ -167,7 +169,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         tab = tab is "plan" or "browser" ? tab : "repo";
         if (tab == "browser" && _state.Browser is null)
         {
-            var browser = _state.Browser = new WorkspaceBrowserView();
+            var browser = _state.Browser = new WorkspaceBrowserView(_log);
             browser.Released += () => _body.Children.Remove(browser);
             // Keep every workspace browser attached: removing a hidden native control destroys its history.
             _body.Children.Insert(1, _state.Browser);

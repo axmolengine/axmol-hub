@@ -46,6 +46,26 @@ Host: **Windows 11 26H2**, build 26300, win-x64; detected WebView2 Runtime **157
 - Two earlier full `--verify-shell` runs passed **1771/1771**. Latest complete run: **1770/1771**; the browser contract passed. The failure is the separate commit/push retry handoff check (`Push retry needs user attention.`). That failure is preserved, not removed or fixed as part of this feature. Reports: `tmp/selfcheck-webview-final.txt` and `tmp/selfcheck-webview-final-run.log`.
 - Linux/macOS live browser behavior and AppImage runtime discovery are **not verified** on this Windows host. The user approved Windows-first implementation with cross-platform acceptance deferred. Input method, zoom, scrolling, clipboard and native menus still need human review on each platform; compiled platform bindings are not acceptance evidence.
 
+## Ubuntu 26.04 deadlock fix (2026-11-10)
+
+Reported installation: **AppImage 0.27.0**. Investigation and source-build checks ran on **Ubuntu 26.04.1 LTS**, x86_64, Wayland with XWayland (`DISPLAY=:0`), GTK **3.24.52**, WebKitGTK **2.52.6**, and libsoup **3.6.6**. `GDK_BACKEND` was unset; the required libraries were installed.
+
+The isolated loopback reproduction confirmed a navigation-policy deadlock, **not a stalled GTK initialization**. Stage logs reached adapter creation, native attachment return, and navigation request return before `UiStallWatch` recorded an unresponsive UI. GDB showed both the main and GTK threads waiting; `dotnet-stack` identified the cycle:
+
+- UI: `NavigationStarted` → `WorkspaceBrowserView.SyncNavigation` → `CanGoBack` → `AvaloniaGtk.RunOnGlibThread` → waits for GTK.
+- GTK: `GtkWebViewAdapter.DecidePolicy` → `WebViewDispatcher.Invoke` → waits for UI.
+
+The pinned GTK adapter delivers the cancellable policy event synchronously. Hub now keeps the HTTP/HTTPS validation and cancellation synchronous, but posts the toolbar/history refresh to the dispatcher so the policy handler returns without querying GTK. This does not change adapter selection, transient browser-state isolation, or sandbox settings. Browser logs record detection, environment request, native attachment, adapter creation, navigation completion and initialization exceptions; explicit stage messages do not include URLs.
+
+Verification:
+
+- Debug and Release source builds: **0 warnings, 0 errors**, using a temporary .NET **10.0.403** SDK (runtime **10.0.14**, major roll-forward for the net8.0 app).
+- The pre-fix reproduction stalled on first loopback navigation; after the fix the same drive script completed, the page reported success, and its run had no UI-stall alarm.
+- The existing `CheckWorkspaceBrowserAsync` loopback fixture was invoked directly by a temporary launcher under ignored `tmp/`, without adding a permanent suite or changing existing assertions. **PASS**: lazy creation/deduplication, hiding, page/handle retention through expansion/restoration, overlays/drawer, workspace isolation, rejected local protocol, close and immediate close. Report: `tmp/webview-linux/lifetime-check-final.log`.
+- The temporary launcher's early runs had an invalid fixture setup: its workspace was inside the protected data root, so workspace selection was refused and restoration/close assertions failed. Moving the fixture workspace outside that root produced the passing result; no product code or assertion was changed to bypass that failure.
+- Full `--verify-shell`: **691/699 passed**, exit **1**; it stopped before the browser scene on existing text-selection checks and a Computer Use approval failure/exception (`ShellCheckWindow.Approvals.cs`). These failures remain unresolved and are outside this fix. Reports: `tmp/webview-linux/selfcheck-shell.txt` and `tmp/webview-linux/selfcheck-shell-run.log`.
+- Human review of **Axmol Hub - WebView test** confirmed other URLs opened without hanging. The temporary launcher's `--verify-shell` startup also created an unshown check window whose 60-second watchdog shut down the desktop lifetime. A monitored repeat captured the watchdog failure, normal window closing events and desktop lifetime exit code **1** (the launcher incorrectly overwrote the process exit code to **0**). This explains the unexpected test-window exit; it is not evidence of a browser crash. Manual acceptance of all interactions remains incomplete. The installed AppImage was **not** replaced or repackaged; packaged-build acceptance remains pending.
+
 ## Windows package measurements
 
 Local unsigned artifacts only, not installed or published. `ORCAROUTER_APP_ID=webview-size-test-only` is set only for temporary packaging; CI supplies the real value. The post-change package uses `installer/Build.ps1`; the saved pre-change self-contained publish is packed with the same pinned Velopack **1.2.161** settings. Both use version 0.26.0, pack identity and icon. All artifacts/logs are under ignored `tmp/webview-size/`.
