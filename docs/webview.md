@@ -18,7 +18,7 @@ The existing `WorkspaceView` owns the tab strip, overflow and close menus. Brows
 | macOS | WKWebView | System WebKit |
 | Linux | WebKitGTK only; no automatic WPE selection | GTK 3, WebKitGTK 4.1, libsoup 3, X11 or XWayland |
 
-Runtime detection is performed before constructing the native view; missing libraries and asynchronous initialization failures produce an in-tab message. Hub does not install dependencies automatically. A URL entered before a failure remains available to the explicit external-browser button (`UrlLauncher`).
+Runtime detection is performed before constructing the native view; missing libraries and asynchronous initialization failures produce an in-tab message. On Linux, library detection also runs when the browser tab opens, without constructing a WebView or requesting a page. If unavailable, the empty browser area immediately displays a selectable installation hint for Ubuntu 24.04 / 26.04 (`sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libsoup-3.0-0`) and the X11/XWayland requirement. Detection is retried on navigation so a missing-library result is not permanently cached by Hub. Hub does not install dependencies automatically. A URL entered before a failure remains available to the explicit external-browser button (`UrlLauncher`).
 
 Linux prerequisites (not executed by Hub):
 

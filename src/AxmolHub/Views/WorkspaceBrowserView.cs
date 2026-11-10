@@ -22,7 +22,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     private readonly Control _reloadIcon = BrowserIcon("Hub.Icon.Refresh");
     private readonly Control _stopIcon = BrowserIcon("Hub.Icon.Close");
     private readonly Grid _surface = new() { ClipToBounds = true };
-    private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16),
+    private readonly SelectableTextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16),
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 480 };
     private readonly Action<string> _log;
     private readonly string _logId = Guid.NewGuid().ToString("N")[..8];
@@ -55,6 +55,8 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         Children.Add(_surface);
         _surface.Children.Add(_message);
         ShowMessage("WorkspaceBrowserEmpty");
+        // Detect missing Linux libraries before asking for a URL, without creating a native view.
+        if (OperatingSystem.IsLinux()) RuntimeAvailable(WebViewAdapterType.WebKitGtk);
         SyncNavigation();
     }
 
@@ -108,18 +110,32 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
 
     private static bool IsWebAddress(Uri? uri) => uri is { Scheme: "http" or "https", Host.Length: > 0 };
 
+    private bool RuntimeAvailable(WebViewAdapterType type)
+    {
+        try
+        {
+            Log($"runtime detection started: adapter={type}");
+            var info = WebViewAdapterInfo.GetAdapterInfo(type);
+            Log($"runtime detection returned: installed={info.IsInstalled}, supported={info.IsSupported}");
+            if (info.IsInstalled && info.IsSupported) return true;
+        }
+        catch (Exception error)
+        {
+            Log("runtime detection failed: " + error);
+        }
+        ShowMessage(MissingRuntimeKey());
+        return false;
+    }
+
     private bool EnsureWebView()
     {
         if (_disposed) return false;
         if (_web is not null) return true;
         var type = OperatingSystem.IsWindows() ? WebViewAdapterType.WebView2
             : OperatingSystem.IsMacOS() ? WebViewAdapterType.WkWebView : WebViewAdapterType.WebKitGtk;
+        if (!RuntimeAvailable(type)) return false;
         try
         {
-            Log($"runtime detection started: adapter={type}");
-            var info = WebViewAdapterInfo.GetAdapterInfo(type);
-            Log($"runtime detection returned: installed={info.IsInstalled}, supported={info.IsSupported}");
-            if (!info.IsInstalled || !info.IsSupported) { ShowMessage(MissingRuntimeKey()); return false; }
             var web = _web = new NativeWebView { Name = "WorkspaceBrowserWebView", AdapterPreference = [type], IsVisible = _active };
             web.EnvironmentRequested += (_, args) =>
             {
