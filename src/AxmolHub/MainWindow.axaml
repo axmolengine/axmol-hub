@@ -136,7 +136,7 @@
 
     <!-- The settings gear at the bottom of the sidebar: a direct shortcut that lifts the settings overlay.
          It is not the update button beside it — that one appears only while there is an update to act on. -->
-    <Style Selector="Button.gear">
+    <Style Selector="Button.gear, Button.update-action.icon">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7" />
@@ -144,7 +144,7 @@
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
-    <Style Selector="Button.gear:pointerover">
+    <Style Selector="Button.gear:pointerover, Button.update-action.icon:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
@@ -155,31 +155,21 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
 
-    <!-- The update's button in the bottom row: one control, two shapes, decided by class
-         (`icon` = found, `pill` = ready); it is hidden while the download moves, the strip reports that. The accent plate is the same accent every
-         other primary action wears (Button.send, the strip's old accent slot) — this is not a new colour,
-         it is the existing one given a permanent address. The pill exists because words are the only honest
-         shape for "this replaces the process"; the circle is enough while the press just fetches bytes.
-         The glyph is stroked, not filled: Hub.Icon.Send is an open path, and a filled
-         open path in Avalonia paints nothing — a silent way for the button to arrive invisible. -->
+    <!-- One update control: a gear-sized outlined download icon when found, an accent restart pill
+         when ready. While downloading, the status strip reports progress and this control is hidden. -->
     <Style Selector="Button.update-action">
       <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0" />
-      <Setter Property="CornerRadius" Value="16" />
+      <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="HorizontalAlignment" Value="Center" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
-    <!-- Found and ready: the circle that a red dot has something to sit on. -->
-    <Style Selector="Button.update-action.icon">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="Height" Value="32" />
-    </Style>
-    <Style Selector="Button.update-action:pointerover">
+    <Style Selector="Button.update-action.pill:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
     <!-- Ready: the pill. One word-cluster at a fixed 28 height so the row's other two controls, which are
@@ -194,8 +184,9 @@
       <Setter Property="Padding" Value="11,0" />
     </Style>
     <Style Selector="Button.update-action Path.icon">
-      <Setter Property="Stroke" Value="{DynamicResource Hub.TextOnAccent}" />
-      <Setter Property="StrokeThickness" Value="1.8" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="StrokeThickness" Value="1.2" />
       <Setter Property="StrokeLineCap" Value="Round" />
       <Setter Property="StrokeJoin" Value="Round" />
     </Style>
@@ -945,9 +936,12 @@
                          takes over in the pill. Swapping content rather than swapping controls keeps one
                          button (and one click seam) across all three states. -->
                     <Grid>
-                      <Path x:Name="UpdateActionGlyph" Classes="icon"
-                            Data="{StaticResource Hub.Icon.Send}"
-                            Width="16" Height="16" Stretch="Uniform" />
+                      <Grid x:Name="UpdateActionGlyph" Width="17" Height="17">
+                        <Ellipse Stroke="{DynamicResource Hub.AccentBorder}" StrokeThickness="1.4" />
+                        <Path Classes="icon" Data="{StaticResource Hub.Icon.ArrowDown}"
+                              Width="8" Height="8" Stretch="Uniform"
+                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Grid>
                       <TextBlock x:Name="UpdateActionText" IsVisible="False"
                                  TextTrimming="CharacterEllipsis" MaxWidth="150"
                                  VerticalAlignment="Center" />
@@ -956,11 +950,11 @@
                   <!-- The attention dot: Hub.AlertDot is the same pure red the sidebar's approval dot uses —
                        one red means "something is waiting for you" across the shell. The 1.5px ring in the
                        sidebar's own chrome colour is what keeps the dot legible where it overlaps the
-                       accent-filled button underneath it. It is declared **after** the button rather than
+                       button underneath it. It is declared **after** the button rather than
                        lifted with a ZIndex: child order is the only stacking rule here, so the z-order check
                        in the shell suite and the pixels it cannot see agree about what decides the paint.
                        10px against the session row's 6: the same red, a size up, because this one sits on a
-                       32px accent plate in the corner rather than in a row's own status column — the -3
+                       update control in the corner rather than in a row's own status column — the -3
                        margin is what keeps the overhang a corner press rather than a floating mark. -->
                   <Ellipse x:Name="UpdateActionDot" Width="10" Height="10"
                            Fill="{DynamicResource Hub.AlertDot}"

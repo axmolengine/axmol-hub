@@ -1318,11 +1318,11 @@ internal sealed class ShellLayoutChecks
         Dispatcher.UIThread.RunJobs();
         Check(shell.UpdateActionVisibleForCheck
               && shell.UpdateActionShapeForCheck == "icon"
-              && shell.UpdateActionGlyphForCheck == "send"
+              && shell.UpdateActionGlyphForCheck == "download"
               && shell.UpdateActionDotVisibleForCheck
               && shell.UpdateActionTipForCheck.Contains("9.9.9", StringComparison.Ordinal)
               && !shell.TaskSlotVisibleForCheck,
-            "有待下载的更新时侧栏出现上箭头圆形 + 红点（提示 " + shell.UpdateActionTipForCheck
+            "有待下载的更新时侧栏出现圆环下载图标 + 红点（提示 " + shell.UpdateActionTipForCheck
             + "），状态条不替它发言（槽亮着 " + shell.TaskSlotVisibleForCheck + "）");
 
         shell.ClickUpdateActionForCheck();

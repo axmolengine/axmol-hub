@@ -190,9 +190,9 @@ public partial class MainWindow
     internal bool UpdateActionDotVisibleForCheck => UpdateActionDot.IsVisible;
     /// <summary>The button's tooltip, where the pending version is spelled out in every state that owes one.</summary>
     internal string UpdateActionTipForCheck => ToolTip.GetTip(UpdateActionButton) as string ?? "";
-    /// <summary>Which glyph is in the content grid: "send" (found), "label" (pill) —
+    /// <summary>Which glyph is in the content grid: "download" (found), "label" (pill) —
     /// the shape a frame capture cannot name for itself.</summary>
-    internal string UpdateActionGlyphForCheck => UpdateActionText.IsVisible ? "label" : UpdateActionGlyph.IsVisible ? "send" : "none";
+    internal string UpdateActionGlyphForCheck => UpdateActionText.IsVisible ? "label" : UpdateActionGlyph.IsVisible ? "download" : "none";
 
     /// <summary>The three pieces of the bottom row in the <b>window's own</b> coordinates — the space a
     /// frame capture reads pixels in, so "the button sits left of the gear" and "the dot paints red at the

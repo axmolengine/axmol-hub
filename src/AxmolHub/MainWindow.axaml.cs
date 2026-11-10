@@ -972,7 +972,7 @@ public partial class MainWindow : Window
         /// <summary>No update, no usable check result, or the transfer is moving (the strip reports it
         /// for itself): the button is not on screen.</summary>
         Hidden,
-        /// <summary>An update is known and not on disk: accent circle + dot, press fetches it.</summary>
+        /// <summary>An update is known and not on disk: outlined download icon + dot, press fetches it.</summary>
         Found,
         /// <summary>The bytes have landed: accent pill + dot, press arms (or applies when armed).</summary>
         Ready,
@@ -1048,7 +1048,7 @@ public partial class MainWindow : Window
         UpdateActionDot.IsVisible = kind is UpdateActionKind.Found or UpdateActionKind.Ready;
 
         // The tip names the version, which is the one thing the button cannot show while it is a circle:
-        // "↑" says an update waits, only the sentence says which. TaskDownloadAction / TaskRestartAction are
+        // The download glyph says an update waits, only the sentence says which. TaskDownloadAction / TaskRestartAction are
         // the fallbacks for the shape of the sentence when no version is known (no check yet can't reach
         // here — Hidden covers that — but a version the feed refused to name still gets a usable tip).
         var version = service.PendingVersion;
