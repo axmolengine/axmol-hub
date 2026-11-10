@@ -144,6 +144,7 @@ public partial class MainWindow
             (pane as WorkspaceView)?.RefreshLayout();
             return;
         }
+        using var browserReparenting = (InspectorPane as WorkspaceView)?.PreserveBrowsersForReparenting();
         InspectorHost.Content = null;
         InspectorExpandContent.Content = null;
         // The plan/changes strip is the one part of the pane that does not travel with it: both homes put it in the

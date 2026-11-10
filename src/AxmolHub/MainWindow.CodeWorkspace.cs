@@ -28,13 +28,27 @@ public partial class MainWindow
                 if (error is not null) _ = HubDialog.ShowAsync(this, HubStrings.Get("WorkspaceFiles"), HubStrings.Get(error));
             };
             _workspaceView.OpenRequested += ShowWorkspace;
+            SettingsOverlayHost.PropertyChanged += (_, e) => { if (e.Property == IsVisibleProperty) SyncWorkspaceBrowserOverlay(); };
+            PictureViewerHost.PropertyChanged += (_, e) => { if (e.Property == IsVisibleProperty) SyncWorkspaceBrowserOverlay(); };
+            SyncWorkspaceBrowserOverlay();
             Closed += (_, _) => _workspaceView.Dispose();
+            Closing += async (_, e) =>
+            {
+                var ready = _workspaceView.BrowsersReady;
+                if (e.Cancel || ready.IsCompleted) return;
+                e.Cancel = true;
+                await ready;
+                Close();
+            };
         }
         var conversationId = _chat.ActiveConversation?.Id ?? "";
         var root = _chat.ActiveWorkspaceRoot;
         _workspaceView.SetContext(root, () => _chat.EditorScopeFor(conversationId, root));
         return _workspaceView;
     }
+
+    private void SyncWorkspaceBrowserOverlay()
+        => _workspaceView?.SetBrowserObscured(SettingsOverlayHost.IsVisible || PictureViewerHost.IsVisible);
 
     private void ShowWorkspace()
     {

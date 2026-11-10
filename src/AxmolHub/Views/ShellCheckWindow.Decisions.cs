@@ -1111,6 +1111,10 @@ internal sealed partial class ShellDecisionsChecks
               && ReferenceEquals(restored.WorkspaceDocumentContentForCheck, workspaceContent)
               && workspaceChecks.Documents,
             "文件 Tab 去重并保留编辑缓冲；动态文件树单独关闭、恢复，不再使用文件覆盖层");
+        if (OperatingSystem.IsWindows())
+            Check(await CheckWorkspaceBrowserAsync(restored, restoredWorkspace),
+                "原生浏览器页签按需创建、工作区隔离，切换和放大还原保留页面，遮罩隐藏原生视图，关闭释放且不允许本地协议");
+        else Console.WriteLine("SKIP native browser lifetime: Linux/macOS live acceptance is pending.");
         restored.CloseWorkspaceDocument(discard: true);
         Check(!restored.WorkspaceDocumentVisibleForCheck && workspaceChecks.Layout,
             "Tab 与文件树独立恢复：无 Tab 入口、窄抽屉、宽分栏及整个工作区放大还原");

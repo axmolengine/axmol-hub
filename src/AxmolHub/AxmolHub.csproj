@@ -83,6 +83,7 @@
          DataGrid references (column definitions + cell templates), and DataGrid's API surface is the
          closest match, which keeps the P5 migration a mechanical replacement. DataGrid currently trails
          the Avalonia core package at 12.1.2; its dependency accepts the newer core version. -->
+    <PackageReference Include="Avalonia.Controls.WebView" Version="12.1.1" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
     <!-- Avalonia.Fonts.Inter deliberately not added: Inter has no CJK glyphs and Hub's UI is Chinese-first;
          font selection belongs to P3, so pulling it in here would only bake in the wrong default. -->

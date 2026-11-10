@@ -21,6 +21,8 @@ Self-contained .NET distributions also retain the runtime's license and third-pa
 
 ## Downloaded and host-provided components
 
+The embedded browser uses `Avalonia.Controls.WebView` (MIT) with host-provided engines: Microsoft Edge WebView2 Evergreen Runtime on Windows, WKWebView on macOS, and WebKitGTK on Linux. Hub does not bundle Chromium/CEF or those system engines; they retain their platform licenses and receive updates outside Hub. See `docs/webview.md` for prerequisites and verification status.
+
 Axmol engines, development tools, and SDKs are separate from Hub's bundled application dependencies. Downloads are specified in `manifests/`; their original licenses and notices remain with the downloaded components. MSVC, Windows and Android SDKs, OpenJDK, Gradle, and Apple Xcode/SDKs remain subject to their own terms. Hub's MIT license does not relicense them. Games created with Hub must retain the notices required by their engine and dependencies.
 
 ## Artwork

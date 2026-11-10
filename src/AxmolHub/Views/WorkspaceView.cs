@@ -10,7 +10,7 @@ using AxmolHub.Core;
 namespace AxmolHub;
 
 /// <summary>One workspace surface, lifted by the shell's existing inspector host. Files are documents;
-/// the browser is independent navigation, never a tab. Runtime states outlive conversation switches.</summary>
+/// the file tree is independent navigation. Runtime states outlive conversation switches.</summary>
 internal sealed class WorkspaceView : Grid, IDisposable
 {
     private sealed class Document(string path, string title, Control content, Func<bool> dirty)
@@ -25,6 +25,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         internal string? Root { get; } = root;
         internal WorkspaceFileTree Tree { get; } = tree;
         internal List<Document> Documents { get; } = [];
+        internal WorkspaceBrowserView? Browser { get; set; }
         internal HashSet<string> Tools { get; } = ["plan", "repo"];
         internal string? Selected { get; set; } = "plan";
         internal bool TreeVisible { get; set; }
@@ -53,6 +54,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private bool _drawer;
     private bool _sizing;
     private bool _closingTabs;
+    private bool _browserObscured;
+    private int _openMenus;
     private enum TabCloseScope { Single, All, Others, Right }
     internal Control TabStrip { get; }
     internal event Action<string>? FileRequested;
@@ -93,13 +96,15 @@ internal sealed class WorkspaceView : Grid, IDisposable
             Classes = { "titlebar" }, Margin = new Thickness(AddTabGap, 0, 0, 0) };
         plus.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceAddTab"));
         var menu = new MenuFlyout();
-        foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("files", "WorkspaceFiles") })
+        foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("browser", "WorkspaceBrowser"), ("files", "WorkspaceFiles") })
         {
-            var item = new MenuItem();
+            var item = new MenuItem { Tag = key };
             item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(caption));
             item.Click += (_, _) => { if (key == "files") ShowFiles(); else OpenTool(key); };
             menu.Items.Add(item);
         }
+        TrackMenu(menu);
+        TrackMenu(_overflowMenu);
         plus.Flyout = menu;
         Grid.SetColumn(plus, 2);
         _tabGrid.Children.Add(plus);
@@ -159,11 +164,18 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal void OpenTool(string tab)
     {
         if (_state is null) return;
-        tab = tab == "plan" ? "plan" : "repo";
+        tab = tab is "plan" or "browser" ? tab : "repo";
+        if (tab == "browser" && _state.Browser is null)
+        {
+            var browser = _state.Browser = new WorkspaceBrowserView();
+            browser.Released += () => _body.Children.Remove(browser);
+            // Keep every workspace browser attached: removing a hidden native control destroys its history.
+            _body.Children.Insert(1, _state.Browser);
+        }
         _state.Tools.Add(tab);
         _state.Selected = tab;
         Render();
-        ToolRequested?.Invoke(tab);
+        if (tab != "browser") ToolRequested?.Invoke(tab);
         OpenRequested?.Invoke();
     }
 
@@ -234,6 +246,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             _inspector.SelectWorkspaceTool(_state.Selected);
             _content.Content = _inspector;
         }
+        else if (_state.Selected == "browser") _content.Content = null;
         else _content.Content = _state.Documents.Find(document => document.Path == _state.Selected)?.Content ?? _empty;
         RenderTabs();
         ApplyTreeLayout();
@@ -245,10 +258,10 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _tabRows.Children.Clear();
         _tabs.Clear();
         var state = _state;
-        foreach (var tool in new[] { "plan", "repo" })
+        foreach (var tool in new[] { "plan", "repo", "browser" })
         {
             if (!state.Tools.Contains(tool)) continue;
-            AddTab(tool, null, tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool),
+            AddTab(tool, null, tool == "browser" ? "WorkspaceBrowser" : tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool),
                 () => _ = CloseTabsAsync(state, tool));
         }
         foreach (var document in state.Documents)
@@ -274,7 +287,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var state = _state!;
         ContextMenu TabMenu() => CreateTabMenu(state, id, editor);
         plate.ContextMenu = TabMenu();
-        plate.Name = editor is not null ? "WorkspaceDocumentTab" : id == "plan" ? "WorkspacePlanTab" : "WorkspaceChangesTab";
+        plate.Name = editor is not null ? "WorkspaceDocumentTab" : id == "browser" ? "WorkspaceBrowserTab" : id == "plan" ? "WorkspacePlanTab" : "WorkspaceChangesTab";
         button.Click += (_, _) => select();
         row.Children.Add(button);
         var closeGlyph = HubActionIcon.Close();
@@ -287,7 +300,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             closeContent = new Grid { Width = 8, Height = 8, Children = { closeGlyph, dot } };
         }
         var x = new Button { Content = closeContent, Width = 20, Height = 20,
-            Name = resource is null ? "WorkspaceCloseDocumentTab" : "WorkspaceClose" + (id == "plan" ? "Plan" : "Changes") + "Tab",
+            Name = resource is null ? "WorkspaceCloseDocumentTab" : "WorkspaceClose" + (id == "browser" ? "Browser" : id == "plan" ? "Plan" : "Changes") + "Tab",
             Classes = { "workspace-tab-close" }, Padding = new Thickness(0), Margin = new Thickness(0, 0, 2, 0),
             VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center };
@@ -347,7 +360,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     }
 
     private static string[] TabIds(State state)
-        => new[] { "plan", "repo" }.Where(state.Tools.Contains)
+        => new[] { "plan", "repo", "browser" }.Where(state.Tools.Contains)
             .Concat(state.Documents.Select(document => document.Path)).ToArray();
 
     private ContextMenu CreateTabMenu(State state, string id, CodeEditorView? editor)
@@ -376,6 +389,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             menu.Opened += (_, _) => item.IsEnabled = !_closingTabs && ReferenceEquals(state, _state)
                 && CloseTargets(state, id, scope).Length > 0;
         }
+        TrackMenu(menu);
         return menu;
 
         void AddPathCopy(bool relative)
@@ -439,6 +453,11 @@ internal sealed class WorkspaceView : Grid, IDisposable
                 }
                 else
                 {
+                    if (target.Id == "browser" && state.Browser is { } browser)
+                    {
+                        browser.Dispose();
+                        state.Browser = null;
+                    }
                     state.Tools.Remove(target.Id);
                     if (state.Selected == target.Id) ChooseRemaining(state);
                 }
@@ -452,7 +471,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
     {
         state.Selected = state.Documents.Count > 0
             ? state.Documents[Math.Clamp(documentIndex, 0, state.Documents.Count - 1)].Path
-            : state.Tools.Contains("repo") ? "repo" : state.Tools.Contains("plan") ? "plan" : null;
+            : state.Tools.Contains("repo") ? "repo" : state.Tools.Contains("plan") ? "plan"
+            : state.Tools.Contains("browser") ? "browser" : null;
     }
 
     private async Task<bool> CloseDocumentAsync(State state, Document document, bool discard)
@@ -502,6 +522,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             _body.ColumnDefinitions[1].Width = new GridLength(visible && !_drawer ? 4 : 0);
             _body.ColumnDefinitions[2].Width = new GridLength(visible && !_drawer ? _state.TreeWidth : 0);
             _content.IsEnabled = !visible || !_drawer;
+            SyncBrowsers();
         }
         finally { _sizing = false; }
     }
@@ -529,10 +550,50 @@ internal sealed class WorkspaceView : Grid, IDisposable
         foreach (var state in _states.Values)
             state.Documents.RemoveAll(document => document.Dirty());
         if (_state is not null && !_state.Documents.Any(document => document.Path == _state.Selected)
-            && _state.Selected is not ("plan" or "repo")) ChooseRemaining(_state);
+            && _state.Selected is not ("plan" or "repo" or "browser")) ChooseRemaining(_state);
         Render();
     }
-    public void Dispose() { foreach (var state in _states.Values) state.Tree.Dispose(); }
+    internal WorkspaceBrowserView? BrowserForCheck => _state?.Browser;
+
+    internal void SetBrowserObscured(bool obscured)
+    {
+        _browserObscured = obscured;
+        SyncBrowsers();
+    }
+
+    private void SyncBrowsers()
+    {
+        foreach (var state in _states.Values)
+            state.Browser?.SetActive(ReferenceEquals(state, _state) && state.Selected == "browser",
+                _browserObscured || _openMenus > 0 || (_drawer && _state?.TreeVisible == true));
+    }
+
+    private void TrackMenu(MenuFlyout menu)
+    {
+        menu.Opened += (_, _) => { _openMenus++; SyncBrowsers(); };
+        menu.Closed += (_, _) => { _openMenus = Math.Max(0, _openMenus - 1); SyncBrowsers(); };
+    }
+
+    private void TrackMenu(ContextMenu menu)
+    {
+        menu.Opened += (_, _) => { _openMenus++; SyncBrowsers(); };
+        menu.Closed += (_, _) => { _openMenus = Math.Max(0, _openMenus - 1); SyncBrowsers(); };
+    }
+
+    internal Task BrowsersReady => Task.WhenAll(_body.Children.OfType<WorkspaceBrowserView>().Select(browser => browser.Ready));
+
+    internal IDisposable PreserveBrowsersForReparenting()
+        => new BrowserReparenting(_body.Children.OfType<WorkspaceBrowserView>().Select(browser => browser.BeginReparenting()).OfType<IDisposable>().ToArray());
+
+    private sealed class BrowserReparenting(IDisposable[] scopes) : IDisposable
+    {
+        public void Dispose() { foreach (var scope in scopes.Reverse()) scope.Dispose(); }
+    }
+
+    public void Dispose()
+    {
+        foreach (var state in _states.Values) { state.Browser?.Dispose(); state.Tree.Dispose(); }
+    }
     internal bool DocumentSelectedForCheck => _state?.Documents.Any(document => document.Path == _state.Selected) == true;
     internal Control? SelectedContentForCheck => _content.Content as Control;
     internal string SelectedTitleForCheck => _state?.Documents.Find(document => document.Path == _state.Selected)?.Title ?? "";

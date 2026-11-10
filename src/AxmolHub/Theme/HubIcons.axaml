@@ -117,6 +117,10 @@
        centre in its slot. -->
   <StreamGeometry x:Key="Hub.Icon.Refresh">M15.5 5.9A7 7 0 1 1 8.5 5.9M5.3 5.3L8.5 5.9L7.4 8.9</StreamGeometry>
 
+  <!-- Browser history arrows: mirrored, square-bounded outlines for the shared small action slot. -->
+  <StreamGeometry x:Key="Hub.Icon.Back">M18 12H6 M12 6L6 12L12 18</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Forward">M6 12H18 M12 6L18 12L12 18</StreamGeometry>
+
   <!-- Two chevrons pointing away from each other = unfold: show the whole file instead of the hunks. Stroked,
        and mirrored by Hub.Icon.Fold pointing inward. The pair is the same 8 DIP wide and 15 tall, so the button
        does not move the moment its meaning flips. -->
