@@ -250,9 +250,10 @@ sealed class MultiCallChatClient(params string[] toolNames) : IChatClient
     public void Dispose() { }
 }
 
-sealed class ToolLoopChatClient(bool honorCancellation = false, string callName = "get_projects") : IChatClient{
+sealed class ToolLoopChatClient(bool honorCancellation = false, string callName = "get_projects", int toolRounds = 1) : IChatClient{
     public int CallCount { get; private set; }
     public IList<ChatMessage> SecondRequest { get; private set; } = [];
+    public IList<ChatMessage> ThirdRequest { get; private set; } = [];
     public ChatOptions? LastOptions { get; private set; }
 
     public Task<ChatResponse> GetResponseAsync(
@@ -267,21 +268,21 @@ sealed class ToolLoopChatClient(bool honorCancellation = false, string callName 
         CallCount++;
         LastOptions = options;
         var request = messages.ToList();
-        if (CallCount == 1)
+        // Preserve the cancellation boundary: a parked request never becomes an observed follow-up.
+        if (honorCancellation && CallCount > toolRounds) cancellationToken.ThrowIfCancellationRequested();
+        if (CallCount == 2) SecondRequest = request;
+        if (CallCount == 3) ThirdRequest = request;
+        if (CallCount <= toolRounds)
         {
             yield return new ChatResponseUpdate(
                 ChatRole.Assistant,
                 new List<AIContent>
                 {
-                    new FunctionCallContent("call-1", callName, new Dictionary<string, object?>()),
+                    new FunctionCallContent($"call-{CallCount}", callName, new Dictionary<string, object?>()),
                 });
         }
         else
         {
-            // A real client refuses to send on a cancelled token, and that is what ends a parked turn, so the
-            // stand-in has to behave the same way or the assertion would pass on a fake nobody could ship.
-            if (honorCancellation) cancellationToken.ThrowIfCancellationRequested();
-            SecondRequest = request;
             if (!request.Any(message => message.Contents.Any(content => content is FunctionResultContent)))
                 throw new Exception("The function result was missing from the follow-up request.");
             yield return new ChatResponseUpdate(ChatRole.Assistant, "Projects loaded.");

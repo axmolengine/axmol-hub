@@ -167,6 +167,31 @@ internal static class AiImagesChecks
                 is not { } liveImage || !liveImage.Data.Span.SequenceEqual(png))
             throw new Exception("The live follow-up request did not contain the captured image bytes.");
         Console.WriteLine("PASS: live capture bytes reach the next model request without replay.");
+        // A mid-run question must survive another tool round, not only the request that first received it.
+        // Keep the fixture shared with the ordinary tool-loop checks; no network or session storage is involved.
+        var steered = new ToolLoopChatClient(callName: "project_list", toolRounds: 2);
+        var interjection = ChatPipeline.ToChatMessage(ChatTurn.User("Inspect this attached error", images: [first]),
+            _ => BinaryData.FromBytes(png));
+        var deliveries = 0;
+        await foreach (var _ in new ChatPipeline(steered).SendAsync(wireProvider,
+            [ChatTurn.User("Inspect the project")],
+            tools: [AIFunctionFactory.Create(() => "project contents", "project_list")],
+            pendingInterjection: () => Task.FromResult<ChatMessage?>(++deliveries == 1 ? interjection : null))) { }
+        if (steered.CallCount != 3 || deliveries != 2)
+            throw new Exception("The steer fixture did not cross two completed tool boundaries.");
+        foreach (var request in new[] { steered.SecondRequest, steered.ThirdRequest })
+        {
+            var index = request.IndexOf(interjection);
+            if (request.Count(message => ReferenceEquals(message, interjection)) != 1 || index < 1
+                || !request[index - 1].Contents.OfType<FunctionResultContent>().Any(result => result.CallId == "call-1")
+                || interjection.Text != "Inspect this attached error"
+                || interjection.Contents.OfType<DataContent>().SingleOrDefault() is not { } image
+                || !image.Data.Span.SequenceEqual(png)
+                || request == steered.ThirdRequest && (index + 1 >= request.Count
+                    || !request[index + 1].Contents.OfType<FunctionCallContent>().Any(call => call.CallId == "call-2")))
+                throw new Exception("A mid-run question or its image disappeared, duplicated, or moved after another tool round.");
+        }
+        Console.WriteLine("PASS: mid-run text and image survive subsequent tool requests once, at their original boundary.");
         // Frame consumption is an isolation boundary, not a cosmetic coordinate detail.
         var observation = new ComputerUseObservation();
         var observedWindow = new CapturableWindow(1, "Fixture", 1, 100, 50)

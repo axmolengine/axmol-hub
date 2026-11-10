@@ -98,8 +98,19 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
                 list.InsertRange(index + 1, frames);
             }
         }
-        if (PendingInterjection is { } ask && atToolBoundary && await ask().ConfigureAwait(false) is { } interjection)
-            list.Add(interjection);
+        if (PendingInterjection is { } ask && atToolBoundary)
+        {
+            // FunctionInvokingChatClient owns this mutable history and appends later responses to it.
+            // A steer must enter that history before the next response, not only this request's copy.
+            // Validate before consuming the callback: an unsupported caller must not silently lose a message.
+            if (messages is not IList<ChatMessage> { IsReadOnly: false } history)
+                throw new InvalidOperationException("Mid-run messages require mutable tool-loop history.");
+            if (await ask().ConfigureAwait(false) is { } interjection)
+            {
+                history.Add(interjection);
+                list.Add(interjection);
+            }
+        }
         // Never yield the first request: an owner whose compaction cannot shrink the prompt must still have
         // a finite fallback. Later boundaries contain every result in the preceding batch, so no tool repeats.
         if (YieldForCompaction && _requests > 0 && atToolBoundary
