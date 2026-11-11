@@ -77,6 +77,24 @@ internal sealed partial class ShellDecisionsChecks
             isolated &= ReferenceEquals(browser, view.BrowserForCheck);
             browser.NavigateForCheck(new Uri("file:///not-authorized.html"));
             var restricted = web.Source.Scheme == "http";
+            // The address bar grants one local page directory, not arbitrary file navigation from a website.
+            var localRoot = Path.Combine(root, "local-browser");
+            Directory.CreateDirectory(localRoot);
+            var localFile = new Uri(Path.Combine(localRoot, "中文 空格.html"));
+            var otherFile = new Uri(Path.Combine(root, "outside-local.html"));
+            File.WriteAllText(localFile.LocalPath, "<!doctype html><title>Local page</title><script src='page.js'></script><img src='image.png'>");
+            File.WriteAllText(Path.Combine(localRoot, "page.js"), "window.localResource = 'loaded';");
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets/hub-icon-256.png"), Path.Combine(localRoot, "image.png"));
+            File.WriteAllText(otherFile.LocalPath, "<!doctype html><title>Outside</title>");
+            restricted &= !browser.CanNavigateForCheck(localFile);
+            browser.NavigateForCheck(localFile);
+            await WaitUntilAsync(() => browser.PageTitle == "Local page" && !browser.LoadingForCheck, maxTicks: 4000);
+            var local = browser.PageTitle == "Local page" && web.Source == localFile
+                && (await web.InvokeScript("window.localResource === 'loaded' && document.querySelector('img').naturalWidth > 0 ? 'loaded' : 'missing'"))?.Contains("loaded", StringComparison.Ordinal) == true;
+            restricted &= browser.CanNavigateForCheck(localFile) && !browser.CanNavigateForCheck(otherFile)
+                && !browser.CanNavigateForCheck(new Uri("file://remote-server/share/page.html"));
+            browser.NavigateForCheck(url);
+            await WaitUntilAsync(() => browser.PageTitle == "First page" && !browser.LoadingForCheck, maxTicks: 4000);
             view.CloseToolForCheck(browser.TabId);
             Dispatcher.UIThread.RunJobs();
             var released = browser.DisposedForCheck && browser.WebViewForCheck is null && ReferenceEquals(second, view.BrowserForCheck)
@@ -90,8 +108,8 @@ internal sealed partial class ShellDecisionsChecks
             await WaitUntilAsync(() => quick.WebViewForCheck is null, maxTicks: 4000);
             released &= quick.DisposedForCheck && quick.WebViewForCheck is null;
             shell.SelectWorkspaceDocument(Path.Combine(root, "src/main.cpp"));
-            Console.WriteLine($"workspace browser: empty={empty}, multiple={multiple}, hidden={hidden}, retained={retained}, covered={covered}, drawer={drawer}, isolated={isolated}, restricted={restricted}, released={released}");
-            return empty && multiple && hidden && retained && covered && drawer && isolated && restricted && released;
+            Console.WriteLine($"workspace browser: empty={empty}, multiple={multiple}, hidden={hidden}, retained={retained}, covered={covered}, drawer={drawer}, isolated={isolated}, local={local}, restricted={restricted}, released={released}");
+            return empty && multiple && hidden && retained && covered && drawer && isolated && local && restricted && released;
         }
         finally
         {

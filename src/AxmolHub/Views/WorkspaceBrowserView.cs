@@ -37,6 +37,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal event Action? Released;
     internal Task Ready => _initializing ? _initialized.Task : Task.CompletedTask;
     private Uri? _requested;
+    private readonly HashSet<string> _localDirectories = new(StringComparer.Ordinal);
     private string? _pageTitle;
     private int _navigationVersion;
     private IImage? _favicon;
@@ -46,7 +47,8 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal event Action<WorkspaceBrowserView>? StateChanged;
     internal bool Loading => !_disposed && (_loading || _initializing);
     internal string? PageTitle => _pageTitle;
-    internal string? TabTitle => _pageTitle ?? _requested?.Host;
+    internal string? TabTitle => _pageTitle ?? (_requested?.IsFile == true
+        ? Path.GetFileName(_requested.LocalPath) : _requested?.Host);
     internal IImage? Favicon => _favicon;
 
     internal WorkspaceBrowserView(Action<string> log)
@@ -103,14 +105,23 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal bool LoadingForCheck => _loading || _initializing;
     internal bool NativeVisibleForCheck => _web?.IsEffectivelyVisible == true;
     internal bool DisposedForCheck => _disposed;
+    internal bool CanNavigateForCheck(Uri uri) => CanNavigate(uri);
     internal void NavigateForCheck(Uri uri) { _address.Text = uri.AbsoluteUri; NavigateAddress(); }
 
     private void NavigateAddress()
     {
         var text = _address.Text?.Trim() ?? "";
         if (!text.Contains("://", StringComparison.Ordinal)) text = "https://" + text;
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !IsWebAddress(uri))
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !(IsWebAddress(uri) || IsLocalFileAddress(uri)))
         { ShowMessage("WorkspaceBrowserInvalidAddress"); return; }
+        if (uri.IsFile)
+        {
+            var folder = Path.GetDirectoryName(uri.LocalPath)!;
+            if (!WorkspacePaths.ResolveRead(folder, uri.LocalPath, new WorkspaceGuards(null, [])).IsAllowed)
+            { ShowMessage("WorkspaceBrowserFileMissing"); return; }
+            // Only the address bar can open a new local directory. Page links and popups cannot.
+            _localDirectories.Add(folder);
+        }
         _requested = uri;
         _address.Text = uri.AbsoluteUri;
         _loading = true;
@@ -120,11 +131,38 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         _web!.IsVisible = _active;
         SyncNavigation();
         Log("navigation requested");
-        _web.Navigate(uri);
-        Log("navigation request returned");
+        _ = NavigatePageAsync(uri);
+    }
+
+    private async Task NavigatePageAsync(Uri uri)
+    {
+        var version = _navigationVersion;
+        try
+        {
+            // WKWebView's file API needs the adapter handle, which does not exist until initialization finishes.
+            await Ready;
+            if (_disposed || version != _navigationVersion || _web is not { } web) return;
+            if (OperatingSystem.IsMacOS() && uri.IsFile) MacWebViewFiles.Navigate(web.TryGetPlatformHandle(), uri);
+            else web.Navigate(uri);
+            Log("navigation request returned");
+        }
+        catch (Exception)
+        {
+            if (_disposed || version != _navigationVersion) return;
+            Log("navigation request failed");
+            _loading = false;
+            ShowMessage("WorkspaceBrowserLoadFailed");
+            SyncNavigation();
+        }
     }
 
     private static bool IsWebAddress(Uri? uri) => uri is { Scheme: "http" or "https", Host.Length: > 0 };
+    private static bool IsLocalFileAddress(Uri? uri) => uri is { IsFile: true, IsUnc: false, IsLoopback: true }
+        && Path.IsPathFullyQualified(uri.LocalPath)
+        && Path.GetExtension(uri.LocalPath).ToLowerInvariant() is ".html" or ".htm" or ".xhtml";
+
+    private bool CanNavigate(Uri? uri) => IsWebAddress(uri) || (IsLocalFileAddress(uri)
+        && _localDirectories.Any(root => WorkspacePaths.ResolveRead(root, uri!.LocalPath, new WorkspaceGuards(null, [])).IsAllowed));
 
     private bool RuntimeAvailable(WebViewAdapterType type)
     {
@@ -178,7 +216,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             {
                 if (_disposed) { args.Cancel = true; return; }
                 if (args.Request?.AbsoluteUri == "about:blank") return;
-                if (!IsWebAddress(args.Request)) { args.Cancel = true; return; }
+                if (!CanNavigate(args.Request)) { args.Cancel = true; return; }
                 _requested = args.Request;
                 _address.Text = args.Request!.AbsoluteUri;
                 _loading = true;
@@ -192,7 +230,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 if (_disposed) return;
                 Log("navigation completed: success=" + args.IsSuccess);
                 _loading = false;
-                if (IsWebAddress(args.Request)) _address.Text = args.Request!.AbsoluteUri;
+                if (CanNavigate(args.Request)) _address.Text = args.Request!.AbsoluteUri;
                 if (!args.IsSuccess) ShowMessage("WorkspaceBrowserLoadFailed");
                 else { _message.IsVisible = false; web.IsVisible = _active; }
                 SyncNavigation();
@@ -202,7 +240,10 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             {
                 // A popup stays in this tab; it cannot silently start another app or invoke a custom protocol.
                 args.Handled = true;
-                if (IsWebAddress(args.Request)) Dispatcher.UIThread.Post(() => { if (!_disposed) web.Navigate(args.Request!); });
+                if (CanNavigate(args.Request)) Dispatcher.UIThread.Post(() =>
+                {
+                    if (!_disposed && CanNavigate(args.Request)) _ = NavigatePageAsync(args.Request!);
+                });
             };
             _initialized = new TaskCompletionSource();
             _initializing = true;
@@ -308,8 +349,11 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         _pageTitle = title.Length > 0 ? title : null;
         StateChanged?.Invoke(this);
         if (_requested is not { } address) return;
-        var icons = (metadata?.Icons ?? []).Where(icon => !string.IsNullOrWhiteSpace(icon) && icon.Length <= 4096).Take(4)
-            .Append(new Uri(address, "/favicon.ico").AbsoluteUri).Distinct().ToArray();
+        var candidates = (metadata?.Icons ?? []).Where(icon => !string.IsNullOrWhiteSpace(icon) && icon.Length <= 4096).Take(4);
+        // Favicon decoding never reads local disk. The page engine can load its own relative icon;
+        // Hub's tab accepts only self-contained data icons or ordinary network icons.
+        var icons = (address.IsFile ? candidates : candidates.Append(new Uri(address, "/favicon.ico").AbsoluteUri))
+            .Distinct().ToArray();
         var key = string.Join("\n", icons);
         if (_faviconCandidates == key) return;
         _faviconCandidates = key;
@@ -350,7 +394,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
 
     private void OpenExternal()
     {
-        if (IsWebAddress(_requested) && !UrlLauncher.TryOpen(_requested!.AbsoluteUri)) ShowMessage("WorkspaceBrowserExternalFailed");
+        if (CanNavigate(_requested) && !UrlLauncher.TryOpen(_requested!.AbsoluteUri)) ShowMessage("WorkspaceBrowserExternalFailed");
     }
 
     private void ShowMessage(string key)
