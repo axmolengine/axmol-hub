@@ -974,7 +974,7 @@ public partial class MainWindow : Window
         Hidden,
         /// <summary>An update is known and not on disk: outlined download icon + dot, press fetches it.</summary>
         Found,
-        /// <summary>The bytes have landed: accent pill + dot, press arms (or applies when armed).</summary>
+        /// <summary>The bytes have landed: accent restart icon + dot, press arms (or applies when armed).</summary>
         Ready,
     }
 
@@ -1011,11 +1011,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Renders <see cref="UpdateActionStateFor"/> onto the button: one of the three shape classes, which
-    /// glyph (or label) shows, whether the dot is up, and the state's tooltip with the pending version
-    /// spelled out. Called from the update's own <see cref="UpdateService.Changed"/> hop, from the press
-    /// itself (the arm flips the label), and from <see cref="InitializeChrome"/> (a language switch has to
-    /// re-resolve the keys, and a tip captured once keeps its old language forever).
+    /// Renders <see cref="UpdateActionStateFor"/> onto the square button: its glyph, plate, attention dot,
+    /// accessible action name and version tooltip. Called from the update's own <see cref="UpdateService.Changed"/>
+    /// hop, from the press itself (the arm changes the outline and hint), and from <see cref="InitializeChrome"/>
+    /// so a language switch re-resolves both names and hints.
     /// </summary>
     private void SyncUpdateAction()
     {
@@ -1038,19 +1037,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Exactly one shape class decides the plate; Classes.Set keeps the others off without a rebuild.
+        // Both actions retain the shared square plate, including while a busy restart is armed.
         UpdateActionButton.Classes.Set("icon", kind == UpdateActionKind.Found);
-        UpdateActionButton.Classes.Set("pill", kind == UpdateActionKind.Ready);
+        UpdateActionButton.Classes.Set("restart", kind == UpdateActionKind.Ready);
+        UpdateActionButton.Classes.Set("armed", kind == UpdateActionKind.Ready && service.RestartArmed);
 
         UpdateActionGlyph.IsVisible = kind == UpdateActionKind.Found;
-        UpdateActionText.IsVisible = kind == UpdateActionKind.Ready;
-        UpdateActionText.Text = labelKey is null ? "" : HubStrings.Get(labelKey);
+        UpdateRestartGlyph.IsVisible = kind == UpdateActionKind.Ready;
+        var actionName = HubStrings.Get(labelKey ?? "TaskDownloadAction");
+        Avalonia.Automation.AutomationProperties.SetName(UpdateActionButton, actionName);
         UpdateActionDot.IsVisible = kind is UpdateActionKind.Found or UpdateActionKind.Ready;
 
-        // The tip names the version, which is the one thing the button cannot show while it is a circle:
-        // The download glyph says an update waits, only the sentence says which. TaskDownloadAction / TaskRestartAction are
-        // the fallbacks for the shape of the sentence when no version is known (no check yet can't reach
-        // here — Hidden covers that — but a version the feed refused to name still gets a usable tip).
+        // The icons name the action; the tooltip names its version. The action keys are the fallback
+        // for a feed without a version, and an armed restart adds the second-press instruction.
         var version = service.PendingVersion;
         var tip = (kind, version) switch
         {
@@ -1064,6 +1063,10 @@ public partial class MainWindow : Window
             (UpdateActionKind.Found, null) => HubStrings.Get("TaskDownloadAction"),
             _ => HubStrings.Get(tipKey!),
         };
+        if (kind == UpdateActionKind.Ready && service.RestartArmed)
+        {
+            tip += "\n" + actionName;
+        }
         ToolTip.SetTip(UpdateActionButton, tip);
     }
 
@@ -1087,8 +1090,8 @@ public partial class MainWindow : Window
             case UpdateActionKind.Hidden:
                 return;
             case UpdateActionKind.Found:
-                // Fetch it, and stop there. The transfer ends in Ready and the button then becomes the
-                // pill, so the process swap stays behind a press the user meant.
+                // Fetch it, and stop there. The transfer ends in Ready and the glyph becomes a restart,
+                // so the process swap stays behind a press the user meant.
                 service.StartPendingDownload();
                 return;
         }
@@ -2817,9 +2820,8 @@ public partial class MainWindow : Window
         ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
         SyncNavigationView();
         ToolTip.SetTip(LogActionsButton, HubStrings.Get("LogActions"));
-        // The update button's tip and pill label are state-dependent, so re-resolving the current state is the
-        // whole language switch for them: SyncUpdateAction reads HubStrings fresh on every call, and a label
-        // assigned once at construction would keep saying last language's sentence forever.
+        // The update icon's hint and accessible name are state-dependent, so the same renderer owns their
+        // language switch rather than capturing a sentence at construction time.
         SyncUpdateAction();
         // Same rule for the two buttons at the title bar's right end, and this one is in InitializeChrome rather
         // than InitializeInspector because ApplyLanguage calls this: an icon-only control whose name lives only in

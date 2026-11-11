@@ -175,24 +175,23 @@ public partial class MainWindow
     /// <summary>Presses the slot the way the user does, so a check walks the same routing.</summary>
     internal void ClickTaskSlotForCheck() => TaskSlot.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
     // ── The sidebar's update button, for the shell self-check ──
-    // The button is icon-only in two of its three states, so every readable fact about it has to be a
-    // dedicated reading: what shape it took, what the dot is doing, what the tip says, and where the two
+    // Both visible phases are icon-only, so every readable fact about the button has to be a
+    // dedicated reading: what glyph it took, what the dot is doing, what the tip says, and where the two
     // sit next to the gear. None of these infer from UpdateService — they read the rendered control.
     /// <summary>Whether the button is on screen at all (the idle sidebar must not carry it).</summary>
     internal bool UpdateActionVisibleForCheck => UpdateActionHost.IsVisible;
-    /// <summary>The pill's word — empty in the circle states, where the glyph speaks instead.</summary>
-    internal string UpdateActionLabelForCheck => UpdateActionText.Text ?? "";
-    /// <summary>Which of the two shapes is on the button right now, read off the classes the style
-    /// selector actually matches.</summary>
-    internal string UpdateActionShapeForCheck => UpdateActionButton.Classes.Contains("pill") ? "pill" : UpdateActionButton.Classes.Contains("icon") ? "icon" : "?";
+    /// <summary>The accessible action name; the icon carries no visible label.</summary>
+    internal string UpdateActionNameForCheck => Avalonia.Automation.AutomationProperties.GetName(UpdateActionButton) ?? "";
+    /// <summary>Whether the button uses the shared square icon plate, read off its style class.</summary>
+    internal string UpdateActionShapeForCheck => UpdateActionButton.Classes.Contains("icon-square") ? "icon" : "?";
     /// <summary>Whether the red dot is up. A check reads this and then the dot's pixels — IsVisible alone
     /// proves the decision, not the paint.</summary>
     internal bool UpdateActionDotVisibleForCheck => UpdateActionDot.IsVisible;
     /// <summary>The button's tooltip, where the pending version is spelled out in every state that owes one.</summary>
     internal string UpdateActionTipForCheck => ToolTip.GetTip(UpdateActionButton) as string ?? "";
-    /// <summary>Which glyph is in the content grid: "download" (found), "label" (pill) —
+    /// <summary>Which glyph is in the content grid: "download" (found), "restart" (ready) —
     /// the shape a frame capture cannot name for itself.</summary>
-    internal string UpdateActionGlyphForCheck => UpdateActionText.IsVisible ? "label" : UpdateActionGlyph.IsVisible ? "download" : "none";
+    internal string UpdateActionGlyphForCheck => UpdateRestartGlyph.IsVisible ? "restart" : UpdateActionGlyph.IsVisible ? "download" : "none";
 
     /// <summary>The three pieces of the bottom row in the <b>window's own</b> coordinates — the space a
     /// frame capture reads pixels in, so "the button sits left of the gear" and "the dot paints red at the
@@ -202,7 +201,7 @@ public partial class MainWindow
     /// <summary>The dot paints above the button rather than under it: a child index is the only thing that
     /// decides that — two elements sharing a grid pass every bounds check in either order.</summary>
     internal bool UpdateActionDotAboveButtonForCheck => UpdateActionHost.Children.IndexOf(UpdateActionDot) > UpdateActionHost.Children.IndexOf(UpdateActionButton);
-    /// <summary>The update button as a visual, for a frame capture (the pill's plate, the circle, the dot).</summary>
+    /// <summary>The update button as a visual, for a frame capture (the square plate, glyph and dot).</summary>
     internal Visual UpdateActionHostForCheck => UpdateActionHost;
     /// <summary>The dot itself as a visual. Capturing the dot rather than a window region is deliberate:
     /// a region read off a window capture has to agree with the capture's pixel origin, and a mismatch
@@ -212,9 +211,9 @@ public partial class MainWindow
 
     /// <summary>Presses the update button the way the user does, so a check walks the same routing.</summary>
     internal void ClickUpdateActionForCheck() => UpdateActionButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-    /// <summary>The restart pill's corner radius, and the gear's beside it. Two readings rather than one
-    /// constant so the assertion can be the relation the design actually wants — the pill is rounded like the
-    /// control it stands next to, not like a value written down here (see Button.update-action.pill).</summary>
+    /// <summary>The update plate's corner radius, and the gear's beside it. Two readings rather than one
+    /// constant so the assertion can be the relation the design actually wants — the icon is rounded like
+    /// the control it stands next to, not like a value written down here.</summary>
     internal double UpdateActionRadiusForCheck => UpdateActionButton.CornerRadius.TopLeft;
     internal double SettingsRadiusForCheck => SettingsButton.CornerRadius.TopLeft;
 

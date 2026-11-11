@@ -136,7 +136,7 @@
 
     <!-- The settings gear at the bottom of the sidebar: a direct shortcut that lifts the settings overlay.
          It is not the update button beside it — that one appears only while there is an update to act on. -->
-    <Style Selector="Button.gear, Button.update-action.icon">
+    <Style Selector="Button.gear">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7" />
@@ -144,7 +144,7 @@
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
-    <Style Selector="Button.gear:pointerover, Button.update-action.icon:pointerover">
+    <Style Selector="Button.gear:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
@@ -155,33 +155,28 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
     </Style>
 
-    <!-- One update control: a gear-sized outlined download icon when found, an accent restart pill
-         when ready. While downloading, the status strip reports progress and this control is hidden. -->
+    <!-- Both update glyphs use the same quiet square plate. While downloading, the status strip
+         reports progress and this control is hidden. -->
     <Style Selector="Button.update-action">
-      <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="HorizontalAlignment" Value="Center" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
-    <Style Selector="Button.update-action.pill:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Hub.AccentBorder}" />
+    <Style Selector="Button.update-action:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
-    <!-- Ready: the pill. One word-cluster at a fixed 28 height so the row's other two controls, which are
-         31-32 tall, never jump when the state changes under them. Its corners are the gear's (6), not half its
-         height: the two sit in the same bottom row a few pixels apart, and a fully rounded cap beside a 6px
-         plate reads as a control of another kind rather than as the one to press. -->
-    <Style Selector="Button.update-action.pill">
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Height" Value="28" />
-      <Setter Property="MinWidth" Value="28" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Padding" Value="11,0" />
+    <!-- A busy restart needs a second press. Outline the same square while armed; the tooltip explains it. -->
+    <Style Selector="Button.update-action.restart.armed">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Button.update-action Path.icon">
       <Setter Property="Fill" Value="Transparent" />
@@ -913,9 +908,7 @@
                 <Button x:Name="BottomMenuButton" Grid.Column="0" Classes="host"
                         VerticalAlignment="Center">
                   <StackPanel>
-                    <!-- Trimming, because the update button in the middle column takes width from this
-                         `*` column when its label is long: a two-line host block that pushed past its
-                         cell would paint over the button instead of shortening. -->
+                    <!-- The host block yields to the fixed icon slots when the sidebar is narrow. -->
                     <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
                                FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
@@ -930,11 +923,9 @@
                 <Grid x:Name="UpdateActionHost" Grid.Column="1"
                       IsVisible="False" Margin="0,0,4,0"
                       VerticalAlignment="Center" ClipToBounds="False">
-                  <Button x:Name="UpdateActionButton" Classes="update-action icon"
+                  <Button x:Name="UpdateActionButton" Classes="update-action icon icon-square"
                           VerticalAlignment="Center">
-                    <!-- One content grid for both shapes: the glyph shows in the circle states, the label
-                         takes over in the pill. Swapping content rather than swapping controls keeps one
-                         button (and one click seam) across all three states. -->
+                    <!-- Both update phases share one square button; only the glyph and plate change. -->
                     <Grid>
                       <Grid x:Name="UpdateActionGlyph" Width="17" Height="17">
                         <Ellipse Stroke="{DynamicResource Hub.AccentBorder}" StrokeThickness="1.4" />
@@ -942,9 +933,10 @@
                               Width="8" Height="8" Stretch="Uniform"
                               HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Grid>
-                      <TextBlock x:Name="UpdateActionText" IsVisible="False"
-                                 TextTrimming="CharacterEllipsis" MaxWidth="150"
-                                 VerticalAlignment="Center" />
+                      <Path x:Name="UpdateRestartGlyph" Classes="icon" IsVisible="False"
+                            Data="{StaticResource Hub.Icon.Refresh}" Width="15" Height="15" Stretch="Uniform"
+                            Stroke="{DynamicResource Hub.AccentBorder}"
+                            HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Grid>
                   </Button>
                   <!-- The attention dot: Hub.AlertDot is the same pure red the sidebar's approval dot uses —
@@ -954,13 +946,13 @@
                        lifted with a ZIndex: child order is the only stacking rule here, so the z-order check
                        in the shell suite and the pixels it cannot see agree about what decides the paint.
                        10px against the session row's 6: the same red, a size up, because this one sits on a
-                       update control in the corner rather than in a row's own status column — the -3
-                       margin is what keeps the overhang a corner press rather than a floating mark. -->
+                       update control in the corner rather than in a row's own status column. The -1
+                       margin keeps it close to either glyph while slightly overhanging the click plate. -->
                   <Ellipse x:Name="UpdateActionDot" Width="10" Height="10"
                            Fill="{DynamicResource Hub.AlertDot}"
                            Stroke="{DynamicResource Hub.SurfaceChrome}" StrokeThickness="1.5"
                            HorizontalAlignment="Right" VerticalAlignment="Top"
-                           Margin="0,-3,-3,0"
+                           Margin="0,-1,-1,0"
                            IsVisible="False" />
                 </Grid>
 

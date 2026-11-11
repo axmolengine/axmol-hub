@@ -966,8 +966,9 @@ internal sealed class ShellLayoutChecks
         Check(settings.UpdateStatusText == foundLine
               && shell.UpdateActionTipForCheck.Contains("9.9.9", StringComparison.Ordinal)
               && shell.UpdateActionVisibleForCheck
-              && shell.UpdateActionShapeForCheck == "pill"
-              && shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartAction", HubStrings.Language),
+              && shell.UpdateActionShapeForCheck == "icon"
+              && shell.UpdateActionGlyphForCheck == "restart"
+              && shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartAction", HubStrings.Language),
             "更新就绪后版本号仍在卡片上，并且进了侧栏更新按钮的重启提示（提示 " + shell.UpdateActionTipForCheck
             + "，形态 " + shell.UpdateActionShapeForCheck + "）");
         Check(settings.UpdateCardButtonVisible && settings.UpdateCardButtonEnabled
@@ -1044,8 +1045,8 @@ internal sealed class ShellLayoutChecks
         // The update's decision table, on the pure function that now owns it: found (the press fetches —
         // including after a cancel, which is exactly when auto-download will not fetch again by itself),
         // downloading (the button is hidden because the strip's percentage reports),
-        // ready (the pill; the dot is back because the restart is owed), and silence with no update. The
-        // arm is a label change on the pill, not a state of its own.
+        // ready (the restart icon; the dot is back because the restart is owed), and silence with no update.
+        // The arm changes the accessible action and hint, not the icon's dimensions.
         var outcomeAvailable = new UpdateService.CheckOutcome(
             UpdateService.CheckResult.UpdateAvailable, new UpdateInfo(new VelopackAsset
             {
@@ -1069,9 +1070,9 @@ internal sealed class ShellLayoutChecks
             "下载中状态 = 按钮整个不在屏上，进度归状态条：" + downloadingState.Kind);
         Check(readyState.Kind == MainWindow.UpdateActionKind.Ready
               && readyState.LabelKey == "TaskRestartAction" && readyState.TipKey == "UpdateRestartActionTip",
-            "就绪状态 = 胶囊「重启完成更新」：" + readyState.Kind + "/" + readyState.LabelKey);
+            "就绪状态 = 重启图标（操作名「重启完成更新」）：" + readyState.Kind + "/" + readyState.LabelKey);
         Check(armedState.LabelKey == "TaskRestartArmed" && armedState.LabelKey != readyState.LabelKey,
-            "忙时第一下只把胶囊换成再点一次（" + readyState.LabelKey + " / " + armedState.LabelKey + "）");
+            "忙时第一下只把图标的操作名换成再点一次（" + readyState.LabelKey + " / " + armedState.LabelKey + "）");
         Check(silentState.Kind == MainWindow.UpdateActionKind.Hidden
               && upToDateState.Kind == MainWindow.UpdateActionKind.Hidden
               && silentState.LabelKey is null && silentState.TipKey is null,
@@ -1163,12 +1164,13 @@ internal sealed class ShellLayoutChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.UpdateActionVisibleForCheck
-              && shell.UpdateActionShapeForCheck == "pill"
-              && shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartAction", HubStrings.Language)
+              && shell.UpdateActionShapeForCheck == "icon"
+              && shell.UpdateActionGlyphForCheck == "restart"
+              && shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartAction", HubStrings.Language)
               && shell.UpdateActionDotVisibleForCheck
               && !shell.TaskSlotVisibleForCheck,
-            "更新就绪且队列空时：侧栏按钮是带红点的重启胶囊，状态条的槽不再跟着说一遍（胶囊「"
-            + shell.UpdateActionLabelForCheck + "」，槽亮着 " + shell.TaskSlotVisibleForCheck + "）");
+            "更新就绪且队列空时：侧栏按钮是带红点的重启图标，状态条的槽不再跟着说一遍（操作名「"
+            + shell.UpdateActionNameForCheck + "」，槽亮着 " + shell.TaskSlotVisibleForCheck + "）");
 
         // The geometry that makes it findable, decided in window space so the pixel read below measures
         // exactly the rectangle this asserts on: the button left of the gear, the dot overhanging the
@@ -1184,12 +1186,11 @@ internal sealed class ShellLayoutChecks
             + Fmt(readyDot.Right - readyButton.Right) + " / 纵 " + Fmt(readyButton.Top - readyDot.Top) + "）");
         Check(shell.UpdateActionDotAboveButtonForCheck,
             "红点画在按钮之上——同一张 Grid 里子序决定叠放，两个矩形断言看不出先后");
-        // The pill's corners are the gear's, and that relation is the assertion rather than a number written
-        // here: the two controls share a row, so "consistent with the one beside it" is what the style is for.
+        // The icon plate's corners are the gear's: both controls share the same bottom row.
 
         // The frame, not the tree. Two captures: the dot has to be real red ink (a dot whose Fill went null
-        // keeps every bounds assertion above green while the screen shows nothing), and the pill has to be
-        // more than a flat plate — the word is on it. The dot is captured as its own visual: its frame has
+        // keeps every bounds assertion above green while the screen shows nothing), and the restart has to be
+        // more than a flat plate — the glyph is on it. The dot is captured as its own visual: its frame has
         // no pixel-origin to disagree with, and a blank frame *is* the defect.
         var updateDir = ScratchDirectory.Resolve("update-button");
         var dotShot = System.IO.Path.Combine(updateDir, "dot.png");
@@ -1199,8 +1200,7 @@ internal sealed class ShellLayoutChecks
         var redPixels = 0;
         for (var i = 0; i + 3 < dotPixels.Length; i += 4)
         {
-            // BGRA. #FF0000 is the dot, and nothing else in this row can produce a saturated red pixel —
-            // the accent plate is blue, the ring and the sidebar are grays.
+            // BGRA. #FF0000 is the dot; the blue update glyph and gray sidebar cannot produce saturated red.
             if (dotPixels[i + 3] > 0xF0 && dotPixels[i + 2] > 0xC0 && dotPixels[i + 1] < 0x60 && dotPixels[i] < 0x60)
             {
                 redPixels++;
@@ -1209,13 +1209,13 @@ internal sealed class ShellLayoutChecks
         Check(redPixels > 0,
             "红点真的画出了红色像素（" + dotStats.Width + "x" + dotStats.Height + " 的帧里命中 "
             + redPixels + " 个）");
-        var pillShot = System.IO.Path.Combine(updateDir, "pill.png");
-        var pillStats = SmokeCapture.Capture(shell.UpdateActionHostForCheck, pillShot);
-        Check(!pillStats.IsBlank() && pillStats.DistinctColors > 2,
-            "胶囊画得出来：强调底板与文字都在帧里（" + pillStats.Width + "x" + pillStats.Height
-            + "，distinct=" + pillStats.DistinctColors + "）");
+        var restartShot = System.IO.Path.Combine(updateDir, "restart.png");
+        var restartStats = SmokeCapture.Capture(shell.UpdateActionHostForCheck, restartShot);
+        Check(!restartStats.IsBlank() && restartStats.DistinctColors > 2,
+            "重启图标画得出来：透明底图形与红点都在帧里（" + restartStats.Width + "x" + restartStats.Height
+            + "，distinct=" + restartStats.DistinctColors + "）");
 
-        // The pill's label and tip are key lookups rendered once per state — a language switch has to
+        // The icon's accessible name and tip are key lookups rendered once per state — a language switch has to
         // re-resolve them or the button keeps last language's sentence forever. Round-tripped the way the
         // menu's own rows are: to English, read the button, back to Chinese, read it again.
         shell.ClickBottomMenuForCheck();
@@ -1226,11 +1226,12 @@ internal sealed class ShellLayoutChecks
             .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartAction", HubTexts.EnglishLanguage)
+        Check(shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartAction", HubTexts.EnglishLanguage)
               && shell.UpdateActionTipForCheck == string.Format(System.Globalization.CultureInfo.CurrentCulture,
                   HubTexts.Get("UpdateRestartActionTip", HubTexts.EnglishLanguage), "9.9.9")
-              && shell.UpdateActionShapeForCheck == "pill",
-            "切到英文后胶囊与提示都跟着换（label「" + shell.UpdateActionLabelForCheck + "」，tip「"
+              && shell.UpdateActionShapeForCheck == "icon"
+              && shell.UpdateActionGlyphForCheck == "restart",
+            "切到英文后图标的操作名与提示都跟着换（name「" + shell.UpdateActionNameForCheck + "」，tip「"
             + shell.UpdateActionTipForCheck + "」）");
         shell.ClickBottomMenuForCheck();
         shell.UpdateLayout();
@@ -1240,8 +1241,8 @@ internal sealed class ShellLayoutChecks
             .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartAction", HubTexts.ChineseLanguage),
-            "切回中文按钮也回来（实际「" + shell.UpdateActionLabelForCheck + "」）");
+        Check(shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartAction", HubTexts.ChineseLanguage),
+            "切回中文图标的操作名也回来（实际「" + shell.UpdateActionNameForCheck + "」）");
 
         // Busy: the first press arms, and nothing is applied yet. The two-tap rule moved here from the
         // strip verbatim — it is the rule, not the surface, that was being asserted.
@@ -1250,8 +1251,9 @@ internal sealed class ShellLayoutChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.RestartArmedForCheck && applied.Length == 0
-              && shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartArmed", HubStrings.Language),
-            "有活在跑时第一下只把胶囊换成再点一次，不重启（实际 " + shell.UpdateActionLabelForCheck + "）");
+              && shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartArmed", HubStrings.Language)
+              && shell.UpdateActionTipForCheck.Contains(HubTexts.Get("TaskRestartArmed", HubStrings.Language), StringComparison.Ordinal),
+            "有活在跑时第一下只武装图标并提示再点一次，不重启（实际 " + shell.UpdateActionTipForCheck + "）");
         shell.ClickUpdateActionForCheck();
         Check(applied == "9.9.9", "第二下才真的走重启，并且带上那个版本（实际 " + applied + "）");
 
@@ -1264,7 +1266,7 @@ internal sealed class ShellLayoutChecks
 
         // The settings card's button is that same gate, not a second one. Pressed from the card while other
         // work is running, the first press arms the **shared** state — which this reads back off the rail's
-        // pill, so a per-button arm hiding behind the card would fail here — and only the second press applies.
+        // icon, so a per-button arm hiding behind the card would fail here — and only the second press applies.
         settings.SelectCategoryForCheck("updates");
         shell.RestartInterruptsWork = () => true;
         applied = "";
@@ -1273,10 +1275,10 @@ internal sealed class ShellLayoutChecks
         settings.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(settings.UpdateCardButtonLabel == HubTexts.Get("TaskRestartArmed", HubStrings.Language)
-              && shell.UpdateActionLabelForCheck == HubTexts.Get("TaskRestartArmed", HubStrings.Language)
+              && shell.UpdateActionNameForCheck == HubTexts.Get("TaskRestartArmed", HubStrings.Language)
               && shell.RestartArmedForCheck && applied.Length == 0,
-            "设置卡片上的重启与侧栏共用一次武装：卡片第一下只改词，侧栏胶囊同时改口，谁都没重启（卡片「"
-            + settings.UpdateCardButtonLabel + "」，胶囊「" + shell.UpdateActionLabelForCheck + "」）");
+            "设置卡片上的重启与侧栏共用一次武装：卡片第一下只改词，侧栏图标同步提示，谁都没重启（卡片「"
+            + settings.UpdateCardButtonLabel + "」，操作名「" + shell.UpdateActionNameForCheck + "」）");
         settings.ClickUpdateCardButtonForCheck();
         Check(applied == "9.9.9" && !shell.RestartArmedForCheck,
             "卡片上第二下才真的走重启，并且带上那个版本（实际 " + applied + "）");
