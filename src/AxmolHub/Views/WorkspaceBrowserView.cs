@@ -28,6 +28,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     private readonly Action<string> _log;
     private readonly string _logId = Guid.NewGuid().ToString("N")[..8];
     private NativeWebView? _web;
+    private MacWebViewPointerLock? _pointerLock;
     private bool _loading;
     private bool _disposed;
     private bool _active;
@@ -222,11 +223,18 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             {
                 Log("adapter created");
                 MacWebViewCanvas.EnableBackground(args.TryGetPlatformHandle());
+                _pointerLock = MacWebViewPointerLock.Install(args.TryGetPlatformHandle(),
+                    () => _active && !_disposed && !_message.IsVisible, Log);
                 WebViewInitialization.Finished(web);
                 _initializing = false;
                 _initialized.TrySetResult();
                 SyncNavigation();
                 if (_disposed) Dispatcher.UIThread.Post(Release);
+            };
+            web.AdapterDestroyed += (_, _) =>
+            {
+                _pointerLock?.Dispose();
+                _pointerLock = null;
             };
             Log("native host attachment started");
             _surface.Children.Insert(0, web);
@@ -376,6 +384,8 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
 
     private void Release()
     {
+        _pointerLock?.Dispose();
+        _pointerLock = null;
         _web?.Stop();
         if (_web is not null) WebViewInitialization.Finished(_web);
         _surface.Children.Clear();
