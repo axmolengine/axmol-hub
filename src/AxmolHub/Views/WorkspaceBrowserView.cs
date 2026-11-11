@@ -151,7 +151,9 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         if (!RuntimeAvailable(type)) return false;
         try
         {
-            var web = _web = new NativeWebView { Name = "WorkspaceBrowserWebView", AdapterPreference = [type], IsVisible = _active };
+            // Set the native page canvas, not the surrounding Hub surface or the document's CSS.
+            var web = _web = new NativeWebView { Name = "WorkspaceBrowserWebView", AdapterPreference = [type],
+                Background = Brushes.White, IsVisible = _active };
             web.EnvironmentRequested += (_, args) =>
             {
                 Log($"environment requested: {args.GetType().Name}");
@@ -216,9 +218,10 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 SyncNavigation();
                 if (_disposed) Release();
             });
-            web.AdapterCreated += (_, _) =>
+            web.AdapterCreated += (_, args) =>
             {
                 Log("adapter created");
+                MacWebViewCanvas.EnableBackground(args.TryGetPlatformHandle());
                 WebViewInitialization.Finished(web);
                 _initializing = false;
                 _initialized.TrySetResult();
