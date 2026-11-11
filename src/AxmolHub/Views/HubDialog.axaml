@@ -37,11 +37,13 @@
       <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <TextBlock Name="DialogMessage" Classes="muted" TextWrapping="Wrap" />
       </ScrollViewer>
-      <!-- A destination the box points at (the About box's repository). Its own row above the answers, because a
-           link is not an answer to the question the box asks; hidden — not merely empty — unless a caller supplies
-           one, since a row takes its share of the panel's spacing even when it holds nothing. -->
-      <StackPanel Name="DialogLinks" Spacing="8" HorizontalAlignment="Left" IsVisible="False" />
-      <StackPanel Name="DialogButtons" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" />
+      <!-- Group the closing rows so the About footer stays close to its links. Optional rows collapse fully;
+           ordinary confirmation dialogs still have only their buttons here. -->
+      <StackPanel Spacing="8">
+        <StackPanel Name="DialogLinks" Spacing="8" HorizontalAlignment="Left" IsVisible="False" />
+        <StackPanel Name="DialogButtons" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" />
+        <ContentControl Name="DialogFooter" HorizontalAlignment="Center" IsVisible="False" />
+      </StackPanel>
     </StackPanel>
   </Grid>
 </Window>

@@ -1195,7 +1195,7 @@ public partial class MainWindow : Window
         RestoreFromTray();
     }
 
-    internal void ExitFromTray()
+    internal void RequestExit()
     {
         if (_workspace.IsBusy)
         {
@@ -1704,7 +1704,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The bottom entry's popup: Settings, Appearance, License and About. Appearance opens the two
+    /// The bottom entry's popup: Settings, Appearance, License, About and Exit. Appearance opens the two
     /// questions it answers, Language and Theme, and each of those opens its own answers. Every row is one
     /// line: a name, and a tick when it is the answer in force. Built fresh on every open, so the labels follow
     /// the UI language and exactly one tick per question is drawn without any sync machinery.
@@ -1824,6 +1824,19 @@ public partial class MainWindow : Window
             await App.ShowAboutAsync(this);
         };
         menu.Items.Add(about);
+
+        menu.Items.Add(new Separator());
+        var exit = new MenuItem
+        {
+            Header = MenuRow.Build("Hub.Icon.Exit", HubStrings.Get("TrayExit"), current: false),
+            Tag = MenuRowTag.Exit,
+        };
+        exit.Click += (_, _) =>
+        {
+            menu.Hide();
+            RequestExit();
+        };
+        menu.Items.Add(exit);
         return menu;
     }
 
@@ -1837,6 +1850,7 @@ public partial class MainWindow : Window
         internal const string Theme = "menu:theme";
         internal const string License = "menu:license";
         internal const string About = "menu:about";
+        internal const string Exit = "menu:exit";
     }
 
     /// <summary>Recomputes all **imperatively** written copy after a language change (DynamicResource

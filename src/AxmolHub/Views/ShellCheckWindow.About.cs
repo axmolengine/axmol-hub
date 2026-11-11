@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Styling;
@@ -136,16 +137,14 @@ internal sealed class ShellAboutChecks
             "关于对话框沿用自绘标题栏：只有一枚关闭盘，没有最小化与最大化（实际 " + plates.Count + " 枚）");
 
         var buttons = ActionButtons(dialog);
-        var primary = buttons.FirstOrDefault(button => button.Classes.Contains("primary"));
-        Check(buttons.Length == 1 && primary is not null
-              && primary.Content?.ToString() == HubStrings.Get("Ok") && primary.IsDefault,
-            "关于对话框只有一个确定键，文案跟着界面语言走（实际 "
+        Check(buttons.Length == 0 && NamedDescendant<StackPanel>(dialog, "DialogButtons") is { IsVisible: false },
+            "关于对话框没有确定键，按钮行完全收起（实际 "
             + string.Join("/", buttons.Select(button => button.Content?.ToString())) + "）");
 
-        primary?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        dialog.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
         var answer = await pending;
-        Check(answer == HubDialogResult.Ok && HubDialogWindows().Length == windowsBefore,
-            "点「确定」关掉关于对话框，结果是 Ok、窗口没有留下（结果 " + answer + "，剩 "
+        Check(answer == HubDialogResult.Cancel && HubDialogWindows().Length == windowsBefore,
+            "按 Esc 关掉关于对话框，结果是 Cancel、窗口没有留下（结果 " + answer + "，剩 "
             + HubDialogWindows().Length + " 个）");
 
         // ⑩ It opens again. A box that can only be shown once is the failure a "did it pop up" assertion cannot

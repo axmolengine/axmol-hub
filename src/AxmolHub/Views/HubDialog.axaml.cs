@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Layout;
 using Avalonia.Media.Imaging;
 using AxmolHub.Core;
 
@@ -11,6 +13,7 @@ public enum HubDialogButtons
     OkCancel,
     YesNo,
     SaveDiscardCancel,
+    None,
 }
 
 /// <summary>
@@ -28,6 +31,8 @@ public enum HubDialogResult
     Save,
     Discard,
 }
+
+public sealed record HubDialogLink(string Caption, string Url, string? Label = null);
 
 /// <summary>
 /// The Avalonia replacement for WPF's <c>MessageBox.Show</c>. See Views/HubDialog.axaml for details.
@@ -67,7 +72,8 @@ public partial class HubDialog : Window
         HubDialogButtons buttons = HubDialogButtons.Ok,
         bool danger = false,
         Bitmap? picture = null,
-        string? linkUrl = null)
+        IReadOnlyList<HubDialogLink>? links = null,
+        HubDialogLink? footerLink = null)
     {
         var dialog = new HubDialog();
 
@@ -76,8 +82,13 @@ public partial class HubDialog : Window
         dialog.Title = title;
         dialog.DialogMessage.Text = message;
         dialog.SetPicture(picture);
-        dialog.AddLink(linkUrl);
+        dialog.AddLinks(links);
         dialog.Build(buttons, danger);
+        if (footerLink is not null)
+        {
+            dialog.DialogFooter.Content = CreateLinkRow(footerLink, "DialogFooterLink");
+            dialog.DialogFooter.IsVisible = true;
+        }
 
         // Modal needs an owner somebody can see. Two real paths reach this with none: the main window does not exist
         // yet (startup failure), and on macOS the close button hides it instead of ending the run
@@ -118,24 +129,59 @@ public partial class HubDialog : Window
     }
 
     /// <summary>
-    /// Adds the destination the box points at, as a row of its own above the answers. A Button rather than a
-    /// TextBlock with a pointer handler, because focus, Enter/Space and the hand cursor come with it; the caption
-    /// is the address itself, so a reader who will not click still sees where it goes.
+    /// Adds optional labeled links above the answers. Buttons provide focus, Enter/Space and the hand cursor.
     /// </summary>
-    private void AddLink(string? url)
+    private void AddLinks(IReadOnlyList<HubDialogLink>? links)
     {
-        if (string.IsNullOrWhiteSpace(url)) return;
+        if (links is null) return;
 
-        var link = new Button { Name = "DialogLink", Content = url, Classes = { "link" } };
-        link.Click += (_, _) => _ = LinkOpener(url);
-        DialogLinks.Children.Add(link);
-        DialogLinks.IsVisible = true;
+        foreach (var destination in links)
+        {
+            var name = DialogLinks.Children.Count == 0 ? "DialogLink" : "DialogLink" + (DialogLinks.Children.Count + 1);
+            DialogLinks.Children.Add(CreateLinkRow(destination, name));
+        }
+
+        DialogLinks.IsVisible = DialogLinks.Children.Count > 0;
+    }
+
+    private static StackPanel CreateLinkRow(HubDialogLink destination, string name)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        if (destination.Label is { Length: > 0 } label)
+            row.Children.Add(new TextBlock
+            {
+                Text = label,
+                Classes = { "muted" },
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+        var link = new Button
+        {
+            Name = name,
+            Content = destination.Caption,
+            Classes = { "link" },
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        link.Click += (_, _) => _ = LinkOpener(destination.Url);
+        row.Children.Add(link);
+        return row;
     }
 
     private void Build(HubDialogButtons buttons, bool danger)
     {
         switch (buttons)
         {
+            case HubDialogButtons.None:
+                DialogButtons.IsVisible = false;
+                // Informational dialogs have no IsCancel button to handle Escape.
+                KeyDown += (_, e) =>
+                {
+                    if (e.Key != Key.Escape) return;
+                    e.Handled = true;
+                    Finish(HubDialogResult.Cancel);
+                };
+                break;
+
             case HubDialogButtons.OkCancel:
                 Add(HubDialogResult.Cancel, HubStrings.Get("Cancel"), primary: false, cancel: true, danger: false);
                 Add(HubDialogResult.Ok, HubStrings.Get("Ok"), primary: true, cancel: false, danger: danger);

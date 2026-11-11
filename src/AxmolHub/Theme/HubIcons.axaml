@@ -179,6 +179,9 @@
   <!-- An information circle for About, square-bounded like the other menu glyphs. -->
   <StreamGeometry x:Key="Hub.Icon.Info">M4 12A8 8 0 0 1 20 12A8 8 0 0 1 4 12ZM12 10.5V16M12 7.5V7.6</StreamGeometry>
 
+  <!-- An open door and outward arrow for Exit, square-bounded like the other menu glyphs. -->
+  <StreamGeometry x:Key="Hub.Icon.Exit">M10 4H4V20H10 M10 12H20 M15 7L20 12L15 17</StreamGeometry>
+
   <!-- The same plate with the divider on the right, so the two top-bar toggles read as a mirrored pair: the left
        one opens the conversation list, this one the review column. Bounded 15×15 centred on the 24 grid —
        deliberately not a copy of Hub.Icon.Panel's 15×14 box, because Stretch="Uniform" parks the leftover axis as

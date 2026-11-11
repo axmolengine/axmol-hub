@@ -36,7 +36,7 @@ internal sealed class WindowsTrayIntegration : IDisposable
         showWindow.Click += (_, _) => window.RestoreFromTray();
 
         var exit = new NativeMenuItem(HubStrings.Get("TrayExit"));
-        exit.Click += (_, _) => window.ExitFromTray();
+        exit.Click += (_, _) => window.RequestExit();
 
         var menu = new NativeMenu();
         menu.Items.Add(showWindow);

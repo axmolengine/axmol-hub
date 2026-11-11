@@ -47,8 +47,8 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// The About surface's copy. Fixed English, unlike the dialog's button: the product's name, its one-sentence
-    /// description and the repository address read the same in both UI languages, so they have no second column —
+    /// The About surface's copy. Fixed English: the product's name, its one-sentence
+    /// description and project/publisher links read the same in both UI languages, so they have no second column —
     /// which is why they live here rather than in <see cref="HubTexts"/>.
     /// </summary>
     private const string AboutTitle = "About Axmol Hub";
@@ -79,8 +79,14 @@ public partial class App : Application
             owner,
             AboutTitle,
             "Axmol Hub v" + HubReleaseInfo.DisplayVersion + "\n\n" + AboutTagline,
+            buttons: HubDialogButtons.None,
             picture: AboutPicture(),
-            linkUrl: AboutRepository);
+            links:
+            [
+                new(AboutRepository, AboutRepository, "Source code:"),
+                new("axmol.dev", "https://axmol.dev", "Super project:"),
+            ],
+            footerLink: new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"));
 
     private static Bitmap? _aboutPicture;
 

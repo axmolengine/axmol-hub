@@ -213,7 +213,7 @@
     <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
   </Style>
 
-  <!-- A link, for the one destination the About box points at. A Button rather than a TextBlock with a pointer
+  <!-- A link, for the destinations the About box points at. A Button rather than a TextBlock with a pointer
        handler, so focus, Enter/Space and the hand cursor come with it; quiet enough that the row reads as text
        until the pointer is on it. -->
   <Style Selector="Button.link">
