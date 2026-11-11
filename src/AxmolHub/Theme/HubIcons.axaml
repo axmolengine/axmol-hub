@@ -238,9 +238,9 @@
        fix the box; the diagonal rays stay inside it. -->
   <StreamGeometry x:Key="Hub.Icon.Sun">M8.8 12A3.2 3.2 0 0 1 15.2 12A3.2 3.2 0 0 1 8.8 12ZM12 4V6.8M12 17.2V20M4 12H6.8M17.2 12H20M6.3 6.3L8.3 8.3M15.7 15.7L17.7 17.7M17.7 6.3L15.7 8.3M6.3 17.7L8.3 15.7</StreamGeometry>
 
-  <!-- A globe, the 语言 row's glyph: outline circle, one meridian, one equator. The circle's two halves and
+  <!-- A globe, the 语言 row's glyph: outline circle, a closed meridian, one equator. The circle's two halves and
        the meridian each span a diameter, so both centres are forced; the equator joins the circle's own left
        and right points. -->
-  <StreamGeometry x:Key="Hub.Icon.Globe">M4 12A8 8 0 0 1 20 12A8 8 0 0 1 4 12ZM12 4A3.2 8 0 0 0 12 20M4 12H20</StreamGeometry>
+  <StreamGeometry x:Key="Hub.Icon.Globe">M4 12A8 8 0 0 1 20 12A8 8 0 0 1 4 12ZM12 4A3.8 8 0 0 0 12 20A3.8 8 0 0 0 12 4ZM4 12H20</StreamGeometry>
 
 </ResourceDictionary>

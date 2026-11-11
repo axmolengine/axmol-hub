@@ -25,7 +25,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         internal string? Root { get; } = root;
         internal WorkspaceFileTree Tree { get; } = tree;
         internal List<Document> Documents { get; } = [];
-        internal WorkspaceBrowserView? Browser { get; set; }
+        internal List<WorkspaceBrowserView> Browsers { get; } = [];
         internal HashSet<string> Tools { get; } = ["plan", "repo"];
         internal string? Selected { get; set; } = "plan";
         internal bool TreeVisible { get; set; }
@@ -41,8 +41,39 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly ContentControl _content = new();
     private readonly ContentControl _treeHost = new();
     private readonly GridSplitter _splitter;
-    private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry);
+    private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry, Button Select, BrowserTabIcon? Icon);
+    private sealed class BrowserTabIcon : Grid
+    {
+        private readonly ActivityGlyph _activity = new() { Width = 12, Height = 12, IsVisible = false };
+        private readonly Image _favicon = new() { Width = 12, Height = 12, IsVisible = false };
+        private readonly Control _globe = HubActionIcon.Create("Hub.Icon.Globe");
+
+        internal BrowserTabIcon()
+        {
+            Width = Height = 12;
+            IsHitTestVisible = false;
+            VerticalAlignment = VerticalAlignment.Center;
+            _activity.Bind(ActivityGlyph.TrackBrushProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            // Inset the stretched geometry so its outer stroke stays inside the clipped tab content.
+            _globe.Width = _globe.Height = 10;
+            _globe.HorizontalAlignment = HorizontalAlignment.Center;
+            _globe.VerticalAlignment = VerticalAlignment.Center;
+            Children.Add(_globe);
+            Children.Add(_favicon);
+            Children.Add(_activity);
+        }
+
+        internal void Apply(WorkspaceBrowserView browser)
+        {
+            _activity.ApplyPhase(browser.Loading ? ActivityPhase.RunningTool : ActivityPhase.ShowingText);
+            _favicon.Source = browser.Favicon;
+            _favicon.IsVisible = !browser.Loading && browser.Favicon is not null;
+            _globe.IsVisible = !browser.Loading && browser.Favicon is null;
+        }
+    }
     private const double AddTabGap = 4;
+    private const double BrowserIconSlotWidth = 17;
+    private const double BrowserTabWidth = 180;
     private readonly List<Tab> _tabs = [];
     private readonly StackPanel _tabRows = new() { Orientation = Orientation.Horizontal, Spacing = 3, ClipToBounds = true };
     private readonly Grid _tabGrid;
@@ -98,7 +129,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             Classes = { "titlebar" }, Margin = new Thickness(AddTabGap, 0, 0, 0) };
         plus.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceAddTab"));
         var menu = new MenuFlyout();
-        foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("browser", "WorkspaceBrowser"), ("files", "WorkspaceFiles") })
+        foreach (var (key, caption) in new[] { ("repo", "InspectorTabChanges"), ("plan", "InspectorTabPlan"), ("browser", "WorkspaceBrowserNew"), ("files", "WorkspaceFiles") })
         {
             var item = new MenuItem { Tag = key };
             item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(caption));
@@ -166,18 +197,30 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal void OpenTool(string tab)
     {
         if (_state is null) return;
-        tab = tab is "plan" or "browser" ? tab : "repo";
-        if (tab == "browser" && _state.Browser is null)
+        if (tab == "browser")
         {
-            var browser = _state.Browser = new WorkspaceBrowserView(_log);
+            var browser = new WorkspaceBrowserView(_log);
+            _state.Browsers.Add(browser);
+            browser.StateChanged += SyncBrowserTab;
             browser.Released += () => _body.Children.Remove(browser);
             // Keep every workspace browser attached: removing a hidden native control destroys its history.
-            _body.Children.Insert(1, _state.Browser);
+            _body.Children.Insert(1, browser);
+            SelectBrowser(_state, browser);
+            return;
         }
+        tab = tab == "plan" ? tab : "repo";
         _state.Tools.Add(tab);
         _state.Selected = tab;
         Render();
-        if (tab != "browser") ToolRequested?.Invoke(tab);
+        ToolRequested?.Invoke(tab);
+        OpenRequested?.Invoke();
+    }
+
+    private void SelectBrowser(State state, WorkspaceBrowserView browser)
+    {
+        if (!ReferenceEquals(state, _state) || !state.Browsers.Contains(browser)) return;
+        state.Selected = browser.TabId;
+        Render();
         OpenRequested?.Invoke();
     }
 
@@ -248,7 +291,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             _inspector.SelectWorkspaceTool(_state.Selected);
             _content.Content = _inspector;
         }
-        else if (_state.Selected == "browser") _content.Content = null;
+        else if (_state.Browsers.Any(browser => browser.TabId == _state.Selected)) _content.Content = null;
         else _content.Content = _state.Documents.Find(document => document.Path == _state.Selected)?.Content ?? _empty;
         RenderTabs();
         ApplyTreeLayout();
@@ -260,19 +303,47 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _tabRows.Children.Clear();
         _tabs.Clear();
         var state = _state;
-        foreach (var tool in new[] { "plan", "repo", "browser" })
+        foreach (var tool in new[] { "plan", "repo" })
         {
             if (!state.Tools.Contains(tool)) continue;
-            AddTab(tool, null, tool == "browser" ? "WorkspaceBrowser" : tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool),
+            AddTab(tool, null, tool == "plan" ? "InspectorTabPlan" : "InspectorTabChanges", () => OpenTool(tool),
                 () => _ = CloseTabsAsync(state, tool));
         }
+        foreach (var browser in state.Browsers)
+            AddTab(browser.TabId, null, "WorkspaceBrowserNewTab", () => SelectBrowser(state, browser),
+                () => _ = CloseTabsAsync(state, browser.TabId), browser: browser);
         foreach (var document in state.Documents)
             AddTab(document.Path, Path.GetFileName(document.Title), null,
                 () => SelectExisting(document.Path), () => _ = CloseTabsAsync(state, document.Path), document.Dirty(), document.Content as CodeEditorView);
         LayoutTabs();
+        foreach (var browser in state.Browsers) SyncBrowserTab(browser);
     }
 
-    private void AddTab(string id, string? caption, string? resource, Action select, Action close, bool dirty = false, CodeEditorView? editor = null)
+    private void SyncBrowserTab(WorkspaceBrowserView browser)
+    {
+        if (_state?.Browsers.Contains(browser) != true || _tabs.Find(tab => tab.Id == browser.TabId) is not { } tab) return;
+        var fallback = browser.TabTitle is null ? "WorkspaceBrowserNewTab" : "WorkspaceBrowser";
+        if (browser.PageTitle is { } caption)
+        {
+            tab.Label.Text = caption;
+            tab.Entry.Header = caption;
+        }
+        else
+        {
+            tab.Label.Bind(TextBlock.TextProperty, new DynamicResourceExtension(fallback));
+            tab.Entry.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(fallback));
+        }
+        tab.Icon?.Apply(browser);
+        if (tab.Entry.Icon is BrowserTabIcon menuIcon) menuIcon.Apply(browser);
+        foreach (var control in new Control[] { tab.Select, tab.Entry })
+        {
+            if (browser.TabTitle is { } title) ToolTip.SetTip(control, title);
+            else control.Bind(ToolTip.TipProperty, new DynamicResourceExtension(fallback));
+        }
+    }
+
+    private void AddTab(string id, string? caption, string? resource, Action select, Action close, bool dirty = false,
+        CodeEditorView? editor = null, WorkspaceBrowserView? browser = null)
     {
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), VerticalAlignment = VerticalAlignment.Center };
         var plate = new Border { Child = row, Classes = { "workspace-tab" }, CornerRadius = new CornerRadius(6), ClipToBounds = true };
@@ -281,7 +352,17 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var label = new TextBlock { Text = caption, FontSize = 12, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center };
         if (resource is not null) label.Bind(TextBlock.TextProperty, new DynamicResourceExtension(resource));
-        var button = new Button { Content = label, MaxWidth = 180, Height = 28,
+        Control content = label;
+        BrowserTabIcon? icon = null;
+        if (browser is not null)
+        {
+            icon = new BrowserTabIcon { HorizontalAlignment = HorizontalAlignment.Left };
+            var titleRow = new Grid { ColumnDefinitions = new ColumnDefinitions($"{BrowserIconSlotWidth},*"),
+                Children = { icon, label }, ClipToBounds = true };
+            Grid.SetColumn(label, 1);
+            content = titleRow;
+        }
+        var button = new Button { Content = content, MaxWidth = 180, Height = 28,
             Classes = { "workspace-tab-select" }, Padding = new Thickness(9, 0, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             ClipToBounds = true };
@@ -289,7 +370,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var state = _state!;
         ContextMenu TabMenu() => CreateTabMenu(state, id, editor);
         plate.ContextMenu = TabMenu();
-        plate.Name = editor is not null ? "WorkspaceDocumentTab" : id == "browser" ? "WorkspaceBrowserTab" : id == "plan" ? "WorkspacePlanTab" : "WorkspaceChangesTab";
+        plate.Name = browser is not null ? "WorkspaceBrowserTab" : editor is not null ? "WorkspaceDocumentTab" : id == "plan" ? "WorkspacePlanTab" : "WorkspaceChangesTab";
+        plate.Tag = id;
         button.Click += (_, _) => select();
         row.Children.Add(button);
         var closeGlyph = HubActionIcon.Close();
@@ -302,7 +384,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             closeContent = new Grid { Width = 8, Height = 8, Children = { closeGlyph, dot } };
         }
         var x = new Button { Content = closeContent, Width = 20, Height = 20,
-            Name = resource is null ? "WorkspaceCloseDocumentTab" : "WorkspaceClose" + (id == "browser" ? "Browser" : id == "plan" ? "Plan" : "Changes") + "Tab",
+            Name = resource is null ? "WorkspaceCloseDocumentTab" : "WorkspaceClose" + (browser is not null ? "Browser" : id == "plan" ? "Plan" : "Changes") + "Tab",
             Classes = { "workspace-tab-close" }, Padding = new Thickness(0), Margin = new Thickness(0, 0, 2, 0),
             VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center };
@@ -316,10 +398,16 @@ internal sealed class WorkspaceView : Grid, IDisposable
         else { entry.Header = caption; ToolTip.SetTip(entry, id); }
         entry.ContextMenu = TabMenu();
         entry.Click += (_, _) => select();
-        _tabs.Add(new Tab(id, plate, label, entry));
+        _tabs.Add(new Tab(id, plate, label, entry, button, icon));
+        if (browser is not null)
+        {
+            entry.Icon = new BrowserTabIcon();
+            button.PointerEntered += (_, _) => _ = browser.RefreshMetadataAsync();
+            entry.PointerEntered += (_, _) => _ = browser.RefreshMetadataAsync();
+        }
         label.PropertyChanged += (_, args) =>
         {
-            if (args.Property == TextBlock.TextProperty) Dispatcher.UIThread.Post(LayoutTabs);
+            if (browser is null && args.Property == TextBlock.TextProperty) Dispatcher.UIThread.Post(LayoutTabs);
         };
     }
 
@@ -329,6 +417,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         // restore a hidden tab without first showing every tab and causing an endless layout invalidation.
         var widths = _tabs.Select(tab =>
         {
+            if (tab.Icon is not null) return BrowserTabWidth;
             tab.Label.Measure(new Size(double.PositiveInfinity, 28));
             return Math.Min(180, Math.Ceiling(tab.Label.DesiredSize.Width) + 9) + 22;
         }).ToArray();
@@ -338,10 +427,10 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var remaining = Math.Max(0, available - (overflow ? 28 : 0));
         var visible = new HashSet<int>();
         var selected = _tabs.FindIndex(tab => tab.Id == _state?.Selected);
-        if (selected >= 0 && remaining >= 32)
+        if (selected >= 0 && remaining >= (_tabs[selected].Icon is not null ? BrowserTabWidth : 32))
         {
             visible.Add(selected);
-            widths[selected] = Math.Min(widths[selected], remaining);
+            if (_tabs[selected].Icon is null) widths[selected] = Math.Min(widths[selected], remaining);
             remaining -= widths[selected] + _tabRows.Spacing;
         }
         for (var i = 0; i < _tabs.Count; i++)
@@ -362,7 +451,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
     }
 
     private static string[] TabIds(State state)
-        => new[] { "plan", "repo", "browser" }.Where(state.Tools.Contains)
+        => new[] { "plan", "repo" }.Where(state.Tools.Contains)
+            .Concat(state.Browsers.Select(browser => browser.TabId))
             .Concat(state.Documents.Select(document => document.Path)).ToArray();
 
     private ContextMenu CreateTabMenu(State state, string id, CodeEditorView? editor)
@@ -455,10 +545,14 @@ internal sealed class WorkspaceView : Grid, IDisposable
                 }
                 else
                 {
-                    if (target.Id == "browser" && state.Browser is { } browser)
+                    if (state.Browsers.Find(browser => browser.TabId == target.Id) is { } browser)
                     {
+                        var index = state.Browsers.IndexOf(browser);
+                        browser.StateChanged -= SyncBrowserTab;
                         browser.Dispose();
-                        state.Browser = null;
+                        state.Browsers.Remove(browser);
+                        if (state.Selected == target.Id && state.Browsers.Count > 0)
+                            state.Selected = state.Browsers[Math.Min(index, state.Browsers.Count - 1)].TabId;
                     }
                     state.Tools.Remove(target.Id);
                     if (state.Selected == target.Id) ChooseRemaining(state);
@@ -474,7 +568,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         state.Selected = state.Documents.Count > 0
             ? state.Documents[Math.Clamp(documentIndex, 0, state.Documents.Count - 1)].Path
             : state.Tools.Contains("repo") ? "repo" : state.Tools.Contains("plan") ? "plan"
-            : state.Tools.Contains("browser") ? "browser" : null;
+            : state.Browsers.FirstOrDefault()?.TabId;
     }
 
     private async Task<bool> CloseDocumentAsync(State state, Document document, bool discard)
@@ -500,7 +594,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
 
     internal void CloseSelected(bool discard = false)
     {
-        if (_state is { Selected: { } id } state && state.Documents.Any(document => document.Path == id))
+        if (_state is { Selected: { } id } state && (state.Documents.Any(document => document.Path == id)
+            || state.Browsers.Any(browser => browser.TabId == id)))
             _ = CloseTabsAsync(state, id, discard: discard);
     }
 
@@ -552,10 +647,16 @@ internal sealed class WorkspaceView : Grid, IDisposable
         foreach (var state in _states.Values)
             state.Documents.RemoveAll(document => document.Dirty());
         if (_state is not null && !_state.Documents.Any(document => document.Path == _state.Selected)
-            && _state.Selected is not ("plan" or "repo" or "browser")) ChooseRemaining(_state);
+            && _state.Selected is not ("plan" or "repo") && !_state.Browsers.Any(browser => browser.TabId == _state.Selected)) ChooseRemaining(_state);
         Render();
     }
-    internal WorkspaceBrowserView? BrowserForCheck => _state?.Browser;
+    internal WorkspaceBrowserView? BrowserForCheck => _state?.Browsers.Find(browser => browser.TabId == _state.Selected)
+        ?? _state?.Browsers.FirstOrDefault();
+
+    internal void SelectBrowserForCheck(string id)
+    {
+        if (_state?.Browsers.Find(browser => browser.TabId == id) is { } browser) SelectBrowser(_state, browser);
+    }
 
     internal void SetBrowserObscured(bool obscured)
     {
@@ -566,8 +667,9 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private void SyncBrowsers()
     {
         foreach (var state in _states.Values)
-            state.Browser?.SetActive(ReferenceEquals(state, _state) && state.Selected == "browser",
-                _browserObscured || _openMenus > 0 || (_drawer && _state?.TreeVisible == true));
+            foreach (var browser in state.Browsers)
+                browser.SetActive(ReferenceEquals(state, _state) && state.Selected == browser.TabId,
+                    _browserObscured || _openMenus > 0 || (_drawer && _state?.TreeVisible == true));
     }
 
     private void TrackMenu(MenuFlyout menu)
@@ -594,7 +696,13 @@ internal sealed class WorkspaceView : Grid, IDisposable
 
     public void Dispose()
     {
-        foreach (var state in _states.Values) { state.Browser?.Dispose(); state.Tree.Dispose(); }
+        foreach (var state in _states.Values)
+        {
+            foreach (var browser in state.Browsers) { browser.StateChanged -= SyncBrowserTab; browser.Dispose(); }
+            state.Tree.Dispose();
+        }
+        _tabRows.Children.Clear();
+        _tabs.Clear();
     }
     internal bool DocumentSelectedForCheck => _state?.Documents.Any(document => document.Path == _state.Selected) == true;
     internal Control? SelectedContentForCheck => _content.Content as Control;
@@ -618,7 +726,9 @@ internal sealed class WorkspaceView : Grid, IDisposable
             && Math.Abs(strip.X - slot.X - 12) < 0.5 && strip.Right <= actions.Left + 0.5
             && Math.Abs(plus.Bounds.Width - plus.Bounds.Height) < 0.5
             && Math.Abs(_folder.Bounds.Width - _folder.Bounds.Height) < 0.5
-            && (capacity < 32 || visible.Any(tab => tab.Id == _state?.Selected))
+            && (capacity < (_tabs.Find(tab => tab.Id == _state?.Selected)?.Icon is not null ? BrowserTabWidth : 32)
+                || visible.Any(tab => tab.Id == _state?.Selected))
+            && visible.Where(tab => tab.Icon is not null).All(tab => Math.Abs(tab.Plate.Bounds.Width - BrowserTabWidth) < 0.5)
             && visible.All(tab => tab.Plate.Bounds.Right <= capacity + 0.5)
             && _overflow.IsVisible == (hidden.Length > 0)
             && _overflowMenu.Items.OfType<MenuItem>().Select(item => item.Tag as string)

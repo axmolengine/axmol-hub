@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -35,20 +36,31 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal event Action? Released;
     internal Task Ready => _initializing ? _initialized.Task : Task.CompletedTask;
     private Uri? _requested;
+    private string? _pageTitle;
+    private int _navigationVersion;
+    private IImage? _favicon;
+    private string? _faviconCandidates;
+    private CancellationTokenSource? _faviconCancellation;
+    internal string TabId { get; } = "browser:" + Guid.NewGuid().ToString("N");
+    internal event Action<WorkspaceBrowserView>? StateChanged;
+    internal bool Loading => !_disposed && (_loading || _initializing);
+    internal string? PageTitle => _pageTitle;
+    internal string? TabTitle => _pageTitle ?? _requested?.Host;
+    internal IImage? Favicon => _favicon;
 
     internal WorkspaceBrowserView(Action<string> log)
     {
         _log = log;
         RowDefinitions = new RowDefinitions("Auto,*");
         ClipToBounds = true;
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto"), Margin = new Thickness(6), ColumnSpacing = 4 };
+        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto"), Margin = new Thickness(6), ColumnSpacing = 4 };
         _back = Action("WorkspaceBrowserBack", BrowserIcon("Hub.Icon.Back"), () => _web?.GoBack());
         _forward = Action("WorkspaceBrowserForward", BrowserIcon("Hub.Icon.Forward"), () => _web?.GoForward());
         _reload = Action("WorkspaceBrowserReload", _reloadIcon, ReloadOrStop);
         var external = Action("WorkspaceBrowserExternal", BrowserIcon("Hub.Icon.OpenFile"), OpenExternal);
         _address.Bind(TextBox.PlaceholderTextProperty, new DynamicResourceExtension("WorkspaceBrowserAddressHint"));
         _address.KeyDown += (_, e) => { if (e.Key == Key.Enter) { NavigateAddress(); e.Handled = true; } };
-        foreach (var (control, column) in new (Control, int)[] { (_back, 0), (_forward, 1), (_address, 2), (_reload, 3), (external, 4) })
+        foreach (var (control, column) in new (Control, int)[] { (_back, 0), (_forward, 1), (_reload, 2), (_address, 3), (external, 4) })
         { Grid.SetColumn(control, column); bar.Children.Add(control); }
         Children.Add(bar);
         Grid.SetRow(_surface, 1);
@@ -100,9 +112,12 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         { ShowMessage("WorkspaceBrowserInvalidAddress"); return; }
         _requested = uri;
         _address.Text = uri.AbsoluteUri;
-        if (!EnsureWebView()) return;
+        _loading = true;
+        ResetMetadata();
+        if (!EnsureWebView()) { _loading = false; SyncNavigation(); return; }
         _message.IsVisible = false;
         _web!.IsVisible = _active;
+        SyncNavigation();
         Log("navigation requested");
         _web.Navigate(uri);
         Log("navigation request returned");
@@ -158,23 +173,27 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             };
             web.NavigationStarted += (_, args) =>
             {
+                if (_disposed) { args.Cancel = true; return; }
                 if (args.Request?.AbsoluteUri == "about:blank") return;
                 if (!IsWebAddress(args.Request)) { args.Cancel = true; return; }
                 _requested = args.Request;
                 _address.Text = args.Request!.AbsoluteUri;
                 _loading = true;
+                ResetMetadata();
                 // GTK's policy callback waits for this handler. Reading native history here waits for
                 // GTK in turn, so refresh the toolbar only after the synchronous decision returns.
                 Dispatcher.UIThread.Post(() => { if (!_disposed) SyncNavigation(); });
             };
             web.NavigationCompleted += (_, args) =>
             {
+                if (_disposed) return;
                 Log("navigation completed: success=" + args.IsSuccess);
                 _loading = false;
                 if (IsWebAddress(args.Request)) _address.Text = args.Request!.AbsoluteUri;
                 if (!args.IsSuccess) ShowMessage("WorkspaceBrowserLoadFailed");
                 else { _message.IsVisible = false; web.IsVisible = _active; }
                 SyncNavigation();
+                if (args.IsSuccess) _ = RefreshMetadataAsync();
             };
             web.NewWindowRequested += (_, args) =>
             {
@@ -184,14 +203,17 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             };
             _initialized = new TaskCompletionSource();
             _initializing = true;
+            SyncNavigation();
             WebViewInitialization.Watch(web, error =>
             {
                 Log("asynchronous initialization failed: " + error);
                 _initializing = false;
+                _loading = false;
                 _initialized.TrySetResult();
                 _surface.Children.Remove(web);
                 _web = null;
                 ShowMessage(MissingRuntimeKey());
+                SyncNavigation();
                 if (_disposed) Release();
             });
             web.AdapterCreated += (_, _) =>
@@ -213,6 +235,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             Log("initialization failed: " + error);
             if (_web is not null) { WebViewInitialization.Finished(_web); _surface.Children.Remove(_web); }
             _initializing = false;
+            _loading = false;
             _initialized.TrySetResult();
             _web = null;
             ShowMessage(MissingRuntimeKey());
@@ -232,15 +255,86 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         {
             _web?.Stop();
             _loading = false;
+            _navigationVersion++;
+            CancelFavicon();
             SyncNavigation();
         }
         else if (_web is not null)
         {
             _message.IsVisible = false;
             _web.IsVisible = _active;
-            _web.Refresh();
+            _loading = true;
+            ResetMetadata();
+            SyncNavigation();
+            if (!_web.Refresh()) { _loading = false; SyncNavigation(); }
         }
         else NavigateAddress();
+    }
+
+    private sealed record PageMetadata(string? Title, string[]? Icons);
+    internal async Task RefreshMetadataAsync()
+    {
+        if (_disposed || Loading || _message.IsVisible || _web is not { } web) return;
+        var version = _navigationVersion;
+        PageMetadata? metadata;
+        try
+        {
+            var result = await web.InvokeScript("""
+                JSON.stringify({ Title: document.title,
+                    Icons: Array.from(document.querySelectorAll('link[rel~="icon" i]')).slice(0, 4).map(link => link.href) })
+                """);
+            // WebView2 JSON-encodes script results; WebKit returns strings directly.
+            if (OperatingSystem.IsWindows() && result is not null) result = JsonSerializer.Deserialize<string>(result);
+            metadata = result is not null ? JsonSerializer.Deserialize<PageMetadata>(result) : null;
+        }
+        catch (Exception)
+        {
+            // Page metadata is optional. Keep the fallbacks without logging page content or addresses.
+            return;
+        }
+        if (_disposed || version != _navigationVersion || !ReferenceEquals(web, _web)) return;
+        var title = TextEol.ToLf(metadata?.Title ?? "").Trim();
+        _pageTitle = title.Length > 0 ? title : null;
+        StateChanged?.Invoke(this);
+        if (_requested is not { } address) return;
+        var icons = (metadata?.Icons ?? []).Where(icon => !string.IsNullOrWhiteSpace(icon) && icon.Length <= 4096).Take(4)
+            .Append(new Uri(address, "/favicon.ico").AbsoluteUri).Distinct().ToArray();
+        var key = string.Join("\n", icons);
+        if (_faviconCandidates == key) return;
+        _faviconCandidates = key;
+        CancelFavicon();
+        var cancellation = _faviconCancellation = new CancellationTokenSource();
+        var image = await BrowserFavicon.LoadAsync(icons, cancellation.Token);
+        if (_disposed || version != _navigationVersion || !ReferenceEquals(cancellation, _faviconCancellation))
+        {
+            (image as IDisposable)?.Dispose();
+            return;
+        }
+        SetFavicon(image);
+    }
+
+    private void ResetMetadata()
+    {
+        _navigationVersion++;
+        _pageTitle = null;
+        _faviconCandidates = null;
+        CancelFavicon();
+        SetFavicon(null);
+    }
+
+    private void CancelFavicon()
+    {
+        _faviconCancellation?.Cancel();
+        _faviconCancellation?.Dispose();
+        _faviconCancellation = null;
+    }
+
+    private void SetFavicon(IImage? image)
+    {
+        var previous = _favicon;
+        _favicon = image;
+        StateChanged?.Invoke(this);
+        (previous as IDisposable)?.Dispose();
     }
 
     private void OpenExternal()
@@ -261,12 +355,17 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         _forward.IsEnabled = _web?.CanGoForward == true;
         _reload.Content = _loading ? _stopIcon : _reloadIcon;
         _reload.Bind(ToolTip.TipProperty, new DynamicResourceExtension(_loading ? "WorkspaceBrowserStop" : "WorkspaceBrowserReload"));
+        StateChanged?.Invoke(this);
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _navigationVersion++;
+        StateChanged = null;
+        CancelFavicon();
+        SetFavicon(null);
         IsVisible = false;
         // An initializing WebView2 controller must keep its HWND until its callback completes.
         if (!_initializing) Release();

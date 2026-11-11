@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace AxmolHub;
 
@@ -80,6 +81,8 @@ public sealed partial class ActivityGlyph : Control
 
     private readonly DispatcherTimer _timer;
     private double _clock;
+    private bool _attached;
+    private readonly List<Visual> _visibilityAncestors = [];
 
     /// <summary>How long one breath of the arc takes, in seconds. The sweep opens to nearly a full ring and
     /// closes back to a stub over this window while the whole thing turns, which is what makes the shape read as
@@ -116,9 +119,36 @@ public sealed partial class ActivityGlyph : Control
     /// <summary>Motion is owed only while something is genuinely in flight and on screen.</summary>
     private void SyncClock()
     {
-        var wants = IsVisible && Phase is ActivityPhase.WaitingFirstToken or ActivityPhase.RunningTool;
+        var wants = _attached && IsVisible && _visibilityAncestors.All(ancestor => ancestor.IsVisible)
+            && Phase is ActivityPhase.WaitingFirstToken or ActivityPhase.RunningTool;
         if (wants && !_timer.IsEnabled) _timer.Start();
         else if (!wants && _timer.IsEnabled) _timer.Stop();
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _attached = true;
+        foreach (var ancestor in this.GetVisualAncestors())
+        {
+            _visibilityAncestors.Add(ancestor);
+            ancestor.PropertyChanged += OnAncestorPropertyChanged;
+        }
+        SyncClock();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _attached = false;
+        SyncClock();
+        foreach (var ancestor in _visibilityAncestors) ancestor.PropertyChanged -= OnAncestorPropertyChanged;
+        _visibilityAncestors.Clear();
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnAncestorPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
+    {
+        if (args.Property == IsVisibleProperty) SyncClock();
     }
 
     /// <summary>Sets the phase and the visibility together and re-arms the clock in one step. Driven explicitly
