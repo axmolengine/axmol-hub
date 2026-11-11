@@ -69,11 +69,16 @@ if ($NoClean) {
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $taskPublish
 $taskIsPrereleaseBuild = $PrereleaseBuild -or $Version.StartsWith('0.', [StringComparison]::Ordinal) -or $Version.Contains('-')
 $taskPrereleaseValue = $taskIsPrereleaseBuild.ToString().ToLowerInvariant()
-dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
+dotnet publish "$taskRoot/src/AxmolHub/AxmolHub.csproj" -c Release -r $Runtime --self-contained true -o $taskPublish "-p:Version=$Version" "-p:HubIsPrereleaseBuild=$taskPrereleaseValue"
 if ($LASTEXITCODE -ne 0) { throw 'Hub publish failed.' }
 
-# Inject the partner ID into the published manifest only, before vpk packs it into the installer and update payload.
-& "$PSScriptRoot/Set-OrcaRouterAppId.ps1" -PublishDir $taskPublish
+# CI still requires the partner ID; local packages may skip it when it is not configured.
+# When present, inject it into the published manifest only, never the tracked source.
+if (-not [string]::IsNullOrWhiteSpace($env:ORCAROUTER_APP_ID) -or $env:CI -in @('true', '1') -or $env:GITHUB_ACTIONS -eq 'true') {
+    & "$PSScriptRoot/Set-OrcaRouterAppId.ps1" -PublishDir $taskPublish
+} else {
+    Write-Warning 'ORCAROUTER_APP_ID is not set; skipping partner ID injection for this local package.'
+}
 
 # When a publish has to rewrite packages.lock.json — a package version changed, or the file is not there — a
 # restore carrying a RID writes only the base node plus that RID. Measured: 2 nodes out against the 5 this
