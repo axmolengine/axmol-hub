@@ -52,7 +52,7 @@ public static class HubTexts
     {
         ["WorkspaceFiles"] = ("文件", "Files"),
         ["WorkspaceBrowser"] = ("浏览器", "Browser"),
-        ["WorkspaceBrowserNew"] = ("网页", "Web page"),
+        ["WorkspaceBrowserNew"] = ("网页", "Browser"),
         ["WorkspaceBrowserNewTab"] = ("新标签页", "New Tab"),
         ["WorkspaceBrowserAddressHint"] = ("输入网址并按 Enter", "Enter a URL and press Enter"),
         ["WorkspaceBrowserBack"] = ("后退", "Back"),
