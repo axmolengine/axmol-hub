@@ -614,7 +614,7 @@ public static class HubTexts
         // The queue row's tooltip for a transport that reports a percentage and no bytes: what its owner
         // estimated the transfer to be. A prefix, not a sentence — the rate is appended with " · " exactly
         // as the measured column does it.
-        ["TaskEstimateSize"] = ("约 ", "About "),
+        ["TaskEstimateSize"] = ("～", "～"),
         // ── The strip's download slot and the queue popover ──
         // The slot is one sentence in a 28px strip, so it counts rather than narrates. The progress bar
         // owns the percentage, because one number beside the bar is enough and multiple tasks cannot make
