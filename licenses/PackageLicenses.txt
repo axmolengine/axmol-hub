@@ -12,7 +12,7 @@ RELEASE PACKAGE INVENTORY
 • Avalonia.Controls.WebView 12.1.2 — MIT (Copyright (c) 2026 AvaloniaUI OÜ; shared MIT text below)
 • Avalonia.Desktop 12.1.6 — MIT
 • Avalonia.Themes.Fluent 12.1.6 — MIT
-• Markdig 0.40.0 — BSD-2-Clause
+• Markdig 1.6.0 — BSD-2-Clause
 • Markdown.Avalonia 12.0.2 — MIT
 • Svg.Controls.Avalonia 12.0.0.1 — MIT
 • Velopack 1.2.161 — MIT (see the Velopack license text in Velopack.txt)
