@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <BuildLinuxPortalHelper Condition="'$(BuildLinuxPortalHelper)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and ('$(RuntimeIdentifier)' == '' or $(RuntimeIdentifier.StartsWith('linux-')))">true</BuildLinuxPortalHelper>
+    <PortalHelperPath>$(MSBuildProjectDirectory)/obj/portal/$(Configuration)/$(RuntimeIdentifier)/axmolhub-portal-helper</PortalHelperPath>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(BuildLinuxPortalHelper)' == 'true'">
+    <Content Include="$(PortalHelperPath)" Link="axmolhub-portal-helper" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildPortalHelper" BeforeTargets="PrepareForBuild" Condition="'$(BuildLinuxPortalHelper)' == 'true'"
+          Inputs="$(MSBuildThisFileDirectory)portal-helper.c;$(MSBuildThisFileDirectory)portal-frame.h;$(MSBuildThisFileDirectory)build-portal-helper.sh" Outputs="$(PortalHelperPath)">
+    <Exec Command="sh &quot;$(MSBuildThisFileDirectory)build-portal-helper.sh&quot; &quot;$(PortalHelperPath)&quot; &quot;$(RuntimeIdentifier)&quot;" />
+  </Target>
+  <Target Name="RequireNativeLinuxPortalBuild" BeforeTargets="Publish"
+          Condition="$(RuntimeIdentifier.StartsWith('linux-')) and '$(BuildLinuxPortalHelper)' != 'true'">
+    <Error Text="Linux publishing requires the portal helper. Publish on a native Linux runner with its development dependencies installed." />
+  </Target>
+</Project>

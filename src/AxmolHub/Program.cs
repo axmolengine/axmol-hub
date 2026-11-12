@@ -103,6 +103,7 @@ internal static class Program
         }
         finally
         {
+            LinuxWaylandRemoteDesktop.Shared.Dispose();
             App.Activations?.Dispose();
         }
     }

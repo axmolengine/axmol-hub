@@ -128,5 +128,6 @@
     <Content Include="Assets/hub-icon-256.png" Link="Assets/hub-icon-256.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets/hub-icon-512.png" Link="Assets/hub-icon-512.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Import Project="Platforms/Linux/PortalHelper.targets" />
   <Import Project="Platforms/macOS/DevelopmentBundle.targets" />
 </Project>

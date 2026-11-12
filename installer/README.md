@@ -41,6 +41,14 @@ dotnet run --project tests/AxmolHub.Checks -- cache/packaging-tools --prepare-pa
 
 `Build.ps1` 按 RID 参数化（`-Runtime win-x64|linux-x64|osx-arm64|osx-x64`），脚本本身不区分平台，**没有平台守卫**：四个平台都在各自原生 runner 上出包（Windows `Setup.exe` / macOS `.pkg` / Linux `.AppImage`）。P6 之后 App 是跨平台实现（Avalonia / `net8.0`），Core、Cli 与 App 都能为每个宿主构建；**签名 / 公证尚未接入**，因此产物目前都是未签名状态。
 
+## Linux Wayland helper
+
+Linux 原生 runner 构建前安装 `gcc pkg-config libglib2.0-dev libpipewire-0.3-dev libspa-0.2-dev`。
+`dotnet build/publish` 自动构建并携带 `axmolhub-portal-helper`，仅动态链接系统 GIO/PipeWire；
+不打包 PipeWire、SPA 插件或 Portal 服务。Windows/macOS 输出不带 helper；Linux 发布要求原生 Linux runner。
+运行时需要桌面提供 RemoteDesktop、ScreenCast WINDOW 源及 PipeWire，缺少能力时明确拒绝，不回退到全局注入。
+详细授权边界和待验收项见 `docs/computer-use.md`。
+
 ## 官网安装链接
 
 Hub 注册 `axmolhub:` 自定义 URI Scheme。官网可用以下链接请求安装清单中**精确匹配**的 Axmol 版本：

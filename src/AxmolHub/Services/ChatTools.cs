@@ -356,8 +356,12 @@ internal static class ChatTools
             // provider's own kind string. Two nouns in front of "fetch" and "search" so the model sees one capability
             // family even though only this half has a Hub body. The method behind it is FetchWebPage because
             // WebFetch is the rules class in Core's namespace, and a method of that name would shadow it here.
-            AIFunctionFactory.Create(tools.CaptureScreen, Options(ToolNames.CaptureScreen)),
-            AIFunctionFactory.Create(tools.ComputerUse, Options(ToolNames.ComputerUse)),
+            scope.Workspace.PortalComputer is not null
+                ? AIFunctionFactory.Create(tools.CaptureScreenAsync, Options(ToolNames.CaptureScreen))
+                : AIFunctionFactory.Create(tools.CaptureScreen, Options(ToolNames.CaptureScreen)),
+            scope.Workspace.PortalComputer is not null
+                ? AIFunctionFactory.Create(tools.ComputerUseAsync, Options(ToolNames.ComputerUse))
+                : AIFunctionFactory.Create(tools.ComputerUse, Options(ToolNames.ComputerUse)),
             AIFunctionFactory.Create(tools.FsRequestAccess, Options(ToolNames.FsRequestAccess)),
             AIFunctionFactory.Create(tools.MemoryWrite, Options(ToolNames.MemoryWrite)),
             AIFunctionFactory.Create(tools.SendToSession, Options(ToolNames.SendToSession)),

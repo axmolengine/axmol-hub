@@ -328,6 +328,8 @@ public static class ToolPreviews
     /// never reaches the card alone: whoever is deciding has to see the window they are agreeing to show.</summary>
     private static string CapturePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
     {
+        if (scope.PortalComputer is not null)
+            return "capture_screen · temporary Wayland portal session · user selects one window; title and process identity are unverified · no permanent grant";
         var backend = CaptureBackends.ForCurrent();
         if (!backend.Available) return $"capture_screen · {backend.Refusal}";
         var target = Text(arguments, "target");

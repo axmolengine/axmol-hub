@@ -1,10 +1,11 @@
 # Computer Use: named-window workflow
 
 Computer Use reuses the normal Agent tool loop. It is not a separate agent, and `--drive`
-remains a development harness for Hub itself. Wayland is deliberately unsupported: no
-fallback to unscoped capture or global input is permitted.
+remains a development harness for Hub itself. Windows, macOS and X11 use verified application
+windows; Wayland uses the separate temporary portal-session contract described below. No
+fallback to unscoped capture or non-portal global input is permitted.
 
-## Protocol
+## Native-window protocol (Windows, macOS, X11)
 
 1. Name the application window in `capture_screen`, or in `computer_use` with
    `action: "screenshot"`. Title ambiguity is refused; `process_id` only narrows the match.
@@ -44,7 +45,51 @@ native-input races or detect every form of human keyboard activity.
 - **Linux X11:** `wmctrl`, `maim` or ImageMagick `import`, plus `xdotool` for input. Executable
   identity is resolved through `/proc/<pid>/exe`. Both window geometry and title are parsed
   from `wmctrl -lpG` (the hostname field is not part of the title).
-- **Linux Wayland:** refused. Scoped portal compatibility is a separate future investigation.
+- **Linux Wayland:** a scoped XDG RemoteDesktop + ScreenCast **window** session. Hub's `axmolhub-portal-helper` (Linux builds only; GIO and PipeWire remain host-provided) asks the desktop for one transient window stream and sends input through RemoteDesktop `Notify*` methods. There is no full-screen fallback, no `xdotool`/`wtype`/`ydotool`/`uinput` path, and no persistent portal token.
+
+The Wayland contract differs from the native backends and the UI says so: the user selects the window, so Hub **cannot verify** its title, process or executable identity. An approval covers one call, even in Full Access and for a screenshot; it never creates an application grant. Each input is individually confirmed, uses one `frame_id`, and afterwards a fresh frame is captured. Portal input belongs to the desktop session — keyboard events may reach the currently focused application, pointer events are not guaranteed to stay in the shared window, and Hub cannot detect user takeover. Stop cancels further input but cannot recall an event already sent. Closing the portal session, its desktop indicator, a PipeWire disconnect, a changed frame size, a blank frame, a timeout or a stale frame invalidates the observation; sharing may need to start again.
+
+Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
+
+## Wayland verification status
+
+Implemented and locally checked: Linux helper compilation and output inclusion, per-call portal
+approval cards, no permanent application grant, cancellation/refusal cleanup and monitor-source
+rejection on an isolated D-Bus fixture. No NuGet dependency was added; the lock file is unchanged.
+
+A real capture on the local GNOME 50 / Ubuntu 26.04 host delivered a readable Hub image, but the
+initial helper exposed the full 5120×2880 canvas with black padding (4K monitor, 150% scale).
+After adding crop/transform processing, a real capture with the new build returned the complete
+2560×1760 Hub window without the large black padding. This verifies local window-crop output, not
+real input or every scaling configuration. KDE/wlroots capture, actual input, mixed-DPI coordinates,
+Stop during input and desktop-indicator revocation remain pending. A build or mocked reply is not
+proof of those cases.
+
+Local verification on the development Wayland host: Release build and linux-x64 self-contained
+publish succeeded; image/context checks passed; synthetic frame/coordinate/one-use isolation tests
+and four private-bus lifecycle cases passed. The full shell suite did **not** pass (694/702): all
+three new portal approval checks passed, but six text-selection assertions and the native-window
+fixture failed, followed by its missing-image exception. The workspace suite also failed on its
+Windows-path fixture (`C:\\Windows\\win.ini`) on Linux. These failures are retained, not waived;
+Windows/macOS native desktop regression and GNOME/KDE/wlroots acceptance remain pending.
+
+### Buffer geometry and fractional scaling
+
+The helper explicitly negotiates `SPA_META_VideoCrop`, `SPA_META_VideoTransform` and header metadata.
+It extracts the validated crop, undoes the advertised buffer orientation, and encodes only those
+pixels. It honors chunk offsets and row stride; it never finds boundaries by scanning for black.
+A missing crop means the full negotiated frame, not a guessed DPI-dependent rectangle. Invalid,
+empty or out-of-bounds metadata is refused rather than replaced with a full-frame fallback.
+
+The native helper retains crop origin, full buffer size and orientation alongside the image.
+Click and scroll positions are mapped back through that geometry to the stream's logical `size`,
+not scaled as if the cropped window filled the whole stream. An image carries a mapping revision;
+any crop/orientation change (including a change and return) invalidates old input even when the
+resulting image pixels are identical. Input commands include that revision for a second check in
+the helper. Pointer control is refused when the portal omits logical `size`.
+
+This handles GNOME's fixed monitor-sized window-stream canvas without hard-coding Ubuntu versions
+or 100%/150%/200% scale factors. It does not by itself prove the cause of another app's capture bug.
 
 ## Verification and remaining manual acceptance
 
@@ -55,6 +100,9 @@ dotnet build src/AxmolHub/AxmolHub.csproj -c Release
 dotnet run --project tests/AxmolHub.Checks -- tmp/computer-images --check-ai-images
 dotnet run --project tests/AxmolHub.Checks -- tmp/computer-context --check-ai-context
 dotnet run --project tests/AxmolHub.Checks -- tmp/computer-workspace --check-ai-workspace
+# Linux-only, isolated geometry/input-address contract; also run by Linux CI.
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/portal-frame-check.c -o tmp/portal-frame-check
+./tmp/portal-frame-check
 ```
 
 Reuse `--verify-shell` for application grants and individual input confirmation. Its fixture
@@ -74,3 +122,9 @@ Real-desktop acceptance still needs the following on **each** native host:
 - Review a harmless mock Send/Delete/Pay control; ensure the final click has its own confirmation.
 
 A successful build or an offline bridge fixture does not prove these native desktop cases.
+
+For Wayland specifically, manually accept on GNOME, KDE and a wlroots backend **only if** that
+backend advertises RemoteDesktop and WINDOW sharing. Verify selection/cancellation, screenshots,
+one confirmed click and short text, Stop, revocation via the sharing indicator, resize/close and
+mixed-DPI coordinates. Unlike native-window backends, do not expect focus/takeover or window-position
+verification; these are not exposed by the standard portal and the approval warns about that limitation.

@@ -212,8 +212,19 @@ jobs:
       # The Avalonia GUI is net8.0 with no Windows-specific target framework, so all three platforms
       # must build it. This is the only GUI *build* step: after P6 deleted the WPF version, Avalonia is
       # the only implementation the App has.
+      - name: Install Linux portal build dependencies
+        if: matrix.host == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libglib2.0-dev libpipewire-0.3-dev libspa-0.2-dev
+
       - name: Build App (GUI)
         run: dotnet build src/AxmolHub/AxmolHub.csproj -c ${{ env.CONFIGURATION }}
+
+      - name: Check portal pixel and input geometry
+        if: matrix.host == 'linux'
+        run: |
+          mkdir -p tmp
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/portal-frame-check.c -o tmp/portal-frame-check
+          ./tmp/portal-frame-check
 
       # The secret store is *OS-branched* product behaviour, and neither route on the Windows side can
       # reach the Linux path: the Checks project is net8.0-windows, and --verify-shell needs a display,
@@ -454,6 +465,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
+      - name: Install Linux portal build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libglib2.0-dev libpipewire-0.3-dev libspa-0.2-dev
 
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v6
@@ -526,6 +539,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
+      - name: Install Linux portal build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libglib2.0-dev libpipewire-0.3-dev libspa-0.2-dev
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v6
         with:

@@ -88,6 +88,8 @@ public sealed record WorkspaceToolScope(
     Func<string, Task<string>>? ApplyGrantedFile = null)
 {
     internal ComputerUseBridge? ComputerUse { get; init; }
+    internal PortalComputerBridge? PortalComputer { get; init; }
+    internal Func<bool>? PortalComputerApproved { get; init; }
     internal ComputerUseObservation? ComputerObservation { get; init; }
     internal Func<bool>? ComputerInputApproved { get; init; }
     /// <summary>Read the global search switch per call. Null means no local search host; <see cref="Web"/>

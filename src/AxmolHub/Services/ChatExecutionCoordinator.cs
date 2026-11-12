@@ -437,6 +437,18 @@ internal sealed partial class ChatExecutionCoordinator
                         : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
                 },
                 ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
+                PortalComputer = PortalComputerBridgeProvider is { } portalProvider ? portalProvider(conversationId)
+                    : LinuxWaylandRemoteDesktop.IsWayland && ScreenCaptureBridgeProvider is null
+                        ? LinuxWaylandRemoteDesktop.Shared.Bridge(conversationId) : null,
+                PortalComputerApproved = () =>
+                {
+                    var callId = ToolInvocation.CallId;
+                    bool Read() => Sessions.Registry.Peek(conversationId)?.Messages.Any(turn =>
+                        turn.ToolCallId == callId && turn.Role == ChatRoles.Assistant
+                        && turn.ApprovalComputerPortal && turn.ApprovalState == ChatApprovalStates.Approved) == true;
+                    return Dispatcher.UIThread.CheckAccess() ? Read()
+                        : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
+                },
                 // Read from the session's own record rather than the screen: a parked call answered after a
                 // restart acts on the directories its card was shown for. Normalized here, with the guards in
                 // hand, because the lists come out of a user-editable session file — a protected location that a
@@ -1777,6 +1789,7 @@ internal sealed partial class ChatExecutionCoordinator
     internal Action<HubPreferences>? PreferencesPersist { get; set; }
     internal Func<ScreenCaptureBridge?>? ScreenCaptureBridgeProvider { get; set; }
     internal Func<ComputerUseBridge?>? ComputerUseBridgeProvider { get; set; }
+    internal Func<string, PortalComputerBridge?>? PortalComputerBridgeProvider { get; set; }
     internal IReadOnlyList<string> TrustedTools => PreferencesProvider?.Invoke()?.TrustedTools ?? [];
     internal IReadOnlyList<ComputerApplication> TrustedComputerApps => PreferencesProvider?.Invoke()?.TrustedComputerApps ?? [];
 
@@ -1988,14 +2001,16 @@ internal sealed partial class ChatExecutionCoordinator
                 var verbGrant = ChatTools.GrantedCommandVerb(member.Name, member.ArgumentsJson, TrustedCommands);
                 var computerUse = ComputerUseGrants.IsComputerUseTool(member.Name);
                 var computerInput = ComputerUseGrants.IsInput(member.Name, member.ArgumentsJson);
-                var target = computerUse
+                var portal = computerUse && scope.Workspace.PortalComputer is not null;
+                var target = computerUse && !portal
                     ? ComputerUseGrants.ResolveTarget(scope.Workspace.Screen, member.Name, member.ArgumentsJson) : null;
                 var computerGrant = HasComputerGrant(conversation, target?.Application);
                 if (computerUse)
                     Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     {
                         var at = opened.IndexOfToolCall(member.CallId);
-                        if (at >= 0) opened.Messages[at] = opened.Messages[at] with { ApprovalComputerTarget = target, ApprovalComputerInput = computerInput };
+                        if (at >= 0) opened.Messages[at] = opened.Messages[at] with
+                        { ApprovalComputerTarget = target, ApprovalComputerInput = computerInput, ApprovalComputerPortal = portal };
                     });
                 var granted = computerGrant || verbGrant || (ToolApprovalPolicy.IsGrantable(risk)
                               && (sessionGrant || ToolTrust.Contains(TrustedTools, member.Name)));
@@ -2010,7 +2025,7 @@ internal sealed partial class ChatExecutionCoordinator
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
                 var parks = computerUse
-                    ? target is not null && (!computerGrant || computerInput)
+                    ? portal || target is not null && (!computerGrant || computerInput)
                     : !granted && !malformed
                       && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
                 return new CallVerdict(member, risk, asks, malformed, granted, sessionGrant, verbGrant, parks,
@@ -2191,15 +2206,16 @@ internal sealed partial class ChatExecutionCoordinator
         }
 
         var toolName = conversation.Messages[index].ToolName ?? "tool";
+        var portalComputer = conversation.Messages[index].ApprovalComputerPortal;
         var computerApp = conversation.Messages[index].ApprovalComputerTarget?.Application;
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
         var inputConfirmation = ComputerUseGrants.IsInput(toolName, conversation.Messages[index].ToolArguments);
-        if (inputConfirmation && alwaysAllow)
+        if ((inputConfirmation || portalComputer) && alwaysAllow)
         {
             refusalKey = "ChatApprovalGone";
             return false;
         }
-        if (isComputerUse && computerApp is null)
+        if (isComputerUse && computerApp is null && !portalComputer)
         {
             refusalKey = "ChatApprovalGone";
             return false;
@@ -2224,8 +2240,9 @@ internal sealed partial class ChatExecutionCoordinator
                 if ((inputConfirmation || ComputerUseGrants.IsInput(owed.ToolName, owed.ToolArguments))
                     && owed.ToolCallId != callId) continue;
                 var owedIsComputerUse = ComputerUseGrants.IsComputerUseTool(owed.ToolName);
-                if (owedIsComputerUse && (!isComputerUse
-                    || computerApp?.IsSameApplication(owed.ApprovalComputerTarget?.Application) != true)) continue;
+                if (owedIsComputerUse && (!isComputerUse || (portalComputer
+                    ? owed.ToolCallId != callId || !owed.ApprovalComputerPortal
+                    : owed.ApprovalComputerPortal || computerApp?.IsSameApplication(owed.ApprovalComputerTarget?.Application) != true))) continue;
                 if (isComputerUse && !owedIsComputerUse) continue;
                 // A question is not answered by an approval, same as on the refusal side above.
                 if (owed.ToolName == AskUserTool.ToolName) continue;
@@ -2247,18 +2264,18 @@ internal sealed partial class ChatExecutionCoordinator
             // was shown beside it.
             if (alwaysAllow && grantable && !ToolTrust.Contains(opened.AutoApprovedTools, toolName))
                 opened.AutoApprovedTools.Add(toolName);
-            if (isComputerUse && !alwaysAllow && !inputConfirmation)
+            if (isComputerUse && !portalComputer && !alwaysAllow && !inputConfirmation)
                 ComputerUseGrants.Add(opened.AllowedComputerApps, computerApp);
         });
         // Outside the session gate: the app-wide half is a different file, with a different owner, and the registry
         // lock must not be held while the settings store is written.
         if (alwaysAllow && grantable) TrustTool(toolName);
-        if (isComputerUse && alwaysAllow) TrustComputerApp(computerApp!);
+        if (isComputerUse && !portalComputer && alwaysAllow) TrustComputerApp(computerApp!);
         // The verb grant is app-level only: the session list above is the tool answer's, and a second per-session
         // list for verbs would be a second place for the two to disagree.
         if (verbKey is not null) TrustCommand(verbKey);
-        AuditApproval(conversationId, isComputerUse ? computerApp!.ExecutablePath : verbKey ?? toolName,
-            isComputerUse
+        AuditApproval(conversationId, portalComputer ? "Wayland portal session" : isComputerUse ? computerApp!.ExecutablePath : verbKey ?? toolName,
+            portalComputer ? "portal call individually confirmed" : isComputerUse
                 ? alwaysAllow ? "computer app always allowed" : "computer app allowed for conversation"
                 : alwaysAllow ? "always allowed" : "allowed");
         Changed?.Invoke();

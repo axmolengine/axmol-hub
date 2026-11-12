@@ -1118,6 +1118,7 @@ public sealed partial class ChatWorkspace : IDisposable
     internal int QueuedWakeCount { get => _execution.QueuedWakeCount; }
     internal Func<ScreenCaptureBridge?>? ScreenCaptureBridgeProvider { get => _execution.ScreenCaptureBridgeProvider; set => _execution.ScreenCaptureBridgeProvider = value; }
     internal Func<ComputerUseBridge?>? ComputerUseBridgeProvider { get => _execution.ComputerUseBridgeProvider; set => _execution.ComputerUseBridgeProvider = value; }
+    internal Func<string, PortalComputerBridge?>? PortalComputerBridgeProvider { get => _execution.PortalComputerBridgeProvider; set => _execution.PortalComputerBridgeProvider = value; }
 
     public bool TrustComputerApp(ComputerApplication app) => _execution.TrustComputerApp(app);
     /// <summary>Grants a tool for every session. The card's 「总是允许」 and the settings page both come through

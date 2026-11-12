@@ -238,6 +238,35 @@ internal static class AiImagesChecks
             || ComputerUseGrants.IsInput(ToolNames.ComputerUse, "{\"action\":\"screenshot\"}"))
             throw new Exception("Input confirmation classification failed.");
         Console.WriteLine("PASS: screenshot coordinates scale once and stale observations refuse input.");
+        // Portal consent is not an executable grant. Test the shared call boundary once, without a desktop.
+        var portalCalls = 0;
+        var portalApproved = false;
+        var portalTools = new WorkspaceTools(WorkspaceToolScope.Empty with
+        {
+            PortalComputerApproved = () => portalApproved,
+            PortalComputer = new PortalComputerBridge((request, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                portalCalls++;
+                return Task.FromResult(new PortalComputerResult(null, "fixture portal result"));
+            }),
+        });
+        var noConsent = await portalTools.CaptureScreenAsync("Fixture");
+        if (portalCalls != 0 || !noConsent.StartsWith("Refused:", StringComparison.Ordinal))
+            throw new Exception("A portal call bypassed its individual confirmation.");
+        portalApproved = true;
+        await portalTools.CaptureScreenAsync("Fixture", fullscreen: true);
+        await portalTools.CaptureScreenAsync("Fixture", process_id: 123);
+        if (portalCalls != 0) throw new Exception("Portal accepted whole-display or unverifiable PID targeting.");
+        if (await portalTools.CaptureScreenAsync("Fixture") != "fixture portal result" || portalCalls != 1)
+            throw new Exception("Confirmed portal capture did not reach the async host exactly once.");
+        try
+        {
+            await portalTools.ComputerUseAsync("Fixture", "type", text: "never sent", cancellationToken: cancelledInput.Token);
+            throw new Exception("Cancelled portal input was admitted.");
+        }
+        catch (OperationCanceledException) when (portalCalls == 1) { }
+        Console.WriteLine("PASS: portal calls require individual consent, refuse display/PID targeting and honor cancellation.");
         // ── Intake: a file a person hands in is first read by the rules, then stored by the rules ──
         // The composer's three entrances all end in the same two calls, so the rules they share are asserted here
         // rather than through a UI that cannot be automated: a file is measured before it is read, a picture is

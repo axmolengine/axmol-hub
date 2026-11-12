@@ -53,6 +53,7 @@ internal sealed class ShellApprovalsChecks
         var screenPeerSession = StartAgentSession(chat);
         var savedScreenProvider = chat.ScreenCaptureBridgeProvider;
         var savedComputerProvider = chat.ComputerUseBridgeProvider;
+        var savedPortalProvider = chat.PortalComputerBridgeProvider;
         // The same tier, reached through the sandbox's own tool rather than past it: a git write that moves a ref
         // starts in the directory the person chose and still belongs on the reach tier. This fixture is the one that
         // proves a grant on <c>run_command</c> does not open it — and it stays a fixture about *that* verb after the
@@ -1180,6 +1181,11 @@ internal sealed class ShellApprovalsChecks
             chat.TryResolveApproval(commitAskSession.Id, commitAskedCallId ?? "", approved: false, alwaysAllow: false, out _);
             await WaitForIdleAsync(chat);
 
+            await CheckPortalApprovalAsync();
+            screenClient.ToolName = ToolNames.CaptureScreen;
+            screenClient.Arguments = new() { ["target"] = "Axmol Hub Desktop Preview - Multi Monitor Session", ["fullscreen"] = false };
+            screenClient.CallsRemaining = 1;
+
             // A named screen target uses the dedicated application gate, independently of the ordinary tool tier.
             var previewApplication = new ComputerApplication(System.IO.Path.GetFullPath("fixtures/HubPreview"));
             var previewWindow = new CapturableWindow(42, "Axmol Hub Desktop Preview - Multi Monitor Session", 101, 800, 600)
@@ -1413,6 +1419,59 @@ internal sealed class ShellApprovalsChecks
                 $"批量恢复不重复询问已授权应用，也不遗失其调用（实际待批 {pendingForeign.Length}，执行 {capturedWindows.Count - beforeGrantedBatch}，未答 {screenPeerSession.HasUnansweredToolCall()}）");
             foreach (var pending in pendingForeign) DenyComputer(screenPeerSession, pending);
             await WaitForIdleAsync(chat);
+            // Declared locally so this independent permission boundary runs before native desktop fixtures.
+            async Task CheckPortalApprovalAsync()
+            {
+                chat.SetApprovalMode(screenSession.Id, ToolApprovalModes.Full);
+                var portalExecutions = 0;
+                chat.PortalComputerBridgeProvider = _ => new PortalComputerBridge((_, _) =>
+                {
+                    portalExecutions++;
+                    return Task.FromResult(new PortalComputerResult(null, "fixture portal observation"));
+                });
+                screenClient.Batch = [];
+                screenClient.ToolName = ToolNames.CaptureScreen;
+                screenClient.Arguments = new() { ["target"] = "Fixture portal window" };
+                screenClient.CallsRemaining = 1;
+                chat.OpenConversation(screenSession.Id);
+                chat.TryEnqueueSend(screenSession.Id, "Observe the portal window", null, out _);
+                var portalCallId = await WaitForPendingCallAsync(screenSession);
+                panel.Reload();
+                shell.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                var portalCard = panel.ApprovalCardForCheck;
+                var portalShown = portalCallId is not null && portalCard is not null
+                    && NamedDescendant<Button>(portalCard, "ComputerUseAlwaysAllowButton")?.IsVisible == false
+                    && NamedDescendant<TextBlock>(portalCard, "ComputerUseGrantDescription")?.Text
+                        ?.Contains(HubStrings.Get("PortalCaptureHint"), StringComparison.Ordinal) == true;
+                Check(portalShown && portalExecutions == 0
+                      && !chat.TryResolveApproval(screenSession.Id, portalCallId ?? "", approved: true, alwaysAllow: true, out _)
+                      && chat.TryResolveApproval(screenSession.Id, portalCallId ?? "", approved: true, alwaysAllow: false, out _),
+                    "Portal 复用现有审批卡，完全访问下仍逐次确认且没有永久授权");
+                await WaitForIdleAsync(chat);
+                var portalNoGrant = screenSession.Messages.LastOrDefault(turn => turn.ToolCallId == portalCallId
+                    && turn.Role == ChatRoles.Assistant) is { ApprovalComputerPortal: true, ApprovalComputerTarget: null };
+                Check(portalExecutions == 1 && portalNoGrant,
+                    "Portal 批准只执行一次，不伪造应用可执行路径身份");
+                screenClient.ToolName = ToolNames.ComputerUse;
+                screenClient.Arguments = new() { ["application"] = "Fixture portal window", ["action"] = "press_key",
+                    ["key"] = "Tab", ["frame_id"] = "fixture" };
+                screenClient.CallsRemaining = 1;
+                chat.TryEnqueueSend(screenSession.Id, "Confirm one portal input", null, out _);
+                var portalInputId = await WaitForPendingCallAsync(screenSession);
+                panel.Reload();
+                shell.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                var portalInputCard = panel.ApprovalCardForCheck;
+                Check(portalInputId is not null && portalInputCard is not null
+                      && NamedDescendant<TextBlock>(portalInputCard, "ComputerUseGrantDescription")?.Text
+                          ?.Contains(HubStrings.Get("PortalInputHint"), StringComparison.Ordinal) == true,
+                    "Portal 输入卡明确桌面会话范围和焦点不可验证风险");
+                if (portalInputId is not null)
+                    chat.TryResolveApproval(screenSession.Id, portalInputId, approved: false, alwaysAllow: false, out _);
+                await WaitForIdleAsync(chat);
+                chat.PortalComputerBridgeProvider = savedPortalProvider;
+            }
             chat.ScreenCaptureBridgeProvider = savedScreenProvider;
             chat.ComputerUseBridgeProvider = savedComputerProvider;
             Check(chat.TrustComputerApp(previewApplication)
@@ -2435,6 +2494,7 @@ internal sealed class ShellApprovalsChecks
             chat.PreferencesProvider = savedPreferencesProvider;
             chat.ScreenCaptureBridgeProvider = savedScreenProvider;
             chat.ComputerUseBridgeProvider = savedComputerProvider;
+            chat.PortalComputerBridgeProvider = savedPortalProvider;
             chat.WebFetchHttp = null;
             chat.ClientOverride = null;
             chat.IdleTimeout = savedIdleTimeout;

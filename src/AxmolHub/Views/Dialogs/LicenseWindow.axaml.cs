@@ -41,6 +41,7 @@ public partial class LicenseWindow : Window
         AppendFile(content, licensesDirectory, "Anthropic.txt", "Anthropic — Apache-2.0 license text");
         AppendFile(content, licensesDirectory, "ANGLE.txt", "ANGLE — BSD-3-Clause license text");
         AppendFile(content, licensesDirectory, "Velopack.txt", "Velopack — MIT license text");
+        AppendFile(content, licensesDirectory, "PipeWire.txt", "PipeWire / SPA headers — MIT license text");
         AppendFile(content, licensesDirectory, "SkiaSharp-THIRD-PARTY-NOTICES.txt",
             "SkiaSharp and HarfBuzzSharp native assets — bundled third-party notices and license texts");
         AppendFile(content, licensesDirectory, "Microsoft-THIRD-PARTY-NOTICES.txt",
