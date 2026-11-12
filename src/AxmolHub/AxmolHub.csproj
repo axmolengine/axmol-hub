@@ -2,7 +2,7 @@
   <PropertyGroup>
     <!-- WinExe only suppresses the console window on Windows; on macOS / Linux it is a plain executable. -->
     <OutputType>WinExe</OutputType>
-    <!-- Deliberately no -windows suffix: this project must build on all three platforms. Avalonia 12.1.5's
+    <!-- Deliberately no -windows suffix: this project must build on all three platforms. Avalonia 12.1.6's
          lib/ ships both net8.0 and net10.0, so aligning with Core / Cli on net8.0 is enough — no TFM bump.
          On 2026-10-09 we did bump to net8.0-windows10.0.19041.0 for in-process WinRT toasts, and reverted it
          the same day after measuring, for two reasons:
@@ -75,9 +75,9 @@
     <PackageReference Include="Svg.Controls.Avalonia" Version="12.0.0.1" />
     <PackageReference Include="Markdig" Version="0.40.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
-    <PackageReference Include="Avalonia" Version="12.1.5" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.1.5" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.5" />
+    <PackageReference Include="Avalonia" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
     <!-- DataGrid is not in Avalonia core and must be referenced separately. This is the conclusion of
          spike #2: pick the package over the built-in TableView added in 12.1 — the WPF version has 35
          DataGrid references (column definitions + cell templates), and DataGrid's API surface is the

@@ -108,7 +108,7 @@ P2–P6 期间仓库里曾**同时存在两个 GUI 项目**，CI 里也对应两
 
 ### 2.4 SDK 版本
 
-CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解析到的补丁编译器 ≥ 4.14，能跑 Avalonia 生成器）。开发机**推荐**装 .NET 10 SDK（README 已说明：`net8.0` 目标框架下 Avalonia 12.1.4 的源生成器是按编译器 4.14 编译的，SDK 8 只有够新的补丁才满足，而 Ubuntu `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx 只有编译器 4.8、源生成器不产出、报 `CS0103`；.NET 10 一定满足）。开发机装的是更高版本（例如只有 SDK 10）这本身是额外信号：能同时通过 10 与更高补丁说明没有依赖某个 SDK 补丁才有的行为。
+CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解析到的补丁编译器 ≥ 4.14，能跑 Avalonia 生成器）。开发机**推荐**装 .NET 10 SDK（README 已说明：`net8.0` 目标框架下 Avalonia 12.1.6 的源生成器是按编译器 4.14 编译的，SDK 8 只有够新的补丁才满足，而 Ubuntu `apt install dotnet-sdk-8.0` 拿到的 8.0.1xx 只有编译器 4.8、源生成器不产出、报 `CS0103`；.NET 10 一定满足）。开发机装的是更高版本（例如只有 SDK 10）这本身是额外信号：能同时通过 10 与更高补丁说明没有依赖某个 SDK 补丁才有的行为。
 
 **运行时地板是另一件事，而且已经声明。** `net8.0` 目标加上默认可滚前策略（`Minor`，不跨主版本）合起来是硬锁 8.0 运行时 —— 只有更高运行时的机器根本起不来（Ubuntu 26.04 起源里已无 `dotnet-runtime-8.0`；只装 `Microsoft.DotNet.SDK.10` 的 Windows 开发机同病）。`Directory.Build.props` 的 `RollForward=Major` 把它改成"地板 8.0"：装了 8.0 就按 8.0 跑，没装才退到最低的更高主版本。**CI runner 自带 8.0，所以 verify 矩阵实际跑的仍是 8.0 那条分支**；换成 `LatestMajor` 就会把它悄悄换成 10.0，这就是选 `Major` 的原因。`build.yml` 里另有一条 grep `"rollForward": "Major"` 的断言：它只防"属性被改名或挪走导致地板无声消失"，**证不了**真的能滚前 —— 后者只能在缺少 8.0 的机器上跑（2026-10-15 于 Ubuntu 26.04.1 实测，见 `docs/building-from-source.md` 的 Ubuntu 一节）。
 

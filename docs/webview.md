@@ -10,7 +10,7 @@ The existing `WorkspaceView` owns the tab strip, overflow and close menus. Brows
 
 ## Component and platform prerequisites
 
-`Avalonia.Controls.WebView` **12.1.1**, MIT (Copyright (c) 2026 AvaloniaUI OÜ), supports .NET 8 and depends on Avalonia >= 12.0.0. Hub remains on Avalonia 12.1.5. The package adds a managed binding assembly, not a bundled Chromium/CEF engine.
+`Avalonia.Controls.WebView` **12.1.2**, MIT (Copyright (c) 2026 AvaloniaUI OÜ), supports .NET 8 and depends on Avalonia >= 12.0.0. Hub remains on Avalonia 12.1.6. The package adds a managed binding assembly, not a bundled Chromium/CEF engine.
 
 | Platform | Selected adapter | Runtime |
 | --- | --- | --- |
