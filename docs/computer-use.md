@@ -60,10 +60,12 @@ rejection on an isolated D-Bus fixture. No NuGet dependency was added; the lock 
 A real capture on the local GNOME 50 / Ubuntu 26.04 host delivered a readable Hub image, but the
 initial helper exposed the full 5120×2880 canvas with black padding (4K monitor, 150% scale).
 After adding crop/transform processing, a real capture with the new build returned the complete
-2560×1760 Hub window without the large black padding. This verifies local window-crop output, not
-real input or every scaling configuration. KDE/wlroots capture, actual input, mixed-DPI coordinates,
-Stop during input and desktop-indicator revocation remain pending. A build or mocked reply is not
-proof of those cases.
+2560×1760 Hub window without the large black padding. With the focus-handoff build and English
+input mode, a confirmed automatic input changed an empty disposable GTK text field to exactly
+`hub-english-5831` (16 characters), visible in the immediately returned screenshot. This verifies
+one local ASCII text-input case, not every input mode or scaling configuration. KDE/wlroots capture,
+click precision, mixed-DPI coordinates, Stop during input and desktop-indicator revocation remain
+pending. A build or mocked reply is not proof of those cases.
 
 Local verification on the development Wayland host: Release build and linux-x64 self-contained
 publish succeeded; image/context checks passed; synthetic frame/coordinate/one-use isolation tests
@@ -73,6 +75,34 @@ fixture failed, followed by its missing-image exception. The workspace suite als
 Windows-path fixture (`C:\\Windows\\win.ini`) on Linux. These failures are retained, not waived;
 Windows/macOS native desktop regression and GNOME/KDE/wlroots acceptance remain pending.
 
+### Approval focus handoff and input observation
+
+Portal capture waits three seconds after selection/approval before taking the baseline. Each input
+also has a fixed three-second handoff after its individual approval. The card tells the user to
+Alt+Tab back to the intended app without changing the caret, selection or content. Hub never steals
+focus or excludes title-bar/focus-decoration pixels from verification. The entire captured image,
+dimensions and mapping revision must still match the baseline; mismatches refuse input.
+
+Hub checks its own activation state before delivery and between text code points, and refuses/stops
+if a Hub window is active. This is not verification of the selected app's focus: another app can be
+focused while Hub is inactive, so the portal-session warning still applies. Stop cancels the handoff;
+an expired or invalidated observation does not become valid merely because the handoff completed.
+
+After input, Hub takes up to three delayed fresh captures (200 ms between attempts) looking for a
+visible change. It never replays input. A change is not proof of application success; no visible
+change returns an explicit warning and no follow-up input frame_id, requiring a new screenshot.
+These are bounded sampling and activation guards, not a guarantee that an application finished
+processing its input. The initial delayed-render diagnosis was not established: the user clarified
+that the text in the later screenshot was manual input, not evidence of automatic delivery.
+With the handoff build, a subsequent attempt produced `和把uto9` instead of `hub-auto-7429`.
+Switching to English input mode then delivered the new phrase `hub-english-5831` exactly, as shown
+in the immediate post-input screenshot. This comparison supports an active-IME limitation of
+simulated keys; it does not establish a general keyboard-injection bug or verify arbitrary Unicode
+input. Use English/direct input for literal ASCII typing, maintain focus, and inspect the result.
+Hub does not switch input methods automatically. No Clipboard access is requested or changed;
+the Clipboard/paste draft was withdrawn because it added permissions and overwrite semantics
+outside the current input approval.
+
 ### Buffer geometry and fractional scaling
 
 The helper explicitly negotiates `SPA_META_VideoCrop`, `SPA_META_VideoTransform` and header metadata.
@@ -80,6 +110,14 @@ It extracts the validated crop, undoes the advertised buffer orientation, and en
 pixels. It honors chunk offsets and row stride; it never finds boundaries by scanning for black.
 A missing crop means the full negotiated frame, not a guessed DPI-dependent rectangle. Invalid,
 empty or out-of-bounds metadata is refused rather than replaced with a full-frame fallback.
+
+Stationary windows may stop sending buffers until their contents change. For each capture, the
+helper pauses the PipeWire receiver, waits for the pause acknowledgement, discards pre-pause pixels,
+then resumes and waits for a newly delivered buffer. It does not use the last cached picture as a
+fresh observation. Missing pause acknowledgement, resume failure or no resumed buffer still times
+out and closes the session. On the local GNOME 50 host this was tested with two consecutive captures
+of a stationary disposable GTK window. The later English-mode automatic input test also completed
+its pre-input verification and post-input capture without the original static-window timeout.
 
 The native helper retains crop origin, full buffer size and orientation alongside the image.
 Click and scroll positions are mapped back through that geometry to the stream's logical `size`,

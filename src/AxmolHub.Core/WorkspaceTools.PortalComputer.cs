@@ -4,7 +4,7 @@ namespace AxmolHub.Core;
 
 public sealed partial class WorkspaceTools
 {
-    [Description("Capture a named application window. On Wayland the user selects one window in the system portal; the supplied name is a request, not verified application identity. No whole-display capture or permanent portal grant.")]
+    [Description("Capture a named application window. On Wayland the user selects one window in the system portal; the supplied name is a request, not verified application identity. No whole-display capture or permanent portal grant. Capture waits 3 seconds after selection/approval so the user can switch back to the intended window for a consistent input baseline.")]
     public Task<string> CaptureScreenAsync(
         [Description("Requested window title. On Wayland the user must select the intended window in the system picker.")] string target = "",
         [Description("Whole-display capture is disabled.")] bool fullscreen = false,
@@ -17,7 +17,7 @@ public sealed partial class WorkspaceTools
         return ExecutePortalComputerAsync(new(target, "screenshot", null, 0, 0, null, null, 0), process_id, cancellationToken);
     }
 
-    [Description("Observe or control a window. Each input needs the latest frame_id and individual approval. On Wayland authorization covers a temporary portal session, not an executable. Keyboard events may reach the currently focused application; Hub cannot verify focus. Inspect the new frame after input.")]
+    [Description("Observe or control a window. Each input needs the latest frame_id and individual approval. On Wayland authorization covers a temporary portal session, not an executable. After approval there is a 3-second focus handoff: the user must Alt+Tab back to the intended app without changing content. Input is refused while Hub is active. Other application focus cannot be verified. Keyboard events may reach the currently focused application. Inspect the returned frame; no visible change does not prove failure or success. Never replay automatically.")]
     internal Task<string> ComputerUseAsync(
         [Description("Requested window. Wayland uses the user-selected portal stream and cannot verify its title or process.")] string application,
         [Description("screenshot, click, type, press_key, or scroll.")] string action,

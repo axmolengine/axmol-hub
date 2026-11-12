@@ -35,6 +35,7 @@ static struct hub_frame_geometry geometry;
 static gint64 deadline;
 static gboolean grabbing;
 static gint broken;
+static gint refresh_pending, refresh_paused;
 static GMainLoop *pending_loop;
 
 static gboolean stop(gpointer data)
@@ -151,6 +152,8 @@ static void session_closed(GDBusConnection *c, const gchar *sender, const gchar 
 static void state_changed(void *data, enum pw_stream_state old, enum pw_stream_state state, const char *error)
 {
     (void)data; (void)old; (void)error;
+    if (state == PW_STREAM_STATE_PAUSED && g_atomic_int_get(&refresh_pending))
+        g_atomic_int_set(&refresh_paused, TRUE);
     if (state == PW_STREAM_STATE_ERROR || state == PW_STREAM_STATE_UNCONNECTED) g_atomic_int_set(&broken, TRUE);
 }
 static void param_changed(void *data, uint32_t id, const struct spa_pod *param)
@@ -251,6 +254,20 @@ static gboolean tick(gpointer data)
     if (g_atomic_int_get(&broken)) { fail("stream-disconnected"); return G_SOURCE_REMOVE; }
     if (g_get_monotonic_time() > deadline) { fail(grabbing ? "frame-timeout" : "session-expired"); return G_SOURCE_REMOVE; }
     if (!grabbing) return G_SOURCE_CONTINUE;
+    if (g_atomic_int_compare_and_exchange(&refresh_paused, TRUE, FALSE)) {
+        pw_thread_loop_lock(pwloop);
+        pthread_mutex_lock(&pixels_lock);
+        // Discard everything delivered before the pause acknowledgement. Only a resumed-source buffer
+        // can satisfy this request, even if a frame raced with deactivation.
+        g_clear_pointer(&pixels, g_free);
+        requested_sequence = sequence;
+        pthread_mutex_unlock(&pixels_lock);
+        int result = pw_stream_set_active(stream, true);
+        pw_thread_loop_unlock(pwloop);
+        g_atomic_int_set(&refresh_pending, FALSE);
+        if (result < 0) { fail("stream-resume-failed"); return G_SOURCE_REMOVE; }
+    }
+    if (g_atomic_int_get(&refresh_pending)) return G_SOURCE_CONTINUE;
     uint32_t w = 0, h = 0, length = 0;
     uint64_t revision = 0;
     uint8_t *frame = NULL;
@@ -296,6 +313,17 @@ static gboolean command(gint fd, GIOCondition condition, gpointer data)
     if (!strcmp(line, "GRAB\n")) {
         pthread_mutex_lock(&pixels_lock); requested_sequence = sequence; pthread_mutex_unlock(&pixels_lock);
         grabbing = TRUE; deadline = g_get_monotonic_time() + 8 * G_USEC_PER_SEC;
+        // A damage-driven source need not send another buffer while a window is stationary.
+        // Pause/resume the receiver to request a new source frame, not a cached-image fallback.
+        pw_thread_loop_lock(pwloop);
+        g_atomic_int_set(&refresh_pending, TRUE);
+        if (pw_stream_get_state(stream, NULL) == PW_STREAM_STATE_PAUSED)
+            g_atomic_int_set(&refresh_paused, TRUE);
+        else if (pw_stream_set_active(stream, false) < 0) {
+            pw_thread_loop_unlock(pwloop);
+            fail("stream-pause-failed"); return G_SOURCE_REMOVE;
+        }
+        pw_thread_loop_unlock(pwloop);
         return G_SOURCE_CONTINUE;
     }
     if (!strcmp(line, "CLOSE\n")) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }

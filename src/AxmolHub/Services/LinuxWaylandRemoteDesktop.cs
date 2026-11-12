@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub;
@@ -18,6 +20,20 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
     private ulong _mappingRevision;
     private uint _devices;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Func<CancellationToken, Task<bool>> _hubIsActive;
+
+    internal LinuxWaylandRemoteDesktop(Func<CancellationToken, Task<bool>>? hubIsActive = null)
+        => _hubIsActive = hubIsActive ?? HubIsActiveAsync;
+
+    private static async Task<bool> HubIsActiveAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        // Only our own activation state is knowable without a compositor-specific API. Being inactive
+        // does NOT prove that the selected stream owns keyboard focus.
+        return await Dispatcher.UIThread.InvokeAsync(() =>
+            Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop
+            || desktop.Windows.Any(window => window.IsActive));
+    }
 
     internal static readonly LinuxWaylandRemoteDesktop Shared = new();
     internal static bool IsWayland => OperatingSystem.IsLinux()
@@ -30,6 +46,7 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
         if (!await _gate.WaitAsync(0, ct)) return new(null, "Refused: another portal operation is active.");
         try
         {
+            CapturedFrame? beforeInput = null;
             if (r.Action != "screenshot")
             {
                 if (_process is null || _process.HasExited || _conversation != conversation || _application != r.Application
@@ -37,6 +54,15 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                     || _generation != ComputerDesktop.Generation)
                     return new(null, "Refused: portal input needs the latest frame_id from this conversation and requested window. Observe again.");
                 _frameId = null;
+                // Approval activates Hub. Give the person a fixed, disclosed handoff interval, not a race
+                // against an immediate Notify call. Never focus another app or ignore decoration changes.
+                await Task.Delay(TimeSpan.FromSeconds(3), ct);
+                if (r.StillApproved?.Invoke() != true)
+                    return new(null, "Refused: portal confirmation was revoked during the focus handoff.");
+                if (await _hubIsActive(ct))
+                    return new(null, "Refused: Hub still has focus after the three-second handoff. Focus the intended app and request a fresh screenshot; no input was sent.");
+                if (Environment.TickCount64 - _recorded > 120_000 || _generation != ComputerDesktop.Generation)
+                    return new(null, "Refused: the observation expired or was invalidated during the handoff. Observe again.");
                 var previousMapping = _mappingRevision;
                 var previousLogicalWidth = _logicalWidth;
                 var previousLogicalHeight = _logicalHeight;
@@ -50,6 +76,12 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                 var requiredDevice = r.Action is "click" or "scroll" ? 2u : 1u;
                 if ((_devices & requiredDevice) == 0)
                     return new(null, "Refused: the user did not grant this input device. Observe before requesting a new session.");
+                if (await _hubIsActive(ct))
+                    return new(null, "Refused: focus returned to Hub during verification. No input was sent; observe again.");
+                ct.ThrowIfCancellationRequested();
+                if (r.StillApproved?.Invoke() != true)
+                    return new(null, "Refused: portal confirmation was revoked before delivery.");
+                beforeInput = current;
                 ComputerDesktop.Invalidate();
                 switch (r.Action)
                 {
@@ -75,6 +107,8 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                             ct.ThrowIfCancellationRequested();
                             if (r.StillApproved?.Invoke() != true)
                                 throw new InvalidOperationException("Portal confirmation was revoked during text input.");
+                            if (await _hubIsActive(ct))
+                                throw new InvalidOperationException("Focus returned to Hub during text input. Remaining characters were not sent.");
                             var sym = rune.Value <= 255 ? (uint)rune.Value : 0x01000000u | (uint)rune.Value;
                             if (rune.Value == '\n') sym = 0xff0d;
                             if (rune.Value == '\t') sym = 0xff09;
@@ -104,8 +138,21 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                 _conversation = conversation;
                 _application = r.Application;
             }
-            var frame = await GrabAsync(ct);
+            // Match the input handoff for observations too: the baseline should show the same activation
+            // appearance. Screenshots of Hub itself remain allowed, but input into active Hub is refused.
+            if (beforeInput is null) await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            var frame = beforeInput is null ? await GrabAsync(ct) : await ObserveAfterInputAsync(beforeInput, ct);
             if (frame.Stats.IsBlank()) { Close(); return new(null, "Refused: portal returned a blank frame. The sharing session was closed."); }
+            if (beforeInput is not null && SameContent(beforeInput, frame))
+            {
+                // No visible change is not evidence of failed delivery. Never replay input or authorize a
+                // follow-up from a potentially lagging render; an explicit screenshot must observe again.
+                _previous = null;
+                _frameId = null;
+                return new(frame, $"Input delivered ({r.Action}); no visible change observed in three delayed captures. "
+                    + "Application outcome is unverified; rendering may still be delayed. No input frame_id issued. "
+                    + "Request a new screenshot before further input; do not replay this action.");
+            }
             _previous = frame;
             _frameId = Guid.NewGuid().ToString("N");
             _recorded = Environment.TickCount64;
@@ -119,6 +166,21 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
             throw;
         }
         finally { _gate.Release(); }
+    }
+
+    private static bool SameContent(CapturedFrame a, CapturedFrame b)
+        => a.Width == b.Width && a.Height == b.Height && a.ContentFingerprint == b.ContentFingerprint;
+
+    private async Task<CapturedFrame> ObserveAfterInputAsync(CapturedFrame before, CancellationToken ct)
+    {
+        // Notify* acknowledges event delivery, not the target application's redraw. Give its event loop
+        // time, then take at most three fresh captures. A change still does not prove task success.
+        for (var attempt = 0; ; ++attempt)
+        {
+            await Task.Delay(200, ct);
+            var frame = await GrabAsync(ct);
+            if (frame.Stats.IsBlank() || !SameContent(before, frame) || attempt == 2) return frame;
+        }
     }
 
     private async Task<CapturedFrame> GrabAsync(CancellationToken ct)
