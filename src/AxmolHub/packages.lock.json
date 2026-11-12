@@ -33,9 +33,9 @@
       },
       "Avalonia.Controls.WebView": {
         "type": "Direct",
-        "requested": "[12.1.1, )",
-        "resolved": "12.1.1",
-        "contentHash": "QrzIoII70cs+dudUWCstZSYuY2Y6y5fh9aI943bEfre28TTJxPSypunlsekr/0xa5YHm9SDaywmn+Mj0lPOspg==",
+        "requested": "[12.1.2, )",
+        "resolved": "12.1.2",
+        "contentHash": "vMP8KLA0avtchWxqP/NAhU6MyTbJcExPGvkj8sW73cn7XvcCSW68XOWG6OEv/G34MAQIBlLChxbhKPJ1C6LWPw==",
         "dependencies": {
           "Avalonia": "12.0.0"
         }
@@ -611,7 +611,7 @@
         "type": "Project",
         "dependencies": {
           "Anthropic": "[13.6.0, )",
-          "AxmolHub.Core": "[0.26.0, )",
+          "AxmolHub.Core": "[0.27.2, )",
           "Microsoft.Extensions.AI": "[10.10.0, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.1, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",
