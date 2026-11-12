@@ -110,8 +110,8 @@
       },
       "Anthropic": {
         "type": "Transitive",
-        "resolved": "13.6.0",
-        "contentHash": "KPmqMhlU3Q2hOlslb4TgRMgQGDzf5v4qW/1bgE+D8dK5BbB1v3Ml40eMGmktmwm+5FPL9arV5MgXWoMBJLHniw==",
+        "resolved": "13.8.0",
+        "contentHash": "N1+grCB2HdfsFsuRVVjBgN0evlxtdvSBw26P7rvaVGHrqgnr00Llw8sPuOP8w8akKzcN5tOd+3I75iEeERJbEQ==",
         "dependencies": {
           "Microsoft.Extensions.AI.Abstractions": "10.5.1",
           "System.Net.ServerSentEvents": "10.0.1",
@@ -610,7 +610,7 @@
       "axmolhub.agent": {
         "type": "Project",
         "dependencies": {
-          "Anthropic": "[13.6.0, )",
+          "Anthropic": "[13.8.0, )",
           "AxmolHub.Core": "[0.27.2, )",
           "Microsoft.Extensions.AI": "[10.10.0, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.1, )",
