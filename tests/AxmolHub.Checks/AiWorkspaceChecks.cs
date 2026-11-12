@@ -58,8 +58,12 @@ internal static class AiWorkspaceChecks
         )
         {
             var verdict = WorkspacePaths.ResolveWrite(workspace, outside, guards).Verdict;
-            if (verdict != WorkspacePathVerdict.OutsideRoots)
-                throw new Exception($"'{outside}' was answered with {verdict} instead of OutsideRoots.");
+            // A foreign drive spelling is not an absolute path on Unix. It remains malformed and refused;
+            // only an absolute path this host can resolve should direct the caller to request a grant.
+            var expectedVerdict = Path.IsPathRooted(outside)
+                ? WorkspacePathVerdict.OutsideRoots : WorkspacePathVerdict.EscapesWorkspace;
+            if (verdict != expectedVerdict)
+                throw new Exception($"'{outside}' was answered with {verdict} instead of {expectedVerdict}.");
         }
 
         // Protected roots are refused identically by every verb that reads: the one rule no approval mode relaxes.
@@ -112,8 +116,12 @@ internal static class AiWorkspaceChecks
         }
 
         )
-            if (WorkspacePaths.ResolveDirectory(workspace, outside, guards).Verdict != WorkspacePathVerdict.OutsideRoots)
-                throw new Exception($"'{outside}' was not refused as outside every root by the directory verb.");
+        {
+            var expectedVerdict = Path.IsPathRooted(outside)
+                ? WorkspacePathVerdict.OutsideRoots : WorkspacePathVerdict.EscapesWorkspace;
+            if (WorkspacePaths.ResolveDirectory(workspace, outside, guards).Verdict != expectedVerdict)
+                throw new Exception($"'{outside}' did not produce {expectedVerdict} from the directory verb.");
+        }
         // An empty path is not a traversal bug, it is the question "what is in my project" — and both spellings of
         // the root have to answer it the same way, or the model learns to probe.
         if (!WorkspacePaths.ResolveDirectory(workspace, "", guards).IsAllowed || !WorkspacePaths.ResolveDirectory(workspace, ".", guards).IsAllowed || !WorkspacePaths.ResolveDirectory(workspace, "./", guards).IsAllowed)
@@ -307,7 +315,7 @@ internal static class AiWorkspaceChecks
         var windows = CommandShells.For("windows", pwshAvailable: false);
         // WindowsShell.PowerShell mixes separators on purpose (Path.Combine over a literal with '/'), so compare
         // normalized rather than asserting a spelling the Hub itself does not use.
-        if (!windows.Executable.Replace('/', '\\').EndsWith("\\WindowsPowerShell\\v1.0\\powershell.exe", StringComparison.OrdinalIgnoreCase) || !windows.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]))
+        if (!windows.Executable.Replace('/', '\\').EndsWith("WindowsPowerShell\\v1.0\\powershell.exe", StringComparison.OrdinalIgnoreCase) || !windows.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]))
             throw new Exception($"Windows did not get the system PowerShell with Bypass: {windows.Executable} {string.Join(' ', windows.PrefixArguments)}");
         var unixPwsh = CommandShells.For("linux", pwshAvailable: true);
         if (unixPwsh.Executable != "pwsh" || unixPwsh.PrefixArguments.Contains("-ExecutionPolicy") || !unixPwsh.PrefixArguments.SequenceEqual(["-NoProfile", "-NonInteractive", "-Command"]))
@@ -327,7 +335,7 @@ internal static class AiWorkspaceChecks
         // session never gets. Only assertable where pwsh actually is, which is why it is written as a one-way rule.
         if (OperatingSystem.IsWindows() && CommandShells.Resolve("pwsh.exe")is not null && CommandShells.Resolve("pwsh")is null)
             throw new Exception("The pwsh probe did not match the pwsh.exe that is installed on this machine.");
-        if (OperatingSystem.IsWindows() != windows.Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
+        if (!windows.IsPowerShell || !windows.Executable.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase))
             throw new Exception("The Windows tier is not the PowerShell that ships with Windows.");
         // ForCurrent is the same pure rule applied to the machine it runs on, and on Windows it must land on a
         // PowerShell tier — a host that falls through to /bin/sh would be handed a script it cannot parse.

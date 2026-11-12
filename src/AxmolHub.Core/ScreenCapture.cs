@@ -31,7 +31,12 @@ public sealed record CapturedFrame(byte[] Png, int Width, int Height, FrameStats
 /// </summary>
 public sealed record ScreenCaptureBridge(
     Func<IReadOnlyList<CapturableWindow>> Windows,
-    Func<CapturableWindow?, CapturedFrame?> Grab);
+    Func<CapturableWindow?, CapturedFrame?> Grab)
+{
+    // An injected host describes its own capability instead of probing the machine behind a fixture.
+    // Production bridges leave this unset and retain the actual platform's fail-closed capability probe.
+    internal CaptureBackend? Backend { get; init; }
+}
 
 internal sealed record ComputerActionRequest(string Action, int X = 0, int Y = 0, string? Text = null,
     string? Key = null, int Scroll = 0, CancellationToken Cancellation = default,

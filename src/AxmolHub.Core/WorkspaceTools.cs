@@ -974,7 +974,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (string.IsNullOrWhiteSpace(target))
             return "Refused: capture_screen needs the named application window so Hub can request its Computer Use grant. Use computer_use with application and action=screenshot.";
         // No path guard runs here: the dedicated app-grant gate decides whether this named window can be read.
-        var backend = CaptureBackends.ForCurrent();
+        var backend = context.Screen?.Backend ?? CaptureBackends.ForCurrent();
         if (!backend.Available) return backend.Refusal!;
         if (context.Screen is not { } host)
             return $"Refused: this build has no capture host for {backend.Label}. Ask the user for a screenshot "
@@ -1082,7 +1082,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         using var lease = ComputerDesktop.TryEnter();
         if (lease is null) return "Refused: another conversation is using the desktop. Capture again after it finishes.";
         if (normalizedAction == "screenshot") return CaptureScreenCore(app, process_id: process_id);
-        var backend = CaptureBackends.ForCurrent();
+        var backend = context.Screen?.Backend ?? CaptureBackends.ForCurrent();
         if (!backend.Available) return backend.Refusal!;
         if (context.Screen is not { } host)
             return $"Refused: Computer Use cannot enumerate or capture application windows on this {backend.Label} build. Ask the user to operate the app manually.";

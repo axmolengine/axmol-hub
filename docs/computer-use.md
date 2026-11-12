@@ -63,17 +63,32 @@ After adding crop/transform processing, a real capture with the new build return
 2560×1760 Hub window without the large black padding. With the focus-handoff build and English
 input mode, a confirmed automatic input changed an empty disposable GTK text field to exactly
 `hub-english-5831` (16 characters), visible in the immediately returned screenshot. This verifies
-one local ASCII text-input case, not every input mode or scaling configuration. KDE/wlroots capture,
-click precision, mixed-DPI coordinates, Stop during input and desktop-indicator revocation remain
-pending. A build or mocked reply is not proof of those cases.
+one local ASCII text-input case, not every input mode or scaling configuration. A separate disposable
+controls window also verified one button-center click (counter 0 to 1), Tab moving focus to an entry,
+and a three-step downward scroll (top visible row 01 to 05). A deliberately confirmed Tab while
+remaining in Hub was refused by the three-second Hub-active guard before delivery. These are single
+local cases, not full coordinate coverage. KDE/wlroots capture, mixed-DPI coordinates, resize/close
+invalidation, Stop during input and desktop-indicator revocation remain pending.
 
 Local verification on the development Wayland host: Release build and linux-x64 self-contained
 publish succeeded; image/context checks passed; synthetic frame/coordinate/one-use isolation tests
-and four private-bus lifecycle cases passed. The full shell suite did **not** pass (694/702): all
-three new portal approval checks passed, but six text-selection assertions and the native-window
-fixture failed, followed by its missing-image exception. The workspace suite also failed on its
-Windows-path fixture (`C:\\Windows\\win.ini`) on Linux. These failures are retained, not waived;
-Windows/macOS native desktop regression and GNOME/KDE/wlroots acceptance remain pending.
+and four private-bus lifecycle cases passed. The native-window approval fixture now explicitly
+supplies its offline backend rather than probing the real desktop, so it runs on Wayland too; real
+production bridges retain their platform probe. Workspace assertions now distinguish foreign drive
+spellings from host-rooted paths and assert the Windows shell selector independently of the current
+OS. The workspace suite passes with no changes to production path guards or shell selection.
+
+The latest full shell run reached the end: **1758/1765 passed**, still a failed suite. Portal and
+native-window approval/input fixtures pass. Six text-selection/copy assertions and one usage-strip
+spacing assertion still fail; these are retained, not waived. Windows/macOS native desktop regression
+and GNOME/KDE/wlroots acceptance remain pending.
+
+Local `installer/Build.ps1 -Runtime linux-x64` packaging succeeded with the pinned, digest-verified
+Velopack tool. The AppImage was extracted; its executable helper matches the published helper by
+hash and the PipeWire license is present. The extracted AppRun completed isolated `--smoke` startup
+with a nonblank image. The AppImage runtime also completed `--appimage-extract-and-run --smoke`
+with HOME/XDG directories and application data/settings isolated under the workspace. This is
+package-content/startup verification, not a portal-input test of the AppImage itself. The local package skipped optional partner-ID injection because none was configured.
 
 ### Approval focus handoff and input observation
 

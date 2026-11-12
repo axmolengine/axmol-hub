@@ -330,7 +330,7 @@ public static class ToolPreviews
     {
         if (scope.PortalComputer is not null)
             return "capture_screen · temporary Wayland portal session · user selects one window; title and process identity are unverified · no permanent grant";
-        var backend = CaptureBackends.ForCurrent();
+        var backend = scope.Screen?.Backend ?? CaptureBackends.ForCurrent();
         if (!backend.Available) return $"capture_screen · {backend.Refusal}";
         var target = Text(arguments, "target");
         var processId = Integer(arguments, "process_id");

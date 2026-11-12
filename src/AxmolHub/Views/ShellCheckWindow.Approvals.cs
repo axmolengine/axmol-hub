@@ -1200,7 +1200,7 @@ internal sealed class ShellApprovalsChecks
             {
                 capturedWindows.Add(window);
                 return fixtureFrame;
-            });
+            }) { Backend = new CaptureBackend("fixture", "offline window fixture") };
             chat.ComputerUseBridgeProvider = () => new ComputerUseBridge((window, request) =>
             {
                 request.Cancellation.ThrowIfCancellationRequested();
