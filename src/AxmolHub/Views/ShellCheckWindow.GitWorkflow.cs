@@ -306,18 +306,24 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             var partialSent = chat.TryEnqueueSend(partial.Id, "@hub commit+push", null, out var partialRefusal);
             // Local Git work has no model run slot. Wait for its terminal notice before reading the
             // handoff or restoring pushurl; restoring it while Git still runs turns failure into success.
+            // The notice and the Agent's retry reply are two independent UI appends — the Git action starts
+            // the fallback run from inside itself — so they land in either order. Only the notice's arrival
+            // is ordered here, never its position: requiring it last made this check race the scripted reply.
             var partialFinished = await WaitForConditionAsync(() =>
-                chat.StoredCopyForCheck(partial.Id)?.Messages.LastOrDefault()?.Role == ChatRoles.Notice,
+                chat.StoredCopyForCheck(partial.Id)?.Messages.Any(turn =>
+                    turn.Role == ChatRoles.Notice && turn.Text == HubStrings.Get("CommitPushPartialFailure")) == true,
                 TimeSpan.FromSeconds(20));
             await WaitForIdleAsync(chat);
             var partialCopy = chat.StoredCopyForCheck(partial.Id);
             var handoff = partialCopy?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.User);
+            var handoffs = partialCopy?.Messages.Count(turn => turn.Role == ChatRoles.User && turn.IsGitOperationFallback) ?? 0;
             var retained = (await Git("rev-parse", "HEAD")).Output;
-            check(partialSent && partialFinished && partialRequests == 1 && handoff?.Text == HubStrings.Get("PushSummaryAction")
+            check(partialSent && partialFinished && partialRequests == 1 && handoffs == 1
+                  && handoff?.Text == HubStrings.Get("PushSummaryAction")
                   && handoff.IsGitOperationFallback && retained != afterLocalHead
                   && (await Git("status", "--porcelain")).Output.Length == 0,
                 "提交并推送部分成功后只用简单推送消息交接一次，保留本地提交（请求=" + partialRequests
-                + "，消息=" + handoff?.Text + "，完成=" + partialFinished + "，拒绝=" + partialRefusal
+                + "，交接=" + handoffs + "，消息=" + handoff?.Text + "，完成=" + partialFinished + "，拒绝=" + partialRefusal
                 + "，结果=" + partialCopy?.Messages.LastOrDefault()?.Text + "）");
             await Git("config", "--unset", "remote.origin.pushurl");
             await Git("push");
