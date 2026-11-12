@@ -70,7 +70,7 @@ RELEASE PACKAGE INVENTORY
 • System.Memory.Data 10.0.9 — MIT
 • System.Net.ServerSentEvents 10.0.11 — MIT
 • System.Numerics.Tensors 10.0.12 — MIT
-• System.Security.Cryptography.ProtectedData 10.0.12 — MIT
+• System.Security.Cryptography.ProtectedData 10.0.15 — MIT
 • System.Text.Encodings.Web 10.0.12 — MIT
 • System.Text.Json 10.0.12 — MIT
 • System.Threading.Channels 10.0.12 — MIT
