@@ -14,7 +14,7 @@ RELEASE PACKAGE INVENTORY
 • Avalonia.Themes.Fluent 12.1.6 — MIT
 • Markdig 1.6.0 — BSD-2-Clause
 • Markdown.Avalonia 12.0.2 — MIT
-• Svg.Controls.Avalonia 12.0.0.1 — MIT
+• Svg.Controls.Avalonia 12.0.0.17 — MIT
 • Velopack 1.2.161 — MIT (see the Velopack license text in Velopack.txt)
 • Avalonia.Angle.Windows.Natives 2.1.27548.20260419 — BSD-3-Clause variant (see ANGLE.txt)
 • Avalonia.AvaloniaEdit 12.0.0 — MIT
@@ -55,15 +55,15 @@ RELEASE PACKAGE INVENTORY
 • Microsoft.Extensions.Primitives 10.0.12 — MIT
 • Microsoft.IO.RecyclableMemoryStream 3.0.1 — MIT
 • OpenAI 2.14.0 — MIT
-• ShimSkiaSharp 4.1.0 — MIT
+• ShimSkiaSharp 5.2.3 — MIT
 • SkiaSharp 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.Linux 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.macOS 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.WebAssembly 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.Win32 3.119.4 — MIT (the package license; third-party notices are listed separately below)
-• Svg.Custom 4.1.0 — MS-PL
-• Svg.Model 4.1.0 — MIT
-• Svg.SceneGraph 4.1.0 — MIT
+• Svg.Custom 5.2.3 — MS-PL
+• Svg.Model 5.2.3 — MIT
+• Svg.SceneGraph 5.2.3 — MIT
 • System.ClientModel 1.15.0 — MIT
 • System.Diagnostics.DiagnosticSource 10.0.12 — MIT
 • System.IO.Pipelines 10.0.12 — MIT

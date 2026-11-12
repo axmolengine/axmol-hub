@@ -71,8 +71,12 @@
     <!-- The SVG cover on a file attachment chip. It already arrives transitively through Markdown.Avalonia.Svg,
          and a package Hub writes code against is declared here rather than leaned on through someone else's
          dependency: the day that plugin drops it, a transitive-only reference becomes a compile error nobody
-         links to this decision. Namespace Avalonia.Svg: SvgImage is an IImage, so it goes into Image.Source. -->
-    <PackageReference Include="Svg.Controls.Avalonia" Version="12.0.0.1" />
+         links to this decision. Namespace Avalonia.Svg: SvgImage is an IImage, so it goes into Image.Source.
+         The pin also decides the Svg.Skia chain: 12.0.0.17 asks for Svg.Model / Svg.SceneGraph 5.2.3, while
+         Markdown.Avalonia.Svg's own 12.0.0.1 would have kept them at 4.1.0. That chain does not reach
+         SkiaSharp — Svg.Model draws through ShimSkiaSharp — so SkiaSharp stays at the 3.119.4 Avalonia.Skia
+         pins and the per-RID native-asset set is untouched, which is the thing an SVG bump used to threaten. -->
+    <PackageReference Include="Svg.Controls.Avalonia" Version="12.0.0.17" />
     <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <PackageReference Include="Avalonia" Version="12.1.6" />
