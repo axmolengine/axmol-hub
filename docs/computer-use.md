@@ -67,8 +67,23 @@ one local ASCII text-input case, not every input mode or scaling configuration. 
 controls window also verified one button-center click (counter 0 to 1), Tab moving focus to an entry,
 and a three-step downward scroll (top visible row 01 to 05). A deliberately confirmed Tab while
 remaining in Hub was refused by the three-second Hub-active guard before delivery. These are single
-local cases, not full coordinate coverage. KDE/wlroots capture, mixed-DPI coordinates, resize/close
-invalidation, Stop during input and desktop-indicator revocation remain pending.
+local cases, not full coordinate coverage.
+
+Local boundary checks also exercised a disposable window resizing from 1504×1078 to 1984×1418:
+input with the pre-resize frame_id was refused. Closing that window caused pre-input capture to
+time out and sharing to stop; no input or automatic reselection occurred. This is bounded safe
+refusal, not immediate window-close detection. After a fresh session was stopped through GNOME's
+sharing indicator, its helper exited and a confirmed input using the old frame_id was refused,
+without opening another picker or starting a helper; the live fixture's key log stayed empty.
+
+The user confirmed that approving and immediately pressing Hub's Stop behaved as expected. The
+subsequent fixture check found no recorded keys and no portal helper. The pending capture was
+reported as not executed/superseded; this verifies the observed cancelled operation, not interruption
+halfway through a character sequence. No further input was attempted or replayed.
+
+These cases complete the agreed local MVP acceptance. Multi-monitor/mixed-DPI and other desktops
+are outside that scope and remain unverified, not claimed as tested. The full shell suite failures
+below remain separate outstanding issues, not a green full-suite result.
 
 Local verification on the development Wayland host: Release build and linux-x64 self-contained
 publish succeeded; image/context checks passed; synthetic frame/coordinate/one-use isolation tests
