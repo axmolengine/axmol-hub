@@ -13,7 +13,7 @@ RELEASE PACKAGE INVENTORY
 • Avalonia.Desktop 12.1.6 — MIT
 • Avalonia.Themes.Fluent 12.1.6 — MIT
 • Markdig 0.40.0 — BSD-2-Clause
-• Markdown.Avalonia 12.0.0-a3 — MIT
+• Markdown.Avalonia 12.0.2 — MIT
 • Svg.Controls.Avalonia 12.0.0.1 — MIT
 • Velopack 1.2.161 — MIT (see the Velopack license text in Velopack.txt)
 • Avalonia.Angle.Windows.Natives 2.1.27548.20260419 — BSD-3-Clause variant (see ANGLE.txt)
@@ -27,8 +27,8 @@ RELEASE PACKAGE INVENTORY
 • Avalonia.Skia 12.1.6 — MIT
 • Avalonia.Win32 12.1.6 — MIT
 • Avalonia.X11 12.1.6 — MIT
-• ColorDocument.Avalonia 12.0.0-a3 — MIT
-• ColorTextBlock.Avalonia 12.0.0-a3 — MIT
+• ColorDocument.Avalonia 12.0.2 — MIT
+• ColorTextBlock.Avalonia 12.0.2 — MIT
 • ExCSS 4.3.1 — MIT
 • HarfBuzzSharp 8.3.1.3 — MIT
 • HarfBuzzSharp.NativeAssets.Linux 8.3.1.3 — MIT
@@ -36,10 +36,10 @@ RELEASE PACKAGE INVENTORY
 • HarfBuzzSharp.NativeAssets.WebAssembly 8.3.1.3 — MIT
 • HarfBuzzSharp.NativeAssets.Win32 8.3.1.3 — MIT
 • HtmlAgilityPack 1.11.42 — MIT (upstream LICENSE; the nuspec has no SPDX expression)
-• Markdown.Avalonia.Html 12.0.0-a3 — MIT
-• Markdown.Avalonia.Svg 12.0.0-a3 — MIT
-• Markdown.Avalonia.SyntaxHigh 12.0.0-a3 — MIT
-• Markdown.Avalonia.Tight 12.0.0-a3 — MIT
+• Markdown.Avalonia.Html 12.0.2 — MIT
+• Markdown.Avalonia.Svg 12.0.2 — MIT
+• Markdown.Avalonia.SyntaxHigh 12.0.2 — MIT
+• Markdown.Avalonia.Tight 12.0.2 — MIT
 • MicroCom.Runtime 0.11.6 — MIT
 • Microsoft.Extensions.AI 10.10.0 — MIT
 • Microsoft.Extensions.AI.Abstractions 10.10.1 — MIT
