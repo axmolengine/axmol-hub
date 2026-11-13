@@ -57,26 +57,55 @@ internal sealed class ShellInlineCodeChecks
                 var code = block.GetLogicalDescendants().OfType<ReadingCode>().Single();
                 var geometry = code.Geometries.Single();
                 var pointer = new Pointer(Pointer.GetNextFreeId(), PointerType.Mouse, true);
-                Point At(double character)
+                double OffsetFor(double character)
                 {
                     geometry = code.Geometries.Single();
                     // Stay just inside the glyph, not on an exact floating-point caret boundary.
-                    var x = character > 10 ? geometry.Width + 5 : geometry.Width * (character + 0.1) / 10;
-                    return (block.TranslatePoint(default, window) ?? default)
-                        + new Vector(geometry.Left + x, geometry.Top + geometry.Height / 2);
+                    return character > 10 ? geometry.Width + 5 : geometry.Width * (character + 0.1) / 10;
                 }
-                void Drag(double from, double to)
+                Point AtOffset(double offset)
                 {
-                    block.RaiseEvent(new PointerPressedEventArgs(block, pointer, window, At(from), 0,
+                    geometry = code.Geometries.Single();
+                    return (block.TranslatePoint(default, window) ?? default)
+                        + new Vector(geometry.Left + offset, geometry.Top + geometry.Height / 2);
+                }
+                void DragPoints(Point from, Point to)
+                {
+                    block.RaiseEvent(new PointerPressedEventArgs(block, pointer, window, from, 0,
                         new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
                         KeyModifiers.None, 1));
-                    block.RaiseEvent(new PointerEventArgs(InputElement.PointerMovedEvent, block, pointer, window, At(to), 0,
+                    block.RaiseEvent(new PointerEventArgs(InputElement.PointerMovedEvent, block, pointer, window, to, 0,
                         new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.Other), KeyModifiers.None));
-                    block.RaiseEvent(new PointerReleasedEventArgs(block, pointer, window, At(to), 0,
+                    block.RaiseEvent(new PointerReleasedEventArgs(block, pointer, window, to, 0,
                         new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
                         KeyModifiers.None, MouseButton.Left));
                     Dispatcher.UIThread.RunJobs();
                     window.UpdateLayout();
+                }
+                void Drag(double from, double to) => DragPoints(AtOffset(OffsetFor(from)), AtOffset(OffsetFor(to)));
+                // The prose immediately before the code is one character — the space between "Before" and the run —
+                // and where that character sits is a property of the font stack, not of the run's width. Measuring
+                // the anchor as a fraction of the width put it inside the 'e' of "Before" ("e Conf") as soon as the
+                // space rendered narrower than the guess. Ask the block's own hit test which index a point names,
+                // and bisect for the space, rather than encoding a pixel distance that only holds on one stack.
+                int AnchorIndexAt(double offset)
+                {
+                    var start = AtOffset(offset);
+                    DragPoints(start, start + new Vector(0.5, 0));
+                    return block.Selection?.From ?? -1;
+                }
+                double ProseBeforeCode()
+                {
+                    const int spaceIndex = 6;
+                    double low = -24, high = 1;
+                    // No space glyph to aim at (or nothing before it): keep the old guess and let the assertion say so.
+                    if (AnchorIndexAt(low) >= spaceIndex || AnchorIndexAt(high) < spaceIndex) return OffsetFor(-0.5);
+                    for (var step = 0; step < 20; step++)
+                    {
+                        var middle = (low + high) / 2;
+                        if (AnchorIndexAt(middle) >= spaceIndex) high = middle; else low = middle;
+                    }
+                    return (low + high) / 2;
                 }
                 string Selected() => MarkdownMessageRenderer.SelectionText(viewer);
                 // The key as a keyboard raises it, on the document itself. Which handler answers, and whether the
@@ -123,11 +152,12 @@ internal sealed class ShellInlineCodeChecks
                     name + "：行内代码的静态底色仍然来自主题令牌");
                 Drag(7, 2);
                 Check(Selected() == "nfigu", name + "：反向内部拖选也保留准确范围");
-                Drag(-0.5, 4);
+                var proseAnchor = ProseBeforeCode();
+                DragPoints(AtOffset(proseAnchor), AtOffset(OffsetFor(4)));
                 Check(Selected() == " Conf", name + "：从正文拖入代码时不扩成整块（实际「" + Selected() + "」）");
                 Drag(4, 10.5);
                 Check(Selected() == "igured ", name + "：从代码拖出正文时保留准确范围（实际「" + Selected() + "」）");
-                Drag(-0.5, 10.5);
+                DragPoints(AtOffset(proseAnchor), AtOffset(OffsetFor(10.5)));
                 Check(Selected() == " Configured ", name + "：跨代码复制的文本包含完整代码");
 
                 // A shortcut travels the route that starts at the focused element, so the document has to hold the
