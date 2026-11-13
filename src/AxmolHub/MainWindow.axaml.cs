@@ -1672,9 +1672,26 @@ public partial class MainWindow : Window
         FlyoutBase.ShowAttachedFlyout(LogActionsButton);
     }
 
-    private MenuFlyout BuildLogActionsMenu()
+    private MenuFlyout BuildLogActionsMenu(bool includeSelectionCopy = false)
     {
-        var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
+        var menu = new MenuFlyout
+        {
+            Placement = includeSelectionCopy ? PlacementMode.Pointer : PlacementMode.BottomEdgeAlignedRight,
+        };
+        if (includeSelectionCopy)
+        {
+            var selectionCopy = new MenuItem
+            {
+                Header = HubStrings.Get("CopyMessage"),
+                InputGesture = new KeyGesture(Key.C,
+                    OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control),
+            };
+            selectionCopy.Click += (_, _) => ActivityLog.Copy();
+            menu.Opened += (_, _) => selectionCopy.IsEnabled = ActivityLog.CanCopy;
+            menu.Items.Add(selectionCopy);
+            menu.Items.Add(new Separator());
+        }
+
         var copy = new MenuItem { Header = HubStrings.Get("CopyError") };
         copy.Click += async (_, _) =>
         {
@@ -2820,6 +2837,8 @@ public partial class MainWindow : Window
         ToolTip.SetTip(SettingsButton, HubStrings.Get("Settings"));
         SyncNavigationView();
         ToolTip.SetTip(LogActionsButton, HubStrings.Get("LogActions"));
+        // Attach to the text box so its selection survives the context menu taking focus.
+        ActivityLog.ContextFlyout = BuildLogActionsMenu(includeSelectionCopy: true);
         // The update icon's hint and accessible name are state-dependent, so the same renderer owns their
         // language switch rather than capturing a sentence at construction time.
         SyncUpdateAction();
