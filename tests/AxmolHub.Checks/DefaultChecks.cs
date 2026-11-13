@@ -45,7 +45,6 @@ internal static class DefaultChecks
         var auxiliary = new PlatformBuildService(runner).CreateEnvironment(engine, BuildTargets.Get("wasm32"));
         Check(auxiliary["AX_ROOT"] == engine.Path && auxiliary["EMSDK"] == Path.Combine(engineTools, "emsdk") && auxiliary["PATH"].Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).All(part => !part.StartsWith(managedTools, StringComparison.OrdinalIgnoreCase)), "Auxiliary environment is rooted at the engine tree, not at a Hub-managed tools root");
         Check(auxiliary.ContainsKey("HOME") && auxiliary.ContainsKey("TEMP"), "Auxiliary environment always exposes HOME/TEMP for child tools");
-        var wrapper = Path.GetFullPath("src/AxmolHub.Core/Scripts/Invoke-Axmol.ps1");
         var service = new ProjectService(runner, EngineCli(runner), new EnginePrebuiltState(root));
         await Reject<ArgumentException>(() => service.CreateAsync("bad;name", root, engine), "Unsafe template name rejected");
         var parent = Path.Combine(root, "projects " + Guid.NewGuid().ToString("N"));

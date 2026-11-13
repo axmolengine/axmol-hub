@@ -62,7 +62,7 @@ public sealed record HostShellStatus(HostShellState State, string? Executable = 
 /// Why Hub needs the answer at all: the engine's <c>setup.ps1</c> begins with
 /// `if ! command -v pwsh; then $scriptdir/1k/pwshi.sh; fi; pwsh setup.ps1`, i.e. the engine treats pwsh as a
 /// <b>host prerequisite that must already exist</b>. But Hub starts setup through
-/// `pwsh -File Invoke-AxmolSetup.ps1` (<see cref="EngineCommandLine"/>), so that bash header never runs on
+/// `pwsh -File setup.ps1` (<see cref="EngineCommandLine"/>), so that bash header never runs on
 /// Hub's path — on a host without pwsh the process cannot even be created. Hub therefore has to answer the
 /// question itself instead of waiting for a script that never gets to speak.
 ///

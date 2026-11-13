@@ -87,7 +87,7 @@ public sealed class EngineSetupService(EngineCommandLine commandLine)
         {
             // setup.ps1 is a bash/PowerShell polyglot whose header reads
             // `if ! command -v pwsh; then $scriptdir/1k/pwshi.sh; fi; pwsh setup.ps1` — but Hub starts it as
-            // `pwsh -File Invoke-AxmolSetup.ps1` (EngineCommandLine), so that header never runs here and the
+            // `pwsh -File setup.ps1` (EngineCommandLine), so that header never runs here and the
             // script cannot self-heal. On a Unix host without pwsh the process simply cannot be created, and no
             // engine text containing "pwshi.sh" is ever printed: the marker-based Classify() below would have
             // nothing to see. Naming the cause at the only point where it is still observable is what turns

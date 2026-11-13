@@ -3,9 +3,9 @@ namespace AxmolHub.Core;
 /// <summary>
 /// The **single entry point** from the Hub to the engine command line.
 ///
-/// Invocation rule: <c>axmol &lt;subcmd&gt; args</c>. Actual forwarding goes through
-/// <c>Invoke-Axmol.ps1</c>, distributed alongside the exe; it only sets <c>AX_ROOT</c> and then hands the
-/// arguments to <c>&lt;engine&gt;/tools/cmdline/axmol.ps1</c>.
+/// Invocation rule: <c>axmol &lt;subcmd&gt; args</c>. Hub invokes the engine's own
+/// <c>tools/cmdline/axmol.ps1</c> directly. Ordinary arguments stay separate in the process
+/// argument list; colon-bearing dash values use an encoded inline command to survive pwsh's CLI parser.
 ///
 /// The key difference from before the rework: **no longer builds its own build environment**. Previously the
 /// Hub hand-assembled <c>INCLUDE</c>/<c>LIB</c>/<c>PATH</c> in C# (standing in for vcvars) and pinned the
@@ -13,22 +13,20 @@ namespace AxmolHub.Core;
 /// by the engine's own setup/1kiss — both system VS and the engine tree's <c>tools/external</c> are located by
 /// the engine. The Hub only maps arguments and judges results.
 /// </summary>
-public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
+public sealed class EngineCommandLine(ProcessRunner runner)
 {
-    /// <summary>Uses the host PowerShell executable discovered by the shared host-shell probe.</summary>
-    private static string Shell
+    /// <summary>Use the engine's supported pwsh version on Windows, never fall back to Windows PowerShell 5.1.</summary>
+    private async Task<string> ShellAsync(CancellationToken cancellation)
     {
-        get
-        {
-            if (OperatingSystem.IsWindows()) return WindowsShell.PowerShell;
-            var status = HostPowerShell.Probe();
-            return status.Executable
-                ?? throw new InvalidOperationException("PowerShell 7 (pwsh) was not found. Install PowerShell 7 or add its executable to PATH, then retry.");
-        }
+        var status = HostPowerShell.Probe();
+        if (OperatingSystem.IsWindows() && status.State == HostShellState.Unknown)
+            status = await HostPowerShell.ProbeVersionAsync(runner, status, cancellation).ConfigureAwait(false);
+        if (status.Executable is null || (OperatingSystem.IsWindows() && status.State != HostShellState.Ready))
+            throw new InvalidOperationException($"PowerShell 7 (pwsh {HostPowerShell.MinimumVersion} or later) is required to run Axmol. {status.Describe()}");
+        return status.Executable;
     }
 
-    /// <summary>The environment-preparation wrapper script, distributed in the same directory as the <c>axmol</c> wrapper.</summary>
-    private string SetupWrapper => Path.Combine(Path.GetDirectoryName(wrapper)!, "Invoke-AxmolSetup.ps1");
+    private static string CommandScript(EngineEntry engine) => Path.Combine(engine.Path, "tools", "cmdline", "axmol.ps1");
 
     public async Task<ProcessResult> RunAsync(EngineEntry engine, AxmolInvocation invocation, string workingDirectory,
         CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyDictionary<string, string>? environment = null,
@@ -36,13 +34,39 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     {
         await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
-        var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
+        var arguments = new List<string> { "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
-        // PowerShell -File can split a dash-prefixed value at ':' even when ArgumentList preserves
-        // its boundary (e.g. -DSEARCH_PATH=C:\\SDK). Encode the argv array, not shell source.
-        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
-            System.Text.Json.JsonSerializer.Serialize(new[] { invocation.SubCommand }.Concat(invocation.Arguments))));
-        arguments.AddRange(["-File", wrapper, "-EngineRoot", engine.Path, "-InvocationBase64", payload]);
+        // pwsh -File (and -CommandWithArgs) splits values such as -DSEARCH_PATH=C:\\SDK
+        // at the colon despite ProcessStartInfo.ArgumentList preserving their boundary.
+        // Only for that case, send an encoded inline invocation with quoted value tokens;
+        // it still calls the engine script directly and introduces no intermediary file.
+        var needsEncodedCommand = invocation.Arguments.Any(value => value.StartsWith('-') && value.Contains(':'));
+        if (needsEncodedCommand)
+        {
+            arguments.AddRange(["-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
+                InlineInvocation(invocation)))]);
+        }
+        else
+        {
+            arguments.AddRange(["-File", CommandScript(engine), invocation.SubCommand]);
+            arguments.AddRange(invocation.Arguments);
+        }
+        var overrides = new Dictionary<string, string>();
+        if (environment is not null)
+            foreach (var entry in environment) overrides[entry.Key] = entry.Value;
+        overrides["AX_ROOT"] = engine.Path;
+        if (needsEncodedCommand) overrides["AX_HUB_ENGINE_ENTRY"] = CommandScript(engine);
+        if (!Directory.Exists(Path.Combine(engine.Path, ".git")))
+        {
+            // Release ZIPs have no git history. The engine probes git and otherwise leaves its
+            // failed exit code in LASTEXITCODE, even after a successful PowerShell-only command.
+            // Keep the old wrapper's process-local git masking without touching the host PATH.
+            var separator = Path.PathSeparator;
+            var path = overrides.TryGetValue("PATH", out var suppliedPath) ? suppliedPath : HostEnvironment.PathValue;
+            overrides["PATH"] = string.Join(separator, path.Split(separator, StringSplitOptions.RemoveEmptyEntries)
+                .Where(directory => !File.Exists(Path.Combine(directory, "git.exe"))
+                                    && !File.Exists(Path.Combine(directory, "git"))));
+        }
 
         runner.Write("axmol: " + invocation);
         // environment: null = inherit the parent environment plus the shared macOS host PATH. The engine depends
@@ -51,13 +75,30 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
         // The timeout semantics = how long with no output before judging a stall (default 10 minutes), not a
         // wall-clock cap on the whole command; compiling the whole engine never times out as long as it keeps
         // printing, so don't pass an arbitrary 2-hour total here.
-        var result = await runner.RunAsync(Shell, arguments, workingDirectory, environment: null, cancellation, timeout, overrides: environment, onLine: onLine);
+        var result = await runner.RunAsync(await ShellAsync(cancellation).ConfigureAwait(false), arguments, workingDirectory,
+            environment: null, cancellation, timeout, overrides: overrides, onLine: onLine).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"axmol {invocation.SubCommand} failed (exit {result.ExitCode}).\n{result.Error}\n{result.Output}");
         }
 
         return result;
+    }
+
+    private static string InlineInvocation(AxmolInvocation invocation)
+    {
+        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+        var tokens = new List<string> { Quote(invocation.SubCommand) };
+        var expectsValue = false;
+        foreach (var value in invocation.Arguments)
+        {
+            var isOption = !expectsValue && value.StartsWith('-')
+                && value.TrimStart('-') is { Length: > 0 } name && name.All(char.IsLetterOrDigit);
+            tokens.Add(isOption ? value : Quote(value));
+            expectsValue = isOption && value is "-p" or "-d" or "-l" or "-m" or "-a" or "-cc"
+                or "-xc" or "-xb" or "-sdk" or "-t";
+        }
+        return "& $env:AX_HUB_ENGINE_ENTRY " + string.Join(' ', tokens) + "; exit $LASTEXITCODE";
     }
 
     /// <summary>
@@ -76,18 +117,32 @@ public sealed class EngineCommandLine(ProcessRunner runner, string wrapper)
     {
         await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
-        var arguments = new List<string> { "-NoProfile", "-NonInteractive" };
-        if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
-        arguments.AddRange(SetupScriptArguments(SetupWrapper, engine.Path, options));
+        var shell = await ShellAsync(cancellation).ConfigureAwait(false);
+        var setupScript = Path.Combine(engine.Path, "setup.ps1");
+        var prefix = new List<string> { "-NonInteractive" };
+        if (OperatingSystem.IsWindows()) prefix.AddRange(["-ExecutionPolicy", "Bypass"]);
+        // Parse the script without executing it. A string search can mistake a comment or a nested
+        // function parameter for -hub; the PowerShell AST checks the script's actual top-level parameters.
+        const string inspect = "$tokens=$null; $errors=$null; "
+            + "$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:AX_HUB_SETUP_PATH,[ref]$tokens,[ref]$errors); "
+            + "if($errors.Count -gt 0 -or $null -eq $ast.ParamBlock -or 'hub' -notin @($ast.ParamBlock.Parameters.Name.VariablePath.UserPath)) "
+            + "{ [Console]::Error.WriteLine('This engine setup.ps1 does not support -hub. Refusing to risk persistent environment changes.'); exit 2 }";
+        var environment = new Dictionary<string, string> { ["AX_ROOT"] = engine.Path, ["AX_HUB_SETUP_PATH"] = setupScript };
+        var inspection = await runner.RunAsync(shell, prefix.Concat(["-Command", inspect]), engine.Path,
+            environment: null, cancellation, overrides: environment).ConfigureAwait(false);
+        if (inspection.ExitCode != 0) return inspection;
 
+        environment.Remove("AX_HUB_SETUP_PATH");
+        var arguments = prefix.Concat(SetupScriptArguments(setupScript, options)).ToArray();
         runner.Write($"axmol setup: {string.Join(' ', arguments)}");
-        return await runner.RunAsync(Shell, arguments, engine.Path, environment: null, cancellation, onLine: onLine).ConfigureAwait(false);
+        return await runner.RunAsync(shell, arguments, engine.Path, environment: null, cancellation,
+            overrides: environment, onLine: onLine).ConfigureAwait(false);
     }
 
-    /// <summary>Builds the engine setup-wrapper arguments, including the Hub-specific no-persistent-AX_ROOT switch.</summary>
-    public static IReadOnlyList<string> SetupScriptArguments(string setupWrapper, string engineRoot, SetupOptions options)
+    /// <summary>Builds arguments for the engine's setup script, including its no-persistent-AX_ROOT switch.</summary>
+    public static IReadOnlyList<string> SetupScriptArguments(string setupScript, SetupOptions options)
     {
-        var arguments = new List<string> { "-File", setupWrapper, "-EngineRoot", engineRoot, "-hub" };
+        var arguments = new List<string> { "-File", setupScript, "-hub" };
         if (options.Platform is { Length: > 0 } platform) arguments.AddRange(["-p", platform]);
         if (options.UpdateAdt) arguments.Add("-updateAdt");
         return arguments;

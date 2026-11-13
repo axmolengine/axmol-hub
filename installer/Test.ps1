@@ -95,7 +95,7 @@ try {
 
     # 2. Installed payload is complete: Velopack puts the app under current\, the outer layer is the stable-path launch stub.
     $taskCurrent = Join-Path $taskInstall 'current'
-    foreach ($taskFile in @($taskMainExe, 'coreclr.dll', 'hostfxr.dll', 'Invoke-Axmol.ps1', 'Invoke-AxmolSetup.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
+    foreach ($taskFile in @($taskMainExe, 'coreclr.dll', 'hostfxr.dll', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/Velopack.txt',
             'manifests/engine-manifest.json', 'manifests/recipe-manifest.json', 'manifests/android-gradle-verification.xml')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskCurrent $taskFile))) { throw "Missing installed file: $taskFile" }
     }

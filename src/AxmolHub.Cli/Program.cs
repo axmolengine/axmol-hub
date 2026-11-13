@@ -140,7 +140,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     var runner = new ProcessRunner(Write);
     var tools = Path.Combine(store.Root, "tools");
     var platform = new PlatformBuildService(runner);
-    var commandLine = new EngineCommandLine(runner, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+    var commandLine = new EngineCommandLine(runner);
 
     if (verb == "create" && arguments.Length is >= 4 and <= 6)
     {

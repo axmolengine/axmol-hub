@@ -106,7 +106,7 @@ public sealed partial class HubWorkspace : IDisposable
         Log.Written += line => Logged?.Invoke(line);
 
         _runner = new ProcessRunner(Log.Write);
-        _commandLine = new EngineCommandLine(_runner, Path.Combine(AppContext.BaseDirectory, "Invoke-Axmol.ps1"));
+        _commandLine = new EngineCommandLine(_runner);
         _setup = new EngineSetupService(_commandLine);
         _prebuiltState = new EnginePrebuiltState(Store.Root);
         _engineBuild = new EngineBuildService(_runner, _commandLine, _prebuiltState);

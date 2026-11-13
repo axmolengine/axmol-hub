@@ -110,7 +110,6 @@
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*.txt" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../AxmolHub.Core/Scripts/*.ps1" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.json" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../manifests/*.xml" Link="manifests/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets/Cpp.xshd" />
@@ -123,7 +122,7 @@
          X property of ~6 MB from the 1254 original is unacceptable), and both sizes are planted into
          hicolor's 256x256 and 512x512 buckets respectively (the bucket name must equal the image's real
          size, or a theme picking images per bucket picks the wrong one). They ride as Content rather
-         than avares:// for the same reason as manifests/*.json and Core/Scripts/*.ps1: data files read
+         than avares:// for the same reason as manifests/*.json: data files read
          by code rather than XAML follow the output directory. This also keeps Linux desktop integration
          independent of Avalonia being initialized — the Linux integration self-check relies on exactly
          this to assert, on a headless server, that the icons really do get planted (see
