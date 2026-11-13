@@ -912,10 +912,8 @@ internal sealed class ShellLayoutChecks
               && UpdateService.FormatSpeed(3.5 * 1024 * 1024) == "3.5 MB/s",
             "下载速率文案按 B/KB/MB 分档，未知速率显示占位符，且与界面语言无关");
 
-        // The version has to survive past the "found" moment. The card no longer renders the download's
-        // phases — the strip's slot and the popover's rows do — so the rule is now the simpler one it was
-        // always serving: the number stays where the user read it, and the restart tip names what it will
-        // install. Assert the rendered text, not "the service knows a version".
+        // The version stays where the user read it throughout all phases; the card does not duplicate
+        // the task queue's progress measurement.
         var pendingAsset = new VelopackAsset
         {
             FileName = "Axmol.Hub-9.9.9-win-x64-full.nupkg",
@@ -933,15 +931,12 @@ internal sealed class ShellLayoutChecks
         Check(foundLine == string.Format(HubTexts.Get("UpdateReady", HubStrings.Language), "9.9.9"),
             "检测到新版本时卡片的状态行说出版本号（实际 " + foundLine + "）");
 
-        // The card's one button stays where it is once the check has found something. The old shape took it
-        // away and left the user with a version number and nothing to press, while the fetch that number
-        // pointed at lives on the sidebar's update button — so what the card owes instead is the sentence
-        // saying where the bytes are going to move.
+        // The card keeps its button and offers the pending download directly.
         Check(settings.UpdateCardButtonVisible && settings.UpdateCardButtonEnabled
-              && settings.UpdateCardButtonLabel == HubTexts.Get("CheckForUpdates", HubStrings.Language)
+              && settings.UpdateCardButtonLabel == HubTexts.Get("TaskDownloadAction", HubStrings.Language)
               && settings.UpdateHintShown
               && settings.UpdateHintText == HubTexts.Get("UpdatePendingDownloadHint", HubStrings.Language),
-            "发现新版本后卡片仍留着按钮，并说清去哪开始下载（按钮「" + settings.UpdateCardButtonLabel
+            "发现新版本后卡片按钮变成下载更新，并说明进度在哪（按钮「" + settings.UpdateCardButtonLabel
             + "」，说明「" + settings.UpdateHintText + "」）");
 
         // The transfer moving is nobody's business on this page: the line must not change, and no
@@ -954,7 +949,7 @@ internal sealed class ShellLayoutChecks
         // What it does say is which phase the transfer is in and which surface holds it — and the button goes
         // dark rather than inviting a second press at a transfer that is already running.
         Check(settings.UpdateCardButtonVisible && !settings.UpdateCardButtonEnabled
-              && settings.UpdateCardButtonLabel == HubTexts.Get("CheckForUpdates", HubStrings.Language)
+              && settings.UpdateCardButtonLabel == HubTexts.Get("TaskDownloadAction", HubStrings.Language)
               && settings.UpdateHintText == HubTexts.Get("UpdateDownloadingHint", HubStrings.Language),
             "下载进行中卡片把按钮留在原处只是按不动，并说下载在底部任务栏里（按钮「"
             + settings.UpdateCardButtonLabel + "」，说明「" + settings.UpdateHintText + "」）");
@@ -1080,20 +1075,20 @@ internal sealed class ShellLayoutChecks
 
         // The settings card's own matrix, through its pure functions for the same reason: the branch "the
         // button became the restart" needs a finished download to reach live, and what decides it is the
-        // phase, not the switch. Both words are the rail's — one action, one sentence.
-        Check(SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.None, false) == "CheckForUpdates"
-              && SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Downloading, false) == "CheckForUpdates"
+        // phase, not the switch. Download and restart words are shared with the sidebar.
+        Check(SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.None, false) == "TaskDownloadAction"
+              && SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Downloading, false) == "TaskDownloadAction"
               && SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Ready, false) == "TaskRestartAction"
               && SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Ready, true) == "TaskRestartArmed"
               && SettingsPage.UpdateCardLabelKey(null, UpdateService.DownloadState.None, false) == "CheckForUpdates",
-            "卡片按钮的两态只看相位：没下载完是检查，下载完才是重启，忙时是再点一次（就绪 "
+            "卡片按钮只看相位：未检查是检查，待下载是下载，下载完才是重启，忙时是再点一次（就绪 "
             + SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Ready, false)
             + "／忙 " + SettingsPage.UpdateCardLabelKey(outcomeAvailable, UpdateService.DownloadState.Ready, true) + "）");
         Check(SettingsPage.UpdateCardHintKey(outcomeAvailable, UpdateService.DownloadState.None) == "UpdatePendingDownloadHint"
               && SettingsPage.UpdateCardHintKey(outcomeAvailable, UpdateService.DownloadState.Downloading) == "UpdateDownloadingHint"
               && SettingsPage.UpdateCardHintKey(outcomeAvailable, UpdateService.DownloadState.Ready) is null
               && SettingsPage.UpdateCardHintKey(null, UpdateService.DownloadState.None) is null,
-            "卡片的说明行只说相位：没开始说去哪按、下载中说在任务栏、就绪交给按钮说（就绪相位 "
+            "卡片的说明行只说相位：没开始说点击下载、下载中说在任务栏、就绪交给按钮说（就绪相位 "
             + (SettingsPage.UpdateCardHintKey(outcomeAvailable, UpdateService.DownloadState.Ready) ?? "不说话") + "）");
 
         // And live, on the real strip: one scripted transfer that never ends.
@@ -1295,7 +1290,7 @@ internal sealed class ShellLayoutChecks
               && !shell.UpdateActionVisibleForCheck && !shell.UpdateActionDotVisibleForCheck,
             "清掉脚本队列与脚本更新后任务槽熄灭、面板收起、更新按钮连同红点消失");
 
-        // --- 5.1c Retry, dismiss, and the download the settings card used to own ---
+        // --- 5.1c Retry, dismiss, and the shared update download ---
         // The three things this round added, asserted where they are decided: the pure function for which
         // branch wins, the live strip and popover for what the user can actually press.
         var retryWord = HubTexts.Get("TaskRetry", HubStrings.Language);
@@ -1313,6 +1308,7 @@ internal sealed class ShellLayoutChecks
 
         // The offer itself, live, and with the real fetch refused: asking Velopack here would reach GitHub.
         var autoDownloadWas = UpdateService.Instance.AutoDownload;
+        UpdateService.Instance.AutoDownload = false;
         var downloaded = "";
         UpdateService.Instance.DownloadOverrideForCheck = update => downloaded = update.TargetFullRelease.Version.ToString();
         UpdateService.Instance.SetPendingForCheck(pendingUpdate);
@@ -1327,17 +1323,14 @@ internal sealed class ShellLayoutChecks
             "有待下载的更新时侧栏出现圆环下载图标 + 红点（提示 " + shell.UpdateActionTipForCheck
             + "），状态条不替它发言（槽亮着 " + shell.TaskSlotVisibleForCheck + "）");
 
-        shell.ClickUpdateActionForCheck();
+        settings.ClickUpdateCardButtonForCheck();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(downloaded == "9.9.9" && TaskQueue.Instance.Items.Count == 0 && !shell.RestartArmedForCheck,
-            "点下载只发起那一次下载，不入队也不武装重启（实际版本 " + downloaded + "）");
+            "关闭自动下载时点设置卡片的下载按钮只发起下载，不重新检查也不武装重启（实际版本 " + downloaded + "）");
 
-        // The hole this button exists to close: auto-download **on** is the default, and a cancelled
-        // transfer puts Download back to None — before this button that state had no entry point anywhere
-        // in the app (the strip only offered with auto-download off, and the settings card's own button
-        // never offers the fetch: it is the check until the bytes land). The button's condition is the
-        // phase's, not the setting's: cancelled or never-started, the press fetches.
+        // A cancelled transfer returns to None. Both surfaces offer the download again regardless of
+        // the auto-download switch; the sidebar retry below reuses the same service entry point.
         UpdateService.Instance.AutoDownload = true;
         downloaded = "";
         UpdateService.Instance.SetPendingForCheck(pendingUpdate); // Download back to None, as a cancel leaves it

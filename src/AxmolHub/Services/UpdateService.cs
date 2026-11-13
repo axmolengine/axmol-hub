@@ -16,20 +16,16 @@ namespace AxmolHub;
 /// There is deliberately **no modal update prompt**. An update's *progress* is surfaced by the same
 /// thing that surfaces every other download: a row in <see cref="TaskQueue"/>, whose slot in the status
 /// strip counts it and whose popover carries the percentage. Its *decisions* — fetch it, restart to
-/// install it — have exactly two press surfaces, and the line between them is the phase rather than the
-/// surface: the fetch stays the sidebar update button's alone (see <c>MainWindow.UpdateActionStateFor</c>),
-/// while the restart is offered by that button's pill *and* by the settings card the check was started
-/// from. A strip line and a rail button asking for the same press would still be one fact told twice —
-/// both restart surfaces are the same <see cref="RestartArmed"/> gate and the same
-/// <see cref="PressUpdateRestart"/> (a second arm with a decay timer of its own would let the two buttons
-/// disagree about whether the next click replaces the process). The settings page keeps what is neither:
-/// the channel, the auto-download switch, the version this would move to, and the phase line that says
-/// where the bytes are.
+/// install it — are offered by the sidebar update button and the settings card. Both reuse
+/// <see cref="StartPendingDownload"/> and <see cref="PressUpdateRestart"/>; restart surfaces also share
+/// <see cref="RestartArmed"/> so they cannot disagree about whether the next press replaces the process.
+/// The settings page owns the channel, auto-download switch, version and phase readout; transfer progress
+/// and cancellation stay in the task queue.
 ///
 /// Two drivers share this service: the silent startup check (<see cref="CheckAsync"/>) and the settings
 /// page's 「检查更新」 button (also <see cref="CheckAsync"/>). With <see cref="AutoDownload"/> on, finding an
 /// update is enough and the fetch starts by itself; with it off — or after a cancel, which lands back in
-/// <see cref="DownloadState.None"/> — the sidebar button's press is <see cref="StartPendingDownload"/>,
+/// <see cref="DownloadState.None"/> — either button's press is <see cref="StartPendingDownload"/>,
 /// and it does not care which. Either way the transfer ends in <see cref="DownloadState.Ready"/>: applying is
 /// never automatic, because it replaces the process, so it stays an explicit press
 /// (<see cref="PressUpdateRestart"/>, from whichever of the two restart surfaces the user is looking at) —
@@ -292,7 +288,7 @@ internal sealed partial class UpdateService
     /// <summary>
     /// Starts a background download if an update is known and nothing is in flight yet. Called after a
     /// check when <see cref="AutoDownload"/> is on, when the user switches the setting on with an update
-    /// already pending, and from the strip's download action — which is the same request made on purpose.
+    /// already pending, and from the settings card or sidebar's download action — the same request.
     /// It never applies by itself: the transfer ends in <see cref="DownloadState.Ready"/> and the restart
     /// stays the user's press, because replacing the process is not something a download should decide.
     /// </summary>

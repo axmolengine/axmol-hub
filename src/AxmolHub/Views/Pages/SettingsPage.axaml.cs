@@ -1141,18 +1141,26 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// The update card's one press, in whichever phase the card is showing. The check is the entry point — the
-    /// button is clicked *because* the user wants a visible answer — until the bytes have landed, and then the
-    /// same button owes the restart. That restart is the rail's own press (<see cref="UpdateService.PressUpdateRestart"/>,
-    /// the armed second tap included) rather than a second gate of this page's: replacing the process is the one
-    /// thing the app cannot undo from the inside, so it keeps one rule and one arm wherever it is offered from.
+    /// The update card's one press follows the phase: check, download, then restart. Download and restart
+    /// reuse the sidebar's service entry points, including the shared armed second tap for a busy restart.
     /// </summary>
     private async Task OnUpdateActionClickedAsync()
     {
         var service = UpdateService.Instance;
+        if (_checking || service.Download == UpdateService.DownloadState.Downloading)
+        {
+            return;
+        }
+
         if (IsRestartPending(service.Last, service.Download))
         {
             service.PressUpdateRestart();
+            return;
+        }
+
+        if (service.Last is { Result: UpdateService.CheckResult.UpdateAvailable })
+        {
+            service.StartPendingDownload();
             return;
         }
 
@@ -1183,21 +1191,22 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    /// <summary>Whether the card's button owes the restart rather than a check: an update is pending *and* its
-    /// bytes have landed. The phase, not the switch — a cancelled or never-started transfer leaves
-    /// <see cref="UpdateService.DownloadState.None"/>, which still wants the check button.</summary>
+    /// <summary>Whether the card owes a restart: an update is pending and its bytes have landed.
+    /// A cancelled, failed or never-started transfer instead offers the download again.</summary>
     private static bool IsRestartPending(UpdateService.CheckOutcome? last, UpdateService.DownloadState download)
         => last is { Result: UpdateService.CheckResult.UpdateAvailable }
            && download == UpdateService.DownloadState.Ready;
 
-    /// <summary>The word on the card's button, as a pure function so the branches can be asserted without a real
-    /// download behind them. The three keys are borrowed from the rail on purpose: one action, one sentence —
-    /// "重启完成更新" means the same thing wherever it is offered, and a second translation of it would let the
-    /// two buttons name the same press differently.</summary>
+    /// <summary>The card's phase-dependent label, testable without a real transfer. Download and restart
+    /// reuse the sidebar's action keys so both surfaces name the same press consistently.</summary>
     internal static string UpdateCardLabelKey(
         UpdateService.CheckOutcome? last, UpdateService.DownloadState download, bool armed)
-        => IsRestartPending(last, download)
-            ? (armed ? "TaskRestartArmed" : "TaskRestartAction")
+        => last is { Result: UpdateService.CheckResult.UpdateAvailable }
+            ? download switch
+            {
+                UpdateService.DownloadState.Ready => armed ? "TaskRestartArmed" : "TaskRestartAction",
+                _ => "TaskDownloadAction",
+            }
             : "CheckForUpdates";
 
     /// <summary>The card's phase line: where the transfer is, or that nobody has started it. Null means the line
@@ -1251,11 +1260,8 @@ public partial class SettingsPage : UserControl
         UpdateHintLine.Text = hintKey is null ? "" : HubStrings.Get(hintKey);
         UpdateHintLine.IsVisible = hintKey is not null;
 
-        // The button never leaves the card. It used to: a check that found something took it away and left the
-        // user with a sentence about a version and nothing to press, while the fetch that sentence pointed at
-        // lives on another surface. Now one button follows the phase — the check while nothing is downloaded, the
-        // restart once the bytes have landed — and it goes dark only while it has nothing to offer: a check is
-        // already running, or the transfer is and the queue row is what reports it.
+        // One button follows the phase: check while no update is known, download while bytes are pending,
+        // restart once they have landed. It stays visible but disabled during a check or transfer.
         var restartPending = IsRestartPending(last, service.Download);
         CheckForUpdatesButton.Content = HubStrings.Get(UpdateCardLabelKey(last, service.Download, service.RestartArmed));
         CheckForUpdatesButton.Classes.Set("primary", restartPending);

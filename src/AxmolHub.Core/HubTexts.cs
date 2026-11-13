@@ -584,9 +584,8 @@ public static class HubTexts
         // own: the strip's queue row is what measures the transfer, and two measuring surfaces would be one
         // fact told twice.
         ["UpdatePendingDownloadHint"] = (
-            "这个版本还没开始下载：用侧栏的「下载更新」开始，进度会出现在底部任务栏。",
-            "This version is not downloaded yet. Start it with \"Download update\" in the sidebar; progress "
-            + "appears in the task bar."),
+            "这个版本还没开始下载：点击「下载更新」开始，进度会出现在底部任务栏。",
+            "This version is not downloaded yet. Click \"Download update\" to start; progress appears in the task bar."),
         ["UpdateDownloadingHint"] = (
             "更新正在后台下载，进度和取消在底部任务栏。",
             "The update is downloading in the background; progress and cancel are in the task bar."),
