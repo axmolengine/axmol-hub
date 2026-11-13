@@ -1105,10 +1105,14 @@
                    FontSize="11" Margin="8,0,0,0" MaxWidth="280"
                    TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center" />
-        <ProgressBar x:Name="StatusProgress" Grid.Column="2" Classes="status-progress"
-                     IsVisible="False" Minimum="0" Maximum="100" />
-        <TextBlock x:Name="StatusProgressPercent" Grid.Column="3"
-                   Classes="status-progress-percent" IsVisible="False" />
+        <!-- The transparent full-height lane makes the 3px track and its percentage one hover target. -->
+        <Grid x:Name="StatusProgressHost" Grid.Column="2" Grid.ColumnSpan="2"
+              ColumnDefinitions="*,Auto" Background="Transparent" ClipToBounds="True" IsVisible="False">
+          <ProgressBar x:Name="StatusProgress" Classes="status-progress"
+                       IsVisible="False" Minimum="0" Maximum="100" />
+          <TextBlock x:Name="StatusProgressPercent" Grid.Column="1"
+                     Classes="status-progress-percent" IsVisible="False" />
+        </Grid>
         <!-- The task queue's one line. It stays dark unless something is moving, failed and unread, or
              waiting on a decision, because the strip's job is what needs acting on and nothing else — a
              progress bar for its own sake would be chrome. Pressing it lifts the popover that holds the

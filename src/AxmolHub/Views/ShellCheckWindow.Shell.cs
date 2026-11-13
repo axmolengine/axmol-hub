@@ -1457,7 +1457,7 @@ internal sealed class ShellLayoutChecks
         Dispatcher.UIThread.RunJobs();
         var rowReading = shell.TaskRowMeasureForCheck(estimateIdentity);
         Check(rowReading.EndsWith("|42%", StringComparison.Ordinal)
-              && rowReading.StartsWith(HubTexts.Get("TaskEstimateSize", HubStrings.Language), StringComparison.Ordinal)
+              && rowReading.Contains(TaskQueue.FormatBytes(1_900_000), StringComparison.Ordinal)
               && rowReading.Contains("MB/s", StringComparison.Ordinal),
             "更新行只报百分比，估算的体积与速率留在 tooltip（实际 " + rowReading + "）");
 

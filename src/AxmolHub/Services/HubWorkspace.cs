@@ -726,6 +726,9 @@ public sealed partial class HubWorkspace : IDisposable
     private Action<string> OwnLines(TaskQueue.Item item) => line => Dispatcher.UIThread.Post(() =>
         item.ApplyProgress(TaskQueue.TaskFeed.Parse(line)));
 
+    private Action<string, string> OwnCommand(TaskQueue.Item item) => (command, directory) =>
+        Dispatcher.UIThread.Post(() => item.ReportCommand(command, directory));
+
     /// <summary>
     /// The WPF version's <c>Refresh()</c>: after an operation ends, recompute all lists and derived
     /// copy. Deliberately keeps "full repaint" over incremental notification — these lists are
@@ -1158,7 +1161,7 @@ public sealed partial class HubWorkspace : IDisposable
         {
             var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
             var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType, cameraMode,
-                portrait, isolated, repair, forceOverwrite, OwnLines(task));
+                portrait, isolated, repair, forceOverwrite, OwnLines(task), OwnCommand(task));
             token.ThrowIfCancellationRequested();
             if (usePrebuilt && !repair)
             {
@@ -1477,7 +1480,7 @@ public sealed partial class HubWorkspace : IDisposable
             try
             {
                 _androidPasswords.TryGetValue(project.Path, out var passwords);
-                await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task));
+                await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task), OwnCommand(task));
                 if (!configureOnly)
                 {
                     _projects.FindExecutable(project);
@@ -1741,7 +1744,7 @@ public sealed partial class HubWorkspace : IDisposable
         await RunTaskAsync($"engine:hostbuild:{engine.Version}:{host.Id}", "Build engine",
             engine.Version + " · " + host.Name, async (task, token) =>
         {
-            await _engineBuild.BuildAsync(engine, host, configuration, token, OwnLines(task));
+            await _engineBuild.BuildAsync(engine, host, configuration, token, OwnLines(task), OwnCommand(task));
         });
 
         Refresh();
@@ -1972,7 +1975,7 @@ public sealed partial class HubWorkspace : IDisposable
             }
 
             var effective = platform ?? AxmolCommandMap.Target(target).Platform;
-            var result = await _setup.RunAsync(engine, new SetupOptions(effective), token, OwnLines(task));
+            var result = await _setup.RunAsync(engine, new SetupOptions(effective), token, OwnLines(task), OwnCommand(task));
             Log.Write($"{effective}: {result.Describe()}");
             if (result.Outcome == SetupOutcome.NeedsPowerShell)
             {

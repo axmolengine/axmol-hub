@@ -12,7 +12,7 @@ namespace AxmolHub.Core;
 public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
     public async Task<EngineBuildRecord> BuildAsync(EngineEntry engine, BuildTarget target, string configuration,
-        CancellationToken cancellation = default, Action<string>? onLine = null)
+        CancellationToken cancellation = default, Action<string>? onLine = null, Action<string, string>? onCommand = null)
     {
         if (!EnginePrebuilt.Supported(target))
         {
@@ -26,7 +26,7 @@ public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine c
         // artifacts, so let it run as long as it keeps producing output. The timeout judgment is done by
         // ProcessRunner as "10 minutes with no output" = a stall.
         await commandLine.RunAsync(engine, AxmolCommandMap.BuildEngine(target, configuration), engine.Path,
-            cancellation, onLine: onLine);
+            cancellation, onLine: onLine, onCommand: onCommand);
 
         // The build directory is decided by the engine, so **discover** it; if not found, don't record — never write a "built" entry pointing at a nonexistent directory.
         var directory = EnginePrebuilt.Discover(engine, configuration)

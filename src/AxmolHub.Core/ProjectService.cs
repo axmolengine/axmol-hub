@@ -34,7 +34,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
     public async Task<ProjectEntry> CreateAsync(string name, string parent, EngineEntry engine, CancellationToken cancellation = default,
         string projectType = "cpp", string? cameraMode = null, bool portrait = false, bool isolated = false,
-        bool repair = false, bool forceOverwrite = false, Action<string>? onLine = null)
+        bool repair = false, bool forceOverwrite = false, Action<string>? onLine = null, Action<string, string>? onCommand = null)
     {
         ValidateProjectType(projectType);
         if (cameraMode is not null && cameraMode is not ("classic" or "2d" or "3d"))
@@ -77,7 +77,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         if (isolated) arguments.Add("-isolated");
         if (repair) arguments.Add("-repair");
         if (forceOverwrite) arguments.Add("-forceOverwrite");
-        await commandLine.RunAsync(engine, new AxmolInvocation("new", arguments.ToArray()), parent, cancellation, onLine: onLine);
+        await commandLine.RunAsync(engine, new AxmolInvocation("new", arguments.ToArray()), parent, cancellation,
+            onLine: onLine, onCommand: onCommand);
         cancellation.ThrowIfCancellationRequested();
         var project = StateStore.ReadProject(path);
         if (project.Version != engine.Version) throw new InvalidDataException("Created project engine version does not match selected engine.");
@@ -196,7 +197,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     public Task ConfigureAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation = default)
         => BuildAsync(project, engine, true, cancellation);
 
-    public async Task BuildAsync(ProjectEntry project, EngineEntry engine, bool configureOnly = false, CancellationToken cancellation = default, AndroidSigningPasswords? androidPasswords = null, Action<string>? onLine = null)
+    public async Task BuildAsync(ProjectEntry project, EngineEntry engine, bool configureOnly = false, CancellationToken cancellation = default,
+        AndroidSigningPasswords? androidPasswords = null, Action<string>? onLine = null, Action<string, string>? onCommand = null)
     {
         BuildConfigurations.ValidateTarget(project);
         var target = BuildTargets.Get(project.Platform);
@@ -215,7 +217,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
         var invocation = ProjectBuildOptions.Invocation(project, engine, configureOnly, prebuiltState);
         var reconfigure = NeedsReconfigure(project);
-        await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine);
+        await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine, onCommand: onCommand);
         WriteBuildReceipt(project, engine);
         if (reconfigure) File.Delete(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
     }

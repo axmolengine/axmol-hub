@@ -611,10 +611,6 @@ public static class HubTexts
         // was no way to ask at all, and the only place to ask used to be the settings page.
         ["TaskDownloadAction"] = ("下载更新", "Download update"),
         ["TaskDownloadSlotTip"] = ("发现新版本 {0}，下载完由你决定何时重启。", "Version {0} is available. Download it, then choose when to restart."),
-        // The queue row's tooltip for a transport that reports a percentage and no bytes: what its owner
-        // estimated the transfer to be. A prefix, not a sentence — the rate is appended with " · " exactly
-        // as the measured column does it.
-        ["TaskEstimateSize"] = ("～", "～"),
         // ── The strip's download slot and the queue popover ──
         // The slot is one sentence in a 28px strip, so it counts rather than narrates. The progress bar
         // owns the percentage, because one number beside the bar is enough and multiple tasks cannot make
@@ -623,6 +619,8 @@ public static class HubTexts
         ["TaskSlotFailed"] = ("{0} 个任务失败", "{0} task(s) failed"),
         ["TaskListTitle"] = ("任务列表", "Tasks"),
         ["TaskSlotTip"] = ("查看正在跑的任务", "Show what is running"),
+        ["TaskWorkingDirectory"] = ("工作目录：{0}", "Working directory: {0}"),
+        ["TaskOtherWork"] = ("其他任务：{0} 个运行中，{1} 个等待中", "Other tasks: {0} running, {1} queued"),
         // On a change's row: the stage is here, the detail is in the log drawer, and this is the only press
         // that leaves the popover to go read it.
         ["TaskLogAction"] = ("看日志", "View log"),

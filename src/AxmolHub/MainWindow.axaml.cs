@@ -99,6 +99,9 @@ public partial class MainWindow : Window
     /// </summary>
     private readonly TextBlock _taskSlotTip = new();
 
+    /// <summary>Like the slot tip, kept in place so progress reports cannot dismiss it mid-read.</summary>
+    private readonly TextBlock _statusProgressTip = new() { MaxWidth = 560, TextWrapping = TextWrapping.Wrap };
+
     private string _currentKey = "";
 
     /// <summary>The press that is armed on the title bar, or null when none is. Holding the whole event rather
@@ -863,9 +866,16 @@ public partial class MainWindow : Window
         TaskSlotText.Text = visible ? label : "";
 
         var active = items.FirstOrDefault(item => item.IsMoving);
+        StatusProgressHost.IsVisible = active is not null;
         StatusProgress.IsVisible = active is not null;
         if (active is { } running)
         {
+            var tip = running.TooltipText;
+            var otherRunning = items.Count(item => item.IsMoving) - 1;
+            var queued = items.Count(item => item.State == TaskQueue.Phase.Queued);
+            if (otherRunning > 0 || queued > 0)
+                tip += "\n\n" + string.Format(HubStrings.Get("TaskOtherWork"), otherRunning, queued);
+            _statusProgressTip.Text = tip;
             var fill = running.Fill;
             var determinate = running.State != TaskQueue.Phase.Finalizing && fill is not null;
             StatusProgress.IsIndeterminate = !determinate;
@@ -877,6 +887,8 @@ public partial class MainWindow : Window
         }
         else
         {
+            _statusProgressTip.Text = "";
+            ToolTip.SetIsOpen(StatusProgressHost, false);
             StatusProgress.IsIndeterminate = false;
             StatusProgress.Value = 0;
             StatusProgressPercent.IsVisible = false;
@@ -1332,7 +1344,7 @@ public partial class MainWindow : Window
         private readonly TextBlock _error = new() { Classes = { "task-row-error" }, IsVisible = false };
         /// <summary>The row's tooltip body, held rather than re-set: assigning a new tooltip closes the one on
         /// screen, and a rate that updates every 500 ms would dismiss itself mid-read.</summary>
-        private readonly TextBlock _tip = new();
+        private readonly TextBlock _tip = new() { MaxWidth = 560, TextWrapping = TextWrapping.Wrap };
         private readonly Button _cancel = StripButton();
         private readonly Button _retry = StripButton();
         private readonly Button _dismiss = StripButton();
@@ -1367,6 +1379,8 @@ public partial class MainWindow : Window
                 },
             };
             Grid.SetColumn(_actions, 1);
+            ToolTip.SetTip(Control, _tip);
+            ToolTip.AddToolTipOpeningHandler(Control, (_, _) => Update());
             Update();
         }
 
@@ -1385,10 +1399,9 @@ public partial class MainWindow : Window
                                    || (_item.Kind == TaskQueue.TaskKind.Mutating && _item.IsMoving && _item.Fill is null);
             _bar.Value = _item.Fill ?? 0;
             _measure.Text = _item.MeasureText;
-            // The estimate reaches the user through the tooltip and nowhere else: the measure column is kept
-            // for bytes the transport actually counted, so a guessed total can never read as a confirmed one.
-            _tip.Text = _item.HintText ?? "";
-            ToolTip.SetTip(Control, _item.HintText is null ? null : _tip);
+            // The row and strip share the same task-owned details. Keep the holder installed while its
+            // text changes so hovering a live download does not dismiss the tooltip on every report.
+            _tip.Text = _item.TooltipText;
             _error.Text = _item.Error ?? "";
             _error.IsVisible = _item.Error is { Length: > 0 };
             // Re-read on every repaint, not once at construction: these are the shell's own buttons, and the
@@ -2037,6 +2050,10 @@ public partial class MainWindow : Window
         TaskPopup.Placement = PlacementMode.TopEdgeAlignedLeft;
         // The holder is installed once, for the reason recorded on _taskSlotTip: only its text moves.
         ToolTip.SetTip(TaskSlot, _taskSlotTip);
+        ToolTip.SetTip(StatusProgressHost, _statusProgressTip);
+        ToolTip.SetPlacement(StatusProgressHost, PlacementMode.Top);
+        // A quiet task may have produced no new output since its last repaint; refresh its elapsed clock.
+        ToolTip.AddToolTipOpeningHandler(StatusProgressHost, (_, _) => UpdateTaskSlot());
         // What a restart would cut short: a Hub operation, or replies still being written in the
         // background. Both are the user's work, and neither gets destroyed by one stray click.
         RestartInterruptsWork = () => _workspace.IsBusy || _chat.RunningCount > 0;

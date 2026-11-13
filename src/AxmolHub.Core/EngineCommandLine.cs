@@ -30,7 +30,7 @@ public sealed class EngineCommandLine(ProcessRunner runner)
 
     public async Task<ProcessResult> RunAsync(EngineEntry engine, AxmolInvocation invocation, string workingDirectory,
         CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyDictionary<string, string>? environment = null,
-        Action<string>? onLine = null)
+        Action<string>? onLine = null, Action<string, string>? onCommand = null)
     {
         await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
@@ -68,14 +68,16 @@ public sealed class EngineCommandLine(ProcessRunner runner)
                                     && !File.Exists(Path.Combine(directory, "git"))));
         }
 
+        var shell = await ShellAsync(cancellation).ConfigureAwait(false);
         runner.Write("axmol: " + invocation);
+        onCommand?.Invoke(TextEol.ToLf(invocation.ToString()), TextEol.ToLf(workingDirectory));
         // environment: null = inherit the parent environment plus the shared macOS host PATH. The engine depends
         // on system VS / its own tools/external. When environment is passed it acts only as an **override**
         // (e.g. ANDROID_SERIAL to select a device), not as a rebuilt environment.
         // The timeout semantics = how long with no output before judging a stall (default 10 minutes), not a
         // wall-clock cap on the whole command; compiling the whole engine never times out as long as it keeps
         // printing, so don't pass an arbitrary 2-hour total here.
-        var result = await runner.RunAsync(await ShellAsync(cancellation).ConfigureAwait(false), arguments, workingDirectory,
+        var result = await runner.RunAsync(shell, arguments, workingDirectory,
             environment: null, cancellation, timeout, overrides: overrides, onLine: onLine).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
@@ -113,7 +115,7 @@ public sealed class EngineCommandLine(ProcessRunner runner)
     /// so no total time cap is set.
     /// </summary>
     public async Task<ProcessResult> RunSetupAsync(EngineEntry engine, SetupOptions options, CancellationToken cancellation = default,
-        Action<string>? onLine = null)
+        Action<string>? onLine = null, Action<string, string>? onCommand = null)
     {
         await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         StateStore.ValidateEngine(engine.Path, engine.Channel);
@@ -135,6 +137,8 @@ public sealed class EngineCommandLine(ProcessRunner runner)
         environment.Remove("AX_HUB_SETUP_PATH");
         var arguments = prefix.Concat(SetupScriptArguments(setupScript, options)).ToArray();
         runner.Write($"axmol setup: {string.Join(' ', arguments)}");
+        onCommand?.Invoke(TextEol.ToLf(shell + " " + string.Join(" ", arguments.Select(
+            argument => System.Text.Json.JsonSerializer.Serialize(argument)))), TextEol.ToLf(engine.Path));
         return await runner.RunAsync(shell, arguments, engine.Path, environment: null, cancellation,
             overrides: environment, onLine: onLine).ConfigureAwait(false);
     }

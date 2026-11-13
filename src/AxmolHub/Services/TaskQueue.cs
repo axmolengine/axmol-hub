@@ -167,6 +167,36 @@ internal sealed partial class TaskQueue
         /// <summary>The failure message, or null. Shown inline on the row.</summary>
         public string? Error { get; private set; }
 
+        /// <summary>The readable invocation and directory reported by this task's actual call site.</summary>
+        public string? Command { get; private set; }
+        public string? WorkingDirectory { get; private set; }
+
+        public void ReportCommand(string command, string workingDirectory)
+        {
+            Command = TextEol.ToLf(command);
+            WorkingDirectory = TextEol.ToLf(workingDirectory);
+            OnProgress?.Invoke();
+        }
+
+        /// <summary>Shared task detail for the strip and the queue row; never infers progress or commands.</summary>
+        public string TooltipText
+        {
+            get
+            {
+                var lines = new List<string> { Title + " · " + PhaseText };
+                // Finalizing is local, unmeasurable work, not the transfer that already finished.
+                if (State == Phase.Finalizing) return lines[0];
+
+                var measure = MeasureText;
+                if (measure != HubStrings.Get("TaskNoMeasure")) lines.Add(measure);
+                if (HintText is { } hint) lines.Add(hint);
+                if (Command is { Length: > 0 } command) lines.Add(command);
+                if (WorkingDirectory is { Length: > 0 } directory)
+                    lines.Add(string.Format(HubStrings.Get("TaskWorkingDirectory"), directory));
+                return string.Join('\n', lines);
+            }
+        }
+
         /// <summary>What the owner of this transfer estimated rather than measured. Never in
         /// <see cref="MeasureText"/>, only in <see cref="HintText"/>.</summary>
         private long? EstimatedTotal { get; set; }
@@ -260,7 +290,7 @@ internal sealed partial class TaskQueue
 
         /// <summary>The estimate, in words, or null when there is nothing honest to say.</summary>
         public string? HintText => EstimatedTotal is { } total && total > 0
-            ? string.Format(HubStrings.Get("TaskEstimateSize"), FormatBytes(total))
+            ? FormatBytes(total)
               + (EstimatedRate is { } rate && rate > 0 ? " · " + UpdateService.FormatSpeed(rate) : "")
             : null;
 
@@ -390,6 +420,8 @@ internal sealed partial class TaskQueue
             EstimatedTotal = null;
             EstimatedRate = null;
             StageKey = null;
+            Command = null;
+            WorkingDirectory = null;
             StepCurrent = null;
             StepTotal = null;
             StartedAt = null;
@@ -426,8 +458,8 @@ internal sealed partial class TaskQueue
 
             if (line.StartsWith("Command: "))
             {
-                // The full command belongs in the log, never on the row: what the user wants from this line is
-                // which stage we are in, and a 300-character cmake invocation is not that.
+                // A process command identifies the stage, not the readable top-level invocation.
+                // The latter comes directly from EngineCommandLine through Item.ReportCommand.
                 if (line.Contains("--build")) return new Reading("BuildCompiling", null, null, null, false, null);
                 if (line.Contains("org.gradle.launcher.GradleMain")) return new Reading("BuildPackaging", null, null, null, false, null);
                 if (line.Contains("apksigner") || line.Contains("jarsigner") || line.Contains("zipalign")
