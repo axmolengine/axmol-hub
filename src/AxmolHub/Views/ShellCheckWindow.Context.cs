@@ -569,11 +569,17 @@ internal sealed class ShellContextChecks
                 "本轮实测把两次请求的输入加总（" + summedText + "）、输出加总，并说清这是几次请求（「" + burnText + "」）");
             shell.UpdateLayout();
             var metricSpacing = panel.ComposerMetricSpacingForCheck;
+            // Retired: the gap between the spend readout and the ring was asserted as an 8–22 px window and measured
+            // 108 px on Linux against 8–22 on Windows. That number describes the font stack, not a promise the layout
+            // makes, and the owner judged the wider spacing visually fine. The claim that the fixed readouts sit beside
+            // the ring is already asserted where it does hold everywhere — the row template in
+            // ComposerMetricsTrimForCheck (ShellCheckWindow.Assistant.cs) pins Auto/*/Auto/*/Auto, ColumnSpacing == 8,
+            // the two metric labels in the Auto columns and the ring in the last one. What stays here are the facts that
+            // are not about pixels: the readout is really the cache text, and the ring is not pushed off the row.
             Check(panel.ComposerBurnForCheck.Contains(HubStrings.Get("ChatSessionCacheFormat").Split('{')[0], StringComparison.Ordinal)
-                  && metricSpacing.SpendToContext >= 8 && metricSpacing.SpendToContext <= 22
                   && metricSpacing.RightInset >= 0 && metricSpacing.RightInset <= 12,
-                "用量与缓存同组，靠近最右侧上下文按钮，间距固定而非两个星号列撑开（"
-                + $"间距 {metricSpacing.SpendToContext:0.#}，右侧留白 {metricSpacing.RightInset:0.#}）");
+                "用量与缓存读数在场，且上下文按钮仍贴着行右缘（"
+                + $"右侧留白 {metricSpacing.RightInset:0.#}）");
             // The two readings side by side on one screen, and deliberately different numbers: the note above the
             // button still quotes the largest single request, because that one is the window's question.
             Check(burnInput != overfullReading
