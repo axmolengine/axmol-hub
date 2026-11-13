@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using AxmolHub.Core;
 
@@ -73,7 +74,8 @@ public partial class HubDialog : Window
         bool danger = false,
         Bitmap? picture = null,
         IReadOnlyList<HubDialogLink>? links = null,
-        HubDialogLink? footerLink = null)
+        HubDialogLink? footerLink = null,
+        bool centerBody = false)
     {
         var dialog = new HubDialog();
 
@@ -83,6 +85,15 @@ public partial class HubDialog : Window
         dialog.DialogMessage.Text = message;
         dialog.SetPicture(picture);
         dialog.AddLinks(links);
+        if (centerBody)
+        {
+            dialog.DialogPicture.HorizontalAlignment = HorizontalAlignment.Center;
+            dialog.DialogMessage.TextAlignment = TextAlignment.Center;
+            dialog.DialogLinks.HorizontalAlignment = HorizontalAlignment.Stretch;
+            foreach (var row in dialog.DialogLinks.Children)
+                row.HorizontalAlignment = HorizontalAlignment.Center;
+        }
+
         dialog.Build(buttons, danger);
         if (footerLink is not null)
         {

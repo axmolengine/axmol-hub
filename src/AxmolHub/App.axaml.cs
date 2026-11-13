@@ -86,7 +86,8 @@ public partial class App : Application
                 new(AboutRepository, AboutRepository, "Source code:"),
                 new("axmol.dev", "https://axmol.dev", "Super project:"),
             ],
-            footerLink: new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"));
+            footerLink: new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"),
+            centerBody: true);
 
     private static Bitmap? _aboutPicture;
 
