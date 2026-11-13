@@ -1390,6 +1390,11 @@ internal sealed class ShellApprovalsChecks
             var beforeBatchCapture = capturedWindows.Count;
             var batchAccepted = pendingOwn is not null && chat.TryResolveApproval(screenPeerSession.Id,
                 pendingOwn.ToolCallId!, approved: true, alwaysAllow: false, out _);
+            // Both calls belong to one application, so approving one card must run both. Wait for that execution
+            // rather than reading the capture count after an idle poll: the resumed calls run through the
+            // dispatcher, and a fixed idle window read 0 or 1 of the 2 depending on the machine, which turned a
+            // grouping fixture into a timing fixture.
+            await WaitForConditionAsync(() => capturedWindows.Count >= beforeBatchCapture + 2, TimeSpan.FromSeconds(20));
             await WaitForIdleAsync(chat);
             var remainingApps = screenPeerSession.Messages.Where(turn => turn.ApprovalState == ChatApprovalStates.Pending).ToArray();
             Check(pendingApps.Length == 3 && batchAccepted && capturedWindows.Count == beforeBatchCapture + 2
