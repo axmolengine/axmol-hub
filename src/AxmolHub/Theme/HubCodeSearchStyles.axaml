@@ -1,0 +1,163 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ae="using:AvaloniaEdit"
+        xmlns:search="using:AvaloniaEdit.Search">
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!-- Static dependencies must be available while this include loads, before the editor is attached. -->
+        <ResourceInclude Source="avares://AvaloniaEdit/Themes/Base.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+    <!-- A toggle uses the same Hub frame as an action button, with a quiet checked state. -->
+    <ControlTheme x:Key="HubCodeSearchToggle" TargetType="ToggleButton"
+                  BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Style Selector="^ /template/ TextBlock#PART_MoreAffordance">
+        <Setter Property="IsVisible" Value="False" />
+      </Style>
+      <Style Selector="^:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      </Style>
+      <Style Selector="^:checked">
+        <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
+        <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
+      </Style>
+    </ControlTheme>
+
+    <!-- Only the visual template changes. AvaloniaEdit still owns search, replacement and keyboard input.
+         Keep its named parts and bindings, including options that Hub's TextBox does not render inline. -->
+    <ControlTheme x:Key="HubCodeSearchPanel" TargetType="search:SearchPanel"
+                  BasedOn="{StaticResource {x:Type search:SearchPanel}}">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Margin" Value="0,6,18,0" />
+      <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Ui}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="PART_Border"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  HorizontalAlignment="Right" VerticalAlignment="Top" Padding="6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto">
+              <ToggleButton Name="Expander" Grid.Column="0" Grid.Row="0" Margin="0,0,4,0"
+                            Theme="{StaticResource HubCodeSearchToggle}"
+                            IsVisible="{Binding !TextEditor.IsReadOnly, RelativeSource={RelativeSource TemplatedParent}}"
+                            IsChecked="{Binding IsReplaceMode, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                            ToolTip.Tip="{x:Static ae:SR.SearchToggleReplace}">
+                <Path Name="ReplaceChevron" Data="M0 0L4 4L0 8" Width="4" Height="8" Stretch="None"
+                      Stroke="{Binding $parent[ToggleButton].Foreground}" StrokeThickness="1.4"
+                      StrokeLineCap="Round" StrokeJoin="Round" />
+              </ToggleButton>
+              <TextBox Name="PART_searchTextBox" Grid.Column="1" Grid.Row="0"
+                       PlaceholderText="{x:Static ae:SR.SearchLabel}"
+                       Text="{Binding SearchPattern, RelativeSource={RelativeSource TemplatedParent}}" />
+              <StackPanel Grid.Column="2" Grid.Row="0" Orientation="Horizontal" Spacing="2" Margin="4,0,0,0">
+                <ToggleButton Theme="{StaticResource HubCodeSearchToggle}"
+                              IsChecked="{Binding $parent[search:SearchPanel].MatchCase, Mode=TwoWay}"
+                              ToolTip.Tip="{x:Static ae:SR.SearchMatchCaseText}">
+                  <Path Data="{StaticResource CaseSensitiveIconPath}" Width="12" Stretch="Uniform"
+                        Fill="{Binding $parent[ToggleButton].Foreground}" />
+                </ToggleButton>
+                <ToggleButton Theme="{StaticResource HubCodeSearchToggle}"
+                              IsChecked="{Binding $parent[search:SearchPanel].WholeWords, Mode=TwoWay}"
+                              ToolTip.Tip="{x:Static ae:SR.SearchMatchWholeWordsText}">
+                  <Path Data="{StaticResource CompleteWordIconPath}" Width="14" Stretch="Uniform"
+                        Fill="{Binding $parent[ToggleButton].Foreground}" />
+                </ToggleButton>
+                <ToggleButton Theme="{StaticResource HubCodeSearchToggle}"
+                              IsChecked="{Binding $parent[search:SearchPanel].UseRegex, Mode=TwoWay}"
+                              ToolTip.Tip="{x:Static ae:SR.SearchUseRegexText}">
+                  <Path Data="{StaticResource RegularExpressionIconPath}" Width="12" Stretch="Uniform"
+                        Fill="{Binding $parent[ToggleButton].Foreground}" />
+                </ToggleButton>
+                <Button Classes="icon-square code-search-action" Command="{x:Static search:SearchCommands.FindPrevious}"
+                        ToolTip.Tip="{x:Static ae:SR.SearchFindPreviousText}">
+                  <Path Data="M4 10V0M0 4L4 0L8 4" Width="8" Height="10" Stretch="None"
+                        Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.4"
+                        StrokeLineCap="Round" StrokeJoin="Round" />
+                </Button>
+                <Button Classes="icon-square code-search-action" Command="{x:Static search:SearchCommands.FindNext}"
+                        ToolTip.Tip="{x:Static ae:SR.SearchFindNextText}">
+                  <Path Data="M4 0V10M0 6L4 10L8 6" Width="8" Height="10" Stretch="None"
+                        Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.4"
+                        StrokeLineCap="Round" StrokeJoin="Round" />
+                </Button>
+                <Button Classes="icon-square code-search-action" Command="{x:Static search:SearchCommands.CloseSearchPanel}">
+                  <Path Data="M0 0L8 8M8 0L0 8" Width="8" Height="8" Stretch="None"
+                        Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.4"
+                        StrokeLineCap="Round" />
+                </Button>
+              </StackPanel>
+              <TextBox Name="PART_replaceTextBox" Grid.Column="1" Grid.Row="1" Margin="0,4,0,0"
+                       IsVisible="{Binding IsReplaceMode, RelativeSource={RelativeSource TemplatedParent}}"
+                       PlaceholderText="{x:Static ae:SR.ReplaceLabel}"
+                       Text="{Binding ReplacePattern, RelativeSource={RelativeSource TemplatedParent}}" />
+              <StackPanel Name="ReplaceButtons" Grid.Column="2" Grid.Row="1" Orientation="Horizontal"
+                          Spacing="2" Margin="4,4,0,0" IsVisible="{Binding #Expander.IsChecked}">
+                <Button Classes="icon-square code-search-action" Command="{x:Static search:SearchCommands.ReplaceNext}"
+                        ToolTip.Tip="{x:Static ae:SR.SearchReplaceNext}">
+                  <Path Data="{StaticResource ReplaceNextIconPath}" Width="12" Stretch="Uniform"
+                        Fill="{Binding $parent[Button].Foreground}" />
+                </Button>
+                <Button Classes="icon-square code-search-action" Command="{x:Static search:SearchCommands.ReplaceAll}"
+                        ToolTip.Tip="{x:Static ae:SR.SearchReplaceAll}">
+                  <Path Data="{StaticResource ReplaceAllIconPath}" Width="14" Stretch="Uniform"
+                        Fill="{Binding $parent[Button].Foreground}" />
+                </Button>
+              </StackPanel>
+              <StackPanel Name="PART_MessageView" Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="2"
+                          IsVisible="False" Orientation="Horizontal" Margin="0,4,0,0">
+                <TextBlock Name="PART_MessageContent" FontSize="11" Foreground="{DynamicResource Hub.TextSecondary}" />
+              </StackPanel>
+            </Grid>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+      <Style Selector="^ /template/ ToggleButton#Expander:checked Path#ReplaceChevron">
+        <Setter Property="RenderTransform">
+          <RotateTransform Angle="90" />
+        </Setter>
+      </Style>
+      <Style Selector="^ /template/ TextBox">
+        <Setter Property="Width" Value="220" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Ui}" />
+        <Setter Property="PlaceholderForeground" Value="{DynamicResource Hub.TextSecondary}" />
+      </Style>
+    </ControlTheme>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <Style Selector="search|SearchPanel">
+    <Setter Property="Theme" Value="{StaticResource HubCodeSearchPanel}" />
+  </Style>
+  <Style Selector="Button.code-search-action">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+  </Style>
+  <Style Selector="Button.code-search-action:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+  </Style>
+</Styles>

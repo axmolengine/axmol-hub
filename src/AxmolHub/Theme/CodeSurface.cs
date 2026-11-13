@@ -43,6 +43,10 @@ internal static class CodeSurface
         {
             Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"),
         });
+        editor.Styles.Add(new StyleInclude(new Uri("avares://AxmolHub/"))
+        {
+            Source = new Uri("avares://AxmolHub/Theme/HubCodeSearchStyles.axaml"),
+        });
         editor.Bind(TemplatedControl.ForegroundProperty, new DynamicResourceExtension("Hub.TextBody"));
         editor.Bind(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceSunken"));
         // Keep the gutter's existing spacing without painting the default dotted separator.

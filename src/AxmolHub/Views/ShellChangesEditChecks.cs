@@ -207,6 +207,15 @@ internal sealed class ShellChangesEditChecks(Action<bool, string> check)
             fullWindow.Show();
             fullWindow.UpdateLayout();
             var source = fullEditor.GetVisualDescendants().OfType<TextEditor>().Single();
+            // Resource lookup is deferred to editor creation and panel opening; a build cannot catch it.
+            var search = source.SearchPanel;
+            search.IsReplaceMode = true;
+            search.Open();
+            fullWindow.UpdateLayout();
+            var fields = search.GetVisualDescendants().OfType<TextBox>().Select(box => box.Name).ToArray();
+            check(search.IsOpened && fields.Contains("PART_searchTextBox") && fields.Contains("PART_replaceTextBox"),
+                "完整文件编辑：查找/替换模板及全部操作图标可加载，不因静态资源缺失崩溃");
+            search.Close();
             source.Document.Insert(source.Document.TextLength, "// full file\n");
             source.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.S,
                 KeyModifiers = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control });
