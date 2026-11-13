@@ -8,8 +8,6 @@ namespace AxmolHub;
 public partial class NewProjectDialog : Window
 {
     private readonly HubWorkspace _workspace;
-    private bool _creating;
-    private ProjectEntry? _created;
 
     public NewProjectDialog() { _workspace = null!; InitializeComponent(); }
 
@@ -18,7 +16,7 @@ public partial class NewProjectDialog : Window
         _workspace = workspace;
         InitializeComponent();
         Title = HubStrings.Get("NewProject");
-        ChromeHost.Content = new HubDialogChrome(this, "CloseWindow", CloseOrCancel).Header;
+        ChromeHost.Content = new HubDialogChrome(this, "CloseWindow", Close).Header;
         ProjectNameBox.Text = draftName;
         ProjectLocationBox.Text = string.IsNullOrWhiteSpace(draftLocation) ? workspace.ProjectDirectory : draftLocation;
         ProjectEnginePicker.ItemsSource = workspace.State.Engines
@@ -67,16 +65,9 @@ public partial class NewProjectDialog : Window
                 await HubDialog.ShowAsync(this, HubStrings.Get("OperationFailed"), HubStrings.Get("LocalPathRequired"));
             if (result.Outcome == PickOutcome.Picked) ProjectLocationBox.Text = result.Path;
         };
-        CancelButton.Click += (_, _) => CloseOrCancel();
+        CancelButton.Click += (_, _) => Close();
         CreateButton.Click += OnCreate;
         KeyDown += OnKeyDown;
-        Closing += (_, e) =>
-        {
-            if (!_creating) return;
-            _workspace.Cancel();
-            CancelButton.IsEnabled = false;
-            e.Cancel = true;
-        };
         Opened += (_, _) => ProjectNameBox.Focus();
         RefreshCameraModeChoice();
         RefreshPrebuiltChoice();
@@ -84,11 +75,16 @@ public partial class NewProjectDialog : Window
 
     public string DraftName => ProjectNameBox.Text ?? "";
     public string DraftLocation => ProjectLocationBox.Text ?? "";
-    public ProjectEntry? CreatedProject => _created;
+
+    /// <summary>
+    /// What the person asked for, set on the way out. Creating a project is a task the strip reports and the task
+    /// list can cancel, so the window closes at the press instead of standing in front of the engine command.
+    /// </summary>
+    public ProjectCreationRequest? Request { get; private set; }
 
     internal TextBox ProjectNameForCheck => ProjectNameBox;
     internal Button CancelForCheck => CancelButton;
-    internal void CloseForCheck() => CloseOrCancel();
+    internal void CloseForCheck() => Close();
 
     public void FitToScreen(Window owner)
     {
@@ -108,27 +104,16 @@ public partial class NewProjectDialog : Window
         public override string ToString() => Label;
     }
 
-    private void CloseOrCancel()
-    {
-        if (_creating)
-        {
-            _workspace.Cancel();
-            CancelButton.IsEnabled = false;
-            return;
-        }
-        Close();
-    }
-
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Escape || ProjectEnginePicker.IsDropDownOpen) return;
-        CloseOrCancel();
+        Close();
         e.Handled = true;
     }
 
     private async void OnCreate(object? sender, RoutedEventArgs e)
     {
-        if (_creating || _workspace.RefuseIfBusy()) return;
+        if (_workspace.RefuseIfBusy()) return;
         var advanced = CreateAdvancedExpander.IsExpanded;
         var repair = advanced && RepairCheck.IsChecked == true;
         var forceOverwrite = repair && ForceOverwriteCheck.IsChecked == true;
@@ -141,30 +126,10 @@ public partial class NewProjectDialog : Window
         var cameraMode = CameraModePanel.IsVisible
             ? (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "classic"
             : null;
-        _creating = true;
-        CreateButton.IsEnabled = false;
-        CreateStatus.Text = HubStrings.Get("CreateRunning");
-        CreateStatus.IsVisible = true;
-        ProjectEntry? created;
-        try
-        {
-            created = await _workspace.CreateProjectAsync(name, ProjectLocationBox.Text ?? "",
-                ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
-                projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
-                PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite);
-        }
-        finally
-        {
-            _creating = false;
-            CreateButton.IsEnabled = true;
-            CancelButton.IsEnabled = true;
-        }
-        if (created is null)
-        {
-            CreateStatus.Text = HubStrings.Get(_workspace.LastError.Length > 0 ? "CreateFailed" : "CreateCancelled");
-            return;
-        }
-        _created = created;
+        Request = new ProjectCreationRequest(name, ProjectLocationBox.Text ?? "",
+            ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
+            projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
+            PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite);
         Close();
     }
 
@@ -202,3 +167,8 @@ public partial class NewProjectDialog : Window
         PrebuiltHint.Text = hint + "\n" + HubStrings.Get(availability?.Usable == true ? "PrebuiltReadyHint" : "PrebuiltNotBuiltHint");
     }
 }
+
+/// <summary>One press of Create, handed to the page that owns the projects list. The window is gone by the time
+/// the engine command runs; what it chose travels in this record instead of in its fields.</summary>
+public sealed record ProjectCreationRequest(string Name, string Location, EngineEntry? Engine, string ProjectType,
+    bool UsePrebuilt, string? CameraMode, bool Portrait, bool Isolated, bool Repair, bool ForceOverwrite);

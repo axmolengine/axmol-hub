@@ -54,7 +54,6 @@
           </StackPanel>
         </Expander>
         <TextBlock Text="{DynamicResource BuildPlatformHint}" Classes="muted" TextWrapping="Wrap" />
-        <TextBlock x:Name="CreateStatus" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
       </StackPanel>
     </ScrollViewer>
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"

@@ -114,24 +114,29 @@ public partial class ProjectsPage : UserControl
         try
         {
             await dialog.ShowDialog(owner);
-            if (dialog.CreatedProject is { } created)
-            {
-                _draftName = "HelloAxmol";
-                _draftLocation = _workspace.ProjectDirectory;
-                ClearSearchAndFilters();
-                _workspace.SelectedProject = created;
-                Reload();
-            }
-            else
-            {
-                _draftName = dialog.DraftName;
-                _draftLocation = dialog.DraftLocation;
-            }
+            _draftName = dialog.DraftName;
+            _draftLocation = dialog.DraftLocation;
+            if (dialog.Request is { } request) _ = CreateProjectAsync(request);
         }
         finally
         {
             _createDialog = null;
         }
+    }
+
+    /// <summary>Finishes the press the dialog already handed over: the window is gone, so progress and failure
+    /// belong to the strip and the task list, and this only selects the project once the engine created it.</summary>
+    private async Task CreateProjectAsync(ProjectCreationRequest request)
+    {
+        var created = await _workspace.CreateProjectAsync(request.Name, request.Location, request.Engine,
+            request.ProjectType, request.UsePrebuilt, request.CameraMode, request.Portrait, request.Isolated,
+            request.Repair, request.ForceOverwrite);
+        if (created is null) return;
+        _draftName = "HelloAxmol";
+        _draftLocation = _workspace.ProjectDirectory;
+        ClearSearchAndFilters();
+        _workspace.SelectedProject = created;
+        Reload();
     }
 
     private async void OnOpenProject(object? sender, RoutedEventArgs e)
