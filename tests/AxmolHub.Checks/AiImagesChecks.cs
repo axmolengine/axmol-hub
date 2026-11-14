@@ -307,6 +307,46 @@ internal static class AiImagesChecks
             throw new Exception("Cancelled input was admitted.");
         }
         catch (OperationCanceledException) when (!neverOperated) { }
+        // Exercise live revocation and cancellation after one simulated event, never the real desktop.
+        foreach (var cancelDuringInput in new[] { false, true })
+        {
+            using var runningInput = new CancellationTokenSource();
+            var liveControl = new ComputerControlSession(inputTarget, "Offline interruption");
+            var liveObservation = new ComputerUseObservation();
+            var eventsSent = 0;
+            var capturesAfterInput = 0;
+            var interruptibleTools = new WorkspaceTools(WorkspaceToolScope.Empty with
+            {
+                Screen = new ScreenCaptureBridge(() => [observedWindow], _ => { capturesAfterInput++; return observedFrame; })
+                    { Backend = new CaptureBackend("fixture", "offline interruption fixture") },
+                ComputerControlVersion = () => liveControl.Version,
+                ApprovedComputerTarget = () => liveControl.Covers(inputTarget) ? inputTarget : null,
+                ComputerObservation = () => liveObservation,
+                ComputerInputDecision = () => new(ComputerRisk.Allow, "Offline interruption"),
+                ComputerUse = new ComputerUseBridge((_, request) =>
+                {
+                    for (var index = 0; index < 3; index++)
+                    {
+                        request.Cancellation.ThrowIfCancellationRequested();
+                        if (request.StillAuthorized?.Invoke() != true) return "Refused: live permission changed.";
+                        eventsSent++;
+                        if (cancelDuringInput) runningInput.Cancel(); else liveControl.Revoke();
+                    }
+                    throw new Exception("Interrupted input reached its end.");
+                }),
+            });
+            var liveFrame = liveObservation.Record(observedWindow, observedFrame);
+            try
+            {
+                var result = interruptibleTools.ComputerUse("Fixture", "type", text: "abc", frame_id: liveFrame,
+                    cancellationToken: runningInput.Token);
+                if (cancelDuringInput || !result.StartsWith("Refused:", StringComparison.Ordinal))
+                    throw new Exception("Interrupted input was reported as delivered.");
+            }
+            catch (OperationCanceledException) when (cancelDuringInput && runningInput.IsCancellationRequested) { }
+            if (eventsSent != 1 || capturesAfterInput != 0)
+                throw new Exception("Interrupted input sent another event or performed a post-input capture.");
+        }
         if (!ComputerUseGrants.IsInput(ToolNames.ComputerUse, "{\"action\":\"click\"}")
             || ComputerUseGrants.IsInput(ToolNames.ComputerUse, "{\"action\":\"screenshot\"}"))
             throw new Exception("Input confirmation classification failed.");
