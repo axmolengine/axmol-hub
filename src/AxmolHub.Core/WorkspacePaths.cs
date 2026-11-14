@@ -614,7 +614,10 @@ public static class WorkspacePaths
     public static (ProtectedKind Kind, string Anchor)? ProtectedLocationOf(string fullPath, WorkspaceGuards guards)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (IsInside(fullPath, guards.DataRoot, comparison)) return (ProtectedKind.DataRoot, guards.DataRoot!);
+        fullPath = Path.GetFullPath(fullPath);
+        if (IsInside(fullPath, guards.DataRoot, comparison)
+            && !IsManagedProjectPath(fullPath, guards.DataRoot!, comparison))
+            return (ProtectedKind.DataRoot, guards.DataRoot!);
         foreach (var engineRoot in guards.EngineRoots)
             if (IsInside(fullPath, engineRoot, comparison)) return (ProtectedKind.Engine, engineRoot);
 
@@ -624,6 +627,30 @@ public static class WorkspacePaths
         return at < 0
             ? null
             : (ProtectedKind.Git, string.Join(Path.DirectorySeparatorChar.ToString(), segments, 0, at + 1));
+    }
+
+    /// <summary>Only an individual project below the fixed data-root/projects container is user source.
+    /// The container, loose files and linked paths keep the data-root protection. Engine and .git checks
+    /// still run after this exception; a project designation never opens Hub's internal state.</summary>
+    private static bool IsManagedProjectPath(string fullPath, string dataRoot, StringComparison comparison)
+    {
+        var projects = Path.Combine(Path.GetFullPath(dataRoot), "projects");
+        var prefix = projects + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(prefix, comparison)) return false;
+        var relative = fullPath[prefix.Length..];
+        if (relative.Length == 0) return false;
+        var separator = relative.IndexOf(Path.DirectorySeparatorChar);
+        var project = Path.Combine(projects, separator < 0 ? relative : relative[..separator]);
+        if (!Directory.Exists(project)) return false;
+        try
+        {
+            if (new FileInfo(fullPath).LinkTarget is not null) return false;
+            return !ContainsReparsePoint(fullPath, dataRoot);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return false;
+        }
     }
 
     public static bool IsProtected(string fullPath, WorkspaceGuards guards)
@@ -793,6 +820,7 @@ public static class WorkspacePaths
         var directory = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path).Directory;
         for (; directory != null; directory = directory.Parent)
         {
+            if (directory.LinkTarget is not null) return true;
             if (!directory.Exists) continue;
             if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) return true;
             if (directory.FullName.TrimEnd(Path.DirectorySeparatorChar).Equals(stop, StringComparison.Ordinal)) break;
