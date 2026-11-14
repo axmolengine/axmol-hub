@@ -221,6 +221,18 @@ internal static class AiImagesChecks
         if (applicationControl.Covers(newWindow) || applicationControl.Wait(CancellationToken.None)
             || new ComputerControlSession(appTarget, "New task").Version == applicationControl.Version)
             throw new Exception("Revoked permission survived or its version was recycled.");
+        // A call waking after pause/resume must fail before touching either capture or input backends.
+        long waitingVersion = 1;
+        var waitingTools = new WorkspaceTools(WorkspaceToolScope.Empty with
+        {
+            ComputerControlVersion = () => waitingVersion,
+            WaitComputerControl = _ => { waitingVersion++; return true; },
+        });
+        if (!waitingTools.ComputerUse("Fixture", "move", frame_id: "old")
+                .Contains("permission changed while this call was waiting", StringComparison.Ordinal)
+            || !waitingTools.CaptureScreen("Fixture")
+                .Contains("permission changed while this call was waiting", StringComparison.Ordinal))
+            throw new Exception("A resumed call did not explain invalidation before accessing the desktop.");
         // Frame consumption is an isolation boundary, not a cosmetic coordinate detail.
         var observation = new ComputerUseObservation();
         var observedWindow = new CapturableWindow(1, "Fixture", 1, 100, 50)

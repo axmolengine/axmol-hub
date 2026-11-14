@@ -966,12 +966,22 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         int process_id = 0,
         CancellationToken cancellationToken = default)
     {
-        if (context.WaitComputerControl?.Invoke(cancellationToken) == false)
-            return "Refused: application-session permission was revoked.";
+        if (WaitForComputerControl(cancellationToken) is { } waitRefusal) return waitRefusal;
         cancellationToken.ThrowIfCancellationRequested();
         using var lease = ComputerDesktop.TryEnter();
         return lease is null ? "Refused: another conversation is using the desktop. Wait for it to finish."
             : CaptureScreenCore(target, fullscreen, process_id);
+    }
+
+    private string? WaitForComputerControl(CancellationToken cancellation)
+    {
+        var version = context.ComputerControlVersion?.Invoke() ?? 0;
+        if (context.WaitComputerControl?.Invoke(cancellation) == false)
+            return "Refused: application-session permission was revoked. No capture or input was sent. Request a new application permission.";
+        // Pause/resume invalidates this call's assessment as well as its observation. Never replay it on wake.
+        if ((context.ComputerControlVersion?.Invoke() ?? 0) != version)
+            return "Refused: Computer Use permission changed while this call was waiting (for example, pause/resume). No capture or input was sent. Capture a fresh observation and request a new action.";
+        return null;
     }
 
     private string CaptureScreenCore(string target, bool fullscreen = false, int process_id = 0)
@@ -1077,8 +1087,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("Horizontal scroll steps, -10 to 10; positive scrolls left.")] int horizontal_scroll = 0,
         CancellationToken cancellationToken = default)
     {
-        if (context.WaitComputerControl?.Invoke(cancellationToken) == false)
-            return "Refused: application-session permission was revoked. Request a new application permission.";
+        if (WaitForComputerControl(cancellationToken) is { } waitRefusal) return waitRefusal;
         var app = ComputerUseGrants.NormalizeTitle(application);
         if (app.Length is 0 or > 256)
             return "Refused: Computer Use needs one application window title, no more than 256 characters. Do not retry without a title.";
