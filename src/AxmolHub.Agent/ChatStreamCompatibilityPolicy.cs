@@ -6,9 +6,9 @@ using System.Text.Json.Nodes;
 
 namespace AxmolHub.Agent;
 
-/// <summary>Keeps auxiliary Chat timestamps from failing SDK deserialization. SSE framing belongs to the
-/// existing parser/formatter; valid seconds and all non-timestamp fields keep their meaning.</summary>
-internal sealed class ChatTimestampPolicy : PipelinePolicy
+/// <summary>Normalizes Chat stream fields that otherwise prevent SDK deserialization. SSE framing belongs to
+/// the existing parser/formatter, and raw wire logging runs before this policy.</summary>
+internal sealed class ChatStreamCompatibilityPolicy : PipelinePolicy
 {
     public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
     {
@@ -27,7 +27,7 @@ internal sealed class ChatTimestampPolicy : PipelinePolicy
         if (message.Response is { Status: 200, ContentStream: { } stream } response
             && response.Headers.TryGetValue("Content-Type", out var type)
             && type?.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
-            response.ContentStream = new TimestampStream(stream);
+            response.ContentStream = new CompatibleChatStream(stream);
     }
 
     internal static string Normalize(string data, long fallback)
@@ -35,22 +35,46 @@ internal sealed class ChatTimestampPolicy : PipelinePolicy
         if (data == "[DONE]") return data;
         try
         {
-            if (JsonNode.Parse(data) is not JsonObject root || !root.ContainsKey("choices")
-                || !root.ContainsKey("created")) return data;
-            var seconds = fallback;
-            if (root["created"] is JsonValue value && value.TryGetValue<long>(out var time))
+            if (JsonNode.Parse(data) is not JsonObject root || root["choices"] is not JsonArray choices)
+                return data;
+            var changed = false;
+            if (root.ContainsKey("created"))
             {
-                if (time is >= -62135596800L and <= 253402300799L) return data;
-                if (time is >= -62135596800000L and <= 253402300799999L)
-                    seconds = DateTimeOffset.FromUnixTimeMilliseconds(time).ToUnixTimeSeconds();
+                var seconds = fallback;
+                var valid = false;
+                if (root["created"] is JsonValue value && value.TryGetValue<long>(out var time))
+                {
+                    valid = time is >= -62135596800L and <= 253402300799L;
+                    if (!valid && time is >= -62135596800000L and <= 253402300799999L)
+                        seconds = DateTimeOffset.FromUnixTimeMilliseconds(time).ToUnixTimeSeconds();
+                }
+                if (!valid)
+                {
+                    root["created"] = seconds;
+                    changed = true;
+                }
             }
-            root["created"] = seconds;
-            return root.ToJsonString();
+            foreach (var choice in choices.OfType<JsonObject>())
+            {
+                if (choice["delta"] is not JsonObject delta || delta["tool_calls"] is not JsonArray calls)
+                    continue;
+                foreach (var call in calls.OfType<JsonObject>())
+                {
+                    // Some relays send an empty type with argument fragments after declaring "function".
+                    // Omit only that empty value so the SDK can merge the fragment into the existing call.
+                    if (call["type"] is JsonValue type && type.TryGetValue<string>(out var kind) && kind.Length == 0)
+                    {
+                        call.Remove("type");
+                        changed = true;
+                    }
+                }
+            }
+            return changed ? root.ToJsonString() : data;
         }
         catch (JsonException) { return data; } // Malformed payloads still fail in the SDK, not disappear here.
     }
 
-    private sealed class TimestampStream(Stream inner) : Stream
+    private sealed class CompatibleChatStream(Stream inner) : Stream
     {
         private readonly long fallback = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         private readonly MemoryStream pending = new();

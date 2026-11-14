@@ -11,7 +11,7 @@ internal static class AiProvidersChecks
     {
         await ClaudeMessagesChecks.RunAsync();
         await RequestRetryChecks.RunAsync();
-        await ChatTimestampChecks.RunAsync(root);
+        await ChatStreamCompatibilityChecks.RunAsync(root);
         void AssertRejects(Action action, string name)
         {
             try
