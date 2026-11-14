@@ -258,8 +258,10 @@ internal static partial class MacOsComputerUse
             if (up != 0) CFRelease(up);
             return false;
         }
-        CGEventKeyboardSetUnicodeString(down, (uint)characters.Length, characters);
-        CGEventKeyboardSetUnicodeString(up, (uint)characters.Length, characters);
+        // UniChar is a UTF-16 code unit; default char[] marshalling converts to UTF-8 on macOS.
+        var unicode = Array.ConvertAll(characters, static character => (ushort)character);
+        CGEventKeyboardSetUnicodeString(down, (nuint)unicode.Length, unicode);
+        CGEventKeyboardSetUnicodeString(up, (nuint)unicode.Length, unicode);
         CGEventPost(0, down);
         CGEventPost(0, up);
         CFRelease(down);
@@ -339,7 +341,7 @@ internal static partial class MacOsComputerUse
     [DllImport(CoreGraphics)] private static extern nint CGEventCreateKeyboardEvent(nint source, ushort virtualKey, bool keyDown);
     [DllImport(CoreGraphics)] private static extern void CGEventSetIntegerValueField(nint value, int field, long number);
     [DllImport(CoreGraphics)] private static extern void CGEventSetFlags(nint value, ulong flags);
-    [DllImport(CoreGraphics)] private static extern void CGEventKeyboardSetUnicodeString(nint value, uint stringLength, [In] char[] unicodeString);
+    [DllImport(CoreGraphics)] private static extern void CGEventKeyboardSetUnicodeString(nint value, nuint stringLength, [In] ushort[] unicodeString);
     [DllImport(CoreGraphics)] private static extern void CGEventPost(uint tap, nint value);
     [DllImport(CoreFoundation)] private static extern nint CFStringCreateWithCString(nint allocator, string value, uint encoding);
     [DllImport(CoreFoundation)] private static extern bool CFStringGetCString(nint value, byte[] buffer, nint bufferSize, uint encoding);

@@ -37,24 +37,37 @@ internal static partial class MacOsComputerUse
 
     private static bool OwnsPoint(CapturableWindow window, CGPoint point)
     {
-        var list = CGWindowListCopyWindowInfo(OnScreenOnly | ExcludeDesktop, 0);
-        if (list == 0) return false;
+        // Window-list rectangles are not hit-test regions: Dock owns a monitor-sized layer even
+        // where it receives no input. Ask macOS for the actual hit, then verify its process and window.
+        var desktop = AXUIElementCreateSystemWide();
+        nint element = 0;
+        if (desktop == 0) return false;
         try
         {
-            for (nint index = 0; index < CFArrayGetCount(list); index++)
+            AXUIElementSetMessagingTimeout(desktop, 0.25f);
+            if (AXUIElementCopyElementAtPosition(desktop, (float)point.X, (float)point.Y, out element) != 0
+                || element == 0 || AXUIElementGetPid(element, out var pid) != 0 || pid != window.ProcessId)
+                return false;
+            for (var depth = 0; element != 0 && depth < 16; depth++)
             {
-                var item = CFArrayGetValueAtIndex(list, index);
-                if (Number(item, WindowLayerKey, 3) < 0) continue;
-                var value = CFDictionaryGetValue(item, WindowBoundsKey);
-                if (value == 0 || !CGRectMakeWithDictionaryRepresentation(value, out var rect)
-                    || point.X < rect.Origin.X || point.Y < rect.Origin.Y
-                    || point.X >= rect.Origin.X + rect.Size.Width || point.Y >= rect.Origin.Y + rect.Size.Height) continue;
-                return Number(item, WindowNumberKey, 3) == (long)window.Handle
-                    && Number(item, OwnerPidKey, 3) == window.ProcessId;
+                if (AxText(element, "AXRole") == "AXWindow") return MatchesAccessibilityWindow(element, window);
+                var owner = AxAttribute(element, "AXWindow");
+                if (owner != 0)
+                {
+                    try { return MatchesAccessibilityWindow(owner, window); }
+                    finally { CFRelease(owner); }
+                }
+                var parent = AxAttribute(element, "AXParent");
+                CFRelease(element);
+                element = parent;
             }
             return false;
         }
-        finally { CFRelease(list); }
+        finally
+        {
+            if (element != 0) CFRelease(element);
+            CFRelease(desktop);
+        }
     }
 
     private static string? Deliver(CapturableWindow window, ComputerActionRequest r, CGRect bounds, Func<bool> authorized)
@@ -68,7 +81,9 @@ internal static partial class MacOsComputerUse
             if (!Inside(r.X, r.Y) || r.Action == "drag" && !Inside(r.EndX, r.EndY))
                 return "Refused: pointer coordinates must remain within the captured window.";
             var point = Point(r.X, r.Y);
-            if (!authorized() || !OwnsPoint(window, point)) return interrupted;
+            if (!authorized()) return interrupted;
+            if (!OwnsPoint(window, point))
+                return "Refused: macOS hit testing did not resolve this point to the selected application window. Nothing was sent.";
             if (!PostMouse(point, 5)) return "Refused: macOS could not create pointer motion.";
             if (r.Action == "move") return null;
             if (!Wait(25) || !OwnsPoint(window, point)) return interrupted;
@@ -173,6 +188,7 @@ internal static partial class MacOsComputerUse
         return null;
     }
 
+    [DllImport(ApplicationServices)] private static extern nint AXUIElementCreateSystemWide();
     [DllImport(ApplicationServices)] private static extern int AXUIElementPerformAction(nint element, nint action);
     [DllImport(CoreGraphics)] private static extern nint CGEventCreateScrollWheelEvent2(nint source, uint units, uint wheelCount,
         int wheel1, int wheel2, int wheel3);
