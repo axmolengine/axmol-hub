@@ -42,7 +42,9 @@ fallback to unscoped capture or non-portal global input is permitted.
 
 A process-wide desktop lease spans observation, input and the post-input capture. Competing
 conversation calls fail instead of interleaving. The live Computer Use strip above the composer provides Pause/Resume, Stop and Revoke.
-Pause blocks further delivery and invalidates frames; resume requires a fresh observation.
+Pause blocks further delivery and invalidates frames. A tool call started while paused waits for
+Resume or cancellation. If its permission version changes during that wait, it refuses before capture
+or input and requires a fresh observation and a new action; it does not replay the queued operation.
 Stop cancels input and revokes control. Revocation also stops further events in a running action.
 Text delivery checks cancellation between characters/code points, and macOS dragging checks
 between bounded motion segments. Mouse buttons and shortcut modifiers are released in `finally`. An event already handed
@@ -102,7 +104,11 @@ are separate OS permissions; granting them does not replay an interrupted action
   Unsupported, protected or blank captures are refused. Occluded click points are refused.
 - **macOS:** Screen Recording and Accessibility permissions. Missing permission stops the
   current call; permission approval never queues an automatic replay. The selected window,
-  not merely another window belonging to its process, must be frontmost.
+  not merely another window belonging to its process, must be frontmost. Pointer ownership uses
+  macOS's system-wide Accessibility hit test and verifies the hit's PID plus its containing
+  window's title/bounds. It does not treat overlapping CoreGraphics rectangles as input regions:
+  Dock can advertise a monitor-sized layer while receiving no input at the selected point.
+  A real Dock/menu/foreign-app hit or an unavailable/ambiguous window remains refused.
 - **Linux X11:** `wmctrl`, `maim` or ImageMagick `import`, plus `xdotool` for input. Executable
   identity is resolved through `/proc/<pid>/exe`. Both window geometry and title are parsed
   from `wmctrl -lpG` (the hostname field is not part of the title).
@@ -120,10 +126,72 @@ Its previously failing inline-code assertions were repaired at the fixture's spa
 shared renderer behavior is checked once, with a separate inspector wiring check. No production
 selection fix or real-desktop success is inferred from that fixture repair.
 
-The local `.pkg` is for user installation and manual acceptance. Native input, accessibility
-classification, clipboard revisions, Retina/multi-monitor coordinates and interruption midway
-through a drag still require that installed-app acceptance. No Windows/X11/Wayland desktop
-regression is claimed by the macOS build.
+The local `.pkg` is for user installation and manual acceptance. An installed macOS arm64 run
+against a disposable TextEdit document returned a 1346x878 image for a 673x439 window. A document
+click placed the caret at the intended line end, ASCII typing inserted `hub-input-7429`, and
+double-click selected `alpha`. Dragging produced a visible selection and downward scrolling
+exposed rows 24-27. These are single-window observations, not complete Retina/multi-monitor coverage.
+An initial input while TextEdit was not frontmost was refused; after explicitly bringing the app
+forward, a fresh observation was used for subsequent input.
+
+The same run exposed two keyboard failures. `中文验证` appeared as incorrect characters, and an
+attempted Command+C replaced the selected `alpha` with `zAsxa` instead of visibly preserving it;
+additional unexpected characters were visible in a later frame. That run did not pass copy/paste
+acceptance, and the shortcut failure's cause was not established. Keyboard testing stopped without
+attempting Paste or replaying the failed text. An event-object-only probe (no input posting) reproduced the
+Unicode ABI error: default `char[]` marshalling supplied UTF-8 bytes where CoreGraphics expects UTF-16
+code units. The declaration now uses `ushort[]` and native-sized `UniCharCount`; the probe reads back
+correct Chinese and surrogate-pair values.
+
+After installing the rebuilt package, the user reported switching from Chinese to English input mode.
+In a fresh disposable TextEdit document, the immediately returned image showed exactly
+`hub-retest-5831 中文验证 😀`. Double-click selected `alpha`; Command+C preserved the selected text,
+and Command+V inserted `alpha` on the separate paste-target line. Command+A visibly selected the
+document. A second newly opened TextEdit window in the same process was observed and operated under
+the live application permission; its returned image showed `second-window-ok-2648` at the intended
+line. These establish one successful Unicode, copy/paste, select-all and same-app new-window case
+with the rebuilt code and English input mode. They do not isolate the input method as the cause of
+the earlier shortcut failure, nor verify the rebuilt code under Chinese input mode. Clipboard bytes
+were not read through a separate tool or replaced for the test; only the selected test word was copied.
+
+In a manual pause/resume case, the user observed that a tool call made while paused stayed pending
+until Resume, then returned a missing-host-assessment refusal with no input sent. This matches the
+current wait gate, not an immediate paused-state refusal. After the user confirmed Resume, an input
+using the pre-pause frame was refused with `No live observation is registered` and no input sent.
+A fresh screenshot followed by a window-scoped move reported delivery; the post-input image showed
+the test document unchanged. This covers a pending call and fresh-observation recovery, not pausing
+midway through native event delivery.
+
+The wait gate now checks the live permission version across the wait and returns an explicit
+permission-changed/fresh-observation refusal before either capture or input, rather than falling
+through to a generic missing-host-assessment failure. After installing the rebuilt package, a pointer
+move requested while paused waited for Resume, then returned the explicit permission-changed refusal
+with `No capture or input was sent`. This verifies the updated wait gate for that installed-app input
+case; the existing offline image fixture covers both tool entry points without touching the desktop.
+
+After that package installation and Hub restart, the user confirmed that the first screenshot request
+showed a new application permission card and that they clicked Allow before the image was returned.
+This verifies one restart/re-authorize path: the saved conversation did not silently restore its live
+application control permission.
+
+For revocation, an initial post-revoke capture succeeded because the user explicitly approved the
+new application permission card; it is not evidence that revocation was bypassed. After revoking
+again, the user denied the new card for an attempted pointer move. The tool returned user rejection
+rather than input delivery, and the user confirmed this matched expectations. This verifies one
+revoke/re-authorize/deny path, not revocation during a running native input sequence. No subsequent
+capture or input was attempted after that denial.
+
+Broader accessibility classification and clipboard-change rejection, Stop, input interruption,
+the rebuilt code under Chinese input mode, and mixed-DPI/multi-monitor coordinates
+still require installed-app acceptance. No Windows/X11/Wayland desktop regression is claimed by the
+macOS build.
+
+The latest local offline run passed `--check-ai-images`, `--check-ai-context` and
+`--check-ai-workspace` with `EnableWindowsTargeting=true`; logs are under
+`tmp/computer-use-offline-{images,context,workspace}.log`. The image suite was rerun successfully
+after adding the minimal wait-version regression case. Debug build and Release osx-arm64 publish/
+packaging succeeded, and `Test-MacPackage.ps1` passed for the rebuilt local installer. These do not
+replace the remaining installed-app cases or claim a fresh full ShellCheck run.
 
 ## Earlier Wayland verification status (historical)
 
