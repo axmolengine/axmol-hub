@@ -60,6 +60,7 @@ public partial class ChatSidebar : UserControl
     /// a card. Left unsettable because a sidebar built without a shell still has to work.
     /// </summary>
     internal Action<UserFeedback>? StatusReporter { get; init; }
+    internal Action? NewWorkspaceRequested { get; init; }
 
     /// <summary>
     /// Where a text copy lands, when a check wants it. <see cref="CopyConversationIdAsync"/> writes the real clipboard
@@ -446,7 +447,10 @@ public partial class ChatSidebar : UserControl
             newButton.Classes.Add("group-new");
             ToolTip.SetTip(newButton, HubStrings.Get(newTip));
             if (bucket.Key == SessionGroupKey.Workspaces)
-                newButton.Click += async (_, _) => await PickWorkspaceForNewConversationAsync();
+            {
+                newButton.Name = "NewWorkspaceButton";
+                newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
+            }
             // A group is named after the workspace of the sessions in it, so it can outlive the reason that workspace
             // was accepted: the folder can be gone, and it can have become an engine installation since. The ＋ goes
             // through the same door as the picker and gives the same verdict, rather than starting a session that
@@ -460,26 +464,6 @@ public partial class ChatSidebar : UserControl
         }
 
         return row;
-    }
-
-    private async System.Threading.Tasks.Task PickWorkspaceForNewConversationAsync()
-    {
-        var owner = TopLevel.GetTopLevel(this);
-        if (owner is null) return;
-        var result = await Pickers.PickFolderAsync(owner, HubStrings.Get("ChatWorkspacePickTitle"));
-        if (result.Outcome == PickOutcome.Cancelled) return;
-        if (result.Outcome == PickOutcome.NotLocal)
-        {
-            StatusReporter?.Invoke(UserFeedback.Warning(HubStrings.Get("ChatFolderNotLocal"), "workspace-path"));
-            return;
-        }
-        if (result.Path is not { Length: > 0 } path)
-        {
-            StatusReporter?.Invoke(UserFeedback.Warning(HubStrings.Get("LocalPathRequired"), "workspace-path"));
-            return;
-        }
-
-        StartWorkspaceConversation(path);
     }
 
     private WorkspacePathVerdict? StartWorkspaceConversation(string path)
@@ -614,15 +598,7 @@ public partial class ChatSidebar : UserControl
     /// </summary>
     private void ReportWorkspaceRejection(WorkspacePathVerdict verdict, string path)
     {
-        // One verdict, one sentence, and the two the composer's chip already uses — so a failure reads the same
-        // wherever it happens. OutsideRoots is here so a verdict with its own fact (this directory is not one of
-        // the session's) cannot fall into the catch-all "that directory cannot be used".
-        var message = verdict switch
-        {
-            WorkspacePathVerdict.ProtectedRoot => HubStrings.Get("ChatWorkspaceProtected"),
-            WorkspacePathVerdict.OutsideRoots => HubStrings.Get("ChatWorkspaceOutside"),
-            _ => HubStrings.Get("ChatWorkspaceRejected") + path,
-        };
+        var message = MainWindow.WorkspaceRejectionMessage(verdict, path);
         StatusReporter?.Invoke(UserFeedback.Warning(message, "workspace-path"));
     }
 

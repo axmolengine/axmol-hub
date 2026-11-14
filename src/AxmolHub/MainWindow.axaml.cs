@@ -200,6 +200,7 @@ public partial class MainWindow : Window
         InitializeInspector();
         InitializePictureViewer();
         InitializeSettings();
+        InitializeNewWorkspace();
         InitializeMacComputerPermissions();
         InitializeChrome();
         WireWorkspace();
@@ -381,7 +382,7 @@ public partial class MainWindow : Window
         {
             page = name switch
             {
-                "Projects" => new ProjectsPage(_workspace),
+                "Projects" => new ProjectsPage(_workspace) { RegisterCreatedWorkspace = RegisterCreatedWorkspace },
                 "Installs" => new InstallsPage(_workspace),
                 "Toolchains" => new ToolchainsPage(_workspace),
                 "Assistant" => _chatPanel ??= CreateChatPanel(),
@@ -405,6 +406,7 @@ public partial class MainWindow : Window
         // that outlives a navigation is a scrim sitting over the page the reader just asked for.
         if (PictureViewerHost.IsVisible) ClosePictureViewer();
         CloseSettings();
+        CloseNewWorkspace();
         UpdatePageTitle();
         return page;
     }
@@ -682,6 +684,7 @@ public partial class MainWindow : Window
         // whether to bother the user with a *notification*, and a card that keeps covering the approval has
         // the same problem whether or not anyone is watching the window.
         CloseSettings();
+        CloseNewWorkspace();
 
         if (App.Options.IsAutomation) return;
         if (!SystemAttentionService.ShouldNotifyApproval(
@@ -1493,6 +1496,7 @@ public partial class MainWindow : Window
         // the next gear press rebuild it against the new one. The category is the shell's to keep: which row
         // you were reading is a fact about the reader, not about the directory.
         CloseSettings();
+        CloseNewWorkspace();
         _settings = null;
 
         // Old pages hold the old workspace and must be dropped wholesale; the next NavigateTo will
@@ -1633,6 +1637,7 @@ public partial class MainWindow : Window
     {
         view = NavigationViews.Normalize(view);
         if (_preferences.NavigationView == view) return;
+        CloseNewWorkspace();
         _preferences.NavigationView = view;
         SyncNavigationView();
         if (!NavigationViews.ShowsWorkbench(view) && _currentKey != "Assistant") NavigateTo("Assistant");
@@ -2138,7 +2143,11 @@ public partial class MainWindow : Window
     /// dialog was open — and that answer belongs in the strip rather than in a card.
     /// </summary>
     private ChatSidebar BuildChatSidebar()
-        => new(_chat, _preferencesStore, _preferences) { StatusReporter = ShowFeedback };
+        => new(_chat, _preferencesStore, _preferences)
+        {
+            StatusReporter = ShowFeedback,
+            NewWorkspaceRequested = OpenNewWorkspace,
+        };
 
     /// <summary>
     /// Builds the conversation sidebar section, applies persisted sidebar state, and wires the collapse

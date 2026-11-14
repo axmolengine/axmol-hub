@@ -564,6 +564,8 @@ public sealed partial class ChatWorkspace : IDisposable
     public static bool CanRemoveProvider(ModelProvider provider) => ChatProviderCoordinator.CanRemoveProvider(provider);
     // ───────────────────────── Conversations ─────────────────────────
     public Conversation StartConversation(string? providerId = null) => _sessions.StartConversation(providerId);
+    /// <summary>Designates a validated directory without opening or retargeting a conversation.</summary>
+    public WorkspacePathVerdict? AddWorkspace(string path) => _sessions.AddWorkspace(path);
     /// <summary>
     /// Opens the most recent empty conversation if one already exists, otherwise starts a new one.
     /// The new-conversation (+) button goes through this so repeated clicks cannot stack up empty

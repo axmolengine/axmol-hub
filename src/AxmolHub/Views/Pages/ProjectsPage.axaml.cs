@@ -49,6 +49,8 @@ public partial class ProjectsPage : UserControl
     private string _draftName = "HelloAxmol";
     private string _draftLocation = "";
 
+    internal Action<ProjectEntry>? RegisterCreatedWorkspace { get; init; }
+
     public ProjectsPage() { _workspace = null!; InitializeComponent(); }
 
     public ProjectsPage(HubWorkspace workspace)
@@ -137,6 +139,7 @@ public partial class ProjectsPage : UserControl
         ClearSearchAndFilters();
         _workspace.SelectedProject = created;
         Reload();
+        if (request.CreateWorkspace) RegisterCreatedWorkspace?.Invoke(created);
     }
 
     private async void OnOpenProject(object? sender, RoutedEventArgs e)

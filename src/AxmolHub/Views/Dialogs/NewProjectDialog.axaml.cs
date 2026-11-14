@@ -129,7 +129,8 @@ public partial class NewProjectDialog : Window
         Request = new ProjectCreationRequest(name, ProjectLocationBox.Text ?? "",
             ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
             projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
-            PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite);
+            PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite,
+            CreateWorkspaceCheck.IsChecked == true);
         Close();
     }
 
@@ -171,4 +172,5 @@ public partial class NewProjectDialog : Window
 /// <summary>One press of Create, handed to the page that owns the projects list. The window is gone by the time
 /// the engine command runs; what it chose travels in this record instead of in its fields.</summary>
 public sealed record ProjectCreationRequest(string Name, string Location, EngineEntry? Engine, string ProjectType,
-    bool UsePrebuilt, string? CameraMode, bool Portrait, bool Isolated, bool Repair, bool ForceOverwrite);
+    bool UsePrebuilt, string? CameraMode, bool Portrait, bool Isolated, bool Repair, bool ForceOverwrite,
+    bool CreateWorkspace = false);

@@ -1,0 +1,81 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AxmolHub"
+             x:Class="AxmolHub.NewWorkspaceView" ClipToBounds="True">
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <Grid ColumnDefinitions="*,Auto" Margin="24,16,18,12">
+      <TextBlock Text="{DynamicResource GroupNewWorkspaceTip}" FontSize="20" FontWeight="SemiBold"
+                 VerticalAlignment="Center" />
+      <Button x:Name="CloseButton" Grid.Column="1" Classes="viewer-action"
+              ToolTip.Tip="{DynamicResource CloseWindow}">
+        <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.Close}"
+              Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.7"
+              StrokeLineCap="Round" StrokeJoin="Round" />
+      </Button>
+    </Grid>
+    <StackPanel Grid.Row="1" Margin="24,0,24,16" Spacing="8">
+      <TextBlock Text="{DynamicResource WorkspaceWorkingFolder}" />
+      <Border BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1" CornerRadius="8" Padding="12">
+        <Grid ColumnDefinitions="Auto,*,Auto" MinHeight="38" ColumnSpacing="10" ClipToBounds="True">
+          <Path Width="20" Height="20" Stretch="Uniform" Data="{StaticResource Hub.Icon.Folder}"
+                Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.5"
+                VerticalAlignment="Center" />
+          <Grid Grid.Column="1" VerticalAlignment="Center" ClipToBounds="True">
+            <TextBlock x:Name="FolderPlaceholder" Text="{DynamicResource WorkspaceChooseFolder}" Classes="muted"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <StackPanel x:Name="SelectedFolderPanel" IsVisible="False" Spacing="3">
+              <TextBlock x:Name="SelectedFolderName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <TextBlock x:Name="SelectedFolderPath" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+          </Grid>
+          <Button x:Name="BrowseButton" Grid.Column="2" Content="{DynamicResource Browse}" Classes="compact quiet"
+                  VerticalAlignment="Center" Margin="0" />
+        </Grid>
+      </Border>
+      <TextBlock x:Name="ErrorLabel" IsVisible="False" Foreground="{DynamicResource Hub.DangerText}"
+                 TextWrapping="Wrap" MaxHeight="72" />
+    </StackPanel>
+    <Grid x:Name="ProjectSection" Grid.Row="2" RowDefinitions="Auto,Auto,*" Margin="16,0,16,16" ClipToBounds="True">
+      <TextBlock Text="{DynamicResource WorkspaceFromProjects}" Classes="muted" Margin="8,0,8,8" />
+      <Border x:Name="ProjectSearchField" Grid.Row="1" Margin="8,0,8,8"
+              Height="{DynamicResource Hub.Control.Height}" Background="{DynamicResource Hub.SurfaceSunken}"
+              BorderBrush="{DynamicResource Hub.BorderStrong}" BorderThickness="1" CornerRadius="6">
+        <Grid ColumnDefinitions="32,*">
+          <Path Classes="field-glyph" Data="{StaticResource Hub.Icon.Search}" />
+          <TextBox x:Name="ProjectSearchBox" Grid.Column="1" PlaceholderText="{DynamicResource WorkspaceProjectSearch}"
+                   PlaceholderForeground="{DynamicResource Hub.TextSecondary}"
+                   Background="Transparent" BorderThickness="0" Padding="0,0,10,0" MinHeight="0" Margin="0"
+                   VerticalContentAlignment="Center" />
+        </Grid>
+      </Border>
+      <Grid Grid.Row="2" ClipToBounds="True">
+        <ListBox x:Name="ProjectList" SelectionMode="Single" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="local:WorkspaceProjectChoice">
+              <Grid ColumnDefinitions="*,Auto" Margin="4,6" ClipToBounds="True">
+                <StackPanel Spacing="3">
+                  <TextBlock Text="{Binding Item.Project.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Item.DisplayPath}" Classes="muted" FontSize="12"
+                             TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Item.Project.Path}" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{DynamicResource WorkspaceAlreadyAdded}" IsVisible="{Binding IsAdded}"
+                           Classes="muted" Margin="12,0,4,0" VerticalAlignment="Center" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="EmptyLabel" Text="{DynamicResource WorkspaceNoMatches}" Classes="muted"
+                   IsVisible="False" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Grid>
+    </Grid>
+    <Border Grid.Row="3" BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,1,0,0" Padding="20,14">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button x:Name="CancelButton" Content="{DynamicResource Cancel}" Classes="compact quiet" Margin="0" />
+        <Button x:Name="SubmitButton" Content="{DynamicResource WorkspaceCreate}" Classes="compact primary"
+                Margin="0" IsEnabled="False" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

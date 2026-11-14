@@ -348,7 +348,7 @@ public partial class MainWindow
         // registration: settings is the topmost layer of the window, the picture viewer sits above the expanded
         // inspector, and only then does an expanded inspector get the key — before the composer's decision host,
         // which is a window away from being on top.
-        if (SettingsOverlayHost.IsVisible) return;
+        if (SettingsOverlayHost.IsVisible || NewWorkspaceOverlayHost.IsVisible) return;
         if (PictureViewerHost.IsVisible) return;
         if (!_inspectorExpanded) return;
         RestoreInspector();
@@ -512,7 +512,7 @@ public partial class MainWindow
         if (!PictureViewerHost.IsVisible) return;
         // Settings is the one layer stacked above the viewer, so a card on screen owns Escape: closing the
         // picture underneath it would take away a frame the reader is not looking at and leave the card up.
-        if (SettingsOverlayHost.IsVisible) return;
+        if (SettingsOverlayHost.IsVisible || NewWorkspaceOverlayHost.IsVisible) return;
         switch (e.Key)
         {
             case Key.Escape:

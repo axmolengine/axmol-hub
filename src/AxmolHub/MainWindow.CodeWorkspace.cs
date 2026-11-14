@@ -48,7 +48,7 @@ public partial class MainWindow
     }
 
     private void SyncWorkspaceBrowserOverlay()
-        => _workspaceView?.SetBrowserObscured(SettingsOverlayHost.IsVisible || PictureViewerHost.IsVisible);
+        => _workspaceView?.SetBrowserObscured(SettingsOverlayHost.IsVisible || PictureViewerHost.IsVisible || NewWorkspaceOverlayHost.IsVisible);
 
     private void ShowWorkspace()
     {

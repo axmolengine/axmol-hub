@@ -45,6 +45,8 @@
         <CheckBox x:Name="PortraitCheck" Content="{DynamicResource CreatePortrait}" />
         <Expander x:Name="CreateAdvancedExpander" Header="{DynamicResource CreateAdvanced}" IsExpanded="False">
           <StackPanel Spacing="8" Margin="0,8,0,0">
+            <CheckBox x:Name="CreateWorkspaceCheck" Content="{DynamicResource CreateAsWorkspace}" />
+            <TextBlock Text="{DynamicResource CreateAsWorkspaceHint}" Classes="muted" TextWrapping="Wrap" />
             <CheckBox x:Name="IsolatedCheck" Content="{DynamicResource CreateIsolated}" />
             <TextBlock Text="{DynamicResource CreateIsolatedHint}" Classes="muted" TextWrapping="Wrap" />
             <CheckBox x:Name="RepairCheck" Content="{DynamicResource CreateRepair}" />

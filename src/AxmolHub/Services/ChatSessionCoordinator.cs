@@ -176,6 +176,14 @@ internal sealed partial class ChatSessionCoordinator
     }
 
     private void RegisterWorkspace(string? root) => _workspaces.Add(root);
+
+    internal WorkspacePathVerdict? AddWorkspace(string path)
+    {
+        var (verdict, full) = ValidateWorkspacePath(path);
+        if (verdict is not null) return verdict;
+        if (_workspaces.Add(full)) Execution.Changed?.Invoke();
+        return null;
+    }
     internal WorkspacePathVerdict? SelectWorkspaceRoot(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))

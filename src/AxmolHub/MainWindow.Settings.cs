@@ -90,6 +90,7 @@ public partial class MainWindow
     /// first row; <c>null</c> reopens on the row they left.</summary>
     internal void OpenSettings(string? category = null)
     {
+        CloseNewWorkspace();
         var page = EnsureSettings();
         if (SettingsPage.IsCategory(category))
         {
