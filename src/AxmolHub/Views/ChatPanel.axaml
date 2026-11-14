@@ -544,11 +544,11 @@
       <Setter Property="ClipToBounds" Value="True" />
       <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
-    <Style Selector="Border.goal-capsule">
+    <Style Selector="Border.composer-capsule">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
+      <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Padding" Value="12,6" />
       <Setter Property="MinHeight" Value="36" />
       <Setter Property="Margin" Value="0,0,0,6" />
@@ -1379,14 +1379,14 @@
               IsVisible="False" />
       <Border x:Name="SteerConfirmHost" Classes="steer-confirm" Grid.Row="3"
               IsVisible="False" MaxWidth="820" />
-      <Border x:Name="GoalCapsuleHost" Classes="goal-capsule" Grid.Row="4"
+      <Border x:Name="GoalCapsuleHost" Classes="composer-capsule goal-capsule" Grid.Row="4"
               IsVisible="False" MaxWidth="820" />
       <!-- The frame wears Hub.Surface — the same raised card the settings card wears — not Hub.SurfaceAlt.
            SurfaceAlt is the sidebar's chrome plane; the input box must float *above* the reading page and
            read as a card, not sit on the same gray strip as the spine. In dark that lifts it off #1E1E1E;
            in light it becomes a white card on the #F4F5F7 page. The shell check pins the separation. -->
-      <Border x:Name="ComputerControlHost" Grid.Row="5" IsVisible="False" MaxWidth="820"
-              ClipToBounds="True" HorizontalAlignment="Stretch" Margin="0,4,0,0" />
+      <Border x:Name="ComputerControlHost" Classes="composer-capsule" Grid.Row="5"
+              IsVisible="False" MaxWidth="820" />
       <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="6"
               Background="{DynamicResource Hub.Surface}" CornerRadius="14"
               HorizontalAlignment="Stretch" MaxWidth="820" ClipToBounds="True"

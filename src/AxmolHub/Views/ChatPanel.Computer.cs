@@ -32,17 +32,17 @@ public partial class ChatPanel
         };
         ToolTip.SetTip(label, control.Target.Application.ExecutablePath);
         grid.Children.Add(label);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        void Button(string key, Action action)
+        var actions = new StackPanel
         {
-            var button = new Button { Content = HubStrings.Get(key), Classes = { "compact", "quiet" } };
-            button.Click += (_, _) => action();
-            actions.Children.Add(button);
-        }
-        Button(control.Paused ? "ComputerControlResume" : "ComputerControlPause",
-            () => _chat?.PauseComputerControl(id!, !control.Paused));
-        Button("ComputerControlStop", () => _chat?.RequestStop(id!));
-        Button("ComputerControlRevoke", () => _chat?.RevokeComputerControl(id!));
+            Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center,
+        };
+        actions.Children.Add(CapsuleActionButton(control.Paused ? "Hub.Icon.Play" : "Hub.Icon.Pause",
+            control.Paused ? "ComputerControlResume" : "ComputerControlPause",
+            () => _chat?.PauseComputerControl(id!, !control.Paused)));
+        actions.Children.Add(CapsuleActionButton("Hub.Icon.Stop", "ComputerControlStop",
+            () => _chat?.RequestStop(id!)));
+        actions.Children.Add(CapsuleActionButton("Hub.Icon.Close", "ComputerControlRevoke",
+            () => _chat?.RevokeComputerControl(id!)));
         Grid.SetColumn(actions, 1);
         grid.Children.Add(actions);
         ComputerControlHost.Child = grid;

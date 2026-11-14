@@ -1553,24 +1553,24 @@ public partial class ChatPanel
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         if (state is ChatGoalStates.Active or ChatGoalStates.Waiting)
-            actions.Children.Add(GoalActionButton("Hub.Icon.Pause", "ChatGoalPause", () =>
+            actions.Children.Add(CapsuleActionButton("Hub.Icon.Pause", "ChatGoalPause", () =>
             {
                 chat.PauseGoal(conversation.Id);
                 RefreshGoalCapsule();
             }));
         else if (state == ChatGoalStates.BudgetLimited)
-            actions.Children.Add(GoalActionButton("Hub.Icon.Plus", "ChatGoalAddBudget", () =>
+            actions.Children.Add(CapsuleActionButton("Hub.Icon.Plus", "ChatGoalAddBudget", () =>
             {
                 chat.AddGoalBudget(conversation.Id);
                 RefreshGoalCapsule();
             }));
         else if (state is ChatGoalStates.Paused or ChatGoalStates.Blocked)
-            actions.Children.Add(GoalActionButton("Hub.Icon.Play", "ChatGoalResume", () =>
+            actions.Children.Add(CapsuleActionButton("Hub.Icon.Play", "ChatGoalResume", () =>
             {
                 chat.ResumeGoal(conversation.Id);
                 RefreshGoalCapsule();
             }));
-        actions.Children.Add(GoalActionButton("Hub.Icon.Close", "ChatGoalClear", () =>
+        actions.Children.Add(CapsuleActionButton("Hub.Icon.Close", "ChatGoalClear", () =>
         {
             chat.ClearGoal(conversation.Id);
             RefreshGoalCapsule();

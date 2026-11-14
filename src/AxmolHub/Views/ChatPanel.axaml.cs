@@ -2948,9 +2948,9 @@ public partial class ChatPanel : UserControl
         return block;
     }
 
-    private Button GoalActionButton(string geometryKey, string tooltipKey, Action action)
+    private Button CapsuleActionButton(string geometryKey, string tooltipKey, Action action)
     {
-        var filled = geometryKey is "Hub.Icon.Pause" or "Hub.Icon.Play";
+        var filled = geometryKey is "Hub.Icon.Pause" or "Hub.Icon.Play" or "Hub.Icon.Stop";
         var path = new Avalonia.Controls.Shapes.Path
         {
             Data = ThemeGeometry(geometryKey),
