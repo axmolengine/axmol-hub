@@ -1208,8 +1208,9 @@ internal sealed class ShellApprovalsChecks
                 if (request.VerifyObservation?.Invoke() != true) return "Refused: fixture observation changed.";
                 operatedWindows.Add(window);
                 return null;
-            }) { AssessRisk = (_, _) => ordinaryInput
-                ? new(ComputerRisk.Allow, "Offline verified ordinary action") : ComputerRiskDecision.Unknown };
+            }) { AssessRisk = (_, request) => ordinaryInput && request.Action == "move"
+                ? new(ComputerRisk.Allow, "Offline verified pointer motion") { Capability = ComputerCapabilities.MovePointer }
+                : ComputerRiskDecision.Unknown };
             chat.SetApprovalMode(screenSession.Id, ToolApprovalModes.Full);
             chat.OpenConversation(screenSession.Id);
             chat.TryEnqueueSend(screenSession.Id, "看看屏幕上是什么", null, out _);
@@ -1288,7 +1289,8 @@ internal sealed class ShellApprovalsChecks
                 screenClient.CallsRemaining = 1;
                 screenClient.Arguments = tool == ToolNames.CaptureScreen
                     ? new() { ["target"] = title }
-                    : new() { ["application"] = title, ["action"] = action, ["key"] = "Tab", ["frame_id"] = frameId };
+                    : new() { ["application"] = title, ["action"] = action, ["key"] = "Tab", ["frame_id"] = frameId,
+                        ["x"] = 1, ["y"] = 1 };
                 chat.TryEnqueueSend(session.Id, $"Computer grant round {screenClient.Requests}: {tool} {title}", null, out _);
                 await WaitForIdleAsync(chat);
                 return session.Messages.LastOrDefault(turn => turn.ToolName == tool && turn.Role == ChatRoles.Assistant);
@@ -1352,7 +1354,7 @@ internal sealed class ShellApprovalsChecks
             var nextFrame = System.Text.RegularExpressions.Regex.Match(
                 screenSession.Messages.Last(turn => turn.Role == ChatRoles.Tool && turn.Images.Count > 0).Text,
                 @"frame_id=([a-f0-9]+)").Groups[1].Value;
-            var ordinaryTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key", nextFrame);
+            var ordinaryTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "move", nextFrame);
             reuse.Add(ordinaryTurn?.ApprovalState != ChatApprovalStates.Pending && operatedWindows.Count == 2);
             // Keep the model's tool declarations alive while a grant replaces the observation registry.
             // The previous one-call-per-run fixture rebuilt ScopeFor each time and could not expose this bug.

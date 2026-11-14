@@ -212,6 +212,15 @@ internal static class AiImagesChecks
         var version = applicationControl.Version;
         if (!applicationControl.Covers(newWindow) || applicationControl.Covers(otherApp))
             throw new Exception("Application permission failed new-window reuse or crossed an executable boundary.");
+        // Session consent is a capability ceiling, not a backend's blanket Allow verdict.
+        if (applicationControl.Capabilities != ComputerCapabilities.Browse
+            || new ComputerRiskDecision(ComputerRisk.Allow, "Unclassified").Within(applicationControl.Capabilities).Risk != ComputerRisk.RequireConfirmation
+            || (new ComputerRiskDecision(ComputerRisk.Allow, "Select") { Capability = ComputerCapabilities.SelectText })
+                .Within(applicationControl.Capabilities).Risk != ComputerRisk.Allow
+            || (new ComputerRiskDecision(ComputerRisk.Allow, "Copy") { Capability = ComputerCapabilities.CopyText })
+                .Within(ComputerCapabilities.Scroll).Risk != ComputerRisk.RequireConfirmation
+            || ComputerRiskDecision.Unknown.Within(applicationControl.Capabilities).Risk != ComputerRisk.RequireConfirmation)
+            throw new Exception("Browsing consent admitted an unclassified action or bypassed the capability ceiling.");
         applicationControl.Pause(true);
         if (applicationControl.Covers(newWindow) || !applicationControl.Covers(newWindow, allowPaused: true)
             || applicationControl.Version == version)

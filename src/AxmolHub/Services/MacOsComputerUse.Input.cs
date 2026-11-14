@@ -100,6 +100,14 @@ internal static partial class MacOsComputerUse
         CGPoint Point(int x, int y) => new(bounds.Origin.X + x, bounds.Origin.Y + y);
         bool Inside(int x, int y) => x >= 0 && y >= 0 && x < bounds.Size.Width && y < bounds.Size.Height;
         bool Wait(int ms) => !r.Cancellation.WaitHandle.WaitOne(ms) && authorized();
+        if (r.Action == "drag" && !r.ExplicitlyApproved)
+        {
+            if (r.InputVerification is not AccessibilityInputVerification textSelection)
+                return "Refused: no host-verified text selection capability. Request confirmation for an ordinary drag.";
+            if (!authorized() || !OwnsPoint(window, Point(r.X, r.Y)) || !OwnsPoint(window, Point(r.EndX, r.EndY)))
+                return "Refused: the selected text endpoints are no longer owned by the authorized window.";
+            return textSelection.SelectText(authorized, r.InputDeliveryStarted);
+        }
         if (r.Action is "click" or "double_click" or "move" or "drag" or "scroll")
         {
             if (!Inside(r.X, r.Y) || r.Action == "drag" && !Inside(r.EndX, r.EndY))
@@ -129,6 +137,22 @@ internal static partial class MacOsComputerUse
             if (r.Action == "drag")
             {
                 var last = point;
+                var previous = point;
+                bool PointerCaughtUp()
+                {
+                    bool Near(CGPoint a, CGPoint b) => Math.Abs(a.X - b.X) <= 2 && Math.Abs(a.Y - b.Y) <= 2;
+                    var deadline = Environment.TickCount64 + 100;
+                    do
+                    {
+                        var actual = PointerLocation();
+                        if (actual is null) return false;
+                        if (Near(actual.Value, last)) return true;
+                        // CGEventPost is asynchronous. Only tolerate the preceding point we posted, never
+                        // an arbitrary displacement; do not resend events or widen the takeover threshold.
+                        if (!Near(actual.Value, previous) || !Wait(10)) return false;
+                    } while (Environment.TickCount64 < deadline);
+                    return false;
+                }
                 try
                 {
                     if (!PostMouse(point, 1)) return "Refused: macOS could not create mouse-down.";
@@ -136,13 +160,13 @@ internal static partial class MacOsComputerUse
                     for (var index = 1; index <= steps; index++)
                     {
                         if (!Wait(r.DurationMs / steps)) return interrupted;
-                        var actual = PointerLocation();
-                        if (actual is null || Math.Abs(actual.Value.X - last.X) > 2 || Math.Abs(actual.Value.Y - last.Y) > 2)
-                            return "Refused: user pointer takeover interrupted dragging.";
+                        if (!PointerCaughtUp())
+                            return "Refused: pointer takeover or unconfirmed OS pointer delivery interrupted dragging.";
                         var next = new CGPoint(point.X + (r.EndX - r.X) * (double)index / steps,
                             point.Y + (r.EndY - r.Y) * (double)index / steps);
                         if (!OwnsPoint(window, next)) return interrupted;
                         if (!PostMouse(next, 6)) return "Refused: macOS could not create drag motion.";
+                        previous = last;
                         last = next;
                     }
                     return null;
@@ -175,7 +199,6 @@ internal static partial class MacOsComputerUse
             return null;
         }
         if (r.Action != "press_key" || !TryKeyCode(r.Key, out var key)) return "Refused: unsupported key or action.";
-        var revision = ClipboardRevision();
         var held = new List<(ushort Key, ulong Flag)>();
         ulong flags = 0;
         try
@@ -207,11 +230,10 @@ internal static partial class MacOsComputerUse
                 PostKey(modifier.Key, false, flags);
             }
         }
-        // Observe copy ownership without reading clipboard bytes; delayed copies simply require confirmation.
+        // Let the app process Copy before capturing; paste always requires its own confirmation.
         if (r.Key?.Equals("c", StringComparison.OrdinalIgnoreCase) == true && r.Modifiers.Contains("command"))
         {
             if (!Wait(100)) return interrupted;
-            RecordCopy(r, revision);
         }
         return null;
     }

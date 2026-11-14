@@ -29,10 +29,8 @@ internal sealed partial class ChatExecutionCoordinator
     {
         if (_computerControls.TryRemove(id, out var control))
         {
-            var version = control.Version;
             control.Revoke();
             Audit(id, "Computer Use application session permission revoked.");
-            if (OperatingSystem.IsMacOS()) MacOsComputerUse.ForgetClipboard(version);
         }
         if (_computerObservations.TryRemove(id, out var observation)) observation.Invalidate();
         foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == id)) ReleaseComputerPermit(key);
@@ -80,8 +78,10 @@ internal sealed partial class ChatExecutionCoordinator
                 return new(ComputerRisk.Deny, "No live observation is registered. Capture this window again.");
             var mapped = observation.Map(frame, window, request, out var refusal);
             if (mapped is null) return new(ComputerRisk.Deny, refusal!);
-            return bridge.AssessRisk?.Invoke(window, mapped with { PermissionVersion = ComputerControlFor(id)?.Version ?? 0 })
+            var decision = bridge.AssessRisk?.Invoke(window, mapped with { PermissionVersion = ComputerControlFor(id)?.Version ?? 0 })
                 ?? ComputerRiskDecision.Unknown;
+            var capabilities = ComputerControlFor(id)?.Capabilities ?? ComputerCapabilities.None;
+            return decision.Within(capabilities);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or UnauthorizedAccessException)
         { return ComputerRiskDecision.Unknown; }

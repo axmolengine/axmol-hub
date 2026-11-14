@@ -10,7 +10,7 @@ fallback to unscoped capture or non-portal global input is permitted.
 1. Name the application window in `capture_screen`, or in `computer_use` with
    `action: "screenshot"`. Title ambiguity is refused; `process_id` only narrows the match.
 2. Hub resolves the executable, process incarnation and window handle. The first approval
-   grants temporary control of that **application** in this conversation, including its other
+   grants temporary **browsing capabilities** for that application in this conversation, including its other
    windows and newly created windows/processes at the same executable path. Discovering a
    different app never grants permission. Explicitly authorizing another app replaces the
    previous app's control permission. There is no desktop-control mode.
@@ -72,11 +72,21 @@ An inaccessible or unclassified control asks for confirmation. Sensitive-label d
 **escalates** risk; absence of a matching word never establishes safety. There is deliberately no
 claim to understand arbitrary GUI business semantics.
 
-The initial ordinary-action adapter is narrow: movement inside the verified window; scrolling
-verified scroll areas; copying from non-secure text controls; and document interactions in the
-system TextEdit app (not its dialogs or sheets). Other app controls, including Hub controls the
-host cannot classify, still ask. An application grant alone does not silently authorize arbitrary
-buttons, Enter-to-submit, uploads, deletion, credentials or payments. Inspect the actual card.
+The live session has an explicit browsing capability ceiling: Observe, MovePointer, Scroll,
+SelectText and CopyText. A backend's unqualified Allow does not bypass that ceiling. The first
+approval explains that Copy replaces the clipboard; typing, pasting, button clicks and unclassified
+actions require separate one-action confirmation, including in TextEdit. There is no Hub-specific
+allowlist and no remembered approval of unknown controls.
+
+On macOS, scrolling resolves the hit's enclosing AXScrollArea and verifies that same container;
+text copying requires a focused non-secure text control with a nonempty valid selection. Text
+selection requires both endpoints in the same text control, bounded text content, AXRangeForPosition,
+a settable AXSelectedTextRange and settable AXFocused. It focuses that control and sets only its text
+range through AX instead of posting mouse-down/drag events, which could otherwise drag existing
+selected text or start drag-and-drop. Unsupported controls still require confirmation for a normal
+mouse drag. Generic clicks/double-clicks are never classified as browsing solely by their AX role.
+Sensitive/actionable/modal ancestor contexts escalate to confirmation. AX implementations remain
+application-provided evidence, not an OS guarantee about arbitrary application business semantics.
 
 For a classified ordinary macOS action the host retains the assessed Accessibility element
 for that call only. Before input it rechecks control identity, owning window, geometry and metadata;
@@ -87,11 +97,10 @@ never recorded in logs. An unavailable verifier falls back to explicit confirmat
 visual validation; there is no percentage-of-pixels threshold that could hide a changed submit button.
 These checks bind the host assessment to delivery, not every pixel to the earlier screenshot.
 
-`Command+A/C/V` delivery is supported. Automatic paste in TextEdit additionally requires a
-clipboard revision observed after this permission's own Copy; an unknown or changed clipboard
-requires explicit confirmation. Hub does not read clipboard contents, write a replacement buffer,
-or restore a guessed previous value. This revision check is conservative provenance bookkeeping,
-not an OS clipboard-isolation guarantee. A delayed Copy may require confirmation on Paste.
+`Command+A/C/V` delivery is supported. Only verified Copy is covered by browsing consent;
+Select All and Paste require separate confirmation. The former TextEdit-specific automatic edits
+and clipboard-provenance exception have been removed. Hub does not read clipboard contents,
+write a replacement buffer, or restore a guessed previous value.
 
 Images are stored with existing tool results and sent to the selected model; action/risk/permission
 records use the existing transcript and audit path. Audit messages do not add typed text or clipboard
@@ -124,6 +133,44 @@ The Wayland contract differs from the native backends and the UI says so: the us
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
 
 ## Current macOS delivery status
+
+### Capability-scoped browsing update (bounded native acceptance completed)
+
+Final Release build passed with 0 warnings/errors; the existing offline image/permission checks passed.
+The existing approval fixture was updated to use a classified Move capability instead of treating an
+arbitrary Tab key as ordinary. The final full shell run passed 1758/1758 in 120.4 seconds. Evidence:
+`tmp/browse-capabilities-{release,images,shell-final-run}.log` and
+`tmp/browse-capabilities-shell-final.txt`. No new desktop probe or Hub-only adapter was added.
+
+The unsigned/unnotarized local osx-arm64 package was rebuilt and passed `Test-MacPackage.ps1` (exit 0):
+`artifacts/releases/osx-arm64/axmol-hub-0.28.0-osx-arm64.pkg`, SHA-256
+`F4C8DA96369026346383B06A54596B2708B51FB90526AE8EC306820CC38BDFE1`.
+Logs: `tmp/browse-capabilities-package{,-check}.log`. Optional partner-ID injection was skipped.
+After installing and restarting this package, the user confirmed that the current Hub process was
+running the new version. In a disposable `browse-acceptance.txt` TextEdit document, two successive
+text selections and two Command+C calls returned delivery and fresh frames. The frames showed the
+selection moving from the first target line to the second without visible text edits. Clipboard bytes
+were not separately read, so this verifies classified Copy delivery, not an independent clipboard-content check.
+
+The user confirmed exactly two approval cards during the sequence and that both were approved:
+the initial application-session grant and the final unclassified document click. The four intervening
+selection/Copy calls did not ask again. The approved click was then refused by strict visual fallback
+with `No input was sent`; this proves the unknown action still required approval, not successful
+click delivery or a user-denial path. No input was replayed. The exact visual difference was not
+isolated, and unknown-control fallback sensitivity remains a usability limitation.
+
+This completes bounded local acceptance of repeated text selection/Copy under one browsing grant
+and separate unknown-action approval. Other apps, unsupported AX text controls, real scrolling,
+paste/high-risk actions and multi-monitor behavior were not newly desktop-tested in this sequence;
+existing offline/shell boundary checks are not evidence of those native cases.
+
+Semantic-verification refusals now name changed target, metadata, geometry, text or selection; unknown
+controls retain strict visual comparison and report that fallback explicitly. Confirmed native dragging
+allows up to 100 ms for the OS pointer to catch up only when it is still at the immediately preceding
+posted point. It never widens the takeover distance, retries a posted event or tolerates arbitrary movement.
+The new verified text-selection path uses no mouse drag at all.
+
+Earlier sections below record historical installed-app acceptance, not acceptance of this update.
 
 ### Focus-handoff usability update (local build, desktop acceptance pending)
 

@@ -10,6 +10,7 @@ internal sealed class ComputerControlSession(ComputerUseTarget target, string ta
     private long _version = Interlocked.Increment(ref _nextVersion);
     internal ComputerUseTarget Target { get; } = target;
     internal string Task { get; } = task;
+    internal ComputerCapabilities Capabilities { get; } = ComputerCapabilities.Browse;
     internal bool Paused { get { lock (_gate) return _paused; } }
     internal long Version { get { lock (_gate) return _version; } }
     internal bool Covers(ComputerUseTarget? value, bool allowPaused = false)
@@ -38,6 +39,13 @@ internal sealed class ComputerControlSession(ComputerUseTarget target, string ta
     }
 }
 
+[Flags]
+internal enum ComputerCapabilities
+{
+    None = 0, Observe = 1, MovePointer = 2, Scroll = 4, SelectText = 8, CopyText = 16,
+    Browse = Observe | MovePointer | Scroll | SelectText | CopyText,
+}
+
 internal enum ComputerRisk { Allow, RequireConfirmation, Deny }
 internal interface IComputerInputVerification : IDisposable
 {
@@ -48,6 +56,15 @@ internal interface IComputerInputVerification : IDisposable
 internal sealed record ComputerRiskDecision(ComputerRisk Risk, string Reason)
 {
     internal IComputerInputVerification? Verification { get; init; }
+    internal ComputerCapabilities Capability { get; init; }
+    internal ComputerRiskDecision Within(ComputerCapabilities capabilities)
+    {
+        if (Risk != ComputerRisk.Allow || Capability != ComputerCapabilities.None && (capabilities & Capability) == Capability)
+            return this;
+        Verification?.Dispose();
+        return new(ComputerRisk.RequireConfirmation, "This action is outside the session's browsing capabilities.");
+    }
+
     internal static ComputerRiskDecision Unknown { get; } = new(ComputerRisk.RequireConfirmation,
         "The host cannot verify this control's consequences. Review the target and action before approving.");
 }

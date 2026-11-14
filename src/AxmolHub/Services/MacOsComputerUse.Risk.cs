@@ -6,18 +6,10 @@ namespace AxmolHub;
 internal static partial class MacOsComputerUse
 {
     private const string ApplicationServices = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
-    private static readonly object ClipboardGate = new();
-    private static long _copiedPermission;
-    private static int _copiedRevision = -1;
-
-    // Only a verified local editor adapter can authorize edits from role information alone. Generic text
-    // fields may be message composers, terminal commands or credentials; unknown controls stay confirmable.
-    private static bool IsLocalEditor(CapturableWindow window)
-        => window.Owner?.Application.ExecutablePath == "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit";
 
     private sealed class PointerVerification : IComputerInputVerification
     {
-        public string? Verify() => null; // Geometry, ownership, occlusion and live permission are checked separately.
+        public string? Verify() => null; // Delivery checks live geometry, focus, identity and pointer ownership.
         public void Dispose() { }
     }
 
@@ -25,7 +17,7 @@ internal static partial class MacOsComputerUse
     {
         if (ComputerInput.Validate(request) is { } invalid) return new(ComputerRisk.Deny, invalid);
         if (request.Action == "move") return new(ComputerRisk.Allow, "Pointer motion within the selected application window.")
-            { Verification = new PointerVerification() };
+            { Verification = new PointerVerification(), Capability = ComputerCapabilities.MovePointer };
         if (!AXIsProcessTrusted()) return ComputerRiskDecision.Unknown;
         var app = AXUIElementCreateApplication(window.ProcessId);
         if (app == 0) return ComputerRiskDecision.Unknown;
@@ -33,75 +25,84 @@ internal static partial class MacOsComputerUse
         try
         {
             AXUIElementSetMessagingTimeout(app, 0.25f);
-            if (request.Action is "click" or "double_click" or "drag" or "scroll")
-            {
-                if (AXUIElementCopyElementAtPosition(app, window.Left + request.X, window.Top + request.Y, out element) != 0)
-                    return ComputerRiskDecision.Unknown;
-            }
-            else element = AxAttribute(app, "AXFocusedUIElement");
+            element = ResolveInputElement(app, window, request);
             if (element == 0 || AXUIElementGetPid(element, out var pid) != 0 || pid != window.ProcessId)
                 return ComputerRiskDecision.Unknown;
-            var role = AxText(element, "AXRole");
-            var subrole = AxText(element, "AXSubrole");
-            var label = string.Join(" ", new[] { "AXTitle", "AXDescription", "AXHelp", "AXIdentifier" }.Select(k => AxText(element, k)));
-            if (subrole == "AXSecureTextField" || SensitiveLabel(label))
-                return new(ComputerRisk.RequireConfirmation, "Sensitive control or consequential action detected by the host. Review before delivery.");
-            // Role inspection must not silently expand permission to the app's other window.
+            if (UnsafeContext(element))
+                return new(ComputerRisk.RequireConfirmation, "Sensitive, actionable or modal control context. Review before delivery.");
             var axWindow = AxAttribute(element, "AXWindow");
             if (axWindow == 0) return ComputerRiskDecision.Unknown;
-            try
-            {
-                if (!MatchesAccessibilityWindow(axWindow, window)) return ComputerRiskDecision.Unknown;
-            }
+            try { if (!MatchesAccessibilityWindow(axWindow, window)) return ComputerRiskDecision.Unknown; }
             finally { CFRelease(axWindow); }
-            ComputerRiskDecision Ordinary(string reason)
+
+            var role = AxText(element, "AXRole");
+            var capability = request.Action switch
             {
-                var verification = AccessibilityInputVerification.Create(element, window, request);
-                return verification is null ? ComputerRiskDecision.Unknown
-                    : new(ComputerRisk.Allow, reason) { Verification = verification };
-            }
-            if (request.Action == "scroll" && HasAxAncestor(element, "AXScrollArea"))
-                return Ordinary("Scrolling a verified accessibility scroll area.");
-            if (request.Action == "press_key" && request.Modifiers.SequenceEqual(new[] { "command" })
-                && string.Equals(request.Key, "c", StringComparison.OrdinalIgnoreCase)
-                && role is "AXTextArea" or "AXTextField" or "AXStaticText")
-                return Ordinary("Copy from the authorized application's text control; clipboard contents are not read.");
-            if (!IsLocalEditor(window) || role != "AXTextArea" || HasAxAncestor(element, "AXSheet")
-                || HasAxAncestor(element, "AXDialog"))
-                return new(ComputerRisk.RequireConfirmation, $"Unclassified {role} control. Application permission is not consent to submit, delete, pay or disclose data.");
-            if (request.Action == "drag")
-            {
-                nint end = 0;
-                try
-                {
-                    if (AXUIElementCopyElementAtPosition(app, window.Left + request.EndX, window.Top + request.EndY, out end) != 0
-                        || end == 0 || !CFEqual(element, end)) return ComputerRiskDecision.Unknown;
-                }
-                finally { if (end != 0) CFRelease(end); }
-            }
-            if (request.Action == "type" && request.Text!.Any(c => char.IsControl(c) && c != '\n' && c != '\t'))
-                return ComputerRiskDecision.Unknown;
-            if (request.Action == "press_key")
-            {
-                var key = (request.Key ?? "").Trim().ToUpperInvariant();
-                if (request.Modifiers.Length > 0)
-                {
-                    if (!request.Modifiers.SequenceEqual(new[] { "command" }) || key is not ("A" or "C" or "V"))
-                        return ComputerRiskDecision.Unknown;
-                    if (key == "V")
-                    {
-                        lock (ClipboardGate)
-                            if (request.PermissionVersion == 0 || _copiedPermission != request.PermissionVersion
-                                || _copiedRevision != ClipboardRevision())
-                                return new(ComputerRisk.RequireConfirmation, "Clipboard provenance is unknown or changed. Explicitly approve this paste; no clipboard content was read.");
-                    }
-                }
-                else if (!TryKeyCode(key, out _)) return ComputerRiskDecision.Unknown;
-            }
-            return Ordinary("Verified local TextEdit document text interaction; no dialogs, submit or application command authorized.");
+                "scroll" when role == "AXScrollArea" => ComputerCapabilities.Scroll,
+                "drag" when IsTextRole(role) => ComputerCapabilities.SelectText,
+                "press_key" when IsTextRole(role) && request.Modifiers.SequenceEqual(new[] { "command" })
+                    && string.Equals(request.Key, "c", StringComparison.OrdinalIgnoreCase) => ComputerCapabilities.CopyText,
+                _ => ComputerCapabilities.None,
+            };
+            if (capability == ComputerCapabilities.None)
+                return new(ComputerRisk.RequireConfirmation, "Browsing permission does not cover clicks, typing, pasting or unclassified actions.");
+            var verification = AccessibilityInputVerification.Create(element, window, request);
+            if (verification is null) return ComputerRiskDecision.Unknown;
+            return new(ComputerRisk.Allow, $"Verified accessibility browsing capability: {capability}.")
+                { Capability = capability, Verification = verification };
         }
         catch (Exception ex) when (ex is InvalidOperationException or ExternalException) { return ComputerRiskDecision.Unknown; }
         finally { if (element != 0) CFRelease(element); CFRelease(app); }
+    }
+
+    private static bool IsTextRole(string role) => role is "AXTextArea" or "AXTextField" or "AXStaticText";
+
+    // Scroll hit tests often return a text child, not its scroll container. Use the same resolved target
+    // for assessment and delivery verification, without expanding a text selection to a different element.
+    private static nint ResolveInputElement(nint app, CapturableWindow window, ComputerActionRequest request)
+    {
+        nint element;
+        if (request.Action is "click" or "double_click" or "drag" or "scroll")
+        {
+            if (AXUIElementCopyElementAtPosition(app, window.Left + request.X, window.Top + request.Y, out element) != 0)
+                return 0;
+        }
+        else element = AxAttribute(app, "AXFocusedUIElement");
+        if (request.Action != "scroll") return element;
+        for (var depth = 0; element != 0 && depth < 16; depth++)
+        {
+            if (AxText(element, "AXRole") == "AXScrollArea") return element;
+            if (AxText(element, "AXRole") == "AXWindow") break;
+            var parent = AxAttribute(element, "AXParent");
+            CFRelease(element);
+            element = parent;
+        }
+        if (element != 0) CFRelease(element);
+        return 0;
+    }
+
+    private static bool UnsafeContext(nint element)
+    {
+        var current = CFRetain(element);
+        try
+        {
+            for (var depth = 0; current != 0 && depth < 20; depth++)
+            {
+                var role = AxText(current, "AXRole");
+                var subrole = AxText(current, "AXSubrole");
+                var label = string.Join(" ", new[] { "AXTitle", "AXDescription", "AXHelp", "AXIdentifier" }
+                    .Select(key => AxText(current, key)));
+                if (subrole is "AXSecureTextField" or "AXDialog" or "AXSystemDialog"
+                    || role is "AXSheet" or "AXDialog" or "AXButton" or "AXLink" or "AXMenuItem"
+                    || SensitiveLabel(label)) return true;
+                if (role == "AXWindow") return false;
+                var parent = AxAttribute(current, "AXParent");
+                CFRelease(current);
+                current = parent;
+            }
+            return true; // Missing or unbounded ownership chains never establish safety.
+        }
+        finally { if (current != 0) CFRelease(current); }
     }
 
     private static bool MatchesAccessibilityWindow(nint element, CapturableWindow window)
@@ -121,24 +122,6 @@ internal static partial class MacOsComputerUse
     private static bool SensitiveLabel(string label)
         => new[] { "send", "submit", "pay", "purchase", "password", "credential", "upload", "delete", "remove", "发送", "提交", "付款", "支付", "密码", "上传", "删除" }
             .Any(word => label.Contains(word, StringComparison.OrdinalIgnoreCase));
-
-    private static bool HasAxAncestor(nint element, string role)
-    {
-        var current = AxAttribute(element, "AXParent");
-        for (var depth = 0; current != 0 && depth < 12; depth++)
-        {
-            var next = nint.Zero;
-            try
-            {
-                if (AxText(current, "AXRole") == role) return true;
-                next = AxAttribute(current, "AXParent");
-            }
-            finally { CFRelease(current); }
-            current = next;
-        }
-        if (current != 0) CFRelease(current);
-        return false;
-    }
 
     private static nint AxAttribute(nint element, string name)
     {
@@ -160,31 +143,6 @@ internal static partial class MacOsComputerUse
             return System.Text.Encoding.UTF8.GetString(buffer, 0, end < 0 ? buffer.Length : end);
         }
         finally { CFRelease(value); }
-    }
-
-    private static int ClipboardRevision()
-    {
-        var board = ObjectMessage(objc_getClass("NSPasteboard"), sel_registerName("generalPasteboard"));
-        return board == 0 ? -1 : IntMessage(board, sel_registerName("changeCount"));
-    }
-
-    internal static void ForgetClipboard(long permissionVersion)
-    {
-        lock (ClipboardGate)
-            if (_copiedPermission == permissionVersion) { _copiedPermission = 0; _copiedRevision = -1; }
-    }
-
-    private static void RecordCopy(ComputerActionRequest request, int before)
-    {
-        if (request.Action != "press_key" || !request.Modifiers.SequenceEqual(new[] { "command" })
-            || !string.Equals(request.Key, "c", StringComparison.OrdinalIgnoreCase)) return;
-        // A delivered shortcut alone does not prove that the clipboard changed. Never infer ownership from it.
-        var after = ClipboardRevision();
-        lock (ClipboardGate)
-        {
-            _copiedPermission = after != before && after >= 0 ? request.PermissionVersion : 0;
-            _copiedRevision = after;
-        }
     }
 
     [DllImport(ApplicationServices)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool AXIsProcessTrusted();

@@ -52,6 +52,7 @@ internal sealed record ComputerActionRequest(string Action, int X = -1, int Y = 
     internal bool ExplicitlyApproved { get; init; }
     internal bool PositionedScroll { get; init; }
     internal Action? InputDeliveryStarted { get; init; }
+    internal IComputerInputVerification? InputVerification { get; init; }
 }
 
 /// <summary>Host operations bound to a previously resolved top-level window.</summary>

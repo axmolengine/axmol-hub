@@ -1132,18 +1132,25 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         bool StillAuthorized() => (context.ComputerControlVersion?.Invoke() ?? 0) == controlVersion
             && context.ApprovedComputerTarget?.Invoke()?.Matches(target) == true;
         // Verify before activation: Hub's approval card deactivates the target and activation changes its chrome.
+        string? verificationRefusal = null;
         bool VerifyObservation()
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!StillAuthorized()) return false;
             // Semantic target verification is supplied by the host only for classified ordinary actions.
             // Unknown/sensitive one-shot approvals keep strict visual verification as their fallback.
-            if (decision.Verification is { } verification) return verification.Verify() is null;
+            if (decision.Verification is { } verification)
+            {
+                verificationRefusal = verification.Verify();
+                return verificationRefusal is null;
+            }
             try
             {
                 var current = host.Grab(target);
-                return current is not null && !current.Stats.IsBlank() && observations.MatchesContent(current)
+                var matches = current is not null && !current.Stats.IsBlank() && observations.MatchesContent(current)
                     && StillAuthorized();
+                if (!matches) verificationRefusal = "Strict visual fallback no longer matches the captured frame; this action has no semantic control verifier.";
+                return matches;
             }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { return false; }
         }
@@ -1160,8 +1167,11 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             VerifyObservation = VerifyObservation, StillAuthorized = StillAuthorized, PermissionVersion = controlVersion,
             ExplicitlyApproved = context.ComputerSensitiveInputApproved?.Invoke() == true,
             InputDeliveryStarted = () => deliveryStarted = true,
+            InputVerification = decision.Verification,
         });
-        if (refusal is not null) return refusal + (deliveryStarted
+        if (refusal is not null) return refusal
+            + (verificationRefusal is null ? "" : " Target verification: " + verificationRefusal)
+            + (deliveryStarted
             ? " Input may have been partially delivered. " : " No input was sent. ")
             + GoalProgress.ComputerObservationRequired;
         // Input delivery is not evidence that the intended application operation succeeded.
