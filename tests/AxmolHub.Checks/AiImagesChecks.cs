@@ -192,6 +192,23 @@ internal static class AiImagesChecks
                 throw new Exception("A mid-run question or its image disappeared, duplicated, or moved after another tool round.");
         }
         Console.WriteLine("PASS: mid-run text and image survive subsequent tool requests once, at their original boundary.");
+        // Live application permission is an isolation boundary, not a persisted tool approval.
+        var appTarget = new ComputerUseTarget(new ComputerApplication(Path.GetFullPath("fixture-editor")), 11, 100, 1, "First");
+        var applicationControl = new ComputerControlSession(appTarget, "Edit a disposable document");
+        var newWindow = appTarget with { ProcessId = 12, ProcessStartedAtUtcTicks = 200, WindowHandle = 2, WindowTitle = "Second" };
+        var otherApp = newWindow with { Application = new ComputerApplication(Path.GetFullPath("fixture-other")) };
+        var version = applicationControl.Version;
+        if (!applicationControl.Covers(newWindow) || applicationControl.Covers(otherApp))
+            throw new Exception("Application permission failed new-window reuse or crossed an executable boundary.");
+        applicationControl.Pause(true);
+        if (applicationControl.Covers(newWindow) || !applicationControl.Covers(newWindow, allowPaused: true)
+            || applicationControl.Version == version)
+            throw new Exception("Pause did not invalidate live input permission.");
+        applicationControl.Pause(false);
+        applicationControl.Revoke();
+        if (applicationControl.Covers(newWindow) || applicationControl.Wait(CancellationToken.None)
+            || new ComputerControlSession(appTarget, "New task").Version == applicationControl.Version)
+            throw new Exception("Revoked permission survived or its version was recycled.");
         // Frame consumption is an isolation boundary, not a cosmetic coordinate detail.
         var observation = new ComputerUseObservation();
         var observedWindow = new CapturableWindow(1, "Fixture", 1, 100, 50)
@@ -201,6 +218,11 @@ internal static class AiImagesChecks
         if (!observation.MatchesContent(observedFrame)
             || observation.MatchesContent(observedFrame with { ContentFingerprint = "changed" }))
             throw new Exception("Changed image content was admitted as the original observation.");
+        var drag = new ComputerActionRequest("drag", 150, 80) { EndX = 20, EndY = 10 };
+        var mappedDrag = observation.Map(frameId, observedWindow, drag);
+        if (mappedDrag is not { X: 75, Y: 40, EndX: 10, EndY: 5 }
+            || observation.Map(frameId, observedWindow, drag with { EndX = 200 }) is not null)
+            throw new Exception("Drag mapping accepted an out-of-window end or scaled its points incorrectly.");
         var cx = 150; var cy = 80;
         if (observation.Consume(frameId, observedWindow, ref cx, ref cy, true) is not null || cx != 75 || cy != 40
             || observation.Consume(frameId, observedWindow, ref cx, ref cy, true) is null)

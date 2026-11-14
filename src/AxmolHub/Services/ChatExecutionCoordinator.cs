@@ -353,6 +353,10 @@ internal sealed partial class ChatExecutionCoordinator
             : OperatingSystem.IsMacOS() ? MacOsComputerUse.ScreenBridge()
             : OperatingSystem.IsLinux() ? LinuxComputerUse.ScreenBridge()
             : null;
+        var inputBridge = ComputerUseBridgeProvider is { } inputProvider ? inputProvider() : OperatingSystem.IsWindows()
+            ? new ComputerUseBridge(WindowsScreenCapture.Operate)
+            : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()
+            : OperatingSystem.IsLinux() ? LinuxComputerUse.InputBridge() : null;
         return new ChatToolScope(
             snapshot,
             new WorkspaceToolScope(
@@ -419,23 +423,12 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 // DuckDuckGo needs no configuration; read the global switch again on each tool call.
                 LocalSearchAllowed = () => IsWebSearchEnabled(),
-                ComputerUse = ComputerUseBridgeProvider is { } inputProvider ? inputProvider() : OperatingSystem.IsWindows()
-                    ? new ComputerUseBridge(WindowsScreenCapture.Operate)
-                    : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()
-                    : OperatingSystem.IsLinux() ? LinuxComputerUse.InputBridge() : null,
+                ComputerUse = inputBridge,
                 ComputerObservation = _computerObservations.GetOrAdd(conversationId, _ => new ComputerUseObservation()),
-                ComputerInputApproved = () =>
-                {
-                    var callId = ToolInvocation.CallId;
-                    bool Read()
-                    {
-                        var call = Sessions.Registry.Peek(conversationId)?.Messages
-                            .LastOrDefault(turn => turn.ToolCallId == callId && turn.Role == ChatRoles.Assistant);
-                        return call?.ApprovalComputerInput == true && call.ApprovalState == ChatApprovalStates.Approved;
-                    }
-                    return Dispatcher.UIThread.CheckAccess() ? Read()
-                        : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
-                },
+                ComputerInputApproved = () => ComputerInputAllowed(conversationId, ToolInvocation.CallId, screenBridge, inputBridge),
+                ComputerSensitiveInputApproved = () => HasExplicitComputerPermit(conversationId, ToolInvocation.CallId),
+                WaitComputerControl = ct => ComputerControlFor(conversationId)?.Wait(ct) ?? true,
+                ComputerControlVersion = () => ComputerControlFor(conversationId)?.Version ?? 0,
                 ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
                 PortalComputer = PortalComputerBridgeProvider is { } portalProvider ? portalProvider(conversationId)
                     : LinuxWaylandRemoteDesktop.IsWayland && ScreenCaptureBridgeProvider is null
@@ -1387,6 +1380,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool ClearGoal(string conversationId)
     {
+        RevokeComputerControl(conversationId);
         var changed = Sessions.Registry.TryUpdate(conversationId, opened =>
         {
             ResetGoal(opened);
@@ -1399,6 +1393,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool CompleteGoal(string conversationId)
     {
+        RevokeComputerControl(conversationId);
         CancelGoalWake(conversationId);
         RunFor(conversationId)?.RequestStop();
         var changed = Sessions.Registry.TryUpdate(conversationId, opened =>
@@ -1644,6 +1639,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool RequestStop(string conversationId)
     {
+        RevokeComputerControl(conversationId);
         var goal = Sessions.Registry.Peek(conversationId)?.Goal is { Length: > 0 };
         if (goal) PauseGoal(conversationId);
         if (RunFor(conversationId) is not { IsStreaming: true } run) return goal;
@@ -2004,13 +2000,26 @@ internal sealed partial class ChatExecutionCoordinator
                 var portal = computerUse && scope.Workspace.PortalComputer is not null;
                 var target = computerUse && !portal
                     ? ComputerUseGrants.ResolveTarget(scope.Workspace.Screen, member.Name, member.ArgumentsJson) : null;
-                var computerGrant = HasComputerGrant(conversation, target?.Application);
+                var control = ComputerControlFor(run.ConversationId);
+                var taskGrant = control?.Covers(target, allowPaused: true) == true;
+                var computerGrant = taskGrant || !computerInput && HasComputerGrant(conversation, target?.Application);
+                var inputRisk = computerInput && !portal && taskGrant && !control!.Paused
+                    ? AssessComputerInput(run.ConversationId, target, member.ArgumentsJson, scope.Workspace.Screen, scope.Workspace.ComputerUse)
+                    : ComputerRiskDecision.Unknown;
+                if (computerInput && !portal && taskGrant)
+                    Audit(run.ConversationId, $"Computer Use risk: {inputRisk.Risk} · {inputRisk.Reason}");
+                if (computerInput && !portal && taskGrant && inputRisk.Risk == ComputerRisk.RequireConfirmation)
+                    _computerPermits[(run.ConversationId, member.CallId)] = new(control!, control!.Version, member.ArgumentsJson, false);
                 if (computerUse)
                     Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     {
                         var at = opened.IndexOfToolCall(member.CallId);
                         if (at >= 0) opened.Messages[at] = opened.Messages[at] with
-                        { ApprovalComputerTarget = target, ApprovalComputerInput = computerInput, ApprovalComputerPortal = portal };
+                        {
+                            ApprovalComputerTarget = target, ApprovalComputerInput = computerInput && (portal || taskGrant),
+                            ApprovalComputerPortal = portal, ApprovalComputerTask = !portal && !computerGrant,
+                            ApprovalComputerReason = computerInput && taskGrant ? inputRisk.Reason : null,
+                        };
                     });
                 var granted = computerGrant || verbGrant || (ToolApprovalPolicy.IsGrantable(risk)
                               && (sessionGrant || ToolTrust.Contains(TrustedTools, member.Name)));
@@ -2025,7 +2034,8 @@ internal sealed partial class ChatExecutionCoordinator
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
                 var parks = computerUse
-                    ? portal || target is not null && (!computerGrant || computerInput)
+                    ? portal || target is not null && (!computerGrant || computerInput && !control!.Paused
+                        && inputRisk.Risk == ComputerRisk.RequireConfirmation)
                     : !granted && !malformed
                       && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
                 return new CallVerdict(member, risk, asks, malformed, granted, sessionGrant, verbGrant, parks,
@@ -2209,8 +2219,9 @@ internal sealed partial class ChatExecutionCoordinator
         var portalComputer = conversation.Messages[index].ApprovalComputerPortal;
         var computerApp = conversation.Messages[index].ApprovalComputerTarget?.Application;
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
-        var inputConfirmation = ComputerUseGrants.IsInput(toolName, conversation.Messages[index].ToolArguments);
-        if ((inputConfirmation || portalComputer) && alwaysAllow)
+        var inputConfirmation = conversation.Messages[index].ApprovalComputerInput;
+        var taskConfirmation = conversation.Messages[index].ApprovalComputerTask;
+        if (isComputerUse && alwaysAllow)
         {
             refusalKey = "ChatApprovalGone";
             return false;
@@ -2219,6 +2230,26 @@ internal sealed partial class ChatExecutionCoordinator
         {
             refusalKey = "ChatApprovalGone";
             return false;
+        }
+        if (isComputerUse && !portalComputer)
+        {
+            var target = conversation.Messages[index].ApprovalComputerTarget!;
+            var current = ScopeFor(conversationId).Workspace.Screen;
+            if (current is null || !target.Find(current.Windows()).Ok)
+            {
+                refusalKey = "ChatApprovalGone";
+                return false;
+            }
+            if (taskConfirmation) GrantComputerControl(conversationId, target);
+            else if (inputConfirmation)
+            {
+                if (!_computerPermits.TryGetValue((conversationId, callId), out var permit)
+                    || !ReferenceEquals(permit.Session, ComputerControlFor(conversationId))
+                    || !permit.Session.Covers(target) || permit.Version != permit.Session.Version
+                    || permit.Arguments != conversation.Messages[index].ToolArguments)
+                { refusalKey = "ChatApprovalGone"; return false; }
+                _computerPermits[(conversationId, callId)] = permit with { Approved = true };
+            }
         }
         // The card only offers 「总是允许」 where a grant can land, and the same rule is decided here rather than
         // trusted from the caller: a tier that reaches past the sandbox ignores every grant, so remembering its
@@ -2237,8 +2268,8 @@ internal sealed partial class ChatExecutionCoordinator
             foreach (var owed in opened.UnansweredCallsOfBatch(batchId))
             {
                 if (owed.ApprovalState != ChatApprovalStates.Pending) continue;
-                if ((inputConfirmation || ComputerUseGrants.IsInput(owed.ToolName, owed.ToolArguments))
-                    && owed.ToolCallId != callId) continue;
+                if (isComputerUse && owed.ToolCallId != callId && (inputConfirmation
+                    || ComputerUseGrants.IsInput(owed.ToolName, owed.ToolArguments))) continue;
                 var owedIsComputerUse = ComputerUseGrants.IsComputerUseTool(owed.ToolName);
                 if (owedIsComputerUse && (!isComputerUse || (portalComputer
                     ? owed.ToolCallId != callId || !owed.ApprovalComputerPortal
@@ -2264,19 +2295,18 @@ internal sealed partial class ChatExecutionCoordinator
             // was shown beside it.
             if (alwaysAllow && grantable && !ToolTrust.Contains(opened.AutoApprovedTools, toolName))
                 opened.AutoApprovedTools.Add(toolName);
-            if (isComputerUse && !portalComputer && !alwaysAllow && !inputConfirmation)
-                ComputerUseGrants.Add(opened.AllowedComputerApps, computerApp);
+            // Task control is live state only; do not serialize it as an application grant.
         });
         // Outside the session gate: the app-wide half is a different file, with a different owner, and the registry
         // lock must not be held while the settings store is written.
         if (alwaysAllow && grantable) TrustTool(toolName);
-        if (isComputerUse && !portalComputer && alwaysAllow) TrustComputerApp(computerApp!);
+        // Permanent legacy screenshot trust never upgrades to live input permission.
         // The verb grant is app-level only: the session list above is the tool answer's, and a second per-session
         // list for verbs would be a second place for the two to disagree.
         if (verbKey is not null) TrustCommand(verbKey);
         AuditApproval(conversationId, portalComputer ? "Wayland portal session" : isComputerUse ? computerApp!.ExecutablePath : verbKey ?? toolName,
             portalComputer ? "portal call individually confirmed" : isComputerUse
-                ? alwaysAllow ? "computer app always allowed" : "computer app allowed for conversation"
+                ? inputConfirmation ? "sensitive input confirmed once" : taskConfirmation ? "application allowed for task session" : "screenshot allowed"
                 : alwaysAllow ? "always allowed" : "allowed");
         Changed?.Invoke();
         _ = PumpApprovedBatchAsync(run, batchId);
@@ -2295,9 +2325,9 @@ internal sealed partial class ChatExecutionCoordinator
             var at = callId is null ? -1 : conversation?.IndexOfToolCall(callId) ?? -1;
             var target = at < 0 ? null : conversation!.Messages[at].ApprovalComputerTarget;
             var turn = at < 0 ? null : conversation!.Messages[at];
-            return turn?.ApprovalComputerInput == true
-                ? turn.ApprovalState == ChatApprovalStates.Approved ? target : null
-                : HasComputerGrant(conversation, target?.Application) ? target : null;
+            return ComputerControlFor(conversationId)?.Covers(target) == true ? target
+                : turn?.ApprovalComputerInput != true && turn?.ApprovalComputerTask != true
+                    && HasComputerGrant(conversation, target?.Application) ? target : null;
         }
         // Grants can be revoked while a call is queued. Read the registry on its owning thread immediately
         // before capture or input rather than caching a permission in the scope assembled for a model round.
@@ -2531,21 +2561,6 @@ internal sealed partial class ChatExecutionCoordinator
 
     private async Task RunApprovedCallAsync(ConversationRun run, ApprovedCall call, int budget, ChatToolScope scope)
     {
-        if (call.Name == ToolNames.ComputerUse && ComputerUseGrants.IsInput(call.Name, call.ArgumentsJson))
-        {
-            var confirmed = await ReadOnUiAsync(() => Sessions.Registry.Peek(run.ConversationId)?.Messages
-                .Any(turn => turn.Role == ChatRoles.Assistant && turn.ToolCallId == call.CallId
-                    && turn.ApprovalComputerInput && turn.ApprovalState == ChatApprovalStates.Approved) == true)
-                .ConfigureAwait(false);
-            if (!confirmed)
-            {
-                await ApplyOnUiAsync(() => Sessions.Registry.TryUpdate(run.ConversationId, opened =>
-                    opened.AppendFunctionResult(ChatTurn.FunctionResult(call.CallId,
-                        "Refused: this saved input has no individual confirmation. Observe again and confirm a new action.", failed: true))))
-                    .ConfigureAwait(false);
-                return;
-            }
-        }
         if (call.Name is ToolNames.FsWrite or ToolNames.FsReplace or ToolNames.FsDelete or ToolNames.FsMove)
             scope = scope with { Workspace = scope.Workspace with { ApprovedWriteFingerprint = call.WriteFingerprint ?? "invalid",
                 ApprovedCacheBreak = call.CacheBreak } };
@@ -4071,6 +4086,9 @@ internal sealed partial class ChatExecutionCoordinator
                     }
                 }
             });
+            if (result != RunResult.Completed || !continueGoal
+                && Sessions.Registry.Peek(run.ConversationId) is { Goal: { Length: > 0 }, GoalState: ChatGoalStates.Complete })
+                RevokeComputerControl(run.ConversationId);
             if (spawnedParentId is { Length: > 0 } parentId && spawnedResult is { Length: > 0 } resultText)
             {
                 var parentSession = Sessions.Registry.Peek(parentId) ?? Sessions.Registry.Load(parentId);
@@ -4225,13 +4243,14 @@ internal sealed partial class ChatExecutionCoordinator
         _disposed = true;
         _memoryStop.Cancel();
         foreach (var id in _goalWakes.Keys.ToArray()) CancelGoalWake(id);
+        foreach (var id in _computerControls.Keys.ToArray()) RevokeComputerControl(id);
         foreach (var run in _runs.Values) run.RequestStop();
     }
 
 
     internal void StopRunFor(string id)
     {
-        _computerObservations.TryRemove(id, out _);
+        RevokeComputerControl(id);
         CancelGoalWake(id);
         // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses
         // those writes — but it should not spend the rest of a reply finding that out.

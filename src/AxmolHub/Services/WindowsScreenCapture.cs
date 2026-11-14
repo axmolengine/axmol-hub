@@ -45,6 +45,9 @@ public static class WindowsScreenCapture
     {
         request.Cancellation.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows()) return "Refused: Windows input is unavailable on this host.";
+        if (request.Action is "move" or "double_click" or "drag" || request.Modifiers.Length > 0
+            || request.HorizontalScroll != 0 || request.PositionedScroll)
+            return "Refused: extended pointer, modifier and positioned-scroll actions currently require macOS.";
         if (!IsWindow(window.Handle) || !IsWindowVisible(window.Handle))
             return "Refused: the authorized application window has closed. Do not retry until it is visible again.";
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(List()).Ok)
@@ -65,6 +68,7 @@ public static class WindowsScreenCapture
             return "Refused: the selected application's identity or focus changed before input.";
 
         request.Cancellation.ThrowIfCancellationRequested();
+        if (request.StillAuthorized?.Invoke() == false) return "Refused: application permission was revoked or paused.";
         switch (request.Action)
         {
             case "click":
@@ -85,6 +89,7 @@ public static class WindowsScreenCapture
                 foreach (var character in request.Text ?? "")
                 {
                     request.Cancellation.ThrowIfCancellationRequested();
+                    if (request.StillAuthorized?.Invoke() == false) return "Refused: application permission was revoked or paused.";
                     if (!GetCursorPos(out var currentPointer) || currentPointer.X != pointer.X || currentPointer.Y != pointer.Y)
                         return "Refused: pointer activity detected during input; user takeover paused typing.";
                     if (GetForegroundWindow() != window.Handle || !target.Find(List()).Ok)

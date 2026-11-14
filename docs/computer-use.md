@@ -1,4 +1,4 @@
-# Computer Use: named-window workflow
+# Computer Use: application-session permission, observed-window input
 
 Computer Use reuses the normal Agent tool loop. It is not a separate agent, and `--drive`
 remains a development harness for Hub itself. Windows, macOS and X11 use verified application
@@ -9,31 +9,74 @@ fallback to unscoped capture or non-portal global input is permitted.
 
 1. Name the application window in `capture_screen`, or in `computer_use` with
    `action: "screenshot"`. Title ambiguity is refused; `process_id` only narrows the match.
-2. Hub resolves the executable, process incarnation and window handle. A session or
-   permanent application grant permits screenshots, not unattended input.
+2. Hub resolves the executable, process incarnation and window handle. The first approval
+   grants temporary control of that **application** in this conversation, including its other
+   windows and newly created windows/processes at the same executable path. Discovering a
+   different app never grants permission. Explicitly authorizing another app replaces the
+   previous app's control permission. There is no desktop-control mode.
+   Existing persisted application grants remain screenshot-only and never upgrade to input.
 3. A successful screenshot returns `frame_id`, image dimensions and the full-image input
    area. Click coordinates are image pixels. Hub scales them to the native window bounds;
    macOS captures exclude shadows. Image bytes reach the very next model request, including
    requests inside a continuous tool loop, and remain attached to their tool result on replay.
-4. Supply that `frame_id` for one `click`, `type`, `press_key` or `scroll`. Every input has an
-   individual approval card, even in Full Access and even for a permanently trusted app.
-   This conservative policy also confirms sending, deletion and payment: screenshots cannot
-   reliably classify these operations. Review the arguments and the visible target before approving.
+4. Supply that `frame_id` for one input. Host-verified ordinary actions run without another
+   approval card. Sensitive or unclassified actions require a one-action confirmation even
+   in Full Access. Model-supplied risk labels are not trusted. Confirmation is bound to the
+   exact arguments, observation and live permission version, not restored from a saved transcript.
+   macOS supports `click`, `double_click`, `move`, `drag`, `type`, `press_key` and `scroll`.
+   Drag uses `x/y`, `end_x/end_y`, and `duration_ms` (100–3000). `press_key` accepts a
+   `modifiers` array (`command`, `control`, `alt`, `shift`). Scroll accepts `x/y` and
+   `horizontal_scroll`; omitted coordinates use the image center. Extended actions on other
+   backends are explicitly refused, not silently converted or dropped.
 5. Hub refuses expired (two-minute), spent, moved/resized, owner-changed or content-changed
    observations. Restarting Hub does not restore live observations. Another conversation's
-   input invalidates older observations. Animated or blinking content may require a new frame;
+   input invalidates older observations. Application permission does not make another window's
+   frame valid: observe each newly selected window before input. Animated or blinking content may require a new frame;
    this is a fail-closed limitation, not a reason to bypass verification.
 6. Input delivery is not application success. After delivery Hub captures a fresh image and
    the model must inspect it before deciding what happened. Failed or interrupted input can
    be partial: observe before retrying and do not replay text blindly.
 
 A process-wide desktop lease spans observation, input and the post-input capture. Competing
-conversation calls fail instead of interleaving. The existing Stop button cancels input;
-text delivery checks cancellation between characters/code points. An event already handed
-to the OS cannot be recalled. Focus changes or pointer movement during typing pause further
+conversation calls fail instead of interleaving. The live Computer Use strip above the composer provides Pause/Resume, Stop and Revoke.
+Pause blocks further delivery and invalidates frames; resume requires a fresh observation.
+Stop cancels input and revokes control. Revocation also stops further events in a running action.
+Text delivery checks cancellation between characters/code points, and macOS dragging checks
+between bounded motion segments. Mouse buttons and shortcut modifiers are released in `finally`. An event already handed
+to the OS cannot be recalled. Focus changes or pointer movement during typing stop further
 input. Hub may restore focus from its own approval window, but will not steal it from a
 third application. These checks are not an OS application sandbox and cannot eliminate all
 native-input races or detect every form of human keyboard activity.
+
+## Session lifetime and host risk checks
+
+Control grants live only in memory. Ordinary chat replies do not end the live conversation
+permission; Stop, Revoke, conversation removal, workspace/data-root shutdown, failure/cancellation
+or an explicit goal completing does. Automatic goal continuation retains permission. Restart
+never restores control from conversation JSON or preferences. Closing one window invalidates
+that window's observation, not the entire app's permission.
+
+On macOS the host reads Accessibility roles, window ownership, title/bounds and control metadata.
+An inaccessible or unclassified control asks for confirmation. Sensitive-label detection only
+**escalates** risk; absence of a matching word never establishes safety. There is deliberately no
+claim to understand arbitrary GUI business semantics.
+
+The initial ordinary-action adapter is narrow: movement inside the verified window; scrolling
+verified scroll areas; copying from non-secure text controls; and document interactions in the
+system TextEdit app (not its dialogs or sheets). Other app controls, including Hub controls the
+host cannot classify, still ask. An application grant alone does not silently authorize arbitrary
+buttons, Enter-to-submit, uploads, deletion, credentials or payments. Inspect the actual card.
+
+`Command+A/C/V` delivery is supported. Automatic paste in TextEdit additionally requires a
+clipboard revision observed after this permission's own Copy; an unknown or changed clipboard
+requires explicit confirmation. Hub does not read clipboard contents, write a replacement buffer,
+or restore a guessed previous value. This revision check is conservative provenance bookkeeping,
+not an OS clipboard-isolation guarantee. A delayed Copy may require confirmation on Paste.
+
+Images are stored with existing tool results and sent to the selected model; action/risk/permission
+records use the existing transcript and audit path. Audit messages do not add typed text or clipboard
+contents. Records are evidence, not an automatic replay script. Screen Recording and Accessibility
+are separate OS permissions; granting them does not replay an interrupted action.
 
 ## Host requirements
 
@@ -51,7 +94,20 @@ The Wayland contract differs from the native backends and the UI says so: the us
 
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
 
-## Wayland verification status
+## Current macOS delivery status
+
+The application-session change is built for macOS arm64. Release build and offline image/permission
+checks pass. The current full ShellCheck passes (see `tmp/computer-use-shell.txt` for the actual run).
+Its previously failing inline-code assertions were repaired at the fixture's space-hit-test anchor;
+shared renderer behavior is checked once, with a separate inspector wiring check. No production
+selection fix or real-desktop success is inferred from that fixture repair.
+
+The local `.pkg` is for user installation and manual acceptance. Native input, accessibility
+classification, clipboard revisions, Retina/multi-monitor coordinates and interruption midway
+through a drag still require that installed-app acceptance. No Windows/X11/Wayland desktop
+regression is claimed by the macOS build.
+
+## Earlier Wayland verification status (historical)
 
 Implemented and locally checked: Linux helper compilation and output inclusion, per-call portal
 approval cards, no permanent application grant, cancellation/refusal cleanup and monitor-source
@@ -93,7 +149,7 @@ production bridges retain their platform probe. Workspace assertions now disting
 spellings from host-rooted paths and assert the Windows shell selector independently of the current
 OS. The workspace suite passes with no changes to production path guards or shell selection.
 
-The latest full shell run reached the end: **1758/1765 passed**, still a failed suite. Portal and
+That earlier Wayland-host full shell run reached the end: **1758/1765 passed**, still a failed suite. Portal and
 native-window approval/input fixtures pass. Six text-selection/copy assertions and one usage-strip
 spacing assertion still fail; these are retained, not waived. Windows/macOS native desktop regression
 and GNOME/KDE/wlroots acceptance remain pending.
@@ -173,21 +229,28 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/portal-fram
 ./tmp/portal-frame-check
 ```
 
-Reuse `--verify-shell` for application grants and individual input confirmation. Its fixture
-verifies that approval executes once, returns a new image and cannot create permanent input
-trust. Full-suite failure remains a failure; unrelated assertions must not be suppressed.
+Reuse `--verify-shell` for the live application grant, ordinary-input reuse and sensitive/unclassified
+confirmation. Its offline fixture checks same-app new-window reuse, conversation isolation,
+one-action confirmation and explicit replacement by a different app. `--check-ai-images` also
+covers permission pause/revoke/version isolation and drag coordinate bounds. Full-suite failure remains a failure; unrelated assertions must not be suppressed.
 
 Real-desktop acceptance still needs the following on **each** native host:
 
-- Observe a disposable text editor, approve a click and short text, and inspect the fresh frame.
+- Approve the system TextEdit app once. Observe, click/type, double-click, move, drag-select,
+  `Command+A/C/V`, and scroll; verified document actions should not show per-input cards.
+- Open a second document window. Observe it, then operate without another application grant.
+- For an unclassified or mock Send/Delete/Pay control, inspect the one-action confirmation.
+  Ordinary-action coverage is limited by the host adapter; do not test real destructive actions.
 - Resize/move the window after observation; ensure input is refused.
 - Switch to another app or move the pointer while typing; ensure further input pauses.
 - Press Stop during typing; ensure no remaining text is sent or automatically replayed.
 - Run two conversations against different fixture apps; ensure desktop actions do not interleave.
-- Deny/revoke application permission; verify screenshots and input do not bypass the gate.
+- Pause/resume and revoke permission; verify stale frames and queued sensitive confirmations fail.
+  Without legacy screenshot trust, both screenshots and input must stop after revocation.
+- Restart Hub and verify a saved conversation approval does not restore control.
 - Verify mixed-DPI/multiple-monitor coordinates, macOS Retina scaling, X11 client geometry,
   and supported hardware-accelerated surfaces. Blank or inaccessible surfaces must refuse.
-- Review a harmless mock Send/Delete/Pay control; ensure the final click has its own confirmation.
+- Verify another application's windows require explicit application permission; title similarity is irrelevant.
 
 A successful build or an offline bridge fixture does not prove these native desktop cases.
 

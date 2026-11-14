@@ -605,6 +605,7 @@ public partial class ChatPanel
     /// </summary>
     private void RefreshDecisionHost()
     {
+        RefreshComputerControlHost();
         var conversation = _chat?.ActiveConversation;
         // A command waiting on an answer about its own process outranks the three below, and cannot coexist with
         // them: the batch is judged before anything runs, so a command in flight means no parked approval or
@@ -947,7 +948,7 @@ public partial class ChatPanel
         var portal = turn.ApprovalComputerPortal;
         var target = turn.ApprovalComputerTarget;
         if (target is null && !portal) return BuildApprovalPendingLine(turn);
-        var input = turn.ApprovalComputerInput || ComputerUseGrants.IsInput(turn.ToolName, turn.ToolArguments);
+        var input = turn.ApprovalComputerInput;
         var app = portal ? HubStrings.Get("PortalSessionTitle") : target!.WindowTitle;
         var card = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 10 };
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
@@ -994,7 +995,7 @@ public partial class ChatPanel
             Text = portal
                 ? HubStrings.Get(input ? "PortalInputHint" : "PortalCaptureHint") + "\n" + turn.ToolArguments
                 : target!.Application.ExecutablePath + "\n" + (input
-                    ? HubStrings.Get("ComputerUseInputHint") + "\n" + turn.ToolArguments
+                    ? HubStrings.Get("ComputerUseInputHint") + "\n" + turn.ApprovalComputerReason + "\n" + turn.ToolArguments
                     : HubStrings.Get("ComputerUseGrantHint")),
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -1004,18 +1005,6 @@ public partial class ChatPanel
         card.Children.Add(header);
 
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 4, 0, 0) };
-        var always = new Button
-        {
-            Name = "ComputerUseAlwaysAllowButton",
-            Classes = { "approval-action" },
-            Content = HubStrings.Get("ComputerUseAlwaysAllow"),
-            Tag = "ComputerUseAlwaysAllow",
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = !input && !portal,
-        };
-        always.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: true);
-        footer.Children.Add(always);
 
         var actions = new StackPanel
         {

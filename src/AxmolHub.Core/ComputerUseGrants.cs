@@ -7,7 +7,7 @@ internal static class ComputerUseGrants
 {
     public static bool IsComputerUseTool(string? name) => name is ToolNames.ComputerUse or ToolNames.CaptureScreen;
 
-    // Conservatively confirm every input. Pixels cannot reliably classify a destructive final submission.
+    // Input classification is not a risk verdict. The host decides risk under a live application grant.
     public static bool IsInput(string? tool, string? json)
     {
         if (tool != ToolNames.ComputerUse) return false;

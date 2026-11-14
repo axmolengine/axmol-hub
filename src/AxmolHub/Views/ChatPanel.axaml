@@ -1344,7 +1344,7 @@
          Row 1 is the decision host — a pending call or a pending plan; row 2 the steer-confirm strip, where a
          second tap stands between Enter and a steer, because a steer is the routing table's strongest signal and
          worth reading once before it is said. Row 4 is the active goal capsule, nearest the box after a steer draft.
-         Nothing is cancelled either way: the sentence waits for the step in flight. Row 6 aligns the workspace
+         Nothing is cancelled either way: the sentence waits for the step in flight. Row 5 holds live Computer Use controls; row 7 aligns the workspace
          picker, per-request metrics and context button below the frame.
          Both strips are siblings of the frame, never children of it: the input box stays live and its draft stays
          visible while a question is waiting, which is the whole reason they moved. -->
@@ -1352,7 +1352,7 @@
          as the transcript: the column's right edge is where the transcript's is meant to be, so the inset goes on
          the whole stack rather than on one card in it (see the transcript scroller's note for why the gutter
          exists at all). -->
-    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0,10,0">
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0,10,0">
       <!-- Keep the changes pill centered over the composer; the scroll control moves to the side when both show.
            Reserve the scrollable transcript's band height so the button does not resize the reading area. -->
       <Grid x:Name="ComposerBand" Grid.Row="0" ColumnDefinitions="*,Auto,*" MaxWidth="820"
@@ -1385,7 +1385,9 @@
            SurfaceAlt is the sidebar's chrome plane; the input box must float *above* the reading page and
            read as a card, not sit on the same gray strip as the spine. In dark that lifts it off #1E1E1E;
            in light it becomes a white card on the #F4F5F7 page. The shell check pins the separation. -->
-      <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="5"
+      <Border x:Name="ComputerControlHost" Grid.Row="5" IsVisible="False" MaxWidth="820"
+              ClipToBounds="True" HorizontalAlignment="Stretch" Margin="0,4,0,0" />
+      <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="6"
               Background="{DynamicResource Hub.Surface}" CornerRadius="14"
               HorizontalAlignment="Stretch" MaxWidth="820" ClipToBounds="True"
               Margin="0,6,0,0" Padding="14,12,12,10">
@@ -1463,7 +1465,7 @@
 
       <!-- The workspace stays at left; the spring keeps the three statuses together at right.
            Speed and context keep their width; the spend label trims first on narrow windows. -->
-      <Grid x:Name="ComposerStatusRow" Grid.Row="6" ColumnDefinitions="Auto,*,Auto,*,Auto" MaxWidth="820" HorizontalAlignment="Stretch"
+      <Grid x:Name="ComposerStatusRow" Grid.Row="7" ColumnDefinitions="Auto,*,Auto,*,Auto" MaxWidth="820" HorizontalAlignment="Stretch"
             Margin="0,3,0,4" MinHeight="30" ColumnSpacing="8">
         <Button x:Name="WorkspaceChip" Grid.Column="0" Classes="workspace-chip" MaxWidth="160">
           <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">

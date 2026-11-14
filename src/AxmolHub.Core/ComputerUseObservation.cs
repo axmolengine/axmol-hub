@@ -22,6 +22,33 @@ internal sealed class ComputerUseObservation
     private static string Fingerprint(CapturedFrame frame)
         => frame.ContentFingerprint ?? FrameAnalysis.Fingerprint(frame.Png);
 
+    internal void Invalidate() { lock (_gate) _latest = null; }
+
+    internal ComputerActionRequest? Map(string? id, CapturableWindow window, ComputerActionRequest request)
+    {
+        lock (_gate)
+        {
+            if (_latest is not { } p || p.Id != id || string.IsNullOrEmpty(id) || !p.Target.Matches(window)
+                || p.Generation != ComputerDesktop.Generation || Environment.TickCount64 - p.RecordedAt > 120_000
+                || p.Left != window.Left || p.Top != window.Top || p.Width != window.Width || p.Height != window.Height)
+                return null;
+            bool Inside(int x, int y) => x >= 0 && y >= 0 && x < p.PixelWidth && y < p.PixelHeight;
+            var pointer = request.Action is "click" or "double_click" or "move" or "drag" or "scroll";
+            var x = request.X; var y = request.Y;
+            var centeredScroll = request.Action == "scroll" && x == -1 && y == -1;
+            if (centeredScroll) { x = p.PixelWidth / 2; y = p.PixelHeight / 2; }
+            if (pointer && !Inside(x, y) || request.Action == "drag" && !Inside(request.EndX, request.EndY)) return null;
+            return request with
+            {
+                X = centeredScroll ? p.Width / 2 : pointer ? (int)((long)x * p.Width / p.PixelWidth) : -1,
+                Y = centeredScroll ? p.Height / 2 : pointer ? (int)((long)y * p.Height / p.PixelHeight) : -1,
+                PositionedScroll = request.Action == "scroll" && !centeredScroll,
+                EndX = request.Action == "drag" ? (int)((long)request.EndX * p.Width / p.PixelWidth) : -1,
+                EndY = request.Action == "drag" ? (int)((long)request.EndY * p.Height / p.PixelHeight) : -1,
+            };
+        }
+    }
+
     internal bool MatchesContent(CapturedFrame frame)
     {
         lock (_gate) return _latest is { } previous && previous.Fingerprint == Fingerprint(frame)

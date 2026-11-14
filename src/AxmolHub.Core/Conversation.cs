@@ -350,6 +350,8 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public ComputerUseTarget? ApprovalComputerTarget { get; init; }
     public bool ApprovalComputerInput { get; init; }
     public bool ApprovalComputerPortal { get; init; }
+    public bool ApprovalComputerTask { get; init; }
+    public string? ApprovalComputerReason { get; init; }
 
     /// <summary>The file name of the pre-image this write left in <see cref="ChatUndoStore"/>, kept by name rather
     /// than as a full path so a session file still means the same thing after the data root moves. Null when the

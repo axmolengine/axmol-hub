@@ -77,6 +77,9 @@ internal static class LinuxComputerUse
     private static string? Operate(CapturableWindow window, ComputerActionRequest request)
     {
         request.Cancellation.ThrowIfCancellationRequested();
+        if (request.Action is "move" or "double_click" or "drag" || request.Modifiers.Length > 0
+            || request.HorizontalScroll != 0 || request.PositionedScroll)
+            return "Refused: extended pointer, modifier and positioned-scroll actions currently require macOS.";
         try { EnsureX11(); }
         catch (InvalidOperationException ex) { return $"Refused: {ex.Message}"; }
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok)
@@ -122,6 +125,7 @@ internal static class LinuxComputerUse
                 foreach (var rune in (request.Text ?? "").EnumerateRunes())
                 {
                     request.Cancellation.ThrowIfCancellationRequested();
+                    if (request.StillAuthorized?.Invoke() == false) return "Refused: application permission was revoked or paused.";
                     var currentPointer = Run(xdotool, ["getmouselocation", "--shell"]);
                     if (currentPointer.Code != 0 || currentPointer.Output != pointer.Output)
                         return "Refused: pointer activity detected; user takeover paused typing.";
@@ -141,6 +145,7 @@ internal static class LinuxComputerUse
                 for (var index = 0; index < Math.Abs(request.Scroll); index++)
                 {
                     request.Cancellation.ThrowIfCancellationRequested();
+                    if (request.StillAuthorized?.Invoke() == false) return "Refused: application permission was revoked or paused.";
                     if (!Focused(xdotool, window.Handle) || !target.Find(ListWindows()).Ok)
                         return "Refused: the selected window lost identity or focus during scrolling.";
                     if (Run(xdotool, ["mousemove", "--window", id, (window.Width / 2).ToString(CultureInfo.InvariantCulture),
@@ -152,6 +157,7 @@ internal static class LinuxComputerUse
                 return "Refused: unsupported Computer Use action.";
         }
         request.Cancellation.ThrowIfCancellationRequested();
+        if (request.StillAuthorized?.Invoke() == false) return "Refused: application permission was revoked or paused.";
         if (!Focused(xdotool, window.Handle)) return "Refused: the selected window lost focus before input.";
         var sent = Run(xdotool, args);
         if (sent.Code != 0)

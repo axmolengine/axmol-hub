@@ -1198,7 +1198,8 @@ public partial class ChatPanel : UserControl
     internal bool GoalCapsuleForCheck => GoalCapsuleHost.IsVisible
         && GoalCapsuleHost.GetLogicalDescendants().OfType<TextBlock>().Any(block => block.Classes.Contains("goal-capsule-text") && block.Text == "完成目标并依据证据核验")
         && Grid.GetRow(GoalCapsuleHost) == Grid.GetRow(SteerConfirmHost) + 1
-        && Grid.GetRow(ComposerFrame) == Grid.GetRow(GoalCapsuleHost) + 1;
+        && Grid.GetRow(ComputerControlHost) == Grid.GetRow(GoalCapsuleHost) + 1
+        && Grid.GetRow(ComposerFrame) == Grid.GetRow(ComputerControlHost) + 1;
     internal bool GoalMessageMetaForCheck => MessageRows.Where(row => row.Classes.Contains("user-row"))
         .Any(row => row.GetLogicalDescendants().OfType<TextBlock>().Any(block => block.Classes.Contains("goal-sent-marker")
             && block.Text == HubStrings.Get("ChatGoalSentAsGoal"))
@@ -1207,7 +1208,7 @@ public partial class ChatPanel : UserControl
     internal string[] GoalCapsuleActionTooltipsForCheck => GoalCapsuleHost.GetLogicalDescendants().OfType<Button>()
         .Select(button => ToolTip.GetTip(button)?.ToString() ?? "").Where(tip => tip.Length > 0).ToArray();
     internal bool ComposerPlusCenteredForCheck => AddContextButton.HorizontalContentAlignment == HorizontalAlignment.Center && AddContextButton.VerticalContentAlignment == VerticalAlignment.Center;
-    internal bool ContextRingBelowComposerForCheck => ContextButton.Parent is Grid row && Grid.GetRow(row) == 6 && Grid.GetColumn(ContextButton) == 4 && ReferenceEquals(WorkspaceChip.Parent, row) && ContextPercentLabel.Text == ContextPopoverPercent.Text;
+    internal bool ContextRingBelowComposerForCheck => ContextButton.Parent is Grid row && Grid.GetRow(row) == Grid.GetRow(ComposerFrame) + 1 && Grid.GetColumn(ContextButton) == 4 && ReferenceEquals(WorkspaceChip.Parent, row) && ContextPercentLabel.Text == ContextPopoverPercent.Text;
     internal string ComposerSpeedForCheck => RequestSpeedLabel.Text ?? "";
     internal (double RowWidth, double SpeedWidth, double ContextRight, double SpeedRight) ComposerStatusBoundsForCheck => (ComposerStatusRow.Bounds.Width, RequestSpeedLabel.Bounds.Width, ContextButton.Bounds.Right, RequestSpeedLabel.Bounds.Right);
     internal double? ComposerSpeedRateForCheck => _chat.ActiveConversationSpeed();

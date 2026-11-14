@@ -12,27 +12,36 @@ public sealed partial class WorkspaceTools
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (context.PortalComputer is null) return Task.FromResult(CaptureScreen(target, fullscreen, process_id));
+        if (context.PortalComputer is null) return Task.FromResult(CaptureScreen(target, fullscreen, process_id, cancellationToken));
         if (fullscreen) return Task.FromResult("Refused: whole-display capture is disabled. Select one window in the portal.");
         return ExecutePortalComputerAsync(new(target, "screenshot", null, 0, 0, null, null, 0), process_id, cancellationToken);
     }
 
-    [Description("Observe or control a window. Each input needs the latest frame_id and individual approval. On Wayland authorization covers a temporary portal session, not an executable. After approval there is a 3-second focus handoff: the user must Alt+Tab back to the intended app without changing content. Input is refused while Hub is active. Other application focus cannot be verified. Keyboard events may reach the currently focused application. Inspect the returned frame; no visible change does not prove failure or success. Never replay automatically.")]
+    [Description("Observe or control a window. Native backends reuse application-session permission; sensitive or unclassified inputs require confirmation. On Wayland every call still requires individual approval and uses a temporary portal session, not an executable grant. After Wayland approval the user has a 3-second focus handoff. Other application focus cannot be verified. Inspect returned frames and never replay input automatically.")]
     internal Task<string> ComputerUseAsync(
         [Description("Requested window. Wayland uses the user-selected portal stream and cannot verify its title or process.")] string application,
-        [Description("screenshot, click, type, press_key, or scroll.")] string action,
-        [Description("Click x in the latest screenshot pixels.")] int x = 0,
-        [Description("Click y in the latest screenshot pixels.")] int y = 0,
+        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended actions are macOS-only.")] string action,
+        [Description("Pointer x in screenshot pixels; -1 with y=-1 uses center for scrolling.")] int x = -1,
+        [Description("Pointer y in screenshot pixels.")] int y = -1,
         [Description("Text to type, at most 1000 characters.")] string? text = null,
         [Description("One named key, letter or digit.")] string? key = null,
         [Description("Vertical scroll steps, -10 to 10 excluding zero.")] int scroll = 0,
         [Description("Native process filter; unavailable for Wayland portal sessions.")] int process_id = 0,
         [Description("Latest frame_id for one input only.")] string? frame_id = null,
+        [Description("Drag end x in screenshot pixels.")] int end_x = -1,
+        [Description("Drag end y in screenshot pixels.")] int end_y = -1,
+        [Description("Drag duration, 100 to 3000 milliseconds.")] int duration_ms = 400,
+        [Description("press_key modifiers: command, control, alt, shift.")] string[]? modifiers = null,
+        [Description("Horizontal scroll steps, -10 to 10.")] int horizontal_scroll = 0,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (context.PortalComputer is null)
-            return Task.FromResult(ComputerUse(application, action, x, y, text, key, scroll, process_id, frame_id, cancellationToken));
+            return Task.FromResult(ComputerUse(application, action, x, y, text, key, scroll, process_id, frame_id,
+                end_x, end_y, duration_ms, modifiers, horizontal_scroll, cancellationToken));
+        if (end_x != -1 || end_y != -1 || duration_ms != 400 || modifiers is { Length: > 0 } || horizontal_scroll != 0
+            || action == "scroll" && (x != -1 || y != -1))
+            return Task.FromResult("Refused: extended pointer, modifier and positioned-scroll actions are unavailable on this Wayland backend.");
         return ExecutePortalComputerAsync(new(application, (action ?? "").Trim().ToLowerInvariant(), frame_id, x, y, text, key, scroll),
             process_id, cancellationToken);
     }

@@ -1196,6 +1196,7 @@ internal sealed class ShellApprovalsChecks
             var capturedWindows = new List<CapturableWindow?>();
             var operatedWindows = new List<CapturableWindow>();
             CapturedFrame? fixtureFrame = null;
+            var ordinaryInput = false;
             chat.ScreenCaptureBridgeProvider = () => new ScreenCaptureBridge(() => [previewWindow, foreignWindow], window =>
             {
                 capturedWindows.Add(window);
@@ -1207,7 +1208,8 @@ internal sealed class ShellApprovalsChecks
                 if (request.VerifyObservation?.Invoke() != true) return "Refused: fixture observation changed.";
                 operatedWindows.Add(window);
                 return null;
-            });
+            }) { AssessRisk = (_, _) => ordinaryInput
+                ? new(ComputerRisk.Allow, "Offline verified ordinary action") : ComputerRiskDecision.Unknown };
             chat.SetApprovalMode(screenSession.Id, ToolApprovalModes.Full);
             chat.OpenConversation(screenSession.Id);
             chat.TryEnqueueSend(screenSession.Id, "看看屏幕上是什么", null, out _);
@@ -1219,11 +1221,11 @@ internal sealed class ShellApprovalsChecks
             Check(screenCallId is not null
                   && panel.ApprovalCardTextForCheck.Contains("Axmol Hub Desktop Preview - Multi Monitor Session", StringComparison.Ordinal)
                   && panel.ApprovalCardActionsForCheck.SequenceEqual(new[]
-                      { "ComputerUseAlwaysAllow", "ComputerUseDeny", "ComputerUseAllowConversation" },
+                      { "ComputerUseDeny", "ComputerUseAllowConversation" },
                       StringComparer.Ordinal)
                   && panel.ComposerInputEnabledForCheck
                   && panel.InputTextForCheck == "preserved computer use draft",
-                "完全访问模式下应用授权仍出现；长应用名、三个选择和输入草稿都保留（实际 "
+                "完全访问模式下仍需首次应用会话授权；不提供永久操作授权并保留输入草稿（实际 "
                 + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");
             var computerCard = panel.ApprovalCardForCheck;
             var appTitle = computerCard is null ? null : NamedDescendant<TextBlock>(computerCard, "ComputerUseApplicationTitle");
@@ -1245,14 +1247,11 @@ internal sealed class ShellApprovalsChecks
                   && Math.Abs(titlePoint.X - questionPoint.X) < 1
                   && Math.Abs(titlePoint.X - descriptionPoint.X) < 1
                   && applicationIcon is not null
-                  && alwaysButton?.HorizontalAlignment == Avalonia.Layout.HorizontalAlignment.Left
-                  && alwaysButton.Classes.Contains("approval-action")
-                  && !alwaysButton.Classes.Contains("approval-secondary")
-                  && alwaysButton.BorderThickness.Left > 0
+                  && alwaysButton is null
                   && denyPosition is { } denyPoint && allowPosition is { } allowPoint
                   && denyPoint.X < allowPoint.X
                   && allowPoint.X + allowButton!.Bounds.Width <= computerCard!.Bounds.Width,
-                "应用窗口图标清晰可辨；始终允许显示为按钮并贴左，拒绝和会话授权并排靠右");
+                "应用授权卡保留窗口标识；无永久操作授权，拒绝和会话授权并排靠右");
             Check(HubTexts.Get("ComputerUseAllowConversation", HubTexts.EnglishLanguage) == "Allow this session",
                 "应用授权按钮的英文把「会话」统一译为 session");
             chat.TryResolveApproval(screenSession.Id, screenCallId ?? "", approved: false, alwaysAllow: false, out _);
@@ -1277,19 +1276,19 @@ internal sealed class ShellApprovalsChecks
                       approved: true, alwaysAllow: false, out _),
                 "允许此对话会恢复指定应用的 Computer Use 调用");
             await WaitForIdleAsync(chat);
-            Check(ComputerUseGrants.Contains(chat.StoredCopyForCheck(screenSession.Id)?.AllowedComputerApps,
-                      previewApplication)
+            Check(chat.ComputerControlFor(screenSession.Id)?.Covers(ComputerUseTarget.FromWindow(previewWindow)) == true
+                  && chat.StoredCopyForCheck(screenSession.Id)?.AllowedComputerApps.Count == 0
                   && !ComputerUseGrants.Contains(chat.TrustedComputerApps, previewApplication)
                   && capturedWindows.Count == 1 && capturedWindows[0]?.Title == previewWindow.Title,
-                $"对话授权只保存在当前对话，卡片后标题变化仍执行同一窗口（实际截图 {capturedWindows.Count}）");
-            async Task<ChatTurn?> ComputerRound(Conversation session, string tool, string title, string action = "screenshot")
+                $"应用授权仅在内存中，卡片后标题变化仍执行同一窗口（实际截图 {capturedWindows.Count}）");
+            async Task<ChatTurn?> ComputerRound(Conversation session, string tool, string title, string action = "screenshot", string? frameId = null)
             {
                 chat.OpenConversation(session.Id);
                 screenClient.ToolName = tool;
                 screenClient.CallsRemaining = 1;
                 screenClient.Arguments = tool == ToolNames.CaptureScreen
                     ? new() { ["target"] = title }
-                    : new() { ["application"] = title, ["action"] = action, ["key"] = "Tab" };
+                    : new() { ["application"] = title, ["action"] = action, ["key"] = "Tab", ["frame_id"] = frameId };
                 chat.TryEnqueueSend(session.Id, $"Computer grant round {screenClient.Requests}: {tool} {title}", null, out _);
                 await WaitForIdleAsync(chat);
                 return session.Messages.LastOrDefault(turn => turn.ToolName == tool && turn.Role == ChatRoles.Assistant);
@@ -1313,15 +1312,13 @@ internal sealed class ShellApprovalsChecks
             reuse.Add(capturedWindows.Count == beforeAlternate + 1);
             DenyComputer(screenSession, alternating);
             var inputTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key");
-            reuse.Add(inputTurn?.ApprovalState == ChatApprovalStates.Pending && inputTurn.ApprovalComputerInput
-                && operatedWindows.Count == 0);
+            reuse.Add(inputTurn?.ApprovalState != ChatApprovalStates.Pending && operatedWindows.Count == 0);
             panel.Reload();
             shell.UpdateLayout();
             var inputCard = panel.ApprovalCardForCheck;
-            Check(inputCard is not null
-                  && NamedDescendant<Button>(inputCard, "ComputerUseAlwaysAllowButton")?.IsVisible == false
-                  && NamedDescendant<TextBlock>(inputCard, "ComputerUseQuestion")?.Text == HubStrings.Get("ComputerUseInputTitle"),
-                "已授权应用的输入仍逐次确认，不能永久授权最终提交");
+            Check(inputCard is null && screenSession.Messages.Any(turn => turn.Role == ChatRoles.Tool
+                      && turn.ToolCallId == inputTurn?.ToolCallId && turn.Text.StartsWith("Refused:", StringComparison.Ordinal)),
+                "已授权应用缺少有效观察时直接拒绝输入，不弹无意义的逐次审批卡");
             // A confirmed input runs exactly once and returns a fresh frame. The fixture never touches the desktop.
             using (var bitmap = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(2, 2), new Vector(96, 96),
                        Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque))
@@ -1345,15 +1342,28 @@ internal sealed class ShellApprovalsChecks
             chat.TryEnqueueSend(screenSession.Id, "Confirm one observed input", null, out _);
             var confirmedInput = await WaitForPendingCallAsync(screenSession);
             Check(confirmedInput is not null && chat.TryResolveApproval(screenSession.Id, confirmedInput,
-                approved: true, alwaysAllow: false, out _), "逐次输入确认可恢复原调用");
+                approved: true, alwaysAllow: false, out _), "宿主未识别风险的输入仍需单次确认并可恢复原调用");
             await WaitForIdleAsync(chat);
             Check(operatedWindows.Count == 1 && screenSession.Messages.Any(turn => turn.Role == ChatRoles.Tool
                     && turn.ToolCallId == confirmedInput && turn.Images.Count == 1
                     && turn.Text.StartsWith("Input delivered (", StringComparison.Ordinal)),
                 "单次确认只执行一次输入并附上新截图，不把输入送达当成任务成功");
+            ordinaryInput = true;
+            var nextFrame = System.Text.RegularExpressions.Regex.Match(
+                screenSession.Messages.Last(turn => turn.Role == ChatRoles.Tool && turn.Images.Count > 0).Text,
+                @"frame_id=([a-f0-9]+)").Groups[1].Value;
+            var ordinaryTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key", nextFrame);
+            reuse.Add(ordinaryTurn?.ApprovalState != ChatApprovalStates.Pending && operatedWindows.Count == 2);
+            previewWindow = previewWindow with { Handle = 44, ProcessId = 102,
+                Owner = new ComputerProcessIdentity(previewApplication, 3000), Title = "New document colors" };
+            var newWindowTurn = await ComputerRound(screenSession, ToolNames.CaptureScreen, "New document colors");
+            reuse.Add(newWindowTurn?.ApprovalState != ChatApprovalStates.Pending
+                && chat.ComputerControlFor(screenSession.Id)?.Covers(ComputerUseTarget.FromWindow(previewWindow)) == true);
+            previewWindow = previewWindow with { Title = "Button review: colors" };
+            ordinaryInput = false;
             fixtureFrame = null;
             Check(reuse.All(value => value),
-                $"应用授权复用截图，输入仍需独立确认（实际 {string.Join(',', reuse)}）");
+                $"应用授权复用截图，无有效观察时不允许输入（实际 {string.Join(',', reuse)}）");
 
             // A peer has no conversation grant. Global trust is reused, never copied into its local grants.
             var peerPending = await ComputerRound(screenPeerSession, ToolNames.CaptureScreen, previewWindow.Title);
@@ -1402,8 +1412,8 @@ internal sealed class ShellApprovalsChecks
                 $"批量审批按应用身份分组：两工具同应用一起批准，不放行另一应用（实际卡 {pendingApps.Length}，批准 {batchAccepted}，执行 {capturedWindows.Count - beforeBatchCapture}，剩余 {remainingApps.Length}）");
             foreach (var pending in remainingApps) DenyComputer(screenPeerSession, pending);
             await WaitForIdleAsync(chat);
-            // Already-granted siblings have no pending card. Resuming only the approved calls would strand them
-            // forever; marking them pending instead would ask again about an application this session may use.
+            // Switching the authorized application revokes its predecessor. Old queued calls must fail,
+            // not inherit the new application's permission or remain unanswered.
             screenClient.Batch =
             [
                 (ToolNames.CaptureScreen, new() { ["target"] = previewWindow.Title }),
@@ -1419,9 +1429,9 @@ internal sealed class ShellApprovalsChecks
                 && chat.TryResolveApproval(screenPeerSession.Id, pendingForeign[0].ToolCallId!,
                     approved: true, alwaysAllow: false, out _);
             await WaitForIdleAsync(chat);
-            Check(foreignAccepted && capturedWindows.Count == beforeGrantedBatch + 3
+            Check(foreignAccepted && capturedWindows.Count == beforeGrantedBatch + 1
                   && !screenPeerSession.HasUnansweredToolCall(),
-                $"批量恢复不重复询问已授权应用，也不遗失其调用（实际待批 {pendingForeign.Length}，执行 {capturedWindows.Count - beforeGrantedBatch}，未答 {screenPeerSession.HasUnansweredToolCall()}）");
+                $"显式改授权另一应用后旧应用调用被拒绝，批次仍逐一给出结果（实际待批 {pendingForeign.Length}，执行 {capturedWindows.Count - beforeGrantedBatch}，未答 {screenPeerSession.HasUnansweredToolCall()}）");
             foreach (var pending in pendingForeign) DenyComputer(screenPeerSession, pending);
             await WaitForIdleAsync(chat);
             // Declared locally so this independent permission boundary runs before native desktop fixtures.
@@ -1446,7 +1456,7 @@ internal sealed class ShellApprovalsChecks
                 Dispatcher.UIThread.RunJobs();
                 var portalCard = panel.ApprovalCardForCheck;
                 var portalShown = portalCallId is not null && portalCard is not null
-                    && NamedDescendant<Button>(portalCard, "ComputerUseAlwaysAllowButton")?.IsVisible == false
+                    && NamedDescendant<Button>(portalCard, "ComputerUseAlwaysAllowButton") is null
                     && NamedDescendant<TextBlock>(portalCard, "ComputerUseGrantDescription")?.Text
                         ?.Contains(HubStrings.Get("PortalCaptureHint"), StringComparison.Ordinal) == true;
                 Check(portalShown && portalExecutions == 0

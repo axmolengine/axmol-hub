@@ -38,13 +38,27 @@ public sealed record ScreenCaptureBridge(
     internal CaptureBackend? Backend { get; init; }
 }
 
-internal sealed record ComputerActionRequest(string Action, int X = 0, int Y = 0, string? Text = null,
+internal sealed record ComputerActionRequest(string Action, int X = -1, int Y = -1, string? Text = null,
     string? Key = null, int Scroll = 0, CancellationToken Cancellation = default,
-    Func<bool>? VerifyObservation = null);
+    Func<bool>? VerifyObservation = null)
+{
+    internal int EndX { get; init; } = -1;
+    internal int EndY { get; init; } = -1;
+    internal int DurationMs { get; init; } = 400;
+    internal string[] Modifiers { get; init; } = [];
+    internal int HorizontalScroll { get; init; }
+    internal Func<bool>? StillAuthorized { get; init; }
+    internal long PermissionVersion { get; init; }
+    internal bool ExplicitlyApproved { get; init; }
+    internal bool PositionedScroll { get; init; }
+}
 
 /// <summary>Host operations bound to a previously resolved top-level window.</summary>
 internal sealed record ComputerUseBridge(
-    Func<CapturableWindow, ComputerActionRequest, string?> Operate);
+    Func<CapturableWindow, ComputerActionRequest, string?> Operate)
+{
+    internal Func<CapturableWindow, ComputerActionRequest, ComputerRiskDecision>? AssessRisk { get; init; }
+}
 
 /// <summary>
 /// Turning "the Axmol window" into one window, or into a refusal that says why it could not. Kept apart from the

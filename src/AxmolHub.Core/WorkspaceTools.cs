@@ -92,6 +92,9 @@ public sealed record WorkspaceToolScope(
     internal Func<bool>? PortalComputerApproved { get; init; }
     internal ComputerUseObservation? ComputerObservation { get; init; }
     internal Func<bool>? ComputerInputApproved { get; init; }
+    internal Func<bool>? ComputerSensitiveInputApproved { get; init; }
+    internal Func<CancellationToken, bool>? WaitComputerControl { get; init; }
+    internal Func<long>? ComputerControlVersion { get; init; }
     /// <summary>Read the global search switch per call. Null means no local search host; <see cref="Web"/>
     /// supplies the HTTPS transport independently of the page-fetch switch.</summary>
     public Func<bool>? LocalSearchAllowed { get; init; }
@@ -960,8 +963,12 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("The process that owns the window, when the title alone does not pick exactly one — two Hub "
                      + "windows can carry the same title, and the refusal lists each one's pid. Narrowing only: a "
                      + "pid owning several windows is still refused.")]
-        int process_id = 0)
+        int process_id = 0,
+        CancellationToken cancellationToken = default)
     {
+        if (context.WaitComputerControl?.Invoke(cancellationToken) == false)
+            return "Refused: application-session permission was revoked.";
+        cancellationToken.ThrowIfCancellationRequested();
         using var lease = ComputerDesktop.TryEnter();
         return lease is null ? "Refused: another conversation is using the desktop. Wait for it to finish."
             : CaptureScreenCore(target, fullscreen, process_id);
@@ -1049,34 +1056,39 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                + "infer it from the title.";
     }
 
-    [Description("Use one named application window. Supported actions are screenshot, click, type, press_key, and scroll. "
-                 + "Coordinates are pixels in the latest screenshot. Every input requires its frame_id and individual user confirmation. "
-                 + "One input per observation; inspect the automatically returned frame before claiming success. "
-                 + "The application must be named on every call.")]
+    [Description("Observe or operate a named window. One application-session permission covers its existing and newly created windows, never other apps. "
+                 + "Ordinary host-verified actions run continuously; sensitive or unclassified actions require confirmation. "
+                 + "Coordinates use latest screenshot pixels. Each input consumes frame_id; inspect the returned image before continuing. "
+                 + "No desktop-wide control. Never replay partially delivered input.")]
     internal string ComputerUse(
         [Description("The visible application/window title to locate. Authorization follows its owning application, not the title.")] string application,
-        [Description("One action: screenshot, click, type, press_key, or scroll.")] string action,
-        [Description("Horizontal image-pixel coordinate for click; otherwise 0.")] int x = 0,
-        [Description("Vertical image-pixel coordinate for click; otherwise 0.")] int y = 0,
+        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended mouse and modifier actions currently require macOS.")] string action,
+        [Description("Image-pixel x for pointer actions; -1 with y=-1 uses window center for scroll.")] int x = -1,
+        [Description("Image-pixel y for pointer actions.")] int y = -1,
         [Description("Text to type, up to 1000 characters.")] string? text = null,
         [Description("Key name for press_key, such as Enter, Tab, Escape, or an A-Z/0-9 key.")] string? key = null,
         [Description("Vertical scroll amount; positive scrolls up, negative down, from -10 to 10.")] int scroll = 0,
         [Description("Narrow the target to this process id when titles are ambiguous.")] int process_id = 0,
         [Description("frame_id from the latest screenshot; required for every input.")] string? frame_id = null,
+        [Description("Drag end x in screenshot pixels.")] int end_x = -1,
+        [Description("Drag end y in screenshot pixels.")] int end_y = -1,
+        [Description("Drag duration, 100 to 3000 milliseconds.")] int duration_ms = 400,
+        [Description("press_key modifiers: command, control, alt, shift. All keys are released within this call.")] string[]? modifiers = null,
+        [Description("Horizontal scroll steps, -10 to 10; positive scrolls left.")] int horizontal_scroll = 0,
         CancellationToken cancellationToken = default)
     {
+        if (context.WaitComputerControl?.Invoke(cancellationToken) == false)
+            return "Refused: application-session permission was revoked. Request a new application permission.";
         var app = ComputerUseGrants.NormalizeTitle(application);
         if (app.Length is 0 or > 256)
             return "Refused: Computer Use needs one application window title, no more than 256 characters. Do not retry without a title.";
         var normalizedAction = (action ?? "").Trim().ToLowerInvariant();
-        if (normalizedAction is not ("screenshot" or "click" or "type" or "press_key" or "scroll"))
-            return "Refused: Computer Use action must be screenshot, click, type, press_key, or scroll. Do not retry with another action name.";
-        if (normalizedAction == "type" && string.IsNullOrEmpty(text) || (text?.Length ?? 0) > 1000)
-            return "Refused: type needs 1 to 1000 characters. Do not split and retry automatically.";
-        if (normalizedAction == "press_key" && string.IsNullOrWhiteSpace(key))
-            return "Refused: press_key needs one named key. Do not retry without a key.";
-        if (normalizedAction == "scroll" && scroll is 0 or < -10 or > 10)
-            return "Refused: scroll must be between -10 and 10, excluding zero. Do not retry automatically.";
+        var request = new ComputerActionRequest(normalizedAction, x, y, text, key, scroll, cancellationToken)
+        {
+            EndX = end_x, EndY = end_y, DurationMs = duration_ms,
+            Modifiers = modifiers ?? [], HorizontalScroll = horizontal_scroll,
+        };
+        if (ComputerInput.Validate(request) is { } invalid) return invalid;
 
         cancellationToken.ThrowIfCancellationRequested();
         using var lease = ComputerDesktop.TryEnter();
@@ -1102,9 +1114,12 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (context.ComputerUse is not { } operations)
             return $"Refused: this {backend.Label} build can capture windows but has no input-control backend. Ask the user to perform this action.";
         if (context.ComputerInputApproved?.Invoke() != true)
-            return "Refused: this input has no individual confirmation. Application trust does not authorize input.";
+            return "Refused: no live task permission or this action requires a new risk confirmation. Request the action again for review; do not replay delivered input.";
         if (context.ComputerObservation is not { } observations)
             return "Refused: this host cannot bind input to a screenshot.";
+        var controlVersion = context.ComputerControlVersion?.Invoke() ?? 0;
+        bool StillAuthorized() => (context.ComputerControlVersion?.Invoke() ?? 0) == controlVersion
+            && context.ApprovedComputerTarget?.Invoke()?.Matches(target) == true;
         // Verify before activation: Hub's approval card deactivates the target and activation changes its chrome.
         bool VerifyObservation()
         {
@@ -1113,16 +1128,22 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             {
                 var current = host.Grab(target);
                 return current is not null && !current.Stats.IsBlank() && observations.MatchesContent(current)
-                    && context.ComputerInputApproved?.Invoke() == true
-                    && context.ApprovedComputerTarget?.Invoke()?.Matches(target) == true;
+                    && StillAuthorized();
             }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { return false; }
         }
-        var stale = observations.Consume(frame_id, target, ref x, ref y, normalizedAction == "click");
+        var mapped = observations.Map(frame_id, target, request);
+        if (mapped is null) return "Refused: stale frame, changed window or coordinates outside the image. Observe again.";
+        var unusedX = 0; var unusedY = 0;
+        var stale = observations.Consume(frame_id, target, ref unusedX, ref unusedY, false);
         if (stale is not null) return stale;
         cancellationToken.ThrowIfCancellationRequested();
         ComputerDesktop.Invalidate();
-        var refusal = operations.Operate(target, new ComputerActionRequest(normalizedAction, x, y, text, key, scroll, cancellationToken, VerifyObservation));
+        var refusal = operations.Operate(target, mapped with
+        {
+            VerifyObservation = VerifyObservation, StillAuthorized = StillAuthorized, PermissionVersion = controlVersion,
+            ExplicitlyApproved = context.ComputerSensitiveInputApproved?.Invoke() == true,
+        });
         if (refusal is not null) return refusal + " Input may have been partially delivered; observe before trying again.";
         // Input delivery is not evidence that the intended application operation succeeded.
         cancellationToken.ThrowIfCancellationRequested();
