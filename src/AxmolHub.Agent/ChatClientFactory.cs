@@ -242,6 +242,8 @@ public static class ChatClientFactory
         // Added last on purpose: <see cref="ReasoningReplayPolicy"/> rewrites the messages at this same position,
         // and the whole point of the recording is to show the body after that rewrite rather than before it.
         chatOptions.AddPolicy(new ModelSelectionPolicy(), PipelinePosition.BeforeTransport);
+        // Response policies unwind in reverse: record raw bytes, then normalize auxiliary timestamps for the SDK.
+        chatOptions.AddPolicy(new ChatTimestampPolicy(), PipelinePosition.BeforeTransport);
         chatOptions.AddPolicy(new RetryMetadataPolicy(), PipelinePosition.BeforeTransport);
         chatOptions.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
         return new OpenAIClient(credential, chatOptions).GetChatClient(model).AsIChatClient();
