@@ -322,7 +322,7 @@ internal sealed class ShellTranscriptChecks
                 "按下发送后焦点回到输入框：接下来通常还要接着说");
             await panel.WaitForRunToFinishForCheck();
 
-            // ── Esc: close the viewer first, then stop the reply ──
+            // Esc closes the viewer without stopping the reply, even on a second press.
             panel.AddImageForCheck(png);
             panel.ClickPendingPictureForCheck(0);
             Check(shell.PictureViewerOpenForCheck, "夹具：查看器开着，图也还在草稿里");
@@ -336,8 +336,10 @@ internal sealed class ShellTranscriptChecks
             Check(!shell.PictureViewerOpenForCheck && panel.IsStreamingForCheck,
                 "查看器开着时 Esc 只收查看器，不停正在写的回复（覆盖层是屏幕上唯一正在被看的东西）");
             panel.PressEscapeForCheck();
+            Check(panel.IsStreamingForCheck && chat.RunFor(session.Id) is { StopRequested: false },
+                "再按一次 Esc 仍不停止回复，也不发出停止请求");
+            chat.RequestStop(session.Id);
             await WaitUntilAsync(() => !panel.IsStreamingForCheck);
-            Check(!panel.IsStreamingForCheck, "再按一次 Esc 才停住这条回复");
             hold.SetResult(true);
             await panel.WaitForRunToFinishForCheck();
 

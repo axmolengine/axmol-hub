@@ -488,17 +488,11 @@ public partial class ChatPanel : UserControl
             if (!await TryPastePictureAsync() && epoch == _composerEpoch) InputBox.Paste();
         }, RoutingStrategies.Tunnel);
 
-        // Escape stops the reply this composer is watching, and Up walks back through what has already been sent.
-        // Both are claimed only while the text box holds the keyboard: the in-place editor on a bubble keeps its
-        // own Escape, and a caret in a multi-line draft keeps its own Up.
+        // Up walks back through what has already been sent. A caret in a multi-line draft keeps its own Up.
         InputBox.AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
             switch (e.Key)
             {
-                case Key.Escape when ViewedRun is { IsStreaming: true } streaming:
-                    e.Handled = true;
-                    _chat.RequestStop(streaming.ConversationId);
-                    break;
                 case Key.Up when e.KeyModifiers == KeyModifiers.None && CanRecall():
                     e.Handled = true;
                     RecallText(backwards: true);
@@ -528,9 +522,8 @@ public partial class ChatPanel : UserControl
         // Escape answers the thing on top, and the order is written in exactly one place per layer: the window
         // closes its picture viewer first, then puts an expanded inspector back in its column (both of those
         // handlers live in MainWindow, above this one), then a decision on the card above the composer is answered,
-        // then a steer waiting for its second tap goes back to being a draft, and only then does Escape mean "stop
-        // the reply". The question card's letter keys ride the same handler for the same reason. Tunnel, so this runs
-        // before the composer's own key handling gets a turn.
+        // then a steer waiting for its second tap goes back to being a draft. The question card's letter keys ride
+        // the same handler for the same reason. Tunnel, so this runs before the composer's own key handling gets a turn.
         AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
             if (TryChooseQuestionOptionByKey(e)) return;
@@ -542,8 +535,7 @@ public partial class ChatPanel : UserControl
                     // A caret in a text box outranks the card. The card sits above the draft rather than in front
                     // of it precisely so a decision cannot interrupt what is being written, and a key that answers
                     // the question while the person is mid-sentence is that interruption again. Only the card's own
-                    // answer line turns Escape into "leave this line"; the composer's box falls through to the
-                    // layers under this one, where Escape still stops the reply.
+                    // answer line turns Escape into "leave this line"; the composer's box does not answer the card.
                     if (box.Name == "QuestionAnswerBox")
                     {
                         DecisionHost.Focus();
