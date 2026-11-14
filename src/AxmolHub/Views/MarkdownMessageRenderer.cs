@@ -96,6 +96,7 @@ internal static partial class MarkdownMessageRenderer
         // The menu a selection earns. Attached here rather than by each caller, so a document is never rendered
         // into a surface where a selection cannot be copied or quoted — the inspector being the surface that would
         // have been forgotten.
+        MarkdownSelection.Attach(viewer);
         SelectionMenu.Attach(viewer, () => SelectionText(viewer), quote);
         // And the key that has to reach it. A document's selection lives in the library's blocks rather than in
         // the keyboard focus, so this is the only thing that brings Ctrl+C here at all (see
@@ -221,6 +222,7 @@ internal static partial class MarkdownMessageRenderer
     /// </summary>
     internal static string SelectionText(MarkdownScrollViewer viewer)
     {
+        MarkdownSelection.Normalize(viewer);
         var parts = new List<string>();
         foreach (var block in viewer.GetVisualDescendants().OfType<CTextBlock>())
         {

@@ -3,6 +3,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
+using ColorTextBlock.Avalonia;
+using Markdown.Avalonia;
 
 namespace AxmolHub;
 
@@ -47,6 +50,39 @@ internal static partial class SelectionMenu
     /// <summary>Target → the menu attached to it. Weak on the control on purpose: a transcript rebuilds its
     /// viewers as it scrolls, and a strong table would hold every document ever painted.</summary>
     private static readonly ConditionalWeakTable<Control, MenuFlyout> Attached = new();
+    private static readonly ConditionalWeakTable<TopLevel, SelectionOwner> Owners = new();
+
+    private sealed class SelectionOwner
+    {
+        internal WeakReference<Control>? Active;
+    }
+
+    private static void ShareSelectionOwner(Control target)
+    {
+        void Register()
+        {
+            if (TopLevel.GetTopLevel(target) is not { } root || Owners.TryGetValue(root, out _)) return;
+            var owner = new SelectionOwner();
+            Owners.Add(root, owner);
+            root.AddHandler(InputElement.PointerPressedEvent, (sender, e) =>
+            {
+                if (!e.GetCurrentPoint(root).Properties.IsLeftButtonPressed || e.Source is not Visual source) return;
+                var next = source.GetVisualAncestors().Prepend(source).OfType<Control>()
+                    .FirstOrDefault(control => Attached.TryGetValue(control, out _));
+                // Menus and action buttons must keep the selection they are about to copy or quote.
+                if (next is null) return;
+                if (owner.Active?.TryGetTarget(out var previous) == true && !ReferenceEquals(previous, next))
+                {
+                    if (previous is MarkdownScrollViewer markdown)
+                        foreach (var block in markdown.GetVisualDescendants().OfType<CTextBlock>()) block.ClearSelection();
+                    else if (previous is SelectableTextBlock text) text.SelectionStart = text.SelectionEnd = 0;
+                }
+                owner.Active = new(next);
+            }, RoutingStrategies.Tunnel, handledEventsToo: true);
+        }
+        target.AttachedToVisualTree += (_, _) => Register();
+        Register();
+    }
 
     /// <summary>A menu for a surface whose selection the caller can read: 复制 always, 引用 when it has somewhere
     /// to put a quote.</summary>
@@ -92,6 +128,7 @@ internal static partial class SelectionMenu
         };
 
         Attached.AddOrUpdate(target, menu);
+        ShareSelectionOwner(target);
         target.AddHandler(InputElement.ContextRequestedEvent, (_, e) =>
         {
             // Nothing selected, nothing asked: a menu whose only rows could not act on anything is worse than no
@@ -128,9 +165,9 @@ internal static partial class SelectionMenu
     /// ours to move. The adorner is cleared and the surface kept out of the tab order, because this focus exists to
     /// route a key and must neither draw chrome nor grow a Tab stop per message.</para>
     ///
-    /// <para><c>handledEventsToo</c> both ways round, and <see cref="KeyEventArgs.Handled"/> set after the copy has
-    /// been handed over: the library consumes the pointer gestures that build the selection, and if it — or a later
-    /// version of it — answers Ctrl+C as well, the text must still land on the clipboard once.</para>
+    /// <para>Pointer handlers observe handled gestures because the library consumes them. The copy key is
+    /// intercepted on the tunnel route and marked handled before writing, so the library's bubble class handler
+    /// cannot queue a second, paragraph-terminated clipboard value over the exact selection.</para>
     /// </summary>
     internal static void AttachCopyKey(Control target, Func<string> readSelection)
     {
@@ -166,6 +203,8 @@ internal static partial class SelectionMenu
             if (!ReferenceEquals(TopLevel.GetTopLevel(target)?.FocusManager?.GetFocusedElement(), target)) return;
             if (back is InputElement element) element.Focus();
         }, RoutingStrategies.Bubble, handledEventsToo: true);
+        // Intercept before the Markdown viewer's bubble class handler: it posts a second clipboard write
+        // using its paragraph extractor, which appends a newline and can overwrite our exact selection later.
         target.AddHandler(InputElement.KeyDownEvent, async (_, e) =>
         {
             if (e.Key != Key.C) return;
@@ -176,7 +215,7 @@ internal static partial class SelectionMenu
             if (text.Length == 0) return;
             e.Handled = true;
             await CopyAsync(target, text);
-        }, RoutingStrategies.Bubble, handledEventsToo: true);
+        }, RoutingStrategies.Tunnel);
     }
 
     /// <summary>The composer's menu: the three clipboard verbs, each enabled by what the box can actually do

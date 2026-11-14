@@ -140,8 +140,11 @@ internal sealed class ShellInlineCodeChecks
                 // shared character geometry, selection painting and clipboard semantics on the chat surface.
                 if (name == "右侧计划栏")
                 {
-                    Drag(2, 7);
-                    Check(viewer.SelectionEnabled && viewer.IsFocused && CopySelection() == "nfigu",
+                    var previousBlock = chatViewer.GetVisualDescendants().OfType<CTextBlock>().First();
+                    previousBlock.Select(0, 6);
+                    Drag(1.75, 6.75);
+                    Check(viewer.SelectionEnabled && viewer.IsFocused && CopySelection() == "nfigu"
+                          && previousBlock.Selection is null,
                         name + "：共享渲染器已接入真实选区及复制快捷键");
                     pointer.Capture(null);
                     continue;
@@ -152,7 +155,8 @@ internal sealed class ShellInlineCodeChecks
                 var before = System.IO.Path.Combine(directory, name == "会话" ? "chat-before.png" : "plan-before.png");
                 var after = System.IO.Path.Combine(directory, name == "会话" ? "chat-selected.png" : "plan-selected.png");
                 SmokeCapture.Capture(viewer, before);
-                Drag(2, 7);
+                // Use the trailing half of each glyph: caret distance and copied offsets must agree.
+                Drag(1.75, 6.75);
                 Check(Selected() == "nfigu", name + "：内部拖选只复制真实字符范围（实际「" + Selected() + "」）");
                 SmokeCapture.Capture(viewer, after);
                 var original = SmokeCapture.ReadBgra(before, out _, out _, out var stride);
@@ -173,7 +177,7 @@ internal sealed class ShellInlineCodeChecks
                       && Math.Abs(original[surfacePixel + 1] - solid.Color.G) <= 2
                       && Math.Abs(original[surfacePixel] - solid.Color.B) <= 2,
                     name + "：行内代码的静态底色仍然来自主题令牌");
-                Drag(7, 2);
+                Drag(6.75, 1.75);
                 Check(Selected() == "nfigu", name + "：反向内部拖选也保留准确范围");
                 var proseAnchor = ProseBeforeCode();
                 DragPoints(AtOffset(proseAnchor), AtOffset(OffsetFor(4)));
