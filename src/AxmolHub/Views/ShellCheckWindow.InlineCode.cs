@@ -96,16 +96,21 @@ internal sealed class ShellInlineCodeChecks
                 }
                 double ProseBeforeCode()
                 {
-                    const int spaceIndex = 6;
-                    double low = -24, high = 1;
-                    // No space glyph to aim at (or nothing before it): keep the old guess and let the assertion say so.
-                    if (AnchorIndexAt(low) >= spaceIndex || AnchorIndexAt(high) < spaceIndex) return OffsetFor(-0.5);
-                    for (var step = 0; step < 20; step++)
+                    double Boundary(int index)
                     {
-                        var middle = (low + high) / 2;
-                        if (AnchorIndexAt(middle) >= spaceIndex) high = middle; else low = middle;
+                        double low = -24, high = OffsetFor(0.5);
+                        if (AnchorIndexAt(low) >= index || AnchorIndexAt(high) < index)
+                            throw new InvalidOperationException("Inline-code fixture cannot locate the preceding space.");
+                        for (var step = 0; step < 20; step++)
+                        {
+                            var middle = (low + high) / 2;
+                            if (AnchorIndexAt(middle) >= index) high = middle; else low = middle;
+                        }
+                        return high;
                     }
-                    return (low + high) / 2;
+                    // A transition is not an interior point: rounding at the 5/6 boundary can select the 'e'.
+                    // Aim halfway through the interval belonging to the space, not at its first caret boundary.
+                    return (Boundary(6) + Boundary(7)) / 2;
                 }
                 string Selected() => MarkdownMessageRenderer.SelectionText(viewer);
                 // The key as a keyboard raises it, on the document itself. Which handler answers, and whether the
@@ -122,6 +127,24 @@ internal sealed class ShellInlineCodeChecks
                     viewer.RaiseEvent(args);
                     Dispatcher.UIThread.RunJobs();
                     return args.Handled;
+                }
+                string? CopySelection()
+                {
+                    var copied = "";
+                    var previousWriter = SelectionMenu.TestClipboardWriter;
+                    SelectionMenu.TestClipboardWriter = text => { copied = text; return Task.CompletedTask; };
+                    try { return CopyKey() ? copied : null; }
+                    finally { SelectionMenu.TestClipboardWriter = previousWriter; }
+                }
+                // Both surfaces use the same renderer. Check the inspector's actual wiring once; exercise
+                // shared character geometry, selection painting and clipboard semantics on the chat surface.
+                if (name == "右侧计划栏")
+                {
+                    Drag(2, 7);
+                    Check(viewer.SelectionEnabled && viewer.IsFocused && CopySelection() == "nfigu",
+                        name + "：共享渲染器已接入真实选区及复制快捷键");
+                    pointer.Capture(null);
+                    continue;
                 }
                 Drag(2, 2);
                 Check(Selected() == "", name + "：单击行内代码不选中整块");
@@ -165,24 +188,9 @@ internal sealed class ShellInlineCodeChecks
                 // the half the person's own message always had, since a SelectableTextBlock asks on a click.
                 Check(viewer.IsFocused, name + "：选中之后文档自己拿到键盘焦点，快捷键才有落处");
 
-                // 复制 goes to a recorded string instead of the clipboard, the way the sidebar's copy is checked.
-                var copied = "";
-                var previousWriter = SelectionMenu.TestClipboardWriter;
-                SelectionMenu.TestClipboardWriter = text =>
-                {
-                    copied = text;
-                    return Task.CompletedTask;
-                };
-                bool answered;
-                try
-                {
-                    answered = CopyKey();
-                }
-                finally
-                {
-                    SelectionMenu.TestClipboardWriter = previousWriter;
-                }
-                Check(answered && copied == " Configured ",
+                // Copy goes to a recorded string rather than the real clipboard.
+                var copied = CopySelection();
+                Check(copied == " Configured ",
                     name + "：Ctrl+C 交出去的就是这段选中的文字，行内代码也在其中（实际「" + copied + "」）");
 
                 // One click, two claims: the keyboard stays where the reader already had it, and a document with
