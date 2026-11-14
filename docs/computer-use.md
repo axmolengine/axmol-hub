@@ -121,7 +121,8 @@ Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-d
 ## Current macOS delivery status
 
 The application-session change is built for macOS arm64. Release build and offline image/permission
-checks pass. The current full ShellCheck passes (see `tmp/computer-use-shell.txt` for the actual run).
+checks pass. The latest full ShellCheck passed 1758/1758 in 123.0 seconds; see
+`tmp/computer-use-followup-shell.txt` and `tmp/computer-use-followup-shell-run.log`.
 Its previously failing inline-code assertions were repaired at the fixture's space-hit-test anchor;
 shared renderer behavior is checked once, with a separate inspector wiring check. No production
 selection fix or real-desktop success is inferred from that fixture repair.
@@ -181,17 +182,62 @@ rather than input delivery, and the user confirmed this matched expectations. Th
 revoke/re-authorize/deny path, not revocation during a running native input sequence. No subsequent
 capture or input was attempted after that denial.
 
-Broader accessibility classification and clipboard-change rejection, Stop, input interruption,
-the rebuilt code under Chinese input mode, and mixed-DPI/multi-monitor coordinates
-still require installed-app acceptance. No Windows/X11/Wayland desktop regression is claimed by the
-macOS build.
+Further installed-app acceptance established the following bounded cases:
+
+- After the user moved/resized the TextEdit window, input with a fresh pre-change observation was
+  refused with `The window moved or resized after capture` and no input sent. An earlier attempt
+  expired after two minutes; that refusal is not counted as geometry validation.
+- A long text attempt was interrupted with `user pointer takeover interrupted typing`. Its subsequent
+  image ended at row 24 of 30, without that attempt's end marker. No remaining text was replayed.
+  This verifies pointer takeover, not Stop: moving toward the Stop button triggered the pointer guard.
+- Two other text attempts reached their end markers before the user could click Stop. These are
+  inconclusive Stop tests, not failures or successes. Text speed was not altered to manufacture a result.
+- With control paused, the user clicked Stop while a pointer-move call was waiting. The call returned
+  `application-session permission was revoked` with `No capture or input was sent`; it was not resumed
+  or retried. This verifies stopping a waiting call, not stopping native events already in flight.
+- With the user reporting Chinese input mode, `IME-RETEST-6184 中文输入验证 😀` appeared correctly.
+  Command+C preserved the selected `alpha`, and Command+V inserted `alpha` at the paste-target line.
+  The earlier keyboard corruption did not recur in this case; this is not all-IME coverage.
+- The user manually changed the clipboard to a known word from the disposable document. A subsequent
+  Command+V required one-action confirmation; the user rejected it and the tool reported rejection,
+  without input delivery. No clipboard contents were read by a separate tool or restored by the test.
+- During a three-second drag-select, the user confirmed switching to Hub with Command+Tab without
+  moving the pointer or changing window geometry. The tool refused further delivery, and the next
+  image showed an inactive TextEdit window with only `IME-RETEST` selected, short of the planned end.
+  This verifies one focus-change interruption of dragging without modifying the document text.
+- In a final text attempt (`STOP-TEST-BEGIN-3076`), with the pointer pre-positioned at Stop, the tool
+  returned `permission, focus, geometry or pointer ownership changed` and stopped further delivery.
+  The user visually confirmed that clicking Stop interrupted the input. This is accepted as one
+  end-to-end Stop-click interruption case; the combined refusal does not isolate Stop cancellation
+  from focus protection. No remaining text was replayed, and no further capture or authorization was
+  requested after the user's confirmation.
+
+The agreed local macOS acceptance is complete with the recorded limitations below. No production
+code changed during this final acceptance round, so the installed package remains current.
+Independent native in-flight Stop/revocation and broader accessibility classification remain
+unverified. A minimal extension of the existing offline image fixture models revocation and
+cancellation after the first simulated event: no second event or post-input capture is admitted.
+That fixture does not invoke the macOS delivery loop or prove native mouse/modifier cleanup.
+Mixed-DPI/multi-monitor and other operating-system desktop acceptance are explicitly excluded from
+this local acceptance scope at the user's request; they are not claimed as tested.
 
 The latest local offline run passed `--check-ai-images`, `--check-ai-context` and
 `--check-ai-workspace` with `EnableWindowsTargeting=true`; logs are under
 `tmp/computer-use-offline-{images,context,workspace}.log`. The image suite was rerun successfully
 after adding the minimal wait-version regression case. Debug build and Release osx-arm64 publish/
-packaging succeeded, and `Test-MacPackage.ps1` passed for the rebuilt local installer. These do not
-replace the remaining installed-app cases or claim a fresh full ShellCheck run.
+packaging succeeded, and `Test-MacPackage.ps1` passed for the rebuilt local installer. A subsequent
+`--check-ai-tool-policy` run passed (log: `tmp/computer-use-tool-policy.log`). The full ShellCheck
+rerun also passed, including the offline application grant, one-action input confirmation, denial,
+revocation/re-authorization, cross-conversation isolation and application-replacement fixtures.
+No checks were removed or ceilings raised for this run. A native macOS input-method diagnostic was
+printed during startup, but the process exited 0 and the report ended with `RESULT: 1758/1758 passed`.
+
+Source review confirms that Stop revokes the live application session before cancelling the run;
+the macOS delivery loop rechecks live permission/focus/geometry between code points or bounded drag
+segments, and mouse-button/shortcut-modifier cleanup uses `finally`. This is code review, not evidence
+that Stop alone interrupted a real OS input sequence. The offline mid-operation revocation/cancellation
+extension passed `--check-ai-images` (log: `tmp/computer-use-interruption-images.log`); no real desktop
+input was used by it. These automated results do not replace the remaining installed-app cases above.
 
 ## Earlier Wayland verification status (historical)
 
