@@ -71,6 +71,14 @@ When in doubt, remove chrome first. New UI does not automatically require a new 
 property. Cover new or changed high-impact interactions in the cheapest suitable check; ordinary visual
 details remain a manual review unless an explicit acceptance requirement says otherwise.
 
+## Local packaging output
+
+Unless the user or the task explicitly specifies another output location, local packaging must reuse
+`artifacts/releases/<RID>/` relative to the repository root — for example, `artifacts/releases/osx-arm64/`
+on Apple Silicon macOS. Repeated packaging for the same RID goes to the same directory. Do not invent
+alternate packaging subdirectories or append a version, timestamp, task name, or temporary suffix to
+this output path.
+
 ## Optional shell verification
 
 Run `--verify-shell` only when a UI shell check is needed. Execute the single build-and-check command through
