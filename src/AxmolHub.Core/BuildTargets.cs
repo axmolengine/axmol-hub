@@ -63,6 +63,7 @@ public static class BuildTargets
         // Added in v3: win32 gains arm64, linux gains arm64, wasm gains wasm64.
         new("windows-arm64", "Windows ARM64", "windows", "arm64", ["windows"], false, 3),
         new("android-arm64", "Android ARM64", "android", "arm64-v8a", ["windows", "linux", "macos"]),
+        new("android-armv7", "Android ARMv7", "android", "armeabi-v7a", ["windows", "linux", "macos"]),
         new("android-x64", "Android x64", "android", "x86_64", ["windows", "linux", "macos"]),
         new("linux-x64", "Linux x64", "linux", "x86_64", ["linux"]),
         new("linux-arm64", "Linux ARM64", "linux", "arm64", ["linux"], false, 3),

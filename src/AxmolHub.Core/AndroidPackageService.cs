@@ -126,8 +126,15 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
         var jni = Path.Combine(stage, "app/src/main/jniLibs", target.Architecture);
         var library = NativeLibrary(project);
         Directory.CreateDirectory(jni);
+        var sysrootAbi = target.Architecture switch
+        {
+            "arm64-v8a" => "aarch64-linux-android",
+            "armeabi-v7a" => "arm-linux-androideabi",
+            "x86_64" => "x86_64-linux-android",
+            _ => throw new InvalidDataException("Unsupported Android ABI: " + target.Architecture)
+        };
         var nativeFiles = new[] { library, Path.Combine(ProjectService.BuildDirectory(project), "lib/libopenal.so"),
-            Tool("adt/sdk/ndk/" + (NewestNdk() ?? "27.3.13750724") + "/toolchains/llvm/prebuilt/" + (BuildTargets.Host == "macos" ? "darwin-x86_64" : BuildTargets.Host + "-x86_64") + "/sysroot/usr/lib/" + (target.Architecture == "arm64-v8a" ? "aarch64-linux-android" : "x86_64-linux-android") + "/libc++_shared.so") };
+            Tool("adt/sdk/ndk/" + (NewestNdk() ?? "27.3.13750724") + "/toolchains/llvm/prebuilt/" + (BuildTargets.Host == "macos" ? "darwin-x86_64" : BuildTargets.Host + "-x86_64") + "/sysroot/usr/lib/" + sysrootAbi + "/libc++_shared.so") };
         foreach (var file in nativeFiles)
         {
             using (var native = File.OpenRead(file)) ValidateElf(native, target.Architecture);
@@ -252,23 +259,43 @@ public sealed class AndroidPackageService(ProcessRunner runner, string toolsRoot
     }
     public static void ValidateElf(Stream stream, string abi)
     {
-        var header = new byte[64]; stream.ReadExactly(header);
-        var machine = abi switch { "arm64-v8a" => 183, "x86_64" => 62, _ => throw new InvalidDataException("Unsupported Android ABI.") };
-        if (header[0] != 0x7f || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' || header[4] != 2 || header[5] != 1
-            || BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(16)) != 3 || BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(18)) != machine) throw new InvalidDataException("Android native library does not match the target ELF ABI.");
-        var offset = BinaryPrimitives.ReadUInt64LittleEndian(header.AsSpan(32));
-        var size = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(54)); var count = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(56));
-        if (offset < 64 || offset > 1024 * 1024 || size < 56 || size > 1024 || count == 0 || count > 1024) throw new InvalidDataException("Invalid ELF program header table.");
+        var (elfClass, machine) = abi switch
+        {
+            "armeabi-v7a" => (1, 40),
+            "arm64-v8a" => (2, 183),
+            "x86_64" => (2, 62),
+            _ => throw new InvalidDataException("Unsupported Android ABI.")
+        };
+        var is64Bit = elfClass == 2;
+        var header = new byte[is64Bit ? 64 : 52];
+        stream.ReadExactly(header);
+        if (header[0] != 0x7f || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' || header[4] != elfClass || header[5] != 1
+            || BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(16)) != 3 || BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(18)) != machine)
+            throw new InvalidDataException("Android native library does not match the target ELF ABI.");
+        var offset = is64Bit ? BinaryPrimitives.ReadUInt64LittleEndian(header.AsSpan(32)) : BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(28));
+        var size = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(is64Bit ? 54 : 42));
+        var count = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(is64Bit ? 56 : 44));
+        var minimumProgramSize = is64Bit ? 56 : 32;
+        if (offset < (ulong)header.Length || offset > 1024 * 1024 || size < minimumProgramSize || size > 1024 || count == 0 || count > 1024)
+            throw new InvalidDataException("Invalid ELF program header table.");
         var skip = new byte[4096];
-        for (var remaining = offset - 64; remaining > 0;) { var take = (int)Math.Min((ulong)skip.Length, remaining); stream.ReadExactly(skip.AsSpan(0, take)); remaining -= (uint)take; }
-        var program = new byte[size]; var loadSegments = 0;
+        for (var remaining = offset - (ulong)header.Length; remaining > 0;)
+        {
+            var take = (int)Math.Min((ulong)skip.Length, remaining);
+            stream.ReadExactly(skip.AsSpan(0, take));
+            remaining -= (uint)take;
+        }
+        var program = new byte[size];
+        var loadSegments = 0;
         for (var index = 0; index < count; index++)
         {
             stream.ReadExactly(program);
             if (BinaryPrimitives.ReadUInt32LittleEndian(program) != 1) continue;
             loadSegments++;
-            if (BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(48)) < 16384
-                || BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(8)) % 16384 != BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(16)) % 16384)
+            var fileOffset = is64Bit ? BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(8)) : BinaryPrimitives.ReadUInt32LittleEndian(program.AsSpan(4));
+            var virtualAddress = is64Bit ? BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(16)) : BinaryPrimitives.ReadUInt32LittleEndian(program.AsSpan(8));
+            var alignment = is64Bit ? BinaryPrimitives.ReadUInt64LittleEndian(program.AsSpan(48)) : BinaryPrimitives.ReadUInt32LittleEndian(program.AsSpan(28));
+            if (alignment < 16384 || fileOffset % 16384 != virtualAddress % 16384)
                 throw new InvalidDataException("Android native library is not aligned for 16 KB pages.");
         }
         if (loadSegments == 0) throw new InvalidDataException("Android native library has no loadable segment.");

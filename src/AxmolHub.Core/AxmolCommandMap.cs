@@ -42,6 +42,7 @@ public static class AxmolCommandMap
         "windows-arm64" => ("win32", "arm64"),
         "uwp-x64" => ("winuwp", "x64"),
         "android-arm64" => ("android", "arm64"),
+        "android-armv7" => ("android", "armv7"),
         "android-x64" => ("android", "x64"),
         "linux-x64" => ("linux", "x64"),
         "linux-arm64" => ("linux", "arm64"),
