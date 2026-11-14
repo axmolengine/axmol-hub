@@ -15,10 +15,17 @@ internal static partial class MacOsComputerUse
     private static bool IsLocalEditor(CapturableWindow window)
         => window.Owner?.Application.ExecutablePath == "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit";
 
+    private sealed class PointerVerification : IComputerInputVerification
+    {
+        public string? Verify() => null; // Geometry, ownership, occlusion and live permission are checked separately.
+        public void Dispose() { }
+    }
+
     private static ComputerRiskDecision AssessRisk(CapturableWindow window, ComputerActionRequest request)
     {
         if (ComputerInput.Validate(request) is { } invalid) return new(ComputerRisk.Deny, invalid);
-        if (request.Action == "move") return new(ComputerRisk.Allow, "Pointer motion within the selected application window.");
+        if (request.Action == "move") return new(ComputerRisk.Allow, "Pointer motion within the selected application window.")
+            { Verification = new PointerVerification() };
         if (!AXIsProcessTrusted()) return ComputerRiskDecision.Unknown;
         var app = AXUIElementCreateApplication(window.ProcessId);
         if (app == 0) return ComputerRiskDecision.Unknown;
@@ -47,12 +54,18 @@ internal static partial class MacOsComputerUse
                 if (!MatchesAccessibilityWindow(axWindow, window)) return ComputerRiskDecision.Unknown;
             }
             finally { CFRelease(axWindow); }
+            ComputerRiskDecision Ordinary(string reason)
+            {
+                var verification = AccessibilityInputVerification.Create(element, window, request);
+                return verification is null ? ComputerRiskDecision.Unknown
+                    : new(ComputerRisk.Allow, reason) { Verification = verification };
+            }
             if (request.Action == "scroll" && HasAxAncestor(element, "AXScrollArea"))
-                return new(ComputerRisk.Allow, "Scrolling a verified accessibility scroll area.");
+                return Ordinary("Scrolling a verified accessibility scroll area.");
             if (request.Action == "press_key" && request.Modifiers.SequenceEqual(new[] { "command" })
                 && string.Equals(request.Key, "c", StringComparison.OrdinalIgnoreCase)
                 && role is "AXTextArea" or "AXTextField" or "AXStaticText")
-                return new(ComputerRisk.Allow, "Copy from the authorized application's text control; clipboard contents are not read.");
+                return Ordinary("Copy from the authorized application's text control; clipboard contents are not read.");
             if (!IsLocalEditor(window) || role != "AXTextArea" || HasAxAncestor(element, "AXSheet")
                 || HasAxAncestor(element, "AXDialog"))
                 return new(ComputerRisk.RequireConfirmation, $"Unclassified {role} control. Application permission is not consent to submit, delete, pay or disclose data.");
@@ -85,7 +98,7 @@ internal static partial class MacOsComputerUse
                 }
                 else if (!TryKeyCode(key, out _)) return ComputerRiskDecision.Unknown;
             }
-            return new(ComputerRisk.Allow, "Verified local TextEdit document text interaction; no dialogs, submit or application command authorized.");
+            return Ordinary("Verified local TextEdit document text interaction; no dialogs, submit or application command authorized.");
         }
         catch (Exception ex) when (ex is InvalidOperationException or ExternalException) { return ComputerRiskDecision.Unknown; }
         finally { if (element != 0) CFRelease(element); CFRelease(app); }

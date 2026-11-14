@@ -116,7 +116,7 @@ internal static partial class MacOsComputerUse
         if (!MacOsComputerPermissions.Require(MacOsComputerPermission.ScreenRecording))
             return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.ScreenRecording);
         if (request.VerifyObservation?.Invoke() != true)
-            return "Refused: the application image changed or cannot be verified. Capture again before input.";
+            return "Refused: the observed input target changed or cannot be verified. Observe again before input.";
         var foregroundApp = DesktopApplicationIdentity.Resolve(FrontmostPid())?.Application;
         if (!IsFrontmost(window.Handle) && (FrontmostPid() != Environment.ProcessId
             && window.Owner?.Application.IsSameApplication(foregroundApp) != true
@@ -139,8 +139,16 @@ internal static partial class MacOsComputerUse
                 && Math.Abs(current.Size.Width - bounds.Size.Width) < 1 && Math.Abs(current.Size.Height - bounds.Size.Height) < 1;
         }
         if (!Authorized()) return "Refused: permission, focus or window geometry changed before delivery.";
-        if (!request.ExplicitlyApproved && AssessRisk(window, request).Risk != ComputerRisk.Allow)
-            return "Refused: host risk changed before delivery. Observe and request confirmation; no input was sent.";
+        if (!request.ExplicitlyApproved)
+        {
+            var risk = AssessRisk(window, request);
+            try
+            {
+                if (risk.Risk != ComputerRisk.Allow)
+                    return "Refused: host risk changed before delivery. Observe and request confirmation; no input was sent.";
+            }
+            finally { risk.Verification?.Dispose(); }
+        }
         return Deliver(window, request, bounds, Authorized);
     }
 

@@ -1354,6 +1354,26 @@ internal sealed class ShellApprovalsChecks
                 @"frame_id=([a-f0-9]+)").Groups[1].Value;
             var ordinaryTurn = await ComputerRound(screenSession, ToolNames.ComputerUse, previewWindow.Title, "press_key", nextFrame);
             reuse.Add(ordinaryTurn?.ApprovalState != ChatApprovalStates.Pending && operatedWindows.Count == 2);
+            // Keep the model's tool declarations alive while a grant replaces the observation registry.
+            // The previous one-call-per-run fixture rebuilt ScopeFor each time and could not expose this bug.
+            var declarationsBeforeRevoke = chat.WorkspaceScopeFor(screenSession.Id);
+            var oldObservation = declarationsBeforeRevoke.ComputerObservation!();
+            chat.RevokeComputerControl(screenSession.Id);
+            await ComputerRound(screenSession, ToolNames.CaptureScreen, previewWindow.Title);
+            var renewedGrant = screenSession.Messages.Last(turn => turn.Role == ChatRoles.Assistant && turn.ToolName == ToolNames.CaptureScreen);
+            Check(renewedGrant.ApprovalState == ChatApprovalStates.Pending && chat.TryResolveApproval(screenSession.Id,
+                renewedGrant.ToolCallId!, approved: true, alwaysAllow: false, out _),
+                "撤销后明确重新授权应用，不继承旧审批");
+            await WaitForIdleAsync(chat);
+            var liveObservation = declarationsBeforeRevoke.ComputerObservation!();
+            screenClient.CallsRemaining = 1;
+            screenClient.ToolName = ToolNames.ComputerUse;
+            screenClient.Arguments = new() { ["application"] = previewWindow.Title, ["action"] = "move",
+                ["x"] = 1, ["y"] = 1, ["modifiers"] = null, ["frame_id"] = liveObservation.Record(previewWindow, fixtureFrame!) };
+            chat.TryEnqueueSend(screenSession.Id, "Move with renewed observation and null modifiers", null, out _);
+            await WaitForIdleAsync(chat);
+            reuse.Add(!ReferenceEquals(oldObservation, liveObservation) && operatedWindows.Count == 3
+                && screenSession.Messages.Last(turn => turn.Role == ChatRoles.Tool).Text.StartsWith("Input delivered (move)", StringComparison.Ordinal));
             previewWindow = previewWindow with { Handle = 44, ProcessId = 102,
                 Owner = new ComputerProcessIdentity(previewApplication, 3000), Title = "New document colors" };
             var newWindowTurn = await ComputerRound(screenSession, ToolNames.CaptureScreen, "New document colors");

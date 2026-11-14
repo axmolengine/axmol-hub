@@ -39,8 +39,15 @@ internal sealed class ComputerControlSession(ComputerUseTarget target, string ta
 }
 
 internal enum ComputerRisk { Allow, RequireConfirmation, Deny }
+internal interface IComputerInputVerification : IDisposable
+{
+    /// <summary>Null means the observed input target is still valid; never reports its text or secrets.</summary>
+    string? Verify();
+}
+
 internal sealed record ComputerRiskDecision(ComputerRisk Risk, string Reason)
 {
+    internal IComputerInputVerification? Verification { get; init; }
     internal static ComputerRiskDecision Unknown { get; } = new(ComputerRisk.RequireConfirmation,
         "The host cannot verify this control's consequences. Review the target and action before approving.");
 }

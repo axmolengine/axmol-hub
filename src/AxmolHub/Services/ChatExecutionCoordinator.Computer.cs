@@ -8,7 +8,8 @@ namespace AxmolHub;
 internal sealed partial class ChatExecutionCoordinator
 {
     private readonly ConcurrentDictionary<string, ComputerControlSession> _computerControls = new();
-    private sealed record InputPermit(ComputerControlSession Session, long Version, string Arguments, bool Approved);
+    private sealed record InputPermit(ComputerControlSession Session, long Version, string Arguments,
+        ComputerRiskDecision Decision, bool Approved);
     private readonly ConcurrentDictionary<(string Conversation, string Call), InputPermit> _computerPermits = new();
 
     internal ComputerControlSession? ComputerControlFor(string id)
@@ -18,6 +19,7 @@ internal sealed partial class ChatExecutionCoordinator
     {
         if (ComputerControlFor(id) is not { } control) return;
         control.Pause(paused);
+        foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == id)) ReleaseComputerPermit(key);
         if (_computerObservations.TryGetValue(id, out var observation)) observation.Invalidate();
         Audit(id, paused ? "Computer Use paused; observations invalidated." : "Computer Use resumed; fresh observation required.");
         Changed?.Invoke();
@@ -33,8 +35,20 @@ internal sealed partial class ChatExecutionCoordinator
             if (OperatingSystem.IsMacOS()) MacOsComputerUse.ForgetClipboard(version);
         }
         if (_computerObservations.TryRemove(id, out var observation)) observation.Invalidate();
-        foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == id)) _computerPermits.TryRemove(key, out _);
+        foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == id)) ReleaseComputerPermit(key);
         Changed?.Invoke();
+    }
+
+    private void ReleaseComputerPermit((string Conversation, string Call) key)
+    {
+        if (_computerPermits.TryRemove(key, out var permit)) permit.Decision.Verification?.Dispose();
+    }
+
+    private void RecordComputerPermit(string id, string call, ComputerControlSession control, string arguments,
+        ComputerRiskDecision decision)
+    {
+        ReleaseComputerPermit((id, call));
+        _computerPermits[(id, call)] = new(control, control.Version, arguments, decision, false);
     }
 
     private void GrantComputerControl(string id, ComputerUseTarget target)
@@ -58,12 +72,14 @@ internal sealed partial class ChatExecutionCoordinator
                 return new(ComputerRisk.Deny, "This window closed or changed owner. Observe another window of the authorized application.");
             }
             var request = ComputerInput.Parse(json);
-            if (request is null || ComputerInput.Validate(request) is not null)
-                return new(ComputerRisk.Deny, "Invalid action arguments.");
+            if (request is null) return new(ComputerRisk.Deny, "Invalid action JSON or parameter types.");
+            if (ComputerInput.Validate(request) is { } invalid) return new(ComputerRisk.Deny, invalid);
             using var doc = JsonDocument.Parse(json!);
             var frame = doc.RootElement.TryGetProperty("frame_id", out var value) ? value.GetString() : null;
-            var mapped = _computerObservations.TryGetValue(id, out var observation) ? observation.Map(frame, window, request) : null;
-            if (mapped is null) return new(ComputerRisk.Deny, "A fresh frame and valid coordinates are required.");
+            if (!_computerObservations.TryGetValue(id, out var observation))
+                return new(ComputerRisk.Deny, "No live observation is registered. Capture this window again.");
+            var mapped = observation.Map(frame, window, request, out var refusal);
+            if (mapped is null) return new(ComputerRisk.Deny, refusal!);
             return bridge.AssessRisk?.Invoke(window, mapped with { PermissionVersion = ComputerControlFor(id)?.Version ?? 0 })
                 ?? ComputerRiskDecision.Unknown;
         }
@@ -86,17 +102,27 @@ internal sealed partial class ChatExecutionCoordinator
             : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
     }
 
-    private bool ComputerInputAllowed(string id, string? callId, ScreenCaptureBridge? screen, ComputerUseBridge? bridge)
+    private ComputerUseObservation ComputerObservationFor(string id)
+        => _computerObservations.GetOrAdd(id, _ => new ComputerUseObservation());
+
+    private ComputerRiskDecision ComputerInputDecision(string id, string? callId)
     {
-        bool Read()
+        ComputerRiskDecision Read()
         {
-            if (callId is null) return false;
+            if (callId is null) return new(ComputerRisk.Deny, "The current tool invocation has no call identity.");
             var call = Sessions.Registry.Peek(id)?.Messages.LastOrDefault(t => t.Role == ChatRoles.Assistant && t.ToolCallId == callId);
+            if (call is null) return new(ComputerRisk.Deny, "The current tool call is absent from this conversation.");
             var control = ComputerControlFor(id);
-            if (control?.Covers(call?.ApprovalComputerTarget) != true) return false;
+            if (control is null) return new(ComputerRisk.Deny, "No live application-session permission. Request the application's session permission first.");
+            if (control.Paused) return new(ComputerRisk.Deny, "Application control is paused. Resume it and observe again.");
+            if (!control.Covers(call.ApprovalComputerTarget))
+                return new(ComputerRisk.Deny, "This window's application is not covered by the live session permission.");
             // A saved transcript approval is not a live permit. Pause/revoke invalidates even approved actions.
-            if (HasExplicitComputerPermit(id, callId)) return true;
-            return AssessComputerInput(id, call?.ApprovalComputerTarget, call?.ToolArguments, screen, bridge).Risk == ComputerRisk.Allow;
+            if (!_computerPermits.TryGetValue((id, callId), out var permit)
+                || !ReferenceEquals(permit.Session, control) || permit.Version != control.Version
+                || permit.Arguments != call.ToolArguments)
+                return new(ComputerRisk.Deny, "No current host assessment for this action. Observe again and request a new action.");
+            return permit.Approved ? permit.Decision with { Risk = ComputerRisk.Allow } : permit.Decision;
         }
         return Dispatcher.UIThread.CheckAccess() ? Read()
             : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();

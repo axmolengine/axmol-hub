@@ -90,8 +90,8 @@ public sealed record WorkspaceToolScope(
     internal ComputerUseBridge? ComputerUse { get; init; }
     internal PortalComputerBridge? PortalComputer { get; init; }
     internal Func<bool>? PortalComputerApproved { get; init; }
-    internal ComputerUseObservation? ComputerObservation { get; init; }
-    internal Func<bool>? ComputerInputApproved { get; init; }
+    internal Func<ComputerUseObservation>? ComputerObservation { get; init; }
+    internal Func<ComputerRiskDecision>? ComputerInputDecision { get; init; }
     internal Func<bool>? ComputerSensitiveInputApproved { get; init; }
     internal Func<CancellationToken, bool>? WaitComputerControl { get; init; }
     internal Func<long>? ComputerControlVersion { get; init; }
@@ -1048,7 +1048,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
 
         var image = store.SaveImage(context.ConversationId, frame.Png);
         context.RecordFrames?.Invoke([image]);
-        var observation = context.ComputerObservation?.Record(window!, frame);
+        var observation = context.ComputerObservation?.Invoke().Record(window!, frame);
         return $"frame_id={observation ?? "unavailable"}; image={frame.Width}×{frame.Height}; "
                + $"input area: full image; image pixels map to window {window!.Width}×{window.Height}. "
                + $"Use frame_id for one input only, then observe again. Captured {what} with {backend.Label} — {frame.Width}×{frame.Height}, {image.Bytes} bytes, stored as "
@@ -1113,9 +1113,11 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
 
         if (context.ComputerUse is not { } operations)
             return $"Refused: this {backend.Label} build can capture windows but has no input-control backend. Ask the user to perform this action.";
-        if (context.ComputerInputApproved?.Invoke() != true)
-            return "Refused: no live task permission or this action requires a new risk confirmation. Request the action again for review; do not replay delivered input.";
-        if (context.ComputerObservation is not { } observations)
+        var decision = context.ComputerInputDecision?.Invoke();
+        if (decision?.Risk != ComputerRisk.Allow)
+            return "Refused: " + (decision?.Reason ?? "This host has no live input authorization evaluator.")
+                + " No input was sent. Observe again before requesting another action.";
+        if (context.ComputerObservation?.Invoke() is not { } observations)
             return "Refused: this host cannot bind input to a screenshot.";
         var controlVersion = context.ComputerControlVersion?.Invoke() ?? 0;
         bool StillAuthorized() => (context.ComputerControlVersion?.Invoke() ?? 0) == controlVersion
@@ -1124,6 +1126,10 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         bool VerifyObservation()
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!StillAuthorized()) return false;
+            // Semantic target verification is supplied by the host only for classified ordinary actions.
+            // Unknown/sensitive one-shot approvals keep strict visual verification as their fallback.
+            if (decision.Verification is { } verification) return verification.Verify() is null;
             try
             {
                 var current = host.Grab(target);
@@ -1132,8 +1138,8 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { return false; }
         }
-        var mapped = observations.Map(frame_id, target, request);
-        if (mapped is null) return "Refused: stale frame, changed window or coordinates outside the image. Observe again.";
+        var mapped = observations.Map(frame_id, target, request, out var mappingRefusal);
+        if (mapped is null) return "Refused: " + mappingRefusal;
         var unusedX = 0; var unusedY = 0;
         var stale = observations.Consume(frame_id, target, ref unusedX, ref unusedY, false);
         if (stale is not null) return stale;

@@ -25,19 +25,36 @@ internal sealed class ComputerUseObservation
     internal void Invalidate() { lock (_gate) _latest = null; }
 
     internal ComputerActionRequest? Map(string? id, CapturableWindow window, ComputerActionRequest request)
+        => Map(id, window, request, out _);
+
+    internal ComputerActionRequest? Map(string? id, CapturableWindow window, ComputerActionRequest request, out string? refusal)
     {
         lock (_gate)
         {
-            if (_latest is not { } p || p.Id != id || string.IsNullOrEmpty(id) || !p.Target.Matches(window)
-                || p.Generation != ComputerDesktop.Generation || Environment.TickCount64 - p.RecordedAt > 120_000
-                || p.Left != window.Left || p.Top != window.Top || p.Width != window.Width || p.Height != window.Height)
-                return null;
+            refusal = _latest switch
+            {
+                null => "No live observation is registered. Capture this window again.",
+                { Id.Length: 0 } => "This observation was already consumed. Capture this window again.",
+                var prior when string.IsNullOrEmpty(id) || prior.Id != id => "frame_id does not match the latest observation. Use the exact ID from a new screenshot.",
+                var prior when !prior.Target.Matches(window) => "This observation belongs to another window or process instance. Capture the selected window again.",
+                var prior when prior.Generation != ComputerDesktop.Generation => "Another desktop input invalidated this observation. Capture again.",
+                var prior when Environment.TickCount64 - prior.RecordedAt > 120_000 => "This observation expired after two minutes. Capture again.",
+                var prior when prior.Left != window.Left || prior.Top != window.Top || prior.Width != window.Width || prior.Height != window.Height
+                    => "The window moved or resized after capture. Capture again.",
+                _ => null,
+            };
+            if (refusal is not null) return null;
+            var p = _latest!;
             bool Inside(int x, int y) => x >= 0 && y >= 0 && x < p.PixelWidth && y < p.PixelHeight;
             var pointer = request.Action is "click" or "double_click" or "move" or "drag" or "scroll";
             var x = request.X; var y = request.Y;
             var centeredScroll = request.Action == "scroll" && x == -1 && y == -1;
             if (centeredScroll) { x = p.PixelWidth / 2; y = p.PixelHeight / 2; }
-            if (pointer && !Inside(x, y) || request.Action == "drag" && !Inside(request.EndX, request.EndY)) return null;
+            if (pointer && !Inside(x, y) || request.Action == "drag" && !Inside(request.EndX, request.EndY))
+            {
+                refusal = "Pointer coordinates must be inside the latest screenshot, including the drag endpoint.";
+                return null;
+            }
             return request with
             {
                 X = centeredScroll ? p.Width / 2 : pointer ? (int)((long)x * p.Width / p.PixelWidth) : -1,

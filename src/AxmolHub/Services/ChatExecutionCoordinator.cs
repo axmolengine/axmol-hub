@@ -424,8 +424,10 @@ internal sealed partial class ChatExecutionCoordinator
                 // DuckDuckGo needs no configuration; read the global switch again on each tool call.
                 LocalSearchAllowed = () => IsWebSearchEnabled(),
                 ComputerUse = inputBridge,
-                ComputerObservation = _computerObservations.GetOrAdd(conversationId, _ => new ComputerUseObservation()),
-                ComputerInputApproved = () => ComputerInputAllowed(conversationId, ToolInvocation.CallId, screenBridge, inputBridge),
+                // A model request can outlive a grant/revoke. Do not freeze an observation object that the
+                // permission lifecycle has removed from the live registry.
+                ComputerObservation = () => ComputerObservationFor(conversationId),
+                ComputerInputDecision = () => ComputerInputDecision(conversationId, ToolInvocation.CallId),
                 ComputerSensitiveInputApproved = () => HasExplicitComputerPermit(conversationId, ToolInvocation.CallId),
                 WaitComputerControl = ct => ComputerControlFor(conversationId)?.Wait(ct) ?? true,
                 ComputerControlVersion = () => ComputerControlFor(conversationId)?.Version ?? 0,
@@ -2008,8 +2010,8 @@ internal sealed partial class ChatExecutionCoordinator
                     : ComputerRiskDecision.Unknown;
                 if (computerInput && !portal && taskGrant)
                     Audit(run.ConversationId, $"Computer Use risk: {inputRisk.Risk} · {inputRisk.Reason}");
-                if (computerInput && !portal && taskGrant && inputRisk.Risk == ComputerRisk.RequireConfirmation)
-                    _computerPermits[(run.ConversationId, member.CallId)] = new(control!, control!.Version, member.ArgumentsJson, false);
+                if (computerInput && !portal && taskGrant && !control!.Paused)
+                    RecordComputerPermit(run.ConversationId, member.CallId, control, member.ArgumentsJson, inputRisk);
                 if (computerUse)
                     Sessions.Registry.TryUpdate(run.ConversationId, opened =>
                     {
@@ -2631,7 +2633,11 @@ internal sealed partial class ChatExecutionCoordinator
                 Changed?.Invoke();
             }).ConfigureAwait(false);
         }
-        finally { ReleaseBatchLease(run.ConversationId, call.CallId); }
+        finally
+        {
+            ReleaseBatchLease(run.ConversationId, call.CallId);
+            ReleaseComputerPermit((run.ConversationId, call.CallId));
+        }
     }
 
     internal async Task<UndoOutcome> RevertWriteAsync(string conversationId, string callId)
@@ -3842,7 +3848,11 @@ internal sealed partial class ChatExecutionCoordinator
                         Changed?.Invoke();
                     }).ConfigureAwait(false);
                 }
-                finally { ReleaseBatchLease(run.ConversationId, info.CallId); }
+                finally
+                {
+                    ReleaseBatchLease(run.ConversationId, info.CallId);
+                    ReleaseComputerPermit((run.ConversationId, info.CallId));
+                }
                 // A call that never asked still leaves a line, and it comes from the gate: "Exempt from approval"
                 // is a decision about cards, not about the record — this is the one tool tier that writes into the
                 // user's repository with nothing clicked, so the trail is the only thing showing it happened.
@@ -3962,6 +3972,8 @@ internal sealed partial class ChatExecutionCoordinator
         // asked for.
         _frames.TryRemove(run.ConversationId, out _);
         if (result != RunResult.Completed) _computerObservations.TryRemove(run.ConversationId, out _);
+        foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == run.ConversationId))
+            ReleaseComputerPermit(key);
         // One hop, in this order: the run leaves the registry so nothing can attach to a finished reply, the
         // transcript's owner repaints, the indicator goes out, and only then does the view get told how it ended.
         // The token sources are released last — a stop pressed on the final chunk is still being unwound here.

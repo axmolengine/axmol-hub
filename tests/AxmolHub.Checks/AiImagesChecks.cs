@@ -4,6 +4,13 @@ using Microsoft.Extensions.AI;
 
 internal static class AiImagesChecks
 {
+    private sealed class ControlVerification : IComputerInputVerification
+    {
+        internal bool Changed;
+        public string? Verify() => Changed ? "The input control changed." : null;
+        public void Dispose() { }
+    }
+
     internal static async Task RunAsync(string root, string[] args)
     {
         // A session file is rewritten on every message and replayed into every later request, so the bytes of an
@@ -192,6 +199,11 @@ internal static class AiImagesChecks
                 throw new Exception("A mid-run question or its image disappeared, duplicated, or moved after another tool round.");
         }
         Console.WriteLine("PASS: mid-run text and image survive subsequent tool requests once, at their original boundary.");
+        // Nullable optional modifiers must have the same meaning in the gate and the tool body.
+        var noModifiers = ComputerInput.Parse("""{"action":"move","x":1,"y":1,"modifiers":null}""");
+        if (noModifiers is not { Modifiers.Length: 0 } || ComputerInput.Validate(noModifiers) is not null
+            || ComputerInput.Parse("""{"action":"move","modifiers":false}""") is not null)
+            throw new Exception("Input parsing disagreed on null modifiers or accepted a malformed modifier value.");
         // Live application permission is an isolation boundary, not a persisted tool approval.
         var appTarget = new ComputerUseTarget(new ComputerApplication(Path.GetFullPath("fixture-editor")), 11, 100, 1, "First");
         var applicationControl = new ComputerControlSession(appTarget, "Edit a disposable document");
@@ -243,6 +255,33 @@ internal static class AiImagesChecks
             if (observation.Consume(frameId, observedWindow, ref cx, ref cy, false) is null)
                 throw new Exception("Another desktop action did not invalidate an old observation.");
         }
+        // A classified target may stay unchanged while unrelated pixels blink. A changed target still refuses.
+        var controlVerification = new ControlVerification();
+        var inputObservation = new ComputerUseObservation();
+        var inputTarget = ComputerUseTarget.FromWindow(observedWindow)!;
+        var changingPixels = observedFrame;
+        var targetDeliveries = 0;
+        var ordinaryTools = new WorkspaceTools(WorkspaceToolScope.Empty with
+        {
+            Screen = new ScreenCaptureBridge(() => [observedWindow], _ => changingPixels)
+                { Backend = new CaptureBackend("fixture", "offline target fixture") },
+            ApprovedComputerTarget = () => inputTarget,
+            ComputerObservation = () => inputObservation,
+            ComputerInputDecision = () => new(ComputerRisk.Allow, "Verified fixture text control") { Verification = controlVerification },
+            ComputerUse = new ComputerUseBridge((_, request) =>
+            {
+                if (request.VerifyObservation?.Invoke() != true) return "Refused: target changed.";
+                targetDeliveries++;
+                return null;
+            }),
+        });
+        var targetFrame = inputObservation.Record(observedWindow, observedFrame);
+        changingPixels = observedFrame with { ContentFingerprint = "caret blink" };
+        ordinaryTools.ComputerUse("Fixture", "move", x: 1, y: 1, frame_id: targetFrame);
+        controlVerification.Changed = true;
+        targetFrame = inputObservation.Record(observedWindow, changingPixels);
+        ordinaryTools.ComputerUse("Fixture", "move", x: 1, y: 1, frame_id: targetFrame);
+        if (targetDeliveries != 1) throw new Exception("Ordinary input required identical pixels or admitted a changed control.");
         using var cancelledInput = new CancellationTokenSource();
         cancelledInput.Cancel();
         var neverOperated = false;

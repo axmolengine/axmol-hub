@@ -13,7 +13,7 @@ internal static class ComputerInput
             var root = doc.RootElement;
             string? Text(string key) => root.TryGetProperty(key, out var v) ? v.GetString() : null;
             int Number(string key, int fallback) => root.TryGetProperty(key, out var v) ? v.GetInt32() : fallback;
-            var modifiers = root.TryGetProperty("modifiers", out var m)
+            var modifiers = root.TryGetProperty("modifiers", out var m) && m.ValueKind != JsonValueKind.Null
                 ? m.EnumerateArray().Select(v => v.GetString() ?? "").ToArray() : [];
             return new((Text("action") ?? "").Trim().ToLowerInvariant(), Number("x", -1), Number("y", -1),
                 Text("text"), Text("key"), Number("scroll", 0))

@@ -28,11 +28,14 @@ fallback to unscoped capture or non-portal global input is permitted.
    `modifiers` array (`command`, `control`, `alt`, `shift`). Scroll accepts `x/y` and
    `horizontal_scroll`; omitted coordinates use the image center. Extended actions on other
    backends are explicitly refused, not silently converted or dropped.
-5. Hub refuses expired (two-minute), spent, moved/resized, owner-changed or content-changed
-   observations. Restarting Hub does not restore live observations. Another conversation's
-   input invalidates older observations. Application permission does not make another window's
-   frame valid: observe each newly selected window before input. Animated or blinking content may require a new frame;
-   this is a fail-closed limitation, not a reason to bypass verification.
+5. Hub refuses expired (two-minute), spent, moved/resized or owner-changed observations.
+   Restarting Hub does not restore live observations. Another conversation's input invalidates
+   older observations. Application permission does not make another window's frame valid:
+   observe each newly selected window before input. On macOS, classified ordinary input verifies
+   the assessed control instead of requiring identical whole-window pixels. Pointer movement
+   only needs live permission, window identity/geometry, focus, bounds and occlusion checks.
+   Other native backends and unclassified/sensitive visual confirmations retain strict frame
+   verification until an equally scoped host verifier is available.
 6. Input delivery is not application success. After delivery Hub captures a fresh image and
    the model must inspect it before deciding what happened. Failed or interrupted input can
    be partial: observe before retrying and do not replay text blindly.
@@ -50,6 +53,12 @@ native-input races or detect every form of human keyboard activity.
 
 ## Session lifetime and host risk checks
 
+Observations are resolved from the live registry on each capture/input, not frozen into a model
+request's tool declarations: a permission change can replace that registry while the same tool loop
+continues. Nullable optional `modifiers` means no modifiers, just like an omitted or empty array.
+Refused input reports the actual permission/frame reason (including missing, expired, spent,
+wrong-window or invalidated observations) rather than a generic approval failure.
+
 Control grants live only in memory. Ordinary chat replies do not end the live conversation
 permission; Stop, Revoke, conversation removal, workspace/data-root shutdown, failure/cancellation
 or an explicit goal completing does. Automatic goal continuation retains permission. Restart
@@ -66,6 +75,15 @@ verified scroll areas; copying from non-secure text controls; and document inter
 system TextEdit app (not its dialogs or sheets). Other app controls, including Hub controls the
 host cannot classify, still ask. An application grant alone does not silently authorize arbitrary
 buttons, Enter-to-submit, uploads, deletion, credentials or payments. Inspect the actual card.
+
+For a classified ordinary macOS action the host retains the assessed Accessibility element
+for that call only. Before input it rechecks control identity, owning window, geometry and metadata;
+text actions also require the same text digest and selection range. A blinking caret or animation
+elsewhere is not a veto. Actual text, selection, target or geometry changes still refuse. Text is
+read only from non-secure classified controls, bounded to 64K characters, hashed in memory and
+never recorded in logs. An unavailable verifier falls back to explicit confirmation plus strict
+visual validation; there is no percentage-of-pixels threshold that could hide a changed submit button.
+These checks bind the host assessment to delivery, not every pixel to the earlier screenshot.
 
 `Command+A/C/V` delivery is supported. Automatic paste in TextEdit additionally requires a
 clipboard revision observed after this permission's own Copy; an unknown or changed clipboard
