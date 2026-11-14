@@ -1154,12 +1154,16 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (stale is not null) return stale;
         cancellationToken.ThrowIfCancellationRequested();
         ComputerDesktop.Invalidate();
+        var deliveryStarted = !operations.ReportsInputDelivery;
         var refusal = operations.Operate(target, mapped with
         {
             VerifyObservation = VerifyObservation, StillAuthorized = StillAuthorized, PermissionVersion = controlVersion,
             ExplicitlyApproved = context.ComputerSensitiveInputApproved?.Invoke() == true,
+            InputDeliveryStarted = () => deliveryStarted = true,
         });
-        if (refusal is not null) return refusal + " Input may have been partially delivered; observe before trying again.";
+        if (refusal is not null) return refusal + (deliveryStarted
+            ? " Input may have been partially delivered. " : " No input was sent. ")
+            + GoalProgress.ComputerObservationRequired;
         // Input delivery is not evidence that the intended application operation succeeded.
         cancellationToken.ThrowIfCancellationRequested();
         var observed = CaptureScreenCore(app, process_id: process_id);

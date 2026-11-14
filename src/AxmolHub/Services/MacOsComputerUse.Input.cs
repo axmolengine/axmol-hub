@@ -5,30 +5,54 @@ namespace AxmolHub;
 
 internal static partial class MacOsComputerUse
 {
-    private static bool ActivateWindow(CapturableWindow window)
+    private static string? ActivateWindow(CapturableWindow window, ComputerActionRequest request, ComputerUseTarget target, int fromPid)
     {
+        bool Permitted() => !request.Cancellation.IsCancellationRequested
+            && request.StillAuthorized?.Invoke() != false && target.Find(ListWindows()).Ok;
+        if (!Permitted()) return "Refused: application permission or window identity changed before focus handoff.";
         var app = AXUIElementCreateApplication(window.ProcessId);
-        if (app == 0) return false;
+        if (app == 0) return "Refused: the target application's accessibility tree is unavailable for focus handoff.";
         try
         {
             AXUIElementSetMessagingTimeout(app, 0.25f);
             var windows = AxAttribute(app, "AXWindows");
-            if (windows == 0) return false;
+            if (windows == 0) return "Refused: macOS did not expose the target application's windows for focus handoff.";
             try
             {
+                nint selected = 0;
                 for (nint index = 0; index < CFArrayGetCount(windows); index++)
                 {
                     var element = CFArrayGetValueAtIndex(windows, index);
                     if (!MatchesAccessibilityWindow(element, window)) continue;
-                    var raise = Key("AXRaise");
-                    try
-                    {
-                        if (AXUIElementPerformAction(element, raise) != 0) return false;
-                        return Activate(window.ProcessId);
-                    }
-                    finally { CFRelease(raise); }
+                    if (selected != 0) return "Refused: the target accessibility window is ambiguous; no window was raised.";
+                    selected = element;
                 }
-                return false;
+                if (selected == 0) return "Refused: macOS could not match the authorized window by title and geometry for focus handoff.";
+                if (!Permitted()) return "Refused: application permission or window identity changed before focus handoff.";
+                if (!Activate(window.ProcessId, fromPid, Permitted))
+                    return "Refused: focus or permission changed, or macOS rejected activation of the authorized application.";
+                if (!Permitted()) return "Refused: application permission or window identity changed before raising the window.";
+                var raise = Key("AXRaise");
+                try
+                {
+                    var error = AXUIElementPerformAction(selected, raise);
+                    if (error != 0) return $"Refused: macOS could not raise the authorized window (AX error {error}).";
+                }
+                finally { CFRelease(raise); }
+
+                // Activation is asynchronous. Wait once for this exact window, not for any same-titled app.
+                // Revoke/cancel or a switch to a third application ends the handoff without sending input.
+                var deadline = Environment.TickCount64 + 1500;
+                do
+                {
+                    if (!Permitted()) return "Refused: application permission or window identity changed during focus handoff.";
+                    if (IsFrontmost(window)) return null;
+                    var foreground = FrontmostPid();
+                    if (foreground != fromPid && foreground != window.ProcessId)
+                        return $"Refused: focus moved to another application (pid {foreground}) during handoff.";
+                    if (request.Cancellation.WaitHandle.WaitOne(25)) break;
+                } while (Environment.TickCount64 < deadline);
+                return $"Refused: focus handoff to window {window.Handle} in pid {window.ProcessId} did not complete within 1500 ms (frontmost pid {FrontmostPid()}). No target input was attempted.";
             }
             finally { CFRelease(windows); }
         }
@@ -84,6 +108,7 @@ internal static partial class MacOsComputerUse
             if (!authorized()) return interrupted;
             if (!OwnsPoint(window, point))
                 return "Refused: macOS hit testing did not resolve this point to the selected application window. Nothing was sent.";
+            r.InputDeliveryStarted?.Invoke();
             if (!PostMouse(point, 5)) return "Refused: macOS could not create pointer motion.";
             if (r.Action == "move") return null;
             if (!Wait(25) || !OwnsPoint(window, point)) return interrupted;
@@ -144,6 +169,7 @@ internal static partial class MacOsComputerUse
                 var current = PointerLocation();
                 if (current is null || current.Value.X != pointer.Value.X || current.Value.Y != pointer.Value.Y)
                     return "Refused: user pointer takeover interrupted typing.";
+                r.InputDeliveryStarted?.Invoke();
                 if (!PostUnicode(rune.ToString().ToCharArray())) return "Refused: macOS could not create text events.";
             }
             return null;
@@ -165,9 +191,11 @@ internal static partial class MacOsComputerUse
                 };
                 flags |= flag;
                 held.Add((code, flag));
+                r.InputDeliveryStarted?.Invoke();
                 if (!PostKey(code, true, flags)) return "Refused: macOS could not create modifier input.";
             }
             if (!authorized()) return interrupted;
+            r.InputDeliveryStarted?.Invoke();
             try { if (!PostKey(key, true, flags)) return "Refused: macOS could not create key input."; }
             finally { PostKey(key, false, flags); }
         }

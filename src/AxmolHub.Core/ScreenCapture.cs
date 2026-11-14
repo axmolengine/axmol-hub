@@ -51,6 +51,7 @@ internal sealed record ComputerActionRequest(string Action, int X = -1, int Y = 
     internal long PermissionVersion { get; init; }
     internal bool ExplicitlyApproved { get; init; }
     internal bool PositionedScroll { get; init; }
+    internal Action? InputDeliveryStarted { get; init; }
 }
 
 /// <summary>Host operations bound to a previously resolved top-level window.</summary>
@@ -58,6 +59,8 @@ internal sealed record ComputerUseBridge(
     Func<CapturableWindow, ComputerActionRequest, string?> Operate)
 {
     internal Func<CapturableWindow, ComputerActionRequest, ComputerRiskDecision>? AssessRisk { get; init; }
+    // Backends without delivery reporting retain the conservative partial-delivery warning.
+    internal bool ReportsInputDelivery { get; init; }
 }
 
 /// <summary>

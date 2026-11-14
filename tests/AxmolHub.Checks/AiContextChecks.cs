@@ -1274,6 +1274,20 @@ internal static class AiContextChecks
         ]);
         if (ToolSpinGuard.RefusalFor("capture_screen", "{}", pictured) is null)
             throw new Exception("Synthetic user-role frame carriers reset the repetition guard.");
+        // A spent input frame requires a fresh capture even after two identical earlier observations.
+        foreach (var (tool, json) in new[] { ("capture_screen", "{}"), ("computer_use", """{"action":"screenshot","application":"Hub"}""") })
+        {
+            var recovery = SpinHistory(("p1", tool, json, "captured"), ("p2", tool, json, "captured"),
+                ("i1", "computer_use", """{"action":"drag","frame_id":"spent"}""", "Refused: focus handoff failed. No input was sent. " + GoalProgress.ComputerObservationRequired));
+            if (ToolSpinGuard.RefusalFor(tool, json, recovery) is not null)
+                throw new Exception("A required fresh window observation was blocked by pre-input captures.");
+            recovery.Add(SpinCall("p3", tool, json));
+            recovery.Add(SpinResult("p3", "captured"));
+            recovery.Add(SpinCall("p4", tool, json));
+            recovery.Add(SpinResult("p4", "captured"));
+            if (ToolSpinGuard.RefusalFor(tool, json, recovery) is null)
+                throw new Exception("Frame recovery disabled the screenshot-only repetition guard.");
+        }
         // An elided result is Hub asking for the re-call — the placeholder says so in its own words.
         var elidedHistory = SpinHistory(("c1", "read_file", """{"path":"a.cpp"}""", "old content"), ("c2", "read_file", """{"path":"a.cpp"}""", $"[elided: 2000 characters of tool output — call the tool again if you need this]"));
         elidedHistory.Add(SpinCall("c3", "read_file", """{"path":"a.cpp"}"""));

@@ -79,6 +79,7 @@ public static class ToolSpinGuard
         IReadOnlySet<string>? elidedCallIds = null, IReadOnlySet<string>? failedCallIds = null)
     {
         var wantedArguments = NormalizeArguments(argumentsJson);
+        var observingWindow = IsWindowObservation(toolName, argumentsJson);
         var results = new Dictionary<string, string>(StringComparer.Ordinal);
         var identical = 0;
         var failed = 0;
@@ -103,6 +104,10 @@ public static class ToolSpinGuard
                     continue;
                 paired++;
                 var failure = Core.GoalProgress.Failed(call.Name, text, failedCallIds?.Contains(call.CallId) == true);
+                // Input consumes its frame even when delivery is refused. The requested fresh observation
+                // must remain possible; this does not forgive repeated input failures or screenshot-only spins.
+                if (observingWindow && call.Name == Core.ToolNames.ComputerUse
+                    && text.EndsWith(Core.GoalProgress.ComputerObservationRequired, StringComparison.Ordinal)) return null;
                 // The world moved: anything older than this is a different problem, not a repetition of this one.
                 if (!failure && Core.GoalProgress.StateChanged(call.Name, text))
                     return null;
@@ -127,6 +132,20 @@ public static class ToolSpinGuard
         }
 
         return null;
+    }
+
+    private static bool IsWindowObservation(string name, string json)
+    {
+        if (name == Core.ToolNames.CaptureScreen) return true;
+        if (name != Core.ToolNames.ComputerUse) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("action", out var action)
+                && action.ValueKind == JsonValueKind.String
+                && string.Equals(action.GetString()?.Trim(), "screenshot", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException) { return false; }
     }
 
     private static string TextOf(FunctionResultContent result) => result.Result switch

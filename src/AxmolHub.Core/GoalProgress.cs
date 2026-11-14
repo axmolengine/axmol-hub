@@ -10,6 +10,7 @@ namespace AxmolHub.Core;
 public static class GoalProgress
 {
     public const int WindowSize = 48;
+    public const string ComputerObservationRequired = "The frame was consumed; observe again before requesting another action.";
 
     public static string NormalizeArguments(string argumentsJson)
     {

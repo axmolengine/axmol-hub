@@ -4,6 +4,7 @@ using System.Text;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub;
@@ -23,7 +24,7 @@ internal static partial class MacOsComputerUse
     private static readonly nint WindowBoundsKey = Key("kCGWindowBounds");
 
     public static ScreenCaptureBridge ScreenBridge() => new(ListWindows, CaptureWindow);
-    public static ComputerUseBridge InputBridge() => new(Operate) { AssessRisk = AssessRisk };
+    public static ComputerUseBridge InputBridge() => new(Operate) { AssessRisk = AssessRisk, ReportsInputDelivery = true };
 
     private static IReadOnlyList<CapturableWindow> ListWindows()
     {
@@ -117,13 +118,18 @@ internal static partial class MacOsComputerUse
             return "Refused: " + MacOsComputerPermissions.Refusal(MacOsComputerPermission.ScreenRecording);
         if (request.VerifyObservation?.Invoke() != true)
             return "Refused: the observed input target changed or cannot be verified. Observe again before input.";
-        var foregroundApp = DesktopApplicationIdentity.Resolve(FrontmostPid())?.Application;
-        if (!IsFrontmost(window.Handle) && (FrontmostPid() != Environment.ProcessId
-            && window.Owner?.Application.IsSameApplication(foregroundApp) != true
-            || !ActivateWindow(window) || !IsFrontmost(window.Handle)))
-            return "Refused: the selected application window is not frontmost. Bring it forward and observe again; input is never sent to a different app.";
         if (ComputerUseTarget.FromWindow(window) is not { } target || !target.Find(ListWindows()).Ok)
             return "Refused: the selected window's application identity changed before input.";
+        if (!IsFrontmost(window))
+        {
+            var foregroundPid = FrontmostPid();
+            var foregroundApp = DesktopApplicationIdentity.Resolve(foregroundPid)?.Application;
+            // Only hand off from this Hub or within the authorized app. Never steal focus from a third app.
+            if (foregroundPid != Environment.ProcessId
+                && window.Owner?.Application.IsSameApplication(foregroundApp) != true)
+                return $"Refused: another application (pid {foregroundPid}) is frontmost. Switch to Hub or the authorized target and observe again.";
+            if (ActivateWindow(window, request, target, foregroundPid) is { } activationRefusal) return activationRefusal;
+        }
         if (!GetWindowBounds(window.Handle, out var bounds))
             return "Refused: the selected application window is no longer available.";
         if ((int)Math.Round(bounds.Origin.X) != window.Left || (int)Math.Round(bounds.Origin.Y) != window.Top
@@ -133,7 +139,7 @@ internal static partial class MacOsComputerUse
         bool Authorized()
         {
             request.Cancellation.ThrowIfCancellationRequested();
-            return request.StillAuthorized?.Invoke() != false && IsFrontmost(window.Handle)
+            return request.StillAuthorized?.Invoke() != false && IsFrontmost(window)
                 && target.Find(ListWindows()).Ok && GetWindowBounds(window.Handle, out var current)
                 && Math.Abs(current.Origin.X - bounds.Origin.X) < 1 && Math.Abs(current.Origin.Y - bounds.Origin.Y) < 1
                 && Math.Abs(current.Size.Width - bounds.Size.Width) < 1 && Math.Abs(current.Size.Height - bounds.Size.Height) < 1;
@@ -176,11 +182,26 @@ internal static partial class MacOsComputerUse
     [DllImport(CoreGraphics)] private static extern nint CGEventCreate(nint source);
     [DllImport(CoreGraphics)] private static extern CGPoint CGEventGetLocation(nint value);
 
-    private static bool Activate(int pid)
+    private static bool Activate(int pid, int fromPid, Func<bool> permitted)
     {
-        var cls = objc_getClass("NSRunningApplication");
-        var app = RunningApplication(cls, sel_registerName("runningApplicationWithProcessIdentifier:"), pid);
-        return app != 0 && ActivateApplication(app, sel_registerName("activateWithOptions:"), 0);
+        // AppKit activation belongs to the main run loop; completion is verified separately.
+        bool RequestActivation()
+        {
+            if (!permitted() || FrontmostPid() != fromPid) return false;
+            var cls = objc_getClass("NSRunningApplication");
+            var app = RunningApplication(cls, sel_registerName("runningApplicationWithProcessIdentifier:"), pid);
+            if (app == 0) return false;
+            if (fromPid == Environment.ProcessId && pid != fromPid && OperatingSystem.IsMacOSVersionAtLeast(14))
+            {
+                // Yield to this process instance, not its bundle ID: installed and --drive Hubs may coexist.
+                var self = ObjectMessage(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+                if (self == 0) return false;
+                YieldActivation(self, sel_registerName("yieldActivationToApplication:"), app);
+            }
+            return ActivateApplication(app, sel_registerName("activateWithOptions:"), 0);
+        }
+        return Dispatcher.UIThread.CheckAccess() ? RequestActivation()
+            : Dispatcher.UIThread.InvokeAsync(RequestActivation).GetAwaiter().GetResult();
     }
 
     [DllImport("/usr/lib/libobjc.A.dylib")] private static extern nint objc_getClass(string name);
@@ -190,23 +211,30 @@ internal static partial class MacOsComputerUse
     [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
     [return: MarshalAs(UnmanagedType.I1)]
     private static extern bool ActivateApplication(nint receiver, nint selector, ulong options);
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern void YieldActivation(nint receiver, nint selector, nint application);
 
-    private static bool IsFrontmost(nint expectedWindow)
+    private static bool IsFrontmost(CapturableWindow window)
     {
-        var info = CGWindowListCopyWindowInfo(OnScreenOnly | ExcludeDesktop, 0);
-        if (info == 0) return false;
+        if (FrontmostPid() != window.ProcessId) return false;
+        var app = AXUIElementCreateApplication(window.ProcessId);
+        if (app == 0) return false;
+        nint focused = 0;
         try
         {
-            for (nint index = 0; index < CFArrayGetCount(info); index++)
-            {
-                var item = CFArrayGetValueAtIndex(info, index);
-                if (item == 0 || Number(item, WindowLayerKey, 3) != 0) continue;
-                return Number(item, WindowNumberKey, 3) == (long)expectedWindow
-                    && Number(item, OwnerPidKey, 3) == FrontmostPid();
-            }
-            return false;
+            AXUIElementSetMessagingTimeout(app, 0.25f);
+            focused = AxAttribute(app, "AXFocusedWindow");
+            // Z-order includes non-input overlays. The focused AX window decides keyboard delivery;
+            // pointer delivery additionally verifies the system-wide hit at each destination.
+            return focused != 0 && AXUIElementGetPid(focused, out var pid) == 0
+                && pid == window.ProcessId && MatchesAccessibilityWindow(focused, window)
+                && FrontmostPid() == window.ProcessId;
         }
-        finally { CFRelease(info); }
+        finally
+        {
+            if (focused != 0) CFRelease(focused);
+            CFRelease(app);
+        }
     }
 
     private static bool GetWindowBounds(nint windowId, out CGRect result)

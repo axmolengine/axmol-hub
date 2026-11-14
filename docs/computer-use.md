@@ -103,8 +103,13 @@ are separate OS permissions; granting them does not replay an interrupted action
 - **Windows:** GDI PrintWindow and SendInput. UIPI can block input to elevated applications.
   Unsupported, protected or blank captures are refused. Occluded click points are refused.
 - **macOS:** Screen Recording and Accessibility permissions. Missing permission stops the
-  current call; permission approval never queues an automatic replay. The selected window,
-  not merely another window belonging to its process, must be frontmost. Pointer ownership uses
+  current call; permission approval never queues an automatic replay. Before input, Hub can hand focus
+  from its own approval UI (or another window of the authorized executable) to the exact selected PID/window.
+  On macOS 14+, Hub yields activation to that process instance, requests activation on the main run loop,
+  raises the matching Accessibility window, and waits at most 1500 ms for verified focus. It never chooses
+  by bundle ID or title alone, and never steals focus from an unrelated foreground application.
+  The selected window's PID and Accessibility focused-window title/bounds must match before and throughout
+  delivery; a third-app focus change during handoff aborts without target input. Pointer ownership uses
   macOS's system-wide Accessibility hit test and verifies the hit's PID plus its containing
   window's title/bounds. It does not treat overlapping CoreGraphics rectangles as input regions:
   Dock can advertise a monitor-sized layer while receiving no input at the selected point.
@@ -119,6 +124,35 @@ The Wayland contract differs from the native backends and the UI says so: the us
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
 
 ## Current macOS delivery status
+
+### Focus-handoff usability update (local build, desktop acceptance pending)
+
+The installed-Hub / development `--drive` workflow exposed a pre-input frontmost refusal. Source review
+found an immediate focus check after asynchronous activation and a global z-order check that treated the
+first layer-zero window as the input window. The update uses cooperative, PID-specific activation and
+Accessibility focused-window verification with a bounded wait. This is not a relaxation of the in-flight
+focus/identity/geometry guards. Permission, observation and host risk checks still precede activation;
+unknown controls still need one-action approval. No input action is replayed on activation failure.
+
+The macOS backend now distinguishes refusal before event delivery from possible partial delivery. Both
+consume the frame and require a fresh observation. The spin guard permits that requested new screenshot,
+without disabling repeated-input failure limits or screenshot-only repetition protection.
+
+Release build (0 warnings/errors), `--check-ai-context` and `--check-ai-images` passed; logs are under
+`tmp/computer-use-focus-{build,context,images}.log`. The context fixture reuses the existing spin-guard
+checks to cover fresh-observation recovery and the retained screenshot-only bound. No desktop probe was
+added. Actual handoff from the installed Hub to a same-title development Hub remains pending installation
+and real Computer Use testing; this running conversation still uses the older installed backend.
+
+The local osx-arm64 package was rebuilt with `installer/Build.ps1` and passed
+`installer/Test-MacPackage.ps1` (exit 0). Artifact:
+`artifacts/releases/osx-arm64/axmol-hub-0.28.0-osx-arm64.pkg`, SHA-256
+`B4943A54BA980E3B7F645DDE717702DD6D92F99BE6A0918F7FA081657855A8B0`.
+Packaging logs: `tmp/computer-use-focus-package{,-check}.log`. This local installer is unsigned and
+not notarized; optional partner-ID injection was skipped because `ORCAROUTER_APP_ID` was unset.
+No version bump, release upload or installation was performed.
+
+### Prior installed-app acceptance
 
 The application-session change is built for macOS arm64. Release build and offline image/permission
 checks pass. The latest full ShellCheck passed 1758/1758 in 123.0 seconds; see
