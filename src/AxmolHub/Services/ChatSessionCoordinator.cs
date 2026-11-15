@@ -643,6 +643,21 @@ internal sealed partial class ChatSessionCoordinator
     internal void DeleteConversation(string id)
     {
         Execution.StopRunFor(id);
+        _sessions.Delete(id);
+        CompleteConversationDeletion(id);
+    }
+
+    internal async Task DeleteConversationAsync(string id, bool useRecycleBin)
+    {
+        Execution.StopRunFor(id);
+        var result = await _sessions.DeleteAsync(id, useRecycleBin);
+        if (result.Kind == FileOperationResultKind.Cancelled) return;
+        if (result.Kind != FileOperationResultKind.Succeeded) throw new IOException(DeleteConfirmation.FailureReason(result));
+        CompleteConversationDeletion(id);
+    }
+
+    private void CompleteConversationDeletion(string id)
+    {
         var referenced = new HashSet<string>(StringComparer.Ordinal);
         var liveConversations = new HashSet<string>(StringComparer.Ordinal);
         foreach (var summary in _sessions.List())
@@ -661,8 +676,6 @@ internal sealed partial class ChatSessionCoordinator
             foreach (var changeId in conversation.ChangeHistoryIds)
                 if (changeId is { Length: > 0 }) referenced.Add(changeId);
         }
-        _sessions.Delete(id);
-        ChatUndoStore.DeleteConversationCopies(_dataRoot, id);
         ChatChangeStore.PruneSession(_dataRoot, liveConversations, referenced);
         CloseIfActive(id);
         Execution.Changed?.Invoke();

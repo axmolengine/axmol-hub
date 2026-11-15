@@ -4,30 +4,63 @@ using Microsoft.VisualBasic.FileIO;
 
 namespace AxmolHub.Core;
 
-public enum TrashResultKind
+public enum FileOperationResultKind
 {
-    Moved,
+    Succeeded,
     Cancelled,
     Unsupported,
     Failed,
 }
 
-public sealed record TrashResult(TrashResultKind Kind, string? Error = null);
+public sealed record FileOperationResult(FileOperationResultKind Kind, string? Error = null);
 
-/// <summary>Moves one filesystem item to the host's trash without a permanent-delete fallback.</summary>
-public static partial class SystemTrash
+/// <summary>Uses the host's recycle API or explicit permanent deletion, according to the confirmed choice.</summary>
+public static partial class FileOperation
 {
 
-    public static async Task<TrashResult> MoveAsync(string path, CancellationToken cancellation = default)
+    /// <summary>Deletes only according to the confirmed policy; a failed recycle never falls back to deletion.</summary>
+    public static async Task<FileOperationResult> DeleteAsync(string path, bool useRecycleBin, CancellationToken cancellation = default)
     {
+        cancellation.ThrowIfCancellationRequested();
+        if (useRecycleBin) return await RecycleAsync(path, cancellation).ConfigureAwait(false);
+        try
+        {
+            await Task.Run(() =>
+            {
+                cancellation.ThrowIfCancellationRequested();
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(path); }
+                catch (FileNotFoundException) { return; }
+                catch (DirectoryNotFoundException) { return; }
+                if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(path, recursive: true);
+                else File.Delete(path);
+            }, cancellation).ConfigureAwait(false);
+            return new(FileOperationResultKind.Succeeded);
+        }
+        catch (OperationCanceledException ex) { return new(FileOperationResultKind.Cancelled, ex.Message); }
+        catch (Exception ex) { return new(FileOperationResultKind.Failed, ex.Message); }
+    }
+
+    private static async Task<FileOperationResult> RecycleAsync(string path, CancellationToken cancellation = default)
+    {
+        cancellation.ThrowIfCancellationRequested();
         path = Path.GetFullPath(path);
-        if (MoveHandlerForCheck is { } handler) return await handler(path, cancellation).ConfigureAwait(false);
+        if (RecycleHandlerForCheck is { } handler) return await handler(path, cancellation).ConfigureAwait(false);
         try
         {
             if (OperatingSystem.IsWindows())
             {
-                FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                return new(TrashResultKind.Moved);
+                await Task.Run(() =>
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    if (Directory.Exists(path))
+                        FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin,
+                            UICancelOption.ThrowException);
+                    else
+                        FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin,
+                            UICancelOption.ThrowException);
+                }, cancellation).ConfigureAwait(false);
+                return new(FileOperationResultKind.Succeeded);
             }
 
             if (OperatingSystem.IsMacOS())
@@ -42,7 +75,7 @@ public static partial class SystemTrash
                 start.ArgumentList.Add("--");
                 start.ArgumentList.Add(path);
                 using var process = Process.Start(start);
-                if (process is null) return new(TrashResultKind.Unsupported, "Could not start gio.");
+                if (process is null) return new(FileOperationResultKind.Unsupported, "Could not start gio.");
                 try
                 {
                     await process.WaitForExitAsync(cancellation).ConfigureAwait(false);
@@ -51,30 +84,30 @@ public static partial class SystemTrash
                 {
                     if (!process.HasExited) process.Kill(entireProcessTree: true);
                     await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                    return new(TrashResultKind.Cancelled, ex.Message);
+                    return new(FileOperationResultKind.Cancelled, ex.Message);
                 }
                 return process.ExitCode == 0
-                    ? new(TrashResultKind.Moved)
-                    : new(TrashResultKind.Failed, $"gio trash exited with code {process.ExitCode}.");
+                    ? new(FileOperationResultKind.Succeeded)
+                    : new(FileOperationResultKind.Failed, $"gio trash exited with code {process.ExitCode}.");
             }
 
-            return new(TrashResultKind.Unsupported, "The system trash is not supported on this platform.");
+            return new(FileOperationResultKind.Unsupported, "The system trash is not supported on this platform.");
         }
         catch (OperationCanceledException ex)
         {
-            return new(TrashResultKind.Cancelled, ex.Message);
+            return new(FileOperationResultKind.Cancelled, ex.Message);
         }
         catch (PlatformNotSupportedException ex)
         {
-            return new(TrashResultKind.Unsupported, ex.Message);
+            return new(FileOperationResultKind.Unsupported, ex.Message);
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
-            return new(TrashResultKind.Unsupported, ex.Message);
+            return new(FileOperationResultKind.Unsupported, ex.Message);
         }
         catch (Exception ex)
         {
-            return new(TrashResultKind.Failed, ex.Message);
+            return new(FileOperationResultKind.Failed, ex.Message);
         }
     }
 
@@ -88,7 +121,7 @@ public static partial class SystemTrash
         [DllImport(LibObjc, EntryPoint = "objc_msgSend")] private static extern nint Send(nint receiver, nint selector, nint argument);
         [DllImport(LibObjc, EntryPoint = "objc_msgSend")] private static extern byte Send(nint receiver, nint selector, nint first, ref nint second, ref nint third);
 
-        public static TrashResult Move(string path)
+        public static FileOperationResult Move(string path)
         {
             var pool = Send(objc_getClass("NSAutoreleasePool"), Sel("new"));
             try
@@ -99,11 +132,11 @@ public static partial class SystemTrash
                 nint destination = 0;
                 nint error = 0;
                 var moved = Send(manager, Sel("trashItemAtURL:resultingItemURL:error:"), url, ref destination, ref error);
-                if (moved != 0) return new(TrashResultKind.Moved);
+                if (moved != 0) return new(FileOperationResultKind.Succeeded);
 
                 var message = error == 0 ? "NSFileManager could not move this item to the Trash." :
                     Utf8(Send(error, Sel("localizedDescription")));
-                return new(TrashResultKind.Unsupported, message);
+                return new(FileOperationResultKind.Failed, message);
             }
             finally
             {

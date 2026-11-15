@@ -83,7 +83,40 @@ internal static class AiImagesChecks
         var rebuilt = store.List();
         if (rebuilt.Count(summary => summary.Id == album.Id) != 1 || !rebuilt.Any(summary => summary.Id == "legacy-no-images") || rebuilt.Count != 2)
             throw new Exception("Rebuilding the index from the files miscounted the sessions: " + string.Join(", ", rebuilt.Select(summary => summary.Id)));
-        store.Delete(album.Id);
+        // The recycle boundary must roll back all session-owned paths, not just keep an index row.
+        var undo = ChatUndoStore.DirectoryFor(imageRoot, album.Id)!;
+        Directory.CreateDirectory(undo);
+        File.WriteAllText(Path.Combine(undo, "before.txt"), "before");
+        var previousTrash = FileOperation.RecycleHandlerForCheck;
+        try
+        {
+            foreach (var kind in new[] { FileOperationResultKind.Unsupported, FileOperationResultKind.Failed, FileOperationResultKind.Cancelled })
+            {
+                FileOperation.RecycleHandlerForCheck = (_, _) => Task.FromResult(new FileOperationResult(kind, "fixture"));
+                var refused = await store.DeleteAsync(album.Id, true);
+                if (refused.Kind != kind || store.Load(album.Id) is null
+                    || store.ReadImage(album.Id, "1.png") is null || !File.Exists(Path.Combine(undo, "before.txt"))
+                    || !store.List().Any(row => row.Id == album.Id))
+                    throw new Exception("A failed or cancelled recycle lost a session, its attachments or undo copies.");
+            }
+            var sink = Path.Combine(imageRoot, "recycle-fixture-" + Guid.NewGuid().ToString("N"));
+            FileOperation.RecycleHandlerForCheck = (path, _) =>
+            {
+                Directory.Move(path, sink);
+                return Task.FromResult(new FileOperationResult(FileOperationResultKind.Succeeded));
+            };
+            var recycled = await store.DeleteAsync(album.Id, true);
+            if (recycled.Kind != FileOperationResultKind.Succeeded || !File.Exists(Path.Combine(sink, "conversation.json"))
+                || !File.Exists(Path.Combine(sink, "attachments", "1.png"))
+                || !File.Exists(Path.Combine(sink, "undo", "before.txt")) || !File.Exists(Path.Combine(sink, "restore.json"))
+                || store.List().Any(row => row.Id == album.Id) || store.Load("legacy-no-images") is null)
+                throw new Exception("Recycling did not retain the session bundle, or touched another session.");
+            store.Save(album);
+            store.SaveImage(album.Id, png);
+            FileOperation.RecycleHandlerForCheck = (_, _) => throw new Exception("Permanent deletion called the recycle bin.");
+            store.Delete(album.Id);
+        }
+        finally { FileOperation.RecycleHandlerForCheck = previousTrash; }
         if (File.Exists(Path.Combine(imageRoot, "ai", "sessions", album.Id + ".json")) || Directory.Exists(Path.Combine(imageRoot, "ai", "sessions", album.Id)))
             throw new Exception("A deleted session left its images behind in a directory nothing can reach again.");
         Console.WriteLine("PASS: attachments live beside the session file, keep their names across a reload, and go " + "with the session.");

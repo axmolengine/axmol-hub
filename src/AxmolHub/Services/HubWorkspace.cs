@@ -1062,7 +1062,7 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Move a managed engine directory to the system trash. Check availability and ask for confirmation
+    /// Delete a managed engine directory. Check availability and ask for confirmation
     /// before taking up the work; keep <see cref="RequireEngineAtRest"/> as the guard against moving a tree
     /// a transfer is still writing into.
     /// </summary>
@@ -1075,6 +1075,7 @@ public sealed partial class HubWorkspace : IDisposable
 
         EngineEntry engine;
         PackageEntry package;
+        bool? useRecycleBin;
         try
         {
             engine = RequiredEngine(requested);
@@ -1088,7 +1089,9 @@ public sealed partial class HubWorkspace : IDisposable
             }
 
             var prompt = string.Format(HubStrings.Get("UninstallPrompt"), engine.Version);
-            if (await HubDialog.ShowAsync(Owner, HubStrings.Get("Uninstall"), prompt, HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok)
+            useRecycleBin = await DeleteConfirmation.ShowAsync(Owner, HubStrings.Get("Uninstall"),
+                "Axmol " + engine.Version, engine.Path, prompt);
+            if (useRecycleBin is null)
             {
                 return;
             }
@@ -1103,9 +1106,10 @@ public sealed partial class HubWorkspace : IDisposable
         // was handed: every question that could change the answer has already been answered above.
         await ExecuteAsync("Uninstall engine", async token =>
         {
-            var result = await _installer.UninstallAsync(package, token);
-            if (result.Kind != TrashResultKind.Moved)
-                throw new IOException(string.Format(HubStrings.Get("UninstallFailed"), result.Error ?? ""));
+            var result = await _installer.UninstallAsync(package, token, useRecycleBin.Value);
+            if (result.Kind == FileOperationResultKind.Cancelled) return;
+            if (result.Kind != FileOperationResultKind.Succeeded)
+                throw new IOException(string.Format(HubStrings.Get("UninstallFailed"), DeleteConfirmation.FailureReason(result)));
             State.Engines.Remove(engine);
             if (State.DefaultEnginePath == engine.Path)
             {
@@ -1298,21 +1302,22 @@ public sealed partial class HubWorkspace : IDisposable
         return Task.CompletedTask;
     });
 
-    public async Task<bool> MoveProjectToTrashAsync(ProjectEntry project)
+    public async Task<bool> DeleteProjectAsync(ProjectEntry project, bool useRecycleBin = true)
     {
-        ValidateProjectTrashAvailability(project);
+        ValidateProjectDeleteAvailability(project);
 
         var moved = false;
-        await ExecuteAsync("Move project to Trash", async token =>
+        await ExecuteAsync("Delete project", async token =>
         {
-            ValidateProjectTrashPath(project);
+            ValidateProjectDeletePath(project);
             if (_launchedGames.TryGetValue(project.Path, out var pid) && ProcessRunner.IsRunning(pid))
                 throw new InvalidOperationException(HubStrings.Get("ProjectStillRunning"));
             if (PathEquals(_webPreviewProjectPath, project.Path))
                 throw new InvalidOperationException(HubStrings.Get("StopProjectPreviewFirst"));
-            var result = await SystemTrash.MoveAsync(project.Path, token);
-            if (result.Kind != TrashResultKind.Moved)
-                throw new IOException(string.Format(HubStrings.Get("MoveProjectToTrashFailed"), result.Error ?? ""));
+            var result = await FileOperation.DeleteAsync(project.Path, useRecycleBin, token);
+            if (result.Kind == FileOperationResultKind.Cancelled) return;
+            if (result.Kind != FileOperationResultKind.Succeeded)
+                throw new IOException(string.Format(HubStrings.Get("DeleteProjectFailed"), DeleteConfirmation.FailureReason(result)));
 
             State.Projects.Remove(project);
             try
@@ -1322,24 +1327,24 @@ public sealed partial class HubWorkspace : IDisposable
             catch (Exception ex)
             {
                 State.Projects.Add(project);
-                throw new IOException(HubStrings.Get("ProjectMovedButListSaveFailed"), ex);
+                throw new IOException(HubStrings.Get("ProjectDeletedButListSaveFailed"), ex);
             }
             moved = true;
         });
         return moved;
     }
 
-    public void ValidateProjectTrashAvailability(ProjectEntry project)
+    public void ValidateProjectDeleteAvailability(ProjectEntry project)
     {
         if (IsBusy) throw new InvalidOperationException(HubStrings.Get("DeepLinkBusy"));
-        ValidateProjectTrashPath(project);
+        ValidateProjectDeletePath(project);
         if (_launchedGames.TryGetValue(project.Path, out var pid) && ProcessRunner.IsRunning(pid))
             throw new InvalidOperationException(HubStrings.Get("ProjectStillRunning"));
         if (PathEquals(_webPreviewProjectPath, project.Path))
             throw new InvalidOperationException(HubStrings.Get("StopProjectPreviewFirst"));
     }
 
-    internal void ValidateProjectTrashPath(ProjectEntry project)
+    internal void ValidateProjectDeletePath(ProjectEntry project)
     {
         if (!State.Projects.Any(item => PathEquals(item.Path, project.Path)))
             throw new InvalidOperationException(HubStrings.Get("ProjectNoLongerRegistered"));
@@ -1347,16 +1352,16 @@ public sealed partial class HubWorkspace : IDisposable
         var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(project.Path));
         var root = Path.GetPathRoot(path);
         if (root is not null && PathEquals(path, Path.TrimEndingDirectorySeparator(root)))
-            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectTrashPath"));
+            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectDeletePath"));
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (IsSameOrParent(path, home) || IsSameOrParent(path, Store.Root))
-            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectTrashPath"));
+            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectDeletePath"));
 
         foreach (var engine in State.Engines)
         {
             if (IsSameOrParent(path, engine.Path))
-                throw new InvalidOperationException(HubStrings.Get("UnsafeProjectTrashPath"));
+                throw new InvalidOperationException(HubStrings.Get("UnsafeProjectDeletePath"));
         }
 
         foreach (var other in State.Projects)
@@ -1368,7 +1373,7 @@ public sealed partial class HubWorkspace : IDisposable
         if (!Directory.Exists(path))
             throw new DirectoryNotFoundException(path);
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectTrashPath"));
+            throw new InvalidOperationException(HubStrings.Get("UnsafeProjectDeletePath"));
     }
 
     private static bool PathEquals(string? left, string? right)

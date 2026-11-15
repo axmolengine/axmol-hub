@@ -25,6 +25,7 @@ internal sealed class ConversationRegistry(ConversationStore store)
 
     private readonly Dictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, object> _gates = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _unavailable = new(StringComparer.Ordinal);
 
     public IReadOnlyList<ConversationSummary> List() => store.List();
 
@@ -47,6 +48,7 @@ internal sealed class ConversationRegistry(ConversationStore store)
     {
         lock (_maintenance)
         {
+            if (_unavailable.Contains(id)) return null;
             if (_cache.TryGetValue(id, out var cached)) return cached;
             var conversation = store.Load(id);
             if (conversation is not null)
@@ -95,8 +97,30 @@ internal sealed class ConversationRegistry(ConversationStore store)
 
     public void Delete(string id)
     {
-        store.Delete(id);
-        Drop(id);
+        var result = DeleteAsync(id, false).GetAwaiter().GetResult();
+        if (result.Kind != FileOperationResultKind.Succeeded) throw new IOException(result.Error ?? "Conversation deletion failed.");
+    }
+
+    public async Task<FileOperationResult> DeleteAsync(string id, bool useRecycleBin)
+    {
+        // Wait out an admitted writer before staging. Late run callbacks must not recreate the transcript.
+        lock (Gate(id))
+        {
+            lock (_maintenance)
+            {
+                if (!_unavailable.Add(id)) return new(FileOperationResultKind.Cancelled);
+            }
+        }
+        try
+        {
+            var result = await store.DeleteAsync(id, useRecycleBin).ConfigureAwait(false);
+            if (result.Kind == FileOperationResultKind.Succeeded) Drop(id);
+            return result;
+        }
+        finally
+        {
+            lock (_maintenance) _unavailable.Remove(id);
+        }
     }
 
     /// <summary>
@@ -113,6 +137,8 @@ internal sealed class ConversationRegistry(ConversationStore store)
         if (conversation is null) return false;
         lock (Gate(id))
         {
+            lock (_maintenance) if (_unavailable.Contains(id)) return false;
+            if (!File.Exists(store.SessionFilePath(id))) return false;
             change(conversation);
             store.Save(conversation);
         }

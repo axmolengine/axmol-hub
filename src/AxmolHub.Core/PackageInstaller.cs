@@ -87,13 +87,13 @@ public sealed class PackageInstaller(DownloadManager downloads, string root, Act
         }
         finally { if (Directory.Exists(replacement)) Directory.Delete(replacement, recursive: true); }
     }
-    public async Task<TrashResult> UninstallAsync(PackageEntry package, CancellationToken cancellation = default)
+    public async Task<FileOperationResult> UninstallAsync(PackageEntry package, CancellationToken cancellation = default, bool useRecycleBin = true)
     {
         cancellation.ThrowIfCancellationRequested();
         var destination = VerifyOwned(package);
-        var result = await SystemTrash.MoveAsync(destination, cancellation);
-        if (result.Kind == TrashResultKind.Moved)
-            log($"Uninstalled: {destination}; moved to system trash.");
+        var result = await FileOperation.DeleteAsync(destination, useRecycleBin, cancellation);
+        if (result.Kind == FileOperationResultKind.Succeeded)
+            log($"Uninstalled: {destination}; {(useRecycleBin ? "moved to system trash" : "permanently deleted")}.");
         return result;
     }
     private string VerifyOwned(PackageEntry package)

@@ -251,23 +251,82 @@ public sealed class ConversationStore(string root)
         }
     }
 
-    /// <summary>Deletes a conversation and its index entry. Deleting an unknown id is not an error.</summary>
+    /// <summary>Permanent deletion for internal cleanup. User actions use the confirmed policy below.</summary>
     public void Delete(string id)
     {
+        var result = DeleteAsync(id, useRecycleBin: false).GetAwaiter().GetResult();
+        if (result.Kind != FileOperationResultKind.Succeeded) throw new IOException(result.Error ?? "Conversation deletion failed.");
+    }
+
+    /// <summary>Recycles one restorable bundle, or permanently deletes attachments before the transcript.
+    /// A rejected recycle restores the original paths and leaves the index untouched.</summary>
+    public async Task<FileOperationResult> DeleteAsync(string id, bool useRecycleBin, CancellationToken cancellation = default)
+    {
         var path = ConversationPath(id);
-        if (File.Exists(path)) File.Delete(path);
-        // The attachments live in a directory named after the session, and once the JSON is gone nothing can
-        // reach them again: a deleted conversation would otherwise leave its screenshots on the disk forever.
         var images = ImageDirectory(id);
-        if (Directory.Exists(images)) Directory.Delete(images, recursive: true);
+        var undo = ChatUndoStore.DirectoryFor(root, id)!;
+        var sources = new[] { images, undo, path };
+        FileOperationResult result;
+        if (useRecycleBin)
+        {
+            var bundle = Path.Combine(root, "ai", "deleted-sessions", SanitizeId(id) + "-" + Guid.NewGuid().ToString("N"));
+            var staged = new List<(string Source, string Destination)>();
+            Directory.CreateDirectory(bundle);
+            try
+            {
+                foreach (var source in sources)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    if (!File.Exists(source) && !Directory.Exists(source)) continue;
+                    var destination = Path.Combine(bundle, source == undo ? "undo" : source == images ? "attachments" : "conversation.json");
+                    if (Directory.Exists(source)) Directory.Move(source, destination);
+                    else File.Move(source, destination);
+                    staged.Add((source, destination));
+                }
+                StateStore.WriteJson(Path.Combine(bundle, "restore.json"), staged.Select(item => new
+                {
+                    OriginalPath = Path.GetRelativePath(root, item.Source),
+                    BundlePath = Path.GetFileName(item.Destination),
+                }).ToArray());
+                result = await FileOperation.DeleteAsync(bundle, true, cancellation).ConfigureAwait(false);
+                if (result.Kind != FileOperationResultKind.Succeeded) Restore();
+            }
+            catch
+            {
+                Restore();
+                throw;
+            }
+
+            void Restore()
+            {
+                foreach (var item in staged.AsEnumerable().Reverse())
+                {
+                    if (Directory.Exists(item.Destination)) Directory.Move(item.Destination, item.Source);
+                    else if (File.Exists(item.Destination)) File.Move(item.Destination, item.Source);
+                }
+                // Delete only our manifest and the now-empty staging directory, never a failed restore's data.
+                var manifest = Path.Combine(bundle, "restore.json");
+                if (File.Exists(manifest)) File.Delete(manifest);
+                if (Directory.Exists(bundle)) Directory.Delete(bundle);
+            }
+        }
+        else
+        {
+            result = new(FileOperationResultKind.Succeeded);
+            foreach (var source in sources)
+            {
+                result = await FileOperation.DeleteAsync(source, false, cancellation).ConfigureAwait(false);
+                if (result.Kind != FileOperationResultKind.Succeeded) return result;
+            }
+        }
+        if (result.Kind != FileOperationResultKind.Succeeded) return result;
         lock (_indexGate)
         {
             var index = List();
             index.RemoveAll(summary => summary.Id == id);
-            // Ordered like every other write: an unordered rewrite would reshuffle the list on a delete,
-            // which is the one operation the user never asked to reorder.
             WriteIndex(index);
         }
+        return result;
     }
 
     private List<ConversationSummary> RebuildIndex()

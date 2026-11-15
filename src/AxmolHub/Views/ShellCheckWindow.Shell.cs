@@ -37,7 +37,7 @@ internal sealed class ShellLayoutChecks
             Platform = "macos-arm64", Configuration = "Debug", ProjectType = "cpp",
         };
         var originalProjects = workspace.State.Projects.ToArray();
-        var previousHandler = SystemTrash.MoveHandlerForCheck;
+        var previousHandler = FileOperation.RecycleHandlerForCheck;
         var previousSuppressDialogs = workspace.SuppressDialogs;
         try
         {
@@ -49,12 +49,12 @@ internal sealed class ShellLayoutChecks
             Directory.CreateDirectory(nestedPath);
             var nested = new ProjectEntry { Name = "Nested fixture", Path = nestedPath };
             workspace.State.Projects.Add(nested);
-            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectTrashAvailability(project)),
+            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectDeleteAvailability(project)),
                 "项目目录包含另一条登记项目时拒绝整体回收");
             workspace.State.Projects.Remove(nested);
             var protectedRoot = new ProjectEntry { Name = "Protected data root", Path = workspace.Store.Root };
             workspace.State.Projects.Add(protectedRoot);
-            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectTrashAvailability(protectedRoot)),
+            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectDeleteAvailability(protectedRoot)),
                 "Hub 数据根登记项不能被移到系统回收站");
             workspace.State.Projects.Remove(protectedRoot);
 
@@ -62,30 +62,30 @@ internal sealed class ShellLayoutChecks
             Directory.CreateSymbolicLink(linkPath, projectPath);
             var linkProject = new ProjectEntry { Name = "Link fixture", Path = linkPath };
             workspace.State.Projects.Add(linkProject);
-            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectTrashAvailability(linkProject)),
+            Check(Throws<InvalidOperationException>(() => workspace.ValidateProjectDeleteAvailability(linkProject)),
                 "项目根目录是符号链接时拒绝回收");
             workspace.State.Projects.Remove(linkProject);
             Directory.Delete(linkPath);
             workspace.Store.Save(workspace.State);
-            SystemTrash.MoveHandlerForCheck = (_, _) => Task.FromResult(new TrashResult(TrashResultKind.Unsupported, "fixture failure"));
-            var failed = await workspace.MoveProjectToTrashAsync(project);
+            FileOperation.RecycleHandlerForCheck = (_, _) => Task.FromResult(new FileOperationResult(FileOperationResultKind.Unsupported, "fixture failure"));
+            var failed = await workspace.DeleteProjectAsync(project);
             Check(!failed && workspace.State.Projects.Contains(project) && Directory.Exists(projectPath),
                 "回收服务失败时项目目录和登记记录都保留");
 
-            SystemTrash.MoveHandlerForCheck = (path, _) =>
+            FileOperation.RecycleHandlerForCheck = (path, _) =>
             {
                 Directory.CreateDirectory(trashPath);
                 Directory.Move(path, Path.Combine(trashPath, Path.GetFileName(path)));
-                return Task.FromResult(new TrashResult(TrashResultKind.Moved));
+                return Task.FromResult(new FileOperationResult(FileOperationResultKind.Succeeded));
             };
-            var moved = await workspace.MoveProjectToTrashAsync(project);
+            var moved = await workspace.DeleteProjectAsync(project);
             Check(moved && !workspace.State.Projects.Contains(project)
                   && File.Exists(Path.Combine(trashPath, "trash-flow-project", "assets", "fixture.txt")),
                 "只有回收服务成功后项目记录才移出列表，整个目录进入回收站结果");
         }
         finally
         {
-            SystemTrash.MoveHandlerForCheck = previousHandler;
+            FileOperation.RecycleHandlerForCheck = previousHandler;
             workspace.SuppressDialogs = previousSuppressDialogs;
             workspace.State.Projects.Clear();
             workspace.State.Projects.AddRange(originalProjects);
@@ -644,11 +644,20 @@ internal sealed class ShellLayoutChecks
         projects.CreateDialogForCheck!.CancelForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Dispatcher.UIThread.RunJobs();
         Directory.CreateDirectory(projectA.Path);
-        projects.ShowTrashConfirmationForCheck(projectA);
-        projects.UpdateLayout();
-        Check(projects.OverlayVisibleForCheck && projects.TrashNameForCheck.Text == projectA.Name && projects.TrashPathForCheck.Text == projectA.Path && projects.CancelOverlayForCheck.IsFocused, "回收确认显示项目名和绝对路径，并将默认焦点留给取消");
-        projects.CloseOverlayForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Check(!projects.OverlayVisibleForCheck && Directory.Exists(projectA.Path) && shell.Workspace.State.Projects.Contains(projectA), "关闭回收确认等同取消，不触碰目录或项目记录");
+        _ = projects.ConfirmDeleteForCheckAsync(projectA);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var deleteView = shell.GetVisualDescendants().OfType<DeleteConfirmation>().Single();
+        Check(NamedDescendant<TextBlock>(deleteView, "ObjectName")?.Text == projectA.Name
+              && NamedDescendant<TextBlock>(deleteView, "ObjectPath")?.Text == projectA.Path
+              && NamedDescendant<CheckBox>(deleteView, "UseRecycleBin")?.IsChecked == true
+              && NamedDescendant<Button>(deleteView, "CancelButton")?.IsFocused == true,
+            "通用删除确认显示项目名和路径，默认勾选回收站并聚焦取消");
+        NamedDescendant<Button>(deleteView, "CloseButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
+        Check(!NamedDescendant<Grid>(shell, "DeleteOverlayHost")!.IsVisible
+              && Directory.Exists(projectA.Path) && shell.Workspace.State.Projects.Contains(projectA),
+            "关闭删除确认等同取消，不触碰目录或项目记录");
         shell.Workspace.State.Projects.Clear();
         shell.Workspace.State.Projects.AddRange(originalProjects);
         projects.Reload();

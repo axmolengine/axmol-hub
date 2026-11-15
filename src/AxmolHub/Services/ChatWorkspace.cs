@@ -613,6 +613,7 @@ public sealed partial class ChatWorkspace : IDisposable
     internal bool TryResolvePlanApproval(string conversationId, int turnIndex, string decision, out string? refusalKey,
         bool isGoal = false) => _sessions.TryResolvePlanApproval(conversationId, turnIndex, decision, out refusalKey, isGoal);
     public void DeleteConversation(string id) => _sessions.DeleteConversation(id);
+    public Task DeleteConversationAsync(string id, bool useRecycleBin) => _sessions.DeleteConversationAsync(id, useRecycleBin);
     /// <summary>Renames a conversation; an empty title is refused so a session can never lose its label.
     /// Renaming writes only the conversation file, so the pin and the messages are untouched. It goes through
     /// the registry rather than a reloaded copy because a session that is streaming keeps appending while the

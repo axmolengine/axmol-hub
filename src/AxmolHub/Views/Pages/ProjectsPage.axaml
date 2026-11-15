@@ -170,35 +170,5 @@
       </Border>
     </Grid>
 
-    <Grid x:Name="ProjectOverlay" IsVisible="False" ClipToBounds="True" Panel.ZIndex="10">
-      <Border Classes="settings-scrim" />
-      <Border x:Name="OverlayCard" Classes="settings-card" Width="760" MaxHeight="680"
-              HorizontalAlignment="Center" VerticalAlignment="Center" Padding="0">
-        <Grid RowDefinitions="56,*,Auto">
-          <Grid ColumnDefinitions="*,Auto" Margin="22,0,16,0">
-            <TextBlock x:Name="OverlayTitle" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <Button Grid.Column="1" x:Name="OverlayCloseButton" Classes="viewer-action" VerticalAlignment="Center"
-                    Content="×" Click="OnCloseOverlay" ToolTip.Tip="{DynamicResource CloseWindow}" />
-          </Grid>
-          <Border Grid.Row="1" BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="0,1,0,0">
-            <ScrollViewer x:Name="OverlayScrollViewer" VerticalScrollBarVisibility="Auto">
-              <Grid x:Name="OverlayContent" Margin="24,20">
-                <StackPanel x:Name="TrashConfirmPanel" Spacing="12" IsVisible="False">
-                  <TextBlock x:Name="TrashConfirmMessage" TextWrapping="Wrap" />
-                  <TextBlock x:Name="TrashProjectName" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  <TextBlock x:Name="TrashProjectPath" Classes="muted" TextWrapping="Wrap" />
-                </StackPanel>
-              </Grid>
-            </ScrollViewer>
-          </Border>
-          <StackPanel Grid.Row="2" x:Name="OverlayActions" Orientation="Horizontal" HorizontalAlignment="Right"
-                      Margin="16,12,20,16" Spacing="8">
-            <Button x:Name="OverlayCancelButton" Content="{DynamicResource Cancel}" Click="OnCloseOverlay"
-                    Classes="compact quiet" Margin="0" />
-            <Button x:Name="OverlayPrimaryButton" Classes="compact primary" Margin="0" Click="OnOverlayPrimary" />
-          </StackPanel>
-        </Grid>
-      </Border>
-    </Grid>
   </Grid>
 </UserControl>

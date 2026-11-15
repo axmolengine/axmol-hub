@@ -1324,6 +1324,10 @@
       <ContentControl x:Name="NewWorkspaceHost" />
     </Border>
   </Grid>
+  <Grid x:Name="DeleteOverlayHost" Grid.Row="1" Margin="0,0,0,28" IsVisible="False" ClipToBounds="True">
+    <Border Classes="settings-scrim" />
+    <ContentControl x:Name="DeleteConfirmationHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+  </Grid>
   <local:ToastPanel x:Name="ToastStack" Grid.Row="1" Margin="0,10,0,28" IsVisible="True"
                     IsHitTestVisible="True" ClipToBounds="True"
                     HorizontalAlignment="Stretch" VerticalAlignment="Top" Spacing="8" />

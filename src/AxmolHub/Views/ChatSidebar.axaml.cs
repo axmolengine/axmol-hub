@@ -720,7 +720,7 @@ public partial class ChatSidebar : UserControl
         {
             Header = HubStrings.Get("DeleteConversation"),
         };
-        deleteItem.Click += (_, _) => _chat.DeleteConversation(summary.Id);
+        deleteItem.Click += async (_, _) => await ConfirmDeleteConversationAsync(summary);
         menu.Items.Add(deleteItem);
 
         menuButton.Click += (_, _) => menu.ShowAt(menuButton);
@@ -742,6 +742,21 @@ public partial class ChatSidebar : UserControl
         row.Child = layout;
         row.Tag = summary.Id;
         return row;
+    }
+
+    private async System.Threading.Tasks.Task ConfirmDeleteConversationAsync(ConversationSummary summary)
+    {
+        if (_chat is null) return;
+        var owner = TopLevel.GetTopLevel(this) as Window;
+        var useRecycleBin = await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteConversation"),
+            summary.Title, null, HubStrings.Get("DeleteConversationPrompt"));
+        if (useRecycleBin is null) return;
+        try { await _chat.DeleteConversationAsync(summary.Id, useRecycleBin.Value); }
+        catch (Exception ex)
+        {
+            await HubDialog.ShowAsync(owner, HubStrings.Get("DeleteConversation"),
+                string.Format(HubStrings.Get("DeleteFailed"), ex.Message));
+        }
     }
 
     /// <summary>Copies one row-specific value and reports success without interrupting the person who copied it.</summary>

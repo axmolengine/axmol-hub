@@ -11,14 +11,8 @@ public partial class ProjectsPage : UserControl
     internal ComboBox PlatformFilterForCheck => PlatformFilter;
     internal Button SortForCheck => SortButton;
     internal Button NewProjectForCheck => NewProjectButton;
-    internal Button CloseOverlayForCheck => OverlayCloseButton;
-    internal Button CancelOverlayForCheck => OverlayCancelButton;
     internal NewProjectDialog? CreateDialogForCheck => _createDialog;
-    internal TextBlock TrashNameForCheck => TrashProjectName;
-    internal TextBlock TrashPathForCheck => TrashProjectPath;
-
-    internal void ShowTrashConfirmationForCheck(ProjectEntry project) => ShowTrashConfirmation(project);
-    internal bool OverlayVisibleForCheck => ProjectOverlay.IsVisible;
+    internal Task ConfirmDeleteForCheckAsync(ProjectEntry project) => ConfirmDeleteAsync(project);
 
     internal void SyncColumnsForCheck() => SyncColumns();
 }

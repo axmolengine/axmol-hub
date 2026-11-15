@@ -3,6 +3,8 @@ using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using AxmolHub.Core;
@@ -896,8 +898,17 @@ internal sealed class ShellAssistantChecks
         Check(sidebar.ConversationCount == 1 && panel.BubbleCount == 0,
             "删除当前会话只清除该记录（实际会话 " + sidebar.ConversationCount + "，气泡 " + panel.BubbleCount + "）");
         sidebar.SearchForCheck("");
-        Check(sidebar.DeleteConversationFromMenuForCheck(second.Id) && sidebar.ConversationCount == 0,
-            "通过会话操作菜单删除指定的历史对话");
+        var openedDelete = sidebar.DeleteConversationFromMenuForCheck(second.Id);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var sessionDeleteView = shell.GetVisualDescendants().OfType<DeleteConfirmation>().Single();
+        Check(openedDelete && sidebar.ConversationCount == 1
+              && NamedDescendant<CheckBox>(sessionDeleteView, "UseRecycleBin")?.IsChecked == true,
+            "会话菜单先显示默认勾选回收站的通用确认，不立即删除");
+        NamedDescendant<CheckBox>(sessionDeleteView, "UseRecycleBin")!.IsChecked = false;
+        NamedDescendant<Button>(sessionDeleteView, "ConfirmButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => sidebar.ConversationCount == 0);
+        Check(sidebar.ConversationCount == 0, "确认后通过会话操作菜单删除指定的历史对话");
 
         // ── New-conversation (+) reuses an existing empty session instead of stacking empties ──
         shell.ClickAssistantNewForCheck();

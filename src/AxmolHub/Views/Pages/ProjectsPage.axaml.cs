@@ -43,8 +43,6 @@ public partial class ProjectsPage : UserControl
     private readonly HubWorkspace _workspace;
     private bool _ready;
     private int _sortMode;
-    private ProjectEntry? _pendingTrash;
-    private string _overlayMode = "";
     private NewProjectDialog? _createDialog;
     private string _draftName = "HelloAxmol";
     private string _draftLocation = "";
@@ -89,7 +87,6 @@ public partial class ProjectsPage : UserControl
         ProjectsGrid.SizeChanged += (_, _) => SyncColumns();
         ProjectsGrid.AddHandler(InputElement.DoubleTappedEvent, OnProjectDoubleTapped, RoutingStrategies.Bubble);
         ProjectsGrid.AddHandler(InputElement.KeyDownEvent, OnProjectsKeyDown, RoutingStrategies.Tunnel);
-        AddHandler(InputElement.KeyDownEvent, OnOverlayKeyDown, RoutingStrategies.Tunnel);
         OpenExistingButton.Click += OnOpenExisting;
         NewProjectButton.Click += OnNewProject;
         Reload();
@@ -248,9 +245,9 @@ public partial class ProjectsPage : UserControl
         var remove = new MenuItem { Header = HubStrings.Get("RemoveFromList") };
         remove.Click += async (_, _) => await _workspace.RemoveProjectAsync(project);
         menu.Items.Add(remove);
-        var trash = new MenuItem { Header = HubStrings.Get("MoveProjectToTrash"), Classes = { "danger" } };
-        trash.Click += (_, _) => ShowTrashConfirmation(project);
-        menu.Items.Add(trash);
+        var delete = new MenuItem { Header = HubStrings.Get("DeleteProject"), Classes = { "danger" } };
+        delete.Click += async (_, _) => await ConfirmDeleteAsync(project);
+        menu.Items.Add(delete);
         menu.ShowAt(button);
 
         void Add(string key, Func<Task> action, bool enabled = true)
@@ -261,67 +258,21 @@ public partial class ProjectsPage : UserControl
         }
     }
 
-    private void ShowTrashConfirmation(ProjectEntry project)
+    private async Task ConfirmDeleteAsync(ProjectEntry project)
     {
-        try { _workspace.ValidateProjectTrashAvailability(project); }
-        catch (Exception ex) { _ = HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("MoveProjectToTrash"), ex.Message); return; }
-        _pendingTrash = project;
-        _overlayMode = "trash";
-        TrashConfirmPanel.IsVisible = true;
-        OverlayTitle.Text = HubStrings.Get("MoveProjectToTrash");
-        TrashConfirmMessage.Text = HubStrings.Get("MoveProjectToTrashPrompt");
-        TrashProjectName.Text = project.Name;
-        TrashProjectPath.Text = project.Path;
-        OverlayPrimaryButton.Content = HubStrings.Get("MoveProjectToTrash");
-        OverlayPrimaryButton.Classes.Add("danger");
-        OverlayPrimaryButton.IsEnabled = true;
-        OverlayCancelButton.IsEnabled = true;
-        ProjectOverlay.IsVisible = true;
-        SyncOverlaySize();
-        OverlayCancelButton.Focus();
-    }
-
-    private async void OnOverlayPrimary(object? sender, RoutedEventArgs e)
-    {
-        if (_overlayMode != "trash" || _pendingTrash is not { } project) return;
-        OverlayPrimaryButton.IsEnabled = false;
-        OverlayCancelButton.IsEnabled = false;
+        var owner = TopLevel.GetTopLevel(this) as Window;
         try
         {
-            var moved = await _workspace.MoveProjectToTrashAsync(project);
-            if (!moved)
-            {
-                OverlayPrimaryButton.IsEnabled = true;
-                OverlayCancelButton.IsEnabled = true;
-                return;
-            }
-            CloseOverlay();
-            Reload();
+            _workspace.ValidateProjectDeleteAvailability(project);
+            var useRecycleBin = await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteProject"),
+                project.Name, project.Path, HubStrings.Get("DeleteProjectPrompt"));
+            if (useRecycleBin is null) return;
+            if (await _workspace.DeleteProjectAsync(project, useRecycleBin.Value)) Reload();
         }
         catch (Exception ex)
         {
-            await HubDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, HubStrings.Get("MoveProjectToTrash"), ex.Message);
-            OverlayPrimaryButton.IsEnabled = true;
-            OverlayCancelButton.IsEnabled = true;
+            await HubDialog.ShowAsync(owner, HubStrings.Get("DeleteProject"), ex.Message);
         }
-    }
-
-    private void OnCloseOverlay(object? sender, RoutedEventArgs e) => CloseOverlay();
-
-    private void CloseOverlay()
-    {
-        ProjectOverlay.IsVisible = false;
-        _overlayMode = "";
-        _pendingTrash = null;
-        OverlayPrimaryButton.Classes.Remove("danger");
-        OverlayCancelButton.IsEnabled = true;
-    }
-
-    private void OnOverlayKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (!ProjectOverlay.IsVisible || e.Key != Key.Escape) return;
-        CloseOverlay();
-        e.Handled = true;
     }
 
     private void OnClearFilters(object? sender, RoutedEventArgs e)
@@ -421,10 +372,4 @@ public partial class ProjectsPage : UserControl
 
     private void ReloadDevices() { }
 
-    private void SyncOverlaySize()
-    {
-        var available = Bounds;
-        OverlayCard.Width = Math.Clamp(available.Width - 32, 360, 760);
-        OverlayCard.MaxHeight = Math.Max(300, available.Height - 32);
-    }
 }

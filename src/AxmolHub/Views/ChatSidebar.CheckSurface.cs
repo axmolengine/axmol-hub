@@ -186,7 +186,7 @@ public partial class ChatSidebar : UserControl
         if (deleteItem is null)
             return false;
         deleteItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        return _chat.Conversations.All(summary => summary.Id != id);
+        return true;
     }
 
     /// <summary>Archives a session through its own row menu and answers whether it left the live list. There is
