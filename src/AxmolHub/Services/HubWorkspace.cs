@@ -593,7 +593,7 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     /// <summary>Cancellable while a change is running (previously had to avoid non-interruptible steps like the MSVC installer; that path has been handed back to the engine). The assistant's command is not in this set: its ✕ is the one on the reply, and stopping Hub's bookkeeping while the process kept building would report a cancellation that never happened.</summary>
-    public bool CanCancel => _tasks.ActiveMutating is not null;
+    public bool CanCancel => _tasks.ActiveMutating is { CanCancel: true };
 
     /// <summary>
     /// Runs one download on <see cref="TaskQueue"/> instead of under the exclusive lock, and gives it

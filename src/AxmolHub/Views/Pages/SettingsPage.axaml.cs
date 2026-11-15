@@ -25,7 +25,7 @@ namespace AxmolHub;
 /// verified empirically), so <c>--verify-shell</c> really switches the language once and reads back
 /// the controls' text.
 ///
-/// Switching the data root is handled by the shell (<see cref="MainWindow.SwitchDataRoot"/>): it
+/// Switching the data root is handled by the shell (<see cref="MainWindow.SwitchDataRootAsync"/>): it
 /// only rebuilds the workspace and pages, **not the window** — so this doesn't depend on the shell
 /// shape. The page here only "asks the user for a directory".
 /// </summary>
@@ -41,7 +41,7 @@ public partial class SettingsPage : UserControl
     private readonly Action _languageChanged;
 
     /// <summary>Asks the shell to switch the data root. Returns whether it actually switched.</summary>
-    private readonly Func<string, bool> _switchDataRoot;
+    private readonly Func<string, Task<bool>> _switchDataRoot;
 
     /// <summary>Asks the shell to switch the theme (persist → apply → revert on failure). Returns null on
     /// success, the error message on failure. The shell owns the sequence: the bottom menu's appearance
@@ -109,7 +109,7 @@ public partial class SettingsPage : UserControl
         _chat = null!;
         _openFolder = _ => { };
         _languageChanged = () => { };
-        _switchDataRoot = _ => false;
+        _switchDataRoot = _ => Task.FromResult(false);
         _applyTheme = _ => null;
 
         InitializeComponent();
@@ -122,7 +122,7 @@ public partial class SettingsPage : UserControl
         ChatWorkspace chat,
         Action<string> openFolder,
         Action languageChanged,
-        Func<string, bool> switchDataRoot,
+        Func<string, Task<bool>> switchDataRoot,
         Func<string, string?> applyTheme)
     {
         _workspace = workspace;
@@ -845,7 +845,7 @@ public partial class SettingsPage : UserControl
                 return;
             }
 
-            _switchDataRoot(picked.Path!);
+            await _switchDataRoot(picked.Path!);
         }
         catch (Exception ex)
         {

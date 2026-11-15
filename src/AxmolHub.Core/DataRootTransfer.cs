@@ -21,7 +21,8 @@ public sealed class DataRootTransfer : IDisposable
         return profileEntries.Any(name => parts[1] == name || parts[1].StartsWith(name + ".", StringComparison.Ordinal));
     }
 
-    public static DataRootTransfer Copy(string source, string destination)
+    public static DataRootTransfer Copy(string source, string destination,
+        CancellationToken cancellationToken = default, IProgress<DownloadProgress>? progress = null)
     {
         source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
         destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
@@ -39,10 +40,12 @@ public sealed class DataRootTransfer : IDisposable
             var directories = new List<string>();
             void Scan(string directory)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("Linked data directories cannot be relocated automatically: " + directory);
                 foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var relative = Path.GetRelativePath(source, entry).Replace('\\', '/');
                     if (Excluded(relative)) continue;
                     var attributes = File.GetAttributes(entry);
@@ -60,17 +63,36 @@ public sealed class DataRootTransfer : IDisposable
             // Preflight all conflicts before copying. Existing identical files permit retry, never overwrite.
             foreach (var directory in directories)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 CheckParents(Path.Combine(directory, ".relocation-probe"));
             }
             foreach (var (input, output) in files)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 CheckParents(output);
-                if (Directory.Exists(output) || File.Exists(output) && !Equal(input, output))
+                if (Directory.Exists(output) || File.Exists(output) && !Equal(input, output, cancellationToken))
                     throw new IOException("The destination contains different data; nothing was overwritten: " + output);
             }
-            foreach (var directory in directories) transfer.EnsureDirectory(directory);
+            long copied = 0;
+            var total = files.Where(file => !File.Exists(file.Target)).Sum(file => new FileInfo(file.Source).Length);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            long lastReport = -100;
+            void Report(bool force = false)
+            {
+                if (!force && clock.ElapsedMilliseconds - lastReport < 100) return;
+                lastReport = clock.ElapsedMilliseconds;
+                progress?.Report(new DownloadProgress(copied, total, copied / Math.Max(clock.Elapsed.TotalSeconds, 0.001)));
+            }
+            Report(true);
+            foreach (var directory in directories)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                transfer.EnsureDirectory(directory);
+            }
+            var buffer = new byte[128 * 1024];
             foreach (var (input, output) in files)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (File.Exists(output)) continue;
                 transfer.EnsureDirectory(Path.GetDirectoryName(output)!);
                 // CreateNew refuses a file appearing after preflight. Rollback owns only files created by this copy.
@@ -78,11 +100,21 @@ public sealed class DataRootTransfer : IDisposable
                 {
                     transfer._createdFiles.Add(output);
                     using var origin = File.OpenRead(input);
-                    origin.CopyTo(target);
+                    int read;
+                    while ((read = origin.Read(buffer)) > 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        target.Write(buffer, 0, read);
+                        copied += read;
+                        Report();
+                    }
                     target.Flush(true);
                 }
-                if (!Equal(input, output)) throw new IOException("Data changed during relocation; please retry after work has stopped: " + input);
+                if (!Equal(input, output, cancellationToken)) throw new IOException("Data changed during relocation; please retry after work has stopped: " + input);
             }
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(true);
+            cancellationToken.ThrowIfCancellationRequested();
             return transfer;
         }
         catch { transfer.Dispose(); throw; }
@@ -101,12 +133,23 @@ public sealed class DataRootTransfer : IDisposable
         return Path.Combine(Path.GetFullPath(destination), Path.GetRelativePath(root, full));
     }
 
-    private static bool Equal(string first, string second)
+    private static bool Equal(string first, string second, CancellationToken token)
     {
         if (new FileInfo(first).Length != new FileInfo(second).Length) return false;
-        using var a = File.OpenRead(first);
-        using var b = File.OpenRead(second);
-        return SHA256.HashData(a).AsSpan().SequenceEqual(SHA256.HashData(b));
+        byte[] Hash(string path)
+        {
+            using var stream = File.OpenRead(path);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[128 * 1024];
+            int read;
+            while ((read = stream.Read(buffer)) > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                hash.AppendData(buffer, 0, read);
+            }
+            return hash.GetHashAndReset();
+        }
+        return Hash(first).AsSpan().SequenceEqual(Hash(second));
     }
 
     private static void CheckParents(string path)

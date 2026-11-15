@@ -166,6 +166,19 @@ internal static class OpenAiChecks
             && new ProviderStore(authRoot).Load().Single().Id == "relocation-provider"
             && new ModelListStore(authRoot).Load().Single().Models.Contains("kept-model"),
             "relocation preserves sessions while providers and their model catalog stay in the shared profile");
+        var cancelledRoot = Path.Combine(scratch, "cancelled-data");
+        using (var cancelCopy = new CancellationTokenSource())
+        {
+            var cancelled = false;
+            try
+            {
+                using var copy = DataRootTransfer.Copy(shared.DataRoot, cancelledRoot, cancelCopy.Token,
+                    new InlineProgress<DownloadProgress>(reading => { if (reading.Bytes > 0) cancelCopy.Cancel(); }));
+            }
+            catch (OperationCanceledException) { cancelled = true; }
+            Check(cancelled && File.Exists(sessionFile) && !Directory.Exists(cancelledRoot),
+                "cancelling a partially copied relocation rolls back new files without changing the source");
+        }
         var rollbackRoot = Path.Combine(scratch, "rollback-data");
         using (DataRootTransfer.Copy(shared.DataRoot, rollbackRoot)) { }
         Check(!File.Exists(Path.Combine(rollbackRoot, "ai", "sessions", "kept.json")),

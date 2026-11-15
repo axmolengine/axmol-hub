@@ -146,6 +146,18 @@ internal sealed partial class TaskQueue
         /// <summary>Some changes require fresh user confirmation or inspection of partial files before another attempt.</summary>
         public bool Retryable { get; init; } = true;
 
+        /// <summary>Root relocation must not overlap any other task, including transfers.</summary>
+        public bool Exclusive { get; init; }
+        public bool CancellationSealed { get; private set; }
+        public bool CanCancel => IsActive && !CancellationSealed;
+
+        /// <summary>The durable commit cannot be interrupted after the final cancellation check.</summary>
+        public void SealCancellation()
+        {
+            CancellationSealed = true;
+            OnProgress?.Invoke();
+        }
+
         /// <summary>
         /// The stage the work itself named, as a copy key — a compile saying 编译代码 or 打包应用. Set from
         /// <see cref="ApplyProgress"/> out of the task's own output, and it outranks the phase word in
@@ -425,6 +437,7 @@ internal sealed partial class TaskQueue
             StepCurrent = null;
             StepTotal = null;
             StartedAt = null;
+            CancellationSealed = false;
             _completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
@@ -556,8 +569,11 @@ internal sealed partial class TaskQueue
         Action<Item>? onFinished = null,
         TaskKind kind = TaskKind.Transfer,
         bool listed = true,
-        bool retryable = true)
+        bool retryable = true,
+        bool exclusive = false)
     {
+        if (_items.Any(item => item.IsActive && item.Exclusive)
+            || exclusive && _items.Any(item => item.IsActive)) return null;
         if (FindActive(identity) is not null)
         {
             return null;
@@ -583,6 +599,7 @@ internal sealed partial class TaskQueue
             Kind = kind,
             Listed = listed,
             Retryable = retryable,
+            Exclusive = exclusive,
         };
         _items.Add(item);
         Publish();
@@ -601,6 +618,7 @@ internal sealed partial class TaskQueue
             return;
         }
 
+        if (item.CancellationSealed) return;
         if (item.CancelAction is { } cancel)
         {
             cancel();
@@ -625,7 +643,8 @@ internal sealed partial class TaskQueue
     /// </summary>
     public void Retry(Item item)
     {
-        if (!item.Retryable || item.State is not (Phase.Failed or Phase.Cancelled))
+        if (_items.Any(other => other.IsActive && (other.Exclusive || item.Exclusive))
+            || !item.Retryable || item.State is not (Phase.Failed or Phase.Cancelled))
         {
             return;
         }

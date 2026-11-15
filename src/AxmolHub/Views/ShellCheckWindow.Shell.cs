@@ -336,7 +336,22 @@ internal sealed class ShellLayoutChecks
         var previousLogLine = shell.ActivityLogTextForCheck.Split('\n')
             .Single(line => line.Contains(previousLogMarker, StringComparison.Ordinal));
 
-        var changed = shell.SwitchDataRoot(next);
+        var cancelledRoot = ScratchDirectory.Resolve("shell-check-switch-cancel", Guid.NewGuid().ToString("N"));
+        var cancelledMigration = shell.SwitchDataRootAsync(cancelledRoot);
+        // A log write from the UI while the worker is copying must buffer, never wait on its lock.
+        shell.Workspace.Log.Write("UI remains responsive during relocation");
+        TaskQueue.Instance.Cancel("data:relocate");
+        Check(!await cancelledMigration && shell.Workspace.Store.Root == new StateStore(scratchRoot).Root
+            && new PreferencesStore(preferencesPath).Load().DataRoot != cancelledRoot,
+            "取消迁移后通用任务恢复旧工作区与设置，UI 日志写入不等待复制线程");
+        var migration = shell.SwitchDataRootAsync(next);
+        var queuedMigration = TaskQueue.Instance.FindActive("data:relocate");
+        var listedMigration = queuedMigration is { Exclusive: true, Listed: true, Kind: TaskQueue.TaskKind.Mutating };
+        var concurrent = TaskQueue.Instance.Enqueue("migration-conflict", "TaskRelocateData", null,
+            (_, _) => Task.CompletedTask);
+        Check(listedMigration && concurrent is null && !migration.IsCompleted,
+            "数据迁移进入通用任务队列并让出 UI 线程，独占任务拒绝并发写入");
+        var changed = await migration;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
@@ -389,14 +404,17 @@ internal sealed class ShellLayoutChecks
             "迁移后新根保留引擎登记、会话正文与全部提供商（不是切到空数据集）");
 
         // Switching to the same directory should be a no-op — otherwise every confirm click rebuilds all pages for nothing.
-        Check(!shell.SwitchDataRoot(next) && ReferenceEquals(shell.CurrentPage, installs),
+        Check(!await shell.SwitchDataRootAsync(next) && ReferenceEquals(shell.CurrentPage, installs),
             "切到同一个目录时什么也不做（返回 false，页面实例不变）");
 
         // A drive root must be rejected: treating a whole drive as the data directory would create tools/ and logs/ inside it.
-        Check(Throws<System.IO.IOException>(() => shell.SwitchDataRoot(System.IO.Path.GetPathRoot(nextRoot)!)),
+        var refusedRoot = false;
+        try { await shell.SwitchDataRootAsync(System.IO.Path.GetPathRoot(nextRoot)!); }
+        catch (System.IO.IOException) { refusedRoot = true; }
+        Check(refusedRoot,
             "拒绝把数据根切到盘符根目录（抛 IOException，而不是把整个盘当成数据目录）");
 
-        shell.SwitchDataRoot(scratchRoot);
+        await shell.SwitchDataRootAsync(scratchRoot);
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.Workspace.Store.Root == new StateStore(scratchRoot).Root,

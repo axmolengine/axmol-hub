@@ -62,7 +62,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// The AI assistant page's state. **One instance for the window's whole life**, created before the page
     /// is: it persists providers/conversations under the data root, so unlike <see cref="HubWorkspace"/>
-    /// it must survive a data-root switch's decision point — see <see cref="SwitchDataRoot"/>.
+    /// it must survive a data-root switch's decision point — see <see cref="SwitchDataRootAsync"/>.
     /// </summary>
     private ChatWorkspace _chat;
 
@@ -300,6 +300,11 @@ public partial class MainWindow : Window
 
     internal async Task HandleInstallLinkAsync(string value)
     {
+        if (_relocatingData)
+        {
+            await HubDialog.ShowAsync(this, HubStrings.Get("DeepLinkTitle"), HubStrings.Get("WaitForOperation"));
+            return;
+        }
         if (EngineInstallLink.IsActivation(value))
         {
             ActivateFromRequest();
@@ -783,6 +788,7 @@ public partial class MainWindow : Window
 
     private void OpenConversationFromAttention(string conversationId)
     {
+        if (_relocatingData) return;
         // Every route that lands here named its own conversation — an action key, a body link, a deeplink — so
         // the remembered target has been overtaken. Left standing, it would replay this jump on the next
         // ordinary raise, long after the notification it belonged to.
@@ -1426,7 +1432,7 @@ public partial class MainWindow : Window
             _log.IsVisible = _item.Kind == TaskQueue.TaskKind.Mutating;
             // A finished row keeps no cancel: there is nothing left to stop, and a button that answers to
             // nothing is the thing this shell already refused to do in the version picker.
-            _cancel.IsVisible = _item.IsActive;
+            _cancel.IsVisible = _item.CanCancel;
             // A cancelled row used to get *neither* button — no retry and no dismiss — which left it as a
             // row nothing could act on or remove (it only ever left on the next Enqueue's cleanup). Cancel
             // settles work the same way failure does, and both settle states offer the same two ways out.
@@ -1458,7 +1464,7 @@ public partial class MainWindow : Window
     /// </summary>
     /// <returns>Whether it actually switched. Does nothing when the target equals the current
     /// root.</returns>
-    internal bool SwitchDataRoot(string directory)
+    internal async Task<bool> SwitchDataRootAsync(string directory)
     {
         // Switching is forbidden while an operation is running: the operation holds the old root's
         // downloader, log, and toolchain directories, and switching mid-run would make it write into
@@ -1469,58 +1475,96 @@ public partial class MainWindow : Window
             throw new InvalidOperationException(HubStrings.Get("WaitForOperation"));
         }
 
-        var path = PreferencesStore.VerifyDirectory(directory);
+        var path = Path.GetFullPath(directory);
         if (path.Equals(_workspace.Store.Root, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        // Persist first, then switch. Once switched there's no going back to the old instance, so a
-        // failed write must surface the error in place, on the old state — otherwise the UI would
-        // point at the new root while the settings file still says the old root, silently reverting
-        // on the next launch.
-        // Validate/import before saving the new root or tearing down the old workspace. A failed import
-        // leaves the current UI and settings usable; no authentication write ever falls back to the data root.
-        // Providers are global. Import from the current root, never replace them with the destination's list.
-        var layout = StorageLayout(_workspace.Store.Root);
-        if (!_isolatedAuthForChecks)
-        {
-            var secrets = AxmolHub.Agent.SecretStoreFactory.Create(layout);
-            AxmolHub.Agent.SecretStoreFactory.PrepareAuthentication(layout, secrets);
-            ProviderSettingsMigration.Import(layout);
-            _ = StorageLayout(path);
-        }
-        // Freeze this instance's append-only log through the copy and hand late writers to the replacement.
-        var oldLog = _workspace.Log;
-        using var pausedLog = oldLog.PauseWrites();
-        using var indexGate = _workspace.Store.LockIndex();
-        using var transfer = DataRootTransfer.Copy(_workspace.Store.Root, path);
-        var previous = _preferences.DataRoot;
-        var previousProjects = _preferences.ProjectDirectory;
-        var originalState = _workspace.Store.Load();
-        var relocatedState = _workspace.Store.Load();
-        relocatedState.RelocatePaths(_workspace.Store.Root, path);
-        _preferences.DataRoot = path;
-        _preferences.ProjectDirectory = DataRootTransfer.RebasePath(previousProjects, _workspace.Store.Root, path);
-        try
-        {
-            _workspace.Store.Save(relocatedState);
-            _preferencesStore.Save(_preferences);
-        }
-        catch
-        {
-            _preferences.DataRoot = previous;
-            _preferences.ProjectDirectory = previousProjects;
-            _workspace.Store.Save(originalState);
-            throw;
-        }
+        _ = StorageLayout(path);
+        var source = _workspace;
+        var layout = StorageLayout(source.Store.Root);
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<HubPreferences>(
+            System.Text.Json.JsonSerializer.Serialize(_preferences))!;
+        var completed = false;
+        var item = TaskQueue.Instance.Enqueue("data:relocate", "TaskRelocateData", path,
+            async (task, token) =>
+            {
+                SetRelocationInputsEnabled(false);
+                CloseSettings();
+                CloseNewWorkspace();
+                using var pausedLog = source.Log.PauseWrites();
+                try
+                {
+                    var progress = new Progress<DownloadProgress>(reading =>
+                    {
+                        if (task.State == TaskQueue.Phase.Running) task.ReportBytes(reading);
+                    });
+                    await Task.Run(() =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        PreferencesStore.VerifyDirectory(path);
+                        if (!_isolatedAuthForChecks)
+                        {
+                            var secrets = AxmolHub.Agent.SecretStoreFactory.Create(layout);
+                            AxmolHub.Agent.SecretStoreFactory.PrepareAuthentication(layout, secrets);
+                            ProviderSettingsMigration.Import(layout);
+                        }
+                        using var indexGate = source.Store.LockIndex();
+                        using var transfer = DataRootTransfer.Copy(source.Store.Root, path, token, progress);
+                        token.ThrowIfCancellationRequested();
+                        // The commit is short and non-cancellable. No thread-affine lease crosses an await.
+                        Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            token.ThrowIfCancellationRequested();
+                            task.SealCancellation();
+                            task.MarkFinalizing();
+                        }).GetAwaiter().GetResult();
+                        var originalState = source.Store.Load();
+                        var relocatedState = source.Store.Load();
+                        relocatedState.RelocatePaths(source.Store.Root, path);
+                        snapshot.DataRoot = path;
+                        snapshot.ProjectDirectory = DataRootTransfer.RebasePath(snapshot.ProjectDirectory, source.Store.Root, path);
+                        try
+                        {
+                            source.Store.Save(relocatedState);
+                            _preferencesStore.Save(snapshot);
+                        }
+                        catch
+                        {
+                            source.Store.Save(originalState);
+                            throw;
+                        }
+                        transfer.Commit();
+                    }, token);
+                    _preferences.DataRoot = snapshot.DataRoot;
+                    _preferences.ProjectDirectory = snapshot.ProjectDirectory;
+                    var nextWorkspace = new HubWorkspace(path, _preferences, _preferencesStore, StorageLayout(path).AuthRoot);
+                    source.Log.RedirectTo(nextWorkspace.Log);
+                    ReplaceWorkspace(nextWorkspace);
+                    completed = true;
+                    ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));
+                }
+                finally { SetRelocationInputsEnabled(true); }
+            }, kind: TaskQueue.TaskKind.Mutating, retryable: false, exclusive: true);
+        if (item is null) throw new InvalidOperationException(HubStrings.Get("WaitForOperation"));
+        await item.Completion;
+        if (item.Fault is { } fault) throw fault;
+        return completed;
+    }
 
-        transfer.Commit();
-        var nextWorkspace = new HubWorkspace(path, _preferences, _preferencesStore, StorageLayout(path).AuthRoot);
-        oldLog.RedirectTo(nextWorkspace.Log);
-        ReplaceWorkspace(nextWorkspace);
-        ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));
-        return true;
+    private bool _relocatingData;
+
+    private void SetRelocationInputsEnabled(bool enabled)
+    {
+        _relocatingData = !enabled;
+        // Keep the title bar, status strip and queue popup alive, but freeze data-writing surfaces.
+        Sidebar.IsEnabled = enabled;
+        PageHost.IsEnabled = enabled;
+        InspectorHost.IsEnabled = enabled;
+        InspectorExpandContent.IsEnabled = enabled;
+        AssistantNewButton.IsEnabled = enabled;
+        ConversationTitleZone.IsEnabled = enabled;
     }
 
     private void ReplaceWorkspace(HubWorkspace next)

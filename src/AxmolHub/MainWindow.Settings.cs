@@ -83,13 +83,14 @@ public partial class MainWindow
     private SettingsPage EnsureSettings()
         => _settings ??= new SettingsPage(
             _workspace, _preferencesStore, _preferences, _chat,
-            OpenFolder, ApplyLanguage, SwitchDataRoot, UseTheme);
+            OpenFolder, ApplyLanguage, SwitchDataRootAsync, UseTheme);
 
     /// <summary>Opens the card. <paramref name="category"/> lands it somewhere specific — what a caller that
     /// already knows which group answers its question should say so instead of dropping the reader on the
     /// first row; <c>null</c> reopens on the row they left.</summary>
     internal void OpenSettings(string? category = null)
     {
+        if (_relocatingData) return;
         CloseNewWorkspace();
         var page = EnsureSettings();
         if (SettingsPage.IsCategory(category))

@@ -8,11 +8,15 @@ public sealed class HubLog
     public event Action<string>? Written;
     private HubLog? _redirect;
 
-    /// <summary>Keep the active file stable while it is copied; waiting writers follow the replacement log.</summary>
+    private readonly List<string> _pending = [];
+    private int _pauses;
+
+    /// <summary>Keep the active file stable without blocking UI writers across a background copy.
+    /// Buffered lines flush to the replacement on success or the original log after cancellation.</summary>
     internal IDisposable PauseWrites()
     {
-        Monitor.Enter(gate);
-        return new WriteLease(gate);
+        lock (gate) _pauses++;
+        return new WriteLease(this);
     }
 
     internal void RedirectTo(HubLog replacement)
@@ -20,9 +24,20 @@ public sealed class HubLog
         lock (gate) _redirect = replacement;
     }
 
-    private sealed class WriteLease(object gate) : IDisposable
+    private sealed class WriteLease(HubLog owner) : IDisposable
     {
-        public void Dispose() => Monitor.Exit(gate);
+        private bool _disposed;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            lock (owner.gate)
+            {
+                if (--owner._pauses != 0) return;
+                foreach (var message in owner._pending) owner.Write(message);
+                owner._pending.Clear();
+            }
+        }
     }
     public HubLog(string folder)
     {
@@ -37,6 +52,7 @@ public sealed class HubLog
         var line = $"{DateTimeOffset.Now:O} {TextEol.ToLf(message)}";
         lock (gate)
         {
+            if (_pauses > 0) { _pending.Add(message); return; }
             if (_redirect is { } replacement) { replacement.Write(message); return; }
             File.AppendAllText(FilePath, line + "\n");
         }
