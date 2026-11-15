@@ -67,7 +67,7 @@ public readonly record struct WorkspacePath(
 /// has to name the location itself — a grant <i>above</i> it does not count, because a home directory is granted
 /// for the project inside it and not for Hub's records. See <see cref="WorkspacePaths.CoversProtected"/>.</para>
 /// </summary>
-public sealed record WorkspaceGuards(string? DataRoot, IReadOnlyList<string> EngineRoots);
+public sealed record WorkspaceGuards(string? DataRoot, IReadOnlyList<string> EngineRoots, string? AuthRoot = null);
 
 /// <summary>Which protected location a path sits in. Named separately from "protected or not" because the grant
 /// card has to tell a person what they are opening: Hub's own records, an engine's installation, or one
@@ -493,7 +493,8 @@ public static class WorkspacePaths
             ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         // A root, or an ancestor containing another authorized/protected root, is never a manageable item.
         var protectedRoots = sandbox.Roots.Concat(guards.EngineRoots)
-            .Concat(guards.DataRoot is { Length: > 0 } dataRoot ? [dataRoot] : []);
+            .Concat(guards.DataRoot is { Length: > 0 } dataRoot ? [dataRoot] : [])
+            .Concat(guards.AuthRoot is { Length: > 0 } authRoot ? [authRoot] : []);
         foreach (var root in protectedRoots)
         {
             try
@@ -615,6 +616,9 @@ public static class WorkspacePaths
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         fullPath = Path.GetFullPath(fullPath);
+        if (IsInside(fullPath, guards.AuthRoot, comparison)
+            && !(guards.DataRoot is { } data && IsManagedProjectPath(fullPath, data, comparison)))
+            return (ProtectedKind.DataRoot, guards.AuthRoot!);
         if (IsInside(fullPath, guards.DataRoot, comparison)
             && !IsManagedProjectPath(fullPath, guards.DataRoot!, comparison))
             return (ProtectedKind.DataRoot, guards.DataRoot!);

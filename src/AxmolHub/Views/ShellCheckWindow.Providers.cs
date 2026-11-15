@@ -558,7 +558,7 @@ internal sealed class ShellProvidersChecks
         // Loading legacy multi-account metadata must never delete the unused secrets.
         var retainedRoot = Path.Combine(scratchRoot, "retained-credentials");
         using (var setup = new ChatWorkspace(retainedRoot)) setup.AddPreset("openai");
-        var retainedSecrets = AxmolHub.Agent.SecretStoreFactory.Create(retainedRoot);
+        var retainedSecrets = AxmolHub.Agent.SecretStoreFactory.Create(HubStorageLayout.Legacy(retainedRoot));
         var retainedStore = new CredentialStore(retainedRoot, retainedSecrets);
         var older = new ProviderCredential { Id = "fixture-older", ProviderId = "openai", Secret = "fixture-old", CreatedAt = DateTimeOffset.UnixEpoch };
         var newer = new ProviderCredential { Id = "fixture-newer", ProviderId = "openai", Secret = "fixture-new", CreatedAt = DateTimeOffset.UnixEpoch.AddDays(1) };
@@ -583,7 +583,7 @@ internal sealed class ShellProvidersChecks
         // instance in this process answers from its own copy. Anything asserting what is really stored — or
         // standing in for another process — has to ask a new instance: the copy one already holds is that
         // process's view of the store, not the store itself.
-        ISecretStore Stored(string root) => AxmolHub.Agent.SecretStoreFactory.Create(root);
+        ISecretStore Stored(string root) => AxmolHub.Agent.SecretStoreFactory.Create(HubStorageLayout.Legacy(root));
 
         var planLogoutRoot = Path.Combine(scratchRoot, "plan-logout");
         using (var setup = new ChatWorkspace(planLogoutRoot)) setup.AddPreset("openai");

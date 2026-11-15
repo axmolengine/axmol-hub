@@ -12,24 +12,26 @@ internal sealed partial class ChatProviderCoordinator
     internal ChatSessionCoordinator Sessions { private get; set; } = null!;
     internal ChatExecutionCoordinator Execution { private get; set; } = null!;
 
-    internal ChatProviderCoordinator(string dataRoot)
+    internal ChatProviderCoordinator(HubStorageLayout layout)
     {
-        _dataRoot = dataRoot;
+        _authRoot = layout.AuthRoot;
         try
         {
-            _secrets = SecretStoreFactory.Create(dataRoot);
+            _secrets = SecretStoreFactory.Create(layout);
         }
         catch (PlatformNotSupportedException)
         {
             _secrets = null;
         }
 
-        _providers = new ProviderStore(dataRoot);
-        _credentials = new CredentialStore(dataRoot, _secrets ?? new NoSecretStore());
-        _modelLists = new ModelListStore(dataRoot);
+        if (_secrets is not null) SecretStoreFactory.PrepareAuthentication(layout, _secrets);
+
+        _providers = new ProviderStore(layout.DataRoot);
+        _credentials = new CredentialStore(layout.AuthRoot, _secrets ?? new NoSecretStore());
+        _modelLists = new ModelListStore(layout.DataRoot);
     }
 
-    private readonly string _dataRoot;
+    private readonly string _authRoot;
     private readonly ProviderStore _providers;
     private readonly CredentialStore _credentials;
     internal HttpClient? ModelListTransportOverride => _modelListHttp;
@@ -374,7 +376,7 @@ internal sealed partial class ChatProviderCoordinator
             provider.ModelCapabilities = ReportedCapabilities(cached?.Capabilities);
         }
         provider.OpenAiTokenProvider = provider.IsOpenAiPlan && provider.Credential is { } credential && _secrets is not null
-            ? new OpenAiDynamicTokenSession(provider, credential, _secrets, OpenAiDynamicTokenExchange.Create(), _dataRoot).GetAsync
+            ? new OpenAiDynamicTokenSession(provider, credential, _secrets, OpenAiDynamicTokenExchange.Create(), _authRoot).GetAsync
             : null;
     }
 
@@ -643,7 +645,7 @@ internal sealed partial class ChatProviderCoordinator
     {
         if (_secrets is null) throw new InvalidOperationException("Secret storage is unavailable.");
         await using var credentialLock = previous is not null && selected is not null
-            ? await OpenAiDynamicTokenSession.LockCredentialAsync(_dataRoot, selected.Id, cancellationToken)
+            ? await OpenAiDynamicTokenSession.LockCredentialAsync(_authRoot, selected.Id, cancellationToken)
             : null;
         if (!_providerList.Contains(provider) || !ReferenceEquals(provider.Credential, selected)
             || (previous is not null && (selected?.Secret != observedSecret
@@ -740,7 +742,7 @@ internal sealed partial class ChatProviderCoordinator
                 var previous = !provider.IsOpenAiPlan ? null
                     : selected?.HasSecret == true ? OpenAiTokens.Decode(observedSecret!)
                     : selected?.OpenAiRegistration?.AuthorizationContext();
-                var hostId = previous?.HostId ?? new OpenAiHostIdStore(_dataRoot).GetOrCreate();
+                var hostId = previous?.HostId ?? new OpenAiHostIdStore(_authRoot).GetOrCreate();
                 var tokens = await new OpenAiDynamicLogin(OpenAiDynamicTokenExchange.Create()).SignInAsync(
                     hostId, previous, attempt => openAiProgress?.Invoke(attempt), url => { BrowserOpener(url); }, cancellationToken);
                 if (!_providerList.Contains(provider) || !ReferenceEquals(provider.Credential, selected))
@@ -1112,7 +1114,7 @@ internal sealed partial class ChatProviderCoordinator
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == "openai");
         if (provider?.IsOpenAiOAuth != true || provider.Credential is not { } credential || _secrets is null)
             return (false, false);
-        await using var credentialLock = await OpenAiDynamicTokenSession.LockCredentialAsync(_dataRoot, credential.Id, cancellationToken);
+        await using var credentialLock = await OpenAiDynamicTokenSession.LockCredentialAsync(_authRoot, credential.Id, cancellationToken);
         if (!ReferenceEquals(provider.Credential, credential)) return (false, false);
         var persisted = _secrets.Read(credential.Id);
         OpenAiTokens? tokens = null;

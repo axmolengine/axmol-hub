@@ -78,11 +78,12 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 | 内容 | 位置 |
 | --- | --- |
 | 安装目录（Velopack 管理） | `%LocalAppData%\dev.axmol.hubapp\` |
-| 设置与数据根 | `%LocalAppData%\AxmolHub\` |
+| 设置与鉴权文件 | `%LocalAppData%\AxmolHub\` |
+| 新安装默认业务数据根 | `%USERPROFILE%\.axmolhub\`（旧安装保留原业务数据位置；鉴权独立迁移） |
 
 引擎与工具链是 GB 级的，因此放 `LocalApplicationData` 而不是漫游 `AppData`。`--data-root` 与 `--preferences` 仍可覆盖，验收测试正是靠它们把数据指到工作区内。
 
-`packId`（`dev.axmol.hubapp`）是安装与更新身份，必须跨版本保持不变，Velopack 才会将后续安装识别为现有应用的更新；公开下载资产前缀则由独立的 `assetPrefix`（`axmol-hub`）控制。用户数据目录仍为 `%LocalAppData%\AxmolHub\`，独立于 Velopack 会整体替换或删除的安装目录。
+`packId`（`dev.axmol.hubapp`）是安装与更新身份，必须跨版本保持不变，Velopack 才会将后续安装识别为现有应用的更新；公开下载资产前缀则由独立的 `assetPrefix`（`axmol-hub`）控制。设置与鉴权文件目录仍为 `%LocalAppData%\AxmolHub\`；新安装的业务数据默认在 `%USERPROFILE%\.axmolhub\`，旧安装的业务数据不迁移，鉴权一次性复制到固定用户目录，原文件不删除。两者均独立于 Velopack 会整体替换或删除的安装目录。
 
 这次将已发布应用身份从 `Axmol.Hub` 切换为 `dev.axmol.hubapp`，Velopack 会把它视为另一个应用，旧安装不会被原位升级；安装前建议先从 Windows“已安装的应用”中卸载旧版。卸载旧版不会删除 `%LocalAppData%\AxmolHub\` 用户数据。此后必须保持 `dev.axmol.hubapp` 不变；`assetPrefix=axmol-hub` 继续保证公开下载资产名不变。
 

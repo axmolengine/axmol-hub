@@ -51,19 +51,14 @@ internal sealed record HubHostOptions(
         || VerifyShellReport is not null || VerifyOpsReport is not null || Gallery;
 
     /// <summary>
-    /// Settings and data root live in the per-user directory, **not** next to
-    /// AppContext.BaseDirectory: Velopack replaces the whole current\ under the install directory
-    /// on update, and deletes the entire install directory on uninstall.
-    /// Engines and toolchains are gigabyte-scale, so use LocalApplicationData rather than roaming
-    /// AppData.
+    /// Settings and authentication stay in the platform user directory, never next to the executable.
+    /// New business data lives in ~/.axmolhub; existing installs retain their business data location.
     /// </summary>
-    public static string UserDirectory => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create),
-        "AxmolHub");
+    public static string UserDirectory => HubStorageLayout.UserDirectory;
 
     public static string DefaultPreferencesPath => System.IO.Path.Combine(UserDirectory, "hub-settings.json");
 
-    public static string DefaultDataRoot => System.IO.Path.Combine(UserDirectory, "data");
+    public static string DefaultDataRoot => HubStorageLayout.DefaultDataRoot;
 
     public static string? DeepLinkArgument(string[] args)
         => args.FirstOrDefault(argument => argument.StartsWith(EngineInstallLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
@@ -75,7 +70,8 @@ internal sealed record HubHostOptions(
     /// passed", and the settings file value would be permanently overridden by the default.
     /// </summary>
     public string ResolveDataRoot(HubPreferences preferences)
-        => System.IO.Path.GetFullPath(DataRootArgument ?? preferences.DataRoot ?? DefaultDataRoot);
+        => System.IO.Path.GetFullPath(DataRootArgument ?? preferences.DataRoot
+            ?? (preferences.UseHomeDataDirectory ? DefaultDataRoot : HubStorageLayout.LegacyDataRoot));
 
     /// <summary>
     /// <c>--check-secrets [scratch-dir]</c>: the secret store's headless self-check. Handled in

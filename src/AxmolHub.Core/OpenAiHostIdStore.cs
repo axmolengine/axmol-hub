@@ -1,6 +1,6 @@
 namespace AxmolHub.Core;
 
-/// <summary>Persists the opaque identifier for the ChatGPT plan usage host in this data root.</summary>
+/// <summary>Persists the opaque identifier for the ChatGPT plan usage host in the authentication root.</summary>
 public sealed class OpenAiHostIdStore(string root)
 {
     private string PathName => Path.Combine(root, "ai", "openai-host-id");

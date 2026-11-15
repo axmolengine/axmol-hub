@@ -9,6 +9,10 @@ public sealed class HubPreferences
     public string Theme { get; set; } = HubTheme.DefaultTheme;
 
     public string? DataRoot { get; set; }
+
+    /// <summary>New installs use ~/.axmolhub for business data. Absent in old settings: false preserves their
+    /// original default data path. Authentication is always independent of this choice.</summary>
+    public bool UseHomeDataDirectory { get; set; }
     public string? ProjectDirectory { get; set; }
 
     /// <summary>

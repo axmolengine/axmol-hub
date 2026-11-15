@@ -63,7 +63,7 @@ internal static class OpenAiChecks
     public static async Task MetadataWorkerAsync(string root, string[] args)
     {
         var id = args[^1];
-        var store = new CredentialStore(root, new MacKeychainSecretStore(root, new KeychainFake()));
+        var store = new CredentialStore(root, new MacKeychainSecretStore(HubStorageLayout.Legacy(root).KeychainService, new KeychainFake()));
         var credentials = store.Load();
         File.WriteAllText(Path.Combine(root, id + ".ready"), "ready");
         var until = DateTime.UtcNow.AddSeconds(20);
@@ -80,34 +80,103 @@ internal static class OpenAiChecks
     {
         var scratch = Path.Combine(root, "openai-" + Guid.NewGuid().ToString("N"));
         var api = new KeychainFake();
-        var store = new MacKeychainSecretStore(scratch, api);
+        var layout = HubStorageLayout.Legacy(scratch);
+        var store = new MacKeychainSecretStore(layout.KeychainService, api);
         Check(store.Read("a") is null, "missing Keychain item is absent");
         store.Write("a", "first"); store.Write("a", "updated");
         Check(store.Read("a") == "updated" && api.Adds == 1 && api.Updates == 2, "Keychain creates then updates one generic password");
         store.Write("b", "second");
-        Check(api.Adds == 1 && new MacKeychainSecretStore(scratch, api).Read("b") == "second",
+        Check(api.Adds == 1 && new MacKeychainSecretStore(layout.KeychainService, api).Read("b") == "second",
             "every credential shares the same Keychain item");
         api.Add(store.Service, "legacy-id", "legacy-secret");
-        Check(new MacKeychainSecretStore(scratch, api).Read("legacy-id") == "legacy-secret"
+        Check(new MacKeychainSecretStore(layout.KeychainService, api).Read("legacy-id") == "legacy-secret"
             && api.Read(store.Service, "legacy-id").Status == MacKeychainSecretStore.NotFound,
             "an item left by the previous per-credential layout is folded into the bundle and removed");
-        Check(store.Service != new MacKeychainSecretStore(scratch + "-other", api).Service,
-            "different data roots use different Keychain services");
-        Check(store.Service == new MacKeychainSecretStore(Path.Combine(scratch, "."), api).Service,
-            "normalized data roots share their Keychain service");
+        var legacyIdentity = Path.TrimEndingDirectorySeparator(Path.GetFullPath(scratch)).Normalize(NormalizationForm.FormC);
+        var legacyService = "dev.axmol.hub." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(legacyIdentity))).ToLowerInvariant();
+        Check(store.Service == legacyService && layout.AuthRoot == layout.DataRoot
+            && store.Service != HubStorageLayout.Legacy(scratch + "-other").KeychainService
+            && store.Service == HubStorageLayout.Legacy(Path.Combine(scratch, ".")).KeychainService,
+            "legacy layouts retain the original normalized path hash and storage location");
+        var authRoot = Path.Combine(scratch, "user", "AxmolHub");
+        var shared = HubStorageLayout.Resolve(Path.Combine(scratch, "business"), authRoot);
+        var moved = HubStorageLayout.Resolve(Path.Combine(scratch, "moved"), authRoot + "-moved");
+        var sharedStore = new MacKeychainSecretStore(shared.KeychainService, api);
+        sharedStore.Write("shared", "shared-secret");
+        Check(shared.KeychainService == "dev.axmol.hub" && MacKeychainSecretStore.Account == "hub-secrets"
+            && new MacKeychainSecretStore(moved.KeychainService, api).Read("shared") == "shared-secret"
+            && sharedStore.Read("b") is null && store.Read("b") == "second",
+            "shared identity survives moving data and auth paths without adopting or deleting legacy items");
+        var oldSettingsPath = Path.Combine(scratch, "old-settings.json");
+        StateStore.WriteJson(oldSettingsPath, new { DataRoot = scratch });
+        Check(HubStorageLayout.UseHomeDataForNewInstall(false, false)
+            && !HubStorageLayout.UseHomeDataForNewInstall(true, false)
+            && !HubStorageLayout.UseHomeDataForNewInstall(false, true)
+            && !new PreferencesStore(oldSettingsPath).Load().UseHomeDataDirectory,
+            "only a fresh install changes its default business data location");
+        var sharedMetadata = new CredentialStore(shared.AuthRoot, sharedStore);
+        sharedMetadata.Save([new ProviderCredential { Id = "shared", ProviderId = "openai", Label = "shared" }], false);
+        var sharedGuards = new WorkspaceGuards(shared.DataRoot, [], shared.AuthRoot);
+        var sharedPath = Path.Combine(shared.AuthRoot, "ai", "credentials.json");
+        Check(File.Exists(sharedPath) && !Directory.Exists(shared.DataRoot)
+            && sharedMetadata.Load().Single().Secret == "shared-secret"
+            && !WorkspacePaths.ResolveWrite(WorkspaceSandbox.For(scratch), sharedPath, sharedGuards).IsAllowed,
+            "shared credential metadata stays outside business data and remains protected from workspace writes");
+        // Migration is a data-integrity boundary: exercise it offline, including failure and replay.
+        var oldRoot = Path.Combine(scratch, "old-data");
+        var importLayout = HubStorageLayout.Resolve(oldRoot, authRoot);
+        var oldService = HubStorageLayout.Legacy(oldRoot).KeychainService;
+        var imported = new ProviderCredential { Id = "imported", ProviderId = "openai", Label = "old account" };
+        new CredentialStore(oldRoot, store).Save([imported], false);
+        api.Add(oldService, imported.Id, "old-secret");
+        var oldJson = File.ReadAllText(Path.Combine(oldRoot, "ai", "credentials.json"));
+        ISecretStore OldSource() => new MacKeychainSecretStore(oldService, api, readOnly: true);
+        api.Status = -25308;
+        await Fails(() => { ProviderAuthMigration.Import(importLayout, OldSource, sharedStore); return Task.CompletedTask; },
+            "migration fails explicitly when the source is locked instead of opening a legacy writer");
+        Check(!File.Exists(Path.Combine(authRoot, "ai", "auth-imports.json"))
+            && File.ReadAllText(Path.Combine(oldRoot, "ai", "credentials.json")) == oldJson,
+            "a failed migration records no completion and leaves source metadata unchanged");
+        api.Status = 0;
+        ProviderAuthMigration.Import(importLayout, OldSource, sharedStore);
+        Check(new CredentialStore(authRoot, sharedStore).Load().Any(c => c.Id == "imported" && c.Secret == "old-secret")
+            && api.Read(oldService, imported.Id).Value == "old-secret"
+            && api.Read(oldService, MacKeychainSecretStore.Account).Status == MacKeychainSecretStore.NotFound
+            && File.ReadAllText(Path.Combine(oldRoot, "ai", "credentials.json")) == oldJson,
+            "migration copies to fixed storage without changing source metadata or adopting legacy Keychain items");
+        var importedStore = new CredentialStore(authRoot, sharedStore);
+        var importedList = importedStore.Load();
+        importedList.RemoveAll(c => c.Id == "imported");
+        importedStore.DeleteSecret("imported");
+        importedStore.Save(importedList, false);
+        ProviderAuthMigration.Import(importLayout, () => throw new Exception("Source reopened after completed import."), sharedStore);
+        Check(!new CredentialStore(authRoot, sharedStore).Load().Any(c => c.Id == "imported") && sharedStore.Read("imported") is null,
+            "completed imports never resurrect a credential removed from fixed storage");
+        var conflictRoot = Path.Combine(scratch, "conflict-data");
+        new CredentialStore(conflictRoot, store).Save([new ProviderCredential { Id = "shared", ProviderId = "openai", Label = "shared" }], false);
+        var conflictService = HubStorageLayout.Legacy(conflictRoot).KeychainService;
+        api.Add(conflictService, "shared", "different-secret");
+        await Fails(() =>
+        {
+            ProviderAuthMigration.Import(HubStorageLayout.Resolve(conflictRoot, authRoot),
+                () => new MacKeychainSecretStore(conflictService, api, readOnly: true), sharedStore);
+            return Task.CompletedTask;
+        }, "migration refuses a conflicting target secret");
+        Check(sharedStore.Read("shared") == "shared-secret", "migration conflicts never overwrite the existing secret");
+
         store.Delete("a"); store.Delete("a");
         Check(store.Read("a") is null && store.Descriptor.Persists, "Keychain delete is idempotent and backend persists");
         var metadata = new ProviderCredential { Id = "a", ProviderId = "openai", AuthKind = "openaiOAuth", Secret = "secret" };
         new CredentialStore(scratch, store).Save([metadata]);
         api.Status = -25308;
-        Check(new CredentialStore(scratch, new MacKeychainSecretStore(scratch, api)).Load().Single() is { Id: "a", Secret: null }, "locked Keychain preserves credential metadata on startup");
+        Check(new CredentialStore(scratch, new MacKeychainSecretStore(layout.KeychainService, api)).Load().Single() is { Id: "a", Secret: null }, "locked Keychain preserves credential metadata on startup");
         await Fails(() => { store.Write("a", "replacement"); return Task.CompletedTask; }, "locked Keychain writes fail explicitly");
         await Fails(() => { store.Delete("a"); return Task.CompletedTask; }, "denied Keychain deletion fails explicitly");
         api.Status = 0;
         store.Delete("a");
         if (native && OperatingSystem.IsMacOS())
         {
-            var real = new MacKeychainSecretStore(scratch);
+            var real = new MacKeychainSecretStore("dev.axmol.hub.test." + Guid.NewGuid().ToString("N"));
             try
             {
                 real.Write("native-check", "unicode-秘密\nline2");

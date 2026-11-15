@@ -25,7 +25,7 @@ internal sealed class ShellCheckFixture : IDisposable
 
     internal static string PreferencesPathFor(string dataRoot) => System.IO.Path.Combine(dataRoot, "hub-settings.json");
     internal static MainWindow NewShell(string dataRoot)
-        => new(dataRoot, new PreferencesStore(PreferencesPathFor(dataRoot)), new HubPreferences());
+        => new(dataRoot, new PreferencesStore(PreferencesPathFor(dataRoot)), new HubPreferences(), isolatedAuthForChecks: true);
     internal static void PrepareDataRoot(string scratchRoot)
     {
         var store = new StateStore(scratchRoot);

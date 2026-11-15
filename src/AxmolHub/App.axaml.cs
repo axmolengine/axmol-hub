@@ -114,7 +114,17 @@ public partial class App : Application
         // demand, so building the window first and loading after would leave a batch of labels
         // resolved to null — with no error, just blank. The WPF version uses the same order.
         var preferencesStore = new PreferencesStore(Options.PreferencesPath);
+        var settingsExist = File.Exists(Options.PreferencesPath);
         var preferences = preferencesStore.Load();
+        // Choose the default business data location once. Authentication always uses the fixed user directory.
+        // Explicit test/development profiles stay isolated; drive runs must not alter the real settings.
+        if (!settingsExist && !Options.IsAutomation && !Options.IsDrive
+            && Options.PreferencesPath == HubHostOptions.DefaultPreferencesPath)
+        {
+            preferences.UseHomeDataDirectory = HubStorageLayout.UseHomeDataForNewInstall(
+                settingsExist, Directory.Exists(HubStorageLayout.LegacyDataRoot));
+            preferencesStore.Save(preferences);
+        }
 
         // Opt-in diagnostic recording of the bytes that actually leave on each model request. Set before any
         // client is built so the first request of the run is already covered. A relative name lands under the
@@ -335,7 +345,8 @@ public partial class App : Application
         // The settings store and settings object are handed to the shell together: changing the
         // language in the settings page must be persisted back to the same store and object,
         // otherwise the preferences cached in the shell would diverge from disk.
-        var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences);
+        var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences,
+            isolatedAuthForChecks: Options.IsAutomation);
         UpdateService.Instance.WriteLog = window.WriteLog;
         desktop.MainWindow = window;
         desktop.Exit += (_, _) => window.StopTaskbarProgress();

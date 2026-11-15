@@ -163,8 +163,14 @@ public partial class MainWindow : Window
     {
     }
 
+    private readonly bool _isolatedAuthForChecks;
+
     public MainWindow(string dataRoot, PreferencesStore preferencesStore, HubPreferences preferences)
+        : this(dataRoot, preferencesStore, preferences, isolatedAuthForChecks: false) { }
+
+    internal MainWindow(string dataRoot, PreferencesStore preferencesStore, HubPreferences preferences, bool isolatedAuthForChecks)
     {
+        _isolatedAuthForChecks = isolatedAuthForChecks;
         // Set in code, not in MainWindow.axaml: Avalonia 12's WindowIcon has no type converter, so
         // `Icon="avares://…"` would fail at XAML load time.
         Icon = HubAppIcon.CreateWindowIcon();
@@ -172,7 +178,7 @@ public partial class MainWindow : Window
         _preferences = preferences;
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
         _workspace.Owner = this;
-        _chat = new ChatWorkspace(dataRoot);
+        _chat = new ChatWorkspace(StorageLayout(dataRoot));
         // Diagnostic before Initialize: the macOS channel reports its environment note (for example "not inside
         // an .app bundle") from Initialize, and a sink attached afterwards would lose the one line that explains
         // why no banner will ever arrive.
@@ -1433,6 +1439,9 @@ public partial class MainWindow : Window
         };
     }
 
+    private HubStorageLayout StorageLayout(string root)
+        => _isolatedAuthForChecks ? HubStorageLayout.Legacy(root) : HubStorageLayout.Resolve(root);
+
     /// <summary>
     /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
     /// up a <c>MainWindow</c> and closes the old one because its state, pages, and log are all bound
@@ -1465,6 +1474,14 @@ public partial class MainWindow : Window
         // failed write must surface the error in place, on the old state — otherwise the UI would
         // point at the new root while the settings file still says the old root, silently reverting
         // on the next launch.
+        // Validate/import before saving the new root or tearing down the old workspace. A failed import
+        // leaves the current UI and settings usable; no authentication write ever falls back to the data root.
+        var layout = StorageLayout(path);
+        if (!_isolatedAuthForChecks)
+        {
+            var secrets = AxmolHub.Agent.SecretStoreFactory.Create(layout);
+            AxmolHub.Agent.SecretStoreFactory.PrepareAuthentication(layout, secrets);
+        }
         var previous = _preferences.DataRoot;
         _preferences.DataRoot = path;
         try
@@ -1503,12 +1520,12 @@ public partial class MainWindow : Window
         // reconstruct them.
         _pages.Clear();
 
-        // The assistant's providers and conversations also live under the data root, so it must be rebuilt
+        // Provider configuration and conversations live under the data root, so the assistant must be rebuilt
         // for the new one and the page (if it was ever built) dropped with it — otherwise the assistant would
         // keep listing the previous root's conversations and saving new ones into a directory that is no
         // longer current. Rebuilding rather than re-pointing mirrors how the pages are handled.
         _chat.Dispose();
-        _chat = new ChatWorkspace(next.Store.Root);
+        _chat = new ChatWorkspace(StorageLayout(next.Store.Root));
         WireChatSeams();
         WireChatRuns();
         UpdateChatRunsStatus();

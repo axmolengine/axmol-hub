@@ -14,11 +14,16 @@ public sealed partial class ChatWorkspace : IDisposable
     private readonly ChatProviderCoordinator _providers;
     private readonly ChatSessionCoordinator _sessions;
     private readonly ChatExecutionCoordinator _execution;
-    public ChatWorkspace(string dataRoot)
+    /// <summary>Isolated legacy fixtures only. Product windows supply the resolved shared layout explicitly.</summary>
+    internal ChatWorkspace(string dataRoot) : this(HubStorageLayout.Legacy(dataRoot)) { }
+
+    public ChatWorkspace(HubStorageLayout layout)
     {
+        var dataRoot = layout.DataRoot;
         _sessions = new ChatSessionCoordinator(dataRoot);
-        _providers = new ChatProviderCoordinator(dataRoot);
+        _providers = new ChatProviderCoordinator(layout);
         _execution = new ChatExecutionCoordinator(dataRoot);
+        _execution.AuthRoot = layout.AuthRoot == layout.DataRoot ? null : layout.AuthRoot;
         _providers.Sessions = _sessions;
         _providers.Execution = _execution;
         _sessions.Providers = _providers;
@@ -28,7 +33,7 @@ public sealed partial class ChatWorkspace : IDisposable
         // The store owns the guards: they decide which half a grant is written into as well as how a recovered
         // batch is graded, and the two answers disagreeing is what put a read-only grant back into the writable
         // half on the next save.
-        _sessions.Registry.Store.GuardsProvider = () => new WorkspaceGuards(dataRoot, _execution.EngineRootsProvider?.Invoke() ?? []);
+        _sessions.Registry.Store.GuardsProvider = () => _execution.Guards;
         _providers.LoadProviders();
     }
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get => _execution.HubSnapshotProvider; set => _execution.HubSnapshotProvider = value; }

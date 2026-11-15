@@ -224,7 +224,7 @@ internal sealed partial class ChatSessionCoordinator
 
         if (!Path.IsPathRooted(path)) return (WorkspacePathVerdict.EscapesWorkspace, "");
         if (!Directory.Exists(full)) return (WorkspacePathVerdict.MissingWorkspace, "");
-        if (WorkspacePaths.IsProtected(full, new WorkspaceGuards(_dataRoot, Execution.EngineRootsProvider?.Invoke() ?? [])))
+        if (WorkspacePaths.IsProtected(full, Execution.Guards))
             return (WorkspacePathVerdict.ProtectedRoot, "");
 
         return (null, full);
@@ -258,7 +258,7 @@ internal sealed partial class ChatSessionCoordinator
     /// </summary>
     internal async Task<string> ApplyGrantedRootAsync(string conversationId, string path)
     {
-        var guards = new WorkspaceGuards(_dataRoot, Execution.EngineRootsProvider?.Invoke() ?? []);
+        var guards = Execution.Guards;
         var readOnly = WorkspacePaths.IsProtected(path, guards);
         var added = false;
         await Execution.ApplyOnUiAsync(() =>
@@ -298,7 +298,7 @@ internal sealed partial class ChatSessionCoordinator
     /// </summary>
     internal async Task<string> ApplyGrantedFileAsync(string conversationId, string path)
     {
-        var guards = new WorkspaceGuards(_dataRoot, Execution.EngineRootsProvider?.Invoke() ?? []);
+        var guards = Execution.Guards;
         var readOnly = WorkspacePaths.FileGrantIsReadOnly(path, guards);
         var added = false;
         await Execution.ApplyOnUiAsync(() =>
@@ -321,7 +321,7 @@ internal sealed partial class ChatSessionCoordinator
         => _active is { } session
            && (_sessions.Peek(session.Id) ?? session).GrantedFiles is { Count: > 0 } files
             ? WorkspacePaths.FileGrants(files,
-                new WorkspaceGuards(_dataRoot, Execution.EngineRootsProvider?.Invoke() ?? []))
+                Execution.Guards)
             : [];
 
     internal bool RevokeGrantedFile(string conversationId, string path)
@@ -373,7 +373,7 @@ internal sealed partial class ChatSessionCoordinator
     internal async Task<(GrantVerdict? Verdict, string Detail)> GrantDirectoryAsync(string conversationId,
         string? path)
     {
-        var guards = new WorkspaceGuards(_dataRoot, Execution.EngineRootsProvider?.Invoke() ?? []);
+        var guards = Execution.Guards;
         if (_sessions.Peek(conversationId) is not { } session) return (GrantVerdict.SessionGone, "");
 
         var (write, read) = WorkspacePaths.SplitRoots(session.GrantedRoots, session.ReadOnlyRoots, guards);

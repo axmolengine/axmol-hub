@@ -42,7 +42,7 @@ internal static class SecretStoreSelfCheck
         ISecretStore? store = null;
         try
         {
-            store = SecretStoreFactory.Create(dataRoot);
+            store = SecretStoreFactory.Create(HubStorageLayout.Legacy(dataRoot));
         }
         catch (PlatformNotSupportedException)
         {

@@ -1084,7 +1084,7 @@ internal sealed partial class ShellDecisionsChecks
             "旧版设置文件里那两个旧默认（目标预算一千方、重试两次）迁到新默认，人选过的值原样保留（实际 "
             + migrated.GoalTokenBudget + "/" + migrated.ProviderMaxRetries + " · "
             + kept.GoalTokenBudget + "/" + kept.ProviderMaxRetries + "）");
-        var restored = new MainWindow(restoreRoot, restoreStore, restoreStore.Load());
+        var restored = new MainWindow(restoreRoot, restoreStore, restoreStore.Load(), isolatedAuthForChecks: true);
         restored.Show();
         restored.NavigateTo("Assistant");
         restored.UpdateLayout();
@@ -2868,7 +2868,7 @@ internal sealed partial class ShellDecisionsChecks
             if (System.IO.File.Exists(carriedSource))
                 System.IO.File.Copy(carriedSource, System.IO.Path.Combine(carriedRoot, "ai", "plans", carriedName));
             var carriedPrefs = new PreferencesStore(PreferencesPathFor(carriedRoot));
-            var carriedShell = new MainWindow(carriedRoot, carriedPrefs, carriedPrefs.Load());
+            var carriedShell = new MainWindow(carriedRoot, carriedPrefs, carriedPrefs.Load(), isolatedAuthForChecks: true);
             carriedShell.Show();
             carriedShell.NavigateTo("Assistant");
             carriedShell.Chat.OpenConversation(approvedSession.Id);

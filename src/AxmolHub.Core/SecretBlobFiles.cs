@@ -1,14 +1,13 @@
 namespace AxmolHub.Core;
 
 /// <summary>
-/// Where stored secrets sit on disk, and how one gets written: <c>data-root/ai/secrets/&lt;id&gt;.bin</c>,
+/// Where stored secrets sit on disk, and how one gets written: <c>auth-root/ai/secrets/&lt;id&gt;.bin</c>,
 /// replaced by an atomic rename.
 ///
 /// Extracted from <c>DpapiSecretStore</c> so every file-backed tier shares one layout — the Windows DPAPI blob,
-/// the AES-GCM blob, and a future macOS Keychain envelope all live in the same directory with the same naming,
-/// which is what lets <see cref="SecretBlobFormat.Classify"/> tell them apart instead of tripping over each
-/// other. The directory is inside the data root on purpose: it is the non-secret half (ciphertext), and users
-/// expect a backup of their Hub data to carry it.
+/// and the AES-GCM blob use the same directory and naming, which lets <see cref="SecretBlobFormat.Classify"/>
+/// tell them apart. Writers use the platform user directory; the original data root is only a migration source.
+/// Backing up business data alone no longer includes newly stored credentials.
 /// </summary>
 public sealed class SecretBlobFiles(string dataRoot)
 {

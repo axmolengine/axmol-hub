@@ -71,17 +71,23 @@ macOS 本地构建会在当前编译的 `obj/` 目录下生成 `macos/Axmol Hub.
 
 **切换数据根已可用**：只重建工作区并丢弃页面缓存，**窗口本身不动** —— 因此它不依赖外壳形态。新根落盘失败时会在旧状态上就地报错，不会留下"界面指向新根、设置文件还写着旧根"的错位。
 
-默认数据根是每用户的 `%LocalAppData%\AxmolHub\data`，设置保存在 `%LocalAppData%\AxmolHub\hub-settings.json` —— 不能放在程序目录旁边，因为 Velopack 更新时整体替换安装目录、卸载时删除整个安装目录。可以指定独立配置：
+新安装的默认业务数据根统一为 `~/.axmolhub`（Windows：`%USERPROFILE%\.axmolhub`），不再套一层 `data`。设置及鉴权文件仍在各平台用户数据目录的 `AxmolHub` 下：Windows 为 `%LocalAppData%\AxmolHub`，macOS 为 `~/Library/Application Support/AxmolHub`，Linux 为 `$XDG_DATA_HOME/AxmolHub`（默认 `~/.local/share/AxmolHub`）。设置文件仍叫 `hub-settings.json`；所有安装的凭据元数据、文件后端密文、OAuth 刷新锁及主机标识分别放在该目录下的 `ai/credentials.json`、`ai/secrets/`、`ai/openai-refresh-locks/` 和 `ai/openai-host-id`。Linux 的加密密钥文件位置及 `HUB_SECRET_KEY_FILE` 覆盖规则不变。提供商非敏感配置、模型缓存、会话等仍属于业务数据。
+
+旧安装仅保留业务数据位置：已有设置（缺少 `UseHomeDataDirectory` 时保留旧默认数据路径）或原默认 `AxmolHub/data` 已存在，都不会自动改变业务数据目录。鉴权不再有旧布局写入分支：启动或切换数据根时，将当前旧数据根的凭据和主机标识一次性复制到固定鉴权位置；原文件和原 Keychain 条目均不删除、不改写。目标冲突或读取/写入失败会明确报错，不回退写入 data。完成来源记录在固定目录的 `ai/auth-imports.json`，防止注销后再次从旧数据恢复凭据；已完成来源不再读取。升级前应退出仍运行的旧版 Hub。
+
+所有正常运行的 macOS Keychain 使用固定 service `dev.axmol.hub`、account `hub-secrets`，当前用户共用，不受 data/auth 绝对路径影响。旧路径哈希 service 仅用于只读迁移。应用签名及 Keychain 访问控制不变。首次正常启动记录的选择仅决定业务数据默认位置，不决定鉴权位置；切换数据根或使用 `--data-root`、`--preferences` 均不改变鉴权目的地。业务数据目录不能等于或包含固定鉴权目录。自动检查使用显式隔离 fixture，不接触真实鉴权。
+
+这些文件均不能放在程序目录旁边，因为 Velopack 更新时整体替换安装目录、卸载时删除整个安装目录。可以指定独立配置：
 
 ```powershell
 dotnet run --project src/AxmolHub -- --data-root ./data --preferences ./artifacts/dev-preferences.json
 ```
 
-`--data-root` 优先于保存的设置；`--preferences` 可用于隔离开发或检查配置。不要将设置、数据目录或下载的工具链提交到 Git。
+`--data-root` 优先于保存的设置；`--preferences` 仅隔离设置，不隔离鉴权，开发时也使用当前用户的固定鉴权存储。不要将设置、数据目录或下载的工具链提交到 Git。
 
 ### macOS 开发构建：钥串提示与本地签名
 
-密钥与登录令牌在登录钥串里只用**一条**条目（服务名 `dev.axmol.hub.<数据根的 sha256>`，账户 `hub-secrets`，值是「凭据 id → 密钥」的 JSON）。旧版本按凭据各存一条，读取时会被折叠进这条并删掉旧的——所以升级后每个凭据第一次被读到时仍会弹一次，之后不再弹。
+密钥与登录令牌在登录钥串里只用**一条**共享条目（服务名 `dev.axmol.hub`，账户 `hub-secrets`，值是「凭据 id → 密钥」的 JSON）。旧版本的 `dev.axmol.hub.<数据根的 sha256>` 条目仅在迁移时读取，迁移保留原条目，包括更早的逐凭据条目，不在旧 service 下折叠或删除它们。首次迁移可能分别请求源条目与共享条目的访问授权。
 
 如果每次重新构建后都再弹一遍，变了的是**签名身份**：未签名的二进制以 cdhash 作为身份，每次构建都不同，「始终允许」记的授权对不上。构建后用证书签一次开发产物，身份就变成「identifier + 证书」，可以跨构建沿用：
 

@@ -11,7 +11,7 @@ namespace AxmolHub.Agent;
 ///
 /// DPAPI encrypts with a key derived from the user's login credentials, so the ciphertext on disk can only be
 /// decrypted by this user on this machine — that is the OWASP/NIST-endorsed protection model for a desktop app's
-/// stored secrets. The ciphertext is written to <c>data-root/ai/secrets/</c> (see <see cref="SecretBlobFiles"/>
+/// stored secrets. The ciphertext is written to <c>auth-root/ai/secrets/</c> (see <see cref="SecretBlobFiles"/>
 /// for the shared layout); it is safe to store the blob in a plain file because the protection is in the key,
 /// not in the file permissions.
 ///

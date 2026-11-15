@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// Persists the user's credentials to <c>data-root/ai/credentials.json</c>, with the secrets split out to an
+/// Persists the user's credentials to <c>auth-root/ai/credentials.json</c>, with the secrets split out to an
 /// <see cref="ISecretStore"/> keyed by <see cref="ProviderCredential.Id"/>.
 ///
 /// The split is the same contract <see cref="ProviderStore"/> has: the JSON is the non-secret half (labels,
@@ -20,7 +20,7 @@ public sealed class CredentialStore(string root, ISecretStore secrets)
     private string CredentialPath => Path.Combine(root, "ai", "credentials.json");
     private Dictionary<string, string>? _baseline;
 
-    private Mutex MetadataMutex()
+    internal Mutex MetadataMutex()
     {
         var path = Path.GetFullPath(CredentialPath);
         if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
@@ -28,7 +28,7 @@ public sealed class CredentialStore(string root, ISecretStore secrets)
         return new Mutex(false, "AxmolHubCredentials-" + hash);
     }
 
-    private static void Acquire(Mutex gate)
+    internal static void Acquire(Mutex gate)
     {
         try { if (!gate.WaitOne(TimeSpan.FromSeconds(10))) throw new TimeoutException("Credential metadata is busy."); }
         catch (AbandonedMutexException) { }

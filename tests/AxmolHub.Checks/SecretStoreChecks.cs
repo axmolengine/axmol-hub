@@ -122,11 +122,11 @@ internal static class SecretStoreChecks
             Assert(!SecretStoreResolver.ShouldProbeKeyring(HubPlatform.Windows) && !SecretStoreResolver.ShouldProbeKeyring(HubPlatform.MacOS) && SecretStoreResolver.ShouldProbeKeyring(HubPlatform.Linux), "only the platform with a keyring tier pays for a probe");
             // The factory's own table, asserted with the platform supplied: a Windows runner cannot become Linux, so
             // without this seam the EncryptedFile arm of the switch would only ever be reached by the CI matrix.
-            var factoryFile = (AesGcmFileSecretStore)SecretStoreFactory.Create(Path.Combine(scratch, "factory"), HubPlatform.Linux);
+            var factoryFile = (AesGcmFileSecretStore)SecretStoreFactory.Create(HubStorageLayout.Legacy(Path.Combine(scratch, "factory")), HubPlatform.Linux);
             Assert(factoryFile.Descriptor.Kind == SecretStoreKind.EncryptedFile, "the factory hands Linux the file tier, and does not throw any more");
             if (OperatingSystem.IsWindows())
-                Assert(SecretStoreFactory.Create(Path.Combine(scratch, "factory"), HubPlatform.Windows).Descriptor.Kind == SecretStoreKind.Dpapi, "and still hands Windows DPAPI");
-            Assert(OperatingSystem.IsMacOS() ? SecretStoreFactory.Create(scratch, HubPlatform.MacOS).Descriptor.Kind == SecretStoreKind.Keychain : Throws(() => SecretStoreFactory.Create(scratch, HubPlatform.MacOS)) is PlatformNotSupportedException, "the Keychain factory is only instantiated on macOS");
+                Assert(SecretStoreFactory.Create(HubStorageLayout.Legacy(Path.Combine(scratch, "factory")), HubPlatform.Windows).Descriptor.Kind == SecretStoreKind.Dpapi, "and still hands Windows DPAPI");
+            Assert(OperatingSystem.IsMacOS() ? SecretStoreFactory.Create(HubStorageLayout.Legacy(scratch), HubPlatform.MacOS).Descriptor.Kind == SecretStoreKind.Keychain : Throws(() => SecretStoreFactory.Create(HubStorageLayout.Legacy(scratch), HubPlatform.MacOS)) is PlatformNotSupportedException, "the Keychain factory is only instantiated on macOS");
             // ── the file store as the app uses it ──
             var storeRoot = Path.Combine(scratch, "data");
             var keyPath = Path.Combine(scratch, "ai-secret.key");

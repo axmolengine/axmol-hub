@@ -16,14 +16,14 @@ public interface IMacKeychainApi
 }
 
 /// <summary>
-/// Secrets isolated by data root in the current user's login keychain, held in <b>one</b> generic-password item.
+/// Secrets in the current user's login keychain, held in <b>one</b> generic-password item per service.
 ///
 /// <para><b>Why one item rather than one per credential.</b> macOS grants access per <i>item</i> and per
 /// application identity: a new item is a new password sheet, and "Always Allow" covers only the item it was
 /// clicked for. One item per credential therefore asked once per provider — and once more per extra account of
 /// the same provider — on every launch whose signature macOS had not seen before. A single bundle costs one
-/// sheet per launch instead, and it keeps the service name, so the data-root isolation (and the identity macOS
-/// already knows this app by) does not change.</para>
+/// sheet per launch instead. The caller supplies a stable shared service, or a read-only path-derived
+/// service for migration; this store never derives identity from a file location.</para>
 ///
 /// <para>The bundle is a JSON object of credential id → secret under <see cref="Account"/>: API keys and OpenAI
 /// token bundles together, a few kilobytes, well inside what a generic password carries.</para>
@@ -47,17 +47,19 @@ public sealed class MacKeychainSecretStore : ISecretStore
     public const string Account = "hub-secrets";
 
     private readonly IMacKeychainApi _api;
+    private readonly bool _readOnly;
     private readonly object _gate = new();
     private Dictionary<string, string>? _entries;
     private string? _problem;
 
     public string Service { get; }
 
-    public MacKeychainSecretStore(string dataRoot, IMacKeychainApi? api = null)
+    public MacKeychainSecretStore(string service, IMacKeychainApi? api = null, bool readOnly = false)
     {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)).Normalize(NormalizationForm.FormC);
-        Service = "dev.axmol.hub." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root))).ToLowerInvariant();
+        ArgumentException.ThrowIfNullOrWhiteSpace(service);
+        Service = service;
         _api = api ?? new NativeMacKeychainApi();
+        _readOnly = readOnly;
     }
 
     public SecretStoreDescriptor Descriptor => new(SecretStoreKind.Keychain, Service, _problem);
@@ -67,12 +69,18 @@ public sealed class MacKeychainSecretStore : ISecretStore
         lock (_gate)
         {
             var entries = Entries();
-            return entries.TryGetValue(id, out var value) ? value : Adopt(id, entries);
+            if (entries.TryGetValue(id, out var value)) return value;
+            if (!_readOnly) return Adopt(id, entries);
+            var (status, legacy) = _api.Read(Service, id);
+            if (status == NotFound) return null;
+            Check(status);
+            return legacy;
         }
     }
 
     public void Write(string id, string value)
     {
+        if (_readOnly) throw new InvalidOperationException("The legacy Keychain migration source is read-only.");
         lock (_gate)
         {
             var entries = new Dictionary<string, string>(Entries());
@@ -88,6 +96,7 @@ public sealed class MacKeychainSecretStore : ISecretStore
 
     public void Delete(string id)
     {
+        if (_readOnly) throw new InvalidOperationException("The legacy Keychain migration source is read-only.");
         lock (_gate)
         {
             // Strict, and before the bundle is touched: if the old item cannot be removed the credential is not

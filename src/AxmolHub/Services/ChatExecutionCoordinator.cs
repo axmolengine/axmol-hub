@@ -21,6 +21,8 @@ internal sealed partial class ChatExecutionCoordinator
     }
 
     private readonly string _dataRoot;
+    internal string? AuthRoot { get; set; }
+    internal WorkspaceGuards Guards => new(_dataRoot, EngineRootsProvider?.Invoke() ?? [], AuthRoot);
     private readonly HashSet<string> _compressingConversations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _localGitActions = new(StringComparer.Ordinal);
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
@@ -345,7 +347,7 @@ internal sealed partial class ChatExecutionCoordinator
     {
         var session = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
         var root = session?.WorkspaceRoot;
-        var guards = new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? []);
+        var guards = Guards;
         var snapshot = HubSnapshotProvider?.Invoke();
         var screenBridge = ScreenCaptureBridgeProvider is { } screenProvider
             ? screenProvider()
@@ -466,7 +468,7 @@ internal sealed partial class ChatExecutionCoordinator
     }
 
     internal WorkspaceToolScope WorkspaceOnlyScope(string? root)
-        => new(root, new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? []), _dataRoot,
+        => new(root, Guards, _dataRoot,
             "", Providers.SensitiveValues(), LogProvider?.Invoke());
 
     private string UpdatePlanTaskStatus(string conversationId, int taskNumber, string status)
@@ -656,7 +658,7 @@ internal sealed partial class ChatExecutionCoordinator
     internal string? DiffForChange(ChangedFile file, string conversationId, out UndoCopyState state, bool wholeFile = false)
     {
         var session = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
-        var guards = new WorkspaceGuards(_dataRoot, EngineRootsProvider?.Invoke() ?? []);
+        var guards = Guards;
         return ChatChanges.DiffFor(
             file,
             conversationId,
