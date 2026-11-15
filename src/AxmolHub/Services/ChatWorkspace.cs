@@ -41,11 +41,6 @@ public sealed partial class ChatWorkspace : IDisposable
     /// the shell because it owns the engine list; the data root needs no seam, it is what this workspace was
     /// constructed with.</summary>
     internal Func<IReadOnlyList<string>>? EngineRootsProvider { get => _execution.EngineRootsProvider; set => _execution.EngineRootsProvider = value; }
-    /// <summary>Hub's one-change-at-a-time gate, asked for by a shell command that may change state. Set by the
-    /// shell, because the queue is the shell's; null in a run with no shell (a self-check), where there is nothing
-    /// to be serialised against. A null answer from the gate means somebody else is changing this, and the command
-    /// refuses rather than waiting — see <c>WorkspaceTools.RunCommand</c>.</summary>
-    internal Func<string, IDisposable?>? ChangeGateProvider { get => _execution.ChangeGateProvider; set => _execution.ChangeGateProvider = value; }
     /// <summary>Hub's activity log. Command output goes through it in full, so a result truncated for the model
     /// can still name a file where nothing was lost.</summary>
     internal Func<HubLog?>? LogProvider { get => _execution.LogProvider; set => _execution.LogProvider = value; }

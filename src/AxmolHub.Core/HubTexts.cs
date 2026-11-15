@@ -496,10 +496,6 @@ public static class HubTexts
         ["DeepLinkTitle"] = ("官网安装请求", "Website install request"),
         ["DeepLinkInvalid"] = ("此安装链接无效或不受支持。请从 Axmol 官网重新打开链接。", "This install link is invalid or unsupported. Open it again from the Axmol website."),
         ["DeepLinkBusy"] = ("Hub 正在执行其他操作，请完成或取消后再试。", "Hub is busy. Finish or cancel the current operation, then try again."),
-        // The same refusal, said about the holder that has no row to point at: an assistant command holds the
-        // change gate without joining the list, because the ✕ that stops it is the one on the reply. Naming the
-        // assistant is the difference between "cancel the current operation" and something the person can find.
-        ["DeepLinkBusyAssistant"] = ("AI 助手正在改动这里，请等它跑完或在回答处停掉它。", "The AI assistant is making a change here. Wait for it to finish, or stop it from the reply."),
         // The stage words a build prints about itself. They outrank the phase word on a task's row, and since
         // the progress window went away nothing else needs the window's own title, hint or "preparing" state.
         ["BuildConfiguring"] = ("配置项目", "Configuring project"),

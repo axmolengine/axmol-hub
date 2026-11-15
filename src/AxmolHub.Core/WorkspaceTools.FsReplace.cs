@@ -74,8 +74,6 @@ public sealed partial class WorkspaceTools
     [Description("Apply exact replacements to one or more existing text files. Every edit is checked before writing.")]
     public string FsReplace([Description("Exact replacements in their application order.")] IReadOnlyList<FsReplacement> edits)
     {
-        using var gate = context.TakeChangeGate?.Invoke(ToolNames.FsReplace);
-        if (context.TakeChangeGate is not null && gate is null) return ToolApprovalResults.Busy;
         var initial = PrepareReplacements(context, edits);
         if (initial.Error is not null) return initial.Error;
         var leases = new List<(FsTextChange Change, TextFile.WriteLease Lease)>();

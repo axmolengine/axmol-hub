@@ -447,10 +447,3 @@ internal sealed class BareSecretStore : ISecretStore
     public void Write(string providerId, string key) { }
     public void Delete(string providerId) { }
 }
-
-/// <summary>A change-gate handoff that records its own release, so an assertion can tell "the command finished and
-/// gave the gate back" from "the gate was taken and nobody remembers where it went".</summary>
-internal sealed class GateHandoff(Action onRelease) : IDisposable
-{
-    public void Dispose() => onRelease();
-}

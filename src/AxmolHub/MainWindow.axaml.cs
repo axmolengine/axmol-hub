@@ -486,7 +486,6 @@ public partial class MainWindow : Window
         _chat.EngineRootsProvider = () => [.. _workspace.State.Engines.Select(engine => engine.Path)];
         // Read through the field on every call, not captured: switching the data root replaces _workspace, and a
         // seam that kept the old one would have the assistant hold the gate of a workspace nobody is looking at.
-        _chat.ChangeGateProvider = subject => _workspace.TakeChangeGate(subject);
     }
 
     private ChatWorkspace.HubReadOnlySnapshot CreateReadOnlyChatSnapshot()

@@ -250,10 +250,6 @@ public partial class MainWindow
 
     internal void ClickAssistantSearchForCheck() => AssistantSearchButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     internal void ClickAssistantNewForCheck() => AssistantNewButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-    /// <summary>Takes the change gate the way an assistant command does — through the seam, not by calling the
-    /// workspace directly — so a self-check can prove the seam points at the workspace that is live <b>now</b>
-    /// rather than the one it was wired to at startup. Null means the seam is not wired at all.</summary>
-    internal IDisposable? TakeAssistantGateForCheck(string subject) => _chat.ChangeGateProvider?.Invoke(subject);
     // ── Title bar, for the shell self-check ──
     /// <summary>The app draws its own title bar, so a self-check has to be able to read back that the client
     /// area really was extended (a box that is 32px tall over a 32px native caption strip would look identical

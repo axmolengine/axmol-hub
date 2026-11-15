@@ -33,11 +33,6 @@ namespace AxmolHub.Core;
 /// <param name="Web">The host's side of an outbound fetch: the setting that allows it and the socket that makes it.
 /// Null in a scope with nothing to send with — <c>web_fetch</c> then says so out loud rather than pretending the
 /// address was bad, which is the only way a zero-network self-check and a real Hub answer the same question.</param>
-/// <param name="TakeChangeGate">The host's one-change-at-a-time gate, asked for the duration of a command that may
-/// change state. Null in a scope with no queue to share — a self-check, or a tool run outside a window. The host
-/// answers null when something is already changing (a build, an engine install) or when another assistant command
-/// holds it, and a command that could not be given the gate is refused rather than run anyway: what is protected is
-/// the disk, not the schedule.</param>
 /// <param name="RecordChangeLines">Where a landed write hands over how many lines it moved, so the app can stamp
 /// that on the call's own turn. The same reason <paramref name="RecordFrames"/> exists: a tool body never learns its
 /// call id, and the turn is written by the app. Reported only after the bytes are on disk, which is what makes the
@@ -68,7 +63,6 @@ public sealed record WorkspaceToolScope(
     Action<IReadOnlyList<ChatImage>>? RecordFrames = null,
     WebBridge? Web = null,
     IReadOnlyList<WorkspaceProject>? Projects = null,
-    Func<string, IDisposable?>? TakeChangeGate = null,
     Action<ChangeLineCounts>? RecordChangeLines = null,
     Func<StalledProcess, string, Task<StalledProcessFate>>? AskAboutStalledProcess = null,
     // The command's lines as they arrive, and the code it ended with. Both are for the card the transcript grows
@@ -272,8 +266,6 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("The complete new text of the file.")] string content,
         [Description("Explicitly allow replacing an existing file.")] bool overwrite = false)
     {
-        using var gate = context.TakeChangeGate?.Invoke(ToolNames.FsWrite);
-        if (context.TakeChangeGate is not null && gate is null) return ToolApprovalResults.Busy;
         return WriteText(path, original => FileEdit.Overwrite(original, content, overwrite),
             context.ApprovedWriteFingerprint, wholeFile: true, allowUnlistedText: true, unlistedContent: content ?? "");
     }
@@ -424,31 +416,9 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         if (!directory.IsAllowed) return Refusal(directory.Verdict, directory.Display, cwd);
         if (string.IsNullOrWhiteSpace(command)) return "Refused: the command is empty. Do not retry it.";
 
-        // Anything but a git read holds Hub's one-change-at-a-time gate for its duration. What is being kept apart
-        // is not a slow command but two of them writing one output directory: a build interrupted or doubled leaves
-        // a tree half new, and no later card can undo that. A git *read* is exempt for two reasons — it cannot
-        // touch a build tree, and the exemption is what keeps the gate cheap, since the model reads the repository
-        // constantly and every `git status` would otherwise put a few hundred milliseconds between the person and
-        // their own build button. Note this is the gate, not the concurrency class: a git read is excluded from
-        // both, for different reasons (see <see cref="ToolConcurrency"/>).
-        IDisposable? gate = null;
-        if (context.TakeChangeGate is { } take && GitCommandGrades.Grade(command) != GitGrade.GitRead)
-        {
-            gate = take("run_command");
-            if (gate is null) return ToolApprovalResults.Busy;
-        }
-
-        try
-        {
-            return await RunInShellAsync(command, directory.Full, timeout_seconds, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            // Released on every road out, the cancellation included: a run the person stopped must not leave the
-            // gate held, or Hub would report itself busy with nothing running.
-            gate?.Dispose();
-        }
+        // Parallel work is the user's decision; unrelated Hub tasks do not veto an approved command.
+        return await RunInShellAsync(command, directory.Full, timeout_seconds, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>One shell run in <paramref name="cwd"/>, which the guard has already resolved — the workspace by
@@ -621,15 +591,13 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
 
             case StalledProcessFate.LeaveItRunning:
                 {
-                    // Let go of the handle, not the process. Hub also stops holding the change gate for it, which is
-                    // what makes this answer dangerous and what makes the sentence below necessary rather than polite:
-                    // the next build — the user's own or the model's — can collide with something Hub just walked away
-                    // from, and nobody should discover that from a compiler error.
+                    // Let go of the handle, not the process. Tell the user it can still be writing so they can
+                    // decide whether another build would conflict with the command Hub stopped watching.
                     var left = stalled.Snapshot();
                     stalled.Release();
                     return $"{header}{Lf}The user chose not to wait for this command and not to stop "
-                           + "it. It is still running, Hub is no longer watching it and no longer holds the change "
-                           + "gate for it, so it may still be writing to the workspace. What it printed so far:"
+                           + "it. It is still running and Hub is no longer watching it, so it may still be writing "
+                           + "to the workspace. What it printed so far:"
                            + Lf + Shaped(left.Output, left.Error)
                            + (builds
                                ? Lf + "Before running another build or clearing anything, tell the "

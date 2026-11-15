@@ -411,9 +411,8 @@ internal sealed class ShellApprovalsChecks
                   // the reach tier, because no part of that line spells the call a grant could name.
                   && ChatTools.RiskOf("run_command", Command("pwsh -c \"git commit -m x && cmake --build build\""), sandbox) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("run_command", Command("git commit -m x && cmake --build build"), sandbox) == ToolRisk.RepositoryWrite
-                  // …while a build the classifier cannot name keeps the sandbox tier — the fail-open the plan named
-                  // out loud, recorded here so it is a known shape and not an accident: still inside the sandbox,
-                  // still holding the change gate, so the worst it does is skip the question.
+                  // A build hidden behind a wrapper keeps the ordinary command tier; the classifier cannot
+                  // inspect the script payload to decide whether it clears a cache.
                   && ChatTools.RiskOf("run_command", Command("cmd /c build.bat"), sandbox) == ToolRisk.WorkspaceCommand
                   && ChatTools.RiskOf("run_command", Command("ls build"), sandbox) == ToolRisk.WorkspaceCommand
                   && ChatTools.RiskOf("run_command", null, sandbox) == ToolRisk.WorkspaceCommand

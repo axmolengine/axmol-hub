@@ -358,18 +358,6 @@ internal sealed class ShellLayoutChecks
         Check(changed && shell.Workspace.Store.Root == nextRoot,
             "切换后工作区的数据根指向新目录（实际 " + shell.Workspace.Store.Root + "）");
 
-        // The assistant's change gate is one of the seams re-wired when the workspace is rebuilt. A lambda that had
-        // captured the *first* workspace would keep holding a gate nobody is looking at: the assistant would be
-        // serialising against a dead queue while the page's busy truth said nothing was running. Taken through the
-        // seam rather than through the workspace, because that is the only shape that can tell the two apart.
-        var heldOnNewRoot = shell.TakeAssistantGateForCheck("cmake --build build");
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        Check(heldOnNewRoot is not null && shell.Workspace.IsBusy,
-            "换根后助手的命令占的是新工作区的闸（缝重接过，实际忙 " + shell.Workspace.IsBusy + "）");
-        heldOnNewRoot?.Dispose();
-        await WaitUntilAsync(() => !shell.Workspace.IsBusy);
-
         Check(System.IO.Directory.Exists(nextRoot), "切换时新数据根被真的建出来（不是只改了个字符串）");
 
         // Persistence: if only the in-memory workspace changed while the settings file still says the old root, the next launch would silently revert.
@@ -1575,38 +1563,6 @@ internal sealed class ShellLayoutChecks
         Dispatcher.UIThread.RunJobs();
         Check(!shell.Workspace.IsBusy && !shell.CanCancelForCheck,
             "取消那条秒级操作后闸空出来，状态条的取消也跟着熄灭");
-
-        // --- 5.1f The assistant holds this very gate ---
-        // The defect this closes is two owners each believing the other's busy signal was somebody else's business:
-        // an assistant `cmake --build` never consulted the queue, so a build button pressed beside it started a
-        // second compile against the same output directory. Read off the shell, three facts — the hold lights the
-        // one busy truth without taking a row, a refused press names the assistant instead of an operation nobody
-        // can find, and the strip's ✕ stays dark because it cannot reach that process.
-        var assistantHold = shell.TakeAssistantGateForCheck("cmake --build build");
-        var secondHold = shell.TakeAssistantGateForCheck("cmake --build build");
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        Check(assistantHold is not null && secondHold is null && shell.Workspace.IsBusy
-              && TaskQueue.Instance.Items.Count == 0 && !shell.TaskSlotVisibleForCheck && !shell.CanCancelForCheck,
-            "助手占闸：忙真相只有一个，不占行不点亮槽位，第二条只会被告知在忙而不会插队，状态条的取消够不到它");
-
-        var dialogsBeforeAssistant = HubDialogWindows().Length;
-        await shell.Workspace.UninstallEngineAsync();
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        Check(shell.ToastTextForCheck.Contains(HubTexts.Get("DeepLinkBusyAssistant", HubStrings.Language), StringComparison.Ordinal)
-              && shell.PageEnabledForCheck && HubDialogWindows().Length == dialogsBeforeAssistant,
-            "助手占闸时被挡住的动手给的是点名助手的一句话，不弹窗也不置灰（实际 " + shell.ToastTextForCheck + "）");
-
-        // The road out the tool body owes the queue: the command's own finally hands the gate back. Left held, Hub
-        // would report itself busy for the rest of the session with nothing running — which is the same silence
-        // this round replaced, only pointing the other way.
-        assistantHold?.Dispose();
-        await WaitUntilAsync(() => !shell.Workspace.IsBusy);
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        Check(!shell.Workspace.IsBusy && TaskQueue.Instance.ActiveCount == 0,
-            "助手还闸之后忙真相立刻熄灭，不留一个没人跑的占位");
 
         // The row reads its own process and nothing else. This is the defect the progress window carried: it
         // was fed from the global log, so a line printed by an unrelated tool moved its stage and its

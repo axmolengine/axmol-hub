@@ -571,16 +571,8 @@ internal static class AiToolsChecks
         var quietCommand = OperatingSystem.IsWindows() ? "Write-Output 'first line'; Start-Sleep -Seconds 4; Write-Output 'second line'" : "echo 'first line'; sleep 4; echo 'second line'";
         var stallAnswers = new Queue<StalledProcessFate>();
         var stallAsked = 0;
-        var stallGateTaken = 0;
-        var stallGateReleased = 0;
-        var stallTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "stalled", [], log, // The one-change gate rides along on purpose: every road out of a stalled command — waited out, walked away
-        // from, stopped, or finished on its own — has to hand it back, or Hub reports itself busy with a process
-        // nobody is holding.
-        TakeChangeGate: _ =>
-        {
-            stallGateTaken++;
-            return new GateHandoff(() => stallGateReleased++);
-        }, AskAboutStalledProcess: (stalled, _) =>
+        var stallTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "stalled", [], log,
+        AskAboutStalledProcess: (stalled, _) =>
         {
             stallAsked++;
             var fate = stallAnswers.Dequeue();
@@ -595,8 +587,7 @@ internal static class AiToolsChecks
         var waitedOut = await stallTools.RunCommand(quietCommand, 1);
         if (!waitedOut.Contains("exit: 0", StringComparison.Ordinal) || !waitedOut.Contains("second line", StringComparison.Ordinal) || !waitedOut.Contains("chose to keep waiting", StringComparison.Ordinal))
             throw new Exception($"Answer A did not wait the command out:{Environment.NewLine}{waitedOut}");
-        // B: nothing is ended either, but Hub stops watching — and says so, including the part that bites: the change
-        // gate goes with the watch, so the next build is no longer held behind a command nobody is tracking.
+        // B: nothing is ended either, but Hub stops watching and warns that the process is still running.
         stallAnswers.Enqueue(StalledProcessFate.LeaveItRunning);
         var walkedAway = await stallTools.RunCommand(quietCommand, 1);
         if (!walkedAway.Contains("first line", StringComparison.Ordinal) || !walkedAway.Contains("no longer watching", StringComparison.Ordinal) || !walkedAway.Contains("still running", StringComparison.Ordinal) || walkedAway.Contains("second line", StringComparison.Ordinal))
@@ -616,11 +607,6 @@ internal static class AiToolsChecks
         var finishedAlone = await stallTools.RunCommand(quietCommand, 1);
         if (!finishedAlone.Contains("exit: 0", StringComparison.Ordinal) || !finishedAlone.Contains("second line", StringComparison.Ordinal) || !finishedAlone.Contains("finished on its own", StringComparison.Ordinal) || finishedAlone.Contains("chose to keep waiting", StringComparison.Ordinal))
             throw new Exception($"A command that finished while being asked about was not closed as itself:{Environment.NewLine}{finishedAlone}");
-        // The gate on every one of those four roads: taken once per command — once even for C, whose retry is the same
-        // call running again rather than a second command — and handed back when the call ends, or Hub reports itself
-        // busy with a process nobody is holding.
-        if (stallGateTaken != stallGateReleased || stallGateTaken != 4)
-            throw new Exception($"A stalled command left the change gate standing (took {stallGateTaken}, released " + $"{stallGateReleased} across {stallAsked} questions).");
         Console.WriteLine("PASS: a quiet command is asked about instead of killed, and each of the four answers does " + "exactly what it says — including the one where the command answers for itself by finishing.");
         // A process that survives its own kill must not wedge the tool, so every wait after the kill is bounded. No
         // real process can be made unkillable on purpose, which is what the StopProcess seam is for: it reports "it
@@ -662,61 +648,21 @@ internal static class AiToolsChecks
         if (!(await homeless.RunCommand("echo hi")).Contains("no workspace directory", StringComparison.Ordinal))
             throw new Exception("run_command without a workspace did not say so.");
         Console.WriteLine("PASS: run_command names its sandbox, redacts secrets, keeps both ends, keeps what a stall " + "already printed, comes back from a process that survives its kill, and speaks UTF-8.");
-        // ── run_command holds Hub's one-change-at-a-time gate ──
-        // The assistant and the build button used to be mutually invisible: an AI `cmake --build` and a UI build could
-        // both start against one output directory, each believing the other's busy signal was somebody else's business.
-        // The tool now asks the host for the gate first, and a command that could not be given it is refused rather than
-        // queued — a wait reads to the model as a hang, and a build that looks hung is what makes an agent start a second
-        // one. The scope above passes no gate at all, which is the self-check road: commands simply are not serialised.
-        var gateMarker = Path.Combine(workspace, "src", "gate-marker.txt").Replace('\\', '/');
-        var gateTaken = 0;
-        var gateReleased = 0;
-        var refusedTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "gated", [], log, TakeChangeGate: _ => null));
-        var gateRefused = await refusedTools.RunCommand($"echo marker > '{gateMarker}'");
-        if (gateRefused != ToolApprovalResults.Busy || File.Exists(gateMarker))
-            throw new Exception($"A command refused the gate either did not say so or ran anyway:{Environment.NewLine}{gateRefused}");
-        if (!gateRefused.Contains("Do not retry", StringComparison.Ordinal))
-            throw new Exception("The busy refusal did not tell the model what not to do, which is a retry loop waiting to happen.");
-        var openTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "gated", [], log, TakeChangeGate: _ =>
-        {
-            gateTaken++;
-            return new GateHandoff(() => gateReleased++);
-        }));
-        var gateRan = await openTools.RunCommand("echo gate-open");
-        if (gateTaken != 1 || gateReleased != 1 || !gateRan.Contains("exit: 0", StringComparison.Ordinal))
-            throw new Exception($"A command that got the gate did not run and hand it back (took {gateTaken}, released {gateReleased}).");
-        // The road the person takes when they press the ✕ on the reply: the tool body throws rather than returning, so
-        // a release that only happened on the success path would leave Hub reporting itself busy forever with nothing
-        // running. A pre-cancelled token is exactly that road, and it throws before the process even starts.
-        using var stoppedGate = new CancellationTokenSource();
-        stoppedGate.Cancel();
-        gateTaken = 0;
-        gateReleased = 0;
+        // A stopped command throws rather than returning a tool result or starting the process.
+        using var stoppedCommand = new CancellationTokenSource();
+        stoppedCommand.Cancel();
         var threwOnStop = false;
         try
         {
-            _ = await openTools.RunCommand("echo never", cancellationToken: stoppedGate.Token);
+            _ = await tools.RunCommand("echo never", cancellationToken: stoppedCommand.Token);
         }
         catch (OperationCanceledException)
         {
             threwOnStop = true;
         }
 
-        if (!threwOnStop || gateTaken != 1 || gateReleased != 1)
-            throw new Exception($"A stopped run left the gate held (took {gateTaken}, released {gateReleased}, threw {threwOnStop}).");
-        // A git *read* is exempt, and this is the cell that keeps the exemption honest: the tier already says it asks
-        // nothing, the model reads the repository constantly, and `git status` refreshes the index rather than a build
-        // tree. With a host that hands out no gate at all, the read still reaches the shell.
-        var gitGateAsked = 0;
-        var gitTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "gated", [], log, TakeChangeGate: _ =>
-        {
-            gitGateAsked++;
-            return null;
-        }));
-        var gitRead = await gitTools.RunCommand("git status");
-        if (gitGateAsked != 0 || !gitRead.Contains("shell:", StringComparison.Ordinal) || gitRead.Contains("already running a change", StringComparison.Ordinal))
-            throw new Exception($"A git read was treated as a change (gate asked {gitGateAsked} times):{Environment.NewLine}{gitRead}");
-        Console.WriteLine("PASS: a changing command takes the gate, refuses out loud when it cannot, gives it back on every " + "road out including a stop, and a git read never asks for it.");
+        if (!threwOnStop)
+            throw new Exception("A cancelled command ran instead of stopping.");
         // ── the directory classifier: whose directory a card is talking about ──
         // The tiers it used to decide went with the tool that moved the sandbox, but a grant card's own facts are still
         // read through it, so the rule is asserted here where no window is involved. The three answers answer one

@@ -14,7 +14,7 @@ namespace AxmolHub.Core;
 /// card in every mode (<see cref="ToolRisk.CacheBreak"/>).</para>
 ///
 /// <para>The second answer still earns its keep. It is what lets a stalled command be described honestly
-/// (<c>this was a build</c> rather than <c>this was a command</c>), and what points the change gate's advice at the
+/// (<c>this was a build</c> rather than <c>this was a command</c>), and what points the stalled-command advice at the
 /// right hazard: two writers in one output directory leave a tree half new, and a cancel does not reach the detached
 /// MSBuild nodes or <c>VBCSCompiler</c> that outlive the tree Hub can see
 /// (<see cref="ProcessRunner"/>'s kill walks the tree still attached to it).</para>
@@ -23,9 +23,8 @@ namespace AxmolHub.Core;
 /// recognise keeps the tier it had (<see cref="ToolRisk.WorkspaceCommand"/>), so an omission costs a card nobody
 /// needed rather than blocking a build nobody asked for. The shapes it cannot see are named rather than pretended
 /// about: a wrapper script that is not itself a builder (<c>cmd /c build.bat</c>) and a payload held in a variable
-/// (<c>pwsh -c $cmd</c>). Both stay inside the sandbox and still take the change gate
-/// (<see cref="WorkspaceTools.RunCommand"/>), so the worst an omission can do is skip one question, never let two
-/// writers into one directory unnoticed.</para>
+/// (<c>pwsh -c $cmd</c>). Both keep the ordinary command tier; the classifier cannot promise to detect every
+/// cache-clearing payload hidden inside a script.</para>
 /// </summary>
 public enum BuildGrade
 {

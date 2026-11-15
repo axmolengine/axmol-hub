@@ -125,8 +125,6 @@ public sealed partial class WorkspaceTools
 
     private string Manage(string source, string? destination, bool recursive)
     {
-        using var gate = context.TakeChangeGate?.Invoke(destination is null ? ToolNames.FsDelete : ToolNames.FsMove);
-        if (context.TakeChangeGate is not null && gate is null) return ToolApprovalResults.Busy;
         if (ManagementMayBreakCache(context, source) && !context.ApprovedCacheBreak)
             return "Refused: removing or moving build cache requires explicit approval. Request the operation again.";
         var initial = PrepareManagement(context, source, destination, recursive);
@@ -386,8 +384,6 @@ public sealed partial class WorkspaceTools
             || batch.State is not (ChatChangeStore.Complete or "partial"))
             return UndoVerdict.CopyMissing;
         path = operation.Source;
-        using var gate = context.TakeChangeGate?.Invoke("undo_fs_management");
-        if (context.TakeChangeGate is not null && gate is null) return UndoVerdict.WriteFailed;
         var leases = new List<TextFile.WriteLease>();
         try
         {

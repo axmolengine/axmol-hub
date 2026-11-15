@@ -232,15 +232,6 @@ public static class ToolApprovalResults
     /// <summary>The tool is gone — renamed or dropped between the request and the approval.</summary>
     public const string Unavailable = "This tool is no longer available, so the approved call was not executed.";
 
-    /// <summary>Hub is already changing the same disk, so this command was refused rather than queued: two changes
-    /// interleaving can leave a tree no sentence describes, and a wait would look to the model like a hang. Said as
-    /// one road out — wait for that to finish, or ask the person — because a retry loop on a busy gate is how a
-    /// refused build turns into two.</summary>
-    public const string Busy =
-        "Refused: Hub is already running a change of its own (a build, an engine install or a setup script), and "
-        + "two of them at once can corrupt the tree they share. Do not retry this now; ask the user to let the "
-        + "running one finish or cancel it, or do the part that needs no change yourself.";
-
     /// <summary>A question the person dismissed with Escape. Deliberately <b>not</b> <see cref="Denied"/>: that
     /// sentence ends with "ask the user what to do instead", so handing it to a skipped question instructs the
     /// model to ask the very thing it was just told no answer to. Skipping is a hand-over of the decision, and

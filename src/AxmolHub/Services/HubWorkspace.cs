@@ -295,15 +295,9 @@ public sealed partial class HubWorkspace : IDisposable
 
     public IReadOnlyList<AndroidDevice> Devices { get; private set; } = [];
     public string LastError { get; private set; } = "";
-    /// <summary>Whether a change is happening. One question, one place that answers it — the queue's mutating slot
-    /// plus the assistant's hold beside it, because a shell command cannot take a slot from a thread the queue's
-    /// other writers do not share. See <see cref="TakeChangeGate"/>.</summary>
-    public bool IsBusy => _tasks.ActiveMutating is not null || Volatile.Read(ref _assistantChanges) > 0;
-
-    /// <summary>How many assistant commands are currently holding the change gate. Zero or one in practice — a
-    /// second one is refused rather than queued — but a count, so a road out that never came back cannot strand the
-    /// gate the way a boolean could.</summary>
-    private int _assistantChanges;
+    /// <summary>Whether Hub's task queue is running a change. Assistant operations are independent: the user
+    /// decides whether parallel work conflicts, rather than an application-wide busy flag vetoing it.</summary>
+    public bool IsBusy => _tasks.ActiveMutating is not null;
 
     public string StatusText { get; private set; } = "";
     private static long _nextTaskStatusToken;
@@ -421,60 +415,15 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public bool RefuseIfBusy()
     {
-        // Which holder is being refused matters to the sentence. "Finish or cancel the current operation" is true of
-        // every change Hub started itself, and it is a lie about the assistant's hold: that has no row, and the ✕ on
-        // the strip deliberately does not reach it, because stopping Hub's bookkeeping while the process keeps
-        // building would report a cancellation that never happened. The reply's ✕ is the cancel that really stops
-        // that command, so the sentence points there instead.
         if (!IsBusy)
         {
             return false;
         }
 
-        var sentence = HubStrings.Get(_tasks.ActiveMutating is null
-            ? "DeepLinkBusyAssistant"
-            : "DeepLinkBusy");
-        SetFeedback(UserFeedback.Warning(sentence,
-            _tasks.ActiveMutating is null ? "workspace-busy-assistant" : "workspace-busy-operation"));
+        var sentence = HubStrings.Get("DeepLinkBusy");
+        SetFeedback(UserFeedback.Warning(sentence, "workspace-busy-operation"));
         Log.Write(sentence);
         return true;
-    }
-
-    /// <summary>Holds the one-change-at-a-time gate for a caller that cannot use the queue: the assistant's shell
-    /// commands. An assistant build and a UI build used to be mutually invisible, each believing the other's busy
-    /// signal was somebody else's business; now both answer to <see cref="IsBusy"/>.
-    ///
-    /// <para>A counter rather than a queue item, for two reasons that point the same way. <see cref="TaskQueue"/>
-    /// is documented «call from the UI thread», and a tool body runs wherever the pipeline's last await landed —
-    /// taking a slot from there would race the list every row and every gate read walks. And a row would give that
-    /// process a second cancel plate beside the one on the reply, which is the same fact owned twice.</para>
-    ///
-    /// <para>Asked for, not queued: a hold that waits reads to the model as a hang, and a build that looks hung is
-    /// what makes an agent start a second one. Null is the answer that says "somebody else is changing this".</para>
-    /// </summary>
-    public IDisposable? TakeChangeGate(string subject)
-    {
-        // The UI change is checked first and the counter swapped second: two commands racing this call cannot both
-        // win, and neither can slip past a build that grabbed the slot a moment earlier.
-        if (_tasks.ActiveMutating is not null) return null;
-        if (Interlocked.CompareExchange(ref _assistantChanges, 1, 0) != 0) return null;
-
-        Log.Write($"Assistant holds the change gate: {subject}");
-        return new AssistantChange(this);
-    }
-
-    /// <summary>The other end of <see cref="TakeChangeGate"/>: the tool body's <c>finally</c>, reached on every road
-    /// out — a normal finish, a refusal inside the command, and the run the person stopped. Idempotent, so the
-    /// count cannot be driven negative by a release that already happened.</summary>
-    private sealed class AssistantChange(HubWorkspace owner) : IDisposable
-    {
-        private int _done;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _done, 1) != 0) return;
-            Interlocked.Decrement(ref owner._assistantChanges);
-        }
     }
 
     private async Task RunGated(string identity, string titleKey, string? subject,

@@ -27,7 +27,6 @@ internal sealed partial class ChatExecutionCoordinator
     private readonly ConcurrentDictionary<string, byte> _localGitActions = new(StringComparer.Ordinal);
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
     internal Func<IReadOnlyList<string>>? EngineRootsProvider { get; set; }
-    internal Func<string, IDisposable?>? ChangeGateProvider { get; set; }
     internal Func<HubLog?>? LogProvider { get; set; }
     internal Func<ModelProvider, string, IChatClient>? ClientOverride { get; set; }
 
@@ -387,10 +386,6 @@ internal sealed partial class ChatExecutionCoordinator
                 // known", which is a different claim from "this is not a project" and only the first is ours.
                 snapshot?.Projects.Select(project => new WorkspaceProject(project.Path, project.Name,
                     project.EngineVersion, project.Platform, project.Configuration)).ToArray(),
-                // A command that may change state asks for the gate, and refuses itself when the gate is taken
-                // rather than waiting behind a build it cannot see: a wait reads to the model as a hang, and a
-                // build that looks hung is what makes an agent start a second one.
-                ChangeGateProvider,
                 // Out of the write and into this conversation's queue, for the same reason the frames go that way
                 // rather than sitting on the scope: the body cannot name its own call, and the call it belongs to
                 // is stamped where the result lands — which for a parked call is a later scope entirely.
@@ -1272,25 +1267,19 @@ internal sealed partial class ChatExecutionCoordinator
             return new(false, UserFeedback.Warning(HubStrings.Get("CommitSummaryWorkspaceChanged"), "git-workspace"));
         if (!facts.ValidSource || facts.Busy)
             return new(false, UserFeedback.Warning(HubStrings.Get("GitActionExpired"), "git-expired"));
-        GitCommitResult result;
-        using (var gate = ChangeGateProvider?.Invoke("git " + action))
+        var runner = new ProcessRunner(line => LogProvider?.Invoke()?.Write(line));
+        var current = await GitRepository.ReadAsync(facts.Root, runner, Providers.SensitiveValues()).ConfigureAwait(false);
+        if (!current.IsReadable || current.Root is not { Length: > 0 } repositoryRoot)
+            return new(false, UserFeedback.Error(HubStrings.Get("CommitSummaryRepoUnavailable"), "git-repository"));
+        var result = action switch
         {
-            if (ChangeGateProvider is not null && gate is null)
-                return new(false, UserFeedback.Warning(HubStrings.Get("CommitSummaryBusy"), "git-busy"));
-            var runner = new ProcessRunner(line => LogProvider?.Invoke()?.Write(line));
-            var current = await GitRepository.ReadAsync(facts.Root, runner, Providers.SensitiveValues()).ConfigureAwait(false);
-            if (!current.IsReadable || current.Root is not { Length: > 0 } repositoryRoot)
-                return new(false, UserFeedback.Error(HubStrings.Get("CommitSummaryRepoUnavailable"), "git-repository"));
-            result = action switch
-            {
-                "push" => await GitRepository.PushAsync(facts.Root, repositoryRoot, runner,
-                    Providers.SensitiveValues()).ConfigureAwait(false),
-                "commit-push" => await GitRepository.CommitAndPushStagedAsync(facts.Root, repositoryRoot,
-                    summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
-                _ => await GitRepository.CommitStagedAsync(facts.Root, repositoryRoot,
-                    summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
-            };
-        }
+            "push" => await GitRepository.PushAsync(facts.Root, repositoryRoot, runner,
+                Providers.SensitiveValues()).ConfigureAwait(false),
+            "commit-push" => await GitRepository.CommitAndPushStagedAsync(facts.Root, repositoryRoot,
+                summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
+            _ => await GitRepository.CommitStagedAsync(facts.Root, repositoryRoot,
+                summary, TitlePrefixes(explicitText, facts.Prefixes), runner, Providers.SensitiveValues()).ConfigureAwait(false),
+        };
         if (!result.Success)
         {
             var noOp = result.FailureKey is "nothing-staged" or "nothing-to-push";
@@ -2813,9 +2802,6 @@ internal sealed partial class ChatExecutionCoordinator
             return (review, scope.DataRoot, scope.ConversationId, scope.Sandbox, scope.Guards);
         }).ConfigureAwait(false);
         if (plan is not { } work) return null;
-
-        using var changeGate = ChangeGateProvider?.Invoke("undo_turn");
-        if (ChangeGateProvider is not null && changeGate is null) return null;
 
         // Off the UI thread: this is one guarded read-and-write per file, the same work a single undo does.
         var undo = await Task.Run(() => work.Review.Undo(work.ConversationId, work.DataRoot, work.Sandbox,
