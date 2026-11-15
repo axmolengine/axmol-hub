@@ -10,19 +10,31 @@ internal static class FileRevealMenu
 {
     internal static void Add(ContextMenu menu, Window? owner, Func<string?> pathFor)
     {
+        var item = Create(() => owner, pathFor);
+        menu.Opened += (_, _) => Refresh(item, pathFor());
+        menu.Items.Add(item);
+    }
+
+    internal static MenuItem Create(Func<Window?> ownerFor, Func<string?> pathFor, bool directory = false, Action? beforeReveal = null)
+    {
         var item = new MenuItem { Tag = "reveal" };
         item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(FileManagerReveal.LabelKey));
-        menu.Opened += (_, _) =>
-        {
-            var path = pathFor();
-            item.IsEnabled = path is not null && File.Exists(path);
-            ToolTip.SetTip(item, path);
-        };
+        Refresh(item, pathFor(), directory);
         item.Click += async (_, _) =>
         {
-            if (pathFor() is not { } path || !await FileManagerReveal.TryRevealAsync(path))
-                await HubDialog.ShowAsync(owner, HubStrings.Get(FileManagerReveal.LabelKey), HubStrings.Get("RevealFileFailed"));
+            beforeReveal?.Invoke();
+            if (pathFor() is not { } path
+                || !(directory ? Directory.Exists(path) : File.Exists(path))
+                || !await FileManagerReveal.TryRevealAsync(path))
+                await HubDialog.ShowAsync(ownerFor(), HubStrings.Get(FileManagerReveal.LabelKey),
+                    HubStrings.Get(directory ? "RevealDirectoryFailed" : "RevealFileFailed"));
         };
-        menu.Items.Add(item);
+        return item;
+    }
+
+    internal static void Refresh(MenuItem item, string? path, bool directory = false)
+    {
+        item.IsEnabled = path is not null && (directory ? Directory.Exists(path) : File.Exists(path));
+        ToolTip.SetTip(item, path);
     }
 }

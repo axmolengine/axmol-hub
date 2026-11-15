@@ -2,15 +2,22 @@ using System.Diagnostics;
 
 namespace AxmolHub.Core;
 
-/// <summary>Reveals a file without opening it in its associated editor. Arguments never pass through a shell.</summary>
+/// <summary>Opens a directory or reveals a file without opening its associated editor. Arguments never pass through a shell.</summary>
 public static class FileManagerReveal
 {
     public static string LabelKey => OperatingSystem.IsMacOS() ? "RevealInFinder"
         : OperatingSystem.IsWindows() ? "RevealInExplorer" : "RevealInFileManager";
 
-    public static string[] CommandFor(string platform, string path)
+    public static string[] CommandFor(string platform, string path, bool directory = false)
     {
         var full = Path.GetFullPath(path);
+        if (directory)
+            return platform switch
+            {
+                "macOS" => ["/usr/bin/open", full],
+                "Windows" => ["explorer.exe", full],
+                _ => ["xdg-open", full],
+            };
         return platform switch
         {
             "macOS" => ["/usr/bin/open", "-R", full],
@@ -23,9 +30,11 @@ public static class FileManagerReveal
 
     public static async Task<bool> TryRevealAsync(string path)
     {
-        if (!File.Exists(path)) return false;
+        var directory = Directory.Exists(path);
+        if (!directory && !File.Exists(path)) return false;
         var platform = OperatingSystem.IsMacOS() ? "macOS" : OperatingSystem.IsWindows() ? "Windows" : "Linux";
-        if (await LaunchAsync(CommandFor(platform, path), wait: platform != "Windows")) return true;
+        if (await LaunchAsync(CommandFor(platform, path, directory), wait: platform != "Windows")) return true;
+        if (directory) return false;
         // Desktops without FileManager1 still get the containing folder, never the file's associated app.
         return platform == "Linux" && await LaunchAsync(["xdg-open", Path.GetDirectoryName(Path.GetFullPath(path))!], wait: true);
     }

@@ -225,6 +225,7 @@ public static class HubTexts
         ["RevealInExplorer"] = ("在资源管理器中显示", "Reveal in Explorer"),
         ["RevealInFileManager"] = ("在文件管理器中显示", "Show in File Manager"),
         ["RevealFileFailed"] = ("文件已不可用，或无法启动文件管理器。", "The file is unavailable or the file manager could not be started."),
+        ["RevealDirectoryFailed"] = ("目录已不可用，或无法启动文件管理器。", "The directory is unavailable or the file manager could not be started."),
         ["OpenFolder"] = ("打开目录", "Open folder"),
         ["RemoveFromList"] = ("移出列表", "Remove from list"),
         ["ProjectsCount"] = ("项目", "Projects"),

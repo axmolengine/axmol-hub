@@ -406,6 +406,8 @@ public partial class ChatSidebar : UserControl
                 : "ConversationActions"));
             menuButton.Click += (_, _) =>
             {
+                foreach (var item in items.Where(item => Equals(item.Tag, "reveal")))
+                    FileRevealMenu.Refresh(item, bucket.WorkspaceRoot, directory: true);
                 _openGroupMenu = menu;
                 menu.ShowAt(menuButton);
             };
@@ -505,6 +507,8 @@ public partial class ChatSidebar : UserControl
         }
 
         if (bucket.WorkspaceRoot is not { Length: > 0 } root) return items;
+
+        items.Add(FileRevealMenu.Create(GetOwner, () => root, directory: true, beforeReveal: CloseGroupMenu));
 
         var edit = new MenuItem { Header = HubStrings.Get("EditWorkspacePath") };
         edit.Click += async (_, _) =>
