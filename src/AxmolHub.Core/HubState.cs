@@ -32,6 +32,22 @@ public sealed class ProjectEntry
     /// "whatever <see cref="HubState.CodeEditor"/> says" — a per-project choice, not a second global slot.
     /// </summary>
     public CodeEditor? CodeEditor { get; set; }
+
+    /// <summary>Refreshes persisted project settings without replacing Hub-only preferences or history.</summary>
+    public void ReloadSettings(ProjectEntry source)
+    {
+        if (Version != source.Version || Channel != source.Channel || Platform != source.Platform
+            || Configuration != source.Configuration || ProjectType != source.ProjectType
+            || AdvancedBuildEnabled != source.AdvancedBuildEnabled || AdditionalBuildParameters != source.AdditionalBuildParameters)
+            BuildStatus = "Not built";
+        Version = source.Version;
+        Channel = source.Channel;
+        Platform = source.Platform;
+        Configuration = source.Configuration;
+        ProjectType = source.ProjectType;
+        AdvancedBuildEnabled = source.AdvancedBuildEnabled;
+        AdditionalBuildParameters = source.AdditionalBuildParameters;
+    }
 }
 public sealed class HubState
 {

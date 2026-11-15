@@ -1139,20 +1139,34 @@ public sealed partial class HubWorkspace : IDisposable
         var fullPath = Path.GetFullPath(path);
         await ExecuteAsync("Open project", _ =>
         {
+            var registered = State.Projects.FirstOrDefault(p => PathEquals(p.Path, fullPath));
+            if (registered is not null)
+            {
+                ReloadProject(registered);
+                return Task.CompletedTask;
+            }
+
             var project = StateStore.ReadProject(fullPath);
-            if (!File.Exists(StateStore.MetadataPath(fullPath)))
-            {
-                StateStore.LockProject(project);
-            }
-
-            if (!State.Projects.Any(p => PathEquals(p.Path, fullPath)))
-            {
-                State.Projects.Add(project);
-            }
-
+            if (!File.Exists(StateStore.MetadataPath(fullPath))) StateStore.LockProject(project);
+            State.Projects.Add(project);
             return Task.CompletedTask;
         });
         return State.Projects.FirstOrDefault(p => PathEquals(p.Path, fullPath));
+    }
+
+    public Task ReloadProjectAsync(ProjectEntry? requested = null) => ExecuteAsync("ReloadProject", _ =>
+    {
+        ReloadProject(requested ?? RequiredProject());
+        return Task.CompletedTask;
+    });
+
+    private void ReloadProject(ProjectEntry project)
+    {
+        // Without project metadata, do not replace the entry with import defaults.
+        if (!File.Exists(StateStore.MetadataPath(project.Path)))
+            throw new FileNotFoundException("Project settings file not found.", StateStore.MetadataPath(project.Path));
+        project.ReloadSettings(StateStore.ReadProject(project.Path));
+        Log.Write($"{project.Name}: project settings reloaded ({project.Platform} · {project.Configuration}).");
     }
 
     /// <summary>Installed engines newer than the project's exact binding, ordered with same-major upgrades first.</summary>
