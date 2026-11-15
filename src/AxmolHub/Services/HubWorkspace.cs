@@ -1038,8 +1038,8 @@ public sealed partial class HubWorkspace : IDisposable
             }
 
             var prompt = string.Format(HubStrings.Get("UninstallPrompt"), engine.Version);
-            useRecycleBin = await DeleteConfirmation.ShowAsync(Owner, HubStrings.Get("Uninstall"),
-                "Axmol " + engine.Version, engine.Path, prompt);
+            useRecycleBin = await DeleteConfirmation.ShowAsync(Owner, HubStrings.Get("UninstallEngineTitle"),
+                "Axmol " + engine.Version, engine.Path, prompt, HubStrings.Get("Uninstall"));
             if (useRecycleBin is null)
             {
                 return;

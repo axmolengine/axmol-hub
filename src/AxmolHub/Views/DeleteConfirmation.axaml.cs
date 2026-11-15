@@ -30,13 +30,14 @@ public partial class DeleteConfirmation : UserControl
     internal void Cancel() => Answered?.Invoke(null);
     internal void FocusCancel() => CancelButton.Focus();
 
-    public static Task<bool?> ShowAsync(Window? owner, string title, string name, string? path, string message)
+    public static Task<bool?> ShowAsync(Window? owner, string title, string name, string? path, string message,
+        string? actionCaption = null)
     {
         // Destructive actions need a visible shell. Losing the owner must never become consent.
         if (owner is not MainWindow { IsVisible: true } shell) return Task.FromResult<bool?>(null);
         var view = new DeleteConfirmation();
         view.Heading.Text = title;
-        view.ConfirmButton.Content = title;
+        view.ConfirmButton.Content = actionCaption ?? title;
         view.ObjectName.Text = name;
         view.ObjectPath.Text = path;
         view.ObjectPath.IsVisible = !string.IsNullOrEmpty(path);

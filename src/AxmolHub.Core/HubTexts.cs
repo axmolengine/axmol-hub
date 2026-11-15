@@ -282,6 +282,8 @@ public static class HubTexts
         ["VerifyEngine"] = ("验证", "Verify"),
         ["Repair"] = ("修复", "Repair"),
         ["Uninstall"] = ("卸载", "Uninstall"),
+        ["UninstallEngineTitle"] = ("卸载引擎", "Uninstall engine"),
+        ["DeleteProjectTitle"] = ("删除项目", "Delete project"),
         // Confirmation prompts and consequence hints. The uninstall wording used to be a C# inline
         // ternary; it lives here now so both languages are editable in one place.
         ["UninstallPrompt"] = ("卸载 Axmol {0}？此操作会删除整个引擎安装目录。项目文件不受影响。", "Uninstall Axmol {0}? This deletes the entire engine installation folder. Project files are preserved."),

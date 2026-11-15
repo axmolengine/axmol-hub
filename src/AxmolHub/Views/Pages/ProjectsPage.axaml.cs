@@ -264,8 +264,8 @@ public partial class ProjectsPage : UserControl
         try
         {
             _workspace.ValidateProjectDeleteAvailability(project);
-            var useRecycleBin = await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteProject"),
-                project.Name, project.Path, HubStrings.Get("DeleteProjectPrompt"));
+            var useRecycleBin = await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteProjectTitle"),
+                project.Name, project.Path, HubStrings.Get("DeleteProjectPrompt"), HubStrings.Get("DeleteProject"));
             if (useRecycleBin is null) return;
             if (await _workspace.DeleteProjectAsync(project, useRecycleBin.Value)) Reload();
         }
