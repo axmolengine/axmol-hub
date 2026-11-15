@@ -6,6 +6,29 @@ using static CheckSupport;
 
 internal static class DefaultChecks
 {
+    internal static void RunBuildLayoutChecks(string root)
+    {
+        // Reused by the offline result checks without invoking the full suite's real engine/toolchain flow.
+        var buildFixture = Path.Combine(root, "engine-layout-" + Guid.NewGuid().ToString("N"));
+        var layoutProject = new ProjectEntry
+        {
+            Name = "Fixture", Path = buildFixture, Platform = "windows-x64", Configuration = "Debug"
+        };
+        var scannedBuild = Path.Combine(buildFixture, "build_win32_x64");
+        Directory.CreateDirectory(Path.Combine(scannedBuild, "bin", "Fixture", "Debug"));
+        File.WriteAllText(Path.Combine(scannedBuild, "bin", "Fixture", "Debug", "Fixture.exe"), "binary");
+        Check(LegacyArtifactResolver.FindBuildDirectory(layoutProject) == scannedBuild && LegacyArtifactResolver.FindArtifact(scannedBuild, "Fixture", "Debug", "windows") is not null, "Engine build directory and artifact are discovered from the engine's own layout");
+        File.WriteAllText(Path.Combine(buildFixture, "run.bat"), "set BUILD_DIR=build_declared\n");
+        Directory.CreateDirectory(Path.Combine(buildFixture, "build_declared"));
+        Check(LegacyArtifactResolver.FindBuildDirectory(layoutProject) == scannedBuild, "Build discovery ignores legacy run.bat and follows the selected target artifact");
+        Check(LegacyArtifactResolver.FindArtifact(scannedBuild, "Fixture", "Release", "windows") is null && LegacyArtifactResolver.FindArtifact(scannedBuild, "Fixture", "Debug", "wasm") is null, "Artifact discovery never borrows another configuration's or target's output");
+        var macBuild = Path.Combine(buildFixture, "build", "build");
+        var macBundleExecutable = Path.Combine(macBuild, "Debug", "Fixture.app", "Contents", "MacOS", "Fixture");
+        Directory.CreateDirectory(Path.GetDirectoryName(macBundleExecutable)!);
+        File.WriteAllText(macBundleExecutable, "binary");
+        Check(LegacyArtifactResolver.FindArtifact(macBuild, "Fixture", "Debug", "macos") == macBundleExecutable, "macOS app bundles are discovered from the configuration directory beside bin");
+    }
+
     internal static async Task RunAsync(string root, string[] args)
     {
         var messages = new List<string>();
@@ -115,28 +138,7 @@ internal static class DefaultChecks
         Check(preferencesStore.Load().Language == "en-US", "Unknown language falls back to the default (English)");
         Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable, "Unknown update channel falls back to Stable");
         Check(Directory.Exists(PreferencesStore.VerifyDirectory(preferences.DataRoot!)) && !Directory.EnumerateFiles(preferences.DataRoot!, ".hub-write-check-*").Any(), "Selected directory checked for write access without residue");
-        // Build discovery follows the selected target's actual artifact and does not depend on a Hub directory convention or helper script.
-        var buildFixture = Path.Combine(root, "engine-layout-" + Guid.NewGuid().ToString("N"));
-        var layoutProject = new ProjectEntry
-        {
-            Name = "Fixture",
-            Path = buildFixture,
-            Platform = "windows-x64",
-            Configuration = "Debug"
-        };
-        var scannedBuild = Path.Combine(buildFixture, "build_win32_x64");
-        Directory.CreateDirectory(Path.Combine(scannedBuild, "bin", "Fixture", "Debug"));
-        File.WriteAllText(Path.Combine(scannedBuild, "bin", "Fixture", "Debug", "Fixture.exe"), "binary");
-        Check(EngineBuildLayout.FindBuildDirectory(layoutProject) == scannedBuild && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "windows")is not null, "Engine build directory and artifact are discovered from the engine's own layout");
-        File.WriteAllText(Path.Combine(buildFixture, "run.bat"), "set BUILD_DIR=build_declared\n");
-        Directory.CreateDirectory(Path.Combine(buildFixture, "build_declared"));
-        Check(EngineBuildLayout.FindBuildDirectory(layoutProject) == scannedBuild, "Build discovery ignores legacy run.bat and follows the selected target artifact");
-        Check(EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Release", "windows")is null && EngineBuildLayout.FindArtifact(scannedBuild, "Fixture", "Debug", "wasm")is null, "Artifact discovery never borrows another configuration's or target's output");
-        var macBuild = Path.Combine(buildFixture, "build", "build");
-        var macBundleExecutable = Path.Combine(macBuild, "Debug", "Fixture.app", "Contents", "MacOS", "Fixture");
-        Directory.CreateDirectory(Path.GetDirectoryName(macBundleExecutable)!);
-        File.WriteAllText(macBundleExecutable, "binary");
-        Check(EngineBuildLayout.FindArtifact(macBuild, "Fixture", "Debug", "macos") == macBundleExecutable, "macOS app bundles are discovered from the configuration directory beside bin");
+        RunBuildLayoutChecks(root);
         await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.SafePath(root, "../escape")), "Manifest path traversal rejected");
         await Reject<InvalidDataException>(() => Task.Run(() => PackageInstaller.SafePath(root, "C:\\escape")), "Absolute manifest path rejected");
         var badZip = Path.Combine(root, Guid.NewGuid() + ".zip");

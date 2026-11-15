@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace AxmolHub.Core;
 
@@ -13,8 +14,8 @@ public sealed class ProjectDestinationExistsException(string destination)
 ///
 /// **Build/run has been delegated to the engine's own command line** (<c>axmol build|run|deploy</c>):
 /// the Hub no longer assembles CMake arguments, pins tool paths, or hand-builds <c>INCLUDE</c>/<c>LIB</c>.
-/// The build directory is also decided by the engine (see <see cref="EngineBuildLayout"/>); the Hub only
-/// discovers it.
+/// The engine reports artifacts; engines without that protocol use <see cref="LegacyArtifactResolver"/> once
+/// after building. Run and preview consume the validated result saved in the build receipt.
 ///
 /// The value the Hub retains: filling in the runtime app-local runtime library (VC redist). Run directly
 /// launches the exe in the engine's artifact directory.
@@ -217,35 +218,61 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
 
         var invocation = ProjectBuildOptions.Invocation(project, engine, configureOnly, prebuiltState);
         var reconfigure = NeedsReconfigure(project);
-        await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine, onCommand: onCommand);
-        WriteBuildReceipt(project, engine);
+        cancellation.ThrowIfCancellationRequested();
+        // Both configure and build may mutate existing output. A failed/cancelled attempt must not leave
+        // a previous receipt advertising those files as a successful build of this attempt.
+        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
+        if (File.Exists(receipt)) File.Delete(receipt);
+        var process = await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine, onCommand: onCommand);
+        if (!configureOnly)
+        {
+            var result = ProjectBuildResult.FromOutput(process.Output + "\n" + process.Error, project)
+                ?? LegacyArtifactResolver.Resolve(project);
+            cancellation.ThrowIfCancellationRequested();
+            WriteBuildReceipt(project, engine, result);
+        }
         if (reconfigure) File.Delete(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
     }
 
     /// <summary>Build receipt: records which engine installation and target/configuration this build corresponds to, so Run can judge whether the artifacts are still valid.</summary>
-    private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine)
+    private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine, ProjectBuildResult result)
     {
         var directory = Path.Combine(project.Path, MarkerDirectory);
         Directory.CreateDirectory(directory);
         StateStore.WriteJson(Path.Combine(directory, "build.json"), new
         {
             engine = EngineInstallationToken(engine), platform = project.Platform, configuration = project.Configuration,
-            buildDirectory = EngineBuildLayout.FindBuildDirectory(project) ?? "",
+            buildDirectory = result.BuildDirectory,
+            result,
             additionalBuildParameters = project.AdvancedBuildEnabled ? project.AdditionalBuildParameters : "",
         });
     }
 
-    public string FindExecutable(ProjectEntry project)
+    public static ProjectBuildResult ReadBuildResult(ProjectEntry project)
     {
-        if (BuildTargets.Get(project.Platform).Family != "windows") return PlatformBuildService.FindArtifact(project);
-        return EngineBuildLayout.FindArtifact(BuildDirectory(project), project.Name, project.Configuration, "windows")
-            ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
+        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
+        if (!File.Exists(receipt)) throw new InvalidOperationException("Build this target successfully before Run.");
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(receipt));
+        var root = document.RootElement;
+        ValidateReceiptTarget(root, project);
+        if (!root.TryGetProperty("result", out var saved) || saved.ValueKind == System.Text.Json.JsonValueKind.Null)
+            throw new InvalidOperationException("Build receipt has no artifact result. Build again before Run.");
+        var result = saved.Deserialize<ProjectBuildResult>(StateStore.ReadOptions)
+            ?? throw new InvalidDataException("Empty build artifact result.");
+        result.Validate(project);
+        return result;
     }
 
-    /// <summary>The engine decides the build directory; this just locates it. Not found means it hasn't been built yet.</summary>
+    public string FindExecutable(ProjectEntry project) => PlatformBuildService.FindArtifact(project);
+
+    /// <summary>Only native packaging helpers require a build directory; final artifact lookup never does.</summary>
     public static string BuildDirectory(ProjectEntry project)
-        => EngineBuildLayout.FindBuildDirectory(project)
-           ?? throw new DirectoryNotFoundException($"No build directory was produced under {project.Path}. Build this target first.");
+    {
+        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
+        var result = File.Exists(receipt) ? ReadBuildResult(project) : null;
+        return result?.BuildDirectory ?? LegacyArtifactResolver.FindBuildDirectory(project)
+            ?? throw new DirectoryNotFoundException($"No native build directory is available under {project.Path}. The final artifact may still be valid.");
+    }
 
     /// <summary>
     /// The waiting contract: start the target and answer with a process's exit code. <c>axmolhub-cli run</c>
@@ -310,9 +337,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new InvalidOperationException("Project metadata changed. Reopen the project before Run.");
         if (project.Version != engine.Version || project.Channel != engine.Channel) throw new InvalidOperationException("Required Axmol version/channel is not installed.");
         ValidateBuildReceipt(project, engine);
-        var build = BuildDirectory(project);
-        return EngineBuildLayout.FindArtifact(build, project.Name, project.Configuration, "windows")
-            ?? throw new FileNotFoundException("Build " + project.Configuration + " successfully before Run.");
+        return FindExecutable(project);
     }
 
     /// <summary>When the build receipt is missing or doesn't match the current engine installation, the previous artifacts must not be used to enter Run.</summary>
@@ -324,6 +349,11 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         var root = document.RootElement;
         if (root.GetProperty("engine").GetString() != EngineInstallationToken(engine))
             throw new InvalidOperationException("Engine installation changed. Build again before Run.");
+        ValidateReceiptTarget(root, project);
+    }
+
+    private static void ValidateReceiptTarget(System.Text.Json.JsonElement root, ProjectEntry project)
+    {
         if (root.GetProperty("platform").GetString() != project.Platform || root.GetProperty("configuration").GetString() != project.Configuration)
             throw new InvalidOperationException("Project target changed. Build again before Run.");
         var parameters = root.TryGetProperty("additionalBuildParameters", out var saved) ? saved.GetString() ?? "" : "";

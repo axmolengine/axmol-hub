@@ -1434,11 +1434,6 @@ public sealed partial class HubWorkspace : IDisposable
             {
                 _androidPasswords.TryGetValue(project.Path, out var passwords);
                 await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task), OwnCommand(task));
-                if (!configureOnly)
-                {
-                    _projects.FindExecutable(project);
-                }
-
                 project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
             }
             catch (OperationCanceledException)

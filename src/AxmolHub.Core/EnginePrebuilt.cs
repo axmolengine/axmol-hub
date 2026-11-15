@@ -70,7 +70,7 @@ public sealed class PrebuiltUnavailableException(string targetName, string confi
 /// or not" must be judged precisely by the Hub itself: only <see cref="PrebuiltStatus.Ready"/> may hand
 /// <c>-DAX_PREBUILT_DIR</c> to CMake.
 ///
-/// Note the division of labor with <see cref="EngineBuildLayout"/>: that one scans the **project directory**
+/// Note the division of labor with <see cref="LegacyArtifactResolver"/>: that one scans the **project directory**
 /// for **app artifacts**, whereas this one scans the **engine root** for **engine libraries**; the two do not
 /// share a determination.
 /// </summary>

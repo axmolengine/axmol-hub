@@ -111,24 +111,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     }
 
     public static string FindArtifact(ProjectEntry project)
-    {
-        var target = BuildTargets.Get(project.Platform);
-        var build = ProjectService.BuildDirectory(project);
-        // The Android artifact is the Gradle-produced APK, which lands in the engine's build directory — do a
-        // controlled discovery, and don't allow the native library (lib<App>.so) to masquerade as the artifact.
-        // Prefer the current configuration.
-        if (target.Family == "android")
-        {
-            var apks = Directory.EnumerateFiles(build, "*.apk", SearchOption.AllDirectories)
-                .OrderByDescending(File.GetLastWriteTimeUtc).ToArray();
-            return apks.FirstOrDefault(path => path.Contains(project.Configuration, StringComparison.OrdinalIgnoreCase))
-                ?? apks.FirstOrDefault()
-                ?? throw new FileNotFoundException($"Android APK is missing for {project.Name}. Build this target first.");
-        }
-
-        return EngineBuildLayout.FindArtifact(build, project.Name, project.Configuration, target.Family)
-            ?? throw new FileNotFoundException($"Target build artifact is missing: {project.Name} ({project.Platform}/{project.Configuration}).");
-    }
+        => ProjectService.ReadBuildResult(project).FindArtifact(project);
 
     public async Task<ProcessResult> RunAsync(ProjectEntry project, EngineEntry engine, EngineCommandLine commandLine,
         CancellationToken cancellation = default, bool openBrowser = true, string? deviceSerial = null)
@@ -136,6 +119,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         var target = BuildTargets.Get(project.Platform);
         if (!target.CanBuildOn(BuildTargets.Host)) throw new PlatformNotSupportedException("Run requires the matching build host.");
         ProjectService.ValidateBuildReceipt(project, engine);
+        _ = FindArtifact(project);
 
         if (target.Family == "wasm")
         {
@@ -190,6 +174,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
     /// </summary>
     public async Task<WebPreview> StartWebPreviewAsync(ProjectEntry project, EngineEntry engine, bool openBrowser, CancellationToken cancellation)
     {
+        ProjectService.ValidateBuildReceipt(project, engine);
         await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         var artifact = FindArtifact(project);
         var emscripten = Path.Combine(EngineToolchain.ToolRoot(engine), "emsdk", "upstream", "emscripten");
