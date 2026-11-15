@@ -159,13 +159,21 @@
 
   <!-- A solid rounded square = stop, the same button's other state. It contrasts with the arrow by fill rather
        than by colour, so the two states are distinguishable even in a monochrome screenshot. The corners are
-       rounded at r=1.8 on this grid — 19% of the square's side, which measures as ~3 DIP in the 15.5 px the slot
+       rounded at r=2.4 on this grid — 19% of the square's side, which measures as ~2.8 DIP in the 15 px the slot
        actually draws, and stays a square rather than drifting toward a circle. Reasons for rounding at all: a
        square corner would be the only hard edge in an otherwise radius-4..15 shell, and a radius small enough to
        blend into the antialiasing reads as a slip rather than as a decision (a 2 DIP corner did). The corners
-       only cut the shape — the box stays 9.4 wide and square, centred on 12,12, because Stretch="Uniform" parks
-       any leftover axis as slack on one side (see Hub.Icon.Send above). -->
-  <StreamGeometry x:Key="Hub.Icon.Stop">M9.1 7.3H14.9A1.8 1.8 0 0 1 16.7 9.1V14.9A1.8 1.8 0 0 1 14.9 16.7H9.1A1.8 1.8 0 0 1 7.3 14.9V9.1A1.8 1.8 0 0 1 9.1 7.3Z</StreamGeometry>
+       only cut the shape — the box stays 12.8 wide and square, centred on 12,12, because Stretch="Uniform" parks
+       any leftover axis as slack on one side (see Hub.Icon.Send above).
+       The side is 12.8 rather than the 9.4 this glyph was first authored at for the send slot: that slot stretches
+       the glyph to fill its box, so the authored size never shows there, and the only consumer drawing it at
+       authored scale is the capsule action row (pause, stop, revoke — Stretch="None" inside a 24-unit canvas).
+       There the old box drew ~6.3 px, and 11 — matching the revoke ×'s 6.5..17.5 centerline box — still read one
+       size small against it, because a stroked × paints half its 1.8 stroke outside that box while a filled
+       square's ink stops at its own outline. 12.8 spans 5.6..18.4, the ×'s actual ink bounds, so the two glyphs
+       now draw 8.5 px each, and a solid square weighs more per px than two thin diagonals — so a shared ink box
+       reads level here, where a shared centerline box read small. -->
+  <StreamGeometry x:Key="Hub.Icon.Stop">M8 5.6H16A2.4 2.4 0 0 1 18.4 8V16A2.4 2.4 0 0 1 16 18.4H8A2.4 2.4 0 0 1 5.6 16V8A2.4 2.4 0 0 1 8 5.6Z</StreamGeometry>
 
   <!-- Goal actions: filled pause bars and play triangle, centered in the authored 24-unit viewport. -->
   <StreamGeometry x:Key="Hub.Icon.Pause">M6 5H10V19H6Z M14 5H18V19H14Z</StreamGeometry>
