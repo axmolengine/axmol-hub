@@ -13,6 +13,10 @@ public sealed class HubPreferences
     /// <summary>New installs use ~/.axmolhub for business data. Absent in old settings: false preserves their
     /// original default data path. Authentication is always independent of this choice.</summary>
     public bool UseHomeDataDirectory { get; set; }
+
+    /// <summary>After changing business roots, never adopt profile settings or credentials from the destination.
+    /// The source profile has already been imported; directory selection only changes business content.</summary>
+    public bool LegacyProfileImportCompleted { get; set; }
     public string? ProjectDirectory { get; set; }
 
     /// <summary>

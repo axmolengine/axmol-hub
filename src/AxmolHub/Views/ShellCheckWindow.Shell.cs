@@ -414,7 +414,7 @@ internal sealed class ShellLayoutChecks
         Check(refusedRoot,
             "拒绝把数据根切到盘符根目录（抛 IOException，而不是把整个盘当成数据目录）");
 
-        await shell.SwitchDataRootAsync(scratchRoot);
+        await shell.SwitchDataRootAsync(scratchRoot, migrate: false);
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         Check(shell.Workspace.Store.Root == new StateStore(scratchRoot).Root,

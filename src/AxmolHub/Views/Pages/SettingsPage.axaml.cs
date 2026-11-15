@@ -41,7 +41,7 @@ public partial class SettingsPage : UserControl
     private readonly Action _languageChanged;
 
     /// <summary>Asks the shell to switch the data root. Returns whether it actually switched.</summary>
-    private readonly Func<string, Task<bool>> _switchDataRoot;
+    private readonly Func<string, bool, Task<bool>> _switchDataRoot;
 
     /// <summary>Asks the shell to switch the theme (persist → apply → revert on failure). Returns null on
     /// success, the error message on failure. The shell owns the sequence: the bottom menu's appearance
@@ -109,7 +109,7 @@ public partial class SettingsPage : UserControl
         _chat = null!;
         _openFolder = _ => { };
         _languageChanged = () => { };
-        _switchDataRoot = _ => Task.FromResult(false);
+        _switchDataRoot = (_, _) => Task.FromResult(false);
         _applyTheme = _ => null;
 
         InitializeComponent();
@@ -122,7 +122,7 @@ public partial class SettingsPage : UserControl
         ChatWorkspace chat,
         Action<string> openFolder,
         Action languageChanged,
-        Func<string, Task<bool>> switchDataRoot,
+        Func<string, bool, Task<bool>> switchDataRoot,
         Func<string, string?> applyTheme)
     {
         _workspace = workspace;
@@ -840,17 +840,46 @@ public partial class SettingsPage : UserControl
             // The whole workspace is rebuilt on switch (page cache cleared), so confirm first: it is the one
             // "Browse" on this page that really re-homes Hub rather than just storing a path.
             var confirm = string.Format(HubStrings.Get("SwitchDataRootPrompt"), picked.Path);
-            if (await HubDialog.ShowAsync(top as Window, HubStrings.Get("DataDirectory"), confirm, HubDialogButtons.OkCancel) != HubDialogResult.Ok)
+            var (choices, migrate) = BuildDataRootChoices();
+            if (await HubDialog.ShowAsync(top as Window, HubStrings.Get("DataDirectory"), confirm,
+                    HubDialogButtons.OkCancel, options: choices) != HubDialogResult.Ok)
             {
                 return;
             }
 
-            await _switchDataRoot(picked.Path!);
+            await _switchDataRoot(picked.Path!, migrate.IsChecked == true);
         }
         catch (Exception ex)
         {
             await HubDialog.ShowAsync(top as Window, HubStrings.Get("OperationFailed"), ex.Message);
         }
+    }
+
+    private static (Control Choices, RadioButton Migrate) BuildDataRootChoices()
+    {
+        var choices = new StackPanel { Spacing = 12 };
+        RadioButton Choice(string name, string title, string detail, bool selected)
+        {
+            var content = new StackPanel { Spacing = 4 };
+            content.Children.Add(new TextBlock { Text = HubStrings.Get(title), TextWrapping = TextWrapping.Wrap });
+            content.Children.Add(new TextBlock
+            {
+                Text = HubStrings.Get(detail), Classes = { "muted" }, TextWrapping = TextWrapping.Wrap,
+            });
+            return new RadioButton
+            {
+                Name = name, GroupName = "DataRootMode", IsChecked = selected,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = content,
+            };
+        }
+        var migrate = Choice("MigrateDataChoice", "MigrateDataChoice", "MigrateDataDetail", true);
+        choices.Children.Add(migrate);
+        choices.Children.Add(Choice("SwitchDataOnlyChoice", "SwitchDataOnlyChoice", "SwitchDataOnlyDetail", false));
+        choices.Children.Add(new TextBlock
+        {
+            Text = HubStrings.Get("DataRootFixedSettings"), Classes = { "muted" }, TextWrapping = TextWrapping.Wrap,
+        });
+        return (choices, migrate);
     }
 
     private async Task ChooseProjectDirectoryAsync()

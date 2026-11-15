@@ -1450,7 +1450,9 @@ public partial class MainWindow : Window
     private HubStorageLayout StorageLayout(string root)
         => _checkStorageLayout is { } fixture
             ? fixture with { DataRoot = Path.GetFullPath(root) }
-            : HubStorageLayout.Resolve(root);
+            : _preferences.LegacyProfileImportCompleted
+                ? HubStorageLayout.Resolve(root) with { LegacySource = null }
+                : HubStorageLayout.Resolve(root);
 
     /// <summary>
     /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
@@ -1464,7 +1466,7 @@ public partial class MainWindow : Window
     /// </summary>
     /// <returns>Whether it actually switched. Does nothing when the target equals the current
     /// root.</returns>
-    internal async Task<bool> SwitchDataRootAsync(string directory)
+    internal async Task<bool> SwitchDataRootAsync(string directory, bool migrate = true)
     {
         // Switching is forbidden while an operation is running: the operation holds the old root's
         // downloader, log, and toolchain directories, and switching mid-run would make it write into
@@ -1487,13 +1489,13 @@ public partial class MainWindow : Window
         var snapshot = System.Text.Json.JsonSerializer.Deserialize<HubPreferences>(
             System.Text.Json.JsonSerializer.Serialize(_preferences))!;
         var completed = false;
-        var item = TaskQueue.Instance.Enqueue("data:relocate", "TaskRelocateData", path,
+        var item = TaskQueue.Instance.Enqueue("data:relocate", migrate ? "TaskRelocateData" : "TaskSwitchData", path,
             async (task, token) =>
             {
                 SetRelocationInputsEnabled(false);
                 CloseSettings();
                 CloseNewWorkspace();
-                using var pausedLog = source.Log.PauseWrites();
+                using var pausedLog = migrate ? source.Log.PauseWrites() : null;
                 try
                 {
                     var progress = new Progress<DownloadProgress>(reading =>
@@ -1511,7 +1513,7 @@ public partial class MainWindow : Window
                             ProviderSettingsMigration.Import(layout);
                         }
                         using var indexGate = source.Store.LockIndex();
-                        using var transfer = DataRootTransfer.Copy(source.Store.Root, path, token, progress);
+                        using var transfer = migrate ? DataRootTransfer.Copy(source.Store.Root, path, token, progress) : null;
                         token.ThrowIfCancellationRequested();
                         // The commit is short and non-cancellable. No thread-affine lease crosses an await.
                         Dispatcher.UIThread.InvokeAsync(() =>
@@ -1522,25 +1524,30 @@ public partial class MainWindow : Window
                         }).GetAwaiter().GetResult();
                         var originalState = source.Store.Load();
                         var relocatedState = source.Store.Load();
-                        relocatedState.RelocatePaths(source.Store.Root, path);
+                        if (migrate)
+                        {
+                            relocatedState.RelocatePaths(source.Store.Root, path);
+                            snapshot.ProjectDirectory = DataRootTransfer.RebasePath(snapshot.ProjectDirectory, source.Store.Root, path);
+                        }
                         snapshot.DataRoot = path;
-                        snapshot.ProjectDirectory = DataRootTransfer.RebasePath(snapshot.ProjectDirectory, source.Store.Root, path);
+                        snapshot.LegacyProfileImportCompleted = true;
                         try
                         {
-                            source.Store.Save(relocatedState);
+                            if (migrate) source.Store.Save(relocatedState);
                             _preferencesStore.Save(snapshot);
                         }
                         catch
                         {
-                            source.Store.Save(originalState);
+                            if (migrate) source.Store.Save(originalState);
                             throw;
                         }
-                        transfer.Commit();
+                        transfer?.Commit();
                     }, token);
                     _preferences.DataRoot = snapshot.DataRoot;
+                    _preferences.LegacyProfileImportCompleted = snapshot.LegacyProfileImportCompleted;
                     _preferences.ProjectDirectory = snapshot.ProjectDirectory;
                     var nextWorkspace = new HubWorkspace(path, _preferences, _preferencesStore, StorageLayout(path).AuthRoot);
-                    source.Log.RedirectTo(nextWorkspace.Log);
+                    if (migrate) source.Log.RedirectTo(nextWorkspace.Log);
                     ReplaceWorkspace(nextWorkspace);
                     completed = true;
                     ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));

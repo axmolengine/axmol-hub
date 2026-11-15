@@ -37,6 +37,7 @@
       <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <TextBlock Name="DialogMessage" Classes="muted" TextWrapping="Wrap" />
       </ScrollViewer>
+      <ContentControl Name="DialogOptions" IsVisible="False" HorizontalContentAlignment="Stretch" />
       <!-- Group the closing rows so the About footer stays close to its links. Optional rows collapse fully;
            ordinary confirmation dialogs still have only their buttons here. -->
       <StackPanel Spacing="8">

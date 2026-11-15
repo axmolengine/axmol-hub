@@ -75,7 +75,8 @@ public partial class HubDialog : Window
         Bitmap? picture = null,
         IReadOnlyList<HubDialogLink>? links = null,
         HubDialogLink? footerLink = null,
-        bool centerBody = false)
+        bool centerBody = false,
+        Control? options = null)
     {
         var dialog = new HubDialog();
 
@@ -83,6 +84,8 @@ public partial class HubDialog : Window
         // is bound to it (see HubDialogChrome), so the title cannot be said twice and cannot go out of step.
         dialog.Title = title;
         dialog.DialogMessage.Text = message;
+        dialog.DialogOptions.Content = options;
+        dialog.DialogOptions.IsVisible = options is not null;
         dialog.SetPicture(picture);
         dialog.AddLinks(links);
         if (centerBody)
