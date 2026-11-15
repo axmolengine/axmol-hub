@@ -233,6 +233,11 @@ public sealed class ProcessRunner(Action<string> log)
 
     public static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(2);
 
+    /// <summary>How long a process that <b>has already exited</b> gets for its output pipes to reach EOF. Anything
+    /// still in flight then is a tail, not a build: the readers consume the pipes as they are written, so at most
+    /// one bufferful can be outstanding at the moment the process exits.</summary>
+    public static readonly TimeSpan ExitDrainGrace = TimeSpan.FromSeconds(5);
+
     /// <summary>Ends a stopped process: kill the tree, wait for it, report whether it died. The checks replace
     /// this to hand back a process that survives its own kill, because "the tool never comes back" is the failure
     /// the bounds above exist for, and no real process can be made unkillable on purpose.</summary>
@@ -264,6 +269,12 @@ public sealed class ProcessRunner(Action<string> log)
         {
             WorkingDirectory = workingDirectory, UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+            // stdin is redirected for one reason only: so it can be closed right after the process starts.
+            // Left inherited, a child that waits for input reads Hub's own stdin — and where that is a console it
+            // waits for a key nobody presses, while where it is a pipe Hub holds and never writes it waits for an
+            // EOF that never comes. Either way Hub ends up waiting for an exit that will not happen. A closed pipe
+            // answers every prompt with EOF, which is the honest answer: there is nobody here to answer it.
+            RedirectStandardInput = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
@@ -312,6 +323,9 @@ public sealed class ProcessRunner(Action<string> log)
             var idleTimeout = timeout ?? DefaultIdleTimeout;
             cancellation.ThrowIfCancellationRequested();
             process.Start();
+            // The write end goes as soon as the child exists: from here on its stdin is an open pipe with nobody
+            // on the other side, so a prompt reads EOF and returns instead of parking the build on a key press.
+            process.StandardInput.Close();
 
             // Record the timestamp of "the most recent output"; both read pumps update it (Interlocked writes a long for thread safety).
             var lastOutputTicks = Environment.TickCount64;
@@ -392,9 +406,15 @@ public sealed class ProcessRunner(Action<string> log)
                 }
             }
 
-            var result = new ProcessResult(process.ExitCode, await output, await error);
-            log($"Exit code: {result.ExitCode}");
-            return result;
+            // The process exiting is not the same event as its pipes closing: a build that starts a daemon (Gradle's,
+            // adb's, a detached helper) leaves behind a process that inherited the write end of these pipes and keeps
+            // it open for as long as it lives. Awaiting the readers unbounded is then a Hub frozen on "Configuring"
+            // with a log that already says the build succeeded — the failure this bound exists for.
+            var exitCode = process.ExitCode;
+            var (finalOutput, finalError) = await DrainAfterExitAsync(output, error, outputSink, errorSink, executable)
+                .ConfigureAwait(false);
+            log($"Exit code: {exitCode}");
+            return new ProcessResult(exitCode, finalOutput, finalError);
         }
         finally
         {
@@ -407,6 +427,32 @@ public sealed class ProcessRunner(Action<string> log)
     private static string SnapshotOf(StringBuilder sink)
     {
         lock (sink) return sink.ToString();
+    }
+
+    /// <summary>
+    /// Collects both pipes once the process exited — <b>bounded</b>, because "the process exited" and "its stdout
+    /// closed" are answered by different things. A build that starts a daemon (Gradle's, adb's, a detached helper)
+    /// leaves a process behind that inherited the write end of Hub's pipes without ever writing to them, and while
+    /// that process lives the pipes never reach EOF. The exit code is known and the log is complete at that moment,
+    /// so waiting is pure loss: the run reports what the readers captured and says in the log which executable left
+    /// the pipes open, instead of leaving Hub on "Configuring" forever with nothing left to wait for.
+    /// </summary>
+    private async Task<(string Output, string Error)> DrainAfterExitAsync(Task<string> output, Task<string> error,
+        StringBuilder outputSink, StringBuilder errorSink, string executable)
+    {
+        var drained = Task.WhenAll(output, error);
+        if (ReferenceEquals(await Task.WhenAny(drained, Task.Delay(ExitDrainGrace)).ConfigureAwait(false), drained))
+        {
+            var both = await drained.ConfigureAwait(false);
+            return (both[0], both[1]);
+        }
+        // Nothing is killed here and nothing is disposed: the process is gone, and whatever holds the pipes is not
+        // Hub's child to end. The readers keep their snapshot, and the task is observed so a pipe that closes later
+        // under a reader is not reported as an unobserved fault.
+        _ = drained.ContinueWith(static finished => _ = finished.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        log($"Exited, but a process it left behind still holds the output pipes; capture ends here: {executable}");
+        return (SnapshotOf(outputSink), SnapshotOf(errorSink));
     }
 
     /// <summary>
