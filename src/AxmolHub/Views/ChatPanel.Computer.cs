@@ -30,7 +30,9 @@ public partial class ChatPanel
             Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
         };
-        ToolTip.SetTip(label, control.Target.Application.ExecutablePath);
+        label.Text += " · " + HubStrings.Get(control.Interaction ? "ComputerControlInteraction" : "ComputerControlBrowsing");
+        ToolTip.SetTip(label, control.Target.Application.ExecutablePath + "\n"
+            + HubStrings.Get(control.Interaction ? "ComputerUseInteractionHint" : "ComputerUseGrantHint"));
         grid.Children.Add(label);
         var actions = new StackPanel
         {

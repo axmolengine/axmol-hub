@@ -1,7 +1,7 @@
 namespace AxmolHub.Core;
 
 /// <summary>Live task permission, deliberately absent from conversation JSON and preferences.</summary>
-internal sealed class ComputerControlSession(ComputerUseTarget target, string task)
+internal sealed class ComputerControlSession(ComputerUseTarget target, string task, bool interaction = false)
 {
     private readonly object _gate = new();
     private readonly ManualResetEventSlim _resumed = new(true);
@@ -10,7 +10,9 @@ internal sealed class ComputerControlSession(ComputerUseTarget target, string ta
     private long _version = Interlocked.Increment(ref _nextVersion);
     internal ComputerUseTarget Target { get; } = target;
     internal string Task { get; } = task;
-    internal ComputerCapabilities Capabilities { get; } = ComputerCapabilities.Browse;
+    internal ComputerCapabilities Capabilities { get; } = ComputerCapabilities.Browse
+        | (interaction ? ComputerCapabilities.Interact : ComputerCapabilities.None);
+    internal bool Interaction => (Capabilities & ComputerCapabilities.Interact) != 0;
     internal bool Paused { get { lock (_gate) return _paused; } }
     internal long Version { get { lock (_gate) return _version; } }
     internal bool Covers(ComputerUseTarget? value, bool allowPaused = false)
@@ -44,6 +46,7 @@ internal enum ComputerCapabilities
 {
     None = 0, Observe = 1, MovePointer = 2, Scroll = 4, SelectText = 8, CopyText = 16,
     Browse = Observe | MovePointer | Scroll | SelectText | CopyText,
+    Interact = 32,
 }
 
 internal enum ComputerRisk { Allow, RequireConfirmation, Deny }
@@ -57,6 +60,8 @@ internal sealed record ComputerRiskDecision(ComputerRisk Risk, string Reason)
 {
     internal IComputerInputVerification? Verification { get; init; }
     internal ComputerCapabilities Capability { get; init; }
+    // Sensitive/semantic failures never acquire generic delivery merely because interaction was granted.
+    internal bool GenericInteraction { get; init; }
     internal ComputerRiskDecision Within(ComputerCapabilities capabilities)
     {
         if (Risk != ComputerRisk.Allow || Capability != ComputerCapabilities.None && (capabilities & Capability) == Capability)

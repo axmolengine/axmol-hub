@@ -897,7 +897,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// result and continues the reply. Refusing writes a result saying so and stops: "the user said no" should
     /// not be answered by more talking, and <see cref = "Regenerate"/> is how a wrap-up gets asked for.
     /// </summary>
-    public bool TryResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey, bool alwaysAllowVerb = false) => _execution.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out refusalKey, alwaysAllowVerb);
+    public bool TryResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey, bool alwaysAllowVerb = false, bool computerInteraction = false) => _execution.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out refusalKey, alwaysAllowVerb, computerInteraction);
     /// <summary>
     /// Answers a question the assistant asked. The sibling of <see cref = "TryResolveApproval"/> rather than a
     /// fourth argument on it, because the two differ in the one thing that decides everything downstream: an

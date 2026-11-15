@@ -11,6 +11,28 @@ internal sealed partial class ChatExecutionCoordinator
     private sealed record InputPermit(ComputerControlSession Session, long Version, string Arguments,
         ComputerRiskDecision Decision, bool Approved);
     private readonly ConcurrentDictionary<(string Conversation, string Call), InputPermit> _computerPermits = new();
+    private sealed record FailedInput(ChatTurn? UserTurn, string Signature);
+    private readonly ConcurrentDictionary<string, FailedInput> _failedComputerInputs = new();
+
+    private static string InputSignature(string? json)
+    {
+        var request = ComputerInput.Parse(json);
+        // Excludes the replaceable observation ID, but never stores typed text in plaintext.
+        return request is null ? "invalid" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                request.Action, request.X, request.Y, request.Text, request.Key, request.Scroll,
+                request.EndX, request.EndY, request.DurationMs, request.Modifiers, request.HorizontalScroll,
+            }))));
+    }
+
+    private void RecordComputerFailure(string id, string? callId)
+    {
+        var conversation = Sessions.Registry.Peek(id);
+        var call = conversation?.Messages.LastOrDefault(t => t.Role == ChatRoles.Assistant && t.ToolCallId == callId);
+        if (call is null) return;
+        _failedComputerInputs[id] = new(conversation!.Messages.LastOrDefault(t => t.Role == ChatRoles.User), InputSignature(call.ToolArguments));
+    }
 
     internal ComputerControlSession? ComputerControlFor(string id)
         => _computerControls.TryGetValue(id, out var value) ? value : null;
@@ -27,6 +49,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal void RevokeComputerControl(string id)
     {
+        _failedComputerInputs.TryRemove(id, out _);
         if (_computerControls.TryRemove(id, out var control))
         {
             control.Revoke();
@@ -49,13 +72,13 @@ internal sealed partial class ChatExecutionCoordinator
         _computerPermits[(id, call)] = new(control, control.Version, arguments, decision, false);
     }
 
-    private void GrantComputerControl(string id, ComputerUseTarget target)
+    private void GrantComputerControl(string id, ComputerUseTarget target, bool interaction = false)
     {
         RevokeComputerControl(id);
         var conversation = Sessions.Registry.Peek(id);
         var task = conversation?.Messages.LastOrDefault(t => t.Role == ChatRoles.User)?.Text ?? "GUI task";
-        _computerControls[id] = new(target, task);
-        Audit(id, $"Computer Use application session permission granted · initial window {target.WindowHandle} · pid {target.ProcessId} · {target.Application.ExecutablePath}");
+        _computerControls[id] = new(target, task, interaction);
+        Audit(id, $"Computer Use {(interaction ? "interaction" : "browsing")} session permission granted · initial window {target.WindowHandle} · pid {target.ProcessId} · {target.Application.ExecutablePath}");
     }
 
     private ComputerRiskDecision AssessComputerInput(string id, ComputerUseTarget? target, string? json, ScreenCaptureBridge? screen, ComputerUseBridge? bridge)
@@ -69,18 +92,26 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 return new(ComputerRisk.Deny, "This window closed or changed owner. Observe another window of the authorized application.");
             }
+            var userTurn = Sessions.Registry.Peek(id)?.Messages.LastOrDefault(t => t.Role == ChatRoles.User);
+            if (_failedComputerInputs.TryGetValue(id, out var failed) && ReferenceEquals(failed.UserTurn, userTurn)
+                && failed.Signature == InputSignature(json))
+                return new(ComputerRisk.Deny, "[repeat-stopped] This input already failed in the current user turn. Do not ask for the same approval again; explain the failure and wait for user direction.");
             var request = ComputerInput.Parse(json);
             if (request is null) return new(ComputerRisk.Deny, "Invalid action JSON or parameter types.");
             if (ComputerInput.Validate(request) is { } invalid) return new(ComputerRisk.Deny, invalid);
             using var doc = JsonDocument.Parse(json!);
             var frame = doc.RootElement.TryGetProperty("frame_id", out var value) ? value.GetString() : null;
             if (!_computerObservations.TryGetValue(id, out var observation))
-                return new(ComputerRisk.Deny, "No live observation is registered. Capture this window again.");
+                return new(ComputerRisk.Deny, "[observation-missing] No live observation is registered. Capture this window again.");
             var mapped = observation.Map(frame, window, request, out var refusal);
-            if (mapped is null) return new(ComputerRisk.Deny, refusal!);
-            var decision = bridge.AssessRisk?.Invoke(window, mapped with { PermissionVersion = ComputerControlFor(id)?.Version ?? 0 })
+            if (mapped is null) return new(ComputerRisk.Deny, "[observation-invalid] " + refusal);
+            if (bridge.Preflight?.Invoke(window, mapped) is { } preflight)
+                return new(ComputerRisk.Deny, preflight);
+            var control = ComputerControlFor(id);
+            var capabilities = control?.Capabilities ?? ComputerCapabilities.None;
+            var decision = bridge.AssessRisk?.Invoke(window, mapped with
+                { PermissionVersion = control?.Version ?? 0, Capabilities = capabilities })
                 ?? ComputerRiskDecision.Unknown;
-            var capabilities = ComputerControlFor(id)?.Capabilities ?? ComputerCapabilities.None;
             return decision.Within(capabilities);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or UnauthorizedAccessException)

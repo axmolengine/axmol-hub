@@ -1028,7 +1028,24 @@ public partial class ChatPanel
             Content = HubStrings.Get(input || portal ? "ApprovalAllow" : "ComputerUseAllowConversation"),
             Tag = "ComputerUseAllowConversation",
         };
-        allow.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false);
+        var interaction = new CheckBox
+        {
+            Name = "ComputerUseInteractionChoice",
+            Content = HubStrings.Get("ComputerUseInteractionChoice"),
+            IsChecked = false,
+        };
+        var interactionHint = new TextBlock
+        {
+            Text = HubStrings.Get("ComputerUseInteractionHint"), Classes = { "muted" },
+            TextWrapping = TextWrapping.Wrap,
+        };
+        if (!input && !portal && turn.ApprovalComputerTask && OperatingSystem.IsWindows())
+        {
+            title.Children.Add(interaction);
+            title.Children.Add(interactionHint);
+        }
+        allow.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false,
+            computerInteraction: interaction.Parent is not null && interaction.IsChecked == true);
         actions.Children.Add(deny);
         actions.Children.Add(allow);
         Grid.SetColumn(actions, 1);

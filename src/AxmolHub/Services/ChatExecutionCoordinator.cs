@@ -355,7 +355,7 @@ internal sealed partial class ChatExecutionCoordinator
             : OperatingSystem.IsLinux() ? LinuxComputerUse.ScreenBridge()
             : null;
         var inputBridge = ComputerUseBridgeProvider is { } inputProvider ? inputProvider() : OperatingSystem.IsWindows()
-            ? new ComputerUseBridge(WindowsScreenCapture.Operate)
+            ? WindowsComputerUse.InputBridge()
             : OperatingSystem.IsMacOS() ? MacOsComputerUse.InputBridge()
             : OperatingSystem.IsLinux() ? LinuxComputerUse.InputBridge() : null;
         return new ChatToolScope(
@@ -428,6 +428,7 @@ internal sealed partial class ChatExecutionCoordinator
                 ComputerSensitiveInputApproved = () => HasExplicitComputerPermit(conversationId, ToolInvocation.CallId),
                 WaitComputerControl = ct => ComputerControlFor(conversationId)?.Wait(ct) ?? true,
                 ComputerControlVersion = () => ComputerControlFor(conversationId)?.Version ?? 0,
+                RecordComputerFailure = () => RecordComputerFailure(conversationId, ToolInvocation.CallId),
                 ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
                 PortalComputer = PortalComputerBridgeProvider is { } portalProvider ? portalProvider(conversationId)
                     : LinuxWaylandRemoteDesktop.IsWayland && ScreenCaptureBridgeProvider is null
@@ -2160,7 +2161,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool TryResolveApproval(
         string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey,
-        bool alwaysAllowVerb = false)
+        bool alwaysAllowVerb = false, bool computerInteraction = false)
     {
         refusalKey = null;
         var conversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
@@ -2214,6 +2215,8 @@ internal sealed partial class ChatExecutionCoordinator
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
         var inputConfirmation = conversation.Messages[index].ApprovalComputerInput;
         var taskConfirmation = conversation.Messages[index].ApprovalComputerTask;
+        if (computerInteraction && (!approved || !isComputerUse || portalComputer || !taskConfirmation || !OperatingSystem.IsWindows()))
+        { refusalKey = "ChatApprovalGone"; return false; }
         if (isComputerUse && alwaysAllow)
         {
             refusalKey = "ChatApprovalGone";
@@ -2233,7 +2236,7 @@ internal sealed partial class ChatExecutionCoordinator
                 refusalKey = "ChatApprovalGone";
                 return false;
             }
-            if (taskConfirmation) GrantComputerControl(conversationId, target);
+            if (taskConfirmation) GrantComputerControl(conversationId, target, computerInteraction);
             else if (inputConfirmation)
             {
                 if (!_computerPermits.TryGetValue((conversationId, callId), out var permit)

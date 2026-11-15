@@ -254,6 +254,24 @@ internal static class AiImagesChecks
                 .Within(ComputerCapabilities.Scroll).Risk != ComputerRisk.RequireConfirmation
             || ComputerRiskDecision.Unknown.Within(applicationControl.Capabilities).Risk != ComputerRisk.RequireConfirmation)
             throw new Exception("Browsing consent admitted an unclassified action or bypassed the capability ceiling.");
+        // Explicit interaction is a new live opt-in, never an upgrade of old browsing/session records.
+        var interactionControl = new ComputerControlSession(appTarget, "Explicit interaction", interaction: true);
+        var genericDecision = new ComputerRiskDecision(ComputerRisk.Allow, "Generic delivery")
+            { Capability = ComputerCapabilities.Interact, GenericInteraction = true };
+        if (!interactionControl.Interaction || applicationControl.Interaction
+            || genericDecision.Within(applicationControl.Capabilities).Risk != ComputerRisk.RequireConfirmation
+            || genericDecision.Within(interactionControl.Capabilities).Risk != ComputerRisk.Allow
+            || ComputerRiskDecision.Unknown.Within(interactionControl.Capabilities).Risk != ComputerRisk.RequireConfirmation
+            || interactionControl.Covers(otherApp))
+            throw new Exception("Interaction opt-in upgraded browsing, bypassed sensitive confirmation or crossed applications.");
+        var interactionVersion = interactionControl.Version;
+        interactionControl.Pause(true);
+        if (interactionControl.Covers(appTarget) || interactionControl.Version == interactionVersion)
+            throw new Exception("Pause did not invalidate interaction input.");
+        interactionControl.Pause(false);
+        interactionControl.Revoke();
+        if (interactionControl.Covers(appTarget) || new ComputerControlSession(appTarget, "Restart").Interaction)
+            throw new Exception("Revoked/restarted interaction permission survived.");
         applicationControl.Pause(true);
         if (applicationControl.Covers(newWindow) || !applicationControl.Covers(newWindow, allowPaused: true)
             || applicationControl.Version == version)

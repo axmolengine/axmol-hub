@@ -1224,6 +1224,8 @@ internal sealed class ShellApprovalsChecks
                       { "ComputerUseDeny", "ComputerUseAllowConversation" },
                       StringComparer.Ordinal)
                   && panel.ComposerInputEnabledForCheck
+                  && (!OperatingSystem.IsWindows() || panel.ApprovalCardForCheck is { } interactionCard
+                      && NamedDescendant<CheckBox>(interactionCard, "ComputerUseInteractionChoice") is { IsChecked: false })
                   && panel.InputTextForCheck == "preserved computer use draft",
                 "完全访问模式下仍需首次应用会话授权；不提供永久操作授权并保留输入草稿（实际 "
                 + string.Join(",", panel.ApprovalCardActionsForCheck) + "）");

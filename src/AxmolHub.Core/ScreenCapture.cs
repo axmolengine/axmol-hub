@@ -53,6 +53,8 @@ internal sealed record ComputerActionRequest(string Action, int X = -1, int Y = 
     internal bool PositionedScroll { get; init; }
     internal Action? InputDeliveryStarted { get; init; }
     internal IComputerInputVerification? InputVerification { get; init; }
+    internal ComputerCapabilities Capabilities { get; init; }
+    internal bool GenericInteraction { get; init; }
 }
 
 /// <summary>Host operations bound to a previously resolved top-level window.</summary>
@@ -62,6 +64,8 @@ internal sealed record ComputerUseBridge(
     internal Func<CapturableWindow, ComputerActionRequest, ComputerRiskDecision>? AssessRisk { get; init; }
     // Backends without delivery reporting retain the conservative partial-delivery warning.
     internal bool ReportsInputDelivery { get; init; }
+    internal Func<CapturableWindow, ComputerActionRequest, string?>? Preflight { get; init; }
+    internal Func<CapturableWindow, Func<bool>, CancellationToken, string?>? WaitForProcessing { get; init; }
 }
 
 /// <summary>

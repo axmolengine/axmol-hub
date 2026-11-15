@@ -15,27 +15,39 @@ fallback to unscoped capture or non-portal global input is permitted.
    different app never grants permission. Explicitly authorizing another app replaces the
    previous app's control permission. There is no desktop-control mode.
    Existing persisted application grants remain screenshot-only and never upgrade to input.
+   On Windows the same card has an unchecked **continuous interaction** option. Only an explicit user
+   choice grants temporary Interact in addition to Browse; the model cannot request/upgrade it through
+   tool arguments. It allows unclassified ordinary window-scoped input without per-action approval or
+   identical whole-window pixels. The card warns about edits, buttons, clipboard changes and incomplete
+   sensitive-action detection. Recognized sensitive/actionable targets still require exact one-action
+   confirmation; no permanent, cross-app or whole-desktop permission is created.
 3. A successful screenshot returns `frame_id`, image dimensions and the full-image input
    area. Click coordinates are image pixels. Hub scales them to the native window bounds;
    macOS captures exclude shadows. Image bytes reach the very next model request, including
    requests inside a continuous tool loop, and remain attached to their tool result on replay.
 4. Supply that `frame_id` for one input. Host-verified ordinary actions run without another
    approval card. Sensitive or unclassified actions require a one-action confirmation even
-   in Full Access. Model-supplied risk labels are not trusted. Confirmation is bound to the
+   in Full Access under browsing consent. Explicit Windows interaction consent permits unclassified
+   ordinary input; recognized sensitive actions still require confirmation. Model-supplied risk labels are not trusted. Confirmation is bound to the
    exact arguments, observation and live permission version, not restored from a saved transcript.
-   macOS supports `click`, `double_click`, `move`, `drag`, `type`, `press_key` and `scroll`.
+   Windows and macOS support `click`, `double_click`, `move`, `drag`, `type`, `press_key` and `scroll`.
    Drag uses `x/y`, `end_x/end_y`, and `duration_ms` (100–3000). `press_key` accepts a
-   `modifiers` array (`command`, `control`, `alt`, `shift`). Scroll accepts `x/y` and
+   `modifiers` array (`control`, `alt`, `shift`, plus macOS-only `command`). Windows refuses
+   `command` instead of substituting Ctrl. Scroll accepts `x/y` and
    `horizontal_scroll`; omitted coordinates use the image center. Extended actions on other
    backends are explicitly refused, not silently converted or dropped.
 5. Hub refuses expired (two-minute), spent, moved/resized or owner-changed observations.
    Restarting Hub does not restore live observations. Another conversation's input invalidates
    older observations. Application permission does not make another window's frame valid:
-   observe each newly selected window before input. On macOS, classified ordinary input verifies
-   the assessed control instead of requiring identical whole-window pixels. Pointer movement
-   only needs live permission, window identity/geometry, focus, bounds and occlusion checks.
-   Other native backends and unclassified/sensitive visual confirmations retain strict frame
-   verification until an equally scoped host verifier is available.
+   observe each newly selected window before input. macOS classified browsing actions and Windows
+   UI Automation-supported text/scroll actions verify the assessed control instead of requiring
+   identical whole-window pixels. Windows confirmed text edits and shortcuts keep their one-action
+   approval but may also use that semantic verifier. Pointer movement on Windows/macOS only needs
+   live permission, window identity/geometry, focus, bounds and occlusion checks. Actions without
+   a scoped semantic verifier retain strict frame verification under browsing or sensitive-action
+   confirmation. Explicit Windows interaction permits a generic host verifier for unclassified ordinary
+   input instead: frame identity/age/geometry, live grant, native focus, hit ownership and takeover guards
+   remain enforced. Results explicitly say semantic target/application outcome were not verified.
 6. Input delivery is not application success. After delivery Hub captures a fresh image and
    the model must inspect it before deciding what happened. Failed or interrupted input can
    be partial: observe before retrying and do not replay text blindly.
@@ -47,7 +59,7 @@ Resume or cancellation. If its permission version changes during that wait, it r
 or input and requires a fresh observation and a new action; it does not replay the queued operation.
 Stop cancels input and revokes control. Revocation also stops further events in a running action.
 Text delivery checks cancellation between characters/code points, and macOS dragging checks
-between bounded motion segments. Mouse buttons and shortcut modifiers are released in `finally`. An event already handed
+between bounded motion segments; Windows does the same for dragging. Mouse buttons and shortcut modifiers are released in `finally`. An event already handed
 to the OS cannot be recalled. Focus changes or pointer movement during typing stop further
 input. Hub may restore focus from its own approval window, but will not steal it from a
 third application. These checks are not an OS application sandbox and cannot eliminate all
@@ -75,8 +87,9 @@ claim to understand arbitrary GUI business semantics.
 The live session has an explicit browsing capability ceiling: Observe, MovePointer, Scroll,
 SelectText and CopyText. A backend's unqualified Allow does not bypass that ceiling. The first
 approval explains that Copy replaces the clipboard; typing, pasting, button clicks and unclassified
-actions require separate one-action confirmation, including in TextEdit. There is no Hub-specific
-allowlist and no remembered approval of unknown controls.
+actions require separate one-action confirmation, including in TextEdit. Windows may additionally
+have explicit temporary Interact consent as described above; old browsing grants never acquire it.
+There is no application-specific allowlist or permanent remembered approval of unknown controls.
 
 On macOS, scrolling resolves the hit's enclosing AXScrollArea and verifies that same container;
 text copying requires a focused non-secure text control with a nonempty valid selection. Text
@@ -110,7 +123,23 @@ are separate OS permissions; granting them does not replay an interrupted action
 ## Host requirements
 
 - **Windows:** GDI PrintWindow and SendInput. UIPI can block input to elevated applications.
-  Unsupported, protected or blank captures are refused. Occluded click points are refused.
+  Unsupported, protected or blank captures are refused. Pointer hit tests require the exact target
+  root window and PID, including every bounded drag segment. Input checks live permission,
+  process incarnation, foreground window and unchanged geometry; typing/shortcuts also stop on
+  pointer movement. Keys/buttons already held before delivery cause refusal. Focus handoff is
+  permitted only from this Hub or the authorized executable, waits at most 1500 ms for the exact
+  target HWND, and stops on third-app takeover. It never uses AttachThreadInput or synthetic Alt
+  to bypass Windows foreground policy. Unicode scalars (including surrogate pairs) are delivered
+  through KEYEVENTF_UNICODE; Enter/Tab use real virtual keys, CRLF becomes one Enter. Navigation
+  keys carry KEYEVENTF_EXTENDEDKEY. Ctrl/Alt/Shift are supported; Command is explicitly refused.
+  Key/button releases run even after interruption, and failed delivery/releases are reported.
+  Hub never reads or directly writes/restores clipboard contents; verified Copy intentionally
+  replaces the clipboard through the application's own shortcut. UI Automation-supported browsing
+  actions reuse the session's bounded capabilities. Under browsing consent, supported text edits
+  and shortcuts still need one-action confirmation with semantic verification. Explicit interaction
+  consent permits ordinary edits and generic input without repeated confirmation. Recognized secure,
+  actionable/modal targets retain confirmation and strict verification; unknown targets do so under
+  browsing consent. Unrelated carets/animations remain a limitation of strict visual fallback.
 - **macOS:** Screen Recording and Accessibility permissions. Missing permission stops the
   current call; permission approval never queues an automatic replay. Before input, Hub can hand focus
   from its own approval UI (or another window of the authorized executable) to the exact selected PID/window.
@@ -131,6 +160,215 @@ are separate OS permissions; granting them does not replay an interrupted action
 The Wayland contract differs from the native backends and the UI says so: the user selects the window, so Hub **cannot verify** its title, process or executable identity. An approval covers one call, even in Full Access and for a screenshot; it never creates an application grant. Each input is individually confirmed, uses one `frame_id`, and afterwards a fresh frame is captured. Portal input belongs to the desktop session — keyboard events may reach the currently focused application, pointer events are not guaranteed to stay in the shared window, and Hub cannot detect user takeover. Stop cancels further input but cannot recall an event already sent. Closing the portal session, its desktop indicator, a PipeWire disconnect, a changed frame size, a blank frame, a timeout or a stale frame invalidates the observation; sharing may need to start again.
 
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
+
+## Current Windows delivery status
+
+### Generic interaction authorization update (bounded installed acceptance completed)
+
+The existing application card offers an unchecked interaction checkbox; the live strip identifies
+Browsing versus Temporary interaction. The new scope is in memory only, versioned by the same
+pause/revoke lifecycle, and available only from an actual native Windows application-session approval.
+Existing grants/transcript approvals do not upgrade. User-authorizing a new app replaces the old grant.
+
+Windows input still uses the same native backend regardless of editor. UIA is an enhancement, not a
+TextPattern prerequisite under explicit interaction consent. Supported text controls retain semantic
+verification and scalar acknowledgement. Missing text semantics may use generic window-scoped input;
+the host still attempts metadata-based risk escalation before delivery and again after activation.
+Recognized secure/actionable/modal targets and potentially dangerous menu/submit shortcuts keep
+separate confirmation and strict verification. UIA failure is not proof of safety: this residual
+uncertainty is explicitly part of the user's interaction choice. No Scintilla adapter, executable
+allowlist, pixel-similarity tolerance or whole-desktop mode was introduced.
+
+Backend parameter/identity/geometry/foreground preflight occurs before asking for an action card.
+Failed delivery records a hashed action signature for the current user turn; repeating the same input
+with a new frame cannot automatically create another approval loop. The model may observe again but
+must explain the failure and await new user direction before repeating that action. This marker is
+in-memory and removed on revocation; it never stores typed text in plaintext. Refusals distinguish
+observation/target changes, user takeover, unsupported input, verification failure and possible partial
+delivery. No interrupted input is repaired or replayed.
+
+Post-input observation uses a bounded idle/visual-settling wait (up to 150 ms idle plus approximately
+600 ms sampling). Stable frames do not prove application success; continued animation/processing is
+reported explicitly. Cancellation/revocation stops further settling captures; the normal capture grant
+is still checked for the final frame. Native capture/provider calls themselves are not hard real-time.
+
+The existing offline image suite now covers interaction opt-in, browsing non-upgrade, capability ceiling,
+cross-app refusal, pause/revoke and fresh-session default. A small isolated metadata fixture checks that
+a provider-less Pane requires approval under Browse but can use generic delivery under explicit
+Interact, while recognized button/password contexts still require confirmation. This is a necessary
+permission-boundary check, not desktop acceptance. Evidence: `tmp/computer-interaction-{images,boundary}.log`.
+The shell approval fixture also asserts the new option is initially unchecked. Full ShellCheck returned
+1760/1761 with one out-of-scope sidebar menu-count failure (actual menus 8 / rows 8), reproduced twice:
+`tmp/interaction-shell{,-final}.txt` and corresponding `-run.log` files. Computer Use assertions passed;
+the unrelated failure was not removed or hidden.
+
+The user installed and restarted the package below, explicitly enabled continuous interaction, and
+accepted the following real x-studio cases:
+- ASCII, Chinese, emoji and multi-line input displayed correctly and the saved UTF-8 file matched
+  exactly. No editor-specific adapter was used.
+- A continuous double-click selection, Ctrl+C, Ctrl+End, Right, Enter and Ctrl+V sequence appended
+  the selected `alpha` correctly while preserving existing content. The user confirmed zero further
+  approval cards for all six actions after initial application interaction consent.
+- Pause followed by Resume invalidated the old observation: a pointer action was refused with no
+  input sent. A fresh observation then allowed pointer movement normally.
+- Moving the window invalidated the old observation with an explicit moved/resized refusal, not a
+  timeout. A fresh observation allowed pointer movement at the new location.
+- Revoke removed the live interaction grant: an old-frame action required fresh application consent;
+  the user rejected that request and confirmed the expected behavior. It was not retried.
+
+The user approved closing this change with those bounded results and reported macOS had already
+been verified. This is not a new macOS test run. Third-party focus takeover, interruption during a
+running action, dedicated two-axis scrolling and mixed-DPI desktop cases were not completed in this
+acceptance round; do not describe them as passed. The earlier text-substitution root cause remains
+unproven. Notepad's transient Chinese glyph issue disappeared after reopening per user report;
+x-studio is the user-selected text-input acceptance reference.
+
+Release build passed with 0 warnings/errors; existing image and tool-policy suites passed. The small
+isolated interaction boundary fixture passed without input/clipboard access. Local unsigned 0.29.0
+win-x64 packaging succeeded: `artifacts/releases/win-x64/AxmolHub.exe`, SHA-256
+`1F3C38986930FDDBEC41B44455FDC91BB90381339CD172F7CA9C74FA69213E81`.
+Logs: `tmp/computer-interaction-{build,images,policy,boundary,package}.log`. Optional partner-ID injection
+was skipped. No automatic installation or version bump was performed. The unrelated ShellCheck failure
+above remains open; this is not an all-green shell or exhaustive desktop acceptance claim.
+
+The Windows input backend now lives in `WindowsComputerUse`, separate from GDI capture. It adds
+pointer movement, double-click, segmented dragging, positioned/two-axis scrolling, Ctrl/Alt/Shift
+shortcuts, bounded cooperative focus handoff and precise input-start reporting. The screenshot-to-native
+coordinate mapping remains shared with the other native backends; no Windows-only scale factor is applied.
+
+### UI Automation browsing and semantic verification update
+
+The Windows host now classifies MovePointer, supported ScrollPattern scrolling, bounded TextPattern
+selection and Ctrl+C with a nonempty non-secure selection. No arbitrary click/double-click, typing,
+paste, Select All or other shortcut becomes automatically approved under browsing consent. The explicit
+interaction scope described above separately authorizes ordinary generic input. Supported text actions can carry
+a UIA semantic verifier even when they still require one-shot confirmation. Unknown targets keep
+strict visual fallback: there is no pixel-percentage threshold or blanket remembered approval.
+
+The verifier binds runtime identity, PID, authorized window ancestry, control geometry/metadata,
+bounded text digest and selection offsets (and scroll state for scrolling). Text is limited to 64K,
+read only from non-secure text controls, hashed in memory and not logged. Sensitive labels only
+escalate risk; missing words do not establish safety. Buttons, links, menu items and modal/secure
+ancestors are not browsing targets. Provider failure/ambiguity returns to explicit confirmation.
+
+The interop uses the native UIAutomationClient ABI on a dedicated MTA, with 500 ms connection and
+transaction timeouts. COM objects are released there and never retained across requests. If an inactive
+thread has no focused HWND, only a bounded unique visible text-pattern candidate can be assessed;
+multiple candidates are not resolved by choosing the first. An existing assessment can resolve its
+exact runtime identity across approval focus changes. The assessed runtime identity is resolved independently of global focus on subsequent checks;
+a retained focused HWND can be a XAML host and UIA global focus can lag native activation.
+After cooperative activation the actual UIA focused element must match before keyboard delivery.
+The host waits at most 750 ms for that exact focus to propagate, rechecking the target snapshot,
+permission, native focus and geometry without sending input. It never waits through changed text,
+selection or provider failures. Continued identity/focus/geometry and pointer checks remain. A different focused control refuses input even after approval.
+
+Classified selection uses UIA RangeFromPoint/Select in the same text control rather than a native
+mouse drag, preventing a selection gesture from moving existing text or starting drag-and-drop.
+Classified scrolling uses the assessed ScrollPattern rather than global wheel events. Permission,
+identity, geometry, pointer takeover and ownership are rechecked during direct delivery. Ordinary
+mouse dragging and unsupported scrolling still require explicit confirmation and native safeguards.
+UIA evidence is application-provided, not an OS sandbox or proof of arbitrary business semantics.
+
+The isolated read-only UIA fixture under `tmp/windows-uia/` checks browsing classification, stable
+verification across caret blink and approval focus, changed text/selection refusal, ambiguous inactive
+controls and secure-field fallback. It never posts input or accesses the clipboard. This fixture is
+needed to validate the native COM ABI and permission boundaries the compiler cannot check; it is not
+installed-app acceptance and adds no permanent ShellCheck suite. Full native acceptance remains pending.
+
+For this update, the Release build passed with 0 warnings/errors, the isolated UIA fixture passed,
+and the existing `--check-ai-images` and `--check-ai-tool-policy` checks passed. Evidence:
+`tmp/windows-uia/{build,probe,images,policy}.log`. The refreshed unsigned local 0.29.0 win-x64
+installer is `artifacts/releases/win-x64/AxmolHub.exe`, SHA-256
+`B9086B0DCCFE3848333F8C6629A7259C31889F91EA5D474A0ABDC9357F34804C`.
+Packaging succeeded (exit 0), log `tmp/windows-uia/package.log`; optional partner-ID injection was
+skipped. No automatic installation, version bump or claim of installed-package acceptance was made.
+
+### UIA focus follow-up (installed acceptance pending)
+
+After installing the first UIA package, the requested multi-line retry in a blank Notepad tab never
+reached input: one frame expired at two minutes; a fresh request then returned the generic UIA
+verification-unavailable refusal with `No input was sent`. No failed text was replayed. A read-only
+probe of that Notepad instance could resolve and verify its inactive text control; the exact active
+failure was not reproduced in that probe. This is not evidence that the original failure is solved.
+
+Source review found that verification resolved keyboard targets from global UIA focus immediately
+after native activation, although the two focus states need not update together. Verification now
+resolves the assessed runtime identity and separately checks actual focused-element equality with
+the bounded wait above. Failures report pre-/post-activation stage and HRESULT (or the changed
+snapshot field), never provider messages or document content. The existing temporary isolated UIA
+fixture now checks delayed/exact focus, wrong focus, cancellation and revocation during that wait,
+as well as the previous text/selection/security boundaries. Reports:
+`tmp/windows-uia/focus-fix-probe.log` and `tmp/windows-uia-live/fixed-read-only.log`.
+
+Release build passed with 0 warnings/errors and the existing `--check-ai-images` checks passed
+(`tmp/windows-uia/focus-fix-{build,images}.log`). The refreshed unsigned local 0.29.0 installer at
+`artifacts/releases/win-x64/AxmolHub.exe` has SHA-256
+`99ADD9B433AB7E69F4612BD54D9D5132AD5D9B24CEF9B8E2861FB3F78D0AFA42`.
+Packaging succeeded; log `tmp/windows-uia/focus-fix-package.log`. This supersedes the earlier packages
+at that output path. Installation and real desktop acceptance remain user-driven and pending.
+
+### Text acknowledgement follow-up (installed acceptance pending)
+
+With the focus-follow-up installer, a full three-line input delivered without UIA/pixel refusal, and
+user confirmed only one input approval. However, a strict UTF-8 read of the user-saved
+`hub-win-retest-9647.txt` found `paste-target:EEND-9647` instead of `paste-target: END-9647`.
+The first two lines, Chinese and emoji were correct. User confirmed no manual third-line edits.
+This is a real character-substitution failure, not successful exact-text acceptance. It does not
+establish that IME state caused the earlier spaces or that the focus fix solved text integrity.
+
+A temporary isolated native edit probe delivered the original text correctly under normal and
+artificially delayed message processing; it did not reproduce Notepad's original substitution.
+The Windows UIA-supported typing path now acknowledges each Unicode scalar before posting the
+next: bounded document text and selection must match the exact expected insertion/replacement,
+including spaces, surrogate pairs and line breaks. It checks for intervening text/selection changes
+before each scalar, and waits up to 1500 ms for the prior scalar's document/caret update while
+retaining permission, native focus/geometry and pointer checks. CRLF and CR are normalized to LF
+for semantic comparison only, not rewritten in the user's document. The transient expected text
+is call-local, bounded to 64K and never logged. Unsupported controls retain the existing confirmed
+native fallback and do not acquire a claim of exact text acknowledgement.
+
+Substitution, provider failure, an unacknowledged character or takeover stops subsequent delivery.
+No automatic repair, clipboard insertion, rollback or replay occurs. There may already be a partial
+edit, so the result requests observation instead of announcing success from SendInput's queue count.
+This is a fail-stop integrity improvement and pacing change, not an established root-cause fix.
+A focused temporary fixture is necessary because silent character corruption affects the core input
+workflow: the fixture checks exact ASCII/Chinese/emoji/multiline delivery with delayed processing,
+and deliberately substitutes/drops a space to verify mismatch/timeout stops without the final marker.
+Evidence: `tmp/windows-text-delivery/{baseline,acknowledged}.log`. Its events target only the fixture;
+no failed user-document text was replayed. Installed Notepad acceptance remains pending.
+
+Release build passed with 0 warnings/errors; the existing image checks and isolated UIA regression
+fixture passed (`tmp/windows-text-delivery/{build,images,uia-regression}.log`). The refreshed unsigned
+local 0.29.0 win-x64 installer at `artifacts/releases/win-x64/AxmolHub.exe` has SHA-256
+`F6643BC44814B9EF835789B4A2EF29387908F6944ADF5CFD5E30543A1FE45393`.
+Packaging succeeded (exit 0), log `tmp/windows-text-delivery/package.log`; optional partner-ID injection
+was skipped. This replaces earlier packages at the same path; no automatic installation was performed.
+
+### Earlier local package and bounded desktop findings
+
+The first installed package accepted pointer movement, separate short ASCII and Chinese inputs,
+a Unicode emoji and Ctrl+A. The user saved the short text and a strict UTF-8 file read confirmed
+`ascii-7296中文😀`; the editor rendered Chinese as boxes despite correct file bytes. Ctrl+C reported
+delivery and preserved text, but paste was not completed. Immediate post-input captures sometimes
+preceded application processing. A longer first input produced only `hub-win-6184 `, two CRLFs and
+37 spaces in the saved file; this failure remains unexplained and is not fixed by UIA classification.
+Repeated whole-frame refusals and one-shot approval frequency blocked further acceptance, prompting
+the semantic-verification update. No original failed text was replayed.
+
+Release build passed with 0 warnings/errors. Existing `--check-ai-images`, `--check-ai-context`
+and `--check-ai-tool-policy` checks passed. Logs: `tmp/windows-computer-{build,images,context,policy}.log`.
+The earlier unsigned win-x64 installer was built with `installer/Build.ps1` (exit 0; superseded at the same output path by the UIA package above):
+`artifacts/releases/win-x64/AxmolHub.exe`, version 0.29.0, SHA-256
+`8132D893629692F3BC7C724E6B74A993D1094E3721195D1E93C2FC3B85664A45`.
+Packaging log: `tmp/windows-computer-package.log`. Optional partner-ID injection was skipped.
+No version bump or automatic installation was performed.
+
+Installed-package desktop acceptance is pending user installation and joint verification. Build and
+offline permission/observation checks do not prove native input delivery. Use a disposable document
+and fresh frames to verify click/move/double-click/drag, ASCII/Chinese/emoji, Ctrl+A/C/V, navigation
+and scrolling. Also verify pause/revoke, focus/pointer takeover, moved/resized frames, and mixed-DPI
+monitors where available. Do not replay an interrupted input. `--drive` control actions are not
+substitutes for these native Computer Use tests.
 
 ## Current macOS delivery status
 

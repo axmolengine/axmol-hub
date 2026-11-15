@@ -89,6 +89,7 @@ public sealed record WorkspaceToolScope(
     internal Func<bool>? ComputerSensitiveInputApproved { get; init; }
     internal Func<CancellationToken, bool>? WaitComputerControl { get; init; }
     internal Func<long>? ComputerControlVersion { get; init; }
+    internal Action? RecordComputerFailure { get; init; }
     /// <summary>Read the global search switch per call. Null means no local search host; <see cref="Web"/>
     /// supplies the HTTPS transport independently of the page-fetch switch.</summary>
     public Func<bool>? LocalSearchAllowed { get; init; }
@@ -1040,7 +1041,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                  + "No desktop-wide control. Never replay partially delivered input.")]
     internal string ComputerUse(
         [Description("The visible application/window title to locate. Authorization follows its owning application, not the title.")] string application,
-        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended mouse and modifier actions currently require macOS.")] string action,
+        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended mouse and modifier actions support Windows and macOS; other native backends refuse them.")] string action,
         [Description("Image-pixel x for pointer actions; -1 with y=-1 uses window center for scroll.")] int x = -1,
         [Description("Image-pixel y for pointer actions.")] int y = -1,
         [Description("Text to type, up to 1000 characters.")] string? text = null,
@@ -1051,7 +1052,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         [Description("Drag end x in screenshot pixels.")] int end_x = -1,
         [Description("Drag end y in screenshot pixels.")] int end_y = -1,
         [Description("Drag duration, 100 to 3000 milliseconds.")] int duration_ms = 400,
-        [Description("press_key modifiers: command, control, alt, shift. All keys are released within this call.")] string[]? modifiers = null,
+        [Description("press_key modifiers: control, alt, shift; command is macOS-only and is not substituted on Windows. All keys are released within this call.")] string[]? modifiers = null,
         [Description("Horizontal scroll steps, -10 to 10; positive scrolls left.")] int horizontal_scroll = 0,
         CancellationToken cancellationToken = default)
     {
@@ -1105,8 +1106,8 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!StillAuthorized()) return false;
-            // Semantic target verification is supplied by the host only for classified ordinary actions.
-            // Unknown/sensitive one-shot approvals keep strict visual verification as their fallback.
+            // A host can bind an ordinary capability or a confirmed edit to an assessed semantic target.
+            // Actions without such a verifier keep strict visual verification as their fallback.
             if (decision.Verification is { } verification)
             {
                 verificationRefusal = verification.Verify();
@@ -1117,7 +1118,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                 var current = host.Grab(target);
                 var matches = current is not null && !current.Stats.IsBlank() && observations.MatchesContent(current)
                     && StillAuthorized();
-                if (!matches) verificationRefusal = "Strict visual fallback no longer matches the captured frame; this action has no semantic control verifier.";
+                if (!matches) verificationRefusal = "[target-verification] Strict visual fallback no longer matches the captured frame; this action has no semantic control verifier. Generic delivery requires an explicit temporary interaction grant; do not repeat this approval automatically.";
                 return matches;
             }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { return false; }
@@ -1135,17 +1136,24 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             VerifyObservation = VerifyObservation, StillAuthorized = StillAuthorized, PermissionVersion = controlVersion,
             ExplicitlyApproved = context.ComputerSensitiveInputApproved?.Invoke() == true,
             InputDeliveryStarted = () => deliveryStarted = true,
-            InputVerification = decision.Verification,
+            InputVerification = decision.Verification, GenericInteraction = decision.GenericInteraction,
         });
-        if (refusal is not null) return refusal
-            + (verificationRefusal is null ? "" : " Target verification: " + verificationRefusal)
-            + (deliveryStarted
-            ? " Input may have been partially delivered. " : " No input was sent. ")
-            + GoalProgress.ComputerObservationRequired;
+        if (refusal is not null)
+        {
+            context.RecordComputerFailure?.Invoke();
+            return refusal + (verificationRefusal is null ? "" : " Target verification: " + verificationRefusal)
+                + (deliveryStarted ? " [partial-input] Input may have been partially delivered. " : " [not-sent] No input was sent. ")
+                + GoalProgress.ComputerObservationRequired
+                + " Do not automatically request the same action approval again; explain the failure and wait for user direction.";
+        }
         // Input delivery is not evidence that the intended application operation succeeded.
         cancellationToken.ThrowIfCancellationRequested();
+        var processing = operations.WaitForProcessing?.Invoke(target, StillAuthorized, cancellationToken);
         var observed = CaptureScreenCore(app, process_id: process_id);
-        return $"Input delivered ({normalizedAction}); application outcome is unverified. Inspect the new frame before deciding success.\n{observed}";
+        var verificationLabel = decision.GenericInteraction
+            ? " Generic window-scoped delivery; semantic target and application result were not verified." : "";
+        return $"Input delivered ({normalizedAction}); application outcome is unverified.{verificationLabel} Inspect the new frame before deciding success."
+            + (processing is null ? "" : " " + processing) + $"\n{observed}";
     }
 
     private ScreenCapture.Match ResolveApprovedComputerWindow(IReadOnlyList<CapturableWindow> windows, string title, int pid)
