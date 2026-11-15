@@ -284,7 +284,8 @@ public static class HubTexts
         ["Uninstall"] = ("卸载", "Uninstall"),
         // Confirmation prompts and consequence hints. The uninstall wording used to be a C# inline
         // ternary; it lives here now so both languages are editable in one place.
-        ["UninstallPrompt"] = ("卸载 Axmol {0}？安装文件会保留到数据目录的 trash 中，项目文件不受影响。", "Uninstall Axmol {0}? Installation files are retained in the data directory's trash folder. Project files are preserved."),
+        ["UninstallPrompt"] = ("卸载 Axmol {0}？整个安装目录会移到系统回收站，可从回收站恢复。项目文件不受影响。", "Uninstall Axmol {0}? The entire installation folder will be moved to the system trash, where it can be restored. Project files are preserved."),
+        ["UninstallFailed"] = ("无法将引擎移到系统回收站。引擎仍保留在列表中。\n{0}", "Could not move the engine to the system trash. It remains in the list.\n{0}"),
         ["RepairPrompt"] = ("重新下载并覆盖 Axmol {0} 的引擎文件？使用此引擎的项目会被重置为“未构建”。", "Re-download and overwrite the Axmol {0} engine files? Projects using this engine are reset to Not built."),
         ["RepairHint"] = ("重新下载并覆盖整棵引擎树，使用此引擎的项目会回到“未构建”", "Re-downloads and overwrites the whole engine tree; projects using it go back to Not built"),
         ["RemoveProjectHint"] = ("把项目移出 Hub 列表，磁盘上的项目文件保留", "Removes the project from Hub's list; the project files on disk are kept"),

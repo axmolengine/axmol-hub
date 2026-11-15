@@ -1062,10 +1062,9 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Delete a managed engine directory. The gate is asked and the question is put <b>before</b> the work is
-    /// taken up: an uninstall is the one click that cannot be undone, so it must never be a dialog the user
-    /// answers and then watches get refused — and it must keep <see cref="RequireEngineAtRest"/> as the guard
-    /// against deleting a tree a transfer is still writing into.
+    /// Move a managed engine directory to the system trash. Check availability and ask for confirmation
+    /// before taking up the work; keep <see cref="RequireEngineAtRest"/> as the guard against moving a tree
+    /// a transfer is still writing into.
     /// </summary>
     public async Task UninstallEngineAsync(EngineEntry? requested = null)
     {
@@ -1102,16 +1101,16 @@ public sealed partial class HubWorkspace : IDisposable
 
         // The directory goes and the bookkeeping follows, so the gated body needs nothing but the package it
         // was handed: every question that could change the answer has already been answered above.
-        await ExecuteAsync("Uninstall engine", _ =>
+        await ExecuteAsync("Uninstall engine", async token =>
         {
-            _installer.Uninstall(package);
+            var result = await _installer.UninstallAsync(package, token);
+            if (result.Kind != TrashResultKind.Moved)
+                throw new IOException(string.Format(HubStrings.Get("UninstallFailed"), result.Error ?? ""));
             State.Engines.Remove(engine);
             if (State.DefaultEnginePath == engine.Path)
             {
                 State.DefaultEnginePath = State.Engines.FirstOrDefault()?.Path;
             }
-
-            return Task.CompletedTask;
         });
     }
 

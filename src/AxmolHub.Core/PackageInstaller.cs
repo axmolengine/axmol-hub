@@ -87,15 +87,14 @@ public sealed class PackageInstaller(DownloadManager downloads, string root, Act
         }
         finally { if (Directory.Exists(replacement)) Directory.Delete(replacement, recursive: true); }
     }
-    public string Uninstall(PackageEntry package)
+    public async Task<TrashResult> UninstallAsync(PackageEntry package, CancellationToken cancellation = default)
     {
+        cancellation.ThrowIfCancellationRequested();
         var destination = VerifyOwned(package);
-        // Only remove Hub-managed installs; keep a recovery directory and never recursively delete files the user may have added.
-        var recovery = SafePath(root, "trash/" + package.Id + "-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.GetDirectoryName(recovery)!);
-        Directory.Move(destination, recovery);
-        log($"Uninstalled: {destination}; recovery directory: {recovery}");
-        return recovery;
+        var result = await SystemTrash.MoveAsync(destination, cancellation);
+        if (result.Kind == TrashResultKind.Moved)
+            log($"Uninstalled: {destination}; moved to system trash.");
+        return result;
     }
     private string VerifyOwned(PackageEntry package)
     {

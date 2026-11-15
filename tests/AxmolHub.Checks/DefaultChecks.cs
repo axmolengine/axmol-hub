@@ -215,7 +215,7 @@ internal static class DefaultChecks
             var receipt = Path.Combine(installed, ".hub-install.json");
             var originalReceipt = File.ReadAllText(receipt);
             File.Delete(receipt);
-            await Reject<InvalidOperationException>(() => Task.Run(() => packages.Uninstall(package)), "Imported/unowned directories cannot be uninstalled");
+            await Reject<InvalidOperationException>(() => packages.UninstallAsync(package), "Imported/unowned directories cannot be uninstalled");
             File.WriteAllText(receipt, originalReceipt);
             using (var cancelled = new CancellationTokenSource())
             {
@@ -224,8 +224,24 @@ internal static class DefaultChecks
             }
 
             Check(File.Exists(Path.Combine(installed, "bin/tool.exe")), "Cancelled repair preserves installed executable");
-            var recovery = packages.Uninstall(package);
-            Check(!Directory.Exists(installed) && File.Exists(Path.Combine(recovery, "bin/tool.exe")), "Uninstall removes managed installation and retains recovery files");
+            var previousHandler = SystemTrash.MoveHandlerForCheck;
+            try
+            {
+                SystemTrash.MoveHandlerForCheck = (_, _) => Task.FromResult(new TrashResult(TrashResultKind.Unsupported, "Fixture failure"));
+                var failed = await packages.UninstallAsync(package);
+                var preserved = failed.Kind == TrashResultKind.Unsupported && File.Exists(receipt);
+                var systemTrash = Path.Combine(lifecycleRoot, "system-trash-fixture");
+                SystemTrash.MoveHandlerForCheck = (path, _) =>
+                {
+                    Directory.Move(path, systemTrash);
+                    return Task.FromResult(new TrashResult(TrashResultKind.Moved));
+                };
+                var uninstalled = await packages.UninstallAsync(package);
+                Check(preserved && uninstalled.Kind == TrashResultKind.Moved && !Directory.Exists(installed)
+                    && File.Exists(Path.Combine(systemTrash, "bin/tool.exe")) && !Directory.Exists(Path.Combine(lifecycleRoot, "trash")),
+                    "Uninstall preserves files when system trash fails and uses system trash without a private recovery folder");
+            }
+            finally { SystemTrash.MoveHandlerForCheck = previousHandler; }
         }
 
         {
