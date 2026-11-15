@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace AxmolHub.Core;
 
 /// <summary>
-/// Persists the user's provider list to <c>data-root/ai/providers.json</c>.
+/// Persists the user's provider list to <c>user-profile/ai/providers.json</c>.
 ///
 /// <para><b>What is no longer here: the key.</b> This store used to split API keys out to an
 /// <see cref="ISecretStore"/>, keyed by provider id, so the JSON never held a credential. Keeping that split is
@@ -23,7 +23,7 @@ public sealed class ProviderStore(string root)
     private string ProviderPath => Path.Combine(root, "ai", "providers.json");
     private Dictionary<string, string?>? _selectionBaseline;
 
-    private Mutex SelectionMutex()
+    internal Mutex SelectionMutex()
     {
         var path = Path.GetFullPath(ProviderPath);
         if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
@@ -31,7 +31,7 @@ public sealed class ProviderStore(string root)
         return new Mutex(false, "AxmolHubProviders-" + hash);
     }
 
-    private static void Acquire(Mutex gate)
+    internal static void Acquire(Mutex gate)
     {
         try { if (!gate.WaitOne(TimeSpan.FromSeconds(10))) throw new TimeoutException("Provider metadata is busy."); }
         catch (AbandonedMutexException) { }

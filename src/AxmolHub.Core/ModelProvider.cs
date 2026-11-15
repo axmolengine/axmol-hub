@@ -4,7 +4,7 @@ namespace AxmolHub.Core;
 
 /// <summary>
 /// A user-facing model provider, assembled from a built-in manifest entry (see
-/// <see cref="AiProviderManifest"/>) plus any user overrides persisted in <c>data-root/ai/providers.json</c>.
+/// <see cref="AiProviderManifest"/>) plus any user overrides persisted in <c>user-profile/ai/providers.json</c>.
 ///
 /// The provider layer has exactly one wire protocol Hub builds a body for — OpenAI-compatible — so every
 /// provider, built-in or custom, drives the same <c>IChatClient</c> factory (see <c>ChatClientFactory</c> in the

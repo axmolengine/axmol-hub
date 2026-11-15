@@ -164,6 +164,7 @@ public partial class MainWindow : Window
     }
 
     private readonly bool _isolatedAuthForChecks;
+    private readonly HubStorageLayout? _checkStorageLayout;
 
     public MainWindow(string dataRoot, PreferencesStore preferencesStore, HubPreferences preferences)
         : this(dataRoot, preferencesStore, preferences, isolatedAuthForChecks: false) { }
@@ -171,12 +172,13 @@ public partial class MainWindow : Window
     internal MainWindow(string dataRoot, PreferencesStore preferencesStore, HubPreferences preferences, bool isolatedAuthForChecks)
     {
         _isolatedAuthForChecks = isolatedAuthForChecks;
+        if (isolatedAuthForChecks) _checkStorageLayout = HubStorageLayout.Legacy(dataRoot);
         // Set in code, not in MainWindow.axaml: Avalonia 12's WindowIcon has no type converter, so
         // `Icon="avares://…"` would fail at XAML load time.
         Icon = HubAppIcon.CreateWindowIcon();
         _preferencesStore = preferencesStore;
         _preferences = preferences;
-        _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore);
+        _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore, StorageLayout(dataRoot).AuthRoot);
         _workspace.Owner = this;
         _chat = new ChatWorkspace(StorageLayout(dataRoot));
         // Diagnostic before Initialize: the macOS channel reports its environment note (for example "not inside
@@ -1440,7 +1442,9 @@ public partial class MainWindow : Window
     }
 
     private HubStorageLayout StorageLayout(string root)
-        => _isolatedAuthForChecks ? HubStorageLayout.Legacy(root) : HubStorageLayout.Resolve(root);
+        => _checkStorageLayout is { } fixture
+            ? fixture with { DataRoot = Path.GetFullPath(root) }
+            : HubStorageLayout.Resolve(root);
 
     /// <summary>
     /// Switches the data root. **Deliberately does not rebuild the window** — the WPF version news
@@ -1459,7 +1463,8 @@ public partial class MainWindow : Window
         // Switching is forbidden while an operation is running: the operation holds the old root's
         // downloader, log, and toolchain directories, and switching mid-run would make it write into
         // a directory that no longer belongs to the current session.
-        if (_workspace.IsBusy)
+        if (_workspace.IsBusy || _chat.RunningCount > 0 || _chat.QueuedWakeCount > 0
+            || TaskQueue.Instance.ActiveCount > 0)
         {
             throw new InvalidOperationException(HubStrings.Get("WaitForOperation"));
         }
@@ -1476,25 +1481,44 @@ public partial class MainWindow : Window
         // on the next launch.
         // Validate/import before saving the new root or tearing down the old workspace. A failed import
         // leaves the current UI and settings usable; no authentication write ever falls back to the data root.
-        var layout = StorageLayout(path);
+        // Providers are global. Import from the current root, never replace them with the destination's list.
+        var layout = StorageLayout(_workspace.Store.Root);
         if (!_isolatedAuthForChecks)
         {
             var secrets = AxmolHub.Agent.SecretStoreFactory.Create(layout);
             AxmolHub.Agent.SecretStoreFactory.PrepareAuthentication(layout, secrets);
+            ProviderSettingsMigration.Import(layout);
+            _ = StorageLayout(path);
         }
+        // Freeze this instance's append-only log through the copy and hand late writers to the replacement.
+        var oldLog = _workspace.Log;
+        using var pausedLog = oldLog.PauseWrites();
+        using var indexGate = _workspace.Store.LockIndex();
+        using var transfer = DataRootTransfer.Copy(_workspace.Store.Root, path);
         var previous = _preferences.DataRoot;
+        var previousProjects = _preferences.ProjectDirectory;
+        var originalState = _workspace.Store.Load();
+        var relocatedState = _workspace.Store.Load();
+        relocatedState.RelocatePaths(_workspace.Store.Root, path);
         _preferences.DataRoot = path;
+        _preferences.ProjectDirectory = DataRootTransfer.RebasePath(previousProjects, _workspace.Store.Root, path);
         try
         {
+            _workspace.Store.Save(relocatedState);
             _preferencesStore.Save(_preferences);
         }
         catch
         {
             _preferences.DataRoot = previous;
+            _preferences.ProjectDirectory = previousProjects;
+            _workspace.Store.Save(originalState);
             throw;
         }
 
-        ReplaceWorkspace(new HubWorkspace(path, _preferences, _preferencesStore));
+        transfer.Commit();
+        var nextWorkspace = new HubWorkspace(path, _preferences, _preferencesStore, StorageLayout(path).AuthRoot);
+        oldLog.RedirectTo(nextWorkspace.Log);
+        ReplaceWorkspace(nextWorkspace);
         ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));
         return true;
     }
@@ -1520,7 +1544,7 @@ public partial class MainWindow : Window
         // reconstruct them.
         _pages.Clear();
 
-        // Provider configuration and conversations live under the data root, so the assistant must be rebuilt
+        // Conversations live under the data root; providers remain in the fixed user profile. Rebuild the assistant
         // for the new one and the page (if it was ever built) dropped with it — otherwise the assistant would
         // keep listing the previous root's conversations and saving new ones into a directory that is no
         // longer current. Rebuilding rather than re-pointing mirrors how the pages are handled.

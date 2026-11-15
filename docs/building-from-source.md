@@ -69,13 +69,13 @@ macOS 本地构建会在当前编译的 `obj/` 目录下生成 `macos/Axmol Hub.
 
 **四个页面（项目 / 引擎 / 工具链 / 设置）与四个对话框窗口**：左侧 218px 导航、三行内容区（页面 / 状态栏 / 日志面板）、统计卡、表格、设备条、操作按钮行的位置与文案都与原 WPF 版对齐；与原版只有三处刻意差异，原因写在 [avalonia-migration-plan.md](avalonia-migration-plan.md) §5.7。业务逻辑全在 `AxmolHub.Core`（界面项目只负责装配），编排在 `Services/HubWorkspace.cs`。
 
-**切换数据根已可用**：只重建工作区并丢弃页面缓存，**窗口本身不动** —— 因此它不依赖外壳形态。新根落盘失败时会在旧状态上就地报错，不会留下"界面指向新根、设置文件还写着旧根"的错位。
+**修改数据目录会搬迁现有业务数据**：先复制会话、附件、计划、记忆、变更/撤销记录及其他业务文件，成功写入设置后再重建工作区，窗口本身不动。原目录保留；目标同名文件内容不同时拒绝覆盖，也不切换；复制或保存设置失败会回滚本次新建副本。固定项只有用户设置、引擎/项目登记索引（`hub-state.json`）、提供商配置、模型缓存及鉴权相关文件；其余内容默认随 data 复制，包括历史日志、隐藏文件和空目录。活动 Hub 日志在复制期间暂停追加，切换后迟到的写入转交新日志。操作期间须先停止助手及其他后台任务，源/目标不能互为父子目录，链接文件/目录须先人工处理。固定索引中位于旧 data 内的引擎、项目、默认引擎和编辑器路径，以及设置中的默认项目目录，改为新 data 下的对应位置；外部路径不变。不会全局替换任意业务文件内的字符串。
 
-新安装的默认业务数据根统一为 `~/.axmolhub`（Windows：`%USERPROFILE%\.axmolhub`），不再套一层 `data`。设置及鉴权文件仍在各平台用户数据目录的 `AxmolHub` 下：Windows 为 `%LocalAppData%\AxmolHub`，macOS 为 `~/Library/Application Support/AxmolHub`，Linux 为 `$XDG_DATA_HOME/AxmolHub`（默认 `~/.local/share/AxmolHub`）。设置文件仍叫 `hub-settings.json`；所有安装的凭据元数据、文件后端密文、OAuth 刷新锁及主机标识分别放在该目录下的 `ai/credentials.json`、`ai/secrets/`、`ai/openai-refresh-locks/` 和 `ai/openai-host-id`。Linux 的加密密钥文件位置及 `HUB_SECRET_KEY_FILE` 覆盖规则不变。提供商非敏感配置、模型缓存、会话等仍属于业务数据。
+新安装的默认业务数据根统一为 `~/.axmolhub`（Windows：`%USERPROFILE%\.axmolhub`），不再套一层 `data`。设置及鉴权文件仍在各平台用户数据目录的 `AxmolHub` 下：Windows 为 `%LocalAppData%\AxmolHub`，macOS 为 `~/Library/Application Support/AxmolHub`，Linux 为 `$XDG_DATA_HOME/AxmolHub`（默认 `~/.local/share/AxmolHub`）。设置文件仍叫 `hub-settings.json`；所有安装的凭据元数据、文件后端密文、OAuth 刷新锁及主机标识分别放在该目录下的 `ai/credentials.json`、`ai/secrets/`、`ai/openai-refresh-locks/` 和 `ai/openai-host-id`。Linux 的加密密钥文件位置及 `HUB_SECRET_KEY_FILE` 覆盖规则不变。引擎/项目登记、默认引擎及编辑器选择统一存储在固定用户目录的 `hub-state.json`；旧 data 中的索引仅在固定索引尚不存在时导入，后续切换目录不会改用目标的旧索引。提供商配置 `ai/providers.json` 和模型缓存 `ai/models-cache.json` 也属于固定用户配置；首次读取旧 data 时一次性导入，已有全局配置优先，不用旧副本覆盖或恢复已删除的提供商。会话等仍属于业务数据。
 
 旧安装仅保留业务数据位置：已有设置（缺少 `UseHomeDataDirectory` 时保留旧默认数据路径）或原默认 `AxmolHub/data` 已存在，都不会自动改变业务数据目录。鉴权不再有旧布局写入分支：启动或切换数据根时，将当前旧数据根的凭据和主机标识一次性复制到固定鉴权位置；原文件和原 Keychain 条目均不删除、不改写。目标冲突或读取/写入失败会明确报错，不回退写入 data。完成来源记录在固定目录的 `ai/auth-imports.json`，防止注销后再次从旧数据恢复凭据；已完成来源不再读取。升级前应退出仍运行的旧版 Hub。
 
-所有正常运行的 macOS Keychain 使用固定 service `dev.axmol.hub`、account `hub-secrets`，当前用户共用，不受 data/auth 绝对路径影响。旧路径哈希 service 仅用于只读迁移。应用签名及 Keychain 访问控制不变。首次正常启动记录的选择仅决定业务数据默认位置，不决定鉴权位置；切换数据根或使用 `--data-root`、`--preferences` 均不改变鉴权目的地。业务数据目录不能等于或包含固定鉴权目录。自动检查使用显式隔离 fixture，不接触真实鉴权。
+所有正常运行的 macOS Keychain 使用固定 service `dev.axmol.hub`、account `hub-secrets`，当前用户共用，不受 data/auth 绝对路径影响。旧路径哈希 service 仅用于只读迁移。应用签名及 Keychain 访问控制不变。首次正常启动记录的选择仅决定业务数据默认位置，不决定鉴权位置；切换数据根或使用 `--data-root`、`--preferences` 均不改变提供商和鉴权目的地。业务数据目录不能等于或包含固定鉴权目录。自动检查使用显式隔离 fixture，不接触真实鉴权。
 
 这些文件均不能放在程序目录旁边，因为 Velopack 更新时整体替换安装目录、卸载时删除整个安装目录。可以指定独立配置：
 
@@ -83,7 +83,7 @@ macOS 本地构建会在当前编译的 `obj/` 目录下生成 `macos/Axmol Hub.
 dotnet run --project src/AxmolHub -- --data-root ./data --preferences ./artifacts/dev-preferences.json
 ```
 
-`--data-root` 优先于保存的设置；`--preferences` 仅隔离设置，不隔离鉴权，开发时也使用当前用户的固定鉴权存储。不要将设置、数据目录或下载的工具链提交到 Git。
+`--data-root` 优先于保存的设置；`--preferences` 仅隔离设置，不隔离登记索引、提供商或鉴权，开发时也使用当前用户的固定用户存储。CLI 同样使用固定登记索引；离线检查通过 CLI 的 `--profile-root <directory>` 显式选择临时索引目录。不要将设置、数据目录或下载的工具链提交到 Git。
 
 ### macOS 开发构建：钥串提示与本地签名
 

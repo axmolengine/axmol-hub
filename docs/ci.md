@@ -239,7 +239,7 @@ CI 固定 `10.0.x`（`build.yml` 的 `DOTNET_SDK_VERSION`，`setup-dotnet` 解�
 | 宿主检测断言脚本 | 正反双向通过（Windows 断言 exit 0，错误宿主断言 exit 1） |
 | `--smoke` 无头截图 | exit 0，产出 53964 字节 PNG |
 | Velopack 钩子拦截 | `AxmolHub.App.exe --veloapp-install 0.1.6` exit 0，**不弹 GUI**（自定义 `Main` 生效） |
-| 默认每用户数据根 | 全新安装不带 `--data-root` 使用 `%USERPROFILE%\.axmolhub`；已有设置或旧数据目录保留原业务数据位置，所有安装的鉴权与设置均在平台用户目录的 `AxmolHub` 下 |
+| 默认每用户数据根 | 全新安装不带 `--data-root` 使用 `%USERPROFILE%\.axmolhub`；已有设置或旧数据目录保留原业务数据位置，所有安装的设置、引擎/项目登记、提供商与鉴权均在平台用户目录的 `AxmolHub` 下 |
 | `--prepare-packaging` | `.nupkg` SHA-256 校验通过；`vpk` 1.2.161 装进 `cache/packaging-tools/vpk`，exit 0 |
 | `installer/Build.ps1` | vpk 打包成功，产出 `Axmol.Hub-win-Setup.exe`（83,730,340 B，SHA-256 `2fe5efa9…`）、`Axmol.Hub-win-Portable.zip`（76,064,070 B，SHA-256 `ea864d58…`）、`Axmol.Hub-0.1.6-full.nupkg`、`releases.win.json` |
 | `installer/Test.ps1 -Isolated` | **9 项断言全过**：静默安装、载荷完整、自包含启动、中文与空格路径、**真实升级 0.1.6 → 0.1.7 生效**、升级保留用户数据、卸载移除载荷、卸载移除注册项与快捷方式、卸载保留用户数据；`ResidualInstallDirectory=false` |

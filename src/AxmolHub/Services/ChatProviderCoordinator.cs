@@ -26,9 +26,10 @@ internal sealed partial class ChatProviderCoordinator
 
         if (_secrets is not null) SecretStoreFactory.PrepareAuthentication(layout, _secrets);
 
-        _providers = new ProviderStore(layout.DataRoot);
+        ProviderSettingsMigration.Import(layout);
+        _providers = new ProviderStore(layout.AuthRoot);
         _credentials = new CredentialStore(layout.AuthRoot, _secrets ?? new NoSecretStore());
-        _modelLists = new ModelListStore(layout.DataRoot);
+        _modelLists = new ModelListStore(layout.AuthRoot);
     }
 
     private readonly string _authRoot;

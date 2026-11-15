@@ -298,7 +298,7 @@ public static class HubTexts
         ["StopProjectPreviewFirst"] = ("请先停止此项目的 Web 预览，再移到回收站。", "Stop this project's web preview before moving it to the trash."),
         ["AnotherProjectPreviewRunning"] = ("另一个项目的 Web 预览仍在运行，请先停止它。", "Another project's web preview is still running. Stop it first."),
         ["RemoveEngineHint"] = ("把引擎移出 Hub 列表，磁盘上的引擎目录保留", "Removes the engine from Hub's list; the engine directory on disk is kept"),
-        ["SwitchDataRootPrompt"] = ("把数据目录切换到 {0}？Hub 会重建工作区并清空当前页面缓存。", "Switch the data directory to {0}? Hub rebuilds the workspace and clears the current page cache."),
+        ["SwitchDataRootPrompt"] = ("将现有业务数据复制到 {0} 并切换？会话将保留，提供商和凭据不受影响。原目录保留；目标有不同内容时不会覆盖。", "Copy existing business data to {0} and switch? Sessions are preserved; providers and credentials stay unchanged. The original directory is kept, and conflicting destination files will not be overwritten."),
         ["ToolsTitle"] = ("平台构建支持", "Platform build support"),
         ["ToolsHint"] = ("按引擎版本管理平台模块和配套工具。", "Manage platform modules and tools for each engine version."),
         ["ToolsNote"] = ("MSVC 使用微软官方安装器，需要 Windows 管理员授权。", "MSVC uses Microsoft's installer and requires Windows administrator approval."),

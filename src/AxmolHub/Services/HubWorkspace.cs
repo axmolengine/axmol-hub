@@ -82,12 +82,12 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>Reentrancy gate for the target dropdown. The WPF version calls it <c>targetReady</c>; it does exactly the same job.</summary>
     private bool _targetReady;
 
-    public HubWorkspace(string root, HubPreferences preferences, PreferencesStore preferencesStore)
+    public HubWorkspace(string root, HubPreferences preferences, PreferencesStore preferencesStore, string? profileRoot = null)
     {
         Preferences = preferences;
         PreferencesStore = preferencesStore;
 
-        Store = new StateStore(root);
+        Store = profileRoot is null ? new StateStore(root) : StateStore.ForProfile(root, profileRoot);
         Directory.CreateDirectory(Store.Root);
         ToolsRoot = Path.Combine(Store.Root, "tools");
         Directory.CreateDirectory(ToolsRoot);

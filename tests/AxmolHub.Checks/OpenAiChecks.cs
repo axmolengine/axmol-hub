@@ -122,6 +122,65 @@ internal static class OpenAiChecks
             && sharedMetadata.Load().Single().Secret == "shared-secret"
             && !WorkspacePaths.ResolveWrite(WorkspaceSandbox.For(scratch), sharedPath, sharedGuards).IsAllowed,
             "shared credential metadata stays outside business data and remains protected from workspace writes");
+        // Relocation and shared provider settings must preserve the two things a root switch used to hide.
+        new ProviderStore(shared.DataRoot).Save([new ModelProvider { Id = "relocation-provider", Name = "Kept provider" }]);
+        new ModelListStore(shared.DataRoot).Save("relocation-provider", ["kept-model"]);
+        ProviderSettingsMigration.Import(shared);
+        var sessionFile = Path.Combine(shared.DataRoot, "ai", "sessions", "kept.json");
+        StateStore.WriteJson(sessionFile, new { Id = "kept", Title = "Kept session" });
+        var relocationRoot = Path.Combine(scratch, "relocated-data");
+        var internalEngine = Path.Combine(shared.DataRoot, "engines", "axmol");
+        var externalProject = Path.Combine(scratch, "outside-project");
+        new StateStore(shared.DataRoot).Save(new HubState
+        {
+            Engines = [new EngineEntry("3.0.0", internalEngine)], DefaultEnginePath = internalEngine,
+            Projects = [new ProjectEntry { Path = Path.Combine(shared.DataRoot, "projects", "kept") },
+                new ProjectEntry { Path = externalProject }],
+        });
+        var index = StateStore.ForProfile(shared.DataRoot, authRoot);
+        var log = new HubLog(Path.Combine(shared.DataRoot, "logs"));
+        log.Write("history before relocation");
+        using (log.PauseWrites())
+        {
+            using var copy = DataRootTransfer.Copy(shared.DataRoot, relocationRoot);
+            var state = index.Load();
+            state.RelocatePaths(shared.DataRoot, relocationRoot);
+            index.Save(state);
+            var nextLog = new HubLog(Path.Combine(relocationRoot, "logs"));
+            log.RedirectTo(nextLog);
+            copy.Commit();
+        }
+        log.Write("late write after relocation");
+        var relocatedIndex = StateStore.ForProfile(relocationRoot, authRoot).Load();
+        Check(!File.Exists(Path.Combine(relocationRoot, "hub-state.json"))
+            && relocatedIndex.DefaultEnginePath == Path.Combine(relocationRoot, "engines", "axmol")
+            && relocatedIndex.Projects[0].Path == Path.Combine(relocationRoot, "projects", "kept")
+            && relocatedIndex.Projects[1].Path == externalProject
+            && File.ReadAllText(log.FilePath).Contains("history before relocation")
+            && !File.ReadAllText(log.FilePath).Contains("late write after relocation")
+            && Directory.GetFiles(Path.Combine(relocationRoot, "logs")).Any(file => File.ReadAllText(file).Contains("late write after relocation")),
+            "the fixed registration index rebases only internal paths and logs relocate without late writes to the source");
+        var relocatedSession = Path.Combine(relocationRoot, "ai", "sessions", "kept.json");
+        Check(File.ReadAllText(relocatedSession) == File.ReadAllText(sessionFile)
+            && !File.Exists(Path.Combine(relocationRoot, "ai", "providers.json"))
+            && new ProviderStore(authRoot).Load().Single().Id == "relocation-provider"
+            && new ModelListStore(authRoot).Load().Single().Models.Contains("kept-model"),
+            "relocation preserves sessions while providers and their model catalog stay in the shared profile");
+        var rollbackRoot = Path.Combine(scratch, "rollback-data");
+        using (DataRootTransfer.Copy(shared.DataRoot, rollbackRoot)) { }
+        Check(!File.Exists(Path.Combine(rollbackRoot, "ai", "sessions", "kept.json")),
+            "an uncommitted relocation removes its copies without deleting the original");
+        File.WriteAllText(relocatedSession, "different session");
+        var refused = false;
+        try { using var copy = DataRootTransfer.Copy(shared.DataRoot, relocationRoot); }
+        catch (IOException) { refused = true; }
+        Check(refused && File.ReadAllText(relocatedSession) == "different session" && File.Exists(sessionFile),
+            "a conflicting destination never overwrites either session dataset");
+        var sharedProviders = new ProviderStore(authRoot);
+        sharedProviders.Save([]);
+        ProviderSettingsMigration.Import(shared);
+        Check(sharedProviders.Load().Count == 0, "a completed provider import never restores a removed provider");
+
         // Migration is a data-integrity boundary: exercise it offline, including failure and replay.
         var oldRoot = Path.Combine(scratch, "old-data");
         var importLayout = HubStorageLayout.Resolve(oldRoot, authRoot);

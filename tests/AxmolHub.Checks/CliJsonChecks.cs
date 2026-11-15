@@ -29,7 +29,7 @@ internal static class CliJsonChecks
         });
         async Task<(int Code, string Output, string Error)> Invoke(string[] arguments)
         {
-            var result = await cli.RunAsync(executable, [..leading, ..arguments], workspace, timeout: TimeSpan.FromMinutes(2));
+            var result = await cli.RunAsync(executable, [..leading, "--profile-root", Path.Combine(scratch, "profile"), ..arguments], workspace, timeout: TimeSpan.FromMinutes(2));
             return (result.ExitCode, result.Output, result.Error);
         }
 

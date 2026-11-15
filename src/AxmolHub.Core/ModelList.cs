@@ -239,7 +239,7 @@ public sealed class ModelListCacheEntry
 }
 
 /// <summary>
-/// The cache document: <c>data-root/ai/models-cache.json</c>, one entry per provider id.
+/// The cache document: <c>user-profile/ai/models-cache.json</c>, one entry per provider id.
 ///
 /// <para><b>Separate from <c>providers.json</c> on purpose.</b> That file is configuration — what the user
 /// chose; this is an observation — what the endpoint said, and when. They change for different reasons and at
@@ -253,7 +253,7 @@ public sealed class ModelListCacheDocument
 }
 
 /// <summary>
-/// Reads and writes <c>data-root/ai/models-cache.json</c>.
+/// Reads and writes <c>user-profile/ai/models-cache.json</c>.
 ///
 /// <para>Same contract as the other two AI stores: the file is optional (a missing one is an empty cache, not
 /// an error), and a damaged one is treated as empty rather than thrown — losing a cache costs one refetch,

@@ -54,6 +54,21 @@ public sealed class HubState
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? CodeExecutable { get; set; }
 
+    /// <summary>Retarget registered installations copied with business data; external paths remain untouched.</summary>
+    public void RelocatePaths(string source, string destination)
+    {
+        string Map(string value) => DataRootTransfer.RebasePath(value, source, destination)!;
+        CodeEditor? Editor(CodeEditor? value) => value is null ? null : value with { Path = Map(value.Path) };
+        Engines = Engines.Select(engine => engine with { Path = Map(engine.Path) }).ToList();
+        foreach (var project in Projects)
+        {
+            project.Path = Map(project.Path);
+            project.CodeEditor = Editor(project.CodeEditor);
+        }
+        DefaultEnginePath = DataRootTransfer.RebasePath(DefaultEnginePath, source, destination);
+        CodeEditor = Editor(CodeEditor);
+    }
+
     /// <summary>
     /// Folds the two legacy slots into the single default editor. Runs on every load and is idempotent: the
     /// legacy values are cleared once folded, so the second load finds nothing to do.
@@ -89,9 +104,40 @@ public sealed class HubState
     }
 }
 
-public sealed class StateStore(string root)
+public sealed class StateStore(string root, string? indexRoot = null)
 {
     public string Root { get; } = System.IO.Path.GetFullPath(root);
+    private string IndexRoot { get; } = System.IO.Path.GetFullPath(indexRoot ?? root);
+
+    /// <summary>The data root is movable; engine/project registrations and editor defaults belong to the profile.
+    /// Adopt an old index only when no profile index exists, never overwrite a newer shared registration.</summary>
+    public static StateStore ForProfile(string dataRoot, string profileRoot)
+    {
+        var store = new StateStore(dataRoot, profileRoot);
+        using var gate = store.LockIndex();
+        var legacy = new StateStore(dataRoot);
+        if (!File.Exists(store.StatePath) && File.Exists(legacy.StatePath)) store.Save(legacy.Load());
+        return store;
+    }
+
+    internal IDisposable LockIndex()
+    {
+        var identity = OperatingSystem.IsWindows() ? StatePath.ToUpperInvariant() : StatePath;
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
+        var gate = new Mutex(false, "AxmolHubState-" + key);
+        try
+        {
+            try { if (!gate.WaitOne(TimeSpan.FromSeconds(10))) throw new TimeoutException("Hub state is busy."); }
+            catch (AbandonedMutexException) { }
+            return new IndexLease(gate);
+        }
+        catch { gate.Dispose(); throw; }
+    }
+
+    private sealed class IndexLease(Mutex gate) : IDisposable
+    {
+        public void Dispose() { gate.ReleaseMutex(); gate.Dispose(); }
+    }
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
@@ -138,21 +184,12 @@ public sealed class StateStore(string root)
         state.MigrateEditors();
         return state;
     }
-    private string StatePath => System.IO.Path.Combine(Root, "hub-state.json");
+    private string StatePath => System.IO.Path.Combine(IndexRoot, "hub-state.json");
     public void Save(HubState state) => WriteJson(StatePath, state);
     public void Update(Action<HubState> change)
     {
-        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(OperatingSystem.IsWindows() ? Root.ToUpperInvariant() : Root)));
-        using var gate = new Mutex(false, "AxmolHubState-" + key);
-        var acquired = false;
-        try
-        {
-            try { acquired = gate.WaitOne(TimeSpan.FromSeconds(10)); }
-            catch (AbandonedMutexException) { acquired = true; }
-            if (!acquired) throw new TimeoutException("Hub state is busy.");
-            var latest = Load(); change(latest); Save(latest);
-        }
-        finally { if (acquired) gate.ReleaseMutex(); }
+        using var gate = LockIndex();
+        var latest = Load(); change(latest); Save(latest);
     }
     public void SaveProject(ProjectEntry project) => Update(latest =>
     {

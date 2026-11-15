@@ -318,6 +318,13 @@ internal sealed class ShellLayoutChecks
         Check(NamedDescendant<Button>(settings, "ChooseDataDirectoryButton") is not null,
             "设置页提供切换数据目录的按钮（而不是一行「尚未迁移」说明）");
 
+        var keptSession = new Conversation
+        {
+            Id = Guid.NewGuid().ToString("N"), Title = "Relocated session",
+            Messages = [new ChatTurn("user", "Keep this history", DateTimeOffset.UtcNow)],
+        };
+        new ConversationStore(scratchRoot).Save(keptSession);
+        var keptProviders = shell.Chat.Providers.Select(provider => provider.Id).ToArray();
         var next = ScratchDirectory.Resolve("shell-check-switch", Guid.NewGuid().ToString("N"));
         var nextRoot = new StateStore(next).Root;
 
@@ -371,12 +378,15 @@ internal sealed class ShellLayoutChecks
         Check(!logAfterSwitch.Contains(previousLogMarker, StringComparison.Ordinal),
             "切换后上一个根的唯一日志记录不再摆在界面上（旧根记录「" + previousLogLine + "」）");
 
-        // The state really comes from the new root: the new root is empty, so if the old root's two engines are still visible, the switch only changed a string.
+        // Relocation preserves business state, rather than opening an empty independent dataset.
         var installs = (InstallsPage)shell.NavigateTo("Installs");
         installs.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(NamedDescendant<TextBlock>(installs, "EmptyEngines") is { IsVisible: true },
-            "切换后引擎页显示空态（状态来自新根，不是残留旧根的引擎列表）");
+        Check(shell.Workspace.State.Engines.Count == new StateStore(scratchRoot).Load().Engines.Count
+            && shell.Chat.Conversations.Any(session => session.Id == keptSession.Id)
+            && shell.Chat.OpenConversation(keptSession.Id)?.Messages.Any(turn => turn.Text == "Keep this history") == true
+            && shell.Chat.Providers.Select(provider => provider.Id).SequenceEqual(keptProviders),
+            "迁移后新根保留引擎登记、会话正文与全部提供商（不是切到空数据集）");
 
         // Switching to the same directory should be a no-op — otherwise every confirm click rebuilds all pages for nothing.
         Check(!shell.SwitchDataRoot(next) && ReferenceEquals(shell.CurrentPage, installs),

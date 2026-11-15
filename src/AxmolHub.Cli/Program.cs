@@ -11,10 +11,21 @@ if (json)
     args = Array.FindAll(args, argument => argument != "--json");
 }
 
+// Explicit profile overrides keep offline fixtures away from the user's registrations. The data-root
+// argument controls content only, just as in the desktop app.
+var profileRoot = HubStorageLayout.UserDirectory;
+var profileIndex = Array.IndexOf(args, "--profile-root");
+if (profileIndex >= 0 && profileIndex + 1 < args.Length)
+{
+    profileRoot = args[profileIndex + 1];
+    args = [.. args.Take(profileIndex), .. args.Skip(profileIndex + 2)];
+}
 var command = args.Length > 0 ? args[0] : "help";
 
 try
 {
+    if (args.Contains("--profile-root"))
+        throw new ArgumentException("--profile-root requires a directory.");
     using var stop = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
     return await RunAsync(args, command, json, stop);
@@ -92,7 +103,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
     if (verb == "select" && arguments.Length == 4)
     {
-        var projectStore = new StateStore(arguments[1]);
+        var projectStore = StateStore.ForProfile(arguments[1], profileRoot);
         var project = StateStore.ReadProject(arguments[2]);
         BuildTargets.Select(project, arguments[3]);
         projectStore.SaveProject(project);
@@ -108,7 +119,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     // below because the query form takes only the data root.
     if (verb == "mirror" && arguments.Length is 2 or 3)
     {
-        var mirrorStore = new StateStore(arguments[1]);
+        var mirrorStore = StateStore.ForProfile(arguments[1], profileRoot);
         var mirrorHub = mirrorStore.Load();
         var mirrorEngine = mirrorHub.Engines.FirstOrDefault(candidate => candidate.Path == mirrorHub.DefaultEnginePath)
             ?? mirrorHub.Engines.FirstOrDefault()
@@ -133,7 +144,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     }
 
     await HostEnvironment.EnsureAsync(stop.Token);
-    var store = new StateStore(arguments[1]);
+    var store = StateStore.ForProfile(arguments[1], profileRoot);
     Directory.CreateDirectory(Path.Combine(store.Root, "tools"));
     var log = new HubLog(Path.Combine(store.Root, "logs"));
     void Write(string message) { Console.Error.WriteLine(message); log.Write(message); }

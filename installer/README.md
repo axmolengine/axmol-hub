@@ -78,7 +78,7 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 | 内容 | 位置 |
 | --- | --- |
 | 安装目录（Velopack 管理） | `%LocalAppData%\dev.axmol.hubapp\` |
-| 设置与鉴权文件 | `%LocalAppData%\AxmolHub\` |
+| 设置、引擎/项目登记、提供商与鉴权文件 | `%LocalAppData%\AxmolHub\` |
 | 新安装默认业务数据根 | `%USERPROFILE%\.axmolhub\`（旧安装保留原业务数据位置；鉴权独立迁移） |
 
 引擎与工具链是 GB 级的，因此放 `LocalApplicationData` 而不是漫游 `AppData`。`--data-root` 与 `--preferences` 仍可覆盖，验收测试正是靠它们把数据指到工作区内。
