@@ -1142,6 +1142,7 @@ public sealed partial class HubWorkspace : IDisposable
             var registered = State.Projects.FirstOrDefault(p => PathEquals(p.Path, fullPath));
             if (registered is not null)
             {
+                if (!CheckProjectDirectory(registered)) return Task.CompletedTask;
                 ReloadProject(registered);
                 SetFeedback(UserFeedback.Info(HubStrings.Get("ProjectAlreadyAdded"), "project-already-added"));
                 return Task.CompletedTask;
@@ -1163,6 +1164,7 @@ public sealed partial class HubWorkspace : IDisposable
 
     private void ReloadProject(ProjectEntry project)
     {
+        if (!CheckProjectDirectory(project)) return;
         // Without project metadata, do not replace the entry with import defaults.
         if (!File.Exists(StateStore.MetadataPath(project.Path)))
             throw new FileNotFoundException("Project settings file not found.", StateStore.MetadataPath(project.Path));
@@ -1200,7 +1202,7 @@ public sealed partial class HubWorkspace : IDisposable
         if (RefuseIfBusy()) return;
 
         var project = requested ?? SelectedProject;
-        if (project is null) return;
+        if (project is null || !CheckProjectDirectory(project)) return;
         if (_launchedGames.TryGetValue(project.Path, out var pid) && ProcessRunner.IsRunning(pid))
         {
             await ReportFailureAsync(new InvalidOperationException("ProjectStillRunning"));
@@ -1273,15 +1275,18 @@ public sealed partial class HubWorkspace : IDisposable
         var moved = false;
         await ExecuteAsync("Delete project", async token =>
         {
-            ValidateProjectDeletePath(project);
+            var directoryExists = ValidateProjectDeletePath(project);
             if (_launchedGames.TryGetValue(project.Path, out var pid) && ProcessRunner.IsRunning(pid))
                 throw new InvalidOperationException(HubStrings.Get("ProjectStillRunning"));
             if (PathEquals(_webPreviewProjectPath, project.Path))
                 throw new InvalidOperationException(HubStrings.Get("StopProjectPreviewFirst"));
-            var result = await FileOperation.DeleteAsync(project.Path, useRecycleBin, token);
-            if (result.Kind == FileOperationResultKind.Cancelled) return;
-            if (result.Kind != FileOperationResultKind.Succeeded)
-                throw new IOException(string.Format(HubStrings.Get("DeleteProjectFailed"), DeleteConfirmation.FailureReason(result)));
+            if (directoryExists)
+            {
+                var result = await FileOperation.DeleteAsync(project.Path, useRecycleBin, token);
+                if (result.Kind == FileOperationResultKind.Cancelled) return;
+                if (result.Kind != FileOperationResultKind.Succeeded)
+                    throw new IOException(string.Format(HubStrings.Get("DeleteProjectFailed"), DeleteConfirmation.FailureReason(result)));
+            }
 
             State.Projects.Remove(project);
             try
@@ -1295,6 +1300,8 @@ public sealed partial class HubWorkspace : IDisposable
             }
             moved = true;
         });
+        if (moved)
+            SetFeedback(UserFeedback.Success(string.Format(HubStrings.Get("ProjectDeleted"), project.Name), "project-deleted"));
         return moved;
     }
 
@@ -1308,7 +1315,7 @@ public sealed partial class HubWorkspace : IDisposable
             throw new InvalidOperationException(HubStrings.Get("StopProjectPreviewFirst"));
     }
 
-    internal void ValidateProjectDeletePath(ProjectEntry project)
+    internal bool ValidateProjectDeletePath(ProjectEntry project)
     {
         if (!State.Projects.Any(item => PathEquals(item.Path, project.Path)))
             throw new InvalidOperationException(HubStrings.Get("ProjectNoLongerRegistered"));
@@ -1334,10 +1341,22 @@ public sealed partial class HubWorkspace : IDisposable
                 throw new InvalidOperationException(string.Format(HubStrings.Get("ProjectContainsRegisteredProject"), other.Name));
         }
 
-        if (!Directory.Exists(path))
-            throw new DirectoryNotFoundException(path);
-        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(path);
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+        if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) == 0)
             throw new InvalidOperationException(HubStrings.Get("UnsafeProjectDeletePath"));
+        return true;
     }
 
     private static bool PathEquals(string? left, string? right)
@@ -1356,6 +1375,16 @@ public sealed partial class HubWorkspace : IDisposable
 
     private static bool IsSameOrParent(string candidate, string protectedPath)
         => PathEquals(candidate, protectedPath) || IsWithin(protectedPath, candidate);
+
+    private bool CheckProjectDirectory(ProjectEntry project)
+    {
+        if (Directory.Exists(project.Path)) return true;
+        SetFeedback(UserFeedback.Warning(
+            string.Format(HubStrings.Get("ProjectFolderMissingHint"), project.Name, project.Path),
+            "project-folder-missing:" + project.Path));
+        Refresh();
+        return false;
+    }
 
     private ProjectEntry RequiredProject() => SelectedProject
         ?? throw new InvalidOperationException("Select a project first.");
@@ -1389,6 +1418,8 @@ public sealed partial class HubWorkspace : IDisposable
         {
             return;
         }
+
+        if (!CheckProjectDirectory(selected)) return;
 
         // A running game holds its own output directory open, so a rebuild started now would fail in a minute
         // with a Windows sharing-conflict sentence from inside the compiler. Hub launched that process, so it
@@ -1433,6 +1464,7 @@ public sealed partial class HubWorkspace : IDisposable
             async (task, token) =>
         {
             var project = selected;
+            if (!CheckProjectDirectory(project)) return;
             token.ThrowIfCancellationRequested();
             BuildTargets.Select(project, target.Id, configuration, chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
             var engine = RequiredEngine(project);
@@ -1493,6 +1525,7 @@ public sealed partial class HubWorkspace : IDisposable
         try
         {
             var project = requested ?? RequiredProject();
+            if (!CheckProjectDirectory(project)) return;
             if (_webPreview is not null)
                 throw new InvalidOperationException(HubStrings.Get("AnotherProjectPreviewRunning"));
             if (project.BuildStatus != "Succeeded")
@@ -1621,6 +1654,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>Opens the Android release settings. The projects page's "Android release settings" button calls it directly.</summary>
     public async Task<bool> EditAndroidReleaseAsync(ProjectEntry project)
     {
+        if (!CheckProjectDirectory(project)) return false;
         try
         {
             _androidPasswords.TryGetValue(project.Path, out var previous);
@@ -1631,6 +1665,7 @@ public sealed partial class HubWorkspace : IDisposable
                 return false;
             }
 
+            if (!CheckProjectDirectory(project)) return false;
             _androidPasswords[project.Path] = dialog.Passwords!;
             project.BuildStatus = "Not built";
             Store.Save(State);
@@ -1650,7 +1685,9 @@ public sealed partial class HubWorkspace : IDisposable
 
     public async Task OpenProjectFolderAsync(ProjectEntry? requested = null) => await ExecuteAsync("Open project folder", _ =>
     {
-        Open((requested ?? RequiredProject()).Path);
+        var project = requested ?? RequiredProject();
+        if (!CheckProjectDirectory(project)) return Task.CompletedTask;
+        Open(project.Path);
         return Task.CompletedTask;
     });
 
@@ -1719,6 +1756,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public async Task<bool> EditPrebuiltAsync(ProjectEntry project)
     {
+        if (!CheckProjectDirectory(project)) return false;
         try
         {
             var engine = RequiredEngine(project);
@@ -1738,6 +1776,7 @@ public sealed partial class HubWorkspace : IDisposable
                 return false;
             }
 
+            if (!CheckProjectDirectory(project)) return false;
             new PrebuiltSettings { Enabled = dialog.Enabled }.Save(project);
             // The link mode changed: existing artifacts no longer represent the current configuration, so a rebuild is required.
             project.BuildStatus = "Not built";
@@ -1791,6 +1830,7 @@ public sealed partial class HubWorkspace : IDisposable
     public async Task OpenEditorAsync(string? presetId = null, ProjectEntry? requested = null) => await ExecuteAsync("OpenInEditor", _ =>
     {
         var project = requested ?? RequiredProject();
+        if (!CheckProjectDirectory(project)) return Task.CompletedTask;
         var binding = presetId is null
             ? EffectiveEditor(project)
             : DetectedEditors.FirstOrDefault(candidate => candidate.Preset.Id == presetId);
@@ -1816,6 +1856,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public async Task<bool> SelectEditorAsync(string id, string path, bool global, ProjectEntry? requested = null)
     {
+        if (!global && (requested ?? SelectedProject) is { } selected && !CheckProjectDirectory(selected)) return false;
         var editor = new CodeEditor(id, path);
         if (CodeEditors.Bind(editor) is not { } binding)
         {
@@ -1855,6 +1896,7 @@ public sealed partial class HubWorkspace : IDisposable
             return;
         }
 
+        if (!CheckProjectDirectory(project)) return;
         project.CodeEditor = null;
         Store.Save(State);
         Refresh();

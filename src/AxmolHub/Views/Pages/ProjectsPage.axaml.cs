@@ -20,6 +20,7 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
                 && !System.IO.Path.IsPathRooted(relative) ? "~" + System.IO.Path.DirectorySeparatorChar + relative : Project.Path;
         }
     }
+    public bool IsFolderMissing { get; } = !Directory.Exists(Project.Path);
     public string Target => BuildTargets.Get(Project.Platform).Name;
     public string ProjectTypeLabel => HubStrings.Get(Project.ProjectType);
     public string Engine => Project.Version + (Project.Channel == "local" ? "" : " · " + Project.Channel);
@@ -87,6 +88,7 @@ public partial class ProjectsPage : UserControl
         ProjectsGrid.SizeChanged += (_, _) => SyncColumns();
         ProjectsGrid.AddHandler(InputElement.DoubleTappedEvent, OnProjectDoubleTapped, RoutingStrategies.Bubble);
         ProjectsGrid.AddHandler(InputElement.KeyDownEvent, OnProjectsKeyDown, RoutingStrategies.Tunnel);
+        AttachedToVisualTree += (_, _) => Reload();
         OpenExistingButton.Click += OnOpenExisting;
         NewProjectButton.Click += OnNewProject;
         Reload();
@@ -265,8 +267,10 @@ public partial class ProjectsPage : UserControl
         try
         {
             _workspace.ValidateProjectDeleteAvailability(project);
-            var useRecycleBin = await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteProjectTitle"),
-                project.Name, project.Path, HubStrings.Get("DeleteProjectPrompt"), HubStrings.Get("DeleteProject"));
+            var useRecycleBin = Directory.Exists(project.Path)
+                ? await DeleteConfirmation.ShowAsync(owner, HubStrings.Get("DeleteProjectTitle"),
+                    project.Name, project.Path, HubStrings.Get("DeleteProjectPrompt"), HubStrings.Get("DeleteProject"))
+                : true;
             if (useRecycleBin is null) return;
             if (await _workspace.DeleteProjectAsync(project, useRecycleBin.Value)) Reload();
         }

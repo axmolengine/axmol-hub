@@ -74,7 +74,16 @@
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
                     <StackPanel Margin="4,2" Spacing="3">
-                      <TextBlock Text="{Binding Project.Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Path IsVisible="{Binding IsFolderMissing}"
+                              Data="M0,0 L8,8 M8,0 L0,8" Stretch="None" Width="8" Height="8"
+                              Stroke="{DynamicResource Hub.DangerText}" StrokeThickness="1.5"
+                              StrokeLineCap="Round" Margin="0,0,6,0" VerticalAlignment="Center"
+                              ToolTip.Tip="{DynamicResource ProjectFolderMissing}"
+                              AutomationProperties.Name="{DynamicResource ProjectFolderMissing}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Project.Name}" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Name}" />
+                      </Grid>
                       <TextBlock Text="{Binding ProjectTypeLabel}" Foreground="{DynamicResource Hub.TextSecondary}"
                                  FontSize="11" TextWrapping="Wrap" />
                       <TextBlock Text="{Binding DisplayPath}" Foreground="{DynamicResource Hub.TextSecondary}"
@@ -144,7 +153,16 @@
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
                     <StackPanel Margin="4,2" Spacing="3">
-                      <TextBlock Text="{Binding Project.Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Path IsVisible="{Binding IsFolderMissing}"
+                              Data="M0,0 L8,8 M8,0 L0,8" Stretch="None" Width="8" Height="8"
+                              Stroke="{DynamicResource Hub.DangerText}" StrokeThickness="1.5"
+                              StrokeLineCap="Round" Margin="0,0,6,0" VerticalAlignment="Center"
+                              ToolTip.Tip="{DynamicResource ProjectFolderMissing}"
+                              AutomationProperties.Name="{DynamicResource ProjectFolderMissing}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Project.Name}" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Name}" />
+                      </Grid>
                       <TextBlock Text="{Binding DisplayPath}" Foreground="{DynamicResource Hub.TextSecondary}"
                                  FontSize="11" TextWrapping="Wrap" ToolTip.Tip="{Binding Project.Path}" />
                       <TextBlock Text="{Binding CompactDetails}" Foreground="{DynamicResource Hub.TextSecondary}"
