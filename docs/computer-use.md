@@ -190,7 +190,7 @@ including stale-mapping/cancellation paths. An event already sent cannot be reca
 
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
 
-## Wayland UTF-8 text paste and approval-card fix (restart acceptance pending)
+## Wayland UTF-8 text paste and approval-card fix (bounded VS Code acceptance passed)
 
 The saved VS Code comparison established missing Unicode characters, not a font problem. The new
 continuous-interaction checkbox explicitly includes text paste and clipboard replacement. Only that
@@ -222,7 +222,7 @@ clipboard. Linux CI runs it beside the geometry check. The rebuilt ShellCheck re
 all Portal checks, including the 220px limited-card footer check, passed. Waiting-state and sidebar
 menu-count failures remain recorded in `tmp/linux-unicode-card-rebuilt-shell{,-run}.txt` / `.log`.
 The machine clock was behind older build outputs, so final builds were explicitly rebuilt rather
-than trusting earlier incremental results. Installed native Unicode acceptance remains pending.
+than trusting earlier incremental results. The subsequent bounded VS Code acceptance is recorded below.
 
 The refreshed local 0.29.1 linux-x64 AppImage was packaged successfully (no version bump):
 `artifacts/releases/linux-x64/axmol-hub-linux-x64.AppImage`, SHA-256
@@ -231,7 +231,34 @@ Extracted `AxmolHub.dll` and `axmolhub-portal-helper` hashes match the publish o
 helper probe returned `CAPABILITIES window 3`. This supersedes the earlier package at the same path.
 Evidence: `tmp/linux-unicode-package.log`, `tmp/linux-unicode-extract.log`,
 `tmp/linux-unicode-release-rebuild.log`, `tmp/linux-unicode-images-final.log`.
-No installation or live clipboard input was performed for this new package.
+At packaging time no installation or live clipboard input had been performed.
+
+### Restarted-package VS Code acceptance
+
+A new window observation reported `Text transport: Portal Clipboard paste (replaces clipboard)`.
+The selected VS Code editor showed the saved previous failure `focus-6274 [] END-6274`.
+One `type` call appended two new lines with Chinese, emoji, spaces and LF; the returned frame showed
+all requested text. Ctrl+S removed the unsaved indicator. A strict UTF-8 read and exact comparison
+of `tmp/linux-cu-vscode.txt` confirmed all 92 bytes matched:
+
+```text
+focus-6274 [] END-6274
+unicode-9157 [中文验证😀] END
+second-line-9157 中文 空格 OK
+```
+
+This passes one native VS Code Unicode/multiline paste-and-save case, retaining the old failure
+as evidence. No direct file write inserted the acceptance text and no failed input was replayed.
+The paste and save calls completed under the live session. The user confirmed the reported problems
+were resolved, including repeated approvals and clipped approval buttons, and accepted closing this
+round. Clipboard bytes were not separately read. Linux pause/resume, revocation during input,
+other applications, active-IME configurations, multiple monitors and other desktop backends remain
+for later verification during actual use; no further testing is required for this closeout.
+
+The user also confirmed Windows and macOS had already been fully accepted. That is user-reported
+acceptance, not a new cross-platform test run by this Linux session. Historical failures and limited
+acceptance notes below remain as evidence rather than being silently rewritten as test passes.
+The full ShellCheck result remains 1752/1754 as recorded above; closeout does not waive its failures.
 
 ## Current Windows delivery status
 
