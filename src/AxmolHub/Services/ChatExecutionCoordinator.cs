@@ -1428,8 +1428,7 @@ internal sealed partial class ChatExecutionCoordinator
 
         if (!isGitOperationFallback && !isGoal && pictures is not { Count: > 0 } && reusedImages is not { Count: > 0 } && string.IsNullOrEmpty(attachedContext)
             && expectedPlanToken is null && GitWorkflow.ParseRequest(text, out var explicitTitle, out var validGitSyntax) is { } gitAction
-            && (Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId)) is { } gitConversation
-            && NormalizeMode(gitConversation.Mode) == ChatModes.Agent && PendingPlanToken(gitConversation) is null)
+            && (Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId)) is { } gitConversation)
         {
             if (IsRunning(conversationId) || _localGitActions.ContainsKey(conversationId))
             {
@@ -1441,15 +1440,13 @@ internal sealed partial class ChatExecutionCoordinator
                 refusalKey = "GitCommitTitleInvalid";
                 return false;
             }
-            if (gitConversation.WorkspaceRoot is { Length: > 0 } root)
-            {
-                var source = gitConversation.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
-                    && turn.ToolCallId is null && turn.Text.Length > 0);
-                Sessions.Registry.TryUpdate(conversationId, opened => opened.Append(ChatTurn.User(text)));
-                Changed?.Invoke();
-                _ = CompleteLocalGitRequestAsync(conversationId, root, source, gitAction, explicitTitle);
-                return true;
-            }
+            var root = gitConversation.WorkspaceRoot ?? "";
+            var source = gitConversation.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
+                && turn.ToolCallId is null && turn.Text.Length > 0);
+            Sessions.Registry.TryUpdate(conversationId, opened => opened.Append(ChatTurn.User(text)));
+            Changed?.Invoke();
+            _ = CompleteLocalGitRequestAsync(conversationId, root, source, gitAction, explicitTitle);
+            return true;
         }
 
         var choice = Providers.ResolvedModel(conversationId, out refusalKey);
