@@ -3583,7 +3583,7 @@ internal sealed partial class ChatExecutionCoordinator
                 PreferencesProvider?.Invoke().MaxAutoEffort,
                 null,
                 null));
-            reasoning = ReachableTier(choice.Provider, modelName, decision.ReasoningEffort);
+            reasoning = ModelCatalog.ReachableReasoningEffort(choice.Provider, modelName, decision.ReasoningEffort);
             Audit(conversationId, $"Auto route: {modelName} · {reasoning ?? "the model's own default"} — {decision.Reason}");
             _routes[conversationId] = (modelName, reasoning ?? ChatReasoningEfforts.Default, decision.Reason);
         }
@@ -4543,13 +4543,6 @@ internal sealed partial class ChatExecutionCoordinator
         return (double)used / room;
     }
 
-    private static string? ReachableTier(ModelProvider provider, string model, string effort)
-    {
-        var selectable = ModelCatalog.SelectableReasoningEfforts(provider, model);
-        for (var candidate = effort; candidate is { Length: > 0 }; candidate = ModelRouting.StepDown(candidate))
-            if (selectable.Contains(candidate, StringComparer.OrdinalIgnoreCase)) return candidate;
-        return selectable.OrderBy(candidate => ModelRouting.Rank(candidate)).FirstOrDefault();
-    }
     private static int StampRunElapsed(Conversation opened, TimeSpan elapsed,
         (string? Model, string? Effort) requestSelection)
     {

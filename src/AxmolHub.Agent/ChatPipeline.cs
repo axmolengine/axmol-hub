@@ -1010,8 +1010,12 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // Quietly dropping a tier the screen still shows is the interface-versus-wire split this app treats as a
         // bug: the request has to say what the screen says, and the model's answer is what teaches Hub about the
         // model, not a guess written into a file beforehand.
-        var effectiveReasoningEffort = ModelCatalog.MaySendEffort(provider, modelName, reasoningEffort)
-            ? reasoningEffort
+        // A custom ladder also applies to callers resuming an older stored selection.
+        var requestedEffort = ModelCatalog.CustomReasoningEfforts(provider, modelName) is not null
+            ? ModelCatalog.ResolveReasoningEffort(provider, modelName, reasoningEffort)
+            : reasoningEffort;
+        var effectiveReasoningEffort = ModelCatalog.MaySendEffort(provider, modelName, requestedEffort)
+            ? requestedEffort
             : null;
         if (effectiveReasoningEffort is null
             && modelReasoning?.DefaultEffort is { } defaultEffort

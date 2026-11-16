@@ -115,15 +115,28 @@ internal sealed partial class ChatSessionCoordinator
             _sessions.TryUpdate(conversation.Id, item => item.ReasoningEffort = effort);
     }
 
+    internal void RefreshReasoningConfiguration(string providerId, string modelName)
+    {
+        if (Providers.SelectedChatModel is not { } choice || choice.Provider.Id != providerId
+            || !string.Equals(choice.ModelName, modelName, StringComparison.OrdinalIgnoreCase)) return;
+        if (_active is { } conversation)
+        {
+            NormalizeSessionReasoningEffort(conversation);
+            Execution.ClearRoute(conversation.Id);
+        }
+        else _selectedReasoningEffort = ModelCatalog.ResolveReasoningEffort(
+            choice.Provider, choice.ModelName, _selectedReasoningEffort);
+    }
+
     internal bool SelectReasoningEffort(string effort)
     {
         if (effort is not (ChatReasoningEfforts.Low or ChatReasoningEfforts.Medium
             or ChatReasoningEfforts.High or ChatReasoningEfforts.XHigh
             or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra)) return false;
-        // Choosing a tier is allowed unless this model refused that one; "the manifest never mentioned it" is
-        // not a refusal, and treating it as one is what made the menu unreachable on the default gateway.
+        // Explicit choices and the slider share the same effective model configuration.
         if (Providers.SelectedChatModel is not { } choice
-            || !ModelCatalog.MaySendEffort(choice.Provider, choice.ModelName, effort)) return false;
+            || !ModelCatalog.SelectableReasoningEfforts(choice.Provider, choice.ModelName)
+                .Contains(effort, StringComparer.OrdinalIgnoreCase)) return false;
         _selectedReasoningEffort = effort;
         if (_active is not null) _sessions.TryUpdate(_active.Id, conversation =>
         {

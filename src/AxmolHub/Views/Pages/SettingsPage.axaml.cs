@@ -2263,8 +2263,7 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>The add/edit-model draft row. Adds appear at the start of the list; edits replace the selected
-    /// model row in place. In edit mode the name is pre-filled and read-only, and a second field carries the
-    /// context-window token count.</summary>
+    /// model row in place. Edits keep context and reasoning changes in a draft until Save.</summary>
     private Control BuildModelDraftRow(ModelProvider provider)
     {
         var stack = new StackPanel { Spacing = 4, Tag = SectionTags.ModelDraft };
@@ -2286,6 +2285,8 @@ public partial class SettingsPage : UserControl
         // The token field is built here but appended after the row, so the stack reads name-row first and
         // the context-window field second (the docstring's "second field").
         Control? tokensField = null;
+        Control? reasoningField = null;
+        Func<List<string>?>? reasoningDraft = null;
         TextBox? tokens = null;
         if (editing)
         {
@@ -2295,6 +2296,7 @@ public partial class SettingsPage : UserControl
                 Text = current.ToString(System.Globalization.CultureInfo.InvariantCulture),
             };
             tokensField = BuildField(HubStrings.Get("ModelContextEditHint"), tokens);
+            reasoningField = BuildReasoningDraft(provider, name, out reasoningDraft);
         }
 
         // Single-line fields and buttons share the theme's control height. A grid stretches the buttons
@@ -2325,7 +2327,7 @@ public partial class SettingsPage : UserControl
         };
         confirm.Click += (_, _) =>
         {
-            if (editing) CommitModelEditDraft(provider, name, tokens!);
+            if (editing) CommitModelEditDraft(provider, name, tokens!, reasoningDraft!());
             else CommitModelDraft(provider, input);
         };
         // Both buttons land in column 0 unless told otherwise: a Grid stacks overlapping children there, so the
@@ -2347,7 +2349,63 @@ public partial class SettingsPage : UserControl
 
         stack.Children.Add(row);
         if (tokensField is not null) stack.Children.Add(tokensField);
+        if (reasoningField is not null) stack.Children.Add(reasoningField);
         return stack;
+    }
+
+    private Control BuildReasoningDraft(ModelProvider provider, string name, out Func<List<string>?> readDraft)
+    {
+        var model = provider.Models.FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase));
+        var detected = ModelCatalog.DetectedReasoningEfforts(provider, name).ToList();
+        var selected = new List<string>(model?.ReasoningEfforts ?? detected);
+        var mode = new ComboBox
+        {
+            Name = "ModelReasoningMode",
+            ItemsSource = new[] { HubStrings.Get("ModelReasoningDetected"), HubStrings.Get("ModelReasoningCustom") },
+            SelectedIndex = model?.ReasoningEfforts is null ? 0 : 1,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        var choices = new WrapPanel { Name = "ModelReasoningChoices" };
+        var preview = new TextBlock { Name = "ModelReasoningPreview", TextWrapping = TextWrapping.Wrap, Classes = { "muted" } };
+        var levels = new[] { "low", "medium", "high", "xhigh", "max", "ultra" };
+        void Refresh()
+        {
+            choices.IsVisible = mode.SelectedIndex == 1;
+            var active = mode.SelectedIndex == 1 ? selected : detected;
+            preview.Text = active.Count > 0 ? string.Join(" → ", active) : HubStrings.Get("ChatReasoningUnavailable");
+        }
+        foreach (var level in levels)
+        {
+            var checkbox = new CheckBox
+            {
+                Content = level,
+                Name = "ModelReasoning_" + level,
+                IsChecked = selected.Contains(level),
+                Margin = new Thickness(0, 0, 16, 0),
+            };
+            checkbox.IsCheckedChanged += (_, _) =>
+            {
+                if (checkbox.IsChecked == true && !selected.Contains(level))
+                {
+                    var index = selected.FindIndex(item => Array.IndexOf(levels, item) > Array.IndexOf(levels, level));
+                    selected.Insert(index < 0 ? selected.Count : index, level);
+                }
+                else if (checkbox.IsChecked != true) selected.Remove(level);
+                Refresh();
+            };
+            choices.Children.Add(checkbox);
+        }
+        var restore = new Button { Content = HubStrings.Get("ModelReasoningRestore"), Classes = { "quiet" } };
+        restore.Click += (_, _) => mode.SelectedIndex = 0;
+        mode.SelectionChanged += (_, _) => Refresh();
+        readDraft = () => mode.SelectedIndex == 1 ? new List<string>(selected) : null;
+        var fields = new StackPanel { Spacing = 6 };
+        fields.Children.Add(mode);
+        fields.Children.Add(choices);
+        fields.Children.Add(preview);
+        fields.Children.Add(restore);
+        Refresh();
+        return BuildField(HubStrings.Get("ModelReasoningLevels"), fields);
     }
 
     private void CommitModelDraft(ModelProvider provider, TextBox input)
@@ -2371,7 +2429,7 @@ public partial class SettingsPage : UserControl
         CloseDraft();
     }
 
-    /// <summary>Opens the context-window draft for a model (the pencil on a model row). It writes the
+    /// <summary>Opens the configuration draft for a model (the pencil on a model row). It writes the
     /// <b>model</b>-draft id only — the group's header stays collapsed.</summary>
     private void OpenModelEditDraft(ModelProvider provider, ProviderModel model)
     {
@@ -2381,9 +2439,14 @@ public partial class SettingsPage : UserControl
         RebuildProviderGroups();
     }
 
-    private void CommitModelEditDraft(ModelProvider provider, string name, TextBox tokens)
+    private void CommitModelEditDraft(ModelProvider provider, string name, TextBox tokens, List<string>? efforts)
     {
         if (_chat is null) return;
+        if (efforts is { Count: 0 })
+        {
+            SetProviderStatus(true, HubStrings.Get("ModelReasoningRequired"));
+            return;
+        }
 
         int? parsed = null;
         if (int.TryParse((tokens.Text ?? "").Trim(), out var value) && value > 0)
@@ -2391,6 +2454,11 @@ public partial class SettingsPage : UserControl
             parsed = value;
         }
 
+        if (!_chat.SetModelReasoningEfforts(provider.Id, name, efforts))
+        {
+            SetProviderStatus(true, HubStrings.Get("ModelMissing"));
+            return;
+        }
         _chat.SetModelContextTokens(provider.Id, name, parsed);
         SetProviderStatus(false, HubStrings.Get("ProviderEditSaved"));
         CloseDraft();
@@ -2457,9 +2525,7 @@ public partial class SettingsPage : UserControl
             Classes = { "reveal" },
         };
 
-        // The pencil opens a context-window draft for this model. The one field is MaxContextTokens — the
-        // zero-cost override the model already persists — so "edit model" is real without growing the model's
-        // schema. Display name / wire override / output cap stay out until a later pass.
+        // Model capabilities are configured here; the composer only chooses a tier from this configuration.
         var edit = new Button
         {
             Content = BuildEditIcon(),

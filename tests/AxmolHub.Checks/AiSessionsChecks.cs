@@ -415,7 +415,49 @@ internal static class AiSessionsChecks
                 .SequenceEqual([ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
                     ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Ultra]))
             throw new Exception("GPT metadata leaked Max into the model-specific reasoning ladder.");
-        Console.WriteLine("PASS: reasoning efforts come from explicit model metadata, including DeepSeek /models.");
+        // A gateway's explicit configuration must survive storage and override name guesses and refusals.
+        var customGpt = ProviderWith("gpt-6.1-sol", new AiModelReasoning
+        {
+            Efforts = ["low", "ultra"], RejectedEfforts = ["max"],
+        });
+        customGpt.Models.Add(new ProviderModel
+        {
+            Name = "gpt-6.1-sol", ReasoningEfforts = ["low", "medium", "high", "xhigh", "max"],
+        });
+        var reasoningStore = new ProviderStore(Path.Combine(root, "reasoning-overrides"));
+        reasoningStore.Save([customGpt]);
+        var savedGpt = reasoningStore.Load().Single();
+        if (!ModelCatalog.SelectableReasoningEfforts(customGpt, "gpt-6.1-sol").SequenceEqual(
+                ModelCatalog.SelectableReasoningEfforts(savedGpt, "gpt-6.1-sol"))
+            || ModelCatalog.EffortAtLevel(savedGpt, "gpt-6.1-sol", 4) != "max"
+            || !ModelCatalog.MaySendEffort(customGpt, "gpt-6.1-sol", "max")
+            || ModelCatalog.MaySendEffort(customGpt, "gpt-6.1-sol", "ultra")
+            || ModelCatalog.EffortAtLevel(openAiProvider, "gpt-6.1-sol", 4) != "ultra")
+            throw new Exception("Custom reasoning tiers did not persist or leaked across providers or refusals.");
+        savedGpt.Models[0].ReasoningEfforts = null;
+        if (ModelCatalog.EffortAtLevel(savedGpt, "gpt-6.1-sol", 4) != "ultra")
+            throw new Exception("Restoring detection did not restore the model's detected ladder.");
+        if (ModelCatalog.ReachableReasoningEffort(customGpt, "gpt-6.1-sol", "ultra") != "xhigh"
+            || ModelCatalog.ReachableReasoningEffort(openAiProvider, "gpt-6.1-sol", "max") != "xhigh")
+            throw new Exception("Automatic reasoning substituted max and ultra instead of using the configured ladder.");
+        foreach (var (target, expected) in new[] { (customGpt, "max"), (openAiProvider, "ultra") })
+        {
+            var client = new FakeChatClient(["ok"]);
+            var selected = ModelCatalog.EffortAtLevel(target, "gpt-6.1-sol", 4);
+            await foreach (var _ in new ChatPipeline(client).SendAsync(target, [ChatTurn.User("test")],
+                               reasoningEffort: selected, modelName: "gpt-6.1-sol")) { }
+            var fields = client.LastOptions?.AdditionalProperties?.GetValueOrDefault(ChatPipeline.RequestOptionsKey)
+                as IReadOnlyDictionary<string, JsonElement>;
+            if (fields is null || fields["reasoning_effort"].GetString() != expected)
+                throw new Exception("The last slider level did not send the provider's exact wire value.");
+        }
+        var staleTierClient = new FakeChatClient(["ok"]);
+        await foreach (var _ in new ChatPipeline(staleTierClient).SendAsync(customGpt, [ChatTurn.User("test")],
+                           reasoningEffort: "ultra", modelName: "gpt-6.1-sol")) { }
+        if (ModelCatalog.ResolveReasoningEffort(customGpt, "gpt-6.1-sol", "ultra") != "medium"
+            || staleTierClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.Medium)
+            throw new Exception("An obsolete tier disagrees between the visible resolved choice and the request.");
+        Console.WriteLine("PASS: reasoning efforts honor per-provider model overrides, exact wire values and restore detection.");
         // What a model was seen to do outranks what a file said, and what it refused closes only that one tier.
         static ModelProvider ProviderWith(string model, AiModelReasoning profile)
         {

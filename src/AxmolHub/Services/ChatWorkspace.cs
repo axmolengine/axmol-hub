@@ -396,6 +396,10 @@ public sealed partial class ChatWorkspace : IDisposable
     /// property. Do not "restore the missing UI" without fixing the rebuild-while-typing first.</para>
     /// </summary>
     public bool SetModelContextTokens(string providerId, string name, int? tokens) => _providers.SetModelContextTokens(providerId, name, tokens);
+    /// <summary>Saves this provider/model's ordered reasoning tiers; null restores detection.</summary>
+    public bool SetModelReasoningEfforts(string providerId, string name, IReadOnlyList<string>? efforts)
+        => _providers.SetModelReasoningEfforts(providerId, name, efforts);
+
     /// <summary>What Hub believes one model's window is, and where that came from — read by the settings row so
     /// it can show the number it is about to let a person override.</summary>
     public (int Tokens, int OutputReserve, CapabilitySource Source) ContextWindowFor(string providerId, string name) => _providers.ContextWindowFor(providerId, name);

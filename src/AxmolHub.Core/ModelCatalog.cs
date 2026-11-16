@@ -155,6 +155,9 @@ public static class ModelCatalog
     /// <summary>The tiers to offer for one model: what the manifest declared — or, when it declared nothing, the
     /// family's ladder — plus what a reply has proved, minus what the model itself refused.</summary>
     public static IReadOnlyList<string> EffortsFor(ModelProvider? provider, string? modelName)
+        => CustomReasoningEfforts(provider, modelName) ?? DetectedEffortsFor(provider, modelName);
+
+    private static IReadOnlyList<string> DetectedEffortsFor(ModelProvider? provider, string? modelName)
     {
         var reasoning = ReasoningFor(provider, modelName);
         if (reasoning is null) return [];
@@ -198,32 +201,45 @@ public static class ModelCatalog
                && reasoning.RejectedEfforts.Count < ReasoningEffortLadder.Length;
     }
 
-    /// <summary>Whether this tier may go on the wire: never a refused one; otherwise yes, even when nobody ever
-    /// promised it — a person chose it, and silence is not a refusal.</summary>
+    /// <summary>A user-configured ladder is authoritative, including after a refusal. Without an override,
+    /// keep the existing permissive policy for unreported tiers and filter observed refusals.</summary>
     public static bool MaySendEffort(ModelProvider? provider, string? modelName, string? effort)
     {
         if (string.IsNullOrEmpty(effort) || effort == ChatReasoningEfforts.Default) return false;
-        return ReasoningFor(provider, modelName)?.RejectedEfforts
-                   .Contains(effort, StringComparer.OrdinalIgnoreCase) != true;
+        return CustomReasoningEfforts(provider, modelName) is { } custom
+            ? custom.Contains(effort, StringComparer.OrdinalIgnoreCase)
+            : !WasRefused(provider, modelName, effort);
     }
+
+    private static bool WasRefused(ModelProvider? provider, string? modelName, string effort)
+        => ReasoningFor(provider, modelName)?.RejectedEfforts.Contains(effort, StringComparer.OrdinalIgnoreCase) == true;
 
     /// <summary>The selectable tiers for one model, ordered from least to most reasoning. GPT families use
     /// their model-specific ladder even when endpoint metadata includes an extra tier; other models prefer known
     /// declared or observed tiers, then fall back to the conservative three-tier ladder.</summary>
     public static IReadOnlyList<string> SelectableReasoningEfforts(ModelProvider? provider, string? modelName)
+        => CustomReasoningEfforts(provider, modelName) ?? DetectedReasoningEfforts(provider, modelName);
+
+    /// <summary>The detected ladder, without the user's override, for previewing a return to detection.</summary>
+    public static IReadOnlyList<string> DetectedReasoningEfforts(ModelProvider? provider, string? modelName)
     {
         var gptEfforts = GptEffortsFor(modelName);
         if (gptEfforts is not null)
-            return gptEfforts.Where(effort => MaySendEffort(provider, modelName, effort)).ToList();
-        var known = EffortsFor(provider, modelName)
+            return gptEfforts.Where(effort => !WasRefused(provider, modelName, effort)).ToList();
+        var known = DetectedEffortsFor(provider, modelName)
             .Where(ChatReasoningEfforts.IsTier)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(effort => ModelRouting.Rank(effort))
             .ToList();
         if (known.Count > 0) return known;
         return new[] { ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High }
-            .Where(effort => MaySendEffort(provider, modelName, effort)).ToList();
+            .Where(effort => !WasRefused(provider, modelName, effort)).ToList();
     }
+
+    /// <summary>The user's ordered wire values for this provider/model, independent of observed refusals.</summary>
+    public static IReadOnlyList<string>? CustomReasoningEfforts(ModelProvider? provider, string? modelName)
+        => provider?.Models.FirstOrDefault(model =>
+            string.Equals(model.Name, modelName?.Trim(), StringComparison.OrdinalIgnoreCase))?.ReasoningEfforts;
 
     /// <summary>Resolves a stored preference to a concrete selectable tier. Legacy default values and obsolete
     /// tiers use the model's declared default, then Medium, then its middle tier. Default remains only as an
@@ -251,6 +267,16 @@ public static class ModelCatalog
                 ChatReasoningEfforts.XHigh]
             : [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
                 ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Ultra];
+    }
+
+    /// <summary>Resolve an automatic decision against the same ordered ladder as the slider. An absent
+    /// value falls back to a lower tier; max and ultra are never substituted for one another.</summary>
+    public static string? ReachableReasoningEffort(ModelProvider? provider, string? modelName, string effort)
+    {
+        var selectable = SelectableReasoningEfforts(provider, modelName);
+        if (selectable.Contains(effort, StringComparer.OrdinalIgnoreCase)) return effort;
+        return selectable.LastOrDefault(candidate => ModelRouting.Rank(candidate) < ModelRouting.Rank(effort))
+               ?? selectable.FirstOrDefault();
     }
 
     /// <summary>Returns the effort at a selectable slider index, or null when the index is outside this model's

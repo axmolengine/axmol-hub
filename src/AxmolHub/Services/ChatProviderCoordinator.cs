@@ -560,6 +560,21 @@ internal sealed partial class ChatProviderCoordinator
         return true;
     }
 
+    internal bool SetModelReasoningEfforts(string providerId, string name, IReadOnlyList<string>? efforts)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        var model = provider?.Models.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (model is null) return false;
+        if (efforts is not null && (efforts.Count == 0 || efforts.Any(level => !ChatReasoningEfforts.IsTier(level))))
+            return false;
+        model.ReasoningEfforts = efforts?.ToList();
+        _providers.Save(_providerList);
+        Sessions.RefreshReasoningConfiguration(providerId, name);
+        Execution.Changed?.Invoke();
+        return true;
+    }
+
     internal (int Tokens, int OutputReserve, CapabilitySource Source) ContextWindowFor(string providerId, string name)
     {
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
@@ -888,12 +903,7 @@ internal sealed partial class ChatProviderCoordinator
             .Select(name =>
             {
                 var previous = previousModels.GetValueOrDefault(name);
-                return new ProviderModel
-                {
-                    Name = name,
-                    InUse = previous?.InUse == true,
-                    Enabled = previous?.Enabled ?? true,
-                };
+                return previous ?? new ProviderModel { Name = name, Enabled = true };
             })
             .ToList();
 

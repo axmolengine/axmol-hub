@@ -72,7 +72,7 @@ internal static class AiRoutingChecks
         )
             if (ModelRouting.Ceiling(input) != expected)
                 throw new Exception($"Ceiling({input ?? "(null)"}) answered {ModelRouting.Ceiling(input)} instead of " + $"{expected} — an unreadable ceiling must never mean \"no ceiling\".");
-        if (!(ModelRouting.Rank("low") < ModelRouting.Rank("medium") && ModelRouting.Rank("medium") < ModelRouting.Rank("high") && ModelRouting.Rank("high") < ModelRouting.Rank("xhigh") && ModelRouting.Rank("xhigh") < ModelRouting.Rank("max") && ModelRouting.Rank("max") < ModelRouting.Rank("ultra") && ModelRouting.Rank("default") == 0 && ModelRouting.Rank("香蕉") == 0))
+        if (!(ModelRouting.Rank("low") < ModelRouting.Rank("medium") && ModelRouting.Rank("medium") < ModelRouting.Rank("high") && ModelRouting.Rank("high") < ModelRouting.Rank("xhigh") && ModelRouting.Rank("xhigh") < ModelRouting.Rank("max") && ModelRouting.Rank("max") == ModelRouting.Rank("ultra") && ModelRouting.Rank("default") == 0 && ModelRouting.Rank("香蕉") == 0))
             throw new Exception("The effort order is not what the ceiling compares against.");
         if (ModelRouting.Clamp("xhigh", "max") != "xhigh" || ModelRouting.Clamp("max", "high") != "high" || ModelRouting.Clamp("low", "high") != "low")
             throw new Exception("The clamp does not bound the tier it is given.");

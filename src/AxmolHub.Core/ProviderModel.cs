@@ -38,6 +38,22 @@ public sealed class ProviderModel
     /// </summary>
     public int? MaxContextTokens { get; set; }
 
+    private List<string>? _reasoningEfforts;
+
+    /// <summary>User-selected wire values, in slider order. Null follows detection. An empty or invalid
+    /// list also follows detection; disabling reasoning is not a tier configuration.</summary>
+    public List<string>? ReasoningEfforts
+    {
+        get => _reasoningEfforts;
+        set
+        {
+            var levels = value?.Select(level => level?.Trim().ToLowerInvariant())
+                .Where(ChatReasoningEfforts.IsTier).Select(level => level!)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _reasoningEfforts = levels is { Count: > 0 } ? levels : null;
+        }
+    }
+
     /// <summary>The picker binds this object directly, so what it shows is this (same rule as ModelProvider).</summary>
     public override string ToString() => Name;
 }

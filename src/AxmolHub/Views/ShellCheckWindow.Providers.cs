@@ -1364,12 +1364,15 @@ internal sealed class ShellProvidersChecks
             Check(credentialAdded is not null
                   && defaultsWorkspace.SetModelEnabled("deepseek", recommendedModel, false),
                 "用户可以关闭 manifest 默认启用的模型");
+            defaultsWorkspace.SetModelReasoningEfforts("deepseek", recommendedModel, ["low", "high"]);
             await defaultsWorkspace.RefreshModelsAsync("deepseek");
             configured = defaultsWorkspace.Providers.First(provider => provider.Id == "deepseek");
             enabledDefault = configured.Models.FirstOrDefault(model => model.Name == recommendedModel);
-            Check(enabledDefault is { Enabled: false }
+            Check(enabledDefault is { Enabled: false, ReasoningEfforts: ["low", "high"] }
+                  && new ProviderStore(defaultsRoot).Load().Single(provider => provider.Id == "deepseek").Models
+                      .First(model => model.Name == recommendedModel).ReasoningEfforts is ["low", "high"]
                   && !configured.Models.Any(model => model.Name == "unlisted-manifest-probe"),
-                "后续目录刷新保留用户已关闭的状态且新模型仍默认关闭");
+                "后续目录刷新与存储保留模型启用状态和自定义推理档位，且新模型仍默认关闭");
         }
         // ── The key probe carries the provider's declared static headers ──
         //
@@ -1726,9 +1729,29 @@ internal sealed class ShellProvidersChecks
         Check(settings.ProviderDraftCountForCheck == 0,
             "模型行铅笔只开模型草稿，不把 provider 的编辑表单也翻出来（实际 "
                 + settings.ProviderDraftCountForCheck + " 份）");
-        settings.CloseDraftForCheck();
-        Check(settings.ModelDraftCountForCheck == 0,
-            "关闭草稿后行从树里消失：取消/保存留下的是收起的分组，不是停在屏上的表单");
+        var editedProvider = shell.Chat.Providers.First(provider => provider.Models.Count > 0);
+        var editedModel = editedProvider.Models[0];
+        var originalEfforts = editedModel.ReasoningEfforts?.ToList();
+        var modePicker = settings.GetLogicalDescendants().OfType<ComboBox>()
+            .Single(control => control.Name == "ModelReasoningMode");
+        modePicker.SelectedIndex = 1;
+        foreach (var checkbox in settings.GetLogicalDescendants().OfType<CheckBox>()
+                     .Where(control => control.Name?.StartsWith("ModelReasoning_", StringComparison.Ordinal) == true))
+            checkbox.IsChecked = checkbox.Name is "ModelReasoning_low" or "ModelReasoning_max";
+        var draftSave = settings.GetLogicalDescendants().OfType<Button>()
+            .Single(button => button.Content as string == HubStrings.Get("Save"));
+        draftSave.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var savedEfforts = editedModel.ReasoningEfforts is ["low", "max"];
+        settings.OpenFirstModelEditForCheck();
+        var restore = settings.GetLogicalDescendants().OfType<Button>()
+            .Single(button => button.Content as string == HubStrings.Get("ModelReasoningRestore"));
+        restore.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        settings.GetLogicalDescendants().OfType<Button>()
+            .Single(button => button.Content as string == HubStrings.Get("Save"))
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Check(settings.ModelDraftCountForCheck == 0 && savedEfforts && editedModel.ReasoningEfforts is null,
+            "模型草稿保存自定义推理档位、恢复识别并关闭草稿");
+        shell.Chat.SetModelReasoningEfforts(editedProvider.Id, editedModel.Name, originalEfforts);
         shell.Chat.RemoveModel(target.Id, "pencil-probe");
         settings.RefreshProviderGroupsForCheck();
     }

@@ -1636,6 +1636,12 @@ public static class HubTexts
         ["NoProviderGuide"] = ("点「添加提供商」从预设清单中选择，或添加自定义接口。", "Choose \"Add provider\" to pick from the presets, or add a custom endpoint."),
         ["ModelCatalogFetchedAt"] = ("目录更新于 {0}", "Catalog updated {0}"),
         ["ModelEditTitle"] = ("编辑模型", "Edit model"),
+        ["ModelReasoningLevels"] = ("推理档位", "Reasoning levels"),
+        ["ModelReasoningDetected"] = ("跟随识别", "Follow detection"),
+        ["ModelReasoningCustom"] = ("自定义", "Custom"),
+        ["ModelReasoningRestore"] = ("恢复自动识别", "Restore detection"),
+        ["ModelReasoningRequired"] = ("请至少选择一个推理档位。", "Select at least one reasoning level."),
+        ["ModelMissing"] = ("该模型已被移除，请重新打开模型设置。", "This model was removed. Reopen the model settings."),
         ["ModelContextEditHint"] = ("覆盖该模型的上下文窗口；留空则回退为自动判定。", "Override this model's context window; leave blank to fall back to the auto value."),
         // Sign-in method and accounts (one credential = one account, whatever its source).
         ["AuthMethod"] = ("鉴权方式", "Sign-in method"),
