@@ -14,11 +14,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <poll.h>
 
 #define SERVICE "org.freedesktop.portal.Desktop"
 #define PATH "/org/freedesktop/portal/desktop"
 #define RD "org.freedesktop.portal.RemoteDesktop"
 #define SC "org.freedesktop.portal.ScreenCast"
+#define CB "org.freedesktop.portal.Clipboard"
 
 static GDBusConnection *bus;
 static char *owner, *session;
@@ -37,6 +40,21 @@ static gboolean grabbing;
 static gint broken;
 static gint refresh_pending, refresh_paused;
 static GMainLoop *pending_loop;
+static uint32_t held_keys[8];
+static unsigned held_count;
+static gboolean held_button;
+static gboolean release_inputs(void);
+static gboolean clipboard_enabled, text_transferred, text_failed;
+static char *clipboard_text;
+static gsize clipboard_length;
+static GMainLoop *text_wait;
+
+static void clear_text(void)
+{
+    if (clipboard_text) memset(clipboard_text, 0, clipboard_length);
+    g_clear_pointer(&clipboard_text, g_free);
+    clipboard_length = 0;
+}
 
 static gboolean stop(gpointer data)
 {
@@ -302,13 +320,132 @@ static gboolean key(uint32_t sym)
     gboolean up = notify("NotifyKeyboardKeysym", g_variant_new("(o@a{sv}iu)", session, options(NULL), sym, 0u));
     return down && up;
 }
+static gboolean release_inputs(void)
+{
+    gboolean ok = TRUE;
+    while (held_count) {
+        uint32_t sym = held_keys[--held_count];
+        ok = notify("NotifyKeyboardKeysym", g_variant_new("(o@a{sv}iu)", session, options(NULL), sym, 0u)) && ok;
+    }
+    if (held_button) {
+        ok = notify("NotifyPointerButton", g_variant_new("(o@a{sv}iu)", session, options(NULL), 272, 0u)) && ok;
+        held_button = FALSE;
+    }
+    return ok;
+}
+static void clipboard_changed(GDBusConnection *c, const gchar *sender, const gchar *path,
+    const gchar *iface, const gchar *signal, GVariant *args, gpointer data)
+{
+    (void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)data;
+    const char *handle;
+    GVariant *details;
+    g_variant_get(args, "(&o@a{sv})", &handle, &details);
+    gboolean ours = FALSE;
+    if (session && !strcmp(handle, session) && g_variant_lookup(details, "session_is_owner", "b", &ours) && !ours) {
+        clear_text(); text_failed = TRUE;
+        if (text_wait) g_main_loop_quit(text_wait);
+    }
+    g_variant_unref(details);
+}
+
+static void clipboard_transfer(GDBusConnection *c, const gchar *sender, const gchar *path,
+    const gchar *iface, const gchar *signal, GVariant *args, gpointer data)
+{
+    (void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)data;
+    const char *handle, *mime;
+    uint32_t serial;
+    g_variant_get(args, "(&o&su)", &handle, &mime, &serial);
+    if (!session || strcmp(handle, session)) return;
+    gboolean ok = clipboard_enabled && clipboard_text &&
+        (!strcmp(mime, "text/plain;charset=utf-8") || !strcmp(mime, "text/plain"));
+    GUnixFDList *fds = NULL;
+    GError *error = NULL;
+    GVariant *result = ok ? g_dbus_connection_call_with_unix_fd_list_sync(bus, owner, PATH, CB, "SelectionWrite",
+        g_variant_new("(ou)", session, serial), G_VARIANT_TYPE("(h)"), G_DBUS_CALL_FLAGS_NONE,
+        2000, NULL, &fds, NULL, &error) : NULL;
+    g_clear_error(&error);
+    if (result) {
+        int index; g_variant_get(result, "(h)", &index); g_variant_unref(result);
+        int fd = g_unix_fd_list_get(fds, index, &error);
+        g_clear_error(&error);
+        ok = fd >= 0;
+        if (ok) {
+            int flags = fcntl(fd, F_GETFL);
+            ok = flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
+            gsize sent = 0;
+            gint64 end = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+            while (ok && sent < clipboard_length) {
+                struct pollfd wait = { .fd = fd, .events = POLLOUT };
+                int ms = (int)((end - g_get_monotonic_time()) / 1000);
+                if (ms <= 0 || poll(&wait, 1, ms) <= 0 || !(wait.revents & POLLOUT)) { ok = FALSE; break; }
+                ssize_t count = write(fd, clipboard_text + sent, clipboard_length - sent);
+                if (count <= 0) { ok = FALSE; break; }
+                sent += (gsize)count;
+            }
+            close(fd);
+        }
+    } else ok = FALSE;
+    if (fds) g_object_unref(fds);
+    result = call(PATH, CB, "SelectionWriteDone", g_variant_new("(oub)", session, serial, ok));
+    ok = result && ok;
+    if (result) g_variant_unref(result);
+    text_transferred = ok;
+    text_failed = !ok;
+    if (text_wait) g_main_loop_quit(text_wait);
+}
+
+static gboolean text_timeout(gpointer data)
+{
+    (void)data;
+    text_failed = TRUE;
+    if (text_wait) g_main_loop_quit(text_wait);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean stage_text(const char *encoded)
+{
+    if (!clipboard_enabled) return FALSE;
+    gsize length = 0;
+    guchar *text = g_base64_decode(encoded, &length);
+    char *canonical = g_base64_encode(text, length);
+    gboolean valid = length > 0 && length <= 4000 && !strcmp(canonical, encoded)
+        && !memchr(text, 0, length) && g_utf8_validate((const char *)text, length, NULL);
+    g_free(canonical);
+    if (!valid) { g_free(text); return FALSE; }
+    clear_text();
+    clipboard_text = (char *)text; clipboard_length = length;
+    text_transferred = text_failed = FALSE;
+    GVariantBuilder options_builder;
+    g_variant_builder_init(&options_builder, G_VARIANT_TYPE_VARDICT);
+    const char *mimes[] = { "text/plain;charset=utf-8", "text/plain", NULL };
+    g_variant_builder_add(&options_builder, "{sv}", "mime_types", g_variant_new_strv(mimes, -1));
+    GVariant *r = call(PATH, CB, "SetSelection", g_variant_new("(o@a{sv})", session, g_variant_builder_end(&options_builder)));
+    if (!r) { clear_text(); return FALSE; }
+    g_variant_unref(r);
+    return TRUE;
+}
+
 static gboolean command(gint fd, GIOCondition condition, gpointer data)
 {
     (void)fd; (void)data;
     if (g_atomic_int_get(&broken)) { fail("stream-disconnected"); return G_SOURCE_REMOVE; }
     if (condition & (G_IO_HUP | G_IO_ERR)) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
-    char line[128];
+    char line[8192];
     if (!fgets(line, sizeof(line), stdin)) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
+    if (!strchr(line, '\n')) { fail("invalid-command-length"); return G_SOURCE_REMOVE; }
+    if (!strcmp(line, "TEXT_DONE\n")) {
+        if (!text_transferred && !text_failed) {
+            text_wait = g_main_loop_new(NULL, FALSE);
+            pending_loop = text_wait;
+            guint timer = g_timeout_add_seconds(5, text_timeout, NULL);
+            if (!g_atomic_int_get(&broken)) g_main_loop_run(text_wait);
+            pending_loop = NULL;
+            if (g_main_context_find_source_by_id(NULL, timer)) g_source_remove(timer);
+            g_main_loop_unref(text_wait); text_wait = NULL;
+        }
+        if (!text_transferred || text_failed || g_atomic_int_get(&broken)) { fail("text-transfer-unverified"); return G_SOURCE_REMOVE; }
+        puts("OK"); fflush(stdout); return G_SOURCE_CONTINUE;
+    }
     deadline = g_get_monotonic_time() + 120 * G_USEC_PER_SEC;
     if (!strcmp(line, "GRAB\n")) {
         pthread_mutex_lock(&pixels_lock); requested_sequence = sequence; pthread_mutex_unlock(&pixels_lock);
@@ -327,33 +464,48 @@ static gboolean command(gint fd, GIOCondition condition, gpointer data)
         return G_SOURCE_CONTINUE;
     }
     if (!strcmp(line, "CLOSE\n")) { g_main_loop_quit(loop); return G_SOURCE_REMOVE; }
-    unsigned sym, x, y; int steps;
+    if (!strcmp(line, "RELEASE\n")) {
+        if (!release_inputs()) { fail("input-release-failed"); return G_SOURCE_REMOVE; }
+        puts("OK"); fflush(stdout); return G_SOURCE_CONTINUE;
+    }
+    unsigned sym, x, y, pressed; int vertical, horizontal;
     guint64 revision = 0;
     double lx, ly;
     gboolean ok = FALSE;
     // The mapping is held through delivery so a concurrent crop change cannot redirect a confirmed click.
     pthread_mutex_lock(&pixels_lock);
     gboolean is_key = sscanf(line, "KEY %" G_GUINT64_FORMAT " %u", &revision, &sym) == 2;
-    gboolean is_click = sscanf(line, "CLICK %" G_GUINT64_FORMAT " %u %u", &revision, &x, &y) == 3;
-    gboolean is_scroll = sscanf(line, "SCROLL %" G_GUINT64_FORMAT " %d", &revision, &steps) == 2;
+    gboolean is_move = sscanf(line, "MOVE %" G_GUINT64_FORMAT " %u %u", &revision, &x, &y) == 3;
+    gboolean is_axis = sscanf(line, "AXIS %" G_GUINT64_FORMAT " %d %d", &revision, &vertical, &horizontal) == 3;
+    gboolean is_button = sscanf(line, "BUTTON %" G_GUINT64_FORMAT " %u", &revision, &pressed) == 2;
+    gboolean is_down = sscanf(line, "DOWN %" G_GUINT64_FORMAT " %u", &revision, &sym) == 2;
+    int text_start = 0;
+    gboolean is_text = sscanf(line, "TEXT %" G_GUINT64_FORMAT " %n", &revision, &text_start) == 1 && text_start > 0;
     if (!pixels || revision != geometry_revision || g_atomic_int_get(&broken)) {
         pthread_mutex_unlock(&pixels_lock);
         fail("frame-mapping-changed"); return G_SOURCE_REMOVE;
     }
-    if (is_key && sym <= 0x11ffffff && (devices & 1)) ok = key(sym);
-    else if (is_click && (devices & 2)
-        && hub_frame_logical_point(&geometry, logical_width, logical_height, x, y, &lx, &ly)) {
+    if (is_text) {
+        line[strcspn(line, "\n")] = 0;
+        ok = revision == geometry_revision && (devices & 1) && stage_text(line + text_start);
+        memset(line, 0, sizeof(line));
+    }
+    else if (is_key && sym <= 0x11ffffff && (devices & 1)) ok = key(sym);
+    else if (is_move && (devices & 2)
+        && hub_frame_logical_point(&geometry, logical_width, logical_height, x, y, &lx, &ly))
         ok = notify("NotifyPointerMotionAbsolute", g_variant_new("(o@a{sv}udd)", session, options(NULL), node, lx, ly));
-        if (ok) {
-            gboolean down = notify("NotifyPointerButton", g_variant_new("(o@a{sv}iu)", session, options(NULL), 272, 1u));
-            gboolean up = notify("NotifyPointerButton", g_variant_new("(o@a{sv}iu)", session, options(NULL), 272, 0u));
-            ok = down && up;
-        }
-    } else if (is_scroll && steps >= -10 && steps <= 10 && steps && (devices & 2)
-        && hub_frame_logical_point(&geometry, logical_width, logical_height,
-            hub_frame_width(&geometry) / 2, hub_frame_height(&geometry) / 2, &lx, &ly)) {
-        ok = notify("NotifyPointerMotionAbsolute", g_variant_new("(o@a{sv}udd)", session, options(NULL), node, lx, ly))
-            && notify("NotifyPointerAxisDiscrete", g_variant_new("(o@a{sv}ui)", session, options(NULL), 0u, -steps));
+    else if (is_button && pressed == 1 && (devices & 2) && !held_button) {
+        held_button = TRUE;
+        ok = notify("NotifyPointerButton", g_variant_new("(o@a{sv}iu)", session, options(NULL), 272, 1u));
+    } else if (is_down && (devices & 1) && held_count < 8
+        && (sym == 0xffe3 || sym == 0xffe9 || sym == 0xffe1)) {
+        held_keys[held_count++] = sym;
+        ok = notify("NotifyKeyboardKeysym", g_variant_new("(o@a{sv}iu)", session, options(NULL), sym, 1u));
+    } else if (is_axis && (devices & 2) && vertical >= -10 && vertical <= 10
+        && horizontal >= -10 && horizontal <= 10 && (vertical || horizontal)) {
+        ok = TRUE;
+        if (vertical) ok = notify("NotifyPointerAxisDiscrete", g_variant_new("(o@a{sv}ui)", session, options(NULL), 0u, -vertical));
+        if (ok && horizontal) ok = notify("NotifyPointerAxisDiscrete", g_variant_new("(o@a{sv}ui)", session, options(NULL), 1u, -horizontal));
     }
     pthread_mutex_unlock(&pixels_lock);
     if (!ok) { fail("input-unavailable-or-failed"); return G_SOURCE_REMOVE; }
@@ -388,7 +540,10 @@ int main(int argc, char **argv)
     if (property(SC, "version") < 3 || !(property(SC, "AvailableSourceTypes") & 2)) { fail("window-sources-unavailable"); return 1; }
     uint32_t available_devices = property(RD, "AvailableDeviceTypes") & 3;
     if (!available_devices) { fail("input-devices-unavailable"); return 1; }
-    if (argc == 2 && !strcmp(argv[1], "--probe")) { puts("READY"); return 0; }
+    if (argc == 2 && !strcmp(argv[1], "--probe")) {
+        printf("CAPABILITIES window %u\n", available_devices);
+        return 0;
+    }
 
     GVariantBuilder b;
     g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
@@ -413,9 +568,21 @@ int main(int argc, char **argv)
     g_variant_builder_add(&b, "{sv}", "multiple", g_variant_new_boolean(FALSE));
     r = request(SC, "SelectSources", "hub_sources", g_variant_new("(o@a{sv})", session, g_variant_builder_end(&b)));
     if (!r) { fail("source-selection-failed-or-cancelled"); goto cleanup; } g_variant_unref(r);
+    gboolean want_clipboard = argc == 2 && !strcmp(argv[1], "--clipboard");
+    if (want_clipboard && property(RD, "version") >= 2 && property(CB, "version") >= 1) {
+        r = call(PATH, CB, "RequestClipboard", g_variant_new("(o@a{sv})", session, options(NULL)));
+        if (r) g_variant_unref(r);
+    }
     r = request(RD, "Start", "hub_start", g_variant_new("(os@a{sv})", session, "", options("hub_start")));
     if (!r) { fail("session-start-failed-or-cancelled"); goto cleanup; }
     g_variant_lookup(r, "devices", "u", &devices);
+    if (want_clipboard) g_variant_lookup(r, "clipboard_enabled", "b", &clipboard_enabled);
+    if (clipboard_enabled) {
+        g_dbus_connection_signal_subscribe(bus, owner, CB, "SelectionOwnerChanged", PATH, NULL,
+            G_DBUS_SIGNAL_FLAGS_NONE, clipboard_changed, NULL, NULL);
+        g_dbus_connection_signal_subscribe(bus, owner, CB, "SelectionTransfer", PATH, NULL,
+            G_DBUS_SIGNAL_FLAGS_NONE, clipboard_transfer, NULL, NULL);
+    }
     GVariant *streams = g_variant_lookup_value(r, "streams", G_VARIANT_TYPE("a(ua{sv})"));
     if (!streams || g_variant_n_children(streams) != 1) {
         fail("expected-single-window"); if (streams) g_variant_unref(streams); g_variant_unref(r); goto cleanup;
@@ -462,11 +629,13 @@ int main(int argc, char **argv)
     g_unix_fd_add(STDIN_FILENO, G_IO_IN | G_IO_HUP | G_IO_ERR, command, NULL);
     g_timeout_add(20, tick, NULL);
     deadline = g_get_monotonic_time() + 120 * G_USEC_PER_SEC;
-    printf("READY %u\n", devices); fflush(stdout);
+    printf("READY %u %u\n", devices, clipboard_enabled ? 1u : 0u); fflush(stdout);
     if (!g_atomic_int_get(&broken)) g_main_loop_run(loop);
     pw_thread_loop_stop(pwloop);
     pw_stream_destroy(stream); pw_core_disconnect(core); pw_context_destroy(context); pw_thread_loop_destroy(pwloop);
 cleanup:
+    clear_text();
+    if (session) release_inputs();
     if (session) { r = call(session, "org.freedesktop.portal.Session", "Close", NULL); if (r) g_variant_unref(r); }
     g_clear_pointer(&pixels, g_free);
     g_object_unref(bus); g_free(owner); g_free(session);

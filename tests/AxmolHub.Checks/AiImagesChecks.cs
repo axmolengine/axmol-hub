@@ -439,7 +439,23 @@ internal static class AiImagesChecks
             throw new Exception("Cancelled portal input was admitted.");
         }
         catch (OperationCanceledException) when (portalCalls == 1) { }
-        Console.WriteLine("PASS: portal calls require individual consent, refuse display/PID targeting and honor cancellation.");
+        var portalPermission = new PortalControlSession("Fixture", interaction: true);
+        var portalVersion = portalPermission.Version;
+        var portalCancellation = portalPermission.Cancellation;
+        if (!portalPermission.Covers("Fixture", portalVersion) || portalPermission.Covers("Other", portalVersion))
+            throw new Exception("Portal interaction permission crossed its requested-stream boundary.");
+        portalPermission.Pause(true);
+        if (!portalCancellation.IsCancellationRequested || portalPermission.Covers("Fixture", portalVersion))
+            throw new Exception("Portal pause retained an in-flight permit.");
+        portalPermission.Pause(false);
+        if (portalPermission.Covers("Fixture", portalVersion) || !portalPermission.Covers("Fixture", portalPermission.Version))
+            throw new Exception("Portal resume restored a stale permit or failed to require a new version.");
+        portalPermission.Revoke();
+        if (portalPermission.Covers("Fixture", portalPermission.Version) || !portalPermission.Cancellation.IsCancellationRequested)
+            throw new Exception("Portal revoke retained permission.");
+        if (new PortalControlSession("Fixture", interaction: false).Interaction)
+            throw new Exception("Single-call portal approval silently became continuous interaction.");
+        Console.WriteLine("PASS: portal consent, stream isolation, pause/resume/revoke cancellation and display/PID refusal.");
         // ── Intake: a file a person hands in is first read by the rules, then stored by the rules ──
         // The composer's three entrances all end in the same two calls, so the rules they share are asserted here
         // rather than through a UI that cannot be automated: a file is measured before it is read, a picture is

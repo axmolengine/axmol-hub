@@ -1041,7 +1041,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                  + "No desktop-wide control. Never replay partially delivered input.")]
     internal string ComputerUse(
         [Description("The visible application/window title to locate. Authorization follows its owning application, not the title.")] string application,
-        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended mouse and modifier actions support Windows and macOS; other native backends refuse them.")] string action,
+        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended mouse and modifier actions support Windows, macOS and Linux X11.")] string action,
         [Description("Image-pixel x for pointer actions; -1 with y=-1 uses window center for scroll.")] int x = -1,
         [Description("Image-pixel y for pointer actions.")] int y = -1,
         [Description("Text to type, up to 1000 characters.")] string? text = null,

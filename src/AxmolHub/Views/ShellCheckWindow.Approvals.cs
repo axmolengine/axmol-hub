@@ -1482,6 +1482,17 @@ internal sealed class ShellApprovalsChecks
                     && NamedDescendant<Button>(portalCard, "ComputerUseAlwaysAllowButton") is null
                     && NamedDescendant<TextBlock>(portalCard, "ComputerUseGrantDescription")?.Text
                         ?.Contains(HubStrings.Get("PortalCaptureHint"), StringComparison.Ordinal) == true;
+                var portalAllow = portalCard is null ? null : NamedDescendant<Button>(portalCard, "ComputerUseAllowConversationButton");
+                var portalScroll = portalCard is null ? null : NamedDescendant<ScrollViewer>(portalCard, "ComputerUseApprovalScroll");
+                var savedMax = portalCard?.MaxHeight ?? double.PositiveInfinity;
+                if (portalCard is not null) portalCard.MaxHeight = 220;
+                shell.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+                var actionPosition = portalAllow?.TranslatePoint(default, portalCard!);
+                Check(portalScroll is not null && portalAllow is not null && actionPosition is { } pos
+                    && pos.Y >= 0 && pos.Y + portalAllow.Bounds.Height <= portalCard!.Bounds.Height + 0.5,
+                    "Portal 长说明在限高卡片内滚动，批准按钮完整留在卡片内");
+                if (portalCard is not null) portalCard.MaxHeight = savedMax;
+                shell.UpdateLayout();
                 Check(portalShown && portalExecutions == 0
                       && !chat.TryResolveApproval(screenSession.Id, portalCallId ?? "", approved: true, alwaysAllow: true, out _)
                       && chat.TryResolveApproval(screenSession.Id, portalCallId ?? "", approved: true, alwaysAllow: false, out _),
@@ -1508,6 +1519,28 @@ internal sealed class ShellApprovalsChecks
                 if (portalInputId is not null)
                     chat.TryResolveApproval(screenSession.Id, portalInputId, approved: false, alwaysAllow: false, out _);
                 await WaitForIdleAsync(chat);
+                screenClient.ToolName = ToolNames.CaptureScreen;
+                screenClient.Arguments = new() { ["target"] = "Fixture portal window" };
+                screenClient.CallsRemaining = 1;
+                chat.TryEnqueueSend(screenSession.Id, "Grant continuous portal interaction", null, out _);
+                var continuousId = await WaitForPendingCallAsync(screenSession);
+                panel.Reload(); shell.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+                var choice = NamedDescendant<CheckBox>(panel.ApprovalCardForCheck!, "ComputerUseInteractionChoice");
+                var optedIn = choice is { IsChecked: false } && continuousId is not null
+                    && chat.TryResolveApproval(screenSession.Id, continuousId, approved: true, alwaysAllow: false,
+                        out _, computerInteraction: true);
+                await WaitForIdleAsync(chat);
+                var beforeContinuous = portalExecutions;
+                screenClient.ToolName = ToolNames.ComputerUse;
+                screenClient.Arguments = new() { ["application"] = "Fixture portal window", ["action"] = "move",
+                    ["x"] = 1, ["y"] = 1, ["frame_id"] = "fixture" };
+                screenClient.CallsRemaining = 2;
+                chat.TryEnqueueSend(screenSession.Id, "Continue within the explicitly shared stream", null, out _);
+                await WaitForIdleAsync(chat);
+                var reused = portalExecutions == beforeContinuous + 2 && !screenSession.Messages.Any(turn => turn.ApprovalState == ChatApprovalStates.Pending);
+                chat.RevokeComputerControl(screenSession.Id);
+                Check(optedIn && reused && chat.PortalControlFor(screenSession.Id) is null,
+                    "Portal 连续交互须显式勾选，同共享连续两次输入不再审批，撤销清除临时许可");
                 chat.PortalComputerBridgeProvider = savedPortalProvider;
             }
             chat.ScreenCaptureBridgeProvider = savedScreenProvider;

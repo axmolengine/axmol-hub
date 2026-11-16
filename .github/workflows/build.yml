@@ -219,12 +219,14 @@ jobs:
       - name: Build App (GUI)
         run: dotnet build src/AxmolHub/AxmolHub.csproj -c ${{ env.CONFIGURATION }}
 
-      - name: Check portal pixel and input geometry
+      - name: Check portal geometry and text transport
         if: matrix.host == 'linux'
         run: |
           mkdir -p tmp
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/portal-frame-check.c -o tmp/portal-frame-check
           ./tmp/portal-frame-check
+          cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/portal-text-check.c $(pkg-config --cflags --libs gio-unix-2.0 libpipewire-0.3) -pthread -o tmp/portal-text-check
+          ./tmp/portal-text-check
 
       # The secret store is *OS-branched* product behaviour, and neither route on the Windows side can
       # reach the Linux path: the Checks project is net8.0-windows, and --verify-shell needs a display,

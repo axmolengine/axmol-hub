@@ -4,7 +4,7 @@ namespace AxmolHub.Core;
 
 public sealed partial class WorkspaceTools
 {
-    [Description("Capture a named application window. On Wayland the user selects one window in the system portal; the supplied name is a request, not verified application identity. No whole-display capture or permanent portal grant. Capture waits 3 seconds after selection/approval so the user can switch back to the intended window for a consistent input baseline.")]
+    [Description("Capture a named application window. On Wayland the user selects one window in the system portal; the supplied name is a request, not verified application identity. No whole-display capture or permanent portal grant. Single-action mode waits 3 seconds after selection/approval for a consistent focus baseline. Explicit temporary continuous interaction reuses the selected stream without that delay.")]
     public Task<string> CaptureScreenAsync(
         [Description("Requested window title. On Wayland the user must select the intended window in the system picker.")] string target = "",
         [Description("Whole-display capture is disabled.")] bool fullscreen = false,
@@ -14,13 +14,13 @@ public sealed partial class WorkspaceTools
         cancellationToken.ThrowIfCancellationRequested();
         if (context.PortalComputer is null) return Task.FromResult(CaptureScreen(target, fullscreen, process_id, cancellationToken));
         if (fullscreen) return Task.FromResult("Refused: whole-display capture is disabled. Select one window in the portal.");
-        return ExecutePortalComputerAsync(new(target, "screenshot", null, 0, 0, null, null, 0), process_id, cancellationToken);
+        return ExecutePortalComputerAsync(new(target.Trim(), "screenshot", null, 0, 0, null, null, 0), process_id, cancellationToken);
     }
 
-    [Description("Observe or control a window. Native backends reuse application-session permission; sensitive or unclassified inputs require confirmation. On Wayland every call still requires individual approval and uses a temporary portal session, not an executable grant. After Wayland approval the user has a 3-second focus handoff. Other application focus cannot be verified. Inspect returned frames and never replay input automatically.")]
+    [Description("Observe or control a window. Native backends reuse application-session permission; sensitive or unclassified inputs require confirmation. On Wayland a temporary portal session is not an executable grant. Explicit continuous interaction consent reuses permission for that shared stream; otherwise calls require individual approval. After Wayland input approval Hub waits up to 15 seconds for the user to switch to the intended app. Other application focus cannot be verified. Inspect returned frames and never replay input automatically.")]
     internal Task<string> ComputerUseAsync(
         [Description("Requested window. Wayland uses the user-selected portal stream and cannot verify its title or process.")] string application,
-        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Extended actions are macOS-only.")] string action,
+        [Description("screenshot, click, double_click, move, drag, type, press_key, or scroll. Supported by Windows, macOS, Linux X11 and Wayland Portal; capability failures refuse before delivery.")] string action,
         [Description("Pointer x in screenshot pixels; -1 with y=-1 uses center for scrolling.")] int x = -1,
         [Description("Pointer y in screenshot pixels.")] int y = -1,
         [Description("Text to type, at most 1000 characters.")] string? text = null,
@@ -39,11 +39,10 @@ public sealed partial class WorkspaceTools
         if (context.PortalComputer is null)
             return Task.FromResult(ComputerUse(application, action, x, y, text, key, scroll, process_id, frame_id,
                 end_x, end_y, duration_ms, modifiers, horizontal_scroll, cancellationToken));
-        if (end_x != -1 || end_y != -1 || duration_ms != 400 || modifiers is { Length: > 0 } || horizontal_scroll != 0
-            || action == "scroll" && (x != -1 || y != -1))
-            return Task.FromResult("Refused: extended pointer, modifier and positioned-scroll actions are unavailable on this Wayland backend.");
-        return ExecutePortalComputerAsync(new(application, (action ?? "").Trim().ToLowerInvariant(), frame_id, x, y, text, key, scroll),
-            process_id, cancellationToken);
+        return ExecutePortalComputerAsync(new(application.Trim(), (action ?? "").Trim().ToLowerInvariant(), frame_id, x, y, text, key, scroll)
+        {
+            EndX = end_x, EndY = end_y, DurationMs = duration_ms, Modifiers = modifiers ?? [], HorizontalScroll = horizontal_scroll,
+        }, process_id, cancellationToken);
     }
 
     private async Task<string> ExecutePortalComputerAsync(PortalComputerRequest request, int processId, CancellationToken cancellationToken)
@@ -51,21 +50,24 @@ public sealed partial class WorkspaceTools
         if (string.IsNullOrWhiteSpace(request.Application) || request.Application.Length > 256)
             return "Refused: name the intended window, up to 256 characters. The user selects it in the portal.";
         if (processId != 0) return "Refused: Wayland portals cannot verify process_id. Do not infer a process from the shared stream.";
-        if (request.Action is not ("screenshot" or "click" or "type" or "press_key" or "scroll"))
-            return "Refused: unsupported Computer Use action.";
-        if (request.Action == "type" && (string.IsNullOrEmpty(request.Text) || request.Text.Length > 1000))
-            return "Refused: type needs 1 to 1000 characters. Do not split and retry automatically.";
-        if (request.Action == "press_key" && string.IsNullOrWhiteSpace(request.Key))
-            return "Refused: press_key requires one supported named key.";
-        if (request.Action == "scroll" && (request.Scroll == 0 || Math.Abs((long)request.Scroll) > 10))
-            return "Refused: scroll needs -10 to 10 steps excluding zero.";
+        var action = new ComputerActionRequest(request.Action, request.X, request.Y, request.Text, request.Key, request.Scroll)
+        {
+            EndX = request.EndX, EndY = request.EndY, DurationMs = request.DurationMs,
+            Modifiers = request.Modifiers, HorizontalScroll = request.HorizontalScroll,
+        };
+        if (ComputerInput.Validate(action) is { } invalid) return invalid;
+        if (request.Modifiers.Contains("command")) return "Refused [unsupported]: Command is not a Linux modifier.";
         if (context.PortalComputerApproved?.Invoke() != true)
-            return "Refused: this portal call has no individual confirmation. No permanent application grant applies.";
+            return "Refused: this portal call has no current confirmation or temporary interaction permission. No permanent application grant applies.";
         using var lease = ComputerDesktop.TryEnter();
         if (lease is null) return "Refused: another conversation is using the desktop. Observe again after it finishes.";
+        var delivered = false;
         try
         {
-            var result = await context.PortalComputer!.ExecuteAsync(request with { StillApproved = context.PortalComputerApproved }, cancellationToken).ConfigureAwait(false);
+            var result = await context.PortalComputer!.ExecuteAsync(request with
+            {
+                StillApproved = context.PortalComputerApproved, InputDeliveryStarted = () => delivered = true,
+            }, cancellationToken).ConfigureAwait(false);
             if (result.Frame is not { } frame) return result.Detail;
             if (context.PortalComputerApproved?.Invoke() != true)
                 return "Refused: portal confirmation was revoked before attaching the frame.";
@@ -81,7 +83,8 @@ public sealed partial class WorkspaceTools
         catch (Exception ex) when (ex is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException)
         {
             return "Refused: " + ex.Message + (request.Action == "screenshot" ? " Do not retry automatically."
-                : " Input may have been partially delivered; do not replay automatically.");
+                : delivered ? " [partial-input] Input may have been partially delivered; observe again, never replay automatically."
+                : " [not-sent] No input was sent. Observe again.");
         }
     }
 }

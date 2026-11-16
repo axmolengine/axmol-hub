@@ -787,6 +787,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// <summary>The tools the whole app has been told to stop asking about, in the order they were granted.</summary>
     public IReadOnlyList<string> TrustedTools { get => _execution.TrustedTools; }
     internal ComputerControlSession? ComputerControlFor(string id) => _execution.ComputerControlFor(id);
+    internal PortalControlSession? PortalControlFor(string id) => _execution.PortalControlFor(id);
     internal void PauseComputerControl(string id, bool paused) => _execution.PauseComputerControl(id, paused);
     internal void RevokeComputerControl(string id) => _execution.RevokeComputerControl(id);
     public IReadOnlyList<ComputerApplication> TrustedComputerApps { get => _execution.TrustedComputerApps; }

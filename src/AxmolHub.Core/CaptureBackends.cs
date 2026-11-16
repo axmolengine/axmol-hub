@@ -4,6 +4,9 @@ namespace AxmolHub.Core;
 public sealed record CaptureBackend(string Id, string Label, string? Refusal = null)
 {
     public bool Available => Refusal is null;
+    public string? InputRefusal { get; init; }
+    public bool KeyboardAvailable => Available && InputRefusal is null;
+    public bool PointerAvailable => KeyboardAvailable;
 }
 
 /// <summary>Named-window capture only. Wayland never falls back to an unscoped desktop tool.</summary>
@@ -20,7 +23,7 @@ public static class CaptureBackends
             "windows" => new(GdiPrintWindow, "GDI PrintWindow"),
             "macos" => new(MacOsScreenshot, "screencapture -x -o"),
             "linux" when wayland => new(None, "Wayland",
-                "Refused: Wayland requires a scoped RemoteDesktop portal session, which this build does not support. Ask the user to operate the app manually; do not retry or fall back to global input."),
+                "Refused: native X11 capture is unavailable in a Wayland session. Use the scoped RemoteDesktop portal backend; do not fall back to global input."),
             "linux" when !displayAvailable => new(None, "X11", "Refused: no X11 display is available. Do not retry until a display session is available."),
             "linux" when x11ToolsAvailable => new(LinuxX11, "X11 window capture"),
             "linux" => new(None, "X11",
@@ -36,6 +39,10 @@ public static class CaptureBackends
         var display = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"));
         var tools = CommandShells.Resolve("wmctrl") is not null
             && (CommandShells.Resolve("maim") is not null || CommandShells.Resolve("import") is not null);
-        return For(BuildTargets.Host, tools, wayland, display);
+        return For(BuildTargets.Host, tools, wayland, display) with
+        {
+            InputRefusal = CommandShells.Resolve("xdotool") is null
+                ? "Refused [unsupported]: X11 input needs xdotool. Window capture remains available when its dependencies are installed." : null,
+        };
     }
 }

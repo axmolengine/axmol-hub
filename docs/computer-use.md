@@ -15,7 +15,7 @@ fallback to unscoped capture or non-portal global input is permitted.
    different app never grants permission. Explicitly authorizing another app replaces the
    previous app's control permission. There is no desktop-control mode.
    Existing persisted application grants remain screenshot-only and never upgrade to input.
-   On Windows the same card has an unchecked **continuous interaction** option. Only an explicit user
+   On Windows and Linux X11 the same card has an unchecked **continuous interaction** option. Only an explicit user
    choice grants temporary Interact in addition to Browse; the model cannot request/upgrade it through
    tool arguments. It allows unclassified ordinary window-scoped input without per-action approval or
    identical whole-window pixels. The card warns about edits, buttons, clipboard changes and incomplete
@@ -27,15 +27,15 @@ fallback to unscoped capture or non-portal global input is permitted.
    requests inside a continuous tool loop, and remain attached to their tool result on replay.
 4. Supply that `frame_id` for one input. Host-verified ordinary actions run without another
    approval card. Sensitive or unclassified actions require a one-action confirmation even
-   in Full Access under browsing consent. Explicit Windows interaction consent permits unclassified
+   in Full Access under browsing consent. Explicit Windows/X11 interaction consent permits unclassified
    ordinary input; recognized sensitive actions still require confirmation. Model-supplied risk labels are not trusted. Confirmation is bound to the
    exact arguments, observation and live permission version, not restored from a saved transcript.
-   Windows and macOS support `click`, `double_click`, `move`, `drag`, `type`, `press_key` and `scroll`.
+   Windows, macOS and Linux X11 support `click`, `double_click`, `move`, `drag`, `type`, `press_key` and `scroll`.
    Drag uses `x/y`, `end_x/end_y`, and `duration_ms` (100–3000). `press_key` accepts a
-   `modifiers` array (`control`, `alt`, `shift`, plus macOS-only `command`). Windows refuses
+   `modifiers` array (`control`, `alt`, `shift`, plus macOS-only `command`). Windows and Linux refuse
    `command` instead of substituting Ctrl. Scroll accepts `x/y` and
-   `horizontal_scroll`; omitted coordinates use the image center. Extended actions on other
-   backends are explicitly refused, not silently converted or dropped.
+   `horizontal_scroll`; omitted coordinates use the image center. Wayland supports the same actions
+   through its separate portal contract below.
 5. Hub refuses expired (two-minute), spent, moved/resized or owner-changed observations.
    Restarting Hub does not restore live observations. Another conversation's input invalidates
    older observations. Application permission does not make another window's frame valid:
@@ -45,7 +45,7 @@ fallback to unscoped capture or non-portal global input is permitted.
    approval but may also use that semantic verifier. Pointer movement on Windows/macOS only needs
    live permission, window identity/geometry, focus, bounds and occlusion checks. Actions without
    a scoped semantic verifier retain strict frame verification under browsing or sensitive-action
-   confirmation. Explicit Windows interaction permits a generic host verifier for unclassified ordinary
+   confirmation. Explicit Windows/X11 interaction permits a generic host verifier for unclassified ordinary
    input instead: frame identity/age/geometry, live grant, native focus, hit ownership and takeover guards
    remain enforced. Results explicitly say semantic target/application outcome were not verified.
 6. Input delivery is not application success. After delivery Hub captures a fresh image and
@@ -152,14 +152,86 @@ are separate OS permissions; granting them does not replay an interrupted action
   window's title/bounds. It does not treat overlapping CoreGraphics rectangles as input regions:
   Dock can advertise a monitor-sized layer while receiving no input at the selected point.
   A real Dock/menu/foreign-app hit or an unavailable/ambiguous window remains refused.
-- **Linux X11:** `wmctrl`, `maim` or ImageMagick `import`, plus `xdotool` for input. Executable
-  identity is resolved through `/proc/<pid>/exe`. Both window geometry and title are parsed
-  from `wmctrl -lpG` (the hostname field is not part of the title).
+- **Linux X11:** `wmctrl`, `maim` or ImageMagick `import`, plus `xdotool`/`libxdo.so.3` for input.
+  Executable identity is resolved through `/proc/<pid>/exe`. Window geometry/title come from
+  `wmctrl -lpG`. Input uses one libxdo connection per call, not one process per character.
+  Preflight rejects unavailable capabilities, invalid keys/Unicode and changed windows before input
+  approval. Delivery checks identity, geometry, foreground and pointer movement between scalars and
+  drag segments; pointer destinations are checked against X11 child-window ownership. Held keys/buttons
+  refuse input. Shortcut/button releases run after interruption. CRLF becomes one Enter, Tab is a key,
+  and Unicode scalars use libxdo without accessing the clipboard. AT-SPI is optional: supported targets
+  bind the owning window, metadata, geometry, bounded text digest and selection; text selection uses
+  the Text interface rather than a drag. Browsing supports verified move/scroll/select/copy. Explicit
+  temporary interaction permits generic input if semantics are unavailable; recognized sensitive
+  controls and menu/submit shortcuts still require confirmation. Native acceptance remains pending.
 - **Linux Wayland:** a scoped XDG RemoteDesktop + ScreenCast **window** session. Hub's `axmolhub-portal-helper` (Linux builds only; GIO and PipeWire remain host-provided) asks the desktop for one transient window stream and sends input through RemoteDesktop `Notify*` methods. There is no full-screen fallback, no `xdotool`/`wtype`/`ydotool`/`uinput` path, and no persistent portal token.
 
-The Wayland contract differs from the native backends and the UI says so: the user selects the window, so Hub **cannot verify** its title, process or executable identity. An approval covers one call, even in Full Access and for a screenshot; it never creates an application grant. Each input is individually confirmed, uses one `frame_id`, and afterwards a fresh frame is captured. Portal input belongs to the desktop session — keyboard events may reach the currently focused application, pointer events are not guaranteed to stay in the shared window, and Hub cannot detect user takeover. Stop cancels further input but cannot recall an event already sent. Closing the portal session, its desktop indicator, a PipeWire disconnect, a changed frame size, a blank frame, a timeout or a stale frame invalidates the observation; sharing may need to start again.
+The Wayland contract differs from the native backends: the user selects the window, so Hub **cannot
+verify** its title, process or executable identity. By default approval covers one call, even in Full
+Access. The initial card now offers an unchecked temporary continuous-interaction option. An explicit
+choice reuses permission for the same requested stream in this conversation without per-action cards,
+and accepts changed content while still validating frame identity, age, dimensions and mapping revision.
+It never creates an executable grant, persistent token or restored restart permission. Portal cannot
+classify sensitive controls; the option explicitly discloses edits, clipboard changes and unverified
+focus. The assistant must still follow the user's task scope and inspect every returned frame.
+
+Each input consumes one `frame_id` and captures a fresh image. Continuous mode can return a new frame
+when no visible change occurred, with an explicit unverified-outcome warning; it never replays input.
+If Hub is active, input waits at most 15 seconds for the user to switch away, then verifies again.
+Already-inactive Hub needs no handoff delay. Other-app focus and takeover remain unverified. Standard
+mode retains strict whole-frame comparison and its three-second screenshot baseline delay.
+
+The sharing strip exposes Pause/Resume, Stop and Revoke. Pause closes the stream, cancels in-flight
+work and invalidates permits; resume requires a new selection and observation. Stop, revoke,
+conversation removal and coordinator disposal close owned sharing. The desktop sharing indicator,
+helper exit or stream failure clears live permission. Permission versions prevent queued inputs from
+surviving pause/resume. Released keys/buttons are tracked in the helper and released during cleanup,
+including stale-mapping/cancellation paths. An event already sent cannot be recalled.
 
 Wayland builds require `gcc`, `pkg-config`, `libglib2.0-dev`, `libpipewire-0.3-dev` and `libspa-0.2-dev` at build time, and the desktop's Portal backend plus PipeWire at run time. Hub does not bundle those services.
+
+## Wayland UTF-8 text paste and approval-card fix (restart acceptance pending)
+
+The saved VS Code comparison established missing Unicode characters, not a font problem. The new
+continuous-interaction checkbox explicitly includes text paste and clipboard replacement. Only that
+user-selected mode starts the helper with `--clipboard` and requests Clipboard Portal access before
+RemoteDesktop Start. The desktop must also grant `clipboard_enabled`; absence never silently upgrades
+permission. This is an intentional transport change, not a claim that IME or Avalonia caused the defect.
+
+With permission, `type` stages the whole LF-normalized UTF-8 text as a bounded private-protocol payload,
+advertises only plain-text MIME types through Portal Clipboard, then posts Ctrl+V through RemoteDesktop.
+The helper serves SelectionTransfer using the portal-provided descriptor and acknowledges completion.
+Hub never reads, backs up or restores existing clipboard content. The offered text remains available
+while Hub owns that sharing session's clipboard, and is cleared on owner loss or helper shutdown.
+A transfer acknowledgement is not proof of document insertion; inspect the returned frame. Failed,
+unacknowledged or cancelled delivery is not replayed. No X11/global injection fallback is used.
+
+Without Clipboard permission, non-ASCII `type` is refused as a whole before sending any characters;
+ASCII retains the key path and its active-IME limitations. Shortcuts remain key events. This prevents
+the previous silent partial-string behavior for Unicode calls. Clipboard permission requires fresh
+sharing after restarting the new build; old live consent does not gain it.
+
+The Computer Use approval card now has a scrollable body and fixed action footer. Shorter copy keeps
+window scope, focus uncertainty, sensitive-action uncertainty and clipboard replacement visible.
+Raw capture parameters are collapsed; one-shot input details remain expanded for review.
+
+Release build and the existing image checks passed. The isolated `tests/portal-text-check.c` uses mocked
+D-Bus and a private pipe to check Chinese/emoji/multiline UTF-8 bytes, missing permission, invalid text,
+foreign-session isolation, transfer failure and owner loss under ASan/UBSan; it never accesses a real
+clipboard. Linux CI runs it beside the geometry check. The rebuilt ShellCheck returned **1752/1754**;
+all Portal checks, including the 220px limited-card footer check, passed. Waiting-state and sidebar
+menu-count failures remain recorded in `tmp/linux-unicode-card-rebuilt-shell{,-run}.txt` / `.log`.
+The machine clock was behind older build outputs, so final builds were explicitly rebuilt rather
+than trusting earlier incremental results. Installed native Unicode acceptance remains pending.
+
+The refreshed local 0.29.1 linux-x64 AppImage was packaged successfully (no version bump):
+`artifacts/releases/linux-x64/axmol-hub-linux-x64.AppImage`, SHA-256
+`294F412FC9FEE902553F276812BAAF89316E8ED07242675AE088EE9795732EAA`.
+Extracted `AxmolHub.dll` and `axmolhub-portal-helper` hashes match the publish output; the extracted
+helper probe returned `CAPABILITIES window 3`. This supersedes the earlier package at the same path.
+Evidence: `tmp/linux-unicode-package.log`, `tmp/linux-unicode-extract.log`,
+`tmp/linux-unicode-release-rebuild.log`, `tmp/linux-unicode-images-final.log`.
+No installation or live clipboard input was performed for this new package.
 
 ## Current Windows delivery status
 
@@ -558,6 +630,67 @@ that Stop alone interrupted a real OS input sequence. The offline mid-operation 
 extension passed `--check-ai-images` (log: `tmp/computer-use-interruption-images.log`); no real desktop
 input was used by it. These automated results do not replace the remaining installed-app cases above.
 
+## Linux continuity update (local build; installed acceptance pending)
+
+The X11 and Portal implementations now support the shared mouse/key action set. Explicit temporary
+continuous interaction avoids repeated approval in the selected scope. Unknown-control behavior and
+Portal's unverified identity/focus limitations remain visible in the permission card. Native X11 uses
+libxdo and optional AT-SPI; Wayland stays entirely on RemoteDesktop/PipeWire with no global fallback.
+
+Local checks: Release build, image/context/tool-policy suites, the sanitizer-enabled portal geometry
+check and an isolated AT-SPI ABI layout/constant check passed. The existing image suite covers portal
+permission versions and pause/revoke isolation. The shell approval fixture now verifies explicit
+opt-in followed by two portal input calls without new cards and subsequent revocation.
+
+ShellCheck remains failed: the final packaging run returned **1752/1753**, with a sidebar menu-count
+failure; Computer Use/Portal assertions passed. Earlier runs also showed intermittent lifecycle,
+waiting-state and plan-draft failures; those logs are retained. Logs are under
+`tmp/linux-computer-*`. These checks do not prove native input delivery, Unicode integrity, focus
+handoff or cancellation during real input. Installation/restart and joint desktop acceptance are
+pending. GNOME/KDE/wlroots and multi-monitor coverage must be recorded individually, never inferred
+from compilation or an injected bridge.
+
+Local linux-x64 packaging succeeded with the pinned Velopack tool, version 0.29.1 (no version bump):
+`artifacts/releases/linux-x64/axmol-hub-linux-x64.AppImage`, SHA-256
+`7CBF0920312E9A992EAA1DFD3A7C088A16F5A9A38E8BD2CC1350F7126B90E8FF`.
+The extracted helper hash matches the published helper; running its `--probe` returned
+`CAPABILITIES window 3`. This verifies package inclusion and capability probing, not native input.
+Packaging log: `tmp/linux-computer-package.log`. Optional partner-ID injection was skipped.
+The user will restart with this package before joint acceptance; no automatic installation occurred.
+
+### Installed GNOME 50.1 acceptance: partial, Unicode failure open
+
+The restarted local 0.29.1 package captured a separate Debug Hub with a 2560×1760 frame.
+The Debug target uses `--drive` with `keep_open: true` and an isolated data root. Earlier drive
+scripts had exited normally after their steps; their disappearing windows were incorrectly attributed
+to single-instance startup. The existing `IsDrive` broker bypass was already working.
+
+An input attempted while the controlling Hub remained active was refused after the bounded handoff,
+with no input sent. After the user switched to the Debug target, a fresh observation and click focused
+its empty composer. Two consecutive type calls visibly produced `linux-cu-20615-again`. Ctrl+A
+selected that draft and Right collapsed the selection. These are bounded native delivery observations;
+approval-card counts still require user confirmation, and Right alone is not proof that no modifier
+remained held. The draft was not submitted to any model.
+
+Typing ` 中文验证 😀` reported delivery but only trailing whitespace appeared; a later fresh capture
+still showed no Chinese or emoji. Unicode acceptance FAILED. No failed text was replayed or repaired.
+Mutter's upstream keysym implementation searches the active keymap and skips unmapped keysyms,
+which is a plausible mechanism, not a locally traced root cause. Portal method acknowledgement is
+not text insertion acknowledgement. Clipboard transport would require a separately disclosed permission
+and ownership contract; it has not been implemented as a fallback. Pause/revoke, dragging, two-axis
+scrolling, mixed-DPI and other desktop acceptance remain pending for this package.
+
+### VS Code comparison with English input mode: Unicode failure confirmed in saved file
+
+After the user explicitly focused the editor and confirmed English input mode, Portal typing
+inserted `focus-6274` into `tmp/linux-cu-vscode.txt`. A subsequent call requested
+` [中文核验😀] END-6274`; the editor displayed `focus-6274 [] END-6274`. Ctrl+S cleared the
+unsaved indicator, and reading the saved UTF-8 file returned exactly `focus-6274 [] END-6274`.
+This confirms missing Unicode characters in persisted text, not merely a glyph rendering issue,
+and reproduces outside Avalonia. It does not establish the compositor/input-method root cause.
+Earlier calls with no visible text had uncertain focus and are not valid Unicode comparisons.
+No clipboard fallback or replay of failed text was used in this comparison.
+
 ## Earlier Wayland verification status (historical)
 
 Implemented and locally checked: Linux helper compilation and output inclusion, per-call portal
@@ -687,8 +820,10 @@ covers permission pause/revoke/version isolation and drag coordinate bounds. Ful
 
 Real-desktop acceptance still needs the following on **each** native host:
 
-- Approve the system TextEdit app once. Observe, click/type, double-click, move, drag-select,
-  `Command+A/C/V`, and scroll; verified document actions should not show per-input cards.
+- Approve a disposable editor once (TextEdit on macOS; the chosen editor on Windows/X11).
+  Observe, click/type, double-click, move, drag-select, platform `Ctrl/Command+A/C/V`, and scroll.
+  Under Browse only verified browsing actions skip confirmation; under explicit Windows/X11 Interact
+  ordinary edits may also continue. Test Portal's explicit continuous mode separately.
 - Open a second document window. Observe it, then operate without another application grant.
 - For an unclassified or mock Send/Delete/Pay control, inspect the one-action confirmation.
   Ordinary-action coverage is limited by the host adapter; do not test real destructive actions.

@@ -432,13 +432,16 @@ internal sealed partial class ChatExecutionCoordinator
                 ApprovedComputerTarget = () => ApprovedComputerTargetFor(conversationId, ToolInvocation.CallId),
                 PortalComputer = PortalComputerBridgeProvider is { } portalProvider ? portalProvider(conversationId)
                     : LinuxWaylandRemoteDesktop.IsWayland && ScreenCaptureBridgeProvider is null
-                        ? LinuxWaylandRemoteDesktop.Shared.Bridge(conversationId) : null,
+                        ? PortalBridge(conversationId) : null,
                 PortalComputerApproved = () =>
                 {
                     var callId = ToolInvocation.CallId;
                     bool Read() => Sessions.Registry.Peek(conversationId)?.Messages.Any(turn =>
                         turn.ToolCallId == callId && turn.Role == ChatRoles.Assistant
-                        && turn.ApprovalComputerPortal && turn.ApprovalState == ChatApprovalStates.Approved) == true;
+                        && turn.ApprovalComputerPortal && callId is not null && PortalPermitCurrent(conversationId, callId)
+                        && (turn.ApprovalState == ChatApprovalStates.Approved
+                            || PortalControlFor(conversationId) is { Interaction: true, Paused: false } portal
+                            && portal.Application == PortalApplication(turn.ToolArguments))) == true;
                     return Dispatcher.UIThread.CheckAccess() ? Read()
                         : Dispatcher.UIThread.InvokeAsync(Read).GetAwaiter().GetResult();
                 },
@@ -1996,7 +1999,11 @@ internal sealed partial class ChatExecutionCoordinator
                     ? ComputerUseGrants.ResolveTarget(scope.Workspace.Screen, member.Name, member.ArgumentsJson) : null;
                 var control = ComputerControlFor(run.ConversationId);
                 var taskGrant = control?.Covers(target, allowPaused: true) == true;
-                var computerGrant = taskGrant || !computerInput && HasComputerGrant(conversation, target?.Application);
+                var portalControl = PortalControlFor(run.ConversationId);
+                var portalGrant = portal && portalControl is { Interaction: true, Paused: false }
+                    && portalControl.Application == PortalApplication(member.ArgumentsJson);
+                if (portalGrant) _portalPermits[(run.ConversationId, member.CallId)] = (portalControl!, portalControl!.Version);
+                var computerGrant = portalGrant || taskGrant || !computerInput && HasComputerGrant(conversation, target?.Application);
                 var inputRisk = computerInput && !portal && taskGrant && !control!.Paused
                     ? AssessComputerInput(run.ConversationId, target, member.ArgumentsJson, scope.Workspace.Screen, scope.Workspace.ComputerUse)
                     : ComputerRiskDecision.Unknown;
@@ -2011,7 +2018,7 @@ internal sealed partial class ChatExecutionCoordinator
                         if (at >= 0) opened.Messages[at] = opened.Messages[at] with
                         {
                             ApprovalComputerTarget = target, ApprovalComputerInput = computerInput && (portal || taskGrant),
-                            ApprovalComputerPortal = portal, ApprovalComputerTask = !portal && !computerGrant,
+                            ApprovalComputerPortal = portal, ApprovalComputerTask = portal ? !portalGrant : !computerGrant,
                             ApprovalComputerReason = computerInput && taskGrant ? inputRisk.Reason : null,
                         };
                     });
@@ -2028,7 +2035,7 @@ internal sealed partial class ChatExecutionCoordinator
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
                 var parks = computerUse
-                    ? portal || target is not null && (!computerGrant || computerInput && !control!.Paused
+                    ? portal && !portalGrant && portalControl?.Paused != true || target is not null && (!computerGrant || computerInput && !control!.Paused
                         && inputRisk.Risk == ComputerRisk.RequireConfirmation)
                     : !granted && !malformed
                       && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
@@ -2215,7 +2222,8 @@ internal sealed partial class ChatExecutionCoordinator
         var isComputerUse = ComputerUseGrants.IsComputerUseTool(toolName);
         var inputConfirmation = conversation.Messages[index].ApprovalComputerInput;
         var taskConfirmation = conversation.Messages[index].ApprovalComputerTask;
-        if (computerInteraction && (!approved || !isComputerUse || portalComputer || !taskConfirmation || !OperatingSystem.IsWindows()))
+        if (computerInteraction && (!approved || !isComputerUse || !taskConfirmation
+            || !portalComputer && !(OperatingSystem.IsWindows() || OperatingSystem.IsLinux() && !LinuxWaylandRemoteDesktop.IsWayland)))
         { refusalKey = "ChatApprovalGone"; return false; }
         if (isComputerUse && alwaysAllow)
         {
@@ -2227,6 +2235,11 @@ internal sealed partial class ChatExecutionCoordinator
             refusalKey = "ChatApprovalGone";
             return false;
         }
+        if (portalComputer && (PortalControlFor(conversationId) is not { Paused: false } existingPortal
+            || existingPortal.Application != PortalApplication(conversation.Messages[index].ToolArguments) || computerInteraction))
+            GrantPortalControl(conversationId, PortalApplication(conversation.Messages[index].ToolArguments), computerInteraction);
+        if (portalComputer && PortalControlFor(conversationId) is { } approvedPortal)
+            _portalPermits[(conversationId, callId)] = (approvedPortal, approvedPortal.Version);
         if (isComputerUse && !portalComputer)
         {
             var target = conversation.Messages[index].ApprovalComputerTarget!;
@@ -2301,7 +2314,7 @@ internal sealed partial class ChatExecutionCoordinator
         // list for verbs would be a second place for the two to disagree.
         if (verbKey is not null) TrustCommand(verbKey);
         AuditApproval(conversationId, portalComputer ? "Wayland portal session" : isComputerUse ? computerApp!.ExecutablePath : verbKey ?? toolName,
-            portalComputer ? "portal call individually confirmed" : isComputerUse
+            portalComputer ? computerInteraction ? "temporary continuous portal interaction explicitly granted" : "portal call individually confirmed" : isComputerUse
                 ? inputConfirmation ? "sensitive input confirmed once" : taskConfirmation ? "application allowed for task session" : "screenshot allowed"
                 : alwaysAllow ? "always allowed" : "allowed");
         Changed?.Invoke();
@@ -4246,7 +4259,8 @@ internal sealed partial class ChatExecutionCoordinator
         _disposed = true;
         _memoryStop.Cancel();
         foreach (var id in _goalWakes.Keys.ToArray()) CancelGoalWake(id);
-        foreach (var id in _computerControls.Keys.ToArray()) RevokeComputerControl(id);
+        foreach (var id in _computerControls.Keys.Concat(_portalControls.Keys).Distinct().ToArray()) RevokeComputerControl(id);
+        _portalDesktop.Dispose();
         foreach (var run in _runs.Values) run.RequestStop();
     }
 

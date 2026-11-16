@@ -12,6 +12,31 @@ public partial class ChatPanel
     {
         var id = _chat?.ActiveConversation?.Id;
         var control = id is null ? null : _chat?.ComputerControlFor(id);
+        if (id is not null && _chat?.PortalControlFor(id) is { } portal)
+        {
+            var portalIdentity = id + ":portal:" + portal.Version + ":" + portal.Interaction + ":" + HubStrings.Get("PortalSessionTitle");
+            if (_computerControlIdentity == portalIdentity) return;
+            _computerControlIdentity = portalIdentity;
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
+            row.Children.Add(new TextBlock
+            {
+                Text = HubStrings.Get("PortalSessionTitle") + " · " + (portal.Paused ? HubStrings.Get("ComputerControlPause")
+                    : portal.Interaction ? HubStrings.Get("ComputerControlInteraction") : HubStrings.Get("PortalOneAction")),
+                Classes = { "muted" }, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            ToolTip.SetTip(row, HubStrings.Get("PortalInteractionHint"));
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            buttons.Children.Add(CapsuleActionButton(portal.Paused ? "Hub.Icon.Play" : "Hub.Icon.Pause",
+                portal.Paused ? "ComputerControlResume" : "ComputerControlPause", () => _chat.PauseComputerControl(id, !portal.Paused)));
+            buttons.Children.Add(CapsuleActionButton("Hub.Icon.Stop", "ComputerControlStop", () => _chat.RequestStop(id)));
+            buttons.Children.Add(CapsuleActionButton("Hub.Icon.Close", "ComputerControlRevoke", () => _chat.RevokeComputerControl(id)));
+            Grid.SetColumn(buttons, 1);
+            row.Children.Add(buttons);
+            ComputerControlHost.Child = row;
+            ComputerControlHost.IsVisible = true;
+            return;
+        }
         if (control is null)
         {
             ComputerControlHost.IsVisible = false;

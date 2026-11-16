@@ -950,8 +950,10 @@ public partial class ChatPanel
         if (target is null && !portal) return BuildApprovalPendingLine(turn);
         var input = turn.ApprovalComputerInput;
         var app = portal ? HubStrings.Get("PortalSessionTitle") : target!.WindowTitle;
-        var card = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 10 };
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
+        // The scrollable body yields to the fixed footer inside the decision host's height limit.
+        var card = new Grid { RowDefinitions = new RowDefinitions("*,Auto"), RowSpacing = 10, ClipToBounds = true };
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10,
+            Margin = new Thickness(0, 0, 16, 0) };
         var icon = new Path
         {
             Name = "ComputerUseApplicationIcon",
@@ -993,16 +995,21 @@ public partial class ChatPanel
             Name = "ComputerUseGrantDescription",
             Classes = { "muted" },
             Text = portal
-                ? HubStrings.Get(input ? "PortalInputHint" : "PortalCaptureHint") + "\n" + turn.ToolArguments
+                ? HubStrings.Get(input ? "PortalInputHint" : "PortalCaptureHint")
                 : target!.Application.ExecutablePath + "\n" + (input
-                    ? HubStrings.Get("ComputerUseInputHint") + "\n" + turn.ApprovalComputerReason + "\n" + turn.ToolArguments
+                    ? HubStrings.Get("ComputerUseInputHint")
                     : HubStrings.Get("ComputerUseGrantHint")),
             TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Left,
         });
         Grid.SetColumn(title, 1);
         header.Children.Add(title);
-        card.Children.Add(header);
+        card.Children.Add(new ScrollViewer
+        {
+            Name = "ComputerUseApprovalScroll", Content = header, ClipToBounds = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        });
 
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 4, 0, 0) };
 
@@ -1031,19 +1038,32 @@ public partial class ChatPanel
         var interaction = new CheckBox
         {
             Name = "ComputerUseInteractionChoice",
-            Content = HubStrings.Get("ComputerUseInteractionChoice"),
+            Content = new TextBlock
+            {
+                Text = HubStrings.Get(portal ? "PortalInteractionChoice" : "ComputerUseInteractionChoice"),
+                TextWrapping = TextWrapping.Wrap,
+            },
             IsChecked = false,
         };
         var interactionHint = new TextBlock
         {
-            Text = HubStrings.Get("ComputerUseInteractionHint"), Classes = { "muted" },
+            Text = HubStrings.Get(portal ? "PortalInteractionHint" : "ComputerUseInteractionHint"), Classes = { "muted" },
             TextWrapping = TextWrapping.Wrap,
         };
-        if (!input && !portal && turn.ApprovalComputerTask && OperatingSystem.IsWindows())
+        if (turn.ApprovalComputerTask && (portal || !input && (OperatingSystem.IsWindows() || OperatingSystem.IsLinux() && !LinuxWaylandRemoteDesktop.IsWayland)))
         {
             title.Children.Add(interaction);
             title.Children.Add(interactionHint);
         }
+        var detail = new StackPanel { Spacing = 4 };
+        AddApprovalDetail(detail, "ChatApprovalArguments", turn.ToolArguments);
+        if (!string.IsNullOrWhiteSpace(turn.ApprovalComputerReason))
+            AddApprovalDetail(detail, "ChatApprovalChangePreview", turn.ApprovalComputerReason);
+        title.Children.Add(new Expander
+        {
+            Header = HubStrings.Get("ChatApprovalArguments"), Content = detail, IsExpanded = input,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        });
         allow.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false,
             computerInteraction: interaction.Parent is not null && interaction.IsChecked == true);
         actions.Children.Add(deny);

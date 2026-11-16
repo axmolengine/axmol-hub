@@ -8,6 +8,57 @@ namespace AxmolHub;
 internal sealed partial class ChatExecutionCoordinator
 {
     private readonly ConcurrentDictionary<string, ComputerControlSession> _computerControls = new();
+    private readonly ConcurrentDictionary<string, PortalControlSession> _portalControls = new();
+    private readonly LinuxWaylandRemoteDesktop _portalDesktop = new();
+    private readonly ConcurrentDictionary<(string Conversation, string Call), (PortalControlSession Control, long Version)> _portalPermits = new();
+    private bool PortalPermitCurrent(string id, string call)
+        => _portalPermits.TryGetValue((id, call), out var permit)
+            && ReferenceEquals(permit.Control, PortalControlFor(id))
+            && permit.Control.Covers(permit.Control.Application, permit.Version);
+    internal PortalControlSession? PortalControlFor(string id)
+        => _portalControls.TryGetValue(id, out var control) ? control : null;
+
+    private static string PortalApplication(string? json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json ?? "{}");
+            var root = document.RootElement;
+            return (root.TryGetProperty("application", out var app) ? app.GetString()
+                : root.TryGetProperty("target", out var target) ? target.GetString() : null)?.Trim() ?? "";
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return ""; }
+    }
+
+    private PortalComputerBridge PortalBridge(string id) => new(async (request, cancellation) =>
+    {
+        var control = PortalControlFor(id);
+        var version = control?.Version ?? 0;
+        if (control is null || !control.Covers(request.Application, version))
+            return new(null, "Refused: sharing permission changed or is paused. Resume and observe again.");
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, control.Cancellation);
+        bool Approved() => ReferenceEquals(control, PortalControlFor(id)) && control.Covers(request.Application, version)
+            && request.StillApproved?.Invoke() == true;
+        return await _portalDesktop.Bridge(id).ExecuteAsync(request with
+        {
+            StillApproved = Approved,
+            ContinuousInteraction = control.Interaction,
+        }, linked.Token);
+    });
+
+    private void GrantPortalControl(string id, string application, bool interaction)
+    {
+        RevokeComputerControl(id);
+        // One desktop stream is active per host. A new selection never inherits the old stream's consent.
+        foreach (var other in _portalControls.Keys.ToArray()) RevokeComputerControl(other);
+        _portalControls[id] = new(application, interaction);
+        _portalDesktop.SessionEnded = closed =>
+        {
+            if (_portalControls.TryRemove(closed, out var old)) old.Revoke();
+            foreach (var key in _portalPermits.Keys.Where(key => key.Conversation == closed)) _portalPermits.TryRemove(key, out _);
+            RaiseOnUi(() => Changed?.Invoke());
+        };
+    }
     private sealed record InputPermit(ComputerControlSession Session, long Version, string Arguments,
         ComputerRiskDecision Decision, bool Approved);
     private readonly ConcurrentDictionary<(string Conversation, string Call), InputPermit> _computerPermits = new();
@@ -39,6 +90,14 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal void PauseComputerControl(string id, bool paused)
     {
+        if (PortalControlFor(id) is { } portal)
+        {
+            portal.Pause(paused);
+            foreach (var key in _portalPermits.Keys.Where(key => key.Conversation == id)) _portalPermits.TryRemove(key, out _);
+            _portalDesktop.CloseFor(id, notify: false);
+            Changed?.Invoke();
+            return;
+        }
         if (ComputerControlFor(id) is not { } control) return;
         control.Pause(paused);
         foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == id)) ReleaseComputerPermit(key);
@@ -49,6 +108,9 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal void RevokeComputerControl(string id)
     {
+        if (_portalControls.TryRemove(id, out var portal)) portal.Revoke();
+        foreach (var key in _portalPermits.Keys.Where(key => key.Conversation == id)) _portalPermits.TryRemove(key, out _);
+        _portalDesktop.CloseFor(id, notify: false);
         _failedComputerInputs.TryRemove(id, out _);
         if (_computerControls.TryRemove(id, out var control))
         {
