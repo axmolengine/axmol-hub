@@ -66,6 +66,10 @@ Verification:
 - Full `--verify-shell`: **691/699 passed**, exit **1**; it stopped before the browser scene on existing text-selection checks and a Computer Use approval failure/exception (`ShellCheckWindow.Approvals.cs`). These failures remain unresolved and are outside this fix. Reports: `tmp/webview-linux/selfcheck-shell.txt` and `tmp/webview-linux/selfcheck-shell-run.log`.
 - Human review of **Axmol Hub - WebView test** confirmed other URLs opened without hanging. The temporary launcher's `--verify-shell` startup also created an unshown check window whose 60-second watchdog shut down the desktop lifetime. A monitored repeat captured the watchdog failure, normal window closing events and desktop lifetime exit code **1** (the launcher incorrectly overwrote the process exit code to **0**). This explains the unexpected test-window exit; it is not evidence of a browser crash. Manual acceptance of all interactions remains incomplete. The installed AppImage was **not** replaced or repackaged; packaged-build acceptance remains pending.
 
+## Known issue: Linux pointer-lock freeze (2026-11-16)
+
+On Ubuntu 26.04.1 / XWayland / NVIDIA, a page that calls `requestPointerLock()` freezes visually: the Web process keeps rendering at full speed, but the UI process receives no frames. Only a real window resize advances the picture. Reproduced with the pinned WebKitGTK **2.52.6** and with `GDK_BACKEND=x11` MiniBrowser, so it is an engine-side X11 pointer-lock defect, not a Hub embedding or driver issue. No Hub-side workaround exists; `NativeWebDialog` shares the same path and freezes too.
+
 ## Windows package measurements
 
 Local unsigned artifacts only, not installed or published. `ORCAROUTER_APP_ID=webview-size-test-only` is set only for temporary packaging; CI supplies the real value. The post-change package uses `installer/Build.ps1`; the saved pre-change self-contained publish is packed with the same pinned Velopack **1.2.161** settings. Both use version 0.26.0, pack identity and icon. All artifacts/logs are under ignored `tmp/webview-size/`.
