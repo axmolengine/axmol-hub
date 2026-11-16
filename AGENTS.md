@@ -110,6 +110,11 @@ development; packaged installs do not support it.
 dotnet run --project src/AxmolHub -- --drive ./tmp/drive/script.json
 ```
 
+`--drive` 默认完成后关闭窗口；持续实机验收需设置 `keep_open: true`。
+
+Set root-level `"keep_open": true` to leave the window open after successful steps for manual or native Computer Use acceptance.
+Failures still exit; the script timeout applies only while steps are running.
+
 Script: `{"out":"tmp/drive","steps":[{"do":"navigate","page":"Assistant"},{"do":"click","text":"..."},
 {"do":"type","name":"...","value":"..."},{"do":"wait","ms":300|"until":"name-or-text"},{"do":"resize","w":1100,"h":700},
 {"do":"language","value":"en-US"},{"do":"screenshot","file":"a.png"}]}`. The exit code and `<out>/drive.evidence.txt`

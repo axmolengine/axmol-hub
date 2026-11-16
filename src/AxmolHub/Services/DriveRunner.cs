@@ -29,6 +29,7 @@ namespace AxmolHub;
 /// tool group head (<c>open</c>) — the two gestures a transcript bug usually needs. The run exits 0 when
 /// every step succeeded and no shot is blank, and leaves <c>drive.evidence.txt</c> in <c>out</c>. It uses the user's
 /// real data root; settings are protected by the copy made in <see cref="HubHostOptions.Parse"/>.
+/// Set root-level <c>"keep_open": true</c> to retain the window after a successful script for manual/native input acceptance.
 /// </summary>
 internal static class DriveRunner
 {
@@ -37,6 +38,7 @@ internal static class DriveRunner
     public static void Attach(MainWindow window, IClassicDesktopStyleApplicationLifetime lifetime, string scriptPath)
     {
         var finished = false;
+        var keepOpen = false;
         var report = new StringBuilder();
         var outDir = Path.GetDirectoryName(Path.GetFullPath(scriptPath))!;
 
@@ -57,7 +59,7 @@ internal static class DriveRunner
                 Console.Error.WriteLine(ex.Message);
             }
 
-            lifetime.Shutdown(code);
+            if (code != 0 || !keepOpen) lifetime.Shutdown(code);
         }
 
         window.Opened += (_, _) => Dispatcher.UIThread.Post(async () =>
@@ -66,6 +68,7 @@ internal static class DriveRunner
             {
                 using var doc = JsonDocument.Parse(File.ReadAllText(scriptPath));
                 var root = doc.RootElement;
+                keepOpen = root.TryGetProperty("keep_open", out var keep) && keep.GetBoolean();
                 if (root.TryGetProperty("out", out var o) && o.GetString() is { Length: > 0 } od)
                     outDir = Path.GetFullPath(od);
                 Directory.CreateDirectory(outDir);
@@ -111,6 +114,7 @@ internal static class DriveRunner
 
         DispatcherTimer.RunOnce(() =>
         {
+            if (finished) return;
             report.AppendLine("script exceeded " + Ceiling.TotalSeconds + "s");
             Finish(1);
         }, Ceiling);
