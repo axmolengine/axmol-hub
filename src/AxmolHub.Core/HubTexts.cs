@@ -507,6 +507,7 @@ public static class HubTexts
         ["BuildPackaging"] = ("打包应用", "Packaging application"),
         ["BuildVerifying"] = ("校验产物", "Verifying output"),
         ["BuildElapsed"] = ("已用时间", "Elapsed"),
+        ["ProjectAlreadyAdded"] = ("该项目已添加，无需重复添加。", "This project has already been added."),
         ["ProjectAlreadyExists"] = ("项目目录已存在，无法创建同名项目。", "The project destination already exists. Cannot create a project at the same location."),
         ["ProjectAlreadyExistsAction"] = ("请修改项目名称或选择其他目录。若要使用现有项目，请点击“添加已有项目”。", "Change the project name or choose another directory. To use the existing project, click Add existing project."),
         ["Project settings file not found."] = ("项目目录中没有 .axmol-hub.json，无法重新加载设置。", "No .axmol-hub.json was found in the project folder; settings cannot be reloaded."),

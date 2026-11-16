@@ -1143,6 +1143,7 @@ public sealed partial class HubWorkspace : IDisposable
             if (registered is not null)
             {
                 ReloadProject(registered);
+                SetFeedback(UserFeedback.Info(HubStrings.Get("ProjectAlreadyAdded"), "project-already-added"));
                 return Task.CompletedTask;
             }
 
