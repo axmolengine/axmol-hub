@@ -217,13 +217,13 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
     {
         var target = BuildTargets.Get(arguments[2]);
         if (target.Family != "android") throw new InvalidOperationException("Device query requires an Android target.");
-        // adb comes from the engine tree (<engine>/tools/external/adt/sdk/platform-tools), no longer a Hub-owned tool.
+        // Resolve the SDK like the engine, including android-sdk and the legacy adt/sdk layout.
         var deviceState = store.Load();
         var deviceEngine = deviceState.Engines.FirstOrDefault(candidate => candidate.Path == deviceState.DefaultEnginePath)
             ?? deviceState.Engines.FirstOrDefault()
             ?? throw new InvalidOperationException("Import an Axmol engine first: adb comes from the engine tree.");
-        var deviceTools = EngineToolchain.ToolRoot(deviceEngine);
-        var devices = await new AndroidDeviceService(runner, deviceTools).DevicesAsync(platform.CreateEnvironment(deviceTools, target), stop.Token);
+        var devices = await new AndroidDeviceService(runner, deviceEngine)
+            .DevicesAsync(cancellation: stop.Token);
         if (!asJson)
         {
             foreach (var device in devices) Console.WriteLine($"{device.Serial}\t{device.State}\t{device.Details}");
@@ -289,7 +289,7 @@ async Task<int> RunAsync(string[] arguments, string verb, bool asJson, Cancellat
 
         case "deploy":
             if (arguments.Length != 4 || BuildTargets.Get(entry.Platform).Family != "android") throw new ArgumentException("deploy <data-root> <Android-project> <serial>");
-            var deployExit = (await platform.RunAsync(entry, engine, commandLine, stop.Token, deviceSerial: arguments[3])).ExitCode;
+            var deployExit = (await platform.RunAsync(entry, engine, commandLine, stop.Token, deviceSerial: arguments[3], deployOnly: true)).ExitCode;
             return Emit(true, deployExit, new ChildExitPayload(deployExit));
 
         default:

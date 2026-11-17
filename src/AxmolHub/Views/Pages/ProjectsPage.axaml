@@ -138,9 +138,15 @@
                       <Button Content="{DynamicResource Build}" Tag="{Binding Project}" Click="OnBuildProject"
                               Classes="project-row-action quiet" Padding="7,5"
                               AutomationProperties.Name="{DynamicResource Build}" />
-                      <Button Content="{Binding RunCaption}" Tag="{Binding Project}" Click="OnRunProject"
+                      <Button Tag="{Binding Project}" Click="OnRunProject" IsEnabled="{Binding CanRun}"
                               Classes="project-row-action quiet" Padding="7,5"
-                              AutomationProperties.Name="{Binding RunCaption}" />
+                              AutomationProperties.Name="{Binding RunCaption}">
+                        <StackPanel Spacing="2">
+                          <TextBlock Text="{Binding RunCaption}" HorizontalAlignment="Center" />
+                          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRunBusy}"
+                                       Width="48" MinWidth="0" Height="2" HorizontalAlignment="Center" />
+                        </StackPanel>
+                      </Button>
                       <Button Content="⋯" Tag="{Binding Project}" Click="OnProjectMenu"
                               Classes="project-row-action quiet" Padding="9,5" ToolTip.Tip="{DynamicResource MoreActions}"
                               AutomationProperties.Name="{DynamicResource MoreActions}" />

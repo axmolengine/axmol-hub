@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -6,8 +7,21 @@ using AxmolHub.Core;
 
 namespace AxmolHub;
 
-public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning, bool CanOpenEditor)
+public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning, bool CanOpenEditor) : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private string? _runStateKey;
+    public bool IsRunBusy => _runStateKey is not null;
+    public bool CanRun => !IsRunBusy;
+
+    public void SetRunState(string? key)
+    {
+        if (_runStateKey == key) return;
+        _runStateKey = key;
+        foreach (var property in new[] { nameof(RunCaption), nameof(IsRunBusy), nameof(CanRun) })
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+    }
+
     public string DisplayPath
     {
         get
@@ -30,7 +44,7 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
         : opened.ToLocalTime().Date == DateTime.Now.Date ? HubStrings.Get("TodayAt") + " " + opened.ToLocalTime().ToString("HH:mm", CultureInfo.CurrentCulture)
         : opened.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
     public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastOpened);
-    public string RunCaption => HubStrings.Get(IsPreviewRunning ? "Stop" : "Run");
+    public string RunCaption => HubStrings.Get(_runStateKey ?? (IsPreviewRunning ? "Stop" : "Run"));
     public string OpenEditorTooltip => CanOpenEditor ? HubStrings.Get("OpenInEditor") : HubStrings.Get("NoEditorConfigured");
 }
 
@@ -57,7 +71,7 @@ public partial class ProjectsPage : UserControl
         _workspace = workspace;
         InitializeComponent();
         _workspace.Changed += Reload;
-        _workspace.DevicesChanged += ReloadDevices;
+        _workspace.AndroidRunStateChanged += UpdateRunStates;
         SearchBox.TextChanged += (_, _) =>
         {
             ClearSearchButton.IsVisible = !string.IsNullOrEmpty(SearchBox.Text);
@@ -153,7 +167,47 @@ public partial class ProjectsPage : UserControl
 
     private async void OnRunProject(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: ProjectEntry project }) await _workspace.RunAsync(project);
+        if (sender is Button { Tag: ProjectEntry project } button)
+            await _workspace.RunAsync(project, devices => PickAndroidDeviceAsync(button, devices));
+    }
+
+    private static async Task<AndroidDevice?> PickAndroidDeviceAsync(Button anchor, IReadOnlyList<AndroidDevice> devices)
+    {
+        if (TopLevel.GetTopLevel(anchor) is null || !anchor.IsEffectivelyVisible) return null;
+        var completion = new TaskCompletionSource<AndroidDevice?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var menu = new MenuFlyout();
+        foreach (var device in devices)
+        {
+            var label = device.DisplayName == device.Serial ? device.Serial : device.DisplayName + " · " + device.Serial;
+            var item = new MenuItem
+            {
+                Header = label + " · " + HubStrings.Get(device.State),
+                IsEnabled = device.State == "device",
+            };
+            item.Click += (_, _) =>
+            {
+                completion.TrySetResult(device);
+                menu.Hide();
+            };
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) => completion.TrySetResult(null);
+        void OnDetached(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
+        {
+            completion.TrySetResult(null);
+            menu.Hide();
+        }
+        anchor.DetachedFromVisualTree += OnDetached;
+        try
+        {
+            menu.ShowAt(anchor);
+            return await completion.Task;
+        }
+        finally
+        {
+            anchor.DetachedFromVisualTree -= OnDetached;
+            menu.Hide();
+        }
     }
 
     private void OnProjectDoubleTapped(object? sender, TappedEventArgs e)
@@ -230,19 +284,6 @@ public partial class ProjectsPage : UserControl
         if (BuildTargets.Get(project.Platform).Family == "android")
         {
             Add("AndroidReleaseSettings", async () => await _workspace.EditAndroidReleaseAsync(project));
-            var devices = new MenuItem { Header = HubStrings.Get("AndroidDevice") };
-            foreach (var device in _workspace.Devices)
-            {
-                var selected = _workspace.SelectedDevice?.Serial == device.Serial;
-                var pick = new MenuItem { Header = MenuRow.Build(null, device.Serial + " · " + HubStrings.Get(device.State), selected), IsChecked = selected };
-                pick.Click += (_, _) => _workspace.SelectedDevice = device;
-                devices.Items.Add(pick);
-            }
-            devices.Items.Add(new Separator());
-            var refresh = new MenuItem { Header = HubStrings.Get("RefreshDevices") };
-            refresh.Click += async (_, _) => await _workspace.QueryDevicesAsync();
-            devices.Items.Add(refresh);
-            menu.Items.Add(devices);
         }
         menu.Items.Add(new Separator());
         var remove = new MenuItem { Header = HubStrings.Get("RemoveFromList") };
@@ -344,6 +385,7 @@ public partial class ProjectsPage : UserControl
             .Select(p => new ProjectListItem(p, _workspace.IsProjectPreviewRunning(p), _workspace.EffectiveEditor(p) is not null)).ToArray();
         _ready = false;
         ProjectsGrid.ItemsSource = items;
+        UpdateRunStates();
         ProjectsGrid.SelectedItem = items.FirstOrDefault(item => _workspace.SelectedProject is not null
             && item.Project.Path.Equals(_workspace.SelectedProject.Path, StringComparison.OrdinalIgnoreCase));
         _ready = true;
@@ -354,6 +396,13 @@ public partial class ProjectsPage : UserControl
         EmptyActions.IsVisible = noProjects;
         ClearFiltersButton.IsVisible = !noProjects;
         EmptyProjects.Text = HubStrings.Get(noProjects ? "EmptyProjects" : "NoProjectsMatch");
+    }
+
+    private void UpdateRunStates()
+    {
+        if (ProjectsGrid.ItemsSource is not IEnumerable<ProjectListItem> items) return;
+        foreach (var item in items)
+            item.SetRunState(item.Project.Path == _workspace.AndroidRunProjectPath ? _workspace.AndroidRunStateKey : null);
     }
 
     private void SyncColumns()
@@ -374,7 +423,5 @@ public partial class ProjectsPage : UserControl
         2 => "SortByName",
         _ => "SortRecentDescending",
     });
-
-    private void ReloadDevices() { }
 
 }

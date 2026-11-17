@@ -76,8 +76,27 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>Signing passwords live only in memory, valid for one session — same as the WPF version, never persisted.</summary>
     private readonly Dictionary<string, AndroidSigningPasswords> _androidPasswords = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The device list is invalidated only when the "project + platform" combination changes, to avoid clearing it on every project selection.</summary>
-    private string _deviceProject = "";
+    private bool _androidRunPending;
+    public string? AndroidRunProjectPath { get; private set; }
+    public string? AndroidRunStateKey { get; private set; }
+    public event Action? AndroidRunStateChanged;
+
+    private void SetAndroidRunState(string? projectPath, string? stateKey)
+    {
+        AndroidRunProjectPath = projectPath;
+        AndroidRunStateKey = stateKey;
+        AndroidRunStateChanged?.Invoke();
+    }
+
+    private void ShowAndroidRunOutcome(string text, bool temporary = true)
+    {
+        SetStatus(text);
+        if (!temporary) return;
+        DispatcherTimer.RunOnce(() =>
+        {
+            if (!_androidRunPending && !IsBusy && StatusText == text) SetStatus("");
+        }, TimeSpan.FromSeconds(4));
+    }
 
     /// <summary>Reentrancy gate for the target dropdown. The WPF version calls it <c>targetReady</c>; it does exactly the same job.</summary>
     private bool _targetReady;
@@ -239,9 +258,6 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>The host PowerShell probe produced a new verdict (page card repaints).</summary>
     public event Action? HostShellChanged;
 
-    /// <summary>Android device list updated.</summary>
-    public event Action? DevicesChanged;
-
     /// <summary>
     /// Requests a switch to a page (page keys match <c>MainWindow.PageKeys</c>). Subscribed by the
     /// main window. Dialogs can't reference the main window directly, so jumps like "go to the
@@ -254,7 +270,6 @@ public sealed partial class HubWorkspace : IDisposable
     public ProjectEntry? SelectedProject { get; set; }
     public EngineEntry? SelectedEngine { get; set; }
     public EngineEntry? ToolchainEngine { get; set; }
-    public AndroidDevice? SelectedDevice { get; set; }
 
     /// <summary>The default location in the new-project panel. The WPF version is <c>ProjectLocation.Text</c>.</summary>
     public string ProjectDirectory { get; set; }
@@ -293,7 +308,6 @@ public sealed partial class HubWorkspace : IDisposable
 
     public string HostShellMethodKey(HostShellMethod method) => _hostShellInstaller.MethodKey(method);
 
-    public IReadOnlyList<AndroidDevice> Devices { get; private set; } = [];
     public string LastError { get; private set; } = "";
     /// <summary>Whether Hub's task queue is running a change. Assistant operations are independent: the user
     /// decides whether parallel work conflicts, rather than an application-wide busy flag vetoing it.</summary>
@@ -697,36 +711,13 @@ public sealed partial class HubWorkspace : IDisposable
         ToolchainEngine = State.Engines.FirstOrDefault(e => moduleEngine is not null && e.Path == moduleEngine.Path)
                        ?? SelectedEngine;
 
-        SyncProjectTarget();
         UpdateTargetHint();
-        UpdateDevicePicker();
         Changed?.Invoke();
     }
 
-    /// <summary>The "recent build platform" card at the top of the projects page. In WPF it's maintained by <c>SyncProjectTarget</c>.</summary>
+    /// <summary>The selected project's most recent build target.</summary>
     public BuildTarget? ProjectTarget =>
         SelectedProject is { } project ? BuildTargets.Get(project.Platform) : null;
-
-    private void SyncProjectTarget()
-    {
-        if (!_targetReady)
-        {
-            return;
-        }
-
-        _targetReady = false;
-        var project = SelectedProject;
-        if (project is not null)
-        {
-            if (project.Path + "|" + project.Platform != _deviceProject)
-            {
-                _deviceProject = project.Path + "|" + project.Platform;
-                Devices = [];
-            }
-        }
-
-        _targetReady = true;
-    }
 
     private void UpdateTargetHint()
     {
@@ -1514,7 +1505,8 @@ public sealed partial class HubWorkspace : IDisposable
     /// window" into an error dialog. Two things stay Hub's own failures: the process that never came up, and
     /// the one that died on contact.
     /// </summary>
-    public async Task RunAsync(ProjectEntry? requested = null)
+    public async Task RunAsync(ProjectEntry? requested = null,
+        Func<IReadOnlyList<AndroidDevice>, Task<AndroidDevice?>>? pickAndroidDevice = null)
     {
         if (_webPreview is not null && (requested is null || PathEquals(_webPreviewProjectPath, requested.Path)))
         {
@@ -1522,6 +1514,9 @@ public sealed partial class HubWorkspace : IDisposable
             return;
         }
 
+        var ownsAndroidRun = false;
+        string? androidOutcome = null;
+        var androidFailed = false;
         try
         {
             var project = requested ?? RequiredProject();
@@ -1534,18 +1529,51 @@ public sealed partial class HubWorkspace : IDisposable
             }
 
             var family = BuildTargets.Get(project.Platform).Family;
+            var engine = RequiredEngine(project);
+            string? androidSerial = null;
+            string? androidDeviceName = null;
             if (family == "windows")
             {
                 UpdateTools(await DetectAsync(CancellationToken.None));
             }
-            else if (family == "android" && SelectedDevice?.State != "device")
+            else if (family == "android")
             {
-                throw new InvalidOperationException(HubStrings.Get("SelectAndroidDevice"));
+                if (_androidRunPending || RefuseIfBusy()) return;
+                _androidRunPending = ownsAndroidRun = true;
+                SetAndroidRunState(project.Path, "AndroidRunDetecting");
+                SetStatus(HubStrings.Get("AndroidRunDetectingStatus"));
+                var devices = await QueryAndroidDevicesAsync(engine, CancellationToken.None);
+                var available = devices.Where(device => device.State == "device").ToArray();
+                if (available.Length == 0)
+                {
+                    var detail = devices.Count == 0 ? HubStrings.Get("AndroidNoDevices")
+                        : string.Join("\n", devices.Select(device => device.Serial + " · " + HubStrings.Get(device.State)));
+                    throw new InvalidOperationException(detail + "\n\n" + HubStrings.Get("AndroidDeviceHint"));
+                }
+
+                AndroidDevice? chosen;
+                if (available.Length == 1) chosen = available[0];
+                else if (pickAndroidDevice is not null)
+                {
+                    SetAndroidRunState(project.Path, "AndroidRunChoosing");
+                    SetStatus(HubStrings.Get("AndroidRunChoosingStatus"));
+                    chosen = await pickAndroidDevice(devices);
+                }
+                else throw new InvalidOperationException(HubStrings.Get("SelectAndroidDevice"));
+                if (chosen is null)
+                {
+                    androidOutcome = HubStrings.Get("AndroidRunCancelled");
+                    return;
+                }
+                if (!available.Any(device => device.Serial == chosen.Serial))
+                    throw new InvalidOperationException(HubStrings.Get("SelectAndroidDevice"));
+                androidSerial = chosen.Serial;
+                androidDeviceName = chosen.DisplayName;
+                Log.Write("Android run device: " + androidSerial);
             }
 
             project.LastOpened = DateTimeOffset.Now;
             Store.Save(State);
-            var engine = RequiredEngine(project);
 
             if (family == "windows")
             {
@@ -1566,20 +1594,50 @@ public sealed partial class HubWorkspace : IDisposable
             // Every other target goes through the engine's own command, and that one is awaited: for a deploy,
             // the command returning is the answer rather than the app exiting, so the exit code still means
             // something Hub can act on.
+            var launchRequested = false;
+            var launchStarted = false;
             await ExecuteAsync("Run project", async token =>
             {
-                var result = await _projects.RunAsync(project, engine, token, SelectedDevice?.Serial);
+                launchStarted = true;
+                if (ownsAndroidRun)
+                {
+                    SetAndroidRunState(project.Path, "AndroidRunStarting");
+                    SetStatus(string.Format(HubStrings.Get("AndroidRunStartingStatus"), project.Name, androidDeviceName));
+                }
+                var result = await _projects.RunAsync(project, engine, token, androidSerial);
                 if (result.ExitCode != 0)
                 {
                     throw new InvalidOperationException($"Game exited with code {result.ExitCode}.");
                 }
+                launchRequested = true;
             });
+            if (ownsAndroidRun && launchStarted)
+            {
+                androidFailed = !launchRequested && LastError.Length > 0;
+                androidOutcome = launchRequested
+                    ? string.Format(HubStrings.Get("AndroidRunRequested"), androidDeviceName)
+                    : HubStrings.Get(androidFailed ? "AndroidRunFailed" : "AndroidRunCancelled");
+            }
         }
         catch (Exception ex)
         {
             // Not on the gate, so nothing upstream catches this: the launch path has to be as loud as the
             // operations that still run under it.
+            if (ownsAndroidRun)
+            {
+                androidFailed = true;
+                androidOutcome = HubStrings.Get("AndroidRunFailed");
+            }
             await ReportFailureAsync(ex);
+        }
+        finally
+        {
+            if (ownsAndroidRun)
+            {
+                _androidRunPending = false;
+                SetAndroidRunState(null, null);
+                if (androidOutcome is not null) ShowAndroidRunOutcome(androidOutcome, temporary: !androidFailed);
+            }
         }
     }
 
@@ -2112,31 +2170,8 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Android devices ─────────────────────────
 
-    private void UpdateDevicePicker()
-    {
-        SelectedDevice = Devices.FirstOrDefault(device => SelectedDevice is not null && device.Serial == SelectedDevice.Serial)
-                         ?? Devices.FirstOrDefault(device => device.State == "device");
-        DevicesChanged?.Invoke();
-    }
-
-    public async Task QueryDevicesAsync()
-    {
-        await ExecuteAsync("Refresh Android devices", async token =>
-        {
-            var project = RequiredProject();
-            var target = BuildTargets.Get(project.Platform);
-            if (target.Family != "android")
-            {
-                throw new InvalidOperationException("Select an Android project.");
-            }
-
-            var deviceEngine = RequiredEngine(project);
-            var environment = _platformBuilds.CreateEnvironment(deviceEngine, target);
-            Devices = await new AndroidDeviceService(_runner, EngineTools(deviceEngine)).DevicesAsync(environment, token);
-            _deviceProject = project.Path + "|" + project.Platform;
-            UpdateDevicePicker();
-        });
-    }
+    private Task<IReadOnlyList<AndroidDevice>> QueryAndroidDevicesAsync(EngineEntry engine, CancellationToken token)
+        => new AndroidDeviceService(_runner, engine).DevicesAsync(cancellation: token);
 
     // ───────────────────────── Settings ─────────────────────────
 

@@ -270,8 +270,8 @@ public sealed class EngineToolchain(ProcessRunner runner)
 
     /// <summary>
     /// SDK root resolution order matches the engine: <c>android_sdk_root</c> in <c>1k/.env</c> → <c>ANDROID_HOME</c>
-    /// → <c>ANDROID_SDK_ROOT</c> → <c>&lt;prefix&gt;/android-sdk</c> → <c>&lt;prefix&gt;/adt/sdk</c>
-    /// (the last one counts as a legacy layout; the engine's next setup migrates it to <c>android-sdk</c>).
+    /// → <c>ANDROID_SDK_ROOT</c> → the engine version's default layout:
+    /// <c>&lt;prefix&gt;/adt/sdk</c> for v2, <c>&lt;prefix&gt;/android-sdk</c> for v3 and later.
     /// </summary>
     public static string ResolveAndroidSdkRoot(EngineEntry engine)
     {
@@ -283,8 +283,9 @@ public sealed class EngineToolchain(ProcessRunner runner)
         }
 
         var root = ToolRoot(engine);
-        var modern = Path.Combine(root, "android-sdk");
-        return Directory.Exists(modern) ? modern : Path.Combine(root, "adt", "sdk");
+        var majorText = engine.Version.Split('.')[0];
+        return int.TryParse(majorText, out var major) && major >= 3
+            ? Path.Combine(root, "android-sdk") : Path.Combine(root, "adt", "sdk");
     }
 
     private static string? ReadAndroidSdkFromEnvFile(EngineEntry engine)
