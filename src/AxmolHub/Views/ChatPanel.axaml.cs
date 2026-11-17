@@ -1287,9 +1287,8 @@ public partial class ChatPanel : UserControl
     /// <summary>
     /// Pick a directory, clear it while one is bound, and take back a grant. The bound path is not repeated as a
     /// row: the chip reads it out and the tooltip gives it in full, so a third copy would be chrome saying a thing
-    /// twice. A granted directory is repeated, because the row is the only way to revoke it — each item names the
-    /// folder and carries the whole path as its tooltip, so two grants with the same folder name are still two
-    /// different buttons.
+    /// twice. Grants live in directory and file submenus; each revoke item names the target and carries the whole
+    /// path as its tooltip, so two grants with the same name are still two different buttons.
     /// </summary>
     private MenuFlyout BuildWorkspaceMenu()
     {
@@ -1327,29 +1326,23 @@ public partial class ChatPanel : UserControl
         var readOnly = _chat.ActiveReadOnlyRoots;
         if (granted.Count > 0 || readOnly.Count > 0)
         {
-            menu.Items.Add(new MenuItem
-            {
-                Header = HubStrings.Get("ChatWorkspaceGrantedMenu"),
-                IsEnabled = false,
-            });
-            AddRevokeRows(granted, readOnly: false);
-            // The read-only ones sit under the same heading and say what they are, because "revoke access to logs"
+            var directoriesMenu = new MenuItem { Header = HubStrings.Get("ChatWorkspaceGrantedMenu") };
+            menu.Items.Add(directoriesMenu);
+            AddRevokeRows(directoriesMenu, granted, readOnly: false);
+            // The read-only ones sit in the same submenu and say what they are, because "revoke access to logs"
             // and "revoke access to logs, read-only" are answers to two different questions — and the row is still
             // the only way to take either back.
-            AddRevokeRows(readOnly, readOnly: true);
+            AddRevokeRows(directoriesMenu, readOnly, readOnly: true);
         }
 
-        // The single files: another heading, because the row here takes back one path and not a folder. Nothing
+        // The single files: another submenu, because the row here takes back one path and not a folder. Nothing
         // else on the menu can name such a grant, so without these the assistant holds a permission the person
         // can see in the tooltip and never take back.
         var files = _chat.ActiveGrantedFiles;
         if (files.Count > 0)
         {
-            menu.Items.Add(new MenuItem
-            {
-                Header = HubStrings.Get("ChatWorkspaceGrantedFilesMenu"),
-                IsEnabled = false,
-            });
+            var filesMenu = new MenuItem { Header = HubStrings.Get("ChatWorkspaceGrantedFilesMenu") };
+            menu.Items.Add(filesMenu);
             foreach (var file in files)
             {
                 var target = file.Path;
@@ -1370,13 +1363,13 @@ public partial class ChatPanel : UserControl
                     if (_chat.RevokeGrantedFile(session.Id, target))
                         AppendNotice(HubStrings.Get("ChatWorkspaceFileRevoked"), danger: false);
                 };
-                menu.Items.Add(revokeFile);
+                filesMenu.Items.Add(revokeFile);
             }
         }
 
         return menu;
 
-        void AddRevokeRows(IReadOnlyList<string> directories, bool readOnly)
+        void AddRevokeRows(MenuItem parent, IReadOnlyList<string> directories, bool readOnly)
         {
             foreach (var directory in directories)
             {
@@ -1396,7 +1389,7 @@ public partial class ChatPanel : UserControl
                     if (_chat.RevokeGrantedRoot(session.Id, target))
                         AppendNotice(HubStrings.Get("ChatWorkspaceRevoked"), danger: false);
                 };
-                menu.Items.Add(revoke);
+                parent.Items.Add(revoke);
             }
         }
     }

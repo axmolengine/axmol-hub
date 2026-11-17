@@ -1606,10 +1606,10 @@ internal sealed class ShellSessionsChecks
                   && chat.ActiveReadOnlyRoots.Contains(protectedFolder, StringComparer.Ordinal)
                   && chat.ActiveGrantedRoots.Count == 0
                   && panel.WorkspaceChipHintForCheck.Contains(readOnlyHint, StringComparison.Ordinal)
-                  && panel.WorkspaceMenuTitlesForCheck.Contains(readOnlyRevoke, StringComparer.Ordinal),
+                  && panel.WorkspaceGrantedDirectoryMenuTitlesForCheck.Contains(readOnlyRevoke, StringComparer.Ordinal),
                 "受保护目录从菜单这扇门落成只读授权，胶囊提示与撤销行都写明只读（实际「"
                 + panel.WorkspaceChipHintForCheck.Replace('\n', '·') + "」/ "
-                + string.Join(" / ", panel.WorkspaceMenuTitlesForCheck) + "）");
+                + string.Join(" / ", panel.WorkspaceGrantedDirectoryMenuTitlesForCheck) + "）");
             Check(chat.RevokeGrantedRoot(session.Id, protectedFolder) && chat.ActiveReadOnlyRoots.Count == 0,
                 "只读授权由它自己的撤销行拿回，助手随即读不到那个目录");
 

@@ -1311,6 +1311,10 @@ public partial class ChatPanel : UserControl
 
     internal string[] WorkspaceMenuTitlesForCheck => BuildWorkspaceMenu().Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray();
 
+    internal string[] WorkspaceGrantedDirectoryMenuTitlesForCheck => BuildWorkspaceMenu().Items.OfType<MenuItem>()
+        .FirstOrDefault(item => MenuItemTitle(item) == HubStrings.Get("ChatWorkspaceGrantedMenu"))?
+        .Items.OfType<MenuItem>().Select(MenuItemTitle).ToArray() ?? [];
+
     internal Control? OpenWorkspaceMenuForCheck()
     {
         ShowWorkspaceMenu();
