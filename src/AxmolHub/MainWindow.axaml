@@ -186,7 +186,7 @@
       <Setter Property="StrokeJoin" Value="Round" />
     </Style>
 
-    <!-- Ghost icon buttons: the status-strip log chevron and (with Button.titlebar's tighter plate) the two
+    <!-- Ghost icon buttons: the status-strip log controls and (with Button.titlebar's tighter plate) the two
          title-bar drawers. Both sit in a fixed-height row, so without the centering they stretch to that row's
          height and the hover plate becomes a tall rectangle around a square icon. -->
     <Style Selector="Button.icon-ghost">
@@ -265,8 +265,7 @@
 
     <!-- Small quiet buttons in the status strip. One plate height for every one of them: the strip is 28 tall
          and its buttons are a row of plates beside each other, so a text plate and the log chevron beside it
-         have to be the same thickness or the chevron reads as a bigger control than the word next to it. A floor
-         rather than a fixed height, because the log drawer's own 「…」 plate sets a taller vertical padding. -->
+         have to be the same thickness or the chevron reads as a bigger control than the word next to it. -->
     <Style Selector="Button.strip">
       <Setter Property="MinHeight" Value="22" />
       <Setter Property="Background" Value="Transparent" />
@@ -1095,7 +1094,7 @@
 
       <!-- Slim status strip. -->
       <Grid x:Name="StatusStrip" Grid.Row="1" Height="28" Margin="18,0,18,0"
-            ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+            ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
         <Ellipse Grid.Column="0" Width="6" Height="6"
                  Fill="{DynamicResource Hub.Success}"
                  VerticalAlignment="Center" />
@@ -1134,15 +1133,24 @@
                    Foreground="{DynamicResource Hub.TextSecondary}"
                    FontSize="11" Margin="8,0,0,0"
                    VerticalAlignment="Center" />
+        <Button x:Name="LogActionsButton" Grid.Column="6" Classes="icon-ghost"
+                Width="22" Height="22" MinWidth="0" MinHeight="0"
+                Margin="6,0,0,0" Padding="0">
+          <StackPanel Orientation="Horizontal" Spacing="3">
+            <Ellipse Width="2" Height="2" Fill="{DynamicResource Hub.TextSecondary}" />
+            <Ellipse Width="2" Height="2" Fill="{DynamicResource Hub.TextSecondary}" />
+            <Ellipse Width="2" Height="2" Fill="{DynamicResource Hub.TextSecondary}" />
+          </StackPanel>
+        </Button>
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
-                Grid.Column="6" Classes="strip"
+                Grid.Column="7" Classes="strip"
                 IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
         <!-- The log drawer's chevron. It is drawn at 1:1 in a box the size of its own ink rather than scaled
              into a square slot: a stretched Path pins the scaled ink to its slot's top-left, which is what left
              this triangle high and left of its hover plate. The geometry starts at 0,0 and fills 11x6 exactly,
              so the box *is* the ink, layout centres that box in the 22x22 plate, and the 180-degree flip for the
              open state turns about the ink's own centre. -->
-        <Button x:Name="LogToggle" Grid.Column="7" Classes="icon-ghost"
+        <Button x:Name="LogToggle" Grid.Column="8" Classes="icon-ghost"
                 Width="22" Height="22" MinWidth="0" MinHeight="0"
                 Margin="0" Padding="0" VerticalAlignment="Center" HorizontalAlignment="Center">
           <Path x:Name="LogToggleChevron" Classes="stroked"
@@ -1158,25 +1166,13 @@
 
       <!-- Log body, shown by the strip chevron or auto-expanded on failure. -->
       <Border x:Name="LogBody" Grid.Row="3" IsVisible="False"
-              Margin="18,0,18,10"
-              BorderBrush="{DynamicResource Hub.Border}"
-              BorderThickness="1" CornerRadius="6"
-              Background="{DynamicResource Hub.SurfaceAlt}" Padding="12,8">
-        <Grid x:Name="LogContent" Height="190" Margin="0,6,0,0" RowDefinitions="Auto,*">
-          <!-- Named, and named with the copy key that existed before anything read it: the drawer is where a
-               task row's 看日志 lands, so it has to say what it holds. -->
-          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-            <TextBlock Grid.Column="0" x:Name="LogTitleText" Text="{DynamicResource LogTitle}"
-                       FontSize="12" VerticalAlignment="Center"
-                       Foreground="{DynamicResource Hub.TextSecondary}" />
-            <Button Grid.Column="1" x:Name="LogActionsButton" Content="⋯"
-                    Classes="strip" Padding="10,4" />
-          </Grid>
+              Margin="18,0,18,10" ClipToBounds="True">
+        <Grid x:Name="LogContent" Height="190">
           <!-- The band is the reading surface's token rather than the base TextBox's opaque Hub.Accent: the log
                is read beside the conversation, so selecting in it has to paint what selecting in a turn paints,
                not the platform's own blue. Its ink stays the log's ink for the same reason the chat's does — a
                translucent band with the theme's white SelectionForeground is unreadable on the light variant. -->
-          <TextBox Grid.Row="1" x:Name="ActivityLog" Classes="mono"
+          <TextBox x:Name="ActivityLog" Classes="mono"
                    VerticalContentAlignment="Top"
                    SelectionBrush="{DynamicResource Hub.Selection}"
                    SelectionForegroundBrush="{DynamicResource Hub.TextPrimary}"

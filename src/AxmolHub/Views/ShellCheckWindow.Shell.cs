@@ -1601,11 +1601,9 @@ internal sealed class ShellLayoutChecks
                   .Contains(HubTexts.Get("BuildPackaging", HubStrings.Language), StringComparison.Ordinal),
             "别人的日志推动不了这一行（行上仍是 " + shell.TaskRowTitleForCheck(ownIdentity) + "）");
 
-        // The row's own answer for where the detail is: a change offers the press into the drawer, and the
-        // drawer says what it holds now that the window that used to hold it is gone.
-        Check(shell.TaskRowActionsForCheck.Contains(HubTexts.Get("TaskLogAction", HubStrings.Language), StringComparison.Ordinal)
-              && shell.LogTitleForCheck == HubTexts.Get("LogTitle", HubStrings.Language),
-            "变更的那一行给看日志，抽屉带着它自己的标题（实际 " + shell.LogTitleForCheck + "）");
+        // A change offers the action into the shared log drawer.
+        Check(shell.TaskRowActionsForCheck.Contains(HubTexts.Get("TaskLogAction", HubStrings.Language), StringComparison.Ordinal),
+            "变更的那一行给看日志（实际 " + shell.TaskRowActionsForCheck + "）");
         shell.CloseTaskPopupForCheck();
 
         // --- 5.1e Two gates over one list, and the one cancel with two entrances ---

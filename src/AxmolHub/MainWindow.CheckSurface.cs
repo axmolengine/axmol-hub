@@ -476,9 +476,6 @@ public partial class MainWindow
     /// not become a rectangle, and neither is visible in an assertion that only reads strings.</summary>
     internal double StatusStripHeightForCheck => StatusStrip.Bounds.Height;
     internal (double Width, double Height) LogTogglePlateForCheck => (LogToggle.Bounds.Width, LogToggle.Bounds.Height);
-    /// <summary>The drawer's own caption. A task row points here, so the surface it lands on has to say what
-    /// it holds rather than leaving the text at the top of a box.</summary>
-    internal string LogTitleForCheck => LogTitleText.Text ?? "";
     internal double StatusWidthForCheck => Status.Bounds.Width;
 
     /// <summary>Forces the desktop half of <see cref = "AttentionNow"/> for the self-check; <c>null</c> hands the

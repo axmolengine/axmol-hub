@@ -433,7 +433,6 @@ public static class HubTexts
         ["EditorFollowDefault"] = ("跟随全局默认", "Follow the global default"),
         ["DefaultEngine"] = ("默认引擎", "Default engine"),
         ["NoDefault"] = ("尚未安装引擎", "No engine installed"),
-        ["LogTitle"] = ("活动与日志", "Activity and output"),
         ["LogActions"] = ("日志操作", "Log actions"),
         ["CopyError"] = ("复制错误", "Copy error"),
         ["CopyCode"] = ("复制代码", "Copy code"),
