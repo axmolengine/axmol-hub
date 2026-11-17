@@ -89,7 +89,7 @@ internal static class Program
         App.Options = HubHostOptions.Parse(args);
         if (!App.Options.IsAutomation && !App.Options.IsDrive)
         {
-            App.Activations = DeepLinkActivationBroker.Start(HubHostOptions.DeepLinkArgument(args));
+            App.Activations = DeepLinkActivationBroker.Start(HubHostOptions.ActivationArgument(args));
             if (App.Activations.IsSecondaryInstance)
             {
                 App.Activations.Dispose();

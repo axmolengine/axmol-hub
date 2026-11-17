@@ -2318,14 +2318,14 @@ internal sealed partial class ShellDecisionsChecks
             Check(chat.ViewedConversationId == viewed && shell.AssistantVisible,
                 "裸唤起同样消费待处理会话：窗口回到助手页并选中该会话（实际 " + chat.ViewedConversationId + "）");
             shell.AttentionForCheck.RememberActivationTarget(background, DateTimeOffset.UtcNow);
-            await shell.HandleInstallLinkAsync(deepLink);
+            await shell.HandleActivationAsync(deepLink);
             Dispatcher.UIThread.RunJobs();
             shell.ActivateFromRequest();
             Dispatcher.UIThread.RunJobs();
             Check(chat.ViewedConversationId == viewed,
                 "带 id 的深链到达时清掉待消费的会话，避免稍后普通唤起跳到旧会话（实际 " + chat.ViewedConversationId + "）");
 
-            await shell.HandleInstallLinkAsync(deepLink);
+            await shell.HandleActivationAsync(deepLink);
             panel.Reload();
             shell.UpdateLayout();
             Dispatcher.UIThread.RunJobs();

@@ -21,6 +21,9 @@ public static class HubStrings
 
     public static string Get(string key) => HubTexts.Get(key, Language);
 
+    public static string EditorName(EditorBinding binding)
+        => binding.Preset.Id == CodeEditors.BuiltInId ? Get("BuiltInEditor") : binding.Preset.DisplayName;
+
     /// <summary>
     /// Must be called before any window is constructed: <c>DynamicResource</c> resolves by key on
     /// demand, and loading copy after the window is built would leave a batch of labels resolved to

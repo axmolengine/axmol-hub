@@ -298,7 +298,7 @@ public partial class MainWindow : Window
         return true;
     }
 
-    internal async Task HandleInstallLinkAsync(string value)
+    internal async Task HandleActivationAsync(string value)
     {
         if (_relocatingData)
         {
@@ -314,6 +314,22 @@ public partial class MainWindow : Window
         if (SystemAttentionService.TryGetConversationId(value, out var conversationId))
         {
             OpenConversationFromAttention(conversationId);
+            return;
+        }
+
+        if (HubHostOptions.WorkspacePathArgument(value) is { } path)
+        {
+            ActivateFromRequest();
+            try
+            {
+                if (OpenWorkspaceFolder(path) is { } verdict)
+                    ShowFeedback(UserFeedback.Warning(WorkspaceRejectionMessage(verdict, path), "open-workspace"));
+            }
+            catch (Exception ex)
+            {
+                _workspace.Log.Write("Workspace activation failed: " + ex.Message);
+                ShowFeedback(UserFeedback.Warning(ex.Message, "open-workspace"));
+            }
             return;
         }
 
@@ -2078,6 +2094,11 @@ public partial class MainWindow : Window
         // is a change to stop. The gate answers a refused press with a sentence instead of grey.
 
         _workspace.Failed += () => ShowLog(true);
+        _workspace.OpenWorkspaceRequested = path =>
+        {
+            if (OpenWorkspaceFolder(path) is { } verdict)
+                throw new InvalidOperationException(WorkspaceRejectionMessage(verdict, path));
+        };
 
         // Dialogs (e.g. "prebuilt library settings") can't reference the main window directly, so
         // page navigation is forwarded here through the workspace.

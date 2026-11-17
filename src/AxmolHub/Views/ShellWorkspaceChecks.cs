@@ -112,9 +112,19 @@ internal sealed partial class ShellDecisionsChecks
         var alternateRoot = Path.Combine(root, "other-workspace");
         Directory.CreateDirectory(alternateRoot);
         var originalConversation = shell.Chat.ActiveConversation!;
-        var switched = shell.OpenWorkspaceFolder(alternateRoot) is null;
+        // Exercise the same activation entry point used by macOS open -a and executable editor launches.
+        await shell.HandleActivationAsync(new Uri(alternateRoot + Path.DirectorySeparatorChar).AbsoluteUri);
+        var switched = shell.Chat.ActiveWorkspaceRoot == alternateRoot;
         var alternateConversation = shell.Chat.ActiveConversation!;
-        var reopened = shell.OpenWorkspaceFolder(root) is null;
+        Directory.CreateDirectory(Path.Combine(root, "proj.android"));
+        var project = new ProjectEntry { Path = root, Platform = "android-arm64",
+            CodeEditor = new CodeEditor(CodeEditors.BuiltInId, "") };
+        await shell.Workspace.OpenEditorAsync(requested: project);
+        var reopened = shell.Chat.ActiveWorkspaceRoot == root && project.LastOpened is not null;
+        var conversationCount = shell.Chat.Conversations.Count;
+        await shell.HandleActivationAsync(HubHostOptions.ActivationArgument([root])!);
+        reopened &= shell.Chat.Conversations.Count == conversationCount
+            && HubHostOptions.ActivationArgument(["--data-root", alternateRoot]) is null;
         var retained = switched && reopened && ReferenceEquals(view.SelectedContentForCheck, editor)
             && editor.EditorForCheck.Text == buffer && editor.IsDirty && editor.EditorForCheck.CanUndo
             && view.TreeVisibleForCheck && shell.Chat.ActiveConversation?.Id == originalConversation.Id

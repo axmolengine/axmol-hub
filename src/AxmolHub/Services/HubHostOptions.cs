@@ -60,8 +60,18 @@ internal sealed record HubHostOptions(
 
     public static string DefaultDataRoot => HubStorageLayout.DefaultDataRoot;
 
-    public static string? DeepLinkArgument(string[] args)
-        => args.FirstOrDefault(argument => argument.StartsWith(EngineInstallLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
+    public static string? ActivationArgument(string[] args)
+        => args.FirstOrDefault(argument => argument.StartsWith(EngineInstallLink.Scheme + ":", StringComparison.OrdinalIgnoreCase))
+            ?? (args.Length == 1 && WorkspacePathArgument(args[0]) is not null ? args[0] : null);
+
+    /// <summary>Launch Services sends file URLs; executable editors receive a positional directory path.
+    /// Do not interpret option values (such as --data-root) or arbitrary web URLs as workspace opens.</summary>
+    internal static string? WorkspacePathArgument(string value)
+    {
+        if (Path.IsPathFullyQualified(value)) return value;
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile
+            ? Path.TrimEndingDirectorySeparator(uri.LocalPath) : null;
+    }
 
     /// <summary>
     /// Three-tier data-root priority: command line &gt; settings file &gt; default directory (same as

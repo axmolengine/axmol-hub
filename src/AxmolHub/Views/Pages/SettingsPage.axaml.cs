@@ -946,7 +946,7 @@ public partial class SettingsPage : UserControl
         var selected = saved ?? rows.FirstOrDefault();
         foreach (var binding in rows)
         {
-            var item = new ComboBoxItem { Content = binding.Preset.DisplayName, Tag = new CodeEditor(binding.Preset.Id, binding.Path) };
+            var item = new ComboBoxItem { Content = HubStrings.EditorName(binding), Tag = new CodeEditor(binding.Preset.Id, binding.Path) };
             EditorPicker.Items.Add(item);
             if (selected is not null && string.Equals(binding.Path, selected.Path, StringComparison.Ordinal))
             {
@@ -954,7 +954,8 @@ public partial class SettingsPage : UserControl
             }
         }
 
-        EditorLocation.Text = selected?.Path ?? HubStrings.Get("NoEditorFound");
+        EditorLocation.Text = selected?.Preset.Id == CodeEditors.BuiltInId ? HubStrings.Get("BuiltInEditorLocation")
+            : selected?.Path ?? HubStrings.Get("NoEditorFound");
     }
 
     private async void OnEditorChanged()
@@ -985,7 +986,9 @@ public partial class SettingsPage : UserControl
 
         if (selected)
         {
-            EditorLocation.Text = CodeEditors.Bind(editor)?.Path ?? editor.Path;
+            var binding = CodeEditors.Bind(editor);
+            EditorLocation.Text = binding?.Preset.Id == CodeEditors.BuiltInId ? HubStrings.Get("BuiltInEditorLocation")
+                : binding?.Path ?? editor.Path;
             return;
         }
 

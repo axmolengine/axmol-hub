@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Xml.Linq;
 
 namespace AxmolHub.Core;
 
@@ -77,6 +78,30 @@ public static class CodeEditors
 {
     /// <summary>The id a hand-picked application is saved under.</summary>
     public const string CustomId = "custom";
+
+    public const string BuiltInId = "axmol-hub";
+    public static EditorBinding BuiltIn { get; } = new(new(BuiltInId, "Axmol Hub"), "");
+
+    /// <summary>Identify old custom selections by application metadata, never the displayed file name.</summary>
+    private static bool IsHubApplication(string path)
+    {
+        try
+        {
+            if (ApplicationBundle(path) is { } bundle)
+            {
+                var entries = XDocument.Load(Path.Combine(bundle, "Contents", "Info.plist"))
+                    .Root?.Element("dict")?.Elements().ToArray() ?? [];
+                return entries.Zip(entries.Skip(1)).Any(pair => pair.First.Name == "key"
+                    && pair.First.Value == "CFBundleIdentifier" && pair.Second.Value == "dev.axmol.hub");
+            }
+            var version = FileVersionInfo.GetVersionInfo(path);
+            return version.ProductName == "Axmol Hub" && version.OriginalFilename == "AxmolHub.dll";
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     private static readonly IReadOnlyList<EditorProbe> None = [];
 
@@ -162,11 +187,14 @@ public static class CodeEditors
                 // listing would offer); the catalog's row wins because it carries the product's name.
                 if (found.All(binding => !string.Equals(binding.Path, bundle, StringComparison.Ordinal)))
                 {
-                    found.Add(new EditorBinding(EditorPreset.Custom(bundle), bundle));
+                    if (!IsHubApplication(bundle))
+                        found.Add(new EditorBinding(EditorPreset.Custom(bundle), bundle));
                 }
             }
         }
 
+        // Keep existing external-editor fallback order; Hub is always available even on a fresh machine.
+        found.Add(BuiltIn);
         return found;
     }
 
@@ -218,7 +246,9 @@ public static class CodeEditors
             return null;
         }
 
+        if (editor.Id == BuiltInId) return BuiltIn;
         var path = ApplicationBundle(editor.Path) ?? editor.Path;
+        if (IsHubApplication(path)) return BuiltIn;
         return Accepts(path) ? new EditorBinding(Preset(editor), path) : null;
     }
 
@@ -294,7 +324,7 @@ public static class CodeEditors
             return global;
         }
 
-        return detected.FirstOrDefault(binding => Accepts(binding.Path));
+        return detected.FirstOrDefault(binding => binding.Preset.Id == BuiltInId || Accepts(binding.Path));
     }
 
     private static IReadOnlyList<EditorProbe> Probes(EditorSource source)

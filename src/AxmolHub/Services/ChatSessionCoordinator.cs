@@ -408,6 +408,7 @@ internal sealed partial class ChatSessionCoordinator
 
     internal Conversation StartConversation(string? providerId = null)
     {
+        RememberWorkspaceConversation();
         // A permission mode picked while nothing was on screen was meant for the session started right then, so
         // it is taken only from that state: a session started from a live one follows the app default again.
         var approvalMode = _active is null ? _selectedApprovalMode : null;
@@ -517,11 +518,34 @@ internal sealed partial class ChatSessionCoordinator
         return (StartDraftIn(full), null);
     }
 
+    private readonly Dictionary<string, string> _workspaceConversations = new(StringComparer.Ordinal);
+
+    private void RememberWorkspaceConversation()
+    {
+        if (_active is { } active && SessionGroupKey.Workspace(active.WorkspaceRoot) is { } key)
+            _workspaceConversations[key] = active.Id;
+    }
+
+    internal (Conversation? Conversation, WorkspacePathVerdict? Verdict) OpenWorkspaceConversation(string workspaceRoot)
+    {
+        var (verdict, full) = ValidateWorkspacePath(workspaceRoot);
+        if (verdict is not null) return (null, verdict);
+        RememberWorkspaceConversation();
+        var key = SessionGroupKey.Workspace(full)!;
+        var candidates = _sessions.List().Where(summary => !summary.Archived
+            && SessionGroupKey.Workspace(summary.WorkspaceRoot) == key).ToArray();
+        var recent = candidates.FirstOrDefault(summary => summary.Id == _workspaceConversations.GetValueOrDefault(key))
+            ?? candidates.OrderByDescending(summary => summary.UpdatedAt).FirstOrDefault();
+        if (recent is null) return (StartDraftIn(full), null);
+        return (_active?.Id == recent.Id ? _active : OpenConversation(recent.Id), null);
+    }
+
     internal (double Milliseconds, bool CameFromCache) LastSessionLoad { get; private set; }
     internal SessionOpenMeasurement? CurrentSessionOpen { get; private set; }
 
     internal Conversation? OpenConversation(string id)
     {
+        RememberWorkspaceConversation();
         var measurement = new SessionOpenMeasurement(id, "OpenConversation");
         CurrentSessionOpen = measurement;
         // The registry hands back the one instance, so opening a session that is streaming does not swap in a

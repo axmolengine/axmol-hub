@@ -600,7 +600,7 @@ internal sealed class ShellLayoutChecks
         projects.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         var rowActions = projects.GetVisualDescendants().OfType<Button>().Where(button => button.Classes.Contains("project-row-action")).ToArray();
-        Check(rowActions.Length >= 8 && rowActions.Count(button => button.Tag is ProjectEntry entry && entry == projectB) >= 4 && rowActions.Where(button => button.Tag is ProjectEntry).All(button => button.Content is not null), "项目行在键盘选择后显示打开/构建/运行/更多动作且带无障碍名称");
+        Check(rowActions.Length >= 6 && rowActions.Count(button => button.Tag is ProjectEntry entry && entry == projectB) == 3 && rowActions.Where(button => button.Tag is ProjectEntry).All(button => button.Content is not null), "项目行在键盘选择后只显示构建/运行/更多动作，编辑器入口收在菜单里");
         projects.SearchForCheck.Text = "FIXTURE-PROJECT-ALPHA";
         // The rows are read after the dispatcher pass that applies the filter: the box raises its change event
         // there rather than inside the setter, and the read before it would see the unfiltered list. Same
@@ -913,8 +913,15 @@ internal sealed class ShellLayoutChecks
         var byFallback = CodeEditors.Resolve(editorProject, editorDetected, editorState);
         editorState.CodeEditor = null;
         var byDetection = CodeEditors.Resolve(editorProject, editorDetected, editorState);
+        var oldHubBundle = Path.Combine(scratchRoot, "Renamed Hub.app");
+        Directory.CreateDirectory(Path.Combine(oldHubBundle, "Contents"));
+        File.WriteAllText(Path.Combine(oldHubBundle, "Contents", "Info.plist"),
+            "<plist><dict><key>CFBundleIdentifier</key><string>dev.axmol.hub</string></dict></plist>\n");
+        editorState.CodeEditor = new CodeEditor(CodeEditors.BuiltInId, "");
         Check(byDefault?.Path == globalPath && byProject?.Path == projectPath && byFallback?.Path == globalPath
-              && byDetection?.Path == detectedPath,
+              && byDetection?.Path == detectedPath
+              && CodeEditors.Resolve(editorProject, editorDetected, editorState) == CodeEditors.BuiltIn
+              && CodeEditors.Bind(new CodeEditor(CodeEditors.CustomId, oldHubBundle)) == CodeEditors.BuiltIn,
             "编辑器解析顺序：项目自身 → 全局默认 → 探测结果，项目路径失效时回落（实际 "
             + byDefault?.Path + " / " + byProject?.Path + " / " + byFallback?.Path + " / " + byDetection?.Path + "）");
 

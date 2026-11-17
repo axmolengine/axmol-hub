@@ -597,6 +597,9 @@ public sealed partial class ChatWorkspace : IDisposable
     /// click came from — which is the direction the user was pointing in.</para>
     /// </summary>
     public (Conversation? Conversation, WorkspacePathVerdict? Verdict) StartOrOpenEmptyConversationInWorkspace(string workspaceRoot) => _sessions.StartOrOpenEmptyConversationInWorkspace(workspaceRoot);
+
+    internal (Conversation? Conversation, WorkspacePathVerdict? Verdict) OpenWorkspaceConversation(string workspaceRoot)
+        => _sessions.OpenWorkspaceConversation(workspaceRoot);
     /// <summary>
     /// What the last <see cref = "OpenConversation"/> cost, and whether it had to touch the disk at all. Read by
     /// the panel's open-cost line (<c>ChatPanel.NoteSessionOpen</c>), which is its only consumer: "opening is

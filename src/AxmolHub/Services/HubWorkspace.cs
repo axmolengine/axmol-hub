@@ -265,6 +265,8 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public event Action<string>? NavigateRequested;
 
+    public Action<string>? OpenWorkspaceRequested { get; set; }
+
     // ───────────────────────── Shared selection ─────────────────────────
 
     public ProjectEntry? SelectedProject { get; set; }
@@ -1897,12 +1899,18 @@ public sealed partial class HubWorkspace : IDisposable
             throw new InvalidOperationException(HubStrings.Get("NoEditorFound"));
         }
 
-        // Both kinds run as a child process: a bundle is `open -a <bundle> <folder>`, everything else is
-        // `<editor> <folder>`. Which one it is comes from the binding's path, not from the product — the same
-        // editor is an executable on Windows and a bundle on macOS. One function (CodeEditors.LaunchPlan) is
-        // what a check can pin, instead of a host test here.
-        var (fileName, arguments) = CodeEditors.LaunchPlan(binding.Path, EditorTargets.Default(project));
-        _runner.Launch(fileName, arguments);
+        // Hub opens its workspace in this window; only external editors need a process. Their launch
+        // convention still comes from the binding's path (bundle versus executable), not the product.
+        if (binding.Preset.Id == CodeEditors.BuiltInId)
+        {
+            var open = OpenWorkspaceRequested ?? throw new InvalidOperationException("The workspace host is unavailable.");
+            open(project.Path);
+        }
+        else
+        {
+            var (fileName, arguments) = CodeEditors.LaunchPlan(binding.Path, EditorTargets.Default(project));
+            _runner.Launch(fileName, arguments);
+        }
         project.LastOpened = DateTimeOffset.Now;
         return Task.CompletedTask;
     });
@@ -1928,11 +1936,11 @@ public sealed partial class HubWorkspace : IDisposable
 
         if (global)
         {
-            State.CodeEditor = editor;
+            State.CodeEditor = new CodeEditor(binding.Preset.Id, binding.Path);
         }
         else if ((requested ?? SelectedProject) is { } project)
         {
-            project.CodeEditor = editor;
+            project.CodeEditor = new CodeEditor(binding.Preset.Id, binding.Path);
         }
         else
         {

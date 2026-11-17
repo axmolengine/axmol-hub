@@ -424,6 +424,8 @@ public static class HubTexts
         ["DetectAgain"] = ("重新探测", "Detect again"),
         ["NoEditorFound"] = ("没有可用的编辑器，请在设置中选择。", "No editor available — choose one in Settings."),
         ["OpenInEditor"] = ("用编辑器打开", "Open in editor"),
+        ["BuiltInEditor"] = ("Axmol Hub（内置）", "Axmol Hub (built-in)"),
+        ["BuiltInEditorLocation"] = ("在当前窗口中打开项目工作区", "Open the project workspace in this window"),
         ["NoEditorConfigured"] = ("请先在设置中配置可用的代码编辑器", "Configure an available code editor in Settings first"),
         ["DefaultEditor"] = ("设为默认编辑器", "Set as default editor"),
         ["OpenWith"] = ("打开方式…", "Open with…"),

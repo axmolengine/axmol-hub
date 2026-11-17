@@ -397,7 +397,7 @@ public partial class App : Application
             }
 
             window.Opened += (_, _) => Activations?.SetHandler(uri =>
-                Dispatcher.UIThread.Post(() => _ = window.HandleInstallLinkAsync(uri)),
+                Dispatcher.UIThread.Post(() => _ = window.HandleActivationAsync(uri)),
                 () => Dispatcher.UIThread.Post(window.ActivateFromRequest));
         }
 

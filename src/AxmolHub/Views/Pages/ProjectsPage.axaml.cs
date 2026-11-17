@@ -238,7 +238,7 @@ public partial class ProjectsPage : UserControl
         var defaultEditorMenu = new MenuItem { Header = HubStrings.Get("DefaultEditor") };
         foreach (var binding in _workspace.DetectedEditors)
         {
-            var once = new MenuItem { Header = binding.Preset.DisplayName };
+            var once = new MenuItem { Header = HubStrings.EditorName(binding) };
             once.Click += async (_, _) => await _workspace.OpenEditorAsync(binding.Preset.Id, project);
             editorMenu.Items.Add(once);
 
@@ -246,7 +246,7 @@ public partial class ProjectsPage : UserControl
                 && _workspace.State.CodeEditor.Path == binding.Path;
             var makeDefault = new MenuItem
             {
-                Header = MenuRow.Build(null, binding.Preset.DisplayName, current),
+                Header = MenuRow.Build(null, HubStrings.EditorName(binding), current),
                 IsChecked = current,
             };
             makeDefault.Click += async (_, _) => await _workspace.SelectEditorAsync(binding.Preset.Id, binding.Path, global: true);
@@ -256,7 +256,7 @@ public partial class ProjectsPage : UserControl
         var projectEditor = new MenuItem { Header = HubStrings.Get("EditorForProject") };
         foreach (var binding in _workspace.DetectedEditors)
         {
-            var choice = new MenuItem { Header = binding.Preset.DisplayName };
+            var choice = new MenuItem { Header = HubStrings.EditorName(binding) };
             choice.Click += async (_, _) => await _workspace.SelectEditorAsync(binding.Preset.Id, binding.Path, global: false, requested: project);
             projectEditor.Items.Add(choice);
         }

@@ -39,8 +39,10 @@ public partial class MainWindow
 
     internal WorkspacePathVerdict? OpenWorkspaceFolder(string path)
     {
-        var (_, verdict) = _chat.StartOrOpenEmptyConversationInWorkspace(path);
+        var (_, verdict) = _chat.OpenWorkspaceConversation(path);
         if (verdict is not null) return verdict;
+        CloseNewWorkspace();
+        CloseSettings();
         NavigateTo("Assistant");
         BuildWorkspaceContent();
         ShowWorkspace();
