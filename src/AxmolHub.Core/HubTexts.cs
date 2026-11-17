@@ -658,7 +658,7 @@ public static class HubTexts
         ["TaskOtherWork"] = ("其他任务：{0} 个运行中，{1} 个等待中", "Other tasks: {0} running, {1} queued"),
         // On a change's row: the stage is here, the detail is in the log drawer, and this is the only press
         // that leaves the popover to go read it.
-        ["TaskLogAction"] = ("看日志", "View log"),
+        ["TaskLogAction"] = ("看日志", "View logs"),
         // The slot's action mode: the bytes have landed and only a process swap is missing. The armed form
         // is the second tap of a restart pressed while something is still working — the word on the button
         // is the warning, same shape as a steer waiting for its second tap.
