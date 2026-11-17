@@ -52,13 +52,13 @@ internal sealed class ShellSessionsChecks
         Check(sidebar.GroupHeaderTagsForCheck().SequenceEqual([SessionGroupKey.Workspaces])
               && sidebar.GroupNewButtonForCheck(SessionGroupKey.Workspaces)
               && sidebar.GroupNewTipForCheck(SessionGroupKey.Workspaces) == HubStrings.Get("GroupNewWorkspaceTip")
-              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.ChineseLanguage) == "新建工作区"
-              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.EnglishLanguage) == "New workspace",
+              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.ChineseLanguage) == "打开文件夹…"
+              && HubTexts.Get("GroupNewWorkspaceTip", HubTexts.EnglishLanguage) == "Open folder…",
             "没有工作区会话时根节点仍显示，并提供新建入口（实际分组："
             + string.Join(" / ", sidebar.GroupHeaderTagsForCheck()) + "）");
         var priorWorkspace = chat.StartConversation();
         chat.SetWorkspaceRoot(priorWorkspace.Id, workspaceBase);
-        Check(sidebar.NewWorkspaceForCheck(scratchRoot) == WorkspacePathVerdict.ProtectedRoot
+        Check(shell.OpenWorkspaceFolder(scratchRoot) == WorkspacePathVerdict.ProtectedRoot
               && chat.ActiveConversation?.Id == priorWorkspace.Id
               && chat.WorkspaceRootFor(priorWorkspace.Id) == System.IO.Path.GetFullPath(workspaceBase),
             "拒绝 Hub 数据目录不会打开会话或改动当前工作目录");
@@ -90,10 +90,12 @@ internal sealed class ShellSessionsChecks
         var upperA = workspaceA.ToUpperInvariant();
         var keyUpper = SessionGroupKey.Workspace(upperA)!;
         var foldsCase = keyUpper == keyA;
-        var createdWorkspaceVerdict = sidebar.NewWorkspaceForCheck(workspaceA);
+        var createdWorkspaceVerdict = shell.OpenWorkspaceFolder(workspaceA);
         var createdWorkspace = chat.ActiveConversation;
         Check(createdWorkspaceVerdict is null && createdWorkspace is not null
-              && chat.WorkspaceRootFor(createdWorkspace.Id) == System.IO.Path.GetFullPath(workspaceA),
+              && chat.WorkspaceRootFor(createdWorkspace.Id) == System.IO.Path.GetFullPath(workspaceA)
+              && createdWorkspace.Messages.Count == 0 && shell.InspectorVisibleForCheck
+              && shell.WorkspaceViewForCheck?.TreeVisibleForCheck == true,
             "从根节点选择现有目录后打开的空会话绑定到该工作区（实际目录 "
             + (createdWorkspace is null ? "（没有建出来）" : chat.WorkspaceRootFor(createdWorkspace.Id) ?? "（无目录）")
             + "）");
@@ -105,7 +107,9 @@ internal sealed class ShellSessionsChecks
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         var draftOnlyTags = sidebar.GroupHeaderTagsForCheck();
-        var draftedAgain = sidebar.NewSessionFromGroupForCheck(keyA);
+        var unclaimedDraft = chat.StartConversation();
+        var reopenedWorkspaceVerdict = shell.OpenWorkspaceFolder(workspaceA);
+        var draftedAgain = chat.ActiveConversation?.Id;
         Check(draftOnlyTags.Contains(keyA)
               && sidebar.GroupRowIdsForCheck(keyA).Length == 0
               && sidebar.SessionRowCountForCheck == 0
@@ -113,9 +117,11 @@ internal sealed class ShellSessionsChecks
               && new ConversationStore(shell.Workspace.Store.Root).List()
                   .Any(summary => summary.Id == createdWorkspace?.Id && summary.MessageCount == 0
                                   && SessionGroupKey.Workspace(summary.WorkspaceRoot) == keyA)
-              && draftedAgain == createdWorkspace?.Id,
+              && reopenedWorkspaceVerdict is null && draftedAgain == createdWorkspace?.Id
+              && chat.WorkspaceRootFor(unclaimedDraft.Id) is null,
             "＋ 建的空草稿不占会话行，但它的工作区当场成组并显一行「暂无会话」，再点 ＋ 拿回的还是同一条（实际分组："
             + string.Join(" / ", draftOnlyTags) + "，＋ 返回 " + RootOf(draftedAgain) + "）");
+        chat.DeleteConversation(unclaimedDraft.Id);
         if (createdWorkspace is not null) chat.DeleteConversation(createdWorkspace.Id);
         chat.PruneEmptyConversations();
         sidebar.Reload();
@@ -185,9 +191,10 @@ internal sealed class ShellSessionsChecks
               && tags.Contains(SessionGroupKey.Recent),
             "没有目录的那一组标题读作「对话 / Chats」、它的 ＋ 读作「新建对话 / New chat」，不再叫「最近聊天」，分组键仍是 recent（实际标题："
             + string.Join(" / ", sidebar.GroupHeaderText.Split('\n')) + "）");
-        Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Workspaces).Length == 0
+        Check(sidebar.GroupMenuTitlesForCheck(SessionGroupKey.Workspaces).SequenceEqual(
+                  sidebar.WorkspaceProjectsRequested is null ? [] : new[] { HubStrings.Get("WorkspaceFromProjects") })
               && sidebar.GroupRowIdsForCheck(SessionGroupKey.Workspaces).Length == 0,
-            "「工作区」只是段标题：它没有可编辑的路径，也不直接收会话行");
+            "「工作区」不收会话行或编辑路径；只有项目选择这个次级入口");
         var upperRows = sidebar.GroupRowIdsForCheck(foldsCase ? keyA : keyUpper);
         Check(sidebar.GroupOfForCheck(aOne.Id) == keyA
               && sidebar.GroupOfForCheck(aUpper.Id) == (foldsCase ? keyA : keyUpper)

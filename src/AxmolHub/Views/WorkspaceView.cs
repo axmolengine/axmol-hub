@@ -93,6 +93,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal event Action<string>? FileRequested;
     internal event Action<string>? ToolRequested;
     internal event Action? OpenRequested;
+    internal event Action? OpenFolderRequested;
 
     internal WorkspaceView(Window owner, InspectorPanel inspector, Action<string> log)
     {
@@ -186,6 +187,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
             created = new State(root, tree) { ScopeFor = scopeFor };
             tree.CloseRequested += HideFiles;
             tree.FileRequested += path => FileRequested?.Invoke(path);
+            tree.OpenFolderRequested += () => OpenFolderRequested?.Invoke();
+            TrackMenu(tree.ActionsMenu);
             _states[key] = state = created;
         }
         state.ScopeFor = scopeFor;

@@ -2237,7 +2237,9 @@ public partial class MainWindow : Window
         => new(_chat, _preferencesStore, _preferences)
         {
             StatusReporter = ShowFeedback,
-            NewWorkspaceRequested = OpenNewWorkspace,
+            OpenFolderRequested = () => _ = OpenWorkspaceFolderAsync(),
+            WorkspaceProjectsRequested = NavigationViews.Normalize(_preferences.NavigationView) == NavigationViews.WorkbenchPlus
+                ? OpenNewWorkspace : null,
         };
 
     /// <summary>

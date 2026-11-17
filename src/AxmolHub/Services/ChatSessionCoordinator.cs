@@ -456,7 +456,9 @@ internal sealed partial class ChatSessionCoordinator
         return _sessions.List()
             .Where(summary => summary.MessageCount == 0 && !summary.Archived)
             .Where(summary => SessionGroupKey.Workspace(summary.WorkspaceRoot) is not { } at || at == wanted)
-            .OrderByDescending(summary => summary.UpdatedAt)
+            // Prefer this directory's draft over a newer, unclaimed chat so reopening stays idempotent.
+            .OrderByDescending(summary => SessionGroupKey.Workspace(summary.WorkspaceRoot) == wanted)
+            .ThenByDescending(summary => summary.UpdatedAt)
             .FirstOrDefault();
     }
 

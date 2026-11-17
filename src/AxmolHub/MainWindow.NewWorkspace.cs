@@ -10,6 +10,43 @@ public partial class MainWindow
 {
     private NewWorkspaceView? _newWorkspace;
     private Control? _workspacePickerFocus;
+    private bool _pickingWorkspaceFolder;
+
+    private async Task OpenWorkspaceFolderAsync()
+    {
+        if (_pickingWorkspaceFolder) return;
+        _pickingWorkspaceFolder = true;
+        CloseNewWorkspace();
+        CloseSettings();
+        var chat = _chat;
+        try
+        {
+            var result = await Pickers.PickFolderAsync(this, HubStrings.Get("GroupNewWorkspaceTip"));
+            // A data-root switch or window close can invalidate the destination while the native picker is up.
+            if (!IsVisible || !ReferenceEquals(chat, _chat) || result.Outcome == PickOutcome.Cancelled) return;
+            string? error = result.Outcome == PickOutcome.NotLocal ? HubStrings.Get("ChatFolderNotLocal")
+                : result.Path is not { Length: > 0 } ? HubStrings.Get("LocalPathRequired")
+                : OpenWorkspaceFolder(result.Path) is { } verdict ? WorkspaceRejectionMessage(verdict, result.Path)
+                : null;
+            if (error is not null) ShowFeedback(UserFeedback.Warning(error, "open-workspace"));
+        }
+        catch (Exception ex)
+        {
+            ShowFeedback(UserFeedback.Warning(ex.Message, "open-workspace"));
+        }
+        finally { _pickingWorkspaceFolder = false; }
+    }
+
+    internal WorkspacePathVerdict? OpenWorkspaceFolder(string path)
+    {
+        var (_, verdict) = _chat.StartOrOpenEmptyConversationInWorkspace(path);
+        if (verdict is not null) return verdict;
+        NavigateTo("Assistant");
+        BuildWorkspaceContent();
+        ShowWorkspace();
+        _workspaceView?.ShowFiles();
+        return null;
+    }
 
     private void RegisterCreatedWorkspace(ProjectEntry project)
     {
@@ -56,8 +93,8 @@ public partial class MainWindow
         if (NewWorkspaceOverlayHost.IsVisible) return;
         CloseSettings();
         _workspacePickerFocus = FocusManager?.GetFocusedElement() as Control;
-        _newWorkspace = new NewWorkspaceView(this, _chat, _workspace.State.Projects,
-            NavigationViews.Normalize(_preferences.NavigationView) == NavigationViews.WorkbenchPlus, CloseNewWorkspace);
+        _newWorkspace = new NewWorkspaceView(_chat, _workspace.State.Projects,
+            OpenWorkspaceFolder, CloseNewWorkspace);
         _newWorkspace.LayoutChanged += SyncNewWorkspaceSize;
         NewWorkspaceHost.Content = _newWorkspace;
         NewWorkspaceOverlayHost.IsVisible = true;

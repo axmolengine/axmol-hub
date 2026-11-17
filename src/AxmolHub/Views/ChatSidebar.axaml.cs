@@ -60,7 +60,8 @@ public partial class ChatSidebar : UserControl
     /// a card. Left unsettable because a sidebar built without a shell still has to work.
     /// </summary>
     internal Action<UserFeedback>? StatusReporter { get; init; }
-    internal Action? NewWorkspaceRequested { get; init; }
+    internal Action? OpenFolderRequested { get; init; }
+    internal Action? WorkspaceProjectsRequested { get; init; }
 
     /// <summary>
     /// Where a text copy lands, when a check wants it. <see cref="CopyConversationIdAsync"/> writes the real clipboard
@@ -451,7 +452,7 @@ public partial class ChatSidebar : UserControl
             if (bucket.Key == SessionGroupKey.Workspaces)
             {
                 newButton.Name = "NewWorkspaceButton";
-                newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
+                newButton.Click += (_, _) => OpenFolderRequested?.Invoke();
             }
             // A group is named after the workspace of the sessions in it, so it can outlive the reason that workspace
             // was accepted: the folder can be gone, and it can have become an engine installation since. The ＋ goes
@@ -494,6 +495,17 @@ public partial class ChatSidebar : UserControl
     private List<MenuItem> GroupMenuItems(SessionBucket bucket)
     {
         var items = new List<MenuItem>();
+        if (bucket.Key == SessionGroupKey.Workspaces && WorkspaceProjectsRequested is not null)
+        {
+            var projects = new MenuItem { Header = HubStrings.Get("WorkspaceFromProjects") };
+            projects.Click += (_, _) =>
+            {
+                CloseGroupMenu();
+                WorkspaceProjectsRequested.Invoke();
+            };
+            items.Add(projects);
+            return items;
+        }
         if (bucket.Key == SessionGroupKey.Archived)
         {
             var restore = new MenuItem { Header = HubStrings.Get("RestoreAllArchived") };

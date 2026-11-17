@@ -41,6 +41,8 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     internal event Action? CloseRequested;
     internal event Action<string>? FileRequested;
+    internal event Action? OpenFolderRequested;
+    internal MenuFlyout ActionsMenu { get; } = new();
 
     internal WorkspaceFileTree(string? root, Func<WorkspaceToolScope> scopeFor)
     {
@@ -58,10 +60,20 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         };
         ToolTip.SetTip(name, root);
         header.Children.Add(name);
-        var refresh = ActionButton("WorkspaceRefreshFiles", "Hub.Icon.Refresh");
+        var actions = new Button { Name = "WorkspaceFileActions", Content = HubActionIcon.More(),
+            Width = 28, Height = 28, Margin = default, Classes = { "viewer-action" }, Flyout = ActionsMenu };
+        actions.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceActions"));
+        var open = new MenuItem { Name = "WorkspaceOpenOtherFolder" };
+        open.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(
+            root is { Length: > 0 } ? "WorkspaceOpenOtherFolder" : "GroupNewWorkspaceTip"));
+        open.Click += (_, _) => OpenFolderRequested?.Invoke();
+        ActionsMenu.Items.Add(open);
+        var refresh = new MenuItem { Name = "WorkspaceRefreshFiles", IsEnabled = root is { Length: > 0 } };
+        refresh.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension("WorkspaceRefreshFiles"));
         refresh.Click += (_, _) => _ = RefreshAsync();
-        Grid.SetColumn(refresh, 1);
-        header.Children.Add(refresh);
+        ActionsMenu.Items.Add(refresh);
+        Grid.SetColumn(actions, 1);
+        header.Children.Add(actions);
         _close = ActionButton("WorkspaceCloseFiles", "Hub.Icon.Close");
         _close.Click += (_, _) => CloseRequested?.Invoke();
         Grid.SetColumn(_close, 2);
@@ -84,7 +96,7 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
             RenderRows();
             if (_active && Query.Length > 0) _searchTimer.Start();
         };
-        var search = new Grid { Margin = new Thickness(8, 0, 8, 8) };
+        var search = new Grid { Margin = new Thickness(8, 0, 8, 8), IsVisible = root is { Length: > 0 } };
         search.Children.Add(_filter);
         var searchIcon = HubActionIcon.Create("Hub.Icon.Search");
         searchIcon.Width = searchIcon.Height = 12;
@@ -186,7 +198,8 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
 
     private async Task RefreshRowsAsync()
     {
-        if (!_active || _root is not { Length: > 0 }) return;
+        if (!_active) return;
+        if (_root is not { Length: > 0 }) { RenderRows(); return; }
         CancelSearch();
         _searchResults = null;
         if (Query.Length > 0) RenderRows();
@@ -374,7 +387,15 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
     private void RenderRows()
     {
         _rows.Children.Clear();
-        if (_root is not { Length: > 0 }) { Notice("WorkspaceNoRoot"); return; }
+        if (_root is not { Length: > 0 })
+        {
+            var open = new Button { Name = "WorkspaceOpenFolder", Margin = new Thickness(8),
+                HorizontalAlignment = HorizontalAlignment.Center, Classes = { "compact", "quiet" } };
+            open.Bind(ContentControl.ContentProperty, new DynamicResourceExtension("GroupNewWorkspaceTip"));
+            open.Click += (_, _) => OpenFolderRequested?.Invoke();
+            _rows.Children.Add(open);
+            return;
+        }
         if (Query.Length > 0)
         {
             if (_searchResults is null) { Notice("WorkspaceSearchingFiles"); return; }

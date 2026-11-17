@@ -28,6 +28,7 @@ public partial class MainWindow
                 if (error is not null) _ = HubDialog.ShowAsync(this, HubStrings.Get("WorkspaceFiles"), HubStrings.Get(error));
             };
             _workspaceView.OpenRequested += ShowWorkspace;
+            _workspaceView.OpenFolderRequested += () => _ = OpenWorkspaceFolderAsync();
             SettingsOverlayHost.PropertyChanged += (_, e) => { if (e.Property == IsVisibleProperty) SyncWorkspaceBrowserOverlay(); };
             PictureViewerHost.PropertyChanged += (_, e) => { if (e.Property == IsVisibleProperty) SyncWorkspaceBrowserOverlay(); };
             SyncWorkspaceBrowserOverlay();

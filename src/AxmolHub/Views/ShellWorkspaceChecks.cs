@@ -46,7 +46,7 @@ internal sealed partial class ShellDecisionsChecks
         commands &= menu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal"))
             && tabMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Tag, "reveal"))
             && !tabMenu.Items.OfType<MenuItem>().Any(item => item.Tag is "save" or "reload");
-        editor.EditorForCheck.Text += "// Unsaved fixture\n";
+        editor.EditorForCheck.Document.Insert(editor.EditorForCheck.Document.TextLength, "// Unsaved fixture\n");
         var buffer = editor.EditorForCheck.Text;
         var tabs = true;
         var initialWidth = shell.InspectorWidthForCheck;
@@ -111,10 +111,16 @@ internal sealed partial class ShellDecisionsChecks
         // A context switch cannot bind a document to another root or throw away its document and undo stack.
         var alternateRoot = Path.Combine(root, "other-workspace");
         Directory.CreateDirectory(alternateRoot);
-        view.SetContext(alternateRoot, () => new WorkspaceToolScope(alternateRoot, new WorkspaceGuards(null, []), null, "workspace-check", [], null, null));
-        view.SetContext(root, scopeFor);
-        var retained = ReferenceEquals(view.SelectedContentForCheck, editor) && editor.EditorForCheck.Text == buffer
-            && !view.TreeVisibleForCheck;
+        var originalConversation = shell.Chat.ActiveConversation!;
+        var switched = shell.OpenWorkspaceFolder(alternateRoot) is null;
+        var alternateConversation = shell.Chat.ActiveConversation!;
+        var reopened = shell.OpenWorkspaceFolder(root) is null;
+        var retained = switched && reopened && ReferenceEquals(view.SelectedContentForCheck, editor)
+            && editor.EditorForCheck.Text == buffer && editor.IsDirty && editor.EditorForCheck.CanUndo
+            && view.TreeVisibleForCheck && shell.Chat.ActiveConversation?.Id == originalConversation.Id
+            && shell.Chat.WorkspaceRootFor(alternateConversation.Id) == alternateRoot
+            && alternateConversation.Messages.Count == 0;
+        Console.WriteLine($"workspace switch: opened={switched}/{reopened}, same={ReferenceEquals(view.SelectedContentForCheck, editor)}, text={editor.EditorForCheck.Text == buffer}, dirty={editor.IsDirty}, undo={editor.EditorForCheck.CanUndo}, tree={view.TreeVisibleForCheck}, session={shell.Chat.ActiveConversation?.Id == originalConversation.Id}, root={shell.Chat.WorkspaceRootFor(alternateConversation.Id) == alternateRoot}, messages={alternateConversation.Messages.Count}");
         File.WriteAllText(path, "// External conflicting change\n");
         var conflict = !editor.Save() && editor.IsDirty && editor.EditorForCheck.Text == buffer;
         view.CloseSelected(discard: true);
