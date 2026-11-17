@@ -922,6 +922,7 @@ public partial class MainWindow : Window
         {
             _statusProgressTip.Text = "";
             ToolTip.SetIsOpen(StatusProgressHost, false);
+            ToolTip.SetIsOpen(StatusProgress, false);
             StatusProgress.IsIndeterminate = false;
             StatusProgress.Value = 0;
             StatusProgressPercent.IsVisible = false;
@@ -2265,8 +2266,14 @@ public partial class MainWindow : Window
         ToolTip.SetTip(TaskSlot, _taskSlotTip);
         ToolTip.SetTip(StatusProgressHost, _statusProgressTip);
         ToolTip.SetPlacement(StatusProgressHost, PlacementMode.Top);
+        // Separate tooltip visuals share the same text, since the track is no longer inside the hover lane.
+        var trackTip = new TextBlock { MaxWidth = 560, TextWrapping = TextWrapping.Wrap };
+        trackTip.Bind(TextBlock.TextProperty, _statusProgressTip.GetObservable(TextBlock.TextProperty));
+        ToolTip.SetTip(StatusProgress, trackTip);
+        ToolTip.SetPlacement(StatusProgress, PlacementMode.Top);
         // A quiet task may have produced no new output since its last repaint; refresh its elapsed clock.
         ToolTip.AddToolTipOpeningHandler(StatusProgressHost, (_, _) => UpdateTaskSlot());
+        ToolTip.AddToolTipOpeningHandler(StatusProgress, (_, _) => UpdateTaskSlot());
         // What a restart would cut short: a Hub operation, or replies still being written in the
         // background. Both are the user's work, and neither gets destroyed by one stray click.
         RestartInterruptsWork = () => _workspace.IsBusy || _chat.RunningCount > 0;

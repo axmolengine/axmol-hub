@@ -206,8 +206,8 @@
     <Style Selector="ProgressBar.status-progress">
       <Setter Property="Height" Value="3" />
       <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Margin" Value="12,0,6,0" />
-      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Bottom" />
       <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
@@ -1092,8 +1092,12 @@
         <ContentControl x:Name="PageHost" Grid.Row="1" Margin="24,14,24,0" />
       </Grid>
 
+      <!-- Resize the open log drawer from above its status strip, leaving no gap above the log text. -->
+      <Border x:Name="LogResizeGrip" Grid.Row="1" IsVisible="False"
+              Height="6" Margin="18,0" Background="Transparent" Cursor="SizeNorthSouth" />
+
       <!-- Slim status strip. -->
-      <Grid x:Name="StatusStrip" Grid.Row="1" Height="28" Margin="18,0,18,0"
+      <Grid x:Name="StatusStrip" Grid.Row="2" Height="28" Margin="18,0,18,0"
             ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
         <Ellipse Grid.Column="0" Width="6" Height="6"
                  Fill="{DynamicResource Hub.Success}"
@@ -1104,12 +1108,10 @@
                    FontSize="11" Margin="8,0,0,0" MaxWidth="280"
                    TextTrimming="CharacterEllipsis"
                    VerticalAlignment="Center" />
-        <!-- The transparent full-height lane makes the 3px track and its percentage one hover target. -->
+        <!-- Keep the percentage and its full-height hover lane separate from the edge track. -->
         <Grid x:Name="StatusProgressHost" Grid.Column="2" Grid.ColumnSpan="2"
-              ColumnDefinitions="*,Auto" Background="Transparent" ClipToBounds="True" IsVisible="False">
-          <ProgressBar x:Name="StatusProgress" Classes="status-progress"
-                       IsVisible="False" Minimum="0" Maximum="100" />
-          <TextBlock x:Name="StatusProgressPercent" Grid.Column="1"
+              Background="Transparent" ClipToBounds="True" IsVisible="False">
+          <TextBlock x:Name="StatusProgressPercent" HorizontalAlignment="Right"
                      Classes="status-progress-percent" IsVisible="False" />
         </Grid>
         <!-- The task queue's one line. It stays dark unless something is moving, failed and unread, or
@@ -1158,11 +1160,10 @@
                 Width="11" Height="6" Stretch="None"
                 RenderTransformOrigin="50%,50%" />
         </Button>
+        <!-- Overlay the strip's bottom edge: the track never reserves a row or depends on the log body. -->
+        <ProgressBar x:Name="StatusProgress" Grid.ColumnSpan="9" Classes="status-progress"
+                     IsVisible="False" Minimum="0" Maximum="100" />
       </Grid>
-
-      <!-- Drag the top edge of the open log drawer to resize it without grabbing its text. -->
-      <Border x:Name="LogResizeGrip" Grid.Row="2" IsVisible="False"
-              Height="6" Margin="18,0" Background="Transparent" Cursor="SizeNorthSouth" />
 
       <!-- Log body, shown by the strip chevron or auto-expanded on failure. -->
       <Border x:Name="LogBody" Grid.Row="3" IsVisible="False"
