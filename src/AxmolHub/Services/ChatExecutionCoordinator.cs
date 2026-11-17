@@ -156,7 +156,7 @@ internal sealed partial class ChatExecutionCoordinator
             var reasoning = new ReasoningTable();
             var client = ClientOverride?.Invoke(request.Value.Provider, conversationId)
                          ?? ChatClientFactory.Create(request.Value.Provider, request.Value.ModelName, reasoning,
-                             maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait,
+                             interactionId: conversationId, maxRetries: retry.MaxRetries, onRetryWait: retry.OnWait,
                              // A live run owns the deadline; a manual summary keeps the standalone SDK bound.
                              networkTimeout: runOwnsDeadline ? Timeout.InfiniteTimeSpan : null);
             var pipeline = new ChatPipeline(client, reasoning);
@@ -3716,7 +3716,7 @@ internal sealed partial class ChatExecutionCoordinator
         run.RetryLimit = Math.Clamp(retry.MaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         var client = ClientOverride?.Invoke(request.Provider, run.ConversationId)
                      ?? ChatClientFactory.Create(request.Provider, request.ModelName, reasoning,
-                         onRetryWait: retry.OnWait, maxRetries: retry.MaxRetries,
+                         interactionId: run.ConversationId, onRetryWait: retry.OnWait, maxRetries: retry.MaxRetries,
                          // The run owns first-frame and idle deadlines. A separate SDK clock must not fire first.
                          networkTimeout: Timeout.InfiniteTimeSpan);
         var pipeline = new ChatPipeline(client, reasoning);

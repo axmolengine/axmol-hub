@@ -133,6 +133,8 @@ internal static class AiWebSearchChecks
             throw new Exception($"The chat bridge did not put the declaration where the table says it goes " + $"(predicted {chatOn.WireField}, looking for {PredictedNeedle(chatOn.WireField)}). Body: {chatBody}");
         Console.WriteLine("PASS: on the chat line the declaration lands in web_search_options, beside the function tools.");
         var responsesBody = await BodyFor(WireLine(ModelProtocols.Responses, true), WithDeclaration(true), question);
+        if (responsesBody.Contains("\"prompt_cache_key\"", StringComparison.Ordinal))
+            throw new Exception("A standalone Responses call generated a cache key without a session.");
         if (!responsesBody.Contains(PredictedNeedle(responsesOn.WireField), StringComparison.Ordinal) || !responsesBody.Contains("\"name\":\"web_fetch\"", StringComparison.Ordinal))
             throw new Exception($"The responses bridge did not add the tool entry the table predicts " + $"(predicted {responsesOn.WireField}, looking for {PredictedNeedle(responsesOn.WireField)}). " + $"Body: {responsesBody}");
         Console.WriteLine("PASS: on the responses line it lands as a tools[] entry beside the function definitions.");

@@ -93,8 +93,9 @@ internal static class RequestRetryChecks
             var wire = new MixedWire();
             waits.Clear();
             var reasoning = new ReasoningTable();
-            using var client = ChatClientFactory.Create(provider, provider.Model, reasoning, transport: wire, maxRetries: 2,
-                networkTimeout: Timeout.InfiniteTimeSpan);
+            const string sessionId = "0123456789abcdef0123456789abcdef";
+            using var client = ChatClientFactory.Create(provider, provider.Model, reasoning,
+                interactionId: sessionId, transport: wire, maxRetries: 2, networkTimeout: Timeout.InfiniteTimeSpan);
             try
             {
                 await foreach (var _ in new ChatPipeline(client, reasoning).SendAsync(provider, summaryHistory,
@@ -106,6 +107,12 @@ internal static class RequestRetryChecks
             {
                 using var json = System.Text.Json.JsonDocument.Parse(body);
                 var root = json.RootElement;
+                // Relays can require this field; check actual retry bodies without another fixture or live call.
+                var hasCacheKey = root.TryGetProperty("prompt_cache_key", out var cacheKey);
+                if (protocol == ModelProtocols.Responses
+                    ? !hasCacheKey || cacheKey.GetString() != sessionId
+                    : hasCacheKey)
+                    throw new Exception("The session cache key was lost across Responses retries or leaked to another wire.");
                 var toolChoice = root.GetProperty("tool_choice");
                 if ((protocol == ModelProtocols.Messages ? toolChoice.GetProperty("type").GetString() : toolChoice.GetString()) != "none"
                     || root.GetProperty("tools").GetArrayLength() != 1)

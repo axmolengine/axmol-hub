@@ -62,7 +62,8 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 var reasoning = new ReasoningTable();
                 var overridden = memory.ClientFactory?.Invoke(choice.Provider, id);
-                var client = overridden ?? ChatClientFactory.Create(choice.Provider, choice.ModelName, reasoning, maxRetries: 0);
+                var client = overridden ?? ChatClientFactory.Create(choice.Provider, choice.ModelName, reasoning,
+                    interactionId: id, maxRetries: 0);
                 using var ownedClient = overridden is null ? client : null;
                 var pipeline = new ChatPipeline(client, reasoning);
                 var output = new StringBuilder();

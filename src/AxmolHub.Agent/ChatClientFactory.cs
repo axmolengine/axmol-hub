@@ -99,9 +99,9 @@ public static class ChatClientFactory
     /// It is optional because it is per-request rather than per-provider: the conversation's owner supplies
     /// the table for OpenAI reasoning replay. Messages carries signed blocks directly in the SDK message history.
     ///
-    /// <para><paramref name="interactionId"/> is the conversation's own id, for the providers that group the
-    /// rounds of one tool run under it. Optional for the same reason the headers are: most providers want
-    /// nothing with it, and sending a header a gateway has never heard of is a worse default than omitting it.</para>
+    /// <para><paramref name="interactionId"/> is the conversation's own id. Responses requests use it as
+    /// <c>prompt_cache_key</c>; providers with interaction headers also use it to group requests. Standalone
+    /// calls without a conversation omit it rather than generating a new cache key.</para>
     ///
     /// <para><paramref name="transport"/> is the seam that lets a self-check read <b>the serialized request
     /// body</b> rather than Hub's intention to send one. It exists for the hosted-search assertions and for
@@ -210,7 +210,20 @@ public static class ChatClientFactory
             options.AddPolicy(new ModelSelectionPolicy(), PipelinePosition.BeforeTransport);
             options.AddPolicy(new RetryMetadataPolicy(), PipelinePosition.BeforeTransport);
             options.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
-            var responses = new ResponsesClient(credential, options).AsIChatClient(model);
+            IChatClient responses = new ResponsesClient(credential, options).AsIChatClient(model);
+            if (!string.IsNullOrWhiteSpace(interactionId))
+                responses = responses.AsBuilder().ConfigureOptions(requestOptions =>
+                {
+                    // Preserve caller-supplied native options and let the SDK serialize the cache key before
+                    // transport policies and wire recording. The persisted session ID stays stable across retries.
+                    var rawFactory = requestOptions.RawRepresentationFactory;
+                    requestOptions.RawRepresentationFactory = chatClient =>
+                    {
+                        var raw = rawFactory?.Invoke(chatClient) as CreateResponseOptions ?? new CreateResponseOptions();
+                        raw.PromptCacheKey = interactionId;
+                        return raw;
+                    };
+                }).Build();
             IChatClient client = provider.IsOpenAiPlan ? new OpenAiStreamingChatClient(responses) : responses;
             return provider.IsOpenAiPlan || !IsOpenAiEndpoint(provider) ? new StatelessResponsesChatClient(client) : client;
 #pragma warning restore OPENAI001
