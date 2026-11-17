@@ -125,16 +125,11 @@
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="276">
+              <DataGridTemplateColumn Width="220">
                 <DataGridTemplateColumn.Header><TextBlock Text="{DynamicResource Actions}" /></DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
                     <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
-                      <Button Content="{DynamicResource Open}" Tag="{Binding Project}" Click="OnOpenProject"
-                              Classes="project-row-action quiet" Padding="7,5"
-                              IsEnabled="{Binding CanOpenEditor}"
-                              ToolTip.Tip="{Binding OpenEditorTooltip}"
-                              AutomationProperties.Name="{Binding OpenEditorTooltip}" />
                       <Button Content="{DynamicResource Build}" Tag="{Binding Project}" Click="OnBuildProject"
                               Classes="project-row-action quiet" Padding="7,5"
                               AutomationProperties.Name="{DynamicResource Build}" />

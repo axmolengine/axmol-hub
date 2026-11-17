@@ -66,7 +66,7 @@ public partial class NewWorkspaceView : UserControl
         var search = (ProjectSearchBox.Text ?? "").Trim();
         var rows = _projects.Where(project => project.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
                 || project.Path.Contains(search, StringComparison.OrdinalIgnoreCase))
-            .Select(project => new WorkspaceProjectChoice(new ProjectListItem(project, false, false), IsAdded(project.Path)))
+            .Select(project => new WorkspaceProjectChoice(new ProjectListItem(project, false), IsAdded(project.Path)))
             .ToArray();
         _refreshingProjects = true;
         try
@@ -89,7 +89,7 @@ public partial class NewWorkspaceView : UserControl
             ?? new ProjectEntry { Path = path };
         var name = System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(path));
         SelectedFolderName.Text = name.Length > 0 ? name : path;
-        SelectedFolderPath.Text = new ProjectListItem(project, false, false).DisplayPath;
+        SelectedFolderPath.Text = new ProjectListItem(project, false).DisplayPath;
         ToolTip.SetTip(SelectedFolderPanel, path);
         FolderPlaceholder.IsVisible = false;
         SelectedFolderPanel.IsVisible = true;

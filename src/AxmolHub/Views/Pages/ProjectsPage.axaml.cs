@@ -7,7 +7,7 @@ using AxmolHub.Core;
 
 namespace AxmolHub;
 
-public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning, bool CanOpenEditor) : INotifyPropertyChanged
+public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning) : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
     private string? _runStateKey;
@@ -45,7 +45,6 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
         : opened.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
     public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastOpened);
     public string RunCaption => HubStrings.Get(_runStateKey ?? (IsPreviewRunning ? "Stop" : "Run"));
-    public string OpenEditorTooltip => CanOpenEditor ? HubStrings.Get("OpenInEditor") : HubStrings.Get("NoEditorConfigured");
 }
 
 public sealed record ProjectFilterChoice(string Label, string Value)
@@ -153,11 +152,6 @@ public partial class ProjectsPage : UserControl
         _workspace.SelectedProject = created;
         Reload();
         if (request.CreateWorkspace) RegisterCreatedWorkspace?.Invoke(created);
-    }
-
-    private async void OnOpenProject(object? sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: ProjectEntry project }) await _workspace.OpenEditorAsync(requested: project);
     }
 
     private async void OnBuildProject(object? sender, RoutedEventArgs e)
@@ -382,7 +376,7 @@ public partial class ProjectsPage : UserControl
             _ => filtered.OrderByDescending(p => p.LastOpened.HasValue).ThenByDescending(p => p.LastOpened).ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase),
         };
         var items = ordered.ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new ProjectListItem(p, _workspace.IsProjectPreviewRunning(p), _workspace.EffectiveEditor(p) is not null)).ToArray();
+            .Select(p => new ProjectListItem(p, _workspace.IsProjectPreviewRunning(p))).ToArray();
         _ready = false;
         ProjectsGrid.ItemsSource = items;
         UpdateRunStates();
@@ -414,7 +408,7 @@ public partial class ProjectsPage : UserControl
         ProjectsGrid.Columns[2].IsVisible = !compact;
         ProjectsGrid.Columns[3].IsVisible = !compact;
         ProjectsGrid.Columns[5].IsVisible = compact;
-        if (compact) ProjectsGrid.Columns[5].Width = new DataGridLength(Math.Max(200, ProjectsGrid.Bounds.Width - 300));
+        if (compact) ProjectsGrid.Columns[5].Width = new DataGridLength(Math.Max(200, ProjectsGrid.Bounds.Width - 244));
     }
 
     private void UpdateSortCaption() => SortButton.Content = HubStrings.Get(_sortMode switch
