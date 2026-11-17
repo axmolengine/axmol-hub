@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private readonly List<ToastEntry> _toasts = [];
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
     private bool _toastPointerInside;
+    private bool _checkingForUpdates;
 
     private sealed class ToastEntry(UserFeedback feedback, DateTimeOffset expiresAt)
     {
@@ -1849,7 +1850,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The bottom entry's popup: Settings, Appearance, License, About and Exit. Appearance opens the two
+    /// The bottom entry's popup: Settings, Appearance, License, Check for updates, About and Exit. Appearance opens the two
     /// questions it answers, Language and Theme, and each of those opens its own answers. Every row is one
     /// line: a name, and a tick when it is the answer in force. Built fresh on every open, so the labels follow
     /// the UI language and exactly one tick per question is drawn without any sync machinery.
@@ -1958,6 +1959,19 @@ public partial class MainWindow : Window
         };
         menu.Items.Add(license);
 
+        var checkForUpdates = new MenuItem
+        {
+            Header = MenuRow.Build("Hub.Icon.Refresh", HubStrings.Get("CheckForUpdates"), current: false),
+            Tag = MenuRowTag.CheckForUpdates,
+            IsEnabled = !_checkingForUpdates && UpdateService.Instance.Download == UpdateService.DownloadState.None,
+        };
+        checkForUpdates.Click += async (_, _) =>
+        {
+            menu.Hide();
+            await CheckForUpdatesFromMenuAsync();
+        };
+        menu.Items.Add(checkForUpdates);
+
         var about = new MenuItem
         {
             Header = MenuRow.Build("Hub.Icon.Info", "About", current: false),
@@ -1985,6 +1999,41 @@ public partial class MainWindow : Window
         return menu;
     }
 
+    /// <summary>Checks in place without opening settings or pressing the download/restart action.</summary>
+    private async Task CheckForUpdatesFromMenuAsync()
+    {
+        var service = UpdateService.Instance;
+        if (_checkingForUpdates || service.Download != UpdateService.DownloadState.None) return;
+
+        const string progressKey = "menu-update-checking";
+        _checkingForUpdates = true;
+        ShowFeedback(UserFeedback.Info(HubStrings.Get("CheckingUpdate"), progressKey));
+        UpdateService.CheckOutcome outcome;
+        try
+        {
+            outcome = await service.CheckAsync();
+        }
+        finally
+        {
+            _checkingForUpdates = false;
+            var progress = _toasts.FirstOrDefault(toast => toast.Feedback.Key == progressKey);
+            if (progress is not null) RemoveToast(progress);
+        }
+
+        const string resultKey = "menu-update-result";
+        var feedback = outcome.Result switch
+        {
+            UpdateService.CheckResult.UpdateAvailable => UserFeedback.Success(
+                string.Format(HubStrings.Get("UpdateReady"), service.PendingVersion), resultKey),
+            UpdateService.CheckResult.UpToDate => UserFeedback.Success(HubStrings.Get("UpdateUpToDate"), resultKey),
+            UpdateService.CheckResult.NotInstalled => UserFeedback.Info(HubStrings.Get("UpdateNotInstalled"), resultKey),
+            _ => UserFeedback.Error(HubStrings.Get("UpdateFailed"), resultKey),
+        };
+        var previous = _toasts.FirstOrDefault(toast => toast.Feedback.Key == resultKey);
+        if (previous is not null) RemoveToast(previous);
+        ShowFeedback(feedback);
+    }
+
     /// <summary>The <c>Tag</c>s the bottom menu's own rows carry, so the self-check finds a question by what it
     /// is rather than by where it happens to sit. Kept distinct from the leaf tags — a theme value and a
     /// language tag are data, and a parent row answering to one of them would be found twice.</summary>
@@ -1994,6 +2043,7 @@ public partial class MainWindow : Window
         internal const string Language = "menu:language";
         internal const string Theme = "menu:theme";
         internal const string License = "menu:license";
+        internal const string CheckForUpdates = "menu:check-for-updates";
         internal const string About = "menu:about";
         internal const string Exit = "menu:exit";
     }
