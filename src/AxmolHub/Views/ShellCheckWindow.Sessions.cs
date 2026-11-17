@@ -483,17 +483,21 @@ internal sealed class ShellSessionsChecks
         chat.SetArchived(plainOne.Id, false);
         sidebar.Reload();
 
-        // ＋ has its own style class, so it is neither mistaken for the group's third menu item (that comes
+        // ＋ has its own style class, so it is neither mistaken for a group menu item (those come
         // from reading the ⋯'s Tag) nor mixed into the actions-menu count — the row count expects a menu on
         // every row, and counting one too many or too few is a false pass.
         // Eight rows: the missing directory's ＋ was refused and added no draft or row. Drafts belonging to
         // existing directories stay off the list until their first message; their workspace headers remain.
+        // Three group items: reveal the directory, edit its path, and archive its sessions.
+        var workspaceMenuTitles = sidebar.GroupMenuTitlesForCheck(keyA);
         Check(sidebar.SessionMenuCount == sidebar.SessionRowCountForCheck
               && sidebar.SessionRowCountForCheck == 8
-              && sidebar.GroupMenuTitlesForCheck(keyA).Length == 2
+              && workspaceMenuTitles.Length == 3
               && sidebar.GroupPlaceholderForCheck(keyMoved).Length == 0,
             "分组上的 ＋ 不计入会话行的操作菜单数，也不算成分组的菜单项；有会话的分组不带占位行（实际菜单 "
-            + sidebar.SessionMenuCount + " / 行 " + sidebar.SessionRowCountForCheck + "）");
+            + sidebar.SessionMenuCount + " / 行 " + sidebar.SessionRowCountForCheck
+            + "，分组菜单 " + workspaceMenuTitles.Length
+            + " 项，占位行「" + sidebar.GroupPlaceholderForCheck(keyMoved) + "」）");
 
         // ── A workspace is a place, not a side effect of the draft that announced it ──
         // Two ＋ in a row used to hand back the same draft and overwrite its directory, so the first workspace

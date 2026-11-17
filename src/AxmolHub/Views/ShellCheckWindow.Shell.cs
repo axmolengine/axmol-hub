@@ -1682,7 +1682,8 @@ internal sealed class ShellLayoutChecks
         // A fixture project rather than one out of state: the suite has moved to a scratch data root by now and
         // has no registered project to hand, and the rule under test needs only the path a game was started
         // for — the refusal happens before the target picker, so no artifact is touched either way.
-        var heldProject = new ProjectEntry { Name = "fixture-running", Path = "fixture://running" };
+        var heldProject = new ProjectEntry { Name = "fixture-running", Path = Path.Combine(scratchRoot, "fixture-running") };
+        Directory.CreateDirectory(heldProject.Path);
         shell.Workspace.SelectedProject = heldProject;
         shell.Workspace.RememberGameForCheck(heldProject.Path, Environment.ProcessId);
         Check(!shell.Workspace.IsBusy && TaskQueue.Instance.ActiveCount == 0,
