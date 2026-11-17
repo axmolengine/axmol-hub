@@ -2101,7 +2101,48 @@ public partial class MainWindow : Window
     /// it from the UI thread.</summary>
     private readonly object _logGate = new();
     private readonly StringBuilder _logText = new();
+    private long _logHead;
+    private long _paintedLogHead;
     private bool _logDirty;
+    private ScrollViewer? _logScroll;
+    private Avalonia.Controls.Presenters.TextPresenter? _logPresenter;
+    private bool _logFollowing = true;
+    private bool _logRefreshing;
+    private int _logRefreshVersion;
+
+    private void InitializeActivityLog()
+    {
+        ActivityLog.TemplateApplied += (_, e) =>
+        {
+            if (_logScroll is not null) _logScroll.ScrollChanged -= OnActivityLogScrollChanged;
+            _logScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
+            _logPresenter = e.NameScope.Find<Avalonia.Controls.Presenters.TextPresenter>("PART_TextPresenter");
+            if (_logScroll is not null) _logScroll.ScrollChanged += OnActivityLogScrollChanged;
+        };
+        // TextPresenter queues caret scrolling after a text replacement. It must not undo the
+        // reading position restored by the drain, even when the caret is outside the viewport.
+        ActivityLog.AddHandler(Control.RequestBringIntoViewEvent, (_, e) =>
+        {
+            if (_logRefreshing) e.Handled = true;
+        }, RoutingStrategies.Tunnel);
+        ActivityLog.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key != Key.End || e.KeyModifiers != KeyModifiers.Control) return;
+            _logFollowing = true;
+            ActivityLog.CaretIndex = ActivityLog.Text?.Length ?? 0;
+            ActivityLog.ClearSelection();
+            _logScroll?.ScrollToEnd();
+            e.Handled = true;
+        }, RoutingStrategies.Tunnel);
+    }
+
+    private void OnActivityLogScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        // An expanding extent (or a resized drawer) is layout, not a request to stop following.
+        if (_logRefreshing || _logScroll is null || e.OffsetDelta.Y == 0
+            || e.ExtentDelta.Y != 0 || e.ViewportDelta.Y != 0) return;
+        _logFollowing = _logScroll.Extent.Height - _logScroll.Viewport.Height - _logScroll.Offset.Y <= 1;
+    }
 
     /// <summary>How often the box is repainted while the drawer is open. A per-line drain is the bug this timer
     /// exists to stop, so the interval is the cost: five writes a second whatever the line rate.</summary>
@@ -2125,7 +2166,12 @@ public partial class MainWindow : Window
             lock (_logGate)
             {
                 _logText.Append(line).Append('\n');
-                if (_logText.Length > 120000) _logText.Remove(0, _logText.Length - 80000);
+                if (_logText.Length > 120000)
+                {
+                    var removed = _logText.Length - 80000;
+                    _logText.Remove(0, removed);
+                    _logHead += removed;
+                }
                 _logDirty = true;
             }
         };
@@ -2947,17 +2993,51 @@ public partial class MainWindow : Window
     private void DrainActivityLog()
     {
         string text;
+        long head;
         lock (_logGate)
         {
             if (!_logDirty) return;
             text = _logText.ToString();
+            head = _logHead;
             _logDirty = false;
         }
 
+        var oldLength = ActivityLog.Text?.Length ?? 0;
+        var removed = (int)Math.Clamp(head - _paintedLogHead, 0, oldLength);
+        var caret = Math.Clamp(ActivityLog.CaretIndex - removed, 0, text.Length);
+        var selectionStart = Math.Clamp(ActivityLog.SelectionStart - removed, 0, text.Length);
+        var selectionEnd = Math.Clamp(ActivityLog.SelectionEnd - removed, 0, text.Length);
+        var offset = _logScroll?.Offset ?? default;
+        if (removed > 0)
+        {
+            // NoWrap gives the retained character the same row after trimming. Subtract its old
+            // row's height, not a guessed font height (emoji and fallback fonts can change it).
+            var removedHeight = _logPresenter?.TextLayout.HitTestTextPosition(removed).Top ?? 0;
+            offset = new Vector(offset.X, removed == oldLength ? 0 : Math.Max(0, offset.Y - removedHeight));
+        }
+
+        var refreshVersion = ++_logRefreshVersion;
+        _logRefreshing = true;
         ActivityLog.Text = text;
-        // Moving the caret to the end is how we "scroll to bottom". Avalonia's TextBox has no ScrollToEnd.
-        ActivityLog.CaretIndex = text.Length;
+        ActivityLog.CaretIndex = caret;
+        ActivityLog.SelectionStart = selectionStart;
+        ActivityLog.SelectionEnd = selectionEnd;
+        _paintedLogHead = head;
         ActivityLogWritesForCheck++;
+
+        // Wait for the new extent and TextPresenter's deferred caret request before releasing
+        // the guard. Following scrolls the viewer, not the caret, so copying text stays possible.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (refreshVersion != _logRefreshVersion) return;
+            if (_logScroll is { } scroll)
+            {
+                scroll.Offset = new Vector(offset.X, _logFollowing
+                    ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
+                scroll.UpdateLayout();
+            }
+            _logRefreshing = false;
+        }, DispatcherPriority.Loaded);
     }
 
     /// <summary>Drops the retained tail and the painted box together. Only a data-root switch does this: the old
@@ -2967,10 +3047,16 @@ public partial class MainWindow : Window
         lock (_logGate)
         {
             _logText.Clear();
+            _logHead = 0;
             _logDirty = false;
         }
 
+        ++_logRefreshVersion;
+        _paintedLogHead = 0;
+        _logFollowing = true;
+        _logRefreshing = false;
         ActivityLog.Text = "";
+        if (_logScroll is not null) _logScroll.Offset = default;
     }
 
     /// <summary>Writes the bar's two names for the current page: the page's own name in the nav zone, and — on the
@@ -3029,6 +3115,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(LogActionsButton, HubStrings.Get("LogActions"));
         // Attach to the text box so its selection survives the context menu taking focus.
         ActivityLog.ContextFlyout = BuildLogActionsMenu(includeSelectionCopy: true);
+        InitializeActivityLog();
         // The update icon's hint and accessible name are state-dependent, so the same renderer owns their
         // language switch rather than capturing a sentence at construction time.
         SyncUpdateAction();
