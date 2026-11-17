@@ -661,19 +661,18 @@ internal sealed class ShellApprovalsChecks
                 chat.HubSnapshotProvider?.Invoke(),
                 new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
             Check(ChatTools.CreateFor(ChatModes.Ask, ChatToolScope.Empty).Count == 0
-                  // Read-only apart from the one tool that reaches nobody but a person. Leaving it out of the
-                  // exemption would be the narrower mistake: 计划 exists to settle requirements before anything is
-                  // built, so it is the mode that most needs to ask — and a question reads no file and writes none,
-                  // so nothing about the mode's promise is weakened by it.
+                  // Questions and access requests involve the person without enabling workspace mutations.
                   && planTools.Where(tool => tool.Name != AskUserTool.ToolName
-                                            && tool.Name is not (ToolNames.WebSearch or ToolNames.WebFetch))
+                                            && tool.Name is not (ToolNames.WebSearch or ToolNames.WebFetch or ToolNames.FsRequestAccess))
                       .All(tool => ChatTools.RiskOf(tool.Name, null, WorkspaceToolScope.Empty) == ToolRisk.ReadOnly)
                   && planTools.Count(tool => tool.Name is ToolNames.WebSearch or ToolNames.WebFetch) == 2
                   && ChatTools.RiskOf(ToolNames.WebSearch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
                   && ChatTools.RiskOf(ToolNames.WebFetch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
+                  && planTools.Count(tool => tool.Name == ToolNames.FsRequestAccess) == 1
+                  && ChatTools.RiskOf(ToolNames.FsRequestAccess, null, WorkspaceToolScope.Empty) == ToolRisk.SystemCommand
                   && planTools.Any(tool => tool.Name == AskUserTool.ToolName)
                   && ChatTools.RiskOf(AskUserTool.ToolName, null, WorkspaceToolScope.Empty) == ToolRisk.AskUser,
-                "Ask 不给工作区工具；计划给只读工具和提问，本地 search/fetch 各声明一次且走沙箱命令审批档");
+                "Ask 不给工作区工具；计划给只读工具、提问和一次访问申请，访问申请保持审批风险，本地 search/fetch 走沙箱命令审批档");
 
             // The agent prompt carries the working discipline the tools cannot enforce: verify with the project's
             // own command before claiming a result, and re-run into a file when the output was cut short. It also

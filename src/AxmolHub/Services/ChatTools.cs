@@ -20,14 +20,13 @@ internal static class ChatTools
 {
     /// <summary>The tools for one request. <c>ask</c> gets only explicitly enabled DeepSeek web tools, which
     /// read external information without changing the workspace. <c>plan</c> gets the ordinary read-only tools
-    /// and those same optional web tools, plus the question tool, which is not read-only and never was a
-    /// permission question either way: it reads
-    /// nothing and changes nothing, it stops the run and waits for a person.</summary>
+    /// and those same optional web tools, plus access requests and questions. Access requests still need
+    /// the person's approval; they do not enable editing or commands in plan mode.</summary>
     public static IReadOnlyList<AITool> CreateFor(string mode, ChatToolScope scope) => mode switch
     {
         ChatModes.Ask => DeepSeekWebBodies(scope) ? [.. WebTools(scope)] : [],
-        ChatModes.Plan => [.. ReadOnlyTools(scope), .. WebTools(scope), .. AskingTools(scope)],
-        _ => [.. ReadOnlyTools(scope), .. WebTools(scope), .. ActingTools(scope),
+        ChatModes.Plan => [.. ReadOnlyTools(scope), .. WebTools(scope), .. AccessTools(scope), .. AskingTools(scope)],
+        _ => [.. ReadOnlyTools(scope), .. WebTools(scope), .. AccessTools(scope), .. ActingTools(scope),
               .. AskingTools(scope), .. PlanTaskTools(scope)],
     };
 
@@ -341,6 +340,10 @@ internal static class ChatTools
         ];
     }
 
+    private static IEnumerable<AITool> AccessTools(ChatToolScope scope)
+        => [AIFunctionFactory.Create(new WorkspaceTools(scope.Workspace).FsRequestAccess,
+            Options(ToolNames.FsRequestAccess))];
+
     private static IReadOnlyList<AITool> ActingTools(ChatToolScope scope)
     {
         var tools = new WorkspaceTools(scope.Workspace);
@@ -362,7 +365,6 @@ internal static class ChatTools
             scope.Workspace.PortalComputer is not null
                 ? AIFunctionFactory.Create(tools.ComputerUseAsync, Options(ToolNames.ComputerUse))
                 : AIFunctionFactory.Create(tools.ComputerUse, Options(ToolNames.ComputerUse)),
-            AIFunctionFactory.Create(tools.FsRequestAccess, Options(ToolNames.FsRequestAccess)),
             AIFunctionFactory.Create(tools.MemoryWrite, Options(ToolNames.MemoryWrite)),
             AIFunctionFactory.Create(tools.SendToSession, Options(ToolNames.SendToSession)),
             AIFunctionFactory.Create(tools.SpawnSession, Options(ToolNames.SpawnSession)),
