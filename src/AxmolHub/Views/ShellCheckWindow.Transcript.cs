@@ -1133,9 +1133,41 @@ internal sealed class ShellTranscriptChecks
         Dispatcher.UIThread.RunJobs();
         try
         {
-            Check(panel.ComposerMenuHeadersForCheck.Contains(HubStrings.Get("ChatAddImage"))
+            Check(new[] { "ChatAddImage", "ChatCaptureRegion", "ChatCaptureWindow" }
+                      .All(key => panel.ComposerMenuHeadersForCheck.Contains(HubStrings.Get(key)))
                   && panel.ComposerAcceptsDropForCheck,
-                "「+」菜单里有「添加图片…」，输入框也接得住拖进来的文件");
+                "「+」菜单提供图片、区域截图和窗口截图，输入框也接得住拖进来的文件");
+
+            // A selector can finish after a deep link switches sessions. Exercise the actual async consumer
+            // with offline PNG bytes; no desktop pixels or system clipboard enter the fixture.
+            await panel.ScreenshotForCheck(() => Task.FromResult(new ScreenshotPick(PictureFixture())));
+            var captureAttached = panel.PendingPictureCountForCheck == 1 && panel.PictureChipsForCheck == 1
+                && session.Messages.Count == 0;
+            panel.RemovePictureChipForCheck(0);
+            await panel.ScreenshotForCheck(() => Task.FromResult(new ScreenshotPick()));
+            var cancelKeptEmpty = panel.PendingPictureCountForCheck == 0;
+            var delayed = new TaskCompletionSource<ScreenshotPick>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var selecting = panel.ScreenshotForCheck(() => delayed.Task);
+            var peer = chat.StartConversation();
+            panel.Reload();
+            delayed.SetResult(new(PictureFixture()));
+            await selecting;
+            var peerKeptEmpty = panel.PendingPictureCountForCheck == 0 && peer.Messages.Count == 0;
+            chat.OpenConversation(session.Id);
+            panel.Reload();
+            var sourceKeptEmpty = panel.PendingPictureCountForCheck == 0;
+            var roundTrip = new TaskCompletionSource<ScreenshotPick>(TaskCreationOptions.RunContinuationsAsynchronously);
+            selecting = panel.ScreenshotForCheck(() => roundTrip.Task);
+            chat.OpenConversation(peer.Id);
+            panel.Reload();
+            chat.OpenConversation(session.Id);
+            panel.Reload();
+            roundTrip.SetResult(new(PictureFixture()));
+            await selecting;
+            Check(captureAttached && cancelKeptEmpty && peerKeptEmpty && sourceKeptEmpty
+                  && panel.PendingPictureCountForCheck == 0 && session.Messages.Count == 0,
+                "截图只进入当前草稿；取消、切换会话及往返切换后返回的截图均不附图、不发送");
+            chat.DeleteConversation(peer.Id);
 
             panel.AddImageForCheck(png);
             Check(panel.PendingPictureCountForCheck == 1 && panel.PictureChipsForCheck == 1,

@@ -1060,6 +1060,9 @@ public partial class ChatPanel : UserControl
     /// once it is encoded. Every entrance ends in the same admission, so this is the one that proves the shared
     /// path and the one that a pasted screenshot goes through.</summary>
     internal void AddImageBytesForCheck(byte[] bytes, string name) => AddPendingPicture(bytes, name);
+    // Only replace the external selector; draft ownership and attachment admission remain the production path.
+    internal Task ScreenshotForCheck(Func<Task<ScreenshotPick>> pick)
+        => AddScreenshotAsync(ScreenshotKind.Region, (_, _, _) => pick());
     /// <summary>The composer's drop target: what "you can drop a screenshot here" is decided by.</summary>
     internal bool ComposerAcceptsDropForCheck => DragDrop.GetAllowDrop(ComposerFrame);
     /// <summary>Pictures painted into the message flow, counted by the frame each one sits in.</summary>

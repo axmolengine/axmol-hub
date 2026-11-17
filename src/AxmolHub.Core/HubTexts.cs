@@ -851,6 +851,16 @@ public static class HubTexts
         // Pictures are a second channel next to the text attachments: a folder becomes bytes of text in the
         // prompt, a picture stays a picture. Same composer, same chips, never the same reader.
         ["ChatAddImage"] = ("添加图片…", "Add image…"),
+        ["ChatCaptureRegion"] = ("截取区域…", "Capture region…"),
+        ["ChatCaptureWindow"] = ("截取窗口…", "Capture window…"),
+        ["ChatCapturedImageName"] = ("截图", "Screenshot"),
+        ["ChatCapturedRegionName"] = ("区域截图", "Region capture"),
+        ["ChatCapturedWindowName"] = ("窗口截图", "Window capture"),
+        ["ChatCaptureRegionHint"] = ("拖动选择区域 · Esc 取消", "Drag to select a region · Esc to cancel"),
+        ["ChatCaptureWindowHint"] = ("点击选择窗口 · Esc 取消", "Click a window · Esc to cancel"),
+        ["ChatCaptureFailed"] = ("截图失败。请检查屏幕录制权限或系统截图服务后重试。", "Capture failed. Check screen recording permission or the system screenshot service and try again."),
+        ["ChatCaptureUnavailable"] = ("当前桌面无法截图。Linux X11 需要 maim；Wayland 需要支持交互式截图的桌面 Portal。", "Capture is unavailable on this desktop. Linux X11 needs maim; Wayland needs a desktop portal with interactive screenshot support."),
+        ["ChatCapturePortalHint"] = ("当前系统不支持由应用指定截图类型，截图对话框可能沿用上次的模式。请在系统界面中手动选择区域或窗口。", "This system cannot select the capture type for an app and may reuse the previous mode. Choose region or window in the system dialog."),
         ["ChatPickImageTitle"] = ("选择要发给助手的图片", "Choose an image to send to the assistant"),
         ["ChatImageEmpty"] = ("没有可附上的图片内容。", "There are no image bytes to attach."),
         ["ChatImageUnrecognized"] = ("这不是 PNG / JPEG / GIF / WebP 位图，Hub 没有可发送的媒体类型。矢量或源码文件（例如 SVG）请走文本通道：把它所在的文件夹作为上下文添加，或让助手直接读它的源码。",

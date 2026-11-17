@@ -1690,6 +1690,21 @@ public partial class ChatPanel : UserControl
         addPicture.Click += async (_, _) => await AddLocalPictureAsync();
         menu.Items.Add(addPicture);
 
+        foreach (var kind in new[] { ScreenshotKind.Region, ScreenshotKind.Window })
+        {
+            var capture = new MenuItem
+            {
+                Header = HubStrings.Get(kind == ScreenshotKind.Region ? "ChatCaptureRegion" : "ChatCaptureWindow"),
+                IsEnabled = !ScreenshotPicker.IsPicking,
+            };
+            capture.Click += async (_, _) =>
+            {
+                menu.Hide();
+                await AddScreenshotAsync(kind);
+            };
+            menu.Items.Add(capture);
+        }
+
         var projects = _chat.HubSnapshotProvider?.Invoke()?.Projects ?? [];
         var addProject = new MenuItem
         {

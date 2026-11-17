@@ -129,7 +129,7 @@ static gboolean expired(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
-static GVariant *request(const char *iface, const char *method, const char *token, GVariant *args)
+static GVariant *request_status(const char *iface, const char *method, const char *token, GVariant *args, uint32_t *status)
 {
     char *sender = g_strdup(g_dbus_connection_get_unique_name(bus) + 1);
     for (char *p = sender; *p; ++p) if (*p == '.') *p = '_';
@@ -156,8 +156,52 @@ static GVariant *request(const char *iface, const char *method, const char *toke
     g_dbus_connection_signal_unsubscribe(bus, watch);
     g_main_loop_unref(p.wait); g_free(path);
     if (r) g_variant_unref(r);
+    if (status) *status = p.response;
     if (p.response != 0) { if (p.results) g_variant_unref(p.results); return NULL; }
     return p.results;
+}
+
+static GVariant *request(const char *iface, const char *method, const char *token, GVariant *args)
+{
+    return request_status(iface, method, token, args, NULL);
+}
+
+// A one-shot, interactive Screenshot request needs neither input devices nor a ScreenCast session.
+static int screenshot(const char *destination, uint32_t target)
+{
+    const char *iface = "org.freedesktop.portal.Screenshot";
+    uint32_t version = property(iface, "version");
+    if (version < 2) { fail("interactive-screenshot-unavailable"); return 1; }
+    // v2 has no target option; do not send an ignored hint and claim the mode was selected.
+    gboolean targeted = version >= 3 && (property(iface, "AvailableTargets") & target) != 0;
+    const char *fallback = targeted ? "" : " MANUAL_TARGET";
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&b, "{sv}", "handle_token", g_variant_new_string("hub_screenshot"));
+    g_variant_builder_add(&b, "{sv}", "interactive", g_variant_new_boolean(TRUE));
+    g_variant_builder_add(&b, "{sv}", "modal", g_variant_new_boolean(TRUE));
+    if (targeted) g_variant_builder_add(&b, "{sv}", "target", g_variant_new_uint32(target));
+    uint32_t status = 2;
+    GVariant *result = request_status(iface, "Screenshot", "hub_screenshot",
+        g_variant_new("(s@a{sv})", "", g_variant_builder_end(&b)), &status);
+    if (!result) {
+        if (status == 1) { printf("CANCELLED%s\n", fallback); return 0; }
+        fail("screenshot-failed"); return 1;
+    }
+    const char *uri = NULL;
+    char *hostname = NULL;
+    char *path = g_variant_lookup(result, "uri", "&s", &uri) ? g_filename_from_uri(uri, &hostname, NULL) : NULL;
+    if (!path || (hostname && *hostname && strcmp(hostname, "localhost"))) {
+        g_free(path); g_free(hostname); g_variant_unref(result); fail("screenshot-file-unavailable"); return 1;
+    }
+    GFile *source = g_file_new_for_path(path);
+    GFile *output = g_file_new_for_path(destination);
+    gboolean copied = g_file_copy(source, output, G_FILE_COPY_NONE, NULL, NULL, NULL, NULL);
+    g_file_delete(source, NULL, NULL);
+    g_object_unref(source); g_object_unref(output);
+    g_free(path); g_free(hostname); g_variant_unref(result);
+    if (!copied) { fail("screenshot-copy-failed"); return 1; }
+    printf("OK%s\n", fallback); return 0;
 }
 
 static void session_closed(GDBusConnection *c, const gchar *sender, const gchar *path,
@@ -536,6 +580,12 @@ int main(int argc, char **argv)
         "GetNameOwner", g_variant_new("(s)", SERVICE), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
     if (!r) { fail("portal-unavailable"); return 1; }
     g_variant_get(r, "(s)", &owner); g_variant_unref(r);
+    if (argc == 4 && !strcmp(argv[1], "--screenshot")) {
+        uint32_t target = !strcmp(argv[3], "window") ? 2u : !strcmp(argv[3], "region") ? 4u : 0u;
+        if (!target) { fail("invalid-screenshot-target"); g_free(owner); g_object_unref(bus); return 1; }
+        int code = screenshot(argv[2], target);
+        g_free(owner); g_object_unref(bus); return code;
+    }
     if (property(RD, "version") < 1) { fail("remotedesktop-unavailable"); return 1; }
     if (property(SC, "version") < 3 || !(property(SC, "AvailableSourceTypes") & 2)) { fail("window-sources-unavailable"); return 1; }
     uint32_t available_devices = property(RD, "AvailableDeviceTypes") & 3;
