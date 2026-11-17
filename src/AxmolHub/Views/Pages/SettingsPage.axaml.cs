@@ -1510,7 +1510,7 @@ public partial class SettingsPage : UserControl
 
     /// <summary>
     /// The collapsed one-line header: name (with source/current/disabled pills), the auth status mark, the
-    /// state-dependent auth action, and — revealed on hover — the pencil and trash icons.
+    /// state-dependent auth action, and the always-visible pencil and trash icons.
     /// </summary>
     private Control BuildCollapsedHeader(ModelProvider provider)
     {
@@ -1585,14 +1585,6 @@ public partial class SettingsPage : UserControl
             }
         }
 
-        var reveal = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 2,
-            VerticalAlignment = VerticalAlignment.Center,
-            Classes = { "reveal" },
-        };
-
         // Custom providers own their identity fields; a built-in is pinned by the manifest and has no
         // configuration left to edit on this page.
         if (provider.IsCustom)
@@ -1606,13 +1598,12 @@ public partial class SettingsPage : UserControl
             };
             ToolTip.SetTip(edit, HubStrings.Get("EditProvider"));
             edit.Click += (_, _) => OpenEditDraft(provider);
-            reveal.Children.Add(edit);
+            actions.Children.Add(edit);
         }
 
         if (ChatWorkspace.CanRemoveProvider(provider))
         {
-            // Always visible: removing a provider is a primary management action, not a hover secret.
-            // The custom-provider pencil stays on the reveal cluster.
+            // Provider management actions remain visible alongside authentication.
             var remove = new Button
             {
                 Content = BuildRemoveIcon(),
@@ -1624,8 +1615,6 @@ public partial class SettingsPage : UserControl
             remove.Click += async (_, _) => await RemoveProviderAsync(provider);
             actions.Children.Add(remove);
         }
-
-        actions.Children.Add(reveal);
 
         // The wire this provider's model is sent on, under the name: the one place a claim about the endpoint
         // becomes visible before a 400 has to explain it. The value comes from ChatClientFactory, not from a copy
