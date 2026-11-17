@@ -67,13 +67,14 @@ internal static class EngineUpgradeChecks
         File.WriteAllText(Path.Combine(engineRoot, "tools", "cmdline", "build.ps1"), """
             param([switch]$configOnly, [switch]$forceConfig)
             if ($env:HUB_FIXTURE_EXIT) { exit ([int]$env:HUB_FIXTURE_EXIT) }
-            [Console]::WriteLine((ConvertTo-Json -Compress @{
+            Write-Host (ConvertTo-Json -Compress @{
+                log = '🔧 中文 😀'
                 configOnly = [bool]$configOnly
                 forceConfig = [bool]$forceConfig
                 configuration = $(if ($args -contains '-O3') { 'Release' } elseif ($args -contains '-O0') { 'Debug' } else { 'RelWithDebInfo' })
                 built = !$configOnly
                 argv = @($args)
-            }))
+            })
             """);
         var extra = ProjectBuildArguments.Parse(true, "-j 2 -xc '-DSEARCH_PATH=C:\\SDK path,-DQUOTED=\"value\"' -xb '--target,Hello3D'");
         var cli = EngineCli(new ProcessRunner(_ => { }));
@@ -82,17 +83,19 @@ internal static class EngineUpgradeChecks
         {
             var configuration = configureOnly ? "Release" : "Debug";
             var invocation = AxmolCommandMap.Build(BuildTargets.Get("wasm64"), projectRoot, configuration,
-                configureOnly, force: force, additionalBuild: extra);
+                configureOnly, force: force, additionalBuild: force ? extra : null);
             var result = await cli.RunAsync(engine, invocation, projectRoot);
             using var output = JsonDocument.Parse(result.Output);
             var data = output.RootElement;
             var expected = invocation.Arguments.Where(arg => arg is not ("-configOnly" or "-forceConfig")).ToArray();
-            Check(data.GetProperty("configOnly").GetBoolean() == configureOnly
+            Check(data.GetProperty("log").GetString() == "🔧 中文 😀"
+                && !result.Error.Contains("CLIXML", StringComparison.Ordinal)
+                && data.GetProperty("configOnly").GetBoolean() == configureOnly
                 && data.GetProperty("forceConfig").GetBoolean() == force
                 && data.GetProperty("built").GetBoolean() == !configureOnly
                 && data.GetProperty("configuration").GetString() == configuration
                 && data.GetProperty("argv").EnumerateArray().Select(arg => arg.GetString()).SequenceEqual(expected),
-                $"Build wrapper binds mode switches and preserves optimization/advanced argv (configure={configureOnly}, force={force})");
+                $"Build wrapper preserves UTF-8 host output, mode switches and argv (configure={configureOnly}, force={force})");
         }
         try
         {

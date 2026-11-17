@@ -4,8 +4,8 @@ namespace AxmolHub.Core;
 /// The **single entry point** from the Hub to the engine command line.
 ///
 /// Invocation rule: <c>axmol &lt;subcmd&gt; args</c>. Hub invokes the engine's own
-/// <c>tools/cmdline/axmol.ps1</c> directly. Ordinary arguments stay separate in the process
-/// argument list; colon-bearing dash values use an encoded inline command to survive pwsh's CLI parser.
+/// <c>tools/cmdline/axmol.ps1</c> directly through an encoded inline command. This initializes UTF-8
+/// before the host writes anything and preserves colon-bearing dash values through pwsh's CLI parser.
 ///
 /// The key difference from before the rework: **no longer builds its own build environment**. Previously the
 /// Hub hand-assembled <c>INCLUDE</c>/<c>LIB</c>/<c>PATH</c> in C# (standing in for vcvars) and pinned the
@@ -36,26 +36,18 @@ public sealed class EngineCommandLine(ProcessRunner runner)
         StateStore.ValidateEngine(engine.Path, engine.Channel);
         var arguments = new List<string> { "-NonInteractive" };
         if (OperatingSystem.IsWindows()) arguments.AddRange(["-ExecutionPolicy", "Bypass"]);
-        // pwsh -File (and -CommandWithArgs) splits values such as -DSEARCH_PATH=C:\\SDK
-        // at the colon despite ProcessStartInfo.ArgumentList preserving their boundary.
-        // Only for that case, send an encoded inline invocation with quoted value tokens;
-        // it still calls the engine script directly and introduces no intermediary file.
-        var needsEncodedCommand = invocation.Arguments.Any(value => value.StartsWith('-') && value.Contains(':'));
-        if (needsEncodedCommand)
-        {
-            arguments.AddRange(["-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
-                InlineInvocation(invocation)))]);
-        }
-        else
-        {
-            arguments.AddRange(["-File", CommandScript(engine), invocation.SubCommand]);
-            arguments.AddRange(invocation.Arguments);
-        }
+        // Initialize UTF-8 before the first host write: changing it inside the engine is too late
+        // once PowerShell has cached its host writer's encoding. Reuse the inline invocation for all
+        // arguments; -File (and -CommandWithArgs) splits colon-bearing dash values such as -DROOT=C:\\SDK.
+        // Encoded commands otherwise serialize information records (Write-Host) as CLIXML on stderr.
+        arguments.AddRange(["-OutputFormat", "Text", "-EncodedCommand",
+            Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(
+                CommandShell.Utf8Preamble + ";" + InlineInvocation(invocation)))]);
         var overrides = new Dictionary<string, string>();
         if (environment is not null)
             foreach (var entry in environment) overrides[entry.Key] = entry.Value;
         overrides["AX_ROOT"] = engine.Path;
-        if (needsEncodedCommand) overrides["AX_HUB_ENGINE_ENTRY"] = CommandScript(engine);
+        overrides["AX_HUB_ENGINE_ENTRY"] = CommandScript(engine);
         if (!Directory.Exists(Path.Combine(engine.Path, ".git")))
         {
             // Release ZIPs have no git history. The engine probes git and otherwise leaves its
