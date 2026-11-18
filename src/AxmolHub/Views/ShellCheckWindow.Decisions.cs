@@ -1118,6 +1118,25 @@ internal sealed partial class ShellDecisionsChecks
         restored.CloseWorkspaceDocument(discard: true);
         Check(!restored.WorkspaceDocumentVisibleForCheck && workspaceChecks.Layout,
             "Tab 与文件树独立恢复：无 Tab 入口、窄抽屉、宽分栏及整个工作区放大还原");
+        restored.Width = restored.MinWidth;
+        restored.SetInspectorWidthForCheck(1000);
+        await WaitUntilAsync(() => restored.ClientSize.Width <= restored.MinWidth + 0.5);
+        restored.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var narrowClient = restored.ClientBoundsForCheck;
+        var narrowBar = restored.TitleBarBoundsForCheck;
+        var narrowPlates = restored.WindowControlsBoundsForCheck;
+        var narrowTabs = restored.InspectorTabSlotBoundsForCheck;
+        var narrowActions = restored.InspectorExpandToggleBoundsForCheck;
+        var frameInset = TitleBarSnapHook.ResizeFrameWidth / restored.RenderScaling;
+        Check(restored.ClientSize.Width <= restored.MinWidth + 0.5
+              && restored.InspectorVisibleForCheck && narrowActions.Width > 0 && narrowPlates.Width > 0
+              && Math.Abs(narrowBar.Right - narrowClient.Right) <= 0.5
+              && Math.Abs(narrowPlates.Right - narrowClient.Right - frameInset) <= 0.5
+              && narrowTabs.Right <= narrowActions.Left + 0.5,
+            "窄窗口中的超宽审阅面板不会把窗口按钮挤出标题栏（客户区右缘 " + Fmt(narrowClient.Right)
+            + "，标题栏 " + Fmt(narrowBar.Right) + "，窗口按钮 " + Fmt(narrowPlates.Right)
+            + "，页签 " + Fmt(narrowTabs.Right) + "，操作组左缘 " + Fmt(narrowActions.Left) + "）");
         restored.ClickInspectorToggleForCheck();
         restored.UpdateLayout();
         Dispatcher.UIThread.RunJobs();

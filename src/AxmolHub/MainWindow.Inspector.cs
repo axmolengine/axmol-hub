@@ -19,12 +19,12 @@ public partial class MainWindow
 {
     // ───────────────────────── Inspector column ─────────────────────────
 
-    /// <summary>Inspector width bounds. The floor is what keeps a diff's two columns legible; the ceiling is
-    /// what keeps the chat column from being squeezed past its own floor on a narrow window.</summary>
+    // Bounds for the requested width; the visible column also has to fit in the current window.
     private const double InspectorMin = 300;
     private const double InspectorMax = 1000;
     private const double InspectorCollapseThreshold = 200;
     private const double InspectorDefault = 360;
+    private const double ShellGripWidth = 5;
 
     /// <summary>Which tab and which plan the column is currently holding. Remembered rather than re-asked, so a
     /// repaint while a run keeps writing lands where the reader was looking instead of bouncing them back to the
@@ -87,6 +87,11 @@ public partial class MainWindow
         InspectorExpandToggle.Click += (_, _) => ToggleInspectorExpanded();
         TitleBarRightActions.SizeChanged += (_, _) => SyncInspectorTabInset();
         TitleBar.SizeChanged += (_, _) => SyncInspectorTabInset();
+        ClientRoot.SizeChanged += (_, _) => FitInspectorToClient();
+        Sidebar.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == WidthProperty) FitInspectorToClient();
+        };
         Inspector.PropertyChanged += (_, e) =>
         {
             if (e.Property == WidthProperty) SyncInspectorTabInset();
@@ -249,20 +254,34 @@ public partial class MainWindow
         SyncInspectorDrawerChrome();
     }
 
+    private double FittedInspectorWidth => Math.Min(Inspector.Width, Inspector.MaxWidth);
+
+    private void FitInspectorToClient()
+    {
+        if (ClientRoot.Bounds.Width <= 0) return;
+
+        // The title bar spans the shell's columns. If the two Auto drawers exceed the client width,
+        // the Grid lays out the caption buttons beyond the window's right edge. Limit the displayed
+        // width, not the saved preference, so the pane can recover its width when there is room again.
+        // The sidebar's grip column is fixed even when the drawer is collapsed.
+        Inspector.MaxWidth = Math.Max(0, ClientRoot.Bounds.Width - Sidebar.Width - 2 * ShellGripWidth);
+        SyncInspectorTabInset();
+    }
+
     // The sibling tab host must stop before the actual action plates, including platform-specific captions.
     // Reserving their measured width prevents tabs and menus from painting or receiving clicks over them.
     private void SyncInspectorTabInset()
     {
         var actions = TitleBarRightActions.Bounds.Width;
-        var grip = _inspectorExpanded ? 0 : 5;
+        var grip = _inspectorExpanded ? 0 : ShellGripWidth;
+        var paneWidth = FittedInspectorWidth;
         InspectorTabSlot.Margin = new Thickness(grip, 0, actions, 0);
-        // An Auto column otherwise measures the tabs at infinity and lets their desired width widen the
-        // column again after a grip drag. The content pane is the width authority, never the tab captions.
-        InspectorTabSlot.Width = Math.Max(0, (_inspectorExpanded ? TitleBar.Bounds.Width : Inspector.Width) - actions);
+        // The tab slot also feeds the Auto column's measurement, so it must use the same cap as the pane.
+        InspectorTabSlot.Width = Math.Max(0, (_inspectorExpanded ? TitleBar.Bounds.Width : paneWidth) - actions);
         // The title bar already reserves the action plates in its own Auto column, but its title lane does
         // not share the shell's inspector column. Reserve the rest here so ellipsis and hit testing stop
         // at the grip's left edge instead of letting a growing tab strip paint over the title.
-        var titleInset = InspectorColumn.IsVisible ? Math.Max(0, Inspector.Width + grip - actions) : 0;
+        var titleInset = InspectorColumn.IsVisible ? Math.Max(0, paneWidth + grip - actions) : 0;
         ConversationTitleZone.Margin = new Thickness(0, 0, titleInset, 0);
     }
 
@@ -359,7 +378,7 @@ public partial class MainWindow
     {
         _inspectorGrabbing = true;
         _inspectorGrabStartX = e.GetPosition(this).X;
-        _inspectorGrabStartWidth = Inspector.Width;
+        _inspectorGrabStartWidth = FittedInspectorWidth;
         e.Pointer.Capture(InspectorResizeGrip);
         e.Handled = true;
     }
