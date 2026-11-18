@@ -39,11 +39,11 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
     public string ProjectTypeLabel => HubStrings.Get(Project.ProjectType);
     public string Engine => Project.Version + (Project.Channel == "local" ? "" : " · " + Project.Channel);
     public string ConfigurationAndStatus => Project.Configuration + " · " + HubStrings.Get(Project.BuildStatus);
-    public string ExactLastOpened => Project.LastOpened?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture) ?? HubStrings.Get("NeverOpened");
-    public string LastOpened => Project.LastOpened is not { } opened ? HubStrings.Get("NeverOpened")
-        : opened.ToLocalTime().Date == DateTime.Now.Date ? HubStrings.Get("TodayAt") + " " + opened.ToLocalTime().ToString("HH:mm", CultureInfo.CurrentCulture)
-        : opened.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
-    public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastOpened);
+    public string ExactLastActivity => Project.LastOpened?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture) ?? HubStrings.Get("NoActivity");
+    public string LastActivity => Project.LastOpened is not { } activity ? HubStrings.Get("NoActivity")
+        : activity.ToLocalTime().Date == DateTime.Now.Date ? HubStrings.Get("TodayAt") + " " + activity.ToLocalTime().ToString("HH:mm", CultureInfo.CurrentCulture)
+        : activity.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
+    public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastActivity);
     public string RunCaption => HubStrings.Get(_runStateKey ?? (IsPreviewRunning ? "Stop" : "Run"));
 }
 

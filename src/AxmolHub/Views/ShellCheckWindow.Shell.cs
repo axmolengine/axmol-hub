@@ -595,7 +595,7 @@ internal sealed class ShellLayoutChecks
         shell.Workspace.State.Projects.AddRange([projectA, projectB]);
         projects.Reload();
         var allRows = projects.RowsForCheck;
-        Check(allRows.Length == 2 && allRows[0].Project == projectB && allRows.Any(x => x.Target.Length > 0 && x.Engine.Contains("official-preview", StringComparison.Ordinal) && x.ConfigurationAndStatus.Contains(HubStrings.Get("Succeeded"), StringComparison.Ordinal) && x.LastOpened.Length > 0 && x.CompactDetails.Contains(HubStrings.Get("lua"), StringComparison.Ordinal)), "项目行提供完整目标/配置状态/引擎渠道/时间及脚本类型，默认按最近打开倒序（实际 " + string.Join(" ｜ ", allRows.Select(x => x.Project.Name + "：" + x.CompactDetails)) + "）");
+        Check(allRows.Length == 2 && allRows[0].Project == projectB && allRows.Any(x => x.Target.Length > 0 && x.Engine.Contains("official-preview", StringComparison.Ordinal) && x.ConfigurationAndStatus.Contains(HubStrings.Get("Succeeded"), StringComparison.Ordinal) && x.LastActivity.Length > 0 && x.CompactDetails.Contains(HubStrings.Get("lua"), StringComparison.Ordinal)), "项目行提供完整目标/配置状态/引擎渠道/时间及脚本类型，默认按最近活动倒序（实际 " + string.Join(" ｜ ", allRows.Select(x => x.Project.Name + "：" + x.CompactDetails)) + "）");
         projects.GridForCheck.SelectedItem = allRows[0];
         projects.UpdateLayout();
         Dispatcher.UIThread.RunJobs();

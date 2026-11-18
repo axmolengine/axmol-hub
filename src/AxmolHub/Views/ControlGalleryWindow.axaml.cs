@@ -345,4 +345,4 @@ public partial class ControlGalleryWindow : Window
     }
 }
 
-internal sealed record GalleryProject(string Name, string Version, string Status, string LastOpened);
+internal sealed record GalleryProject(string Name, string Version, string Status, string LastActivity);

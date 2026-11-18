@@ -114,7 +114,8 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         => ProjectService.ReadBuildResult(project).FindArtifact(project);
 
     public async Task<ProcessResult> RunAsync(ProjectEntry project, EngineEntry engine, EngineCommandLine commandLine,
-        CancellationToken cancellation = default, bool openBrowser = true, string? deviceSerial = null, bool deployOnly = false)
+        CancellationToken cancellation = default, bool openBrowser = true, string? deviceSerial = null, bool deployOnly = false,
+        Action<string, string>? onCommand = null)
     {
         var target = BuildTargets.Get(project.Platform);
         if (!target.CanBuildOn(BuildTargets.Host)) throw new PlatformNotSupportedException("Run requires the matching build host.");
@@ -149,7 +150,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         var invocation = deployOnly
             ? AxmolCommandMap.Deploy(target, project.Path, project.Configuration)
             : AxmolCommandMap.Run(target, project.Path, project.Configuration);
-        return await commandLine.RunAsync(engine, invocation, project.Path, cancellation, environment: overrides);
+        return await commandLine.RunAsync(engine, invocation, project.Path, cancellation, environment: overrides, onCommand: onCommand);
     }
 
     /// <summary>

@@ -691,8 +691,20 @@ public sealed partial class HubWorkspace : IDisposable
     private Action<string> OwnLines(TaskQueue.Item item) => line => Dispatcher.UIThread.Post(() =>
         item.ApplyProgress(TaskQueue.TaskFeed.Parse(line)));
 
-    private Action<string, string> OwnCommand(TaskQueue.Item item) => (command, directory) =>
-        Dispatcher.UIThread.Post(() => item.ReportCommand(command, directory));
+    private Action<string, string> OwnCommand(TaskQueue.Item item, Action? onStarted = null) => (command, directory) =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            item.ReportCommand(command, directory);
+            onStarted?.Invoke();
+        });
+
+    private void RecordProjectActivity(ProjectEntry project)
+    {
+        // Keep the stored field name so existing activity history needs no migration.
+        project.LastOpened = DateTimeOffset.Now;
+        Store.Save(State);
+        Changed?.Invoke();
+    }
 
     /// <summary>
     /// The WPF version's <c>Refresh()</c>: after an operation ends, recompute all lists and derived
@@ -752,7 +764,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>Equivalent of the WPF <c>SetHeaders</c>: header copy follows the language, so it is reset on every refresh.</summary>
     public static string[] GridHeaders(string grid) => grid switch
     {
-        "projects" => ["Name", "Version", "Scripting", "BuildStatus", "LastOpened"],
+        "projects" => ["Name", "Version", "Scripting", "BuildStatus", "LastActivity"],
         "engines" => ["Version", "Channel", "Path"],
         "tools" => ["Component", "Status", "Details"],
         _ => [],
@@ -1473,7 +1485,8 @@ public sealed partial class HubWorkspace : IDisposable
             try
             {
                 _androidPasswords.TryGetValue(project.Path, out var passwords);
-                await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task), OwnCommand(task));
+                await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task),
+                    OwnCommand(task, () => RecordProjectActivity(project)));
                 project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
             }
             catch (OperationCanceledException)
@@ -1574,13 +1587,11 @@ public sealed partial class HubWorkspace : IDisposable
                 Log.Write("Android run device: " + androidSerial);
             }
 
-            project.LastOpened = DateTimeOffset.Now;
-            Store.Save(State);
-
             if (family == "windows")
             {
                 var pid = await _projects.LaunchAsync(project, engine);
                 _launchedGames[project.Path] = pid;
+                RecordProjectActivity(project);
                 Log.Write($"{project.Name} launched (pid {pid}).");
                 SetStatus(HubStrings.Get("Run project") + " · " + project.Name);
                 WatchEarlyExit(project, pid);
@@ -1606,7 +1617,8 @@ public sealed partial class HubWorkspace : IDisposable
                     SetAndroidRunState(project.Path, "AndroidRunStarting");
                     SetStatus(string.Format(HubStrings.Get("AndroidRunStartingStatus"), project.Name, androidDeviceName));
                 }
-                var result = await _projects.RunAsync(project, engine, token, androidSerial);
+                var result = await _projects.RunAsync(project, engine, token, androidSerial,
+                    onCommand: (_, _) => Dispatcher.UIThread.Post(() => RecordProjectActivity(project)));
                 if (result.ExitCode != 0)
                 {
                     throw new InvalidOperationException($"Game exited with code {result.ExitCode}.");
@@ -1679,7 +1691,7 @@ public sealed partial class HubWorkspace : IDisposable
         _webPreview = preview;
         _webPreviewProjectPath = project.Path;
         SetStatus(HubStrings.Get("Run project") + " · " + preview.Url);
-        Changed?.Invoke();
+        RecordProjectActivity(project);
 
         // The server going away — a crash, a Ctrl+C in its console, the browser tab ending the session — has to
         // put the button back by itself. Guarded on identity because stopping one preview must not erase a
@@ -1911,7 +1923,7 @@ public sealed partial class HubWorkspace : IDisposable
             var (fileName, arguments) = CodeEditors.LaunchPlan(binding.Path, EditorTargets.Default(project));
             _runner.Launch(fileName, arguments);
         }
-        project.LastOpened = DateTimeOffset.Now;
+        RecordProjectActivity(project);
         return Task.CompletedTask;
     });
 

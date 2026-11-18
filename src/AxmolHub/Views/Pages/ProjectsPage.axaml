@@ -90,7 +90,7 @@
                                  FontSize="11" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Path}" />
                       <TextBlock x:Name="CompactDetails" Text="{Binding CompactDetails}" IsVisible="False"
                                  Foreground="{DynamicResource Hub.TextSecondary}" TextWrapping="Wrap"
-                                 ToolTip.Tip="{Binding ExactLastOpened}" />
+                                 ToolTip.Tip="{Binding ExactLastActivity}" />
                     </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
@@ -116,12 +116,12 @@
               </DataGridTemplateColumn>
               <DataGridTemplateColumn Width="145">
                 <DataGridTemplateColumn.Header>
-                  <TextBlock Text="{DynamicResource LastOpened}" />
+                  <TextBlock Text="{DynamicResource LastActivity}" />
                 </DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
-                    <TextBlock Text="{Binding LastOpened}" Margin="2,2" TextWrapping="Wrap"
-                               ToolTip.Tip="{Binding ExactLastOpened}" />
+                    <TextBlock Text="{Binding LastActivity}" Margin="2,2" TextWrapping="Wrap"
+                               ToolTip.Tip="{Binding ExactLastActivity}" />
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
@@ -167,7 +167,7 @@
                       <TextBlock Text="{Binding DisplayPath}" Foreground="{DynamicResource Hub.TextSecondary}"
                                  FontSize="11" TextWrapping="Wrap" ToolTip.Tip="{Binding Project.Path}" />
                       <TextBlock Text="{Binding CompactDetails}" Foreground="{DynamicResource Hub.TextSecondary}"
-                                 TextWrapping="Wrap" ToolTip.Tip="{Binding ExactLastOpened}" />
+                                 TextWrapping="Wrap" ToolTip.Tip="{Binding ExactLastActivity}" />
                     </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>

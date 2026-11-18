@@ -157,7 +157,7 @@
               <DataGridTextColumn Header="Project" Binding="{Binding Name}" Width="*" />
               <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="110" />
               <DataGridTextColumn Header="Build status" Binding="{Binding Status}" Width="140" />
-              <DataGridTextColumn Header="Last opened" Binding="{Binding LastOpened}" Width="170" />
+              <DataGridTextColumn Header="Last activity" Binding="{Binding LastActivity}" Width="170" />
             </DataGrid.Columns>
           </DataGrid>
         </Border>

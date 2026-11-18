@@ -281,11 +281,13 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     /// the app on the phone. The shell's 运行 is not in this set: it launches a Windows game with
     /// <see cref="LaunchAsync"/> and lets go.
     /// </summary>
-    public async Task<ProcessResult> RunAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation = default, string? androidDevice = null)
+    public async Task<ProcessResult> RunAsync(ProjectEntry project, EngineEntry engine, CancellationToken cancellation = default,
+        string? androidDevice = null, Action<string, string>? onCommand = null)
     {
         if (BuildTargets.Get(project.Platform).Family != "windows")
         {
-            return await new PlatformBuildService(runner).RunAsync(project, engine, commandLine, cancellation, deviceSerial: androidDevice);
+            return await new PlatformBuildService(runner).RunAsync(project, engine, commandLine, cancellation,
+                deviceSerial: androidDevice, onCommand: onCommand);
         }
 
         using var process = await StartWindowsAsync(project, engine, cancellation);
