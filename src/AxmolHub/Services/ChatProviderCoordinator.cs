@@ -932,7 +932,7 @@ internal sealed partial class ChatProviderCoordinator
                 : ModelCatalogFailure.Clean(failure.Problem!, secrets);
             try
             {
-                log.Write($"Model list refresh failed for {label}: {detail}");
+                log.Write($"Model list refresh failed for {label}: {detail}", HubLog.Level.Error);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

@@ -11,6 +11,9 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Threading;
+using AvaloniaEdit.Document;
+using AvaloniaEdit.Editing;
+using AvaloniaEdit.Rendering;
 using AxmolHub.Core;
 
 namespace AxmolHub;
@@ -2111,26 +2114,34 @@ public partial class MainWindow : Window
     private readonly object _logGate = new();
     private readonly StringBuilder _logText = new();
     private readonly Queue<(HubLog.Location Location, long Offset)> _logLocations = new();
+    private readonly Queue<LogDiagnostic> _logDiagnostics = new();
+    private LogDiagnostic[] _paintedLogDiagnostics = [];
+    private readonly record struct LogDiagnostic(long Start, long End, HubLog.Level Level);
     private long _logHead;
     private long _paintedLogHead;
-    private bool _logDirty;
     private ScrollViewer? _logScroll;
-    private Avalonia.Controls.Presenters.TextPresenter? _logPresenter;
     private bool _logFollowing = true;
     private bool _logRefreshing;
     private int _logRefreshVersion;
 
     private void InitializeActivityLog()
     {
+        ActivityLog.Options.EnableHyperlinks = false;
+        ActivityLog.Options.EnableEmailHyperlinks = false;
+        ActivityLog.Options.AcceptsTab = false;
+        ActivityLog.Options.AllowScrollBelowDocument = false;
+        ActivityLog.Options.CutCopyWholeLine = false;
+        ActivityLog.Document.UndoStack.SizeLimit = 0;
+        CodeSurface.ApplySelection(ActivityLog, "Hub.Selection");
+        ActivityLog.TextArea.TextView.LineTransformers.Add(new LogColors(this));
+        ActivityLog.ActualThemeVariantChanged += (_, _) => ActivityLog.TextArea.TextView.Redraw();
         ActivityLog.TemplateApplied += (_, e) =>
         {
             if (_logScroll is not null) _logScroll.ScrollChanged -= OnActivityLogScrollChanged;
             _logScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
-            _logPresenter = e.NameScope.Find<Avalonia.Controls.Presenters.TextPresenter>("PART_TextPresenter");
             if (_logScroll is not null) _logScroll.ScrollChanged += OnActivityLogScrollChanged;
         };
-        // TextPresenter queues caret scrolling after a text replacement. It must not undo the
-        // reading position restored by the drain, even when the caret is outside the viewport.
+        // Keep caret/selection changes during a drain from moving the restored reading position.
         ActivityLog.AddHandler(Control.RequestBringIntoViewEvent, (_, e) =>
         {
             if (_logRefreshing) e.Handled = true;
@@ -2139,11 +2150,34 @@ public partial class MainWindow : Window
         {
             if (e.Key != Key.End || e.KeyModifiers != KeyModifiers.Control) return;
             _logFollowing = true;
-            ActivityLog.CaretIndex = ActivityLog.Text?.Length ?? 0;
-            ActivityLog.ClearSelection();
+            ActivityLog.CaretOffset = ActivityLog.Document.TextLength;
+            ActivityLog.TextArea.ClearSelection();
             _logScroll?.ScrollToEnd();
             e.Handled = true;
         }, RoutingStrategies.Tunnel);
+    }
+
+    private sealed class LogColors(MainWindow owner) : DocumentColorizingTransformer
+    {
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            if (line.Length == 0) return;
+            var offset = owner._paintedLogHead + line.Offset;
+            var diagnostics = owner._paintedLogDiagnostics;
+            // Absolute offsets keep the retained ranges valid when the UI trims the head.
+            int low = 0, high = diagnostics.Length;
+            while (low < high)
+            {
+                var mid = (low + high) / 2;
+                if (diagnostics[mid].End <= offset) low = mid + 1;
+                else high = mid;
+            }
+            if (low == diagnostics.Length || diagnostics[low].Start > offset) return;
+            var key = diagnostics[low].Level == HubLog.Level.Error ? "Hub.DangerText" : "Hub.LogWarning";
+            if (Application.Current?.TryGetResource(key, owner.ActivityLog.ActualThemeVariant, out var value) == true
+                && value is IBrush brush)
+                ChangeLinePart(line.Offset, line.EndOffset, element => element.TextRunProperties.SetForegroundBrush(brush));
+        }
     }
 
     private void OnActivityLogScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -2158,8 +2192,7 @@ public partial class MainWindow : Window
     /// exists to stop, so the interval is the cost: five writes a second whatever the line rate.</summary>
     private readonly DispatcherTimer _logDrain = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
-    /// <summary>The retained tail — what the drawer shows, whether or not it is open. The box itself lags one
-    /// drain behind and holds nothing while the drawer is closed, so anything that reads the log reads this.</summary>
+    /// <summary>The current retained tail, even while the hidden editor is not being updated.</summary>
     private string ReadRetainedLog()
     {
         lock (_logGate) return _logText.ToString();
@@ -2167,15 +2200,15 @@ public partial class MainWindow : Window
 
     private void WireWorkspace()
     {
-        // The log's retained tail, kept off the UI thread. A build has been measured at 111 lines a second, and
-        // appending each one to TextBox.Text copies the whole retained string and re-measures the box: a flood of
-        // those held the dispatcher for 216 seconds, which is a frozen shell with no message beside it. The pump
-        // appends here; DrainActivityLog is the only writer of the box.
-        _workspace.Log.Written += (line, location) =>
+        // The output pump only updates the bounded tail. DrainActivityLog applies batches to the editor
+        // on the UI thread, and only while the drawer is open.
+        _workspace.Log.Written += (line, level, location) =>
         {
             lock (_logGate)
             {
-                if (location is not null) _logLocations.Enqueue((location, _logHead + _logText.Length));
+                var offset = _logHead + _logText.Length;
+                if (location is not null) _logLocations.Enqueue((location, offset));
+                if (level != HubLog.Level.Info) _logDiagnostics.Enqueue(new(offset, offset + line.Length + 1, level));
                 _logText.Append(line).Append('\n');
                 if (_logText.Length > 120000)
                 {
@@ -2184,8 +2217,9 @@ public partial class MainWindow : Window
                     _logHead += removed;
                     while (_logLocations.TryPeek(out var entry) && entry.Offset < _logHead)
                         _logLocations.Dequeue();
+                    while (_logDiagnostics.TryPeek(out var diagnostic) && diagnostic.End <= _logHead)
+                        _logDiagnostics.Dequeue();
                 }
-                _logDirty = true;
             }
         };
         _logDrain.Tick += (_, _) => DrainActivityLog();
@@ -2996,7 +3030,13 @@ public partial class MainWindow : Window
     /// <summary>Paints pending output in one write. Returns whether a requested location is still in the live tail.</summary>
     private bool DrainActivityLog(HubLog.Location? location = null)
     {
-        string text;
+        var area = ActivityLog.TextArea;
+        var document = area.Document;
+        var view = area.TextView;
+        var oldLength = document.TextLength;
+        var paintedEnd = _paintedLogHead + oldLength;
+        string appended;
+        LogDiagnostic[] diagnostics;
         long head;
         int? targetIndex = null;
         lock (_logGate)
@@ -3010,50 +3050,50 @@ public partial class MainWindow : Window
                     break;
                 }
             }
-            if (!_logDirty && targetIndex is null) return false;
-            text = _logText.ToString();
             head = _logHead;
-            _logDirty = false;
+            if (head + _logText.Length == paintedEnd && targetIndex is null) return false;
+            // When the drawer has been shut long enough, the entire last painted range may be gone.
+            var start = (int)Math.Max(0, paintedEnd - head);
+            appended = _logText.ToString(start, _logText.Length - start);
+            diagnostics = _logDiagnostics.ToArray();
         }
 
-        var oldLength = ActivityLog.Text?.Length ?? 0;
         var removed = (int)Math.Clamp(head - _paintedLogHead, 0, oldLength);
-        var caret = Math.Clamp(ActivityLog.CaretIndex - removed, 0, text.Length);
-        var selectionStart = Math.Clamp(ActivityLog.SelectionStart - removed, 0, text.Length);
-        var selectionEnd = Math.Clamp(ActivityLog.SelectionEnd - removed, 0, text.Length);
         var offset = _logScroll?.Offset ?? default;
-        if (removed > 0)
-        {
-            // NoWrap gives the retained character the same row after trimming. Subtract its old
-            // row's height, not a guessed font height (emoji and fallback fonts can change it).
-            var removedHeight = _logPresenter?.TextLayout.HitTestTextPosition(removed).Top ?? 0;
-            offset = new Vector(offset.X, removed == oldLength ? 0 : Math.Max(0, offset.Y - removedHeight));
-        }
-
-        if (targetIndex is { } start)
-        {
-            _logFollowing = false;
-            caret = selectionStart = selectionEnd = start;
-        }
+        if (removed > 0 && !_logFollowing && targetIndex is null)
+            offset = new Vector(offset.X, removed == oldLength ? 0 : Math.Max(0, offset.Y
+                - view.GetVisualTopByDocumentLine(document.GetLineByOffset(removed).LineNumber)));
 
         var refreshVersion = ++_logRefreshVersion;
         _logRefreshing = true;
-        ActivityLog.Text = text;
-        ActivityLog.CaretIndex = caret;
-        ActivityLog.SelectionStart = selectionStart;
-        ActivityLog.SelectionEnd = selectionEnd;
-        _paintedLogHead = head;
-        ActivityLogWritesForCheck++;
+        _paintedLogDiagnostics = diagnostics;
+        if (removed > 0 || appended.Length > 0)
+        {
+            using (document.RunUpdate())
+            {
+                if (removed > 0) document.Remove(0, removed);
+                _paintedLogHead = head;
+                // Do not extend a selection or push the caret forward if it ends at the old tail.
+                if (appended.Length > 0)
+                    document.Insert(document.TextLength, appended, AnchorMovementType.BeforeInsertion);
+            }
+            ActivityLogWritesForCheck++;
+        }
+        if (targetIndex is { } startIndex)
+        {
+            _logFollowing = false;
+            ActivityLog.CaretOffset = startIndex;
+            area.ClearSelection();
+        }
 
-        // Wait for the new extent and TextPresenter's deferred caret request before releasing
-        // the guard. Following scrolls the viewer, not the caret, so copying text stays possible.
+        // Following moves the viewport, not the caret, so copying remains possible.
         Dispatcher.UIThread.Post(() =>
         {
             if (refreshVersion != _logRefreshVersion) return;
             if (_logScroll is { } scroll)
             {
-                if (targetIndex is { } index && _logPresenter is { } presenter)
-                    scroll.Offset = new Vector(0, presenter.TextLayout.HitTestTextPosition(index).Top);
+                if (targetIndex is { } index)
+                    scroll.Offset = new Vector(0, view.GetVisualTopByDocumentLine(document.GetLineByOffset(index).LineNumber));
                 else
                     scroll.Offset = new Vector(offset.X, _logFollowing
                         ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
@@ -3072,12 +3112,13 @@ public partial class MainWindow : Window
         {
             _logText.Clear();
             _logLocations.Clear();
+            _logDiagnostics.Clear();
             _logHead = 0;
-            _logDirty = false;
         }
 
         ++_logRefreshVersion;
         _paintedLogHead = 0;
+        _paintedLogDiagnostics = [];
         _logFollowing = true;
         _logRefreshing = false;
         ActivityLog.Text = "";

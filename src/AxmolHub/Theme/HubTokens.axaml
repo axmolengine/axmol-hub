@@ -85,6 +85,7 @@
            Hub.DangerBorder is that hue mixed into the surface, so a page button can be marked
            consequential without shouting over the action bar's primary button. -->
       <SolidColorBrush x:Key="Hub.WarningText" Color="#FF9B59" />
+      <SolidColorBrush x:Key="Hub.LogWarning" Color="#FFD166" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#F294A7" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#8A5A64" />
 
@@ -204,6 +205,7 @@
       <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#E5C75C" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.WarningText" Color="#A94700" />
+      <SolidColorBrush x:Key="Hub.LogWarning" Color="#825600" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#E5A6B2" />
       <!-- The badge red on light, the same pure red as the Dark dictionary's Hub.AlertDot — one signal, one

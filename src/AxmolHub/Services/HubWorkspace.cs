@@ -186,7 +186,7 @@ public sealed partial class HubWorkspace : IDisposable
             var url = new Uri(EngineIndex.DefaultUrl);
             var result = await Task.Run(() => EngineIndex.FetchAsync(_http, url, timeout.Token), timeout.Token);
             _releases.Adopt(result);
-            foreach (var problem in _releases.Problems) Log.Write("Engine index: " + problem);
+            foreach (var problem in _releases.Problems) Log.Write("Engine index: " + problem, HubLog.Level.Warning);
             Log.Write(result.Manifest is null
                 ? "Engine index unavailable; using the built-in manifest."
                 : $"Engine index applied: {_releases.All().Count} release(s).");
@@ -195,7 +195,7 @@ public sealed partial class HubWorkspace : IDisposable
         {
             // By contract EngineIndex.FetchAsync doesn't throw; and if it does, it still shouldn't
             // fail startup.
-            Log.Write("Engine index failed: " + ex.Message);
+            Log.Write("Engine index failed: " + ex.Message, HubLog.Level.Error);
         }
 
         _engineIndexReady.TrySetResult();
@@ -525,7 +525,7 @@ public sealed partial class HubWorkspace : IDisposable
     {
         LastError = error.ToString();
         // The queue already wrote task failures with a location before notifying the shell.
-        if (taskStatus is null) Log.Write(LastError);
+        if (taskStatus is null) Log.Write(LastError, HubLog.Level.Error);
         var message = taskStatus ?? (HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]));
         SetStatus(message, taskToken, taskFinished: taskToken is not null);
         Failed?.Invoke();
@@ -939,7 +939,7 @@ public sealed partial class HubWorkspace : IDisposable
             // The report the locked action used to give: logged, the drawer open, the typed dialog — not
             // an exception escaping into a button handler that has no catcher.
             LastError = ex.ToString();
-            Log.Write(LastError);
+            Log.Write(LastError, HubLog.Level.Error);
             Failed?.Invoke();
             if (!SuppressDialogs)
             {

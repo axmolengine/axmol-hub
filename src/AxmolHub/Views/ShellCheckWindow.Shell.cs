@@ -1402,10 +1402,10 @@ internal sealed class ShellLayoutChecks
         var clickedLog = shell.ClickTaskRowActionForCheck(retryIdentity, logWord);
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var logBox = shell.FindControl<TextBox>("ActivityLog");
+        var logBox = shell.FindControl<AvaloniaEdit.TextEditor>("ActivityLog");
         var header = logBox?.Text?.IndexOf("Task failed: " + firstAttempt.Title, StringComparison.Ordinal) ?? -1;
         Check(hasFailureActions && clickedLog && !shell.TaskPopupOpenForCheck && logBox?.IsEffectivelyVisible == true
-              && header >= 0 && logBox.CaretIndex == logBox.Text!.LastIndexOf('\n', header) + 1
+              && header >= 0 && logBox.CaretOffset == logBox.Text!.LastIndexOf('\n', header) + 1
               && shell.ActivityLogTextForCheck == beforeLogClick,
             "更新失败的任务行可重试、忽略，或跳到对应日志且不重复写入");
         shell.OpenTaskPopupForCheck();

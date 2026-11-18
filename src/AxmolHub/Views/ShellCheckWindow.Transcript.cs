@@ -583,7 +583,7 @@ internal sealed class ShellTranscriptChecks
                 + " 次，而命令打了 1,200 行）");
 
             shell.ShowLog(true);
-            var box = NamedDescendant<TextBox>(shell, "ActivityLog")?.Text ?? "";
+            var box = NamedDescendant<AvaloniaEdit.TextEditor>(shell, "ActivityLog")?.Text ?? "";
             Check(shell.ActivityLogWritesForCheck > writesBefore
                   && box.Contains(lastLine, StringComparison.Ordinal),
                 "打开抽屉才把保留尾部铺上屏，一次写完（写入 "

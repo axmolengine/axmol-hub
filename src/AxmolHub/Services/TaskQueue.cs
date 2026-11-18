@@ -429,7 +429,7 @@ internal sealed partial class TaskQueue
 
             try
             {
-                FailureLogLocation = GetFailureLog().WriteLocated($"Task failed: {Title}\n{details}");
+                FailureLogLocation = GetFailureLog().WriteLocated($"Task failed: {Title}\n{details}", HubLog.Level.Error);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
