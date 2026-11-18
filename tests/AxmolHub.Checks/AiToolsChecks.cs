@@ -852,8 +852,8 @@ internal static class AiToolsChecks
             throw new Exception($"A protected file granted by name was not read-only, or it opened the folder around it ({protectedRead.Verdict}).");
         // A file outside the write allowlist is the same tier for a different reason: readable, never written. That
         // is what makes a log outside the workspace readable at all, without ever making it editable.
-        if (!WorkspacePaths.ResolveRead(fileBox, logFile, guards).ReadOnly
-            || WorkspacePaths.ResolveWrite(fileBox, logFile, guards).Verdict != WorkspacePathVerdict.ReadOnlyRoot)
+        if (WorkspacePaths.ResolveRead(fileBox, logFile, guards) is not { IsAllowed: true, ReadOnly: true }
+            || WorkspacePaths.ResolveWrite(fileBox, logFile, guards, allowUnlistedText: true).Verdict != WorkspacePathVerdict.ReadOnlyRoot)
             throw new Exception("A file outside the write allowlist was not granted read-only.");
         // A grant is named absolutely and nothing else reaches it: the workspace's own spelling of the same file is
         // still refused, because the grammar a relative path speaks is the workspace and only the workspace.

@@ -302,9 +302,7 @@ public static class ToolPreviews
         var facts = new List<string> { File.Exists(full) ? "exists" : "does not exist yet" };
         if (WorkspacePaths.ProtectedLocationOf(full, scope.Guards) is { } location) facts.Add(ProtectedFact(location));
         else if (!WorkspacePaths.IsWritableText(Path.GetFileName(full)))
-            facts.Add(File.Exists(full) && TextFile.HasTextFilePrefix(full)
-                ? "its extension is outside the write allowlist; the file prefix looks like text"
-                : "its extension is outside the write allowlist and the file is read only");
+            facts.Add("its extension is outside the write allowlist");
         if (WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, full).Verdict
             is GrantVerdict.AlreadyGranted or GrantVerdict.InsideGrant)
             facts.Add("already reachable by this session");

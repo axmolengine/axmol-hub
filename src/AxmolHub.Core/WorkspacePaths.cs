@@ -422,8 +422,7 @@ public static class WorkspacePaths
     /// artifact. Both are properties of the path, so no session file can be edited into a permission.
     /// </summary>
     public static bool FileGrantIsReadOnly(string fullPath, WorkspaceGuards guards)
-        => IsProtected(fullPath, guards)
-           || !IsWritableText(Path.GetFileName(fullPath)) && !TextFile.HasTextFilePrefix(fullPath);
+        => IsProtected(fullPath, guards) || !IsWritableText(Path.GetFileName(fullPath));
 
     /// <summary>Whether this exact path is one of the files this session was granted. Exact and canonical: a file
     /// grant is one file, so nothing under it and nothing beside it counts.</summary>
