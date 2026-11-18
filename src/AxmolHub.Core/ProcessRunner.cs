@@ -500,12 +500,9 @@ public sealed class ProcessRunner(Action<string> log)
                 // Not AppendLine: this sink becomes the command output a tool result quotes, and the host's
                 // newline would arrive in text the model reads and a log file keeps.
                 lock (sink) sink.Append(line).Append('\n');
-                var text = error ? $"stderr: {line}" : line;
-                log(text);
-                // The one who started this process may want its lines for itself: a task row fed from the
-                // global log moves when an unrelated tool prints. This is that row's own stream — the same
-                // redacted text the log got, so the stderr prefix a stage parser reads stays in one piece.
-                onLine?.Invoke(text);
+                log(line);
+                // Keep the stderr tag on the task's own stream for the stage parser, not in the Hub log.
+                onLine?.Invoke(error ? $"stderr: {line}" : line);
                 // For cheap probes (e.g. `nuget help` where only the first line "NuGet Version: …" matters),
                 // stop reading once the first line is captured so the rest of the dump isn't pulled into memory
                 // or the log. The child process still runs to completion and exits on its own.
