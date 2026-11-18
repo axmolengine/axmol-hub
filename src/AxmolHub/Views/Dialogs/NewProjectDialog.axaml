@@ -38,10 +38,7 @@
           <TextBlock Text="{DynamicResource CameraMode}" />
           <ComboBox x:Name="CameraModePicker" />
         </StackPanel>
-        <StackPanel Spacing="7">
-          <CheckBox x:Name="PrebuiltCheck" Content="{DynamicResource UsePrebuilt}" />
-          <TextBlock x:Name="PrebuiltHint" Classes="muted" TextWrapping="Wrap" />
-        </StackPanel>
+        <ContentControl x:Name="PrebuiltHost" />
         <CheckBox x:Name="PortraitCheck" Content="{DynamicResource CreatePortrait}" />
         <Expander x:Name="CreateAdvancedExpander" Header="{DynamicResource CreateAdvanced}" IsExpanded="False">
           <StackPanel Spacing="8" Margin="0,8,0,0">

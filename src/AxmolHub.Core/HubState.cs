@@ -15,7 +15,7 @@ public sealed class ProjectEntry
     public string Version { get; set; } = "";
     public string Channel { get; set; } = "local";
     public string Platform { get; set; } = "windows-x64";
-    public string Configuration { get; set; } = "Debug";
+    public string Configuration { get; set; } = BuildConfigurations.Default;
     public bool AdvancedBuildEnabled { get; set; }
     private string _additionalBuildParameters = "";
     public string AdditionalBuildParameters
@@ -288,7 +288,8 @@ public sealed class StateStore(string root, string? indexRoot = null)
             project.Version = doc.RootElement.GetProperty("version").GetString() ?? "";
             project.Channel = doc.RootElement.GetProperty("channel").GetString() ?? "";
             project.Platform = doc.RootElement.GetProperty("platform").GetString() ?? "";
-            project.Configuration = doc.RootElement.TryGetProperty("configuration", out var configuration) ? configuration.GetString() ?? "Debug" : "Debug";
+            project.Configuration = doc.RootElement.TryGetProperty("configuration", out var configuration)
+                ? configuration.GetString() ?? BuildConfigurations.Default : BuildConfigurations.Default;
             project.AdvancedBuildEnabled = doc.RootElement.TryGetProperty("advancedBuildEnabled", out var advanced) && advanced.GetBoolean();
             project.AdditionalBuildParameters = doc.RootElement.TryGetProperty("additionalBuildParameters", out var parameters) ? parameters.GetString() ?? "" : "";
             if (doc.RootElement.TryGetProperty("projectType", out var projectType))

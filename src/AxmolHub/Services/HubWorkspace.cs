@@ -258,13 +258,6 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>The host PowerShell probe produced a new verdict (page card repaints).</summary>
     public event Action? HostShellChanged;
 
-    /// <summary>
-    /// Requests a switch to a page (page keys match <c>MainWindow.PageKeys</c>). Subscribed by the
-    /// main window. Dialogs can't reference the main window directly, so jumps like "go to the
-    /// engines page to build" are forwarded through it.
-    /// </summary>
-    public event Action<string>? NavigateRequested;
-
     public Action<string>? OpenWorkspaceRequested { get; set; }
 
     // ───────────────────────── Shared selection ─────────────────────────
@@ -1117,14 +1110,17 @@ public sealed partial class HubWorkspace : IDisposable
         await RunTaskAsync($"project:create:{parent}:{name}", "Create project", name.Trim(), async (task, token) =>
         {
             var target = engine ?? throw new InvalidOperationException("Install or import an engine first.");
+            var prebuiltTarget = BuildTargets.DefaultForHost(target.Version);
+            var enablePrebuilt = usePrebuilt && !repair && EnginePrebuilt.Supported(prebuiltTarget);
+            if (enablePrebuilt)
+            {
+                var availability = InspectPrebuilt(target, prebuiltTarget, BuildConfigurations.Default);
+                if (!availability.Usable) throw new PrebuiltUnavailableException(prebuiltTarget.Name, BuildConfigurations.Default, availability);
+            }
             var project = await _projects.CreateAsync(name.Trim(), parent.Trim(), target, token, projectType, cameraMode,
                 portrait, isolated, repair, forceOverwrite, OwnLines(task), OwnCommand(task));
             token.ThrowIfCancellationRequested();
-            if (usePrebuilt && !repair)
-            {
-                // Per-project options are written to a standalone file inside the project directory (same family as AndroidReleaseSettings).
-                new PrebuiltSettings { Enabled = true }.Save(project);
-            }
+            if (enablePrebuilt) new PrebuiltSettings { Enabled = true }.Save(project);
 
             var registered = State.Projects.FirstOrDefault(entry => PathEquals(entry.Path, project.Path));
             if (registered is null) State.Projects.Add(project);
@@ -1436,7 +1432,29 @@ public sealed partial class HubWorkspace : IDisposable
             return;
         }
 
-        var chosen = selection ?? await BuildTargetDialog.PickAsync(Owner, selected);
+        BuildSelection? chosen;
+        try
+        {
+            var selectedEngine = State.Engines.FirstOrDefault(engine => engine.Version == selected.Version && engine.Channel == selected.Channel);
+            chosen = selection;
+            if (chosen is null)
+            {
+                var draft = await BuildTargetDialog.PickAsync(Owner, selected,
+                    PrebuiltSettings.Load(selected)?.Enabled == true,
+                    (window, target, configuration) => PrebuiltChoiceFor(window, selectedEngine, target, configuration));
+                if (draft.EngineBuild is { } request)
+                {
+                    await RunEngineBuildAsync(request);
+                    return;
+                }
+                chosen = draft.Selection;
+            }
+        }
+        catch (Exception ex)
+        {
+            await ReportFailureAsync(ex);
+            return;
+        }
         if (chosen is null)
         {
             return;
@@ -1473,6 +1491,8 @@ public sealed partial class HubWorkspace : IDisposable
             token.ThrowIfCancellationRequested();
             BuildTargets.Select(project, target.Id, configuration, chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
             var engine = RequiredEngine(project);
+            if (chosen.UsePrebuilt is bool usePrebuilt)
+                ApplyPrebuiltPreference(project, engine, usePrebuilt);
 
             if (project.Platform == "windows-x64")
             {
@@ -1486,7 +1506,7 @@ public sealed partial class HubWorkspace : IDisposable
             {
                 _androidPasswords.TryGetValue(project.Path, out var passwords);
                 await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task),
-                    OwnCommand(task, () => RecordProjectActivity(project)));
+                    OwnCommand(task, () => RecordProjectActivity(project)), chosen.Cleanup);
                 project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
             }
             catch (OperationCanceledException)
@@ -1504,13 +1524,7 @@ public sealed partial class HubWorkspace : IDisposable
                 Store.Save(State);
             }
 
-            if (configureOnly)
-            {
-                return;
-            }
-
-            // No completion dialog or output-directory guess: the row reports completion and the drawer holds the build detail.
-        });
+        }, retryable: chosen.Cleanup is null);
     }
 
     /// <summary>
@@ -1771,54 +1785,41 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Prebuilt engine libraries ─────────────────────────
 
-    /// <summary>
-    /// Whether the currently selected engine can build a prebuilt library on this machine; returns
-    /// <c>null</c> when it can't (non-Windows host). The engine itself also allows Linux to consume
-    /// prebuilt libraries, but this project only targets Windows.
-    /// </summary>
-    public BuildTarget? PrebuiltHostTarget => EnginePrebuilt.HostTarget();
+    public PrebuiltAvailability InspectPrebuilt(EngineEntry engine, BuildTarget target, string configuration)
+        => EnginePrebuilt.Inspect(engine, target, configuration, _prebuiltState);
 
-    /// <summary>The selected engine's prebuilt-library status on the local target (for the engines page status readout).</summary>
-    public PrebuiltAvailability? PrebuiltStatusOf(EngineEntry? engine)
+    internal PrebuiltChoiceState PrebuiltChoiceFor(Window owner, EngineEntry? engine, BuildTarget target, string configuration)
     {
-        if (engine is null || PrebuiltHostTarget is not { } host) return null;
-        var configuration = _prebuiltState.Load(engine)?.Configuration ?? "Release";
-        return EnginePrebuilt.Inspect(engine, host, configuration, _prebuiltState);
+        if (engine is null || !EnginePrebuilt.Supported(target)) return default;
+        var availability = InspectPrebuilt(engine, target, configuration);
+        return new(availability, PrebuiltBuildOffer(engine, target, configuration, availability) is { } offer
+            ? () => offer(owner) : null);
     }
 
-    /// <summary>
-    /// Compiles the engine into a prebuilt library reusable by projects.
-    ///
-    /// This is a **long task** (compiling the whole engine, minutes to tens of minutes, gigabytes of
-    /// disk), and when the toolchain is missing the engine may trigger its own setup on the way
-    /// (which changes the global environment), so a confirmation window first lets the user pick a
-    /// configuration and be informed.
-    /// </summary>
+    private Func<Window, Task<EngineBuildRequest?>>? PrebuiltBuildOffer(EngineEntry engine, BuildTarget target,
+        string configuration, PrebuiltAvailability availability)
+        => !availability.Usable && EnginePrebuilt.BuildableTargets(engine).Contains(target)
+            ? owner => RefuseIfBusy() ? Task.FromResult<EngineBuildRequest?>(null)
+                : EngineBuildWindow.PickAsync(owner, engine, [target], configuration)
+            : null;
+
     public async Task BuildEngineAsync(EngineEntry? requested = null)
     {
-        if (RefuseIfBusy())
-        {
-            return;
-        }
-
+        if (RefuseIfBusy()) return;
         var engine = RequiredEngine(requested);
-        var host = PrebuiltHostTarget ?? throw new InvalidOperationException(HubStrings.Get("PrebuiltUnsupportedHost"));
+        var request = await EngineBuildWindow.PickAsync(Owner, engine, EnginePrebuilt.BuildableTargets(engine));
+        if (request is not null) await RunEngineBuildAsync(request);
+    }
 
-        var configuration = await EngineBuildWindow.PickAsync(Owner, engine, host);
-        if (configuration is null)
+    internal async Task RunEngineBuildAsync(EngineBuildRequest request)
+    {
+        var (engine, target, configuration, cleanup) = request;
+        await RunTaskAsync($"engine:hostbuild:{engine.Path}:{target.Id}:{configuration}", "Build engine",
+            $"{engine.Version} · {target.Name} · {configuration}", async (task, token) =>
         {
-            return;
-        }
-
-        // Compiling the engine is the longest thing Hub does and the one whose output the user cannot watch
-        // any other way, so it is the change that earns a row — and an identity per engine and host, so
-        // pressing build twice on two targets shows two rows rather than a second copy of one.
-        await RunTaskAsync($"engine:hostbuild:{engine.Version}:{host.Id}", "Build engine",
-            engine.Version + " · " + host.Name, async (task, token) =>
-        {
-            await _engineBuild.BuildAsync(engine, host, configuration, token, OwnLines(task), OwnCommand(task));
-        });
-
+            RequireEngineAtRest(engine);
+            await _engineBuild.BuildAsync(engine, target, configuration, token, OwnLines(task), OwnCommand(task), cleanup);
+        }, retryable: cleanup is null);
         Refresh();
     }
 
@@ -1828,32 +1829,20 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public async Task<bool> EditPrebuiltAsync(ProjectEntry project)
     {
-        if (!CheckProjectDirectory(project)) return false;
+        if (RefuseIfBusy() || !CheckProjectDirectory(project)) return false;
         try
         {
             var engine = RequiredEngine(project);
             var target = BuildTargets.Get(project.Platform);
-            var availability = EnginePrebuilt.Supported(target)
-                ? EnginePrebuilt.Inspect(engine, target, project.Configuration, _prebuiltState)
-                : new PrebuiltAvailability(PrebuiltStatus.PlatformUnsupported,
-                    $"Prebuilt engine libraries are only supported for Windows targets; {target.Id} is a '{target.Family}' target.");
-
-            var enabled = PrebuiltSettings.Load(project)?.Enabled == true;
-            var dialog = new PrebuiltWindow(project, engine, target, availability, enabled, NavigateTo);
-            var result = Owner is null
-                ? await dialog.ShowDialog<HubDialogResult>(null!)
-                : await dialog.ShowDialog<HubDialogResult>(Owner);
-            if (result != HubDialogResult.Ok)
-            {
-                return false;
-            }
-
-            if (!CheckProjectDirectory(project)) return false;
-            new PrebuiltSettings { Enabled = dialog.Enabled }.Save(project);
-            // The link mode changed: existing artifacts no longer represent the current configuration, so a rebuild is required.
-            project.BuildStatus = "Not built";
+            var availability = InspectPrebuilt(engine, target, project.Configuration);
+            var enabled = EnginePrebuilt.Supported(target) && PrebuiltSettings.Load(project)?.Enabled == true;
+            var dialog = new PrebuiltWindow(project, engine, target, availability, enabled,
+                PrebuiltBuildOffer(engine, target, project.Configuration, availability));
+            var result = await dialog.ShowDialog<HubDialogResult>(Owner!);
+            if (dialog.BuildRequest is { } request) await RunEngineBuildAsync(request);
+            if (result != HubDialogResult.Ok || RefuseIfBusy() || !CheckProjectDirectory(project)) return false;
+            if (!ApplyPrebuiltPreference(project, engine, dialog.Enabled)) return false;
             Store.Save(State);
-            Log.Write(HubStrings.Get("PrebuiltSaved"));
             Refresh();
             return true;
         }
@@ -1864,7 +1853,12 @@ public sealed partial class HubWorkspace : IDisposable
         }
     }
 
-    private void NavigateTo(string page) => NavigateRequested?.Invoke(page);
+    private bool ApplyPrebuiltPreference(ProjectEntry project, EngineEntry engine, bool enabled)
+    {
+        if (!_projects.SetPrebuiltPreference(project, engine, enabled)) return false;
+        Log.Write(HubStrings.Get("PrebuiltSaved"));
+        return true;
+    }
 
     // ───────────────────────── Code editors ─────────────────────────
 

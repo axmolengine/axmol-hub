@@ -8,6 +8,7 @@ namespace AxmolHub;
 public partial class NewProjectDialog : Window
 {
     private readonly HubWorkspace _workspace;
+    private readonly PrebuiltChoice _prebuilt = new(false);
 
     public NewProjectDialog() { _workspace = null!; InitializeComponent(); }
 
@@ -65,6 +66,13 @@ public partial class NewProjectDialog : Window
                 await HubDialog.ShowAsync(this, HubStrings.Get("OperationFailed"), HubStrings.Get("LocalPathRequired"));
             if (result.Outcome == PickOutcome.Picked) ProjectLocationBox.Text = result.Path;
         };
+        PrebuiltHost.Content = _prebuilt;
+        _prebuilt.BuildRequested += request =>
+        {
+            BuildRequest = request;
+            Close();
+        };
+        _prebuilt.Changed += () => CreateButton.IsEnabled = _prebuilt.CanContinue;
         CancelButton.Click += (_, _) => Close();
         CreateButton.Click += OnCreate;
         KeyDown += OnKeyDown;
@@ -81,6 +89,7 @@ public partial class NewProjectDialog : Window
     /// list can cancel, so the window closes at the press instead of standing in front of the engine command.
     /// </summary>
     public ProjectCreationRequest? Request { get; private set; }
+    internal EngineBuildRequest? BuildRequest { get; private set; }
 
     internal TextBox ProjectNameForCheck => ProjectNameBox;
     internal Button CancelForCheck => CancelButton;
@@ -113,7 +122,7 @@ public partial class NewProjectDialog : Window
 
     private async void OnCreate(object? sender, RoutedEventArgs e)
     {
-        if (_workspace.RefuseIfBusy()) return;
+        if (!_prebuilt.CanContinue || _workspace.RefuseIfBusy()) return;
         var advanced = CreateAdvancedExpander.IsExpanded;
         var repair = advanced && RepairCheck.IsChecked == true;
         var forceOverwrite = repair && ForceOverwriteCheck.IsChecked == true;
@@ -121,14 +130,14 @@ public partial class NewProjectDialog : Window
         if (forceOverwrite && await HubDialog.ShowAsync(this,
                 HubStrings.Get("CreateForceOverwrite"), string.Format(HubStrings.Get("CreateForceOverwritePrompt"), name),
                 HubDialogButtons.OkCancel, danger: true) != HubDialogResult.Ok) return;
-        if (_workspace.RefuseIfBusy()) return;
+        if (!_prebuilt.CanContinue || _workspace.RefuseIfBusy()) return;
         var projectType = (ProjectLanguagePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "cpp";
         var cameraMode = CameraModePanel.IsVisible
             ? (CameraModePicker.SelectedItem as ProjectFilterChoice)?.Value ?? "classic"
             : null;
         Request = new ProjectCreationRequest(name, ProjectLocationBox.Text ?? "",
             ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null,
-            projectType, PrebuiltCheck.IsChecked == true && !repair, cameraMode,
+            projectType, _prebuilt.IsVisible && _prebuilt.Enabled && !repair, cameraMode,
             PortraitCheck.IsChecked == true, advanced && IsolatedCheck.IsChecked == true, repair, forceOverwrite,
             CreateWorkspaceCheck.IsChecked == true);
         Close();
@@ -154,18 +163,15 @@ public partial class NewProjectDialog : Window
 
     private void RefreshPrebuiltChoice()
     {
-        var hint = HubStrings.Get("PrebuiltHint");
-        if (_workspace.PrebuiltHostTarget is null)
+        if (RepairCheck.IsChecked == true || ProjectEnginePicker.SelectedItem is not ProjectEngineChoice choice)
         {
-            PrebuiltCheck.IsChecked = false;
-            PrebuiltCheck.IsEnabled = false;
-            PrebuiltHint.Text = hint + "\n" + HubStrings.Get("PrebuiltUnsupportedHost");
+            _prebuilt.IsVisible = false;
+            CreateButton.IsEnabled = true;
             return;
         }
-        PrebuiltCheck.IsEnabled = RepairCheck.IsChecked != true;
-        var selected = ProjectEnginePicker.SelectedItem is ProjectEngineChoice choice ? choice.Engine : null;
-        var availability = _workspace.PrebuiltStatusOf(selected);
-        PrebuiltHint.Text = hint + "\n" + HubStrings.Get(availability?.Usable == true ? "PrebuiltReadyHint" : "PrebuiltNotBuiltHint");
+        var target = BuildTargets.DefaultForHost(choice.Engine.Version);
+        var state = _workspace.PrebuiltChoiceFor(this, choice.Engine, target, BuildConfigurations.Default);
+        _prebuilt.Refresh(target, state.Availability, state.ConfirmBuild);
     }
 }
 

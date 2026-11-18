@@ -14,13 +14,8 @@ internal static class BuildResultChecks
             DefaultChecks.RunBuildLayoutChecks(fixture);
             // An isolated command-line engine exercises the real invocation and receipt path without a toolchain.
             var engineRoot = Path.Combine(fixture, "engine");
-            foreach (var directory in new[] { "core", "tools/cmdline", "templates/cpp", "1k" }) Directory.CreateDirectory(Path.Combine(engineRoot, directory));
-            File.WriteAllText(Path.Combine(engineRoot, "core/axmolver.h.in"), "#define AX_VERSION_MAJOR 2\n#define AX_VERSION_MINOR 11\n#define AX_VERSION_PATCH 5\n");
-            File.WriteAllText(Path.Combine(engineRoot, "templates/cpp/axproj-template.json"), "{}");
-            File.WriteAllText(Path.Combine(engineRoot, "1k/1kiss.ps1"), "");
+            var engine = CommandEngine(engineRoot, "fixture");
             var script = Path.Combine(engineRoot, "tools/cmdline/axmol.ps1");
-            File.WriteAllText(script, "exit 0\n");
-            var engine = StateStore.ValidateEngine(engineRoot, "fixture");
             var project = new ProjectEntry { Name = "HelloAxmol", Path = Path.Combine(fixture, "project"), Version = engine.Version, Channel = engine.Channel, Platform = "android-arm64", Configuration = "Debug" };
             Directory.CreateDirectory(project.Path);
             File.WriteAllText(Path.Combine(project.Path, "CMakeLists.txt"), "# fixture\n");

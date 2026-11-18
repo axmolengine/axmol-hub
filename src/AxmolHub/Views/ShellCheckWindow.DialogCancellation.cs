@@ -33,11 +33,11 @@ internal sealed class ShellDialogCancellationChecks(Action<bool, string> check)
         var cases = new (string Name, Func<Task<bool>> Open)[]
         {
             ("Prompt", async () => await PromptWindow.ShowAsync(shell, "Fixture") is null),
-            ("BuildTarget", async () => await BuildTargetDialog.PickAsync(shell, project) is null),
+            ("BuildTarget", BuildTargetClosed),
             ("EngineVersion", async () => await EngineVersionDialog.PickAsync(shell, catalog, null) is null),
             ("EngineMirror", async () => await EngineMirrorDialog.PickAsync(shell, engine,
                 [new MirrorOption("github", "", "fixture")]) is null),
-            ("EngineBuild", async () => await EngineBuildWindow.PickAsync(shell, engine, target) is null),
+            ("EngineBuild", async () => await EngineBuildWindow.PickAsync(shell, engine, [target]) is null),
             ("Prebuilt", () => Cancel(new PrebuiltWindow(project, engine, target,
                 new PrebuiltAvailability(PrebuiltStatus.NotBuilt, "fixture"), false, null))),
             ("AndroidRelease", () => Cancel(new AndroidReleaseWindow(project, root,
@@ -86,6 +86,30 @@ internal sealed class ShellDialogCancellationChecks(Action<bool, string> check)
         // One failure: a caller's close plate is disconnected or accidentally confirms an operation.
         check(allCancelled,
             "迁移后的对话框关闭盘接共享标题栏并取消调用方操作（实际 " + string.Join(", ", observations) + "）");
+
+        async Task<bool> BuildTargetClosed()
+        {
+            var picked = BuildTargetDialog.PickAsync(shell, project, usePrebuilt: true,
+                prebuiltState: (_, _, _) => new(new(PrebuiltStatus.Ready, "fixture", "build"), null));
+            var dialog = desktop.Windows.OfType<BuildTargetDialog>().Single();
+            dialog.UpdateLayout();
+            var picker = NamedDescendant<ComboBox>(dialog, "BuildTargetPicker");
+            var prebuilt = NamedDescendant<CheckBox>(dialog, "UsePrebuiltLibraries");
+            var clean = NamedDescendant<CheckBox>(dialog, "ClearBuildDirectories");
+            var choicesCorrect = picker is not null && prebuilt is not null && clean?.IsChecked == false;
+            if (choicesCorrect && OperatingSystem.IsWindows())
+            {
+                var savedTarget = picker!.SelectedItem;
+                var visibleOnWindows = prebuilt!.IsEffectivelyVisible && prebuilt.IsChecked == true;
+                picker.SelectedItem = BuildTargets.Get("android-arm64");
+                var hiddenOnAndroid = !prebuilt.IsEffectivelyVisible;
+                picker.SelectedItem = savedTarget;
+                choicesCorrect = visibleOnWindows && hiddenOnAndroid && prebuilt.IsEffectivelyVisible && prebuilt.IsChecked == true;
+            }
+            if (clean is not null) clean.IsChecked = true;
+            var result = await picked;
+            return choicesCorrect && result == (null, null) && !File.Exists(PrebuiltSettings.PathFor(project));
+        }
 
         async Task<bool> Cancel(Window window) => await window.ShowDialog<HubDialogResult>(shell) == HubDialogResult.Cancel;
         async Task<bool> DeviceClosed()

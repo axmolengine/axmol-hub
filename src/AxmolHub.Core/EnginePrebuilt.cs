@@ -83,8 +83,8 @@ public static class EnginePrebuilt
     /// </summary>
     public static bool Supported(BuildTarget target) => target.Family == "windows";
 
-    /// <summary>The target this host can build prebuilt libraries for: Windows host → <c>windows-x64</c>; other hosts → <c>null</c>.</summary>
-    public static BuildTarget? HostTarget() => OperatingSystem.IsWindows() ? BuildTargets.Get("windows-x64") : null;
+    public static IReadOnlyList<BuildTarget> BuildableTargets(EngineEntry engine)
+        => BuildTargets.ForHost(engine.Version).Where(Supported).ToArray();
 
     /// <summary>
     /// Given an engine + target + configuration, returns the usable prebuilt directory or the **precise
@@ -99,11 +99,14 @@ public static class EnginePrebuilt
                 $"Prebuilt engine libraries are only supported for Windows targets; {target.Id} is a '{target.Family}' target.");
         }
 
-        var record = state.Load(engine);
+        var record = state.Load(engine, target, configuration);
         if (record is null)
         {
-            return new(PrebuiltStatus.NotBuilt,
-                $"Axmol {engine.Version} has not been built yet. Build the engine from the Engines page first.");
+            var other = BuildConfigurations.All.FirstOrDefault(candidate => candidate != configuration
+                && state.Load(engine, target, candidate) is not null);
+            return other is null
+                ? new(PrebuiltStatus.NotBuilt, $"Axmol {engine.Version} has not been built for {target.Name} ({configuration}).")
+                : new(PrebuiltStatus.ConfigurationMissing, $"No {configuration} build for {target.Name} is recorded; a {other} build is recorded.");
         }
 
         if (record.EngineToken != ProjectService.EngineInstallationToken(engine))
@@ -118,67 +121,28 @@ public static class EnginePrebuilt
                 $"The engine was built for {record.Target}, but this project targets {target.Id}. Rebuild the engine for {target.Id}.");
         }
 
-        // The recorded path must stay inside the engine tree: it is handed to CMake as -DAX_PREBUILT_DIR.
-        var relative = record.BuildDirectory.Replace('\\', '/').Trim();
-        if (relative.Length == 0 || Path.IsPathRooted(relative) || relative.Split('/').Contains(".."))
-        {
-            return new(PrebuiltStatus.MissingCache,
-                $"The recorded engine build directory is not a relative path inside the engine tree ('{record.BuildDirectory}'). Rebuild the engine.");
-        }
+        if (record.Configuration != configuration || ResolveDirectory(engine, record.BuildDirectory) is not { } directory)
+            return new(PrebuiltStatus.MissingCache, $"Invalid engine build record for {target.Name} ({configuration}).");
 
-        var directory = Path.GetFullPath(Path.Combine(engine.Path, relative.Replace('/', Path.DirectorySeparatorChar)));
         var problem = Validate(directory, configuration);
         if (problem is { } failure) return failure;
-        return new(PrebuiltStatus.Ready, $"{record.Platform} {record.Architecture} {configuration} -> {relative}", relative, directory,
-            $"{record.Platform} {record.Architecture} {configuration}");
+        var relative = Path.GetRelativePath(engine.Path, directory).Replace('\\', '/');
+        var label = $"{target.Name} · {configuration}";
+        return new(PrebuiltStatus.Ready, $"{label} -> {relative}", relative, directory, label);
     }
 
-    /// <summary>
-    /// **Discovery** for right after a build, before a record exists: scan <c>build*</c> under the engine
-    /// root for the first complete directory. Returns the relative path under the engine root (forward
-    /// slashes); returns <c>null</c> when not found.
-    /// </summary>
-    public static string? Discover(EngineEntry engine, string configuration)
+    internal static string? ResolveDirectory(EngineEntry engine, string? buildDirectory)
     {
-        foreach (var candidate in CandidateBuildDirectories(engine.Path))
-        {
-            if (Validate(candidate, configuration) is null)
-            {
-                return RelativeDirectory(engine.Path, candidate);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Absolute directory → clean relative path under the engine root (forward slashes). Throws on escape —
-    /// callers should never hand CMake a directory outside the engine tree.
-    /// </summary>
-    public static string RelativeDirectory(string enginePath, string buildDirectory)
-    {
-        var relative = Path.GetRelativePath(Path.GetFullPath(enginePath), Path.GetFullPath(buildDirectory)).Replace('\\', '/');
-        if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
-        {
-            throw new InvalidDataException($"The engine build directory is outside the engine root: {buildDirectory}");
-        }
-
-        return relative;
-    }
-
-    /// <summary>Candidate build directories under the engine root: those with <c>CMakeCache.txt</c> first, then directories with a build prefix, finally by last write time descending.</summary>
-    private static IEnumerable<string> CandidateBuildDirectories(string enginePath)
-    {
-        if (!Directory.Exists(enginePath)) return [];
-        return Directory.EnumerateDirectories(enginePath)
-            .Where(directory => Path.GetFileName(directory).StartsWith("build", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(directory => File.Exists(Path.Combine(directory, "CMakeCache.txt")))
-            .ThenByDescending(Directory.GetLastWriteTimeUtc)
-            .ToArray();
+        // A record is not authority to hand CMake a path outside the engine (or an extra -xc option).
+        if (string.IsNullOrWhiteSpace(buildDirectory)) return null;
+        var relative = buildDirectory.Trim().Replace('\\', '/');
+        if (Path.IsPathRooted(relative) || relative.Contains(',') || relative.Contains(':') || relative.Any(char.IsControl)
+            || relative.Split('/').Any(part => part is "." or "..")) return null;
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(engine.Path, relative)));
     }
 
     /// <summary>Content validation. Returns <c>null</c> when the directory can be used as a prebuilt directory.</summary>
-    private static PrebuiltAvailability? Validate(string directory, string configuration)
+    internal static PrebuiltAvailability? Validate(string directory, string configuration)
     {
         if (!File.Exists(Path.Combine(directory, "CMakeCache.txt")))
         {
@@ -187,9 +151,7 @@ public static class EnginePrebuilt
         }
 
         var libraries = Path.Combine(directory, "lib", configuration);
-        var hasLibraries = Directory.Exists(libraries)
-            && (Directory.EnumerateFiles(libraries, "*.lib").Any() || Directory.EnumerateFiles(libraries, "*.a").Any());
-        if (!hasLibraries)
+        if (!File.Exists(Path.Combine(libraries, "axmol.lib")) && !File.Exists(Path.Combine(libraries, "libaxmol.a")))
         {
             // The engine uses lib/${CMAKE_BUILD_TYPE}, but under VS multi-config the real directory is
             // lib/<Config> — so **report which configurations actually exist**, rather than assuming the

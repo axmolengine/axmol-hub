@@ -12,7 +12,8 @@ namespace AxmolHub.Core;
 public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine commandLine, EnginePrebuiltState prebuiltState)
 {
     public async Task<EngineBuildRecord> BuildAsync(EngineEntry engine, BuildTarget target, string configuration,
-        CancellationToken cancellation = default, Action<string>? onLine = null, Action<string, string>? onCommand = null)
+        CancellationToken cancellation = default, Action<string>? onLine = null, Action<string, string>? onCommand = null,
+        BuildCleanup? cleanup = null)
     {
         if (!EnginePrebuilt.Supported(target))
         {
@@ -20,19 +21,25 @@ public sealed class EngineBuildService(ProcessRunner runner, EngineCommandLine c
         }
 
         BuildConfigurations.Validate(configuration);
+        StateStore.ValidateEngine(engine.Path, engine.Channel);
+        var directory = BuildCleanup.NativeDirectory(target);
+        cancellation.ThrowIfCancellationRequested();
+        if (cleanup is not null)
+            await cleanup.ExecuteAsync(() => BuildCleanup.ForEngine(engine, target),
+                () => prebuiltState.Clear(engine, cleanup.Directories), cancellation, onLine ?? runner.Write);
+        else
+            prebuiltState.Invalidate(engine, target, configuration);
         runner.Write($"Building Axmol {engine.Version} for {target.Name} ({configuration}); this compiles the whole engine.");
 
         // No total time cap: compiling the whole engine takes minutes to tens of minutes and several GB of
         // artifacts, so let it run as long as it keeps producing output. The timeout judgment is done by
         // ProcessRunner as "10 minutes with no output" = a stall.
-        await commandLine.RunAsync(engine, AxmolCommandMap.BuildEngine(target, configuration), engine.Path,
+        await commandLine.RunAsync(engine, AxmolCommandMap.BuildEngine(target, configuration, "-B" + directory), engine.Path,
             cancellation, onLine: onLine, onCommand: onCommand);
 
-        // The build directory is decided by the engine, so **discover** it; if not found, don't record — never write a "built" entry pointing at a nonexistent directory.
-        var directory = EnginePrebuilt.Discover(engine, configuration)
-            ?? throw new InvalidOperationException(
-                $"The engine build finished but produced no usable prebuilt directory under {engine.Path} " +
-                $"(expected a build directory with CMakeCache.txt, lib/{configuration}, bin/{configuration} and runtime/axslc).");
+        cancellation.ThrowIfCancellationRequested();
+        if (EnginePrebuilt.Validate(Path.Combine(engine.Path, directory), configuration) is { } failure)
+            throw new InvalidOperationException($"The engine build finished but did not produce usable libraries. {failure.Detail}");
 
         var (platform, architecture) = AxmolCommandMap.Target(target);
         var record = new EngineBuildRecord

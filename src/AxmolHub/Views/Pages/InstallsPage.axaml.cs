@@ -224,8 +224,9 @@ public partial class InstallsPage : UserControl
         var mirror = new MenuItem { Header = HubStrings.Get("SwitchMirror"), IsEnabled = _workspace.MirrorOptionsOf(engine).Count > 0 };
         mirror.Click += async (_, _) => await SwitchMirrorAsync(engine);
         menu.Items.Add(mirror);
-        Add("BuildEngine", async () => await _workspace.BuildEngineAsync(engine), _workspace.PrebuiltHostTarget is not null,
-            _workspace.PrebuiltHostTarget is null ? HubStrings.Get("PrebuiltUnsupportedHost") : null);
+        var canBuildLibraries = EnginePrebuilt.BuildableTargets(engine).Count != 0;
+        Add("BuildEngine", async () => await _workspace.BuildEngineAsync(engine), canBuildLibraries,
+            canBuildLibraries ? null : HubStrings.Get("PrebuiltUnsupportedHost"));
         menu.Items.Add(new Separator());
         Add("OpenFolder", async () => await _workspace.OpenEngineFolderAsync(engine));
         Add("VerifyEngine", async () => await _workspace.VerifyEngineAsync(engine));
@@ -298,11 +299,29 @@ public partial class InstallsPage : UserControl
 
     private (string Label, string Tooltip, bool Warning) GetPrebuiltStatus(EngineEntry engine)
     {
-        if (_workspace.PrebuiltHostTarget is null)
-            return ("", "", false);
+        var statuses = (from target in EnginePrebuilt.BuildableTargets(engine)
+                        from configuration in BuildConfigurations.All
+                        select (target, configuration, status: _workspace.InspectPrebuilt(engine, target, configuration))).ToArray();
+        if (statuses.Length == 0) return ("", "", false);
 
-        return (HubStrings.Get("PrebuiltSupported"), HubStrings.Get("PrebuiltSupportedHint"), false);
+        var ready = statuses.Count(row => row.status.Usable);
+        var warning = statuses.Any(row => row.status.Status
+            is PrebuiltStatus.EngineChanged or PrebuiltStatus.TargetMismatch or PrebuiltStatus.MissingCache or PrebuiltStatus.MissingContents);
+        var summary = ready == 0 && !warning
+            ? HubStrings.Get("PrebuiltLabelNotBuilt")
+            : string.Format(HubStrings.Get("PrebuiltReadyCount"), ready, statuses.Length);
+        var details = statuses.Select(row => $"{row.target.Name} · {row.configuration}: {HubStrings.Get(PrebuiltLabelKey(row.status.Status))}"
+            + " — " + (row.status.Usable ? row.status.RelativeDirectory : HubStrings.Get(row.status.TextKey)));
+        return ($"{HubStrings.Get("PrebuiltStatus")} · {summary}", string.Join("\n", details), warning);
     }
+
+    private static string PrebuiltLabelKey(PrebuiltStatus status) => status switch
+    {
+        PrebuiltStatus.Ready => "PrebuiltLabelReady",
+        PrebuiltStatus.EngineChanged or PrebuiltStatus.TargetMismatch => "PrebuiltLabelRebuild",
+        PrebuiltStatus.MissingCache or PrebuiltStatus.MissingContents => "PrebuiltLabelIncomplete",
+        _ => "PrebuiltLabelNotBuilt",
+    };
 
     private static bool SamePath(string? left, string? right)
     {

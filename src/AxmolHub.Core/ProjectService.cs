@@ -199,7 +199,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         => BuildAsync(project, engine, true, cancellation);
 
     public async Task BuildAsync(ProjectEntry project, EngineEntry engine, bool configureOnly = false, CancellationToken cancellation = default,
-        AndroidSigningPasswords? androidPasswords = null, Action<string>? onLine = null, Action<string, string>? onCommand = null)
+        AndroidSigningPasswords? androidPasswords = null, Action<string>? onLine = null, Action<string, string>? onCommand = null,
+        BuildCleanup? cleanup = null)
     {
         BuildConfigurations.ValidateTarget(project);
         var target = BuildTargets.Get(project.Platform);
@@ -216,26 +217,50 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             throw new InvalidOperationException("Project metadata changed. Reopen the project before building.");
         StateStore.ValidateEngine(engine.Path, engine.Channel);
 
-        var invocation = ProjectBuildOptions.Invocation(project, engine, configureOnly, prebuiltState);
+        var (invocation, usesPrebuilt) = ProjectBuildOptions.Prepare(project, engine, configureOnly, prebuiltState, cleanup);
         var reconfigure = NeedsReconfigure(project);
         cancellation.ThrowIfCancellationRequested();
         // Both configure and build may mutate existing output. A failed/cancelled attempt must not leave
         // a previous receipt advertising those files as a successful build of this attempt.
-        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
-        if (File.Exists(receipt)) File.Delete(receipt);
+        if (cleanup is not null)
+            await cleanup.ExecuteAsync(() => BuildCleanup.ForProject(project, target),
+                () => InvalidateBuildReceipt(project), cancellation, onLine ?? runner.Write);
+        else
+            InvalidateBuildReceipt(project);
         var process = await commandLine.RunAsync(engine, invocation, project.Path, cancellation, onLine: onLine, onCommand: onCommand);
         if (!configureOnly)
         {
             var result = ProjectBuildResult.FromOutput(process.Output + "\n" + process.Error, project)
                 ?? LegacyArtifactResolver.Resolve(project);
             cancellation.ThrowIfCancellationRequested();
-            WriteBuildReceipt(project, engine, result);
+            WriteBuildReceipt(project, engine, result, usesPrebuilt);
         }
         if (reconfigure) File.Delete(Path.Combine(project.Path, MarkerDirectory, ReconfigureMarker));
     }
 
+    public bool SetPrebuiltPreference(ProjectEntry project, EngineEntry engine, bool enabled)
+    {
+        var target = BuildTargets.Get(project.Platform);
+        if (!EnginePrebuilt.Supported(target) || PrebuiltSettings.AppliesTo(project, target) == enabled) return false;
+        if (enabled)
+        {
+            var availability = EnginePrebuilt.Inspect(engine, target, project.Configuration, prebuiltState);
+            if (!availability.Usable) throw new PrebuiltUnavailableException(target.Name, project.Configuration, availability);
+        }
+        InvalidateBuildReceipt(project);
+        new PrebuiltSettings { Enabled = enabled }.Save(project);
+        project.BuildStatus = "Not built";
+        return true;
+    }
+
+    private static void InvalidateBuildReceipt(ProjectEntry project)
+    {
+        var receipt = Path.Combine(project.Path, MarkerDirectory, "build.json");
+        if (File.Exists(receipt)) File.Delete(receipt);
+    }
+
     /// <summary>Build receipt: records which engine installation and target/configuration this build corresponds to, so Run can judge whether the artifacts are still valid.</summary>
-    private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine, ProjectBuildResult result)
+    private void WriteBuildReceipt(ProjectEntry project, EngineEntry engine, ProjectBuildResult result, bool usesPrebuilt)
     {
         var directory = Path.Combine(project.Path, MarkerDirectory);
         Directory.CreateDirectory(directory);
@@ -243,6 +268,7 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
         {
             engine = EngineInstallationToken(engine), platform = project.Platform, configuration = project.Configuration,
             buildDirectory = result.BuildDirectory,
+            usesPrebuilt,
             result,
             additionalBuildParameters = project.AdvancedBuildEnabled ? project.AdditionalBuildParameters : "",
         });
@@ -358,6 +384,9 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
     {
         if (root.GetProperty("platform").GetString() != project.Platform || root.GetProperty("configuration").GetString() != project.Configuration)
             throw new InvalidOperationException("Project target changed. Build again before Run.");
+        var usesPrebuilt = root.TryGetProperty("usesPrebuilt", out var prebuilt) && prebuilt.GetBoolean();
+        if (usesPrebuilt != PrebuiltSettings.AppliesTo(project, BuildTargets.Get(project.Platform)))
+            throw new InvalidOperationException("Prebuilt library settings changed. Build again before Run.");
         var parameters = root.TryGetProperty("additionalBuildParameters", out var saved) ? saved.GetString() ?? "" : "";
         if (parameters != (project.AdvancedBuildEnabled ? project.AdditionalBuildParameters : ""))
             throw new InvalidOperationException("Additional build parameters changed. Build again before Run.");

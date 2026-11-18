@@ -154,7 +154,8 @@ public static class BuildTargets
 
 public static class BuildConfigurations
 {
-    public static string[] All { get; } = ["Debug", "Release"];
+    public const string Default = "Debug";
+    public static string[] All { get; } = [Default, "Release"];
     public static void Validate(string configuration)
     {
         if (!All.Contains(configuration)) throw new InvalidDataException("Unknown build configuration: " + configuration);

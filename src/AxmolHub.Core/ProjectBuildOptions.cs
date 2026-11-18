@@ -11,27 +11,44 @@ public static class ProjectBuildOptions
 {
     /// <summary>Plan and execution use this exact invocation, including pending engine reconfiguration.</summary>
     public static AxmolInvocation Invocation(ProjectEntry project, EngineEntry engine, bool configureOnly, EnginePrebuiltState prebuiltState)
+        => Prepare(project, engine, configureOnly, prebuiltState, null).Invocation;
+
+    internal static (AxmolInvocation Invocation, bool UsesPrebuilt) Prepare(ProjectEntry project, EngineEntry engine,
+        bool configureOnly, EnginePrebuiltState prebuiltState, BuildCleanup? cleanup)
     {
         var extra = ProjectBuildArguments.Parse(project.AdvancedBuildEnabled, project.AdditionalBuildParameters);
         var target = BuildTargets.Get(project.Platform);
-        return AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly,
-            CmakeOptions(project, engine, target, prebuiltState), force: ProjectService.NeedsReconfigure(project), additionalBuild: extra);
+        var usesPrebuilt = PrebuiltSettings.AppliesTo(project, target);
+        var options = new List<string>();
+        var force = ProjectService.NeedsReconfigure(project);
+        if (EnginePrebuilt.Supported(target))
+        {
+            string? prebuiltDirectory = null;
+            if (usesPrebuilt)
+            {
+                // An unusable library must not silently turn an enabled build into a source build.
+                var availability = EnginePrebuilt.Inspect(engine, target, project.Configuration, prebuiltState);
+                if (!availability.Usable) throw new PrebuiltUnavailableException(target.Name, project.Configuration, availability);
+                prebuiltDirectory = availability.RelativeDirectory;
+            }
+            // Older templates test DEFINED, then check the path relative to AX_ROOT. An empty value
+            // could therefore select the engine root; remove the entry entirely instead.
+            options.Add(prebuiltDirectory is null ? "-UAX_PREBUILT_DIR" : "-DAX_PREBUILT_DIR=" + prebuiltDirectory);
+            force |= PrebuiltCacheDiffers(project, target, prebuiltDirectory);
+        }
+        if (cleanup?.CmakeOption is { } output) options.Add(output);
+        return (AxmolCommandMap.Build(target, project.Path, project.Configuration, configureOnly,
+            options, force: force, additionalBuild: extra), usesPrebuilt);
     }
 
-    private static string[] CmakeOptions(ProjectEntry project, EngineEntry engine, BuildTarget target, EnginePrebuiltState prebuiltState)
+    private static bool PrebuiltCacheDiffers(ProjectEntry project, BuildTarget target, string? expected)
     {
-        var options = new List<string>();
-
-        if (PrebuiltSettings.Load(project) is { Enabled: true })
-        {
-            // The engine **silently falls back to a source build** when the directory is unusable
-            // (AXGameEngineSetup.cmake:22), so this must judge precisely on its own: only hand the option
-            // over when Ready; otherwise fail explicitly and point at the Engines page.
-            var availability = EnginePrebuilt.Inspect(engine, target, project.Configuration, prebuiltState);
-            if (!availability.Usable) throw new PrebuiltUnavailableException(target.Name, project.Configuration, availability);
-            options.Add("-DAX_PREBUILT_DIR=" + availability.RelativeDirectory);
-        }
-
-        return options.ToArray();
+        var cache = Path.Combine(project.Path, BuildCleanup.NativeDirectory(target), "CMakeCache.txt");
+        if (!File.Exists(cache)) return false;
+        const string entry = "AX_PREBUILT_DIR:";
+        var line = File.ReadLines(cache).FirstOrDefault(line => line.StartsWith(entry, StringComparison.Ordinal));
+        var equals = line?.IndexOf('=') ?? -1;
+        var cached = equals >= 0 ? line![(equals + 1)..].Replace('\\', '/') : null;
+        return !string.Equals(cached, expected, StringComparison.Ordinal);
     }
 }

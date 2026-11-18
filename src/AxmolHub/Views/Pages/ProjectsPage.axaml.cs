@@ -130,7 +130,8 @@ public partial class ProjectsPage : UserControl
             await dialog.ShowDialog(owner);
             _draftName = dialog.DraftName;
             _draftLocation = dialog.DraftLocation;
-            if (dialog.Request is { } request) _ = CreateProjectAsync(request);
+            if (dialog.BuildRequest is { } build) _ = _workspace.RunEngineBuildAsync(build);
+            else if (dialog.Request is { } request) _ = CreateProjectAsync(request);
         }
         finally
         {

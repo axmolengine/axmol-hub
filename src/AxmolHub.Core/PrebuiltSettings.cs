@@ -17,8 +17,8 @@ public sealed class PrebuiltSettings
 
     public static PrebuiltSettings? Load(ProjectEntry project) => StateStore.ReadJson<PrebuiltSettings>(PathFor(project), ignoreErrors: false);
 
-    public static PrebuiltSettings Require(ProjectEntry project) => Load(project)
-        ?? throw new InvalidOperationException("Configure prebuilt engine libraries for this project first.");
+    internal static bool AppliesTo(ProjectEntry project, BuildTarget target)
+        => EnginePrebuilt.Supported(target) && Load(project)?.Enabled == true;
 
     public void Save(ProjectEntry project) => StateStore.WriteJson(PathFor(project), this);
 }

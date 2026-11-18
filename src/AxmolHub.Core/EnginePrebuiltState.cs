@@ -14,7 +14,7 @@ public sealed class EngineBuildRecord
     public string EngineVersion { get; set; } = "";
     public string Channel { get; set; } = "";
 
-    /// <summary>The Hub target id (currently only <c>windows-x64</c> is supported).</summary>
+    /// <summary>The Hub target id, including architecture.</summary>
     public string Target { get; set; } = "";
 
     /// <summary>The engine <c>-p</c> platform name, e.g. <c>win32</c>. This is the basis for whether <c>-DAX_PREBUILT_DIR</c> applies.</summary>
@@ -36,8 +36,8 @@ public sealed class EngineBuildRecord
 }
 
 /// <summary>
-/// Where engine build records are stored: **inside the Hub data root**, one file per hash of
-/// "engine path | version | channel".
+/// Engine build records live in the Hub data root, partitioned by installation, target and configuration.
+/// The old installation-only record can still attest to the one configuration it names.
 ///
 /// Storing in the data root rather than the engine tree has two reasons:
 /// <list type="number">
@@ -54,21 +54,63 @@ public sealed class EnginePrebuiltState(string root)
 {
     public string Root { get; } = Path.GetFullPath(root);
 
-    private string PathFor(EngineEntry engine)
+    private string Prefix(EngineEntry engine)
     {
         var identity = Path.GetFullPath(engine.Path) + "|" + engine.Version + "|" + engine.Channel;
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-        return Path.Combine(Root, "prebuilt", key + ".json");
+        return Path.Combine(Root, "prebuilt", key);
     }
 
-    public EngineBuildRecord? Load(EngineEntry engine) => StateStore.ReadJson<EngineBuildRecord>(PathFor(engine));
-
-    public void Save(EngineEntry engine, EngineBuildRecord record) => StateStore.WriteJson(PathFor(engine), record);
-
-    /// <summary>Cleared when the engine is repaired/reinstalled/uninstalled, to avoid leaving a "built" claim pointing at stale artifacts.</summary>
-    public void Clear(EngineEntry engine)
+    private static string PathFor(string prefix, string target, string configuration)
     {
-        var path = PathFor(engine);
+        BuildTargets.Get(target);
+        BuildConfigurations.Validate(configuration);
+        return $"{prefix}.{target}.{configuration}.json";
+    }
+
+    public EngineBuildRecord? Load(EngineEntry engine, BuildTarget target, string configuration)
+    {
+        var prefix = Prefix(engine);
+        return StateStore.ReadJson<EngineBuildRecord>(PathFor(prefix, target.Id, configuration))
+            ?? LoadLegacy(prefix, target.Id, configuration);
+    }
+
+    private static EngineBuildRecord? LoadLegacy(string prefix, string target, string configuration)
+    {
+        var record = StateStore.ReadJson<EngineBuildRecord>(prefix + ".json");
+        return record?.Target == target && record.Configuration == configuration ? record : null;
+    }
+
+    public void Save(EngineEntry engine, EngineBuildRecord record)
+        => StateStore.WriteJson(PathFor(Prefix(engine), record.Target, record.Configuration), record);
+
+    internal void Invalidate(EngineEntry engine, BuildTarget target, string configuration)
+    {
+        var prefix = Prefix(engine);
+        DeleteIfPresent(PathFor(prefix, target.Id, configuration));
+        if (LoadLegacy(prefix, target.Id, configuration) is not null) DeleteIfPresent(prefix + ".json");
+    }
+
+    public void Clear(EngineEntry engine, IReadOnlyList<string>? directories = null)
+    {
+        var prefix = Prefix(engine);
+        var parent = Path.GetDirectoryName(prefix)!;
+        if (!Directory.Exists(parent)) return;
+        var comparison = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        foreach (var path in Directory.EnumerateFiles(parent, Path.GetFileName(prefix) + ".*.json").Append(prefix + ".json"))
+        {
+            if (directories is not null)
+            {
+                var record = StateStore.ReadJson<EngineBuildRecord>(path);
+                if (record is null || EnginePrebuilt.ResolveDirectory(engine, record.BuildDirectory) is not { } resolved
+                    || !directories.Contains(resolved, comparison)) continue;
+            }
+            DeleteIfPresent(path);
+        }
+    }
+
+    private static void DeleteIfPresent(string path)
+    {
         if (File.Exists(path)) File.Delete(path);
     }
 }

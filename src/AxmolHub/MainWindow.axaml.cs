@@ -2197,22 +2197,6 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException(WorkspaceRejectionMessage(verdict, path));
         };
 
-        // Dialogs (e.g. "prebuilt library settings") can't reference the main window directly, so
-        // page navigation is forwarded here through the workspace.
-        _workspace.NavigateRequested += key =>
-        {
-            // Settings still answers the name, but it is no longer a page: whoever asks gets the overlay.
-            if (key == "Settings")
-            {
-                OpenSettings();
-                return;
-            }
-
-            if (PageKeys.Contains(key))
-            {
-                NavigateTo(key);
-            }
-        };
     }
 
     /// <summary>

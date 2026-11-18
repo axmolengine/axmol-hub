@@ -11,7 +11,7 @@ internal static class PrebuiltChecks
         var projectPath = Path.Combine(prebuiltRoot, "game");
         Directory.CreateDirectory(enginePath);
         Directory.CreateDirectory(projectPath);
-        var fixtureEngine = new EngineEntry("2.11.5", enginePath, "local");
+        var fixtureEngine = CommandEngine(enginePath, "local", "exit 7\n");
         var prebuiltState = new EnginePrebuiltState(prebuiltRoot);
         var windowsTarget = BuildTargets.Get("windows-x64");
         var fixtureProject = new ProjectEntry
@@ -26,75 +26,143 @@ internal static class PrebuiltChecks
 
         // Build a "content-complete" engine build directory: CMakeCache.txt + lib/<configuration> + bin/<configuration>
         // + runtime/axslc + freetype headers.
-        var buildDirectory = Path.Combine(enginePath, "build");
-        /// Start clean: build everything from scratch each time, otherwise files left by the previous step make the
-        /// next assertion falsely green (e.g. the "no shaders" step would be rescued by shader files an earlier step
-        /// created).
-        void CompleteBuild(string configuration)
+        var armTarget = BuildTargets.Get("windows-arm64");
+        var buildDirectory = BuildCleanup.ForEngine(fixtureEngine, windowsTarget).Directories.Single();
+        var armDirectory = BuildCleanup.ForEngine(fixtureEngine, armTarget).Directories.Single();
+        var directoryName = Path.GetFileName(buildDirectory);
+        string Cache(string directory) => Path.Combine(directory, "CMakeCache.txt");
+        var cacheContent = $"CMAKE_HOME_DIRECTORY:INTERNAL={enginePath.Replace('\\', '/')}\n";
+        void CompleteBuild(string directory, string configuration)
         {
-            if (Directory.Exists(buildDirectory))
-                Directory.Delete(buildDirectory, recursive: true);
-            Directory.CreateDirectory(buildDirectory);
-            File.WriteAllText(Path.Combine(buildDirectory, "CMakeCache.txt"), "# fixture cache");
-            Directory.CreateDirectory(Path.Combine(buildDirectory, "bin", configuration));
-            Directory.CreateDirectory(Path.Combine(buildDirectory, "engine", "3rdparty", "freetype", "include"));
-            var shaders = Path.Combine(buildDirectory, "runtime", "axslc");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Cache(directory), cacheContent);
+            Directory.CreateDirectory(Path.Combine(directory, "bin", configuration));
+            Directory.CreateDirectory(Path.Combine(directory, "engine", "3rdparty", "freetype", "include"));
+            var shaders = Path.Combine(directory, "runtime", "axslc");
             Directory.CreateDirectory(shaders);
             File.WriteAllText(Path.Combine(shaders, "positionTextureColor_vs"), "fixture");
-            var libraries = Path.Combine(buildDirectory, "lib", configuration);
+            var libraries = Path.Combine(directory, "lib", configuration);
             Directory.CreateDirectory(libraries);
             File.WriteAllText(Path.Combine(libraries, "axmol.lib"), "fixture");
         }
 
-        void SaveRecord(string target, string configuration, string token) => prebuiltState.Save(fixtureEngine, new EngineBuildRecord { EnginePath = enginePath, EngineVersion = "2.11.5", Channel = "local", Target = target, Platform = "win32", Architecture = "x64", Configuration = configuration, BuildDirectory = "build", EngineToken = token, BuiltAt = DateTimeOffset.Now, });
+        void SaveRecord(BuildTarget target, string configuration, string token) => prebuiltState.Save(fixtureEngine, new EngineBuildRecord
+        {
+            Target = target.Id, Configuration = configuration, EngineToken = token,
+            BuildDirectory = Path.GetFileName(target == armTarget ? armDirectory : buildDirectory),
+        });
+        PrebuiltAvailability Inspect(BuildTarget target, string configuration) => EnginePrebuilt.Inspect(fixtureEngine, target, configuration, prebuiltState);
         var token = ProjectService.EngineInstallationToken(fixtureEngine);
         // 1) Never built yet — the most common initial state.
-        Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState).Status == PrebuiltStatus.NotBuilt, "Without a build record the prebuilt libraries are reported as not built");
-        // 2) Content complete + record matches → Ready, and the relative path is a clean path under the engine root
-        //    (forward slashes).
-        CompleteBuild("Debug");
-        SaveRecord("windows-x64", "Debug", token);
-        var ready = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Debug", prebuiltState);
-        Check(ready.Usable && ready.RelativeDirectory == "build" && !ready.RelativeDirectory!.Contains('\\'), "A complete engine build is reported ready with an engine-root-relative path (build)");
-        // 3) Only Debug libraries but Release was asked for: report **which configurations actually exist**, instead of
-        //    just saying "missing".
-        var missingConfiguration = EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState);
-        Check(missingConfiguration.Status == PrebuiltStatus.ConfigurationMissing && missingConfiguration.Detail.Contains("Debug"), "A missing configuration reports the configurations the engine build actually has");
-        // 4) Incomplete content (no prebuilt shaders) → not ready.
-        CompleteBuild("Release");
-        File.Delete(Path.Combine(buildDirectory, "runtime", "axslc", "positionTextureColor_vs"));
-        Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.MissingContents, "An engine build without runtime/axslc is not accepted as prebuilt");
-        // 5) The engine was reinstalled/repaired → the record is void, old artifacts must not be taken on trust.
-        CompleteBuild("Release");
-        SaveRecord("windows-x64", "Release", "token-from-an-older-installation");
-        Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.EngineChanged, "A record from an older engine installation is refused");
-        // 6) The target recorded differs from the one requested → refuse (the directory name alone says nothing about
-        //    the platform; only the record is trusted).
-        SaveRecord("windows-arm64", "Release", token);
-        Check(EnginePrebuilt.Inspect(fixtureEngine, windowsTarget, "Release", prebuiltState).Status == PrebuiltStatus.TargetMismatch, "A record built for another target is refused");
-        // 7) Platform gate: prebuilt libraries only hold for Windows targets (the engine itself only accepts
-        //    WIN32/LINUX).
-        SaveRecord("windows-x64", "Release", token);
-        Check(!EnginePrebuilt.Supported(BuildTargets.Get("android-arm64")) && EnginePrebuilt.Inspect(fixtureEngine, BuildTargets.Get("android-arm64"), "Release", prebuiltState).Status == PrebuiltStatus.PlatformUnsupported, "Non-Windows targets are refused before reading the disk");
-        // 8) Per-project option storage (a separate JSON inside the project directory; .axmol-hub.json is untouched).
-        new PrebuiltSettings
+        Check(Inspect(windowsTarget, "Debug").Status == PrebuiltStatus.NotBuilt, "No record means no trusted prebuilt output");
+        CompleteBuild(buildDirectory, "Debug");
+        SaveRecord(windowsTarget, "Debug", token);
+        var recordFile = Directory.GetFiles(Path.Combine(prebuiltRoot, "prebuilt")).Single();
+        File.Move(recordFile, recordFile.Replace(".windows-x64.Debug.json", ".json", StringComparison.Ordinal));
+        Check(Inspect(windowsTarget, "Debug").RelativeDirectory == directoryName
+            && Inspect(windowsTarget, "Release").Status == PrebuiltStatus.ConfigurationMissing
+            && Inspect(armTarget, "Debug").Status == PrebuiltStatus.NotBuilt,
+            "A legacy record still works, but only for its own architecture and configuration");
+        File.Delete(Path.Combine(buildDirectory, "runtime/axslc/positionTextureColor_vs"));
+        Check(Inspect(windowsTarget, "Debug").Status == PrebuiltStatus.MissingContents, "Missing shaders make the engine library unusable");
+        CompleteBuild(buildDirectory, "Release");
+        SaveRecord(windowsTarget, "Release", "older-installation");
+        Check(Inspect(windowsTarget, "Release").Status == PrebuiltStatus.EngineChanged, "A record from an older installation is refused");
+        SaveRecord(windowsTarget, "Release", token);
+        CompleteBuild(armDirectory, "Release");
+        SaveRecord(armTarget, "Release", token);
+        Check(Inspect(windowsTarget, "Debug").Usable && Inspect(windowsTarget, "Release").Usable
+            && Inspect(armTarget, "Release").AbsoluteDirectory == armDirectory && !Inspect(armTarget, "Debug").Usable,
+            "Build records are independent by configuration and architecture");
+
+        var runner = new ProcessRunner(_ => { });
+        var service = new ProjectService(runner, EngineCli(runner), prebuiltState);
+        var engineBuild = new EngineBuildService(runner, EngineCli(runner), prebuiltState);
+        var project = fixtureProject;
+        var androidTarget = BuildTargets.Get("android-arm64");
+        string[] Arguments() => ProjectBuildOptions.Invocation(project, fixtureEngine, false, prebuiltState).Arguments;
+        Check(service.SetPrebuiltPreference(project, fixtureEngine, true) && !File.Exists(StateStore.MetadataPath(project.Path))
+            && Arguments().Contains("-DAX_PREBUILT_DIR=" + directoryName), "Enabling ready libraries uses an engine-relative directory and separate project settings");
+
+        File.WriteAllText(Path.Combine(project.Path, "CMakeLists.txt"), "# fixture only\n");
+        BuildTargets.Select(project, androidTarget.Id);
+        Check(!Arguments().Any(option => option.Contains("AX_PREBUILT_DIR", StringComparison.Ordinal))
+            && !service.SetPrebuiltPreference(project, fixtureEngine, false) && PrebuiltSettings.Load(project)?.Enabled == true,
+            "Android does not apply or overwrite the Windows preference");
+        BuildTargets.Select(project, windowsTarget.Id);
+        Check(Arguments().Contains("-DAX_PREBUILT_DIR=" + directoryName), "Switching back to Windows applies the saved preference");
+
+        var receipt = Path.Combine(project.Path, ProjectService.MarkerDirectory, "build.json");
+        StateStore.WriteJson(receipt, new { engine = token, platform = project.Platform, configuration = project.Configuration, usesPrebuilt = true });
+        project.BuildStatus = "Succeeded";
+        var projectOutput = BuildCleanup.ForProject(project, windowsTarget).Directories.Single();
+        Directory.CreateDirectory(projectOutput);
+        File.WriteAllText(Cache(projectOutput), "AX_PREBUILT_DIR:UNINITIALIZED=" + directoryName + "\n");
+        Check(!service.SetPrebuiltPreference(project, fixtureEngine, true) && File.Exists(receipt) && project.BuildStatus == "Succeeded",
+            "Confirming unchanged link preferences preserves the build receipt and status");
+        Check(service.SetPrebuiltPreference(project, fixtureEngine, false) && !File.Exists(receipt) && project.BuildStatus == "Not built"
+            && Arguments().Contains("-UAX_PREBUILT_DIR") && Arguments().Contains("-forceConfig"),
+            "Disabling prebuilt linking invalidates the receipt and removes the cache entry on configure");
+        Check(service.SetPrebuiltPreference(project, fixtureEngine, true), "Available libraries can be re-enabled after disabling");
+
+        var cleanup = BuildCleanup.ForEngine(fixtureEngine, windowsTarget);
+        var unaffected = Directory.CreateDirectory(Path.Combine(enginePath, "install")).FullName;
+        var invoked = 0;
+        Task CleanEngine() => engineBuild.BuildAsync(fixtureEngine, windowsTarget, "Debug", cleanup: cleanup, onCommand: (_, _) => invoked++);
+        File.WriteAllText(Cache(buildDirectory), "CMAKE_HOME_DIRECTORY:INTERNAL=" + projectPath + "\n");
+        await Reject<InvalidDataException>(CleanEngine, "A changed cleanup directory is rejected before invoking the engine");
+        Check(invoked == 0 && Directory.Exists(buildDirectory) && Inspect(windowsTarget, "Release").Usable,
+            "A refused cleanup neither invokes a build nor invalidates untouched libraries");
+        File.WriteAllText(Cache(buildDirectory), cacheContent);
+        if (OperatingSystem.IsWindows())
         {
-            Enabled = true
-        }.Save(fixtureProject);
-        Check(PrebuiltSettings.Load(fixtureProject)?.Enabled == true && File.Exists(Path.Combine(projectPath, ".axmol-hub.prebuilt.json")) && !File.Exists(Path.Combine(projectPath, ".axmol-hub.json")), "Prebuilt settings persist in the project directory without touching the project metadata");
-        // 9) Switch on and ready → what is handed to CMake is the relative path under the engine root; otherwise
-        //    **fail explicitly** rather than silently falling back to a source build.
-        //    The fixture project is Debug, so here the engine's own copy must also be back on Debug to count as ready.
-        CompleteBuild("Debug");
-        SaveRecord("windows-x64", "Debug", token);
-        var options = ProjectBuildOptions.Invocation(fixtureProject, fixtureEngine, configureOnly: false, prebuiltState);
-        var xc = Array.IndexOf(options.Arguments, "-xc");
-        Check(xc >= 0 && options.Arguments[xc + 1] == "-DAX_PREBUILT_DIR=build", "An enabled, ready prebuilt build contributes -DAX_PREBUILT_DIR=build");
-        prebuiltState.Clear(fixtureEngine);
-        await Reject<PrebuiltUnavailableException>(() => Task.Run(() => ProjectBuildOptions.Invocation(fixtureProject, fixtureEngine, configureOnly: false, prebuiltState)), "An enabled but unavailable prebuilt build fails the build instead of silently compiling from source");
+            var shader = Path.Combine(buildDirectory, "runtime", "axslc", "positionTextureColor_vs");
+            File.SetAttributes(shader, FileAttributes.ReadOnly);
+            var reportedPath = false;
+            using (File.OpenRead(shader))
+            {
+                try { await CleanEngine(); }
+                catch (IOException ex) when (ex.Message.Contains(shader, StringComparison.OrdinalIgnoreCase)) { reportedPath = true; }
+            }
+            Check(reportedPath && invoked == 0 && File.Exists(Cache(buildDirectory)),
+                "A locked shader reports its path, skips compilation and retains the cache for a retry");
+            // Exercise the read-only path after releasing the handle as the failed attempt may have cleared it.
+            File.SetAttributes(shader, FileAttributes.ReadOnly);
+        }
+        await Reject<InvalidOperationException>(CleanEngine, "The isolated engine fails after the confirmed cleanup");
+        Check(invoked == 1 && !Directory.Exists(buildDirectory) && Directory.Exists(unaffected)
+            && !Inspect(windowsTarget, "Debug").Usable && !Inspect(windowsTarget, "Release").Usable && Inspect(armTarget, "Release").Usable,
+            "Cleaning a shared build directory clears both configurations and preserves other architecture and install output");
+        await Reject<PrebuiltUnavailableException>(() => Task.Run(Arguments), "An enabled library that disappeared never silently falls back to sources");
+        await CheckAndroidCleanupAsync(project, androidTarget, fixtureEngine, service, receipt);
         Console.WriteLine($"{count} prebuilt checks passed.");
         return;
     }
+    private static async Task CheckAndroidCleanupAsync(ProjectEntry project, BuildTarget target, EngineEntry engine, ProjectService service, string receipt)
+    {
+        BuildTargets.Select(project, target.Id);
+        var gradle = Path.Combine(project.Path, "proj.android");
+        var app = Path.Combine(gradle, "app");
+        Directory.CreateDirectory(app);
+        File.WriteAllText(Path.Combine(gradle, "gradlew"), "");
+        File.WriteAllText(Path.Combine(gradle, "settings.gradle"), "project(':app').projectDir = new File(settingsDir, 'app')\n");
+        File.WriteAllText(Path.Combine(gradle, "build.gradle"), "tasks.register('clean', Delete) { delete rootProject.layout.buildDirectory }\n");
+        File.WriteAllText(Path.Combine(app, "build.gradle"), "android { externalNativeBuild { cmake { path '../../CMakeLists.txt' } } }\n");
+        var outputs = new[] { Path.Combine(app, "build"), Path.Combine(app, ".cxx"), Path.Combine(gradle, "build") };
+        foreach (var directory in outputs) Directory.CreateDirectory(directory);
+        var key = Path.Combine(gradle, "release.jks");
+        File.WriteAllText(key, "fixture only");
+        File.WriteAllText(receipt, "stale receipt");
+        var cleanup = BuildCleanup.ForProject(project, target);
+        var invoked = 0;
+        await Reject<InvalidOperationException>(() => service.BuildAsync(project, engine, configureOnly: true,
+            cleanup: cleanup, onCommand: (_, _) => invoked++), "An isolated Android configure failure is still reported after cleanup");
+        Check(invoked == 1 && cleanup.Directories.SequenceEqual(outputs) && outputs.All(directory => !Directory.Exists(directory))
+            && !File.Exists(receipt) && File.Exists(key) && File.Exists(Path.Combine(app, "build.gradle"))
+            && PrebuiltSettings.Load(project)?.Enabled == true,
+            "Android cleanup removes native and Gradle output but preserves source, signing file, and Windows preference");
+    }
+
     // The shared reader must accept old files without hiding damaged signing configuration.
     private static void CheckSettingsReaders(ProjectEntry project)
     {

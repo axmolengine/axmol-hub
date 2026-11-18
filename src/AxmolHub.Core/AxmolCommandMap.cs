@@ -115,11 +115,12 @@ public static class AxmolCommandMap
     /// `axmol -p win32 -a x64 -xc '…' -O3`, without <c>-d</c>). The working directory is set to the engine
     /// root by the caller.
     /// </summary>
-    public static AxmolInvocation BuildEngine(BuildTarget target, string configuration)
+    public static AxmolInvocation BuildEngine(BuildTarget target, string configuration, string? outputOption = null)
     {
         var arguments = new List<string>();
         AddTarget(arguments, target);               // -p win32 -a x64
-        AddConfiguration(arguments, configuration); // Release → -O3; Debug → not passed
+        AddConfiguration(arguments, configuration);
+        if (outputOption is not null) AddCmake(arguments, [outputOption]);
         return new("build", arguments.ToArray());
     }
 
