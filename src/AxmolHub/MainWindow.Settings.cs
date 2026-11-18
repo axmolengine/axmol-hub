@@ -83,7 +83,7 @@ public partial class MainWindow
     private SettingsPage EnsureSettings()
         => _settings ??= new SettingsPage(
             _workspace, _preferencesStore, _preferences, _chat,
-            OpenFolder, ApplyLanguage, SwitchDataRootAsync, UseTheme);
+            OpenPath, ApplyLanguage, SwitchDataRootAsync, UseTheme);
 
     /// <summary>Opens the card. <paramref name="category"/> lands it somewhere specific — what a caller that
     /// already knows which group answers its question should say so instead of dropping the reader on the

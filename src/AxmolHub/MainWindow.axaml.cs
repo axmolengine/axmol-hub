@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -359,7 +360,8 @@ public partial class MainWindow : Window
         await _workspace.InstallEngineAsync(request.Version, request.Source);
     }
 
-    internal void WriteLog(string message) => _workspace.Log.Write(message);
+    internal HubLog CurrentLog => _workspace.Log;
+    internal void WriteLog(string message) => CurrentLog.Write(message);
 
     /// <summary>
     /// Startup font self-check. Two things are done separately because they have different
@@ -894,9 +896,10 @@ public partial class MainWindow : Window
         CancelButton.IsEnabled = _workspace.CanCancel;
 
         var items = TaskQueue.Instance.Items;
-        var (visible, label, action) = TaskSlotStateFor(items);
-        TaskSlot.IsVisible = visible;
-        TaskSlotText.Text = visible ? label : "";
+        var slot = TaskSlotStateFor(items);
+        TaskSlot.IsVisible = slot.Visible;
+        TaskSlotText.Text = slot.Label;
+        TaskSlotText.Classes.Set("task-failed", slot.Failed);
 
         var active = items.FirstOrDefault(item => item.IsMoving);
         StatusProgressHost.IsVisible = active is not null;
@@ -932,7 +935,7 @@ public partial class MainWindow : Window
         // the sidebar's update button, so the slot's tooltip is the queue's own sentence in every state it
         // can still show — it no longer holds a version, which is what the button's tip carries instead.
         _taskSlotTip.Text = HubStrings.Get("TaskSlotTip");
-        if (!visible)
+        if (!slot.Visible)
         {
             // Nothing left to act on and nothing left to read: the popover goes with its own anchor rather
             // than staying open over an empty list — and its rows go with it, because a closed popover still
@@ -973,7 +976,7 @@ public partial class MainWindow : Window
     /// told twice on one screen. Silence is what is left when nothing is moving and nothing failed — a strip
     /// that lit for work already finished would be reporting the past.</para>
     /// </summary>
-    internal static (bool Visible, string Label, TaskSlotAction Action) TaskSlotStateFor(
+    internal static (bool Visible, string Label, TaskSlotAction Action, bool Failed) TaskSlotStateFor(
         IReadOnlyList<TaskQueue.Item> items)
     {
         var active = items.Where(item => item.IsActive).ToList();
@@ -984,17 +987,17 @@ public partial class MainWindow : Window
             // only reports the queue shape, so one task cannot repeat the same percentage beside the bar and
             // multiple tasks cannot make one percentage look like a total for the whole queue.
             return (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("TaskSlotFormat"), moving, active.Count), TaskSlotAction.OpenQueue);
+                HubStrings.Get("TaskSlotFormat"), moving, active.Count), TaskSlotAction.OpenQueue, false);
         }
 
         var failed = items.Count(item => item.State == TaskQueue.Phase.Failed);
         if (failed > 0)
         {
             return (true, string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("TaskSlotFailed"), failed), TaskSlotAction.OpenQueue);
+                HubStrings.Get("TaskSlotFailed"), failed), TaskSlotAction.OpenQueue, true);
         }
 
-        return (false, "", TaskSlotAction.None);
+        return (false, "", TaskSlotAction.None, false);
     }
 
     /// <summary>The slot's one press: lift the popover that holds the rows, the measurements and the
@@ -1002,7 +1005,7 @@ public partial class MainWindow : Window
     /// (see <see cref="OnUpdateActionClicked"/>).</summary>
     private void OnTaskSlotClicked()
     {
-        var (_, _, action) = TaskSlotStateFor(TaskQueue.Instance.Items);
+        var action = TaskSlotStateFor(TaskQueue.Instance.Items).Action;
         if (action == TaskSlotAction.OpenQueue)
         {
             ToggleTaskPopup();
@@ -1350,7 +1353,7 @@ public partial class MainWindow : Window
                     () => TaskQueue.Instance.Cancel(item.Identity),
                     () => TaskQueue.Instance.Retry(item),
                     () => TaskQueue.Instance.Dismiss(item),
-                    () => ShowLog(true));
+                    () => ShowTaskLog(item));
                 TaskRows.Children.Add(row.Control);
                 _taskRowViews.Add(row);
             }
@@ -1364,6 +1367,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowTaskLog(TaskQueue.Item item)
+    {
+        TaskPopup.IsOpen = false;
+        ShowLog(true, item.FailureLogLocation);
+    }
+
     private readonly List<TaskRowView> _taskRowViews = [];
 
     /// <summary>One row of the popover: what is being fetched, how far it has come, and the press that
@@ -1373,28 +1382,29 @@ public partial class MainWindow : Window
     {
         private readonly TaskQueue.Item _item;
         private readonly TextBlock _title = new() { Classes = { "task-row-title" } };
+        private readonly Run _caption = new();
+        private readonly Run _failure = new();
         private readonly ProgressBar _bar = new() { Minimum = 0, Maximum = 100, Height = 6 };
         private readonly TextBlock _measure = new() { Classes = { "task-row-measure" } };
-        private readonly TextBlock _error = new() { Classes = { "task-row-error" }, IsVisible = false };
         /// <summary>The row's tooltip body, held rather than re-set: assigning a new tooltip closes the one on
         /// screen, and a rate that updates every 500 ms would dismiss itself mid-read.</summary>
         private readonly TextBlock _tip = new() { MaxWidth = 560, TextWrapping = TextWrapping.Wrap };
         private readonly Button _cancel = StripButton();
         private readonly Button _retry = StripButton();
         private readonly Button _dismiss = StripButton();
-        /// <summary>For a change whose detail lives in the log drawer rather than on this row: the row says
-        /// which stage, the drawer says what happened. The one press that leaves the popover to go read.</summary>
         private readonly Button _log = StripButton();
         private readonly StackPanel _actions = new()
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 3,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
         public TaskRowView(TaskQueue.Item item, Action cancel, Action retry, Action dismiss, Action showLog)
         {
             _item = item;
+            _title.Inlines = new InlineCollection { _caption, _failure };
+            _failure.Bind(TextElement.ForegroundProperty, new DynamicResourceExtension("Hub.DangerText"));
             _cancel.Click += (_, _) => cancel();
             _retry.Click += (_, _) => retry();
             _dismiss.Click += (_, _) => dismiss();
@@ -1408,7 +1418,7 @@ public partial class MainWindow : Window
                 ColumnDefinitions = new ColumnDefinitions("*,Auto"),
                 Children =
                 {
-                    new StackPanel { Spacing = 4, Children = { _title, _bar, _measure, _error } },
+                    new StackPanel { Spacing = 4, Children = { _title, _bar, _measure } },
                     _actions,
                 },
             };
@@ -1424,7 +1434,10 @@ public partial class MainWindow : Window
 
         public void Update()
         {
-            _title.Text = _item.Title + " · " + _item.PhaseText;
+            var failed = _item.State == TaskQueue.Phase.Failed;
+            _caption.Text = failed ? _item.Title + " · " : _item.TitleWithPhase;
+            _failure.Text = failed ? _item.PhaseText : "";
+            _bar.IsVisible = _measure.IsVisible = !failed;
             // An unmeasurable phase gets the indeterminate bar rather than a number held at 99: the local
             // work after the bytes (unzipping, patching) is real work with no percentage in it. A change that
             // is running but cannot name a percentage is the same case — a determinate bar sitting at zero
@@ -1432,21 +1445,15 @@ public partial class MainWindow : Window
             _bar.IsIndeterminate = _item.State == TaskQueue.Phase.Finalizing
                                    || (_item.Kind == TaskQueue.TaskKind.Mutating && _item.IsMoving && _item.Fill is null);
             _bar.Value = _item.Fill ?? 0;
-            _measure.Text = _item.MeasureText;
-            // The row and strip share the same task-owned details. Keep the holder installed while its
-            // text changes so hovering a live download does not dismiss the tooltip on every report.
+            _measure.Text = failed ? "" : _item.MeasureText;
+            // Keep the tooltip installed so hovering a live download survives progress updates.
             _tip.Text = _item.TooltipText;
-            _error.Text = _item.Error ?? "";
-            _error.IsVisible = _item.Error is { Length: > 0 };
-            // Re-read on every repaint, not once at construction: these are the shell's own buttons, and the
-            // row that survived a language switch would otherwise keep saying 取消 in an English client.
+            // Read button labels on every repaint so a surviving row follows language changes.
             _cancel.Content = HubStrings.Get("Cancel");
             _retry.Content = HubStrings.Get("TaskRetry");
             _dismiss.Content = HubStrings.Get("TaskDismiss");
             _log.Content = HubStrings.Get("TaskLogAction");
-            // A change's detail is in the drawer; a transfer's whole story is its byte count, and a fourth
-            // button on every row would be the shell asking permission to scroll.
-            _log.IsVisible = _item.Kind == TaskQueue.TaskKind.Mutating;
+            _log.IsVisible = _item.FailureLogLocation is not null || _item.Kind == TaskQueue.TaskKind.Mutating;
             // A finished row keeps no cancel: there is nothing left to stop, and a button that answers to
             // nothing is the thing this shell already refused to do in the version picker.
             _cancel.IsVisible = _item.CanCancel;
@@ -1460,6 +1467,7 @@ public partial class MainWindow : Window
         private static Button StripButton() => new()
         {
             Classes = { "strip" },
+            Padding = new Thickness(5, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
     }
@@ -1570,7 +1578,7 @@ public partial class MainWindow : Window
                     ShowFeedback(UserFeedback.Success(HubStrings.Get("DataChanged"), "data-root-changed"));
                 }
                 finally { SetRelocationInputsEnabled(true); }
-            }, kind: TaskQueue.TaskKind.Mutating, retryable: false, exclusive: true);
+            }, kind: TaskQueue.TaskKind.Mutating, retryable: false, exclusive: true, getFailureLog: () => source.Log);
         if (item is null) throw new InvalidOperationException(HubStrings.Get("WaitForOperation"));
         await item.Completion;
         if (item.Fault is { } fault) throw fault;
@@ -2102,6 +2110,7 @@ public partial class MainWindow : Window
     /// it from the UI thread.</summary>
     private readonly object _logGate = new();
     private readonly StringBuilder _logText = new();
+    private readonly Queue<(HubLog.Location Location, long Offset)> _logLocations = new();
     private long _logHead;
     private long _paintedLogHead;
     private bool _logDirty;
@@ -2162,16 +2171,19 @@ public partial class MainWindow : Window
         // appending each one to TextBox.Text copies the whole retained string and re-measures the box: a flood of
         // those held the dispatcher for 216 seconds, which is a frozen shell with no message beside it. The pump
         // appends here; DrainActivityLog is the only writer of the box.
-        _workspace.Logged += line =>
+        _workspace.Log.Written += (line, location) =>
         {
             lock (_logGate)
             {
+                if (location is not null) _logLocations.Enqueue((location, _logHead + _logText.Length));
                 _logText.Append(line).Append('\n');
                 if (_logText.Length > 120000)
                 {
                     var removed = _logText.Length - 80000;
                     _logText.Remove(0, removed);
                     _logHead += removed;
+                    while (_logLocations.TryPeek(out var entry) && entry.Offset < _logHead)
+                        _logLocations.Dequeue();
                 }
                 _logDirty = true;
             }
@@ -2964,7 +2976,7 @@ public partial class MainWindow : Window
     /// <summary>Shows/hides the log body and flips the strip chevron. The drain belongs to the body: while nobody
     /// is looking at the drawer a flood costs the UI thread nothing at all, and the retained tail is painted the
     /// moment it opens.</summary>
-    internal void ShowLog(bool show)
+    internal void ShowLog(bool show, HubLog.Location? location = null)
     {
         LogBody.IsVisible = show;
         LogResizeGrip.IsVisible = show;
@@ -2976,18 +2988,29 @@ public partial class MainWindow : Window
             return;
         }
 
-        DrainActivityLog();
+        if (!DrainActivityLog(location) && location?.FilePath is { } path)
+            OpenPath(path);
         _logDrain.Start();
     }
 
-    /// <summary>Paints everything the pump appended since the last pass, in one write.</summary>
-    private void DrainActivityLog()
+    /// <summary>Paints pending output in one write. Returns whether a requested location is still in the live tail.</summary>
+    private bool DrainActivityLog(HubLog.Location? location = null)
     {
         string text;
         long head;
+        int? targetIndex = null;
         lock (_logGate)
         {
-            if (!_logDirty) return;
+            if (location is not null)
+            {
+                foreach (var entry in _logLocations)
+                {
+                    if (!ReferenceEquals(entry.Location, location)) continue;
+                    targetIndex = (int)(entry.Offset - _logHead);
+                    break;
+                }
+            }
+            if (!_logDirty && targetIndex is null) return false;
             text = _logText.ToString();
             head = _logHead;
             _logDirty = false;
@@ -3007,6 +3030,12 @@ public partial class MainWindow : Window
             offset = new Vector(offset.X, removed == oldLength ? 0 : Math.Max(0, offset.Y - removedHeight));
         }
 
+        if (targetIndex is { } start)
+        {
+            _logFollowing = false;
+            caret = selectionStart = selectionEnd = start;
+        }
+
         var refreshVersion = ++_logRefreshVersion;
         _logRefreshing = true;
         ActivityLog.Text = text;
@@ -3023,12 +3052,16 @@ public partial class MainWindow : Window
             if (refreshVersion != _logRefreshVersion) return;
             if (_logScroll is { } scroll)
             {
-                scroll.Offset = new Vector(offset.X, _logFollowing
-                    ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
+                if (targetIndex is { } index && _logPresenter is { } presenter)
+                    scroll.Offset = new Vector(0, presenter.TextLayout.HitTestTextPosition(index).Top);
+                else
+                    scroll.Offset = new Vector(offset.X, _logFollowing
+                        ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
                 scroll.UpdateLayout();
             }
             _logRefreshing = false;
         }, DispatcherPriority.Loaded);
+        return targetIndex is not null;
     }
 
     /// <summary>Drops the retained tail and the painted box together. Only a data-root switch does this: the old
@@ -3038,6 +3071,7 @@ public partial class MainWindow : Window
         lock (_logGate)
         {
             _logText.Clear();
+            _logLocations.Clear();
             _logHead = 0;
             _logDirty = false;
         }
@@ -3150,12 +3184,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Hands a directory to the system shell to open. Avalonia has no wrapper for WPF's
-    /// <c>Process.Start(UseShellExecute)</c>, so just start the process directly. Failures go to
-    /// the status bar instead of being thrown: clicking "open directory" shouldn't blow up the
-    /// whole program.
+    /// Hands a file or directory to the system shell. Failures go to the status bar.
     /// </summary>
-    private void OpenFolder(string path)
+    private void OpenPath(string path)
     {
         try
         {
@@ -3164,7 +3195,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowFeedback(UserFeedback.Error(ex.Message, "open-folder-error"));
+            ShowFeedback(UserFeedback.Error(ex.Message, "open-path-error"));
         }
     }
 private static bool ShouldHideOnClose(bool isWindows, bool isMacOS, bool isAutomation, bool quitConfirmed, bool trayAvailable) => !isAutomation && !quitConfirmed && (isMacOS || (isWindows && trayAvailable));

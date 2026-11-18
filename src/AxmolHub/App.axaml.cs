@@ -348,6 +348,7 @@ public partial class App : Application
         var window = new MainWindow(Options.ResolveDataRoot(preferences), preferencesStore, preferences,
             isolatedAuthForChecks: Options.IsAutomation);
         UpdateService.Instance.WriteLog = window.WriteLog;
+        UpdateService.Instance.GetFailureLog = () => window.CurrentLog;
         desktop.MainWindow = window;
         desktop.Exit += (_, _) => window.StopTaskbarProgress();
 

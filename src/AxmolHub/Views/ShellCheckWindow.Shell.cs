@@ -1385,18 +1385,31 @@ internal sealed class ShellLayoutChecks
 
         // A failed row is the one settled state with answers left to give, and the retry has to be the same
         // row: a second row for one download would make 「取消这个」 ambiguous.
-        var retryIdentity = "engine:install:9.9.2";
-        var firstAttempt = TaskQueue.Instance.EnqueueForCheck(retryIdentity, "TaskEnginePackage", "9.9.2")
+        var retryIdentity = "hub:update:9.9.2";
+        var firstAttempt = TaskQueue.Instance.EnqueueForCheck(retryIdentity, "TaskHubUpdate", "9.9.2",
+                getFailureLog: () => shell.CurrentLog)
             ?? throw new InvalidOperationException("fixture: the retry transfer was refused");
         var firstCompletion = firstAttempt.Completion;
+        var logWord = HubStrings.Get("TaskLogAction");
+        var failureActions = retryWord + "+" + dismissWord + "+" + logWord;
         TaskQueue.Instance.FinishTaskForCheck(retryIdentity, TaskQueue.Phase.Failed, "fixture: 503");
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         shell.OpenTaskPopupForCheck();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.TaskRowCountForCheck == 1 && shell.TaskRowActionsForCheck == retryWord + "+" + dismissWord,
-            "失败的那一行给的是重试和忽略，不是取消（实际 " + shell.TaskRowActionsForCheck + "）");
+        var hasFailureActions = shell.TaskRowCountForCheck == 1 && shell.TaskRowActionsForCheck == failureActions;
+        var beforeLogClick = shell.ActivityLogTextForCheck;
+        var clickedLog = shell.ClickTaskRowActionForCheck(retryIdentity, logWord);
+        shell.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        var logBox = shell.FindControl<TextBox>("ActivityLog");
+        var header = logBox?.Text?.IndexOf("Task failed: " + firstAttempt.Title, StringComparison.Ordinal) ?? -1;
+        Check(hasFailureActions && clickedLog && !shell.TaskPopupOpenForCheck && logBox?.IsEffectivelyVisible == true
+              && header >= 0 && logBox.CaretIndex == logBox.Text!.LastIndexOf('\n', header) + 1
+              && shell.ActivityLogTextForCheck == beforeLogClick,
+            "更新失败的任务行可重试、忽略，或跳到对应日志且不重复写入");
+        shell.OpenTaskPopupForCheck();
 
         // The trap the retry could walk into: a completion source is single-shot, so reusing it hands an
         // awaiting caller an already-settled task and 「还在下载」 reads as 「装完了」.
@@ -1411,8 +1424,8 @@ internal sealed class ShellLayoutChecks
         TaskQueue.Instance.FinishTaskForCheck(retryIdentity, TaskQueue.Phase.Failed, "fixture: 503 again");
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.TaskRowActionsForCheck == retryWord + "+" + dismissWord,
-            "又失败一次，行仍然给那两条路（实际 " + shell.TaskRowActionsForCheck + "）");
+        Check(shell.TaskRowActionsForCheck == failureActions,
+            "重试后再次失败仍提供相同操作（实际 " + shell.TaskRowActionsForCheck + "）");
         shell.ClickTaskRowActionForCheck(retryIdentity, dismissWord);
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();

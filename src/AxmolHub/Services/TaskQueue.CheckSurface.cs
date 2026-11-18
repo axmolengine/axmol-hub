@@ -1,3 +1,5 @@
+using AxmolHub.Core;
+
 namespace AxmolHub;
 
 /// <summary>
@@ -13,9 +15,9 @@ internal sealed partial class TaskQueue
     /// <see cref="FinishTaskForCheck"/>; <see cref="ClearForCheck"/> takes it away.
     /// </summary>
     internal Item? EnqueueForCheck(string identity, string titleKey, string? subject = null,
-        TaskKind kind = TaskKind.Transfer, bool listed = true)
+        TaskKind kind = TaskKind.Transfer, bool listed = true, Func<HubLog>? getFailureLog = null)
         => Enqueue(identity, titleKey, subject, (_, token) => Task.Delay(Timeout.Infinite, token),
-            kind: kind, listed: listed);
+            kind: kind, listed: listed, getFailureLog: getFailureLog);
 
     /// <summary>
     /// Verification hook: feeds one line through <see cref="TaskFeed"/>, the way the task's own process would.

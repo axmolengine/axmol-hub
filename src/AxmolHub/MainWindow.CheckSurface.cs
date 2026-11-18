@@ -638,7 +638,7 @@ public partial class MainWindow
     {
         /// <summary>The row's title line as drawn — what the work is and which stage it says it is in. A check
         /// on "the row speaks for its own process" has to read this, not the field behind it.</summary>
-        public string TitleForCheck => _title.Text ?? "";
+        public string TitleForCheck => _caption.Text + _failure.Text;
         /// <summary>The row's buttons, in the order they appear. A check presses these rather than calling
         /// the queue method behind them, so broken wiring stays detectable.</summary>
         public IReadOnlyList<Button> ActionButtons => [_cancel, _retry, _dismiss, _log];

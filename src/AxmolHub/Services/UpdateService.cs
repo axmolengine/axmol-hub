@@ -48,6 +48,7 @@ internal sealed partial class UpdateService
     public static UpdateService Instance => Shared.Value;
 
     internal Action<string> WriteLog { get; set; } = _ => { };
+    internal Func<HubLog>? GetFailureLog { get; set; }
 
     /// <summary>The outcome of a check, carried back to the UI so it can choose its copy.</summary>
     public enum CheckResult
@@ -500,7 +501,7 @@ internal sealed partial class UpdateService
 
             Download = DownloadState.Ready;
             Changed?.Invoke();
-        }, onFinished: FinishDownload);
+        }, onFinished: FinishDownload, getFailureLog: GetFailureLog);
     }
 
     /// <summary>
@@ -515,7 +516,7 @@ internal sealed partial class UpdateService
         {
             case TaskQueue.Phase.Failed:
             case TaskQueue.Phase.Cancelled:
-                // The row keeps the message and the retry; this service only gives up the restart action —
+                // The row keeps its retry action; the service only gives up the restart action —
                 // and the arm that was waiting on it.
                 Download = DownloadState.None;
                 DropRestartArm();

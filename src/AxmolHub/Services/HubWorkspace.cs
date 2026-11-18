@@ -122,7 +122,6 @@ public sealed partial class HubWorkspace : IDisposable
         // The drawer is the one surface that shows every line; a task's own row is fed by that task's process (see
         // OwnLines), because a row that moved on somebody else's output was reporting a stage the build never
         // printed.
-        Log.Written += line => Logged?.Invoke(line);
 
         _runner = new ProcessRunner(Log.Write);
         _commandLine = new EngineCommandLine(_runner);
@@ -237,7 +236,6 @@ public sealed partial class HubWorkspace : IDisposable
     public bool SuppressDialogs { get; set; }
 
     /// <summary>A single log line (already on the UI thread). The main window appends it to the log panel.</summary>
-    public event Action<string>? Logged;
 
     /// <summary>State/lists changed and pages should repaint. Equivalent to the WPF version's trailing <c>Refresh()</c>.</summary>
     public event Action? Changed;
@@ -473,7 +471,7 @@ public sealed partial class HubWorkspace : IDisposable
                 }
             },
             onFinished: settled => FinishGated(settled, taskToken), kind: TaskQueue.TaskKind.Mutating,
-            listed: listed, retryable: retryable);
+            listed: listed, retryable: retryable, getFailureLog: () => Log);
         if (item is null)
         {
             // Already running under this identity: the row on screen is the answer, and the repaint the first
@@ -502,7 +500,7 @@ public sealed partial class HubWorkspace : IDisposable
         var title = item.Title;
         if (item.Fault is { } error)
         {
-            _ = ReportFailureAsync(error, taskToken);
+            _ = ReportFailureAsync(error, taskToken, item.TitleWithPhase);
         }
         else if (item.State == TaskQueue.Phase.Done)
         {
@@ -523,15 +521,13 @@ public sealed partial class HubWorkspace : IDisposable
     /// gated operations and by the launch path, which runs outside the gate and so has no <c>catch</c> above
     /// it — a refusal must not be able to land quieter than an operation.
     /// </summary>
-    private async Task ReportFailureAsync(Exception error, long? taskToken = null)
+    private async Task ReportFailureAsync(Exception error, long? taskToken = null, string? taskStatus = null)
     {
         LastError = error.ToString();
-        Log.Write(LastError);
-        var message = HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]);
-        if (taskToken is { } owner)
-            SetTaskStatus(message, owner, finished: true);
-        else
-            SetStatus(message);
+        // The queue already wrote task failures with a location before notifying the shell.
+        if (taskStatus is null) Log.Write(LastError);
+        var message = taskStatus ?? (HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]));
+        SetStatus(message, taskToken, taskFinished: taskToken is not null);
         Failed?.Invoke();
         // In verification mode don't pop up: ExpectedFailure is the norm for this group (e.g.
         // importing an incomplete engine), and a dialog would make the await never return (see
@@ -593,7 +589,7 @@ public sealed partial class HubWorkspace : IDisposable
                     _taskStatusContext.Value = previous;
                 }
             },
-            onFinished: finished => FinishTask(finished, logTitleKey, taskToken));
+            onFinished: finished => FinishTask(finished, logTitleKey, taskToken), getFailureLog: () => Log);
         if (item is null)
         {
             DiscardTaskStatus(taskToken);
@@ -612,14 +608,7 @@ public sealed partial class HubWorkspace : IDisposable
         var title = HubStrings.Get(logTitleKey);
         if (item.Fault is { } error)
         {
-            LastError = error.ToString();
-            Log.Write(LastError);
-            SetTaskStatus(HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]), taskToken, finished: true);
-            Failed?.Invoke();
-            if (!SuppressDialogs)
-            {
-                _ = ShowOperationErrorAsync(error);
-            }
+            _ = ReportFailureAsync(error, taskToken, item.TitleWithPhase);
         }
         else if (item.State == TaskQueue.Phase.Done)
         {

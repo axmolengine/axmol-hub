@@ -176,8 +176,11 @@ internal sealed partial class TaskQueue
 
         public Progress Report { get; private set; } = Progress.Unknown;
 
-        /// <summary>The failure message, or null. Shown inline on the row.</summary>
+        /// <summary>The failure message, or null. Only shown on request.</summary>
         public string? Error { get; private set; }
+
+        internal Func<HubLog>? GetFailureLog { get; init; }
+        public HubLog.Location? FailureLogLocation { get; private set; }
 
         /// <summary>The readable invocation and directory reported by this task's actual call site.</summary>
         public string? Command { get; private set; }
@@ -195,10 +198,11 @@ internal sealed partial class TaskQueue
         {
             get
             {
-                var lines = new List<string> { Title + " · " + PhaseText };
-                // Finalizing is local, unmeasurable work, not the transfer that already finished.
-                if (State == Phase.Finalizing) return lines[0];
+                var title = TitleWithPhase;
+                // Neither finalizing nor failed work has live transfer measurements to show.
+                if (State is Phase.Finalizing or Phase.Failed) return title;
 
+                var lines = new List<string> { title };
                 var measure = MeasureText;
                 if (measure != HubStrings.Get("TaskNoMeasure")) lines.Add(measure);
                 if (HintText is { } hint) lines.Add(hint);
@@ -216,9 +220,8 @@ internal sealed partial class TaskQueue
         private double? EstimatedRate { get; set; }
 
         /// <summary>
-        /// The exception behind <see cref="Error"/>, kept whole. The row only needs the message, but the
-        /// caller that owns the work needs the type: <see cref="HubWorkspace.ShowOperationErrorAsync"/>
-        /// chooses its advice by exception, and the log keeps the stack trace.
+        /// The exception behind <see cref="Error"/>, kept whole for the details and the log.
+        /// <see cref="HubWorkspace.ShowOperationErrorAsync"/> chooses its advice by exception type.
         /// </summary>
         public Exception? Fault { get; private set; }
 
@@ -317,11 +320,10 @@ internal sealed partial class TaskQueue
         /// The phase as the row words it. Said here so every surface uses one word for one state, the same
         /// reason <see cref="UpdateService.PendingVersion"/> is read rather than rebuilt.
         ///
-        /// <para>A stage the work named itself wins over the phase word, because it is the worker's answer
-        /// rather than an inference from how many bytes arrived. And the phase words split by kind: 下载中 is
-        /// true of a transfer and a lie about a compile that is also running.</para>
+        /// <para>A stage the work named itself wins over the phase word unless the task failed. The phase
+        /// words split by kind: downloading describes a transfer but not a running compile.</para>
         /// </summary>
-        public string PhaseText => StageKey is { Length: > 0 } stage
+        public string PhaseText => State != Phase.Failed && StageKey is { Length: > 0 } stage
             ? HubStrings.Get(stage)
             : HubStrings.Get(State switch
             {
@@ -332,6 +334,8 @@ internal sealed partial class TaskQueue
                 Phase.Cancelled => "TaskCancelled",
                 _ => "TaskFailed",
             });
+
+        public string TitleWithPhase => Title + " · " + PhaseText;
 
         /// <summary>
         /// What the work can prove, in words. Bytes for a transport that counts them, a percentage for one
@@ -408,6 +412,7 @@ internal sealed partial class TaskQueue
             Fault = fault;
             Error = fault.Message;
             State = Phase.Failed;
+            WriteFailureLog();
         }
 
         internal void Fail(string? message)
@@ -415,6 +420,22 @@ internal sealed partial class TaskQueue
             Fault = null;
             Error = message;
             State = Phase.Failed;
+            WriteFailureLog();
+        }
+
+        private void WriteFailureLog()
+        {
+            if (GetFailureLog is null || (Fault?.ToString() ?? Error) is not { Length: > 0 } details) return;
+
+            try
+            {
+                FailureLogLocation = GetFailureLog().WriteLocated($"Task failed: {Title}\n{details}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An unwritable log must not prevent a failed task from settling.
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
         }
 
         /// <summary>
@@ -428,6 +449,7 @@ internal sealed partial class TaskQueue
             State = Phase.Queued;
             Error = null;
             Fault = null;
+            FailureLogLocation = null;
             Report = Progress.Unknown;
             EstimatedTotal = null;
             EstimatedRate = null;
@@ -570,7 +592,8 @@ internal sealed partial class TaskQueue
         TaskKind kind = TaskKind.Transfer,
         bool listed = true,
         bool retryable = true,
-        bool exclusive = false)
+        bool exclusive = false,
+        Func<HubLog>? getFailureLog = null)
     {
         if (_items.Any(item => item.IsActive && item.Exclusive)
             || exclusive && _items.Any(item => item.IsActive)) return null;
@@ -600,6 +623,7 @@ internal sealed partial class TaskQueue
             Listed = listed,
             Retryable = retryable,
             Exclusive = exclusive,
+            GetFailureLog = getFailureLog,
         };
         _items.Add(item);
         Publish();
