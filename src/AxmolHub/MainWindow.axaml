@@ -3,7 +3,7 @@
         xmlns:local="using:AxmolHub"
         x:Class="AxmolHub.MainWindow"
         Title="Axmol Hub"
-        Width="1280" Height="880" MinWidth="900" MinHeight="640"
+        Width="1280" Height="880" MinWidth="1100" MinHeight="640"
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaTitleBarHeightHint="32"
         WindowDecorations="BorderOnly"

@@ -37,13 +37,16 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
     public bool IsFolderMissing { get; } = !Directory.Exists(Project.Path);
     public string Target => BuildTargets.Get(Project.Platform).Name;
     public string ProjectTypeLabel => HubStrings.Get(Project.ProjectType);
+    public string ProjectTypeAndStatus => ProjectTypeLabel + " · " + ConfigurationAndStatus;
     public string Engine => Project.Version + (Project.Channel == "local" ? "" : " · " + Project.Channel);
+    public string EngineChannel => Project.Channel;
+    public bool HasEngineChannel => !string.IsNullOrWhiteSpace(Project.Channel) && Project.Channel != "local";
     public string ConfigurationAndStatus => Project.Configuration + " · " + HubStrings.Get(Project.BuildStatus);
+    public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastActivity);
     public string ExactLastActivity => Project.LastOpened?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture) ?? HubStrings.Get("NoActivity");
     public string LastActivity => Project.LastOpened is not { } activity ? HubStrings.Get("NoActivity")
         : activity.ToLocalTime().Date == DateTime.Now.Date ? HubStrings.Get("TodayAt") + " " + activity.ToLocalTime().ToString("HH:mm", CultureInfo.CurrentCulture)
         : activity.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
-    public string CompactDetails => string.Join(" · ", Target, HubStrings.Get(Project.ProjectType), ConfigurationAndStatus, Engine, LastActivity);
     public string RunCaption => HubStrings.Get(_runStateKey ?? (IsPreviewRunning ? "Stop" : "Run"));
 }
 
@@ -98,7 +101,6 @@ public partial class ProjectsPage : UserControl
                 _workspace.Refresh();
             }
         };
-        ProjectsGrid.SizeChanged += (_, _) => SyncColumns();
         ProjectsGrid.AddHandler(InputElement.DoubleTappedEvent, OnProjectDoubleTapped, RoutingStrategies.Bubble);
         ProjectsGrid.AddHandler(InputElement.KeyDownEvent, OnProjectsKeyDown, RoutingStrategies.Tunnel);
         AttachedToVisualTree += (_, _) => Reload();
@@ -355,7 +357,6 @@ public partial class ProjectsPage : UserControl
         PlatformFilter.SelectedItem = PlatformFilter.Items.Cast<ProjectFilterChoice>().FirstOrDefault(x => x.Value == previousPlatform) ?? PlatformFilter.Items[0];
         UpdateSortCaption();
         ApplyView();
-        SyncColumns();
     }
 
     private void ApplyView()
@@ -398,18 +399,6 @@ public partial class ProjectsPage : UserControl
         if (ProjectsGrid.ItemsSource is not IEnumerable<ProjectListItem> items) return;
         foreach (var item in items)
             item.SetRunState(item.Project.Path == _workspace.AndroidRunProjectPath ? _workspace.AndroidRunStateKey : null);
-    }
-
-    private void SyncColumns()
-    {
-        if (ProjectsGrid.Bounds.Width <= 0) return;
-        var compact = ProjectsGrid.Bounds.Width < 840;
-        ProjectsGrid.Columns[0].IsVisible = !compact;
-        ProjectsGrid.Columns[1].IsVisible = !compact;
-        ProjectsGrid.Columns[2].IsVisible = !compact;
-        ProjectsGrid.Columns[3].IsVisible = !compact;
-        ProjectsGrid.Columns[5].IsVisible = compact;
-        if (compact) ProjectsGrid.Columns[5].Width = new DataGridLength(Math.Max(200, ProjectsGrid.Bounds.Width - 244));
     }
 
     private void UpdateSortCaption() => SortButton.Content = HubStrings.Get(_sortMode switch

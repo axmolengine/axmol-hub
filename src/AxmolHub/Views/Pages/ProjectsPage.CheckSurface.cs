@@ -13,6 +13,4 @@ public partial class ProjectsPage : UserControl
     internal Button NewProjectForCheck => NewProjectButton;
     internal NewProjectDialog? CreateDialogForCheck => _createDialog;
     internal Task ConfirmDeleteForCheckAsync(ProjectEntry project) => ConfirmDeleteAsync(project);
-
-    internal void SyncColumnsForCheck() => SyncColumns();
 }

@@ -375,6 +375,11 @@
     <Setter Property="Padding" Value="14,8" />
     <Setter Property="MinHeight" Value="40" />
   </Style>
+  <Style Selector="DataGrid.library-grid DataGridColumnHeader">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="MinHeight" Value="44" />
+  </Style>
 
   <Style Selector="DataGridCell">
     <Setter Property="Padding" Value="14,8" />

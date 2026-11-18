@@ -565,7 +565,7 @@ internal sealed class ShellLayoutChecks
         var projects = (ProjectsPage)shell.NavigateTo("Projects");
         projects.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(NamedDescendant<TextBox>(projects, "SearchBox")is { IsVisible: true } && NamedDescendant<Button>(projects, "OpenExistingButton")is { IsVisible: true } && NamedDescendant<Button>(projects, "NewProjectButton")is { IsVisible: true } && projects.GridForCheck.Columns.Count == 6, "项目页以搜索/添加/新建为主入口，列表保留完整信息列和紧凑列");
+        Check(NamedDescendant<TextBox>(projects, "SearchBox")is { IsVisible: true } && NamedDescendant<Button>(projects, "OpenExistingButton")is { IsVisible: true } && NamedDescendant<Button>(projects, "NewProjectButton")is { IsVisible: true } && projects.GridForCheck.Columns.Count == 5, "项目页以搜索/添加/新建为主入口，列表保留五个独立数据列");
         var originalProjects = shell.Workspace.State.Projects.ToArray();
         var projectA = new ProjectEntry
         {
@@ -621,8 +621,7 @@ internal sealed class ShellLayoutChecks
         projects.PlatformFilterForCheck.SelectedIndex = 0;
         projects.SortForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         projects.UpdateLayout();
-        projects.SyncColumnsForCheck();
-        Check(projects.GridForCheck.Columns[5].IsVisible == (projects.GridForCheck.Bounds.Width < 840), "项目列表窄于 840px 时切换到含全部元数据的紧凑布局");
+        Check(projects.GridForCheck.Columns.All(column => column.IsVisible), "项目列表在常规列空间下保持所有独立数据列，不切换折叠布局");
         projects.NewProjectForCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         projects.CreateDialogForCheck!.ProjectNameForCheck.Text = "Draft retained on close";
         projects.CreateDialogForCheck.CloseForCheck();

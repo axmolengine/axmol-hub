@@ -31,7 +31,7 @@
     <Grid RowDefinitions="Auto,Auto,*">
       <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,14">
         <TextBlock Text="{DynamicResource Projects}" FontSize="28" FontWeight="SemiBold"
-                   VerticalAlignment="Center" Margin="0,0,18,0" />
+                   VerticalAlignment="Center" Margin="0,0,18,0" TextTrimming="CharacterEllipsis" />
         <Border Grid.Column="1" Classes="project-search" Width="400" MaxWidth="420" Height="{DynamicResource Hub.Control.Height}" VerticalAlignment="Center"
                 Background="{DynamicResource Hub.SurfaceSunken}" BorderBrush="{DynamicResource Hub.BorderStrong}"
                 BorderThickness="1" CornerRadius="6" Margin="0,0,10,0">
@@ -65,9 +65,14 @@
       <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
               BorderThickness="1" CornerRadius="7" ClipToBounds="True">
         <Grid>
-          <DataGrid x:Name="ProjectsGrid" CanUserSortColumns="False" IsReadOnly="True">
+          <DataGrid x:Name="ProjectsGrid" Classes="library-grid" CanUserSortColumns="False" IsReadOnly="True"
+                    ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Resources>
+              <!-- Sorting uses the toolbar, not the column headers. -->
+              <x:Double x:Key="DataGridSortIconMinWidth">0</x:Double>
+            </DataGrid.Resources>
             <DataGrid.Columns>
-              <DataGridTemplateColumn Width="*">
+              <DataGridTemplateColumn Width="*" MinWidth="300">
                 <DataGridTemplateColumn.Header>
                   <TextBlock Text="{DynamicResource Name}" />
                 </DataGridTemplateColumn.Header>
@@ -84,48 +89,51 @@
                         <TextBlock Grid.Column="1" Text="{Binding Project.Name}" FontWeight="SemiBold"
                                    TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Name}" />
                       </Grid>
-                      <TextBlock Text="{Binding ProjectTypeLabel}" Foreground="{DynamicResource Hub.TextSecondary}"
-                                 FontSize="11" TextWrapping="Wrap" />
                       <TextBlock Text="{Binding DisplayPath}" Foreground="{DynamicResource Hub.TextSecondary}"
-                                 FontSize="11" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Path}" />
-                      <TextBlock x:Name="CompactDetails" Text="{Binding CompactDetails}" IsVisible="False"
-                                 Foreground="{DynamicResource Hub.TextSecondary}" TextWrapping="Wrap"
-                                 ToolTip.Tip="{Binding ExactLastActivity}" />
+                                 FontSize="12" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Path}" />
                     </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="180">
+              <DataGridTemplateColumn Width="200" MinWidth="200">
                 <DataGridTemplateColumn.Header><TextBlock Text="{DynamicResource BuildTarget}" /></DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
                     <StackPanel Margin="2,2" Spacing="3">
-                      <TextBlock Text="{Binding Target}" TextWrapping="Wrap" />
-                      <TextBlock Text="{Binding ConfigurationAndStatus}" Classes="muted" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding Target}" FontWeight="SemiBold" TextWrapping="NoWrap"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding ProjectTypeAndStatus}" Classes="muted" TextWrapping="NoWrap"
+                                 TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="130">
-                <DataGridTemplateColumn.Header><TextBlock Text="{DynamicResource EngineVersion}" /></DataGridTemplateColumn.Header>
+              <DataGridTemplateColumn Width="SizeToHeader">
+                <DataGridTemplateColumn.Header>
+                  <TextBlock Text="{DynamicResource EngineVersion}" TextWrapping="NoWrap" />
+                </DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
-                    <TextBlock Text="{Binding Engine}" Margin="2,2" TextWrapping="Wrap" ToolTip.Tip="{Binding Project.Channel}" />
+                    <StackPanel Margin="2,2" Spacing="2">
+                      <TextBlock Text="{Binding Project.Version}" FontWeight="SemiBold" TextWrapping="NoWrap" />
+                      <TextBlock Text="{Binding EngineChannel}" Classes="muted" IsVisible="{Binding HasEngineChannel}"
+                                 TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Channel}" />
+                    </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="145">
+              <DataGridTemplateColumn Width="135" MinWidth="135">
                 <DataGridTemplateColumn.Header>
                   <TextBlock Text="{DynamicResource LastActivity}" />
                 </DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
-                    <TextBlock Text="{Binding LastActivity}" Margin="2,2" TextWrapping="Wrap"
-                               ToolTip.Tip="{Binding ExactLastActivity}" />
+                    <TextBlock Text="{Binding LastActivity}" Margin="2,2" TextWrapping="NoWrap"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ExactLastActivity}" />
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="220">
+              <DataGridTemplateColumn Width="220" MinWidth="220">
                 <DataGridTemplateColumn.Header><TextBlock Text="{DynamicResource Actions}" /></DataGridTemplateColumn.Header>
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
@@ -145,29 +153,6 @@
                       <Button Content="⋯" Tag="{Binding Project}" Click="OnProjectMenu"
                               Classes="project-row-action quiet" Padding="9,5" ToolTip.Tip="{DynamicResource MoreActions}"
                               AutomationProperties.Name="{DynamicResource MoreActions}" />
-                    </StackPanel>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTemplateColumn Width="*" IsVisible="False">
-                <DataGridTemplateColumn.Header><TextBlock Text="{DynamicResource Name}" /></DataGridTemplateColumn.Header>
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate x:DataType="local:ProjectListItem">
-                    <StackPanel Margin="4,2" Spacing="3">
-                      <Grid ColumnDefinitions="Auto,*">
-                        <Path IsVisible="{Binding IsFolderMissing}"
-                              Data="M0,0 L8,8 M8,0 L0,8" Stretch="None" Width="8" Height="8"
-                              Stroke="{DynamicResource Hub.DangerText}" StrokeThickness="1.5"
-                              StrokeLineCap="Round" Margin="0,0,6,0" VerticalAlignment="Center"
-                              ToolTip.Tip="{DynamicResource ProjectFolderMissing}"
-                              AutomationProperties.Name="{DynamicResource ProjectFolderMissing}" />
-                        <TextBlock Grid.Column="1" Text="{Binding Project.Name}" FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Project.Name}" />
-                      </Grid>
-                      <TextBlock Text="{Binding DisplayPath}" Foreground="{DynamicResource Hub.TextSecondary}"
-                                 FontSize="11" TextWrapping="Wrap" ToolTip.Tip="{Binding Project.Path}" />
-                      <TextBlock Text="{Binding CompactDetails}" Foreground="{DynamicResource Hub.TextSecondary}"
-                                 TextWrapping="Wrap" ToolTip.Tip="{Binding ExactLastActivity}" />
                     </StackPanel>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>

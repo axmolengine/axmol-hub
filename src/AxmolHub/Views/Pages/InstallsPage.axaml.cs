@@ -7,7 +7,7 @@ namespace AxmolHub;
 
 public sealed record EngineListItem(EngineEntry Engine, bool IsDefault,
     string MirrorLabel, string MirrorTooltip, bool MirrorWarning,
-    string PrebuiltLabel, string PrebuiltTooltip, bool PrebuiltWarning, bool IsCompact)
+    string PrebuiltLabel, string PrebuiltTooltip, bool PrebuiltWarning)
 {
     public bool PrebuiltVisible => PrebuiltLabel.Length > 0;
 
@@ -37,7 +37,6 @@ public partial class InstallsPage : UserControl
 {
     private readonly HubWorkspace _workspace;
     private bool _ready;
-    private bool _compact;
     private int _sortMode;
 
     public InstallsPage() { _workspace = null!; InitializeComponent(); }
@@ -71,8 +70,6 @@ public partial class InstallsPage : UserControl
             if (EnginesGrid.SelectedItem is EngineListItem item)
                 _workspace.SelectedEngine = item.Engine;
         };
-        EnginesGrid.SizeChanged += (_, _) => SyncColumns();
-
         ImportButton.Click += OnImportEngine;
         InstallButton.Click += OnInstallEngine;
         Reload();
@@ -143,7 +140,7 @@ public partial class InstallsPage : UserControl
                 return new EngineListItem(engine,
                     SamePath(_workspace.State.DefaultEnginePath, engine.Path),
                     mirror.Label, mirror.Tooltip, mirror.Warning,
-                    prebuilt.Label, prebuilt.Tooltip, prebuilt.Warning, _compact);
+                    prebuilt.Label, prebuilt.Tooltip, prebuilt.Warning);
             })
             .ToArray();
 
@@ -172,21 +169,6 @@ public partial class InstallsPage : UserControl
         EmptyActions.IsVisible = hasNoEngines;
         ClearFiltersButton.IsVisible = !hasNoEngines;
         EmptyEngines.Text = HubStrings.Get(hasNoEngines ? "EmptyEngines" : "NoEnginesMatch");
-    }
-
-    private void SyncColumns()
-    {
-        if (EnginesGrid.Bounds.Width <= 0 || EnginesGrid.Columns.Count < 4) return;
-        var compact = EnginesGrid.Bounds.Width < 840;
-        if (compact == _compact) return;
-        _compact = compact;
-        EnginesGrid.Columns[0].Width = compact
-            ? new DataGridLength(1, DataGridLengthUnitType.Star)
-            : new DataGridLength(165);
-        EnginesGrid.Columns[1].IsVisible = !compact;
-        EnginesGrid.Columns[2].IsVisible = !compact;
-        EnginesGrid.Columns[3].Width = new DataGridLength(compact ? 150 : 180);
-        ApplyView();
     }
 
     private void UpdateSortCaption() => SortButton.Content = HubStrings.Get(_sortMode switch
