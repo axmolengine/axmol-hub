@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Globalization;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using AxmolHub.Core;
 
 namespace AxmolHub;
@@ -209,9 +211,17 @@ public partial class ProjectsPage : UserControl
 
     private void OnProjectDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (e.Source is Control control && IsAction(control)) return;
-        if (ProjectsGrid.SelectedItem is ProjectListItem item && _workspace.EffectiveEditor(item.Project) is not null)
-            _ = _workspace.OpenEditorAsync(requested: item.Project);
+        for (var hit = e.Source as Visual; hit is not null && hit != ProjectsGrid; hit = hit.GetVisualParent())
+        {
+            if (hit is Button) return;
+            if (hit is not DataGridRow { DataContext: ProjectListItem item }) continue;
+            if (_workspace.EffectiveEditor(item.Project) is not null)
+            {
+                e.Handled = true;
+                _ = _workspace.OpenEditorAsync(requested: item.Project);
+            }
+            return;
+        }
     }
 
     private void OnProjectsKeyDown(object? sender, KeyEventArgs e)
@@ -222,13 +232,6 @@ public partial class ProjectsPage : UserControl
             _ = _workspace.OpenEditorAsync(requested: item.Project);
             e.Handled = true;
         }
-    }
-
-    private static bool IsAction(Control control)
-    {
-        for (var current = control; current is not null; current = current.Parent as Control)
-            if (current is Button) return true;
-        return false;
     }
 
     private void OnProjectMenu(object? sender, RoutedEventArgs e)
