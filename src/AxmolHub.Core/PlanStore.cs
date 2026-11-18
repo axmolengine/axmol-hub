@@ -98,7 +98,7 @@ public static class PlanStore
             // readable as the whole document, because the next request sends whatever it finds here.
             File.WriteAllText(temporary, body);
             File.Move(temporary, path, overwrite: true);
-            Evict(directory);
+            BoundedFileStore.Evict(directory, "*.md", path, MaxFiles, MaxBytes);
             return new PlanEntry(true, name, "");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -212,33 +212,6 @@ public static class PlanStore
         for (var index = 0; index < 32; index++)
             if (!Uri.IsHexDigit(name[index])) return false;
         return true;
-    }
-
-    /// <summary>Oldest first, until both bounds hold. Count and size are checked together because 64 plans of a
-    /// large document is just as much disk as 64 small ones. The document just written is the newest file, so a
-    /// plan can never be taken by the pass that stored it.</summary>
-    private static void Evict(string directory)
-    {
-        var files = new DirectoryInfo(directory).EnumerateFiles("*.md")
-            .OrderBy(file => file.LastWriteTimeUtc)
-            .ToList();
-        var total = files.Sum(file => file.Length);
-        var remaining = files.Count;
-        foreach (var file in files)
-        {
-            if (remaining <= MaxFiles && total <= MaxBytes) break;
-            remaining--;
-            try
-            {
-                file.Delete();
-                total -= file.Length;
-            }
-            catch (IOException)
-            {
-                // A document that cannot be deleted is a document that stays; the next write tries again.
-                remaining++;
-            }
-        }
     }
 
     private static readonly System.Text.RegularExpressions.Regex HeadingPattern = new(

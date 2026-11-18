@@ -510,9 +510,13 @@ internal static class AiToolsChecks
             throw new Exception("A write from before the undo existed invented a copy to revert to.");
         Console.WriteLine("PASS: the undo restores only the write its copy was made for, and refuses everything else by name.");
         for (var index = 0; index < ChatUndoStore.MaxFiles + 10; index++)
-            ChatUndoStore.Store(dataRoot, "conversation-1", $"file-{index:D3}.txt", "content");
-        if (Directory.GetFiles(undoRoot).Length > ChatUndoStore.MaxFiles)
-            throw new Exception($"The undo directory grew past its bound ({Directory.GetFiles(undoRoot).Length} files).");
+        {
+            var expectedCount = Math.Min(ChatUndoStore.MaxFiles, Directory.GetFiles(undoRoot).Length + 1);
+            var entry = ChatUndoStore.Store(dataRoot, "conversation-1", $"file-{index:D3}.txt", "content");
+            if (!entry.Stored || Directory.GetFiles(undoRoot).Length != expectedCount
+                || ChatUndoStore.ReadCopy(dataRoot, "conversation-1", Path.GetFileName(entry.Path), out _) != "content")
+                throw new Exception("An undo eviction removed too many copies or lost the newly stored pre-image.");
+        }
         if (ChatUndoStore.Store(null, "conversation-1", "a.txt", "x").Stored || ChatUndoStore.Store(dataRoot, "", "a.txt", "x").Stored)
             throw new Exception("An undo copy was written with no data root or no conversation.");
         Console.WriteLine("PASS: file_write edits once, keeps the pre-image, and leaves the file alone on every refusal.");

@@ -1008,15 +1008,43 @@ internal static class AiSessionsChecks
         var legacyPlan = planStore.Load("legacy-inline-plan") ?? throw new Exception("A session file written before the plan store stopped loading.");
         if (legacyPlan.Messages[0].Plan is not null || PlanStore.BodyOf(legacyPlan.Messages[0], planRoot, out var legacyState) != "# 旧计划\n\n正文还在轮子上。" || legacyState != PlanBodyState.NoReference)
             throw new Exception("An inline plan from before the store was read as a document nobody wrote.");
-        // Bounded the way the undo store is: enough plans to trip the cap, and the guarantee that matters — the one
-        // just stamped is never the one the pass takes, because the write happens before the sweep.
-        var last = PlanStore.Store(planRoot, "最新的一份计划").Name;
-        for (var index = 0; index < PlanStore.MaxFiles + 10; index++)
-            last = PlanStore.Store(planRoot, $"计划 {index:D3}：{(index % 7 == 0 ? "清理旧正文" : "file the body")}").Name;
-        if (PlanStore.FileCount(planRoot) > PlanStore.MaxFiles)
-            throw new Exception($"The plan store grew past its bound ({PlanStore.FileCount(planRoot)} files).");
-        if (PlanStore.Read(planRoot, last, out _) != $"计划 {PlanStore.MaxFiles + 9:D3}：file the body")
-            throw new Exception("The eviction pass took the plan that had just been written.");
+        // Check the crossing write itself: checking only a later write hides a sweep that deletes every file.
+        // Future timestamps also make the new document the oldest, so protection cannot depend on sort order.
+        var countRoot = Path.Combine(planRoot, "count-bound");
+        var retained = new List<string>();
+        var future = DateTime.UtcNow.AddDays(1);
+        for (var index = 0; index < PlanStore.MaxFiles; index++)
+        {
+            var entry = PlanStore.Store(countRoot, $"计划 {index:D3}");
+            if (!entry.Stored) throw new Exception(entry.Message);
+            retained.Add(entry.Name);
+            File.SetLastWriteTimeUtc(Path.Combine(PlanStore.DirectoryFor(countRoot)!, entry.Name), future.AddMinutes(index));
+        }
+        var crossing = PlanStore.Store(countRoot, "最新的一份计划");
+        if (!crossing.Stored || PlanStore.FileCount(countRoot) != PlanStore.MaxFiles
+            || PlanStore.Read(countRoot, crossing.Name, out _) != "最新的一份计划"
+            || PlanStore.Read(countRoot, retained[0], out _) is not null
+            || retained.Skip(1).Any(name => PlanStore.Read(countRoot, name, out _) is null))
+            throw new Exception("The 64-to-65 write did not evict exactly the oldest unprotected plan and retain the new body.");
+        // Exercise the byte ceiling below the count ceiling through the same shared cleanup implementation.
+        var bytesRoot = Path.Combine(planRoot, "bytes-bound");
+        var largeBody = new string('规', PlanStore.MaxBodyCharacters);
+        var keptByBytes = (int)(PlanStore.MaxBytes / System.Text.Encoding.UTF8.GetByteCount(largeBody));
+        retained.Clear();
+        for (var index = 0; index < keptByBytes; index++)
+        {
+            var entry = PlanStore.Store(bytesRoot, largeBody);
+            if (!entry.Stored) throw new Exception(entry.Message);
+            retained.Add(entry.Name);
+            File.SetLastWriteTimeUtc(Path.Combine(PlanStore.DirectoryFor(bytesRoot)!, entry.Name), future.AddMinutes(index));
+        }
+        var byteCrossing = PlanStore.Store(bytesRoot, largeBody);
+        if (!byteCrossing.Stored || PlanStore.FileCount(bytesRoot) != keptByBytes
+            || PlanStore.Read(bytesRoot, byteCrossing.Name, out _) != largeBody
+            || PlanStore.Read(bytesRoot, retained[0], out _) is not null
+            || retained.Skip(1).Any(name => PlanStore.Read(bytesRoot, name, out _) != largeBody)
+            || new DirectoryInfo(PlanStore.DirectoryFor(bytesRoot)!).EnumerateFiles("*.md").Sum(file => file.Length) > PlanStore.MaxBytes)
+            throw new Exception("The byte-limit crossing did not retain the new plan and evict only the necessary old body.");
         Console.WriteLine("PASS: PlanStore files a plan as ai/plans/<guid>.md, refuses every other name, and bounds itself.");
         // Hub's own JSON leaves through one funnel, and the indented formatter wrote the host's newline into every
         // state, settings and conversation file. Folded at the funnel — and only the formatter's: a CRLF inside a

@@ -267,7 +267,7 @@ public static class ChatUndoStore
             Directory.CreateDirectory(directory);
             var path = NextPath(directory, relativePath);
             File.WriteAllText(path, originalText);
-            Evict(directory);
+            BoundedFileStore.Evict(directory, "*", path, MaxFiles, MaxBytes);
             return new ChatUndoEntry(true, path, "");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -275,32 +275,6 @@ public static class ChatUndoStore
             // The edit itself is more important than its safety net: refusing to write because the copy failed
             // would turn a disk-full warning into a tool that cannot do its job.
             return new ChatUndoEntry(false, "", $"no undo copy: {ex.Message}");
-        }
-    }
-
-    /// <summary>Oldest first, until both bounds hold. Count and size are checked together because 64 copies of a
-    /// large source file is just as much disk as 64 small ones.</summary>
-    private static void Evict(string directory)
-    {
-        var files = new DirectoryInfo(directory).EnumerateFiles()
-            .OrderBy(file => file.LastWriteTimeUtc)
-            .ToList();
-        var total = files.Sum(file => file.Length);
-        var remaining = files.Count;
-        foreach (var file in files)
-        {
-            if (remaining <= MaxFiles && total <= MaxBytes) break;
-            remaining--;
-            try
-            {
-                file.Delete();
-                total -= file.Length;
-            }
-            catch (IOException)
-            {
-                // A copy that cannot be deleted is a copy that stays; the next write tries again.
-                remaining++;
-            }
         }
     }
 
