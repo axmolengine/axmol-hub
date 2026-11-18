@@ -24,7 +24,11 @@ internal static class OpenAiPlanModels
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0) continue;
-                if (!response.IsSuccessStatusCode) return ModelFetchResult.Unreachable($"OpenAI catalog returned HTTP {(int)response.StatusCode}.");
+                if (!response.IsSuccessStatusCode)
+                    return ModelFetchResult.Unreachable($"OpenAI catalog returned HTTP {(int)response.StatusCode}.") with
+                    {
+                        Diagnostic = await ModelCatalogFailure.DescribeAsync(request, response, token).ConfigureAwait(false),
+                    };
                 await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
                 return Parse(await ModelList.ReadBoundedAsync(stream, token).ConfigureAwait(false));
             }

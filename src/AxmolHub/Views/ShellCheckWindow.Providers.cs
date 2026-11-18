@@ -1626,7 +1626,10 @@ internal sealed class ShellProvidersChecks
         // and it would pass every check above — those all run against a handler that answers.
         var beforeFailure = shell.Chat.Providers.First(provider => provider.Id == target.Id).Models
             .Select(model => model.Name).ToArray();
-        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(status: 401));
+        const string testKey = "model-list-403-fixture-key";
+        settings.UseModelListHandlerForCheck(new ModelListProbeHandler(
+            $$"""{"error":{"code":"catalog_forbidden","message":"Model catalog access denied; api_key={{testKey}}"},"request_id":"catalog-403-probe","private":"raw-body-not-for-logs"}""",
+            status: 403));
         await settings.RefreshModelsForCheckAsync(target.Id);
         settings.RefreshProviderGroupsForCheck();
         var afterFailure = settings.ProviderGroupForId(target.Id);
@@ -1635,8 +1638,23 @@ internal sealed class ShellProvidersChecks
                   .SequenceEqual(beforeFailure.OrderBy(name => name)),
             "拉取失败时原有列表原封不动（[" + string.Join(",", beforeFailure) + "] → ["
                 + string.Join(",", afterFailure?.ModelNames ?? []) + "]）");
-        Check(settings.StatusLineText.Contains(HubStrings.Get("ModelsFetchFailed")),
-            "拉取失败在状态行说明了原因（实际「" + settings.StatusLineText + "」）");
+        Check(settings.StatusLineText.Contains(HubStrings.Get("ModelsFetchFailed"))
+              && settings.StatusLineText.Contains("HTTP 403", StringComparison.Ordinal)
+              && !settings.StatusLineText.Contains("catalog_forbidden", StringComparison.Ordinal),
+            "拉取失败在状态行只显示简短提示（实际「" + settings.StatusLineText + "」）");
+        var errorLog = shell.ActivityLogTextForCheck.Split('\n')
+            .Where(line => line.IndexOf(" Model list refresh failed for ", StringComparison.Ordinal) == line.IndexOf(' ')
+                           && line.Contains("request ID: catalog-403-probe", StringComparison.Ordinal)).ToArray();
+        Check(errorLog is [var line]
+              && line.Contains(target.Id, StringComparison.Ordinal)
+              && line.Contains("GET ", StringComparison.Ordinal)
+              && line.Contains("HTTP 403", StringComparison.Ordinal)
+              && line.Contains("catalog_forbidden", StringComparison.Ordinal)
+              && line.Contains("Model catalog access denied", StringComparison.Ordinal)
+              && line.Contains(SecretRedaction.Marker, StringComparison.Ordinal)
+              && !line.Contains(testKey, StringComparison.Ordinal)
+              && !line.Contains("raw-body-not-for-logs", StringComparison.Ordinal),
+            "日志窗口只记一次模型目录 403 详情，不泄露测试密钥或原始响应体");
 
         // An empty list is a real answer, and everything the endpoint had reported goes away because of it —
         // otherwise a provider that retired every model would keep showing them forever. What survives is

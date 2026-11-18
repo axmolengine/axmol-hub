@@ -182,6 +182,8 @@ public sealed record ModelCapabilityBatch(
     IReadOnlyDictionary<string, ModelCapabilities> Capabilities,
     string? Problem)
 {
+    internal string? Diagnostic { get; init; }
+
     public bool Reachable => Problem is null;
 
     public static ModelCapabilityBatch Unreachable(string problem) => new([], EmptyReasoning, Empty, problem);

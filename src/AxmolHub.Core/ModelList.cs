@@ -46,6 +46,9 @@ public sealed record ModelFetchResult(IReadOnlyList<string> Models, string? Prob
     public IReadOnlyDictionary<string, ModelCapabilities> Capabilities { get; init; }
         = new Dictionary<string, ModelCapabilities>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Redacted, log-only details; not part of the status message.</summary>
+    public string? Diagnostic { get; init; }
+
     /// <summary>Whether the endpoint answered — including with an empty list.</summary>
     public bool Reachable => Problem is null;
 
@@ -119,7 +122,7 @@ public static class ModelList
                     ReasoningModels = batch.Reasoning,
                     Capabilities = batch.Capabilities,
                 }
-                : ModelFetchResult.Unreachable(batch.Problem!);
+                : ModelFetchResult.Unreachable(batch.Problem!) with { Diagnostic = batch.Diagnostic };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

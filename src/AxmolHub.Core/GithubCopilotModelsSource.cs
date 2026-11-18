@@ -39,7 +39,10 @@ public sealed class GithubCopilotModelsSource : IModelCapabilitySource
         using var response = await client
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
-            return ModelCapabilityBatch.Unreachable($"The provider returned HTTP {(int)response.StatusCode}.");
+            return ModelCapabilityBatch.Unreachable($"The provider returned HTTP {(int)response.StatusCode}.") with
+            {
+                Diagnostic = await ModelCatalogFailure.DescribeAsync(request, response, cancellationToken).ConfigureAwait(false),
+            };
 
         var declared = response.Content.Headers.ContentLength;
         if (declared > ModelList.MaxBytes)

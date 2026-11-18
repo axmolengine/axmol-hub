@@ -859,7 +859,7 @@ internal sealed partial class ChatProviderCoordinator
         CancellationToken cancellationToken = default)
     {
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
-        if (provider is null) return ModelFetchResult.Unreachable("No such provider.");
+        if (provider is null) return LogFailure(ModelFetchResult.Unreachable("No such provider."));
 
         var catalogCredential = provider.Credential;
         var catalogMode = ModelCacheId(providerId);
@@ -876,14 +876,14 @@ internal sealed partial class ChatProviderCoordinator
         // UI context; resuming on the thread pool would touch the visual tree from a worker thread and hang
         // the whole UI (a CPU-bound cross-thread re-entrancy, not a network wait).
         if (provider.NeedsOpenAiRelogin)
-            return ModelFetchResult.Unreachable("This legacy ChatGPT credential requires signing in again.");
+            return LogFailure(ModelFetchResult.Unreachable("This legacy ChatGPT credential requires signing in again."));
         var result = provider.IsOpenAiPlan
             ? await OpenAiPlanModels.FetchAsync(client, provider, cancellationToken)
             : await ModelList.FetchAsync(client, provider, cancellationToken);
         if (!_providerList.Contains(provider) || !ReferenceEquals(provider.Credential, catalogCredential)
             || ModelCacheId(providerId) != catalogMode || provider.Credential?.AccountId != catalogAccount)
-            return ModelFetchResult.Unreachable("The provider credential changed during the catalog request. Retry the request.");
-        if (!result.Reachable) return result;
+            return LogFailure(ModelFetchResult.Unreachable("The provider credential changed during the catalog request. Retry the request."));
+        if (!result.Reachable) return LogFailure(result);
 
         // Split against the *previous* fetch, not against nothing. "Not in this response" alone cannot tell a
         // retired model from a hand-written one — both are simply absent — and guessing wrong in either
@@ -919,6 +919,27 @@ internal sealed partial class ChatProviderCoordinator
         _modelLists.Save(ModelCacheId(providerId), result.Models, result.ReasoningModels, result.Capabilities);
         SaveProviders();
         return result;
+
+        ModelFetchResult LogFailure(ModelFetchResult failure)
+        {
+            if (cancellationToken.IsCancellationRequested || Execution.LogProvider?.Invoke() is not { } log)
+                return failure;
+
+            var secrets = SensitiveValues();
+            var label = ModelCatalogFailure.Clean(provider is null ? providerId : $"{provider.Name} ({providerId})", secrets);
+            var detail = failure.Diagnostic is { } diagnostic
+                ? SecretRedaction.Redact(diagnostic, secrets)
+                : ModelCatalogFailure.Clean(failure.Problem!, secrets);
+            try
+            {
+                log.Write($"Model list refresh failed for {label}: {detail}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A log write failure must not replace the model refresh result shown to the user.
+            }
+            return failure;
+        }
     }
 
     internal IReadOnlyList<string> CachedModels(string providerId)
