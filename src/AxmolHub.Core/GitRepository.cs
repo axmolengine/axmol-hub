@@ -65,6 +65,8 @@ public sealed record GitRepositoryState(
     public static GitRepositoryState Stopped(GitReadOutcome outcome, string? detail = null)
         => new(outcome, null, null, 0, 0, [], new Dictionary<string, string>(StringComparer.Ordinal), false, detail);
 
+    public bool HasUpstream { get; init; }
+
     /// <summary>Whether the snapshot is worth listing at all.</summary>
     public bool IsReadable => Outcome == GitReadOutcome.Ok;
 }
@@ -194,13 +196,14 @@ public static partial class GitRepository
 
         var reading = ParseStatus(status.Output);
         var branch = ParseBranch(reading.BranchHeader);
+        var hasUpstream = reading.BranchHeader?.Contains("...", StringComparison.Ordinal) == true;
         // The root the entries are relative to. A failure here is not fatal: the workspace directory is the next
         // best answer, and a snapshot whose paths resolve one folder too high shows rows that say they cannot be
         // read — which is honest — rather than nothing at all.
         var repositoryRoot = await ReadToplevelAsync(git, runner, root, sensitiveValues, cancellation) ?? root;
         if (!includeDiffs)
             return new GitRepositoryState(GitReadOutcome.Ok, repositoryRoot, branch.Name, branch.Ahead, branch.Behind,
-                reading.Entries, new Dictionary<string, string>(StringComparer.Ordinal), reading.Truncated, null);
+                reading.Entries, new Dictionary<string, string>(StringComparer.Ordinal), reading.Truncated, null) { HasUpstream = hasUpstream };
 
         // The patch and its ordered name list are read together so a row's diff costs no process of its own: two
         // calls, one per question, because the list is the only spelling where a path survives intact and the
@@ -246,7 +249,7 @@ public static partial class GitRepository
         }
 
         return new GitRepositoryState(GitReadOutcome.Ok, repositoryRoot, branch.Name, branch.Ahead,
-            branch.Behind, reading.Entries, sections, truncated, detail);
+            branch.Behind, reading.Entries, sections, truncated, detail) { HasUpstream = hasUpstream };
     }
 
     /// <summary>The repository root as git sees it, or null when it will not say. Kept separate from the failure
@@ -530,38 +533,50 @@ public static partial class GitRepository
         yield return "--show-toplevel";
     }
 
-    /// <summary>Stages non-ignored worktree changes, then revalidates and commits the resulting index.
-    /// A null <paramref name="prefixes"/> means the title was typed by the user in `@hub commit "..."`,
-    /// so only the commit-object limits apply and the project's own convention wins.</summary>
+    private static string? TargetFailure(GitRepositoryState state, string expectedRoot, string? expectedBranch)
+    {
+        if (!state.IsReadable || state.Root is null) return "repository-unavailable";
+        if (!string.Equals(WorkspacePaths.CanonicalRoot(state.Root), WorkspacePaths.CanonicalRoot(expectedRoot),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return "workspace-changed";
+        if (state.Branch is not { Length: > 0 } || state.Branch == "HEAD (no branch)") return "branch-unavailable";
+        return expectedBranch is not null && expectedBranch != state.Branch ? "workspace-changed" : null;
+    }
+
+    /// <summary>Change the index only for the exact status entry selected, or explicitly stage the entire repository.</summary>
+    public static async Task<GitCommitResult> ChangeIndexAsync(string workspace, string root, string branch,
+        GitStatusEntry? entry, bool unstage, ProcessRunner runner, IReadOnlyList<string>? sensitiveValues = null,
+        CancellationToken cancellation = default)
+    {
+        var state = await ReadAsync(workspace, runner, sensitiveValues, cancellation, includeDiffs: false).ConfigureAwait(false);
+        if (TargetFailure(state, root, branch) is { } failure) return new(false, failure, state.Detail);
+        if (CommandShells.Resolve("git") is not { } git) return new(false, "git-missing", null);
+        if (entry is null && unstage || entry is not null && !state.Entries.Contains(entry)) return new(false, "workspace-changed", null);
+        var args = new List<string> { "--literal-pathspecs" };
+        // reset with a pathspec also works before the first commit and leaves the worktree alone.
+        args.AddRange(unstage ? new[] { "reset", "--quiet", "--" } : new[] { "add", "-A", "--" });
+        args.Add(entry?.RelativePath ?? ".");
+        if (entry?.OriginalPath is { } source && (unstage ? entry.IndexState : entry.WorktreeState) == "R") args.Add(source);
+        var result = await runner.RunAsync(git, args, root, timeout: ReadIdleTimeout,
+            sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
+        return new(result.ExitCode == 0, result.ExitCode == 0 ? null : "stage-failed", FirstText(result.Error, result.Output));
+    }
+
+    /// <summary>Commit the index exactly as staged. A user-entered title is not constrained by suggested prefixes.</summary>
     public static async Task<GitCommitResult> CommitStagedAsync(string workspaceRoot, string expectedRoot,
         string summary, IEnumerable<string>? prefixes, ProcessRunner runner,
-        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default)
+        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default, string? expectedBranch = null)
     {
         var git = CommandShells.Resolve("git");
         if (git is null) return new(false, "git-missing", null);
-        var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation).ConfigureAwait(false);
-        if (!state.IsReadable || state.Root is not { Length: > 0 } root)
-            return new(false, "repository-unavailable", state.Detail);
-        if (!string.Equals(WorkspacePaths.CanonicalRoot(root), WorkspacePaths.CanonicalRoot(expectedRoot),
-                OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-            return new(false, "workspace-changed", null);
-        if (state.Branch is not { Length: > 0 }) return new(false, "branch-unavailable", null);
-        if (state.Entries.Any(entry => entry.IndexState == "U" || entry.WorktreeState == "U"))
-            return new(false, "conflict", null);
-        if (state.Entries.Count == 0) return new(false, "nothing-staged", null);
-        var titled = prefixes is null ? CommitSummary.IsWellFormedTitle(summary) : CommitSummary.IsValid(summary, prefixes);
-        if (!titled) return new(false, "invalid-summary", null);
-        var stage = await runner.RunAsync(git, ["add", "-A", "--", "."], root,
-            timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
-        if (stage.ExitCode != 0)
-            return new(false, "stage-failed", FirstText(stage.Error, stage.Output));
-        state = await ReadAsync(root, runner, sensitiveValues, cancellation).ConfigureAwait(false);
-        if (!state.IsReadable || state.Root is not { Length: > 0 })
-            return new(false, "repository-unavailable", state.Detail);
+        var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false).ConfigureAwait(false);
+        if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure) return new(false, failure, state.Detail);
+        var root = state.Root!;
         if (state.Entries.Any(entry => entry.IndexState == "U" || entry.WorktreeState == "U"))
             return new(false, "conflict", null);
         if (!state.Entries.Any(entry => entry.IndexState != " " && entry.IndexState != "?"))
             return new(false, "nothing-staged", null);
+        var titled = prefixes is null ? CommitSummary.IsWellFormedTitle(summary) : CommitSummary.IsValid(summary, prefixes);
+        if (!titled) return new(false, "invalid-summary", null);
         var result = await runner.RunAsync(git,
             ["--no-pager", "-c", "core.quotepath=false", "commit", "-m", summary], root,
             timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
@@ -573,17 +588,13 @@ public static partial class GitRepository
     /// <summary>Pushes the checked-out branch to its configured upstream after the user explicitly clicks a push action.</summary>
     public static async Task<GitCommitResult> PushAsync(string workspaceRoot, string expectedRoot,
         ProcessRunner runner, IReadOnlyList<string>? sensitiveValues = null,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, string? expectedBranch = null)
     {
         var git = CommandShells.Resolve("git");
         if (git is null) return new(false, "git-missing", null);
-        var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation).ConfigureAwait(false);
-        if (!state.IsReadable || state.Root is not { Length: > 0 } root)
-            return new(false, "repository-unavailable", state.Detail);
-        if (!string.Equals(WorkspacePaths.CanonicalRoot(root), WorkspacePaths.CanonicalRoot(expectedRoot),
-                OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-            return new(false, "workspace-changed", null);
-        if (state.Branch is not { Length: > 0 }) return new(false, "branch-unavailable", null);
+        var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false).ConfigureAwait(false);
+        if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure) return new(false, failure, state.Detail);
+        var root = state.Root!;
         try
         {
             // Read the exact checked-out ref instead of trusting a display name (including detached HEAD).
@@ -592,6 +603,7 @@ public static partial class GitRepository
             var branchRef = branch.Output.Trim();
             if (branch.ExitCode != 0 || !branchRef.StartsWith("refs/heads/", StringComparison.Ordinal))
                 return new(false, "branch-unavailable", FirstText(branch.Error, branch.Output));
+            if (expectedBranch is not null && branchRef != "refs/heads/" + expectedBranch) return new(false, "workspace-changed", null);
             var upstream = await runner.RunAsync(git,
                 ["for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)", branchRef], root,
                 timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
@@ -621,22 +633,6 @@ public static partial class GitRepository
         {
             return new(false, "push-failed", ex is IdleTimeoutException stalled ? Stalled(stalled) : ex.Message);
         }
-    }
-
-    /// <summary>Stages and commits non-ignored changes, then pushes; a clean worktree only pushes pending commits.
-    /// A null <paramref name="prefixes"/> follows the rule in <see cref="CommitStagedAsync"/>: the title is kept as typed.</summary>
-    public static async Task<GitCommitResult> CommitAndPushStagedAsync(string workspaceRoot, string expectedRoot,
-        string summary, IEnumerable<string>? prefixes, ProcessRunner runner,
-        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default)
-    {
-        var commit = await CommitStagedAsync(workspaceRoot, expectedRoot, summary, prefixes, runner,
-            sensitiveValues, cancellation).ConfigureAwait(false);
-        if (!commit.Success && commit.FailureKey != "nothing-staged") return commit;
-        var push = await PushAsync(workspaceRoot, expectedRoot, runner, sensitiveValues, cancellation).ConfigureAwait(false);
-        // Another client or a post-commit hook may have pushed already. That is still a completed commit,
-        // not the partial failure reserved for a real push error after Hub created a commit.
-        if (commit.Success && push.FailureKey == "nothing-to-push") return commit;
-        return !commit.Success || push.Success ? push : new(false, "commit-succeeded-push-failed", push.Detail);
     }
 
     private static IEnumerable<string> StatusArguments()
@@ -754,6 +750,7 @@ public static partial class GitRepository
         var dots = label.IndexOf("...", StringComparison.Ordinal);
         if (dots >= 0) label = label[..dots];
         var name = label.Trim();
+        if (name.StartsWith("No commits yet on ", StringComparison.Ordinal)) name = name[18..];
         return new GitBranch(name.Length == 0 ? null : name, CountAfter(state, "ahead"),
             CountAfter(state, "behind"), detached);
     }

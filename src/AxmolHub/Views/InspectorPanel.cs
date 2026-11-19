@@ -326,7 +326,10 @@ internal sealed partial class InspectorPanel : UserControl
 
         // One Changes surface: the scope picker stays pinned above whichever list it governs, so the list below is
         // always the scope named above it and switching scope never moves the control that switched it.
-        _changesHost = new Grid { IsVisible = false };
+        _changesHost = new Grid { IsVisible = false, RowDefinitions = new RowDefinitions("Auto,*") };
+        _changesHost.Children.Add(BuildGitHeader());
+        Grid.SetRow(_changesScroll, 1);
+        Grid.SetRow(_repoScroll, 1);
         _changesHost.Children.Add(_changesScroll);
         _changesHost.Children.Add(_repoScroll);
         _body.Children.Add(_changesHost);
@@ -770,14 +773,19 @@ internal sealed partial class InspectorPanel : UserControl
         if (repository is null)
         {
             _repoBody.Children.Add(EmptyLine("InspectorRepoReading"));
-            _repoBody.Children.Add(RepositoryHead(null));
             return;
         }
-        _repoBody.Children.Add(RepositoryHead(repository));
         if (!repository.IsReadable)
         {
             _repoBody.Children.Add(EmptyLine(RepositoryWhyKey(repository.Outcome)));
             return;
+        }
+        if (repository.Root is { } root && repository.Ahead > 0 && _pendingPush.Contains((root, repository.Branch)))
+        {
+            var retry = new Button { Content = HubStrings.Get("GitRetryPush"), Classes = { "quiet" } };
+            retry.Click += (_, _) => RequestGit(repository, WorkspaceGitAction.Push);
+            _repoBody.Children.Add(Note("CommitPushPartialFailure"));
+            _repoBody.Children.Add(retry);
         }
         var entries = repository.Entries.Where(entry => GitReviewScopes.Applies(_scope, entry)).ToList();
         if (entries.Count == 0)
@@ -1222,6 +1230,8 @@ internal sealed partial class InspectorPanel : UserControl
         var changes = _changesHost.IsVisible;
         _changesScroll.IsVisible = changes && _scope == GitReviewScope.LastTurn;
         _repoScroll.IsVisible = changes && _scope != GitReviewScope.LastTurn;
+        _gitHeader.IsVisible = _repoScroll.IsVisible && _repository?.IsReadable == true;
+        UpdateGitHeader(_repository);
         _viewSettings.IsVisible = changes && !EditSession.Editing;
         _refreshChanges.IsVisible = changes;
         if (_fileTreeToggle is not null) _fileTreeToggle.IsVisible = changes;
@@ -1643,9 +1653,8 @@ internal sealed partial class InspectorPanel : UserControl
 
     /// <summary>The branch line. The count only appears when the session is off its upstream, because "0 ahead · 0 behind"
     /// would be a fact nobody needed telling.</summary>
-    private Control RepositoryHead(GitRepositoryState? state)
+    private void UpdateGitHeader(GitRepositoryState? state)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         var text = new StringBuilder();
         if (state is { IsReadable: true } readable)
         {
@@ -1660,17 +1669,9 @@ internal sealed partial class InspectorPanel : UserControl
         {
             text.Append("—");
         }
-        var head = Themed(new TextBlock
-        {
-            Text = text.ToString(),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-            Classes = { "inspector-note" },
-        }, "Hub.TextSecondary");
-        ToolTip.SetTip(head, HubStrings.Get("InspectorTabRepo"));
-        row.Children.Add(head);
-
-        return row;
+        _gitBranch.Text = text.ToString();
+        ToolTip.SetTip(_gitBranch, state?.Root);
+        _gitButton.IsVisible = GitRequested is not null;
     }
 
     private Control BuildRepositoryRow(GitStatusEntry entry, GitRepositoryState state)
@@ -1802,6 +1803,22 @@ internal sealed partial class InspectorPanel : UserControl
             ? System.IO.Path.Combine(root, entry.RelativePath) : entry.RelativePath);
         Grid.SetColumn(repositoryFileActions, 2);
         repositoryRow.Children.Add(repositoryFileActions);
+        if (GitRequested is not null)
+        {
+            void Add(Control glyph, string label, WorkspaceGitAction action)
+            {
+                var button = new Button { Content = glyph, Classes = { "inspector-file-menu", "git-row-action" }, Width = 26,
+                    Height = 26, Padding = new Thickness(0), VerticalContentAlignment = VerticalAlignment.Center };
+                ToolTip.SetTip(button, HubStrings.Get(label));
+                Avalonia.Automation.AutomationProperties.SetName(button, HubStrings.Get(label));
+                button.Click += (_, _) => RequestGit(state, action, entry);
+                Grid.SetColumn(button, repositoryRow.ColumnDefinitions.Count);
+                repositoryRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                repositoryRow.Children.Add(button);
+            }
+            if (_scope != GitReviewScope.Staged && entry.WorktreeState != " ") Add(HubActionIcon.Create("Hub.Icon.Plus"), "GitStageFile", WorkspaceGitAction.Stage);
+            if (_scope != GitReviewScope.Unstaged && entry.IndexState is not (" " or "?")) Add(Themed(new TextBlock { Text = "−", FontSize = 16 }, "Hub.TextSecondary"), "GitUnstageFile", WorkspaceGitAction.Unstage);
+        }
         container.Children.Add(repositoryRow);
         container.Children.Add(detail);
         if (_openedRepoFiles.Contains(entry.RelativePath))

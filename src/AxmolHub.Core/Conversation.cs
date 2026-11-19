@@ -219,11 +219,6 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     /// <summary>An explicitly marked proposed commit title associated with this completed assistant reply.</summary>
     public string? CommitSummary { get; init; }
 
-    /// <summary>Hub handed an explicit Git action to the normal Agent path. Its reply cannot re-enter local Git handling.</summary>
-    public bool IsGitOperationFallback { get; init; }
-
-    /// <summary>Display actions from Hub's latest read-only Git snapshot, independent of reply text or tool history.</summary>
-    public GitActions GitActions { get; init; }
     public string? GitWorkspaceRoot { get; init; }
 
     /// <summary>Whether this user message was explicitly sent as a task goal. It is display metadata only: the

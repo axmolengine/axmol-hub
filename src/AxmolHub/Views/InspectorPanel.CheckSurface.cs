@@ -241,7 +241,8 @@ internal sealed partial class InspectorPanel : UserControl
     /// N+2 — plus one more when the read said it was cut, and one more again when it said why it could not read.</summary>
     internal int RepoBodyCountForCheck => _repoBody.Children.Count;
     /// <summary>The head line's text: the branch, and the ahead/behind pair only when it is off its upstream.</summary>
-    internal string RepoHeadlineForCheck => _repoBody.Children.OfType<Grid>().SelectMany(grid => grid.Children).OfType<TextBlock>().FirstOrDefault(block => block.Classes.Contains("inspector-note"))?.Text ?? "";
+    internal string RepoHeadlineForCheck => _gitBranch.Text ?? "";
+    internal Flyout GitTitleFlyoutForCheck => _gitTitleFlyout;
     /// <summary>The scope the picker names. The tab's standing first line used to be a caveat saying the list was
     /// the repository's; that job belongs to the picker now, which names the range instead of apologising for it.</summary>
     internal string ScopeNameForCheck => _scopeName.Text ?? "";

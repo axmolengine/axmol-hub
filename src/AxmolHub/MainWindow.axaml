@@ -626,6 +626,8 @@
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
+    <Style Selector="Button.git-row-action"><Setter Property="Opacity" Value="0" /></Style>
+    <Style Selector="Grid:pointerover > Button.git-row-action, Grid:focus-within > Button.git-row-action"><Setter Property="Opacity" Value="1" /></Style>
     <Style Selector="Button.inspector-file-menu:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>

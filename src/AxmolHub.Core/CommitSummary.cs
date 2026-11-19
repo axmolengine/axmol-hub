@@ -45,7 +45,7 @@ public static class CommitSummary
     }
 
     /// <summary>
-    /// A title the user typed verbatim, such as `@hub commit "..."`. Commit conventions differ per project,
+    /// A title the user entered in the workspace Changes panel. Commit conventions differ per project,
     /// so no prefix rule applies; only what a commit object cannot carry (empty, multi-line, control
     /// characters, stray surrounding whitespace) is refused.
     /// </summary>

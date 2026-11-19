@@ -188,6 +188,38 @@
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
 
+  <!-- The commit editor is a single toolbar row: the flyout supplies its only frame. -->
+  <Style Selector="FlyoutPresenter.git-title">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="7" />
+    <Setter Property="Padding" Value="5,2" />
+    <Setter Property="MinHeight" Value="0" />
+  </Style>
+  <Style Selector="TextBox.git-title">
+    <Setter Property="MinHeight" Value="26" />
+    <Setter Property="Margin" Value="0" />
+    <Setter Property="Padding" Value="6,0" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="PlaceholderForeground" Value="{DynamicResource Hub.TextTertiary}" />
+  </Style>
+
+  <Style Selector="Button.git-submit">
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="MinHeight" Value="22" />
+    <Setter Property="Padding" Value="9,1" />
+    <Setter Property="Margin" Value="0" />
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.git-submit:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+  </Style>
+
   <!-- Compact actions in the Changes header. The secondary action stays quiet beside the save plate. -->
   <Style Selector="Button.inspector-edit-action">
     <Setter Property="MinWidth" Value="0" />

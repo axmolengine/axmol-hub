@@ -1313,6 +1313,15 @@ public partial class ChatPanel : UserControl
 
         if (_chat.ActiveWorkspaceRoot is { Length: > 0 })
         {
+            var changes = new MenuItem { Header = HubStrings.Get("WorkspaceGitChanges") };
+            changes.Click += (_, _) =>
+            {
+                menu.Hide();
+                OpenInspector?.Invoke("changes", -1);
+                _inspector?.SetScope(GitReviewScope.Uncommitted);
+                RequestRepositoryRead();
+            };
+            menu.Items.Add(changes);
             var clear = new MenuItem { Header = HubStrings.Get("ChatWorkspaceMenuClear") };
             clear.Click += (_, _) =>
             {
@@ -4518,49 +4527,6 @@ public partial class ChatPanel : UserControl
             if (isLast)
                 bar.Children.Add(IconActionButton("RegenerateMessage", "Hub.Icon.Refresh", RegenerateCurrent));
             bar.Children.Add(IconActionButton("BranchFromHere", "Hub.Icon.Branch", () => { if (CurrentIndex() is var current && current >= 0) BranchFromHere(current); }));
-            if (_chat.ActiveConversation is { } active && active.Id == actionSession
-                && index >= 0 && index < active.Messages.Count
-                && active.Messages[index] is { GitActions: not GitActions.None,
-                    GitWorkspaceRoot: { Length: > 0 } root } gitTurn)
-            {
-                void AddGitButton(GitActions action, string textKey)
-                {
-                    if (!gitTurn.GitActions.HasFlag(action)) return;
-                    var button = new Button
-                    {
-                        Content = HubStrings.Get(textKey),
-                        Tag = textKey,
-                        Classes = { "quiet", "message-action" },
-                        Padding = new Thickness(8, 2),
-                        VerticalAlignment = VerticalAlignment.Center,
-                    };
-                    ToolTip.SetTip(button, action == GitActions.Commit ? gitTurn.CommitSummary
-                        : HubStrings.Get("GitPushAuthorizationTip"));
-                    button.Click += async (_, _) =>
-                    {
-                        var current = CurrentIndex();
-                        if (current < 0 || _chat.ActiveConversation is not { } conversation
-                            || conversation.Id != actionSession || current >= conversation.Messages.Count) return;
-                        var currentTurn = conversation.Messages[current];
-                        if (currentTurn.At != gitTurn.At || !currentTurn.GitActions.HasFlag(action)) return;
-                        button.IsEnabled = false;
-                        try
-                        {
-                            var outcome = action == GitActions.Commit
-                                ? await _chat.CommitSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At)
-                                : await _chat.PushSuggestedAsync(actionSession!, root, currentTurn.CommitSummary ?? "", currentTurn.At,
-                                    commitFirst: action == GitActions.CommitAndPush);
-                            if (outcome.Feedback.Key != "git-invalid-summary")
-                                StatusMessage?.Invoke(outcome.Feedback);
-                        }
-                        finally { button.IsEnabled = true; }
-                    };
-                    bar.Children.Add(button);
-                }
-                AddGitButton(GitActions.Commit, "CommitSummaryAction");
-                AddGitButton(GitActions.Push, "PushSummaryAction");
-                AddGitButton(GitActions.CommitAndPush, "CommitPushSummaryAction");
-            }
         }
 
         if (role == ChatRoles.Assistant && at is { } assistantTimestamp)

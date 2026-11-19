@@ -15,5 +15,3 @@ public readonly record struct UserFeedback(string Text, UserFeedbackKind Kind, s
     public static UserFeedback Warning(string text, string key) => new(text, UserFeedbackKind.Warning, key);
     public static UserFeedback Error(string text, string key) => new(text, UserFeedbackKind.Error, key);
 }
-
-public readonly record struct GitActionOutcome(bool Success, UserFeedback Feedback);

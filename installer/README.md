@@ -104,7 +104,7 @@ Windows 安装时为当前用户注册协议，应用启动时刷新，卸载时
 
 日常发版：只把版本号修改写进 `Directory.Build.props`，提交标题写 `ver: x.y.z`（如 `ver: 0.19.0`），push 到 master。预览版可使用 `ver: x.y.z (Preview)`；`0.y.z` 或 `-beta` 版本也自动作为预发布版。CI 自己判断是否打包、是否发布 —— 没有上述版本标记的普通提交只验证、不打包、不发布。旧的 `Version ...`、`misc: Version ...` 和 `release: ...` 格式不再触发发版。
 
-Hub 的默认提交摘要前缀为 `feat:, fix:, docs:, misc:, ver:`；原先的默认四项配置会自动升级，已保存的自定义前缀保持不变。在选定 Git 工作目录的 Agent 会话中，可用 `@hub commit "任意提交标题"` 创建本地提交：显式输入的标题不套用上述前缀（各项目提交规范不同），只要求单行、不超过 120 字符；该命令不会自动修改 `Directory.Build.props` 或推送。推送请另用 `@hub push`。
+Hub 的默认提交摘要前缀为 `feat:, fix:, docs:, misc:, ver:`；原先的默认四项配置会自动升级，已保存的自定义前缀保持不变。在工作区菜单中打开「Git 更改」，先暂存要提交的内容，再输入标题并提交。手动输入的标题不受前缀限制，只要求单行、不超过 120 字符。提交不会修改 `Directory.Build.props` 或自动推送；需要发布到当前分支的上游时，选择「推送」或「提交并推送」。
 
 安装版在设置页的「软件更新」中可选择 Stable（默认）或 Preview；Preview 会纳入 GitHub Pre-release。预发布构建始终使用 Preview 更新流，并在左侧 `Axmol Hub` 标题旁显示主题自适应的黄色 `Preview` 标记。
 

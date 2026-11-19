@@ -596,7 +596,6 @@ internal sealed partial class ChatSessionCoordinator
         if (_active is { Goal: { Length: > 0 } } goalThread && NormalizeMode(goalThread.Mode) == ChatModes.Agent
             && Execution.RunFor(goalThread.Id) is null)
             Execution.RestoreGoal(goalThread.Id);
-        if (_active is { } selected) _ = Execution.RefreshGitPresentationAsync(selected.Id);
         return _active;
     }
 
@@ -1047,15 +1046,15 @@ internal sealed partial class ChatSessionCoordinator
     internal Task<RepositorySnapshot> RefreshRepositoryAsync(string conversationId, bool refresh = true)
     {
         var scope = Execution.ScopeFor(conversationId).Workspace;
-        return RefreshRepositoryAsync(scope.WorkspaceRoot ?? "", scope.Log, scope.SensitiveValues, conversationId, refresh);
+        return RefreshRepositoryAsync(scope.WorkspaceRoot ?? "", scope.Log, scope.SensitiveValues, refresh);
     }
 
     internal Task<RepositorySnapshot> RefreshActiveWorkspaceRepositoryAsync(bool refresh = true)
         => RefreshRepositoryAsync(ActiveWorkspaceRoot ?? "", Execution.LogProvider?.Invoke(),
-            Providers.SensitiveValues(), null, refresh);
+            Providers.SensitiveValues(), refresh);
 
     private Task<RepositorySnapshot> RefreshRepositoryAsync(string root, HubLog? log,
-        IReadOnlyList<string> sensitiveValues, string? conversationId, bool refresh)
+        IReadOnlyList<string> sensitiveValues, bool refresh)
     {
         var key = RepositoryKey(root);
         RepositoryRead reading;
@@ -1071,12 +1070,12 @@ internal sealed partial class ChatSessionCoordinator
             reading = new RepositoryRead();
             _repositoryReads.Add(key, reading);
         }
-        _ = ReadRepositoryAsync(root, log, sensitiveValues, conversationId, key, reading);
+        _ = ReadRepositoryAsync(root, log, sensitiveValues, key, reading);
         return reading.Completion.Task;
     }
 
     private async Task ReadRepositoryAsync(string workspaceRoot, HubLog? log,
-        IReadOnlyList<string> sensitiveValues, string? conversationId, string key, RepositoryRead reading)
+        IReadOnlyList<string> sensitiveValues, string key, RepositoryRead reading)
     {
         try
         {
@@ -1087,7 +1086,6 @@ internal sealed partial class ChatSessionCoordinator
                 var state = await GitRepository.ReadAsync(workspaceRoot, runner, sensitiveValues)
                     .ConfigureAwait(false);
                 var snapshot = new RepositorySnapshot(workspaceRoot, state);
-                var delivered = false;
                 await Execution.ApplyOnUiAsync(() =>
                 {
                     // A refresh requested during the read makes this answer obsolete. Do not release the pane's
@@ -1096,12 +1094,9 @@ internal sealed partial class ChatSessionCoordinator
                     {
                         if (reading.RefreshAgain) return;
                         _repository = snapshot;
-                        delivered = true;
                     }
                     RepositoryChanged?.Invoke();
                 }).ConfigureAwait(false);
-                if (delivered && conversationId is not null)
-                    await Execution.RefreshGitPresentationAsync(conversationId, state, workspaceRoot).ConfigureAwait(false);
                 lock (_repositoryReads)
                 {
                     if (reading.RefreshAgain)

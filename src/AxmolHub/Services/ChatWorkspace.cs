@@ -212,6 +212,13 @@ public sealed partial class ChatWorkspace : IDisposable
     /// sandbox is a fact about one job, not a preference.</summary>
     public string? ActiveWorkspaceRoot { get => _sessions.ActiveWorkspaceRoot; }
 
+    internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool> finished)
+    {
+        if (ActiveWorkspaceRoot != request.Workspace) return null;
+        var log = LogProvider?.Invoke();
+        return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(), finished);
+    }
+
     /// <summary>Build the current capability scope for one existing conversation. Editor saves call this again
     /// rather than retaining permissions from the moment a file was opened.</summary>
     internal WorkspaceToolScope WorkspaceScopeFor(string conversationId) => _execution.ScopeFor(conversationId).Workspace;
@@ -718,11 +725,6 @@ public sealed partial class ChatWorkspace : IDisposable
     internal string? PlanFilePath(ChatTurn turn) => _sessions.PlanFilePath(turn);
     internal string? PlanBody(ChatTurn turn, out PlanBodyState state) => _sessions.PlanBody(turn, out state);
     public bool IsRunning(string conversationId) => _execution.IsRunning(conversationId);
-    internal Task RefreshGitPresentationAsync(string conversationId) => _execution.RefreshGitPresentationAsync(conversationId);
-    internal Task<GitActionOutcome> CommitSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt)
-        => _execution.CommitSuggestedAsync(conversationId, expectedWorkspaceRoot, summary, turnAt);
-    internal Task<GitActionOutcome> PushSuggestedAsync(string conversationId, string expectedWorkspaceRoot, string summary, DateTimeOffset turnAt, bool commitFirst)
-        => _execution.PushSuggestedAsync(conversationId, expectedWorkspaceRoot, summary, turnAt, commitFirst);
     public bool PauseGoal(string conversationId) => _execution.PauseGoal(conversationId);
     public bool ResumeGoal(string conversationId) => _execution.ResumeGoal(conversationId);
     public bool AddGoalBudget(string conversationId) => _execution.AddGoalBudget(conversationId);

@@ -19,7 +19,7 @@ internal static class AiCommitSummaryChecks
             || CommitSummary.IsValid("feature: " + new string('x', 121), configured)
             || CommitSummary.IsValid("ver: 0.19.0", configured))
             throw new Exception("Custom prefixes or the title length bound were not enforced.");
-        // A title typed into @hub commit "..." answers to its own project's convention: no prefix rule,
+        // A user-entered commit title answers to its own project's convention: no prefix rule,
         // only what a commit object cannot carry.
         if (!CommitSummary.IsWellFormedTitle("整理发布流程")
             || CommitSummary.IsWellFormedTitle("")
@@ -59,7 +59,21 @@ internal static class AiCommitSummaryChecks
                 await RunGit("add", "staged.txt", "unstaged.txt", "deleted.txt", ".gitignore");
                 await RunGit("commit", "-m", "chore: create fixture baseline");
                 await File.WriteAllTextAsync(Path.Combine(repo, "staged.txt"), "staged change\n");
-                await RunGit("add", "staged.txt");
+                var selection = await GitRepository.ReadAsync(repo, runner, includeDiffs: false);
+                var file = selection.Entries.Single();
+                async Task ChangeFile(bool unstage)
+                {
+                    var current = await GitRepository.ReadAsync(repo, runner, includeDiffs: false);
+                    var changed = await GitRepository.ChangeIndexAsync(repo, current.Root!, "main",
+                        current.Entries.Single(e => e.RelativePath == file.RelativePath), unstage, runner);
+                    if (!changed.Success) throw new Exception("File staging failed: " + changed.Detail);
+                }
+                await ChangeFile(false);
+                await ChangeFile(true);
+                if ((await runner.RunAsync(git, ["diff", "--cached", "--name-only"], repo)).Output.Trim().Length != 0
+                    || !File.ReadAllText(Path.Combine(repo, "staged.txt")).Contains("staged change"))
+                    throw new Exception("Unstaging changed the working file or left it staged.");
+                await ChangeFile(false);
                 await File.WriteAllTextAsync(Path.Combine(repo, "unstaged.txt"), "unstaged change\n");
                 await File.WriteAllTextAsync(Path.Combine(repo, "untracked.txt"), "new file\n");
                 await File.WriteAllTextAsync(Path.Combine(repo, "ignored.txt"), "keep this ignored\n");
@@ -67,18 +81,15 @@ internal static class AiCommitSummaryChecks
                 var repository = await GitRepository.ReadAsync(repo, runner);
                 if (!repository.IsReadable || repository.Root is not { } repositoryRoot)
                     throw new Exception("Git fixture repository could not be read.");
+                await File.AppendAllTextAsync(Path.Combine(repo, "staged.txt"), "keep this unstaged\n");
                 var outcome = await GitRepository.CommitStagedAsync(repo, repositoryRoot,
                     "feat: commit non-ignored changes", CommitSummary.DefaultPrefixes, runner);
                 if (!outcome.Success) throw new Exception("Staged commit failed: " + outcome.FailureKey + " " + outcome.Detail);
                 var committed = await runner.RunAsync(git, ["show", "--format=", "--name-only", "HEAD"], repo);
                 var status = await GitRepository.ReadAsync(repo, runner);
-                if (!committed.Output.Contains("staged.txt", StringComparison.Ordinal)
-                    || !committed.Output.Contains("unstaged.txt", StringComparison.Ordinal)
-                    || !committed.Output.Contains("untracked.txt", StringComparison.Ordinal)
-                    || !committed.Output.Contains("deleted.txt", StringComparison.Ordinal)
-                    || committed.Output.Contains("ignored.txt", StringComparison.Ordinal)
-                    || status.Entries.Count != 0)
-                    throw new Exception("Hub's deterministic commit did not commit staged, unstaged, deleted and untracked changes while preserving ignored files.");
+                if (committed.Output.Trim() != "staged.txt" || status.Entries.Count != 4
+                    || (await runner.RunAsync(git, ["show", "HEAD:staged.txt"], repo)).Output.Trim() != "staged change")
+                    throw new Exception("Commit included unstaged content or changed unrelated files.");
                 var noneStaged = await GitRepository.CommitStagedAsync(repo, repositoryRoot,
                     "", ["feat:", "fix:"], runner);
                 if (noneStaged.Success || noneStaged.FailureKey != "nothing-staged")
@@ -86,12 +97,15 @@ internal static class AiCommitSummaryChecks
 
                 // A typed title outside the configured prefixes still commits when the caller says so.
                 await File.WriteAllTextAsync(Path.Combine(repo, "freeform.txt"), "typed title\n");
+                var staged = await GitRepository.ChangeIndexAsync(repo, repositoryRoot, "main", null, false, runner);
+                if (!staged.Success) throw new Exception("Explicit stage all failed: " + staged.Detail);
                 var freeform = await GitRepository.CommitStagedAsync(repo, repositoryRoot, "整理发布流程", null, runner);
                 var freeformTitle = await runner.RunAsync(git, ["log", "-1", "--format=%s"], repo);
                 if (!freeform.Success || freeformTitle.Output.TrimEnd('\r', '\n') != "整理发布流程")
                     throw new Exception("A typed title outside the configured prefixes was refused: "
                         + freeform.FailureKey + " " + freeform.Detail);
                 await File.WriteAllTextAsync(Path.Combine(repo, "freeform.txt"), "second typed title\n");
+                await RunGit("add", "freeform.txt");
                 var unfreeform = await GitRepository.CommitStagedAsync(repo, repositoryRoot, "整理发布流程", ["feat:"], runner);
                 if (unfreeform.Success || unfreeform.FailureKey != "invalid-summary")
                     throw new Exception("The prefix rule stopped guarding summaries Hub proposes.");
@@ -116,21 +130,14 @@ internal static class AiCommitSummaryChecks
                     await RunGit("config", "push.followTags", "true");
                     await RunGit("tag", "-a", "should-stay-local", "-m", "Keep this tag local");
                     await File.WriteAllTextAsync(Path.Combine(repo, "push.txt"), "push this\n");
-                    var combined = await GitRepository.CommitAndPushStagedAsync(repo, repositoryRoot,
-                        "feat: commit and push changes", ["feat:", "fix:"], runner);
-                    if (!combined.Success) throw new Exception("Commit-and-push failed: " + combined.FailureKey + " " + combined.Detail);
-                    if (await ReadHead(remote, "refs/heads/published") != await ReadHead(repo, "HEAD"))
-                        throw new Exception("Commit-and-push did not update the differently named configured upstream.");
+                    await RunGit("add", "push.txt");
+                    // Push the existing commit, without following any other branch or tag.
 
-                    // A clean worktree can still have commits to publish; it must not create an empty commit.
-                    await File.WriteAllTextAsync(Path.Combine(repo, "pending.txt"), "already committed\n");
-                    await RunGit("add", "pending.txt");
                     await RunGit("commit", "-m", "feat: prepare pending local commit");
                     await RunGit("branch", "-f", "other", "HEAD");
                     var pending = await ReadHead(repo, "HEAD");
-                    var cleanCombined = await GitRepository.CommitAndPushStagedAsync(repo, repositoryRoot,
-                        "", ["feat:", "fix:"], runner);
-                    if (!cleanCombined.Success || await ReadHead(repo, "HEAD") != pending
+                    var pushed = await GitRepository.PushAsync(repo, repositoryRoot, runner);
+                    if (!pushed.Success || await ReadHead(repo, "HEAD") != pending
                         || await ReadHead(remote, "refs/heads/published") != pending)
                         throw new Exception("Clean commit-and-push did not publish the existing commit without creating another.");
                     var remoteRefs = await runner.RunAsync(git, ["for-each-ref", "--format=%(refname)"], remote);
@@ -141,32 +148,11 @@ internal static class AiCommitSummaryChecks
 
                     // An invalid push URL proves no-op paths never launch a push or contact a remote.
                     await RunGit("config", "remote.origin.pushurl", Path.Combine(remote, "missing.git"));
-                    foreach (var noOp in new[]
-                    {
-                        await GitRepository.PushAsync(repo, repositoryRoot, runner),
-                        await GitRepository.CommitAndPushStagedAsync(repo, repositoryRoot,
-                            "fix: nothing changed", ["feat:", "fix:"], runner),
-                    })
-                    {
-                        if (noOp.Success || noOp.FailureKey != "nothing-to-push")
-                            throw new Exception("An up-to-date branch attempted a push instead of a terminal no-op: " + noOp.FailureKey);
-                    }
-                    await File.WriteAllTextAsync(Path.Combine(repo, "partial.txt"), "keep this local commit\n");
-                    var partial = await GitRepository.CommitAndPushStagedAsync(repo, repositoryRoot,
-                        "fix: preserve local commit on push failure", ["feat:", "fix:"], runner);
-                    var partialHead = await ReadHead(repo, "HEAD");
-                    if (partial.Success || partial.FailureKey != "commit-succeeded-push-failed"
-                        || partialHead == pending || await ReadHead(remote, "refs/heads/published") != pending
-                        || (await GitRepository.ReadAsync(repo, runner)).Entries.Count != 0)
-                        throw new Exception("A failed push did not preserve and distinguish the successful local commit.");
-                    var cleanFailure = await GitRepository.CommitAndPushStagedAsync(repo, repositoryRoot,
-                        "fix: retry pending push", ["feat:", "fix:"], runner);
-                    if (cleanFailure.Success || cleanFailure.FailureKey != "push-failed" || await ReadHead(repo, "HEAD") != partialHead)
-                        throw new Exception("A clean push retry falsely claimed to have created a commit.");
+                    var noOp = await GitRepository.PushAsync(repo, repositoryRoot, runner);
+                    if (noOp.FailureKey != "nothing-to-push") throw new Exception("An up-to-date branch attempted a push.");
                     await RunGit("config", "--unset", "remote.origin.pushurl");
-                    var pushOnly = await GitRepository.PushAsync(repo, repositoryRoot, runner);
-                    if (!pushOnly.Success || await ReadHead(remote, "refs/heads/published") != partialHead)
-                        throw new Exception("Push-only did not publish the retained local commit: " + pushOnly.FailureKey);
+                    await RunGit("commit", "--allow-empty", "-m", "local divergence");
+                    var partialHead = await ReadHead(repo, "HEAD");
 
                     // A divergent remote must reject, never force-overwrite the remote commit.
                     await RunGit("checkout", "-b", "divergent", pending);
@@ -213,7 +199,7 @@ internal static class AiCommitSummaryChecks
         {
             Console.WriteLine("SKIP: git executable unavailable; repository commit fixture not run.");
         }
-        Console.WriteLine("PASS: commit-summary parsing and legacy defaults; commits include staged, unstaged, deleted and untracked changes but not ignored files; clean commit-and-push publishes existing commits; push is upstream-only, non-forced and a terminal no-op when current; push failures preserve successful local commits.");
+        Console.WriteLine("PASS: commit-summary parsing and legacy defaults; commit preserves unstaged content; push is upstream-only, non-forced and a terminal no-op when current.");
         return;
     }
 }

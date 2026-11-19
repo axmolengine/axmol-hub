@@ -1554,7 +1554,7 @@ internal sealed class ShellSessionsChecks
 
             Check(panel.WorkspaceMenuTitlesForCheck.SequenceEqual(
                     [HubStrings.Get("ChatWorkspaceMenuChoose"), HubStrings.Get("ChatWorkspaceMenuGrant"),
-                        HubStrings.Get("ChatWorkspaceMenuClear")],
+                        HubStrings.Get("WorkspaceGitChanges"), HubStrings.Get("ChatWorkspaceMenuClear")],
                     StringComparer.Ordinal),
                 "绑定之后菜单保留「选择」和「授权」，并多出「清除」一行（实际 "
                 + string.Join(" / ", panel.WorkspaceMenuTitlesForCheck) + "）");

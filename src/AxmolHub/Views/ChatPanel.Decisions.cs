@@ -414,6 +414,23 @@ public partial class ChatPanel
             // The pane asks; this is where the ask turns into a git read, because the panel has no session, no
             // log and no thread to wait on — and a pane that did its own I/O could not be fed a fixture by a check.
             _inspector.RepoRefreshRequested += RefreshChanges;
+            _inspector.GitRequested = request =>
+            {
+                if (_chat?.StartWorkspaceGit(request, (item, committed) =>
+                    {
+                        _inspector.GitFinished(request, item, committed);
+                        if (_chat.ActiveWorkspaceRoot != request.Workspace) return;
+                        if (item.Error is { } error) StatusMessage?.Invoke(UserFeedback.Error(error, "git-failed"));
+                        RequestRepositoryRead();
+                    }) is null)
+                {
+                    var busy = TaskQueue.Instance.ActiveMutating;
+                    StatusMessage?.Invoke(UserFeedback.Warning(busy is null ? HubStrings.Get("CommitSummaryBusy")
+                        : string.Format(HubStrings.Get("GitWriteBusy"), busy.TitleWithPhase), "git-busy"));
+                }
+            };
+            _inspector.SuggestedTitle = () => _chat?.ActiveConversation?.Messages.LastOrDefault(t => t.Role == ChatRoles.Assistant
+                && t.CommitSummary is not null && t.GitWorkspaceRoot == _chat.ActiveWorkspaceRoot)?.CommitSummary;
             // The history scopes ask the same way: the pane owns which scope and which commit, the workspace owns
             // the process, and a check can feed the pane an answer without a repository.
             _inspector.ReadReviewRequested = request => _chat is null
