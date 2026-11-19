@@ -19,6 +19,8 @@ public partial class MainWindow
         if (_workspaceView is null)
         {
             _workspaceView = new WorkspaceView(this, inspector, WriteLog);
+            inspector.GitTitleResizeHandle = () => _workspaceView.VisibleTreeSplitter
+                ?? (InspectorResizeGrip.IsEffectivelyVisible ? InspectorResizeGrip : null);
             _workspaceView.ToolRequested += tab => _inspectorTab = tab;
             _workspaceView.FileRequested += path =>
             {

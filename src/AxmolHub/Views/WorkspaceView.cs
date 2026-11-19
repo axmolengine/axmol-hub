@@ -91,6 +91,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private double _editorFontSize = CodeEditorView.DefaultWorkspaceFontSize;
     private enum TabCloseScope { Single, All, Others, Right }
     internal Control TabStrip { get; }
+    internal Control? VisibleTreeSplitter => _splitter.IsEffectivelyVisible ? _splitter : null;
     internal event Action<string>? FileRequested;
     internal event Action<string>? ToolRequested;
     internal event Action? OpenRequested;

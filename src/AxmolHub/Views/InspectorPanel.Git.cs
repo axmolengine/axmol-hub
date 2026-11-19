@@ -20,6 +20,7 @@ internal sealed partial class InspectorPanel
 {
     internal Action<WorkspaceGitRequest>? GitRequested { get; set; }
     internal Func<string?>? SuggestedTitle { get; set; }
+    internal Func<Control?>? GitTitleResizeHandle { get; set; }
     private readonly Dictionary<(string, string?), string> _gitDrafts = [];
     private readonly HashSet<(string, string?)> _pendingPush = [];
     private readonly Dictionary<(string, string?), string?> _usedSuggestion = [];
@@ -50,6 +51,9 @@ internal sealed partial class InspectorPanel
 
     private Control BuildGitHeader()
     {
+        _gitTitleFlyout.Opening += (_, _) => SyncGitTitleWidth();
+        _gitTitleFlyout.Opened += (_, _) => _gitHeader.SizeChanged += OnGitHeaderSizeChanged;
+        _gitTitleFlyout.Closed += (_, _) => _gitHeader.SizeChanged -= OnGitHeaderSizeChanged;
         var branchIcon = HubActionIcon.Create("Hub.Icon.Branch");
         branchIcon.Width = branchIcon.Height = 8;
         branchIcon.VerticalAlignment = VerticalAlignment.Center;
@@ -103,6 +107,16 @@ internal sealed partial class InspectorPanel
         return _gitHeader;
     }
 
+    private void OnGitHeaderSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (e.WidthChanged) SyncGitTitleWidth();
+    }
+
+    private void SyncGitTitleWidth()
+    {
+        if (_gitTitleFlyout.Popup.Child is { } presenter) presenter.Width = _gitHeader.Bounds.Width;
+    }
+
     private void OpenGitTitle(GitRepositoryState state, WorkspaceGitAction action)
     {
         if (!ReferenceEquals(state, _repository) || !_gitHeader.IsEffectivelyVisible) return;
@@ -113,8 +127,7 @@ internal sealed partial class InspectorPanel
         var title = new TextBox { Classes = { "git-title" }, PlaceholderText = HubStrings.Get("GitCommitMessage"), MaxLength = 120, Text = draft };
         var submit = new Button { Classes = { "git-submit" }, Content = HubStrings.Get(action == WorkspaceGitAction.Commit ? "CommitSummaryAction" : "CommitPushSummaryAction"),
             IsEnabled = CommitSummary.IsWellFormedTitle(draft) };
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6,
-            Width = Math.Clamp(Bounds.Width - 48, 220, 400) };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6 };
         row.Children.Add(title);
         Grid.SetColumn(submit, 1);
         row.Children.Add(submit);
@@ -142,6 +155,7 @@ internal sealed partial class InspectorPanel
             if (e.Key == Key.Escape) _gitTitleFlyout.Hide(); else Confirm();
         }, RoutingStrategies.Tunnel);
         _gitTitleFlyout.Content = row;
+        _gitTitleFlyout.OverlayInputPassThroughElement = GitTitleResizeHandle?.Invoke();
         _gitTitleFlyout.ShowAt(_gitButton);
         Dispatcher.UIThread.Post(() => { if (_gitTitleFlyout.IsOpen && ReferenceEquals(_gitTitleFlyout.Content, row)) title.Focus(); }, DispatcherPriority.Input);
     }

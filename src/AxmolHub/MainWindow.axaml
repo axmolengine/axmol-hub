@@ -1217,8 +1217,10 @@
          right end, over the drawer button and all three caption plates — which left a reader holding a column
          they could only get out of through the pane's own ×. -->
     <Grid Grid.Row="1" Grid.Column="2" ColumnDefinitions="5,*" IsVisible="False" x:Name="InspectorColumn">
-      <Border x:Name="InspectorResizeGrip" Grid.Column="0" Background="Transparent"
-              Cursor="SizeWestEast" IsVisible="False" />
+      <Border x:Name="InspectorResizeGrip" Grid.Column="0" Cursor="SizeWestEast" IsVisible="False">
+        <!-- A popup's input pass-through targets the grip's descendants, not the grip itself. -->
+        <Border Background="Transparent" />
+      </Border>
       <Border x:Name="Inspector" Grid.Column="1" Width="360" ClipToBounds="True"
               Background="{DynamicResource Hub.SurfaceChrome}"
               BorderBrush="{DynamicResource Hub.BorderSubtle}" BorderThickness="1,0,0,0">

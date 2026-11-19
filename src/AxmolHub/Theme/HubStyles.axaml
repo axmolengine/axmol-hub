@@ -195,7 +195,10 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="7" />
     <Setter Property="Padding" Value="5,2" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="MaxWidth" Value="Infinity" />
     <Setter Property="MinHeight" Value="0" />
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
   </Style>
   <Style Selector="TextBox.git-title">
     <Setter Property="MinHeight" Value="26" />
