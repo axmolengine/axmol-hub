@@ -1504,6 +1504,7 @@ public static class HubTexts
         ["CommitSummaryNothingStaged"] = ("暂存区为空，请先暂存要提交的更改。", "Nothing staged. Stage the changes you want to commit first."),
         ["CommitSummaryStageFailed"] = ("无法暂存仓库更改；未创建提交。", "Could not stage repository changes; no commit was created."),
         ["CommitSummaryFailed"] = ("Git 提交失败；请检查仓库状态。", "Git commit failed; check the repository state."),
+        ["ChatGitCommitSucceeded"] = ("已提交仓库更改。", "Committed repository changes."),
         ["CommitSummarySucceeded"] = ("已提交暂存区更改。", "Committed the staged changes."),
         // The app-wide trust ledger: what a card's "always allow" wrote, shown where it can be taken back. One
         // header, one empty line and one caveat for all three lists, because they answer one question — what will

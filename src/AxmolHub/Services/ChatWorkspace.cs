@@ -212,7 +212,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// sandbox is a fact about one job, not a preference.</summary>
     public string? ActiveWorkspaceRoot { get => _sessions.ActiveWorkspaceRoot; }
 
-    internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool> finished,
+    internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool, UserFeedback?> finished,
         bool stageAllBeforeCommit = false)
     {
         if (ActiveWorkspaceRoot != request.Workspace) return null;

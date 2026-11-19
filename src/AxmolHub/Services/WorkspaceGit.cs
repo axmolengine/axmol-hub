@@ -12,13 +12,14 @@ internal static class WorkspaceGit
     };
 
     internal static TaskQueue.Item? Start(WorkspaceGitRequest request, ProcessRunner runner,
-        IReadOnlyList<string> secrets, Action<TaskQueue.Item, bool> finished, bool stageAllBeforeCommit = false)
+        IReadOnlyList<string> secrets, Action<TaskQueue.Item, bool, UserFeedback?> finished, bool stageAllBeforeCommit = false)
     {
         var queue = TaskQueue.Instance;
         if (queue.ActiveMutating is not null) return null;
         var action = request.Action;
         var label = ActionKey(action);
         bool committed = false;
+        bool pushed = false;
         return queue.Enqueue("git:" + request.Root, label, request.Root + " · " + request.Branch, async (item, token) =>
         {
             token.ThrowIfCancellationRequested();
@@ -48,13 +49,29 @@ internal static class WorkspaceGit
                 {
                     var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token, request.Branch);
                     if (result.FailureKey != "nothing-to-push") Check(result);
+                    pushed = result.Success;
                 }
                 catch (Exception ex) when (committed)
                 {
                     throw new InvalidOperationException(HubStrings.Get("CommitPushPartialFailure") + " " + ex.Message, ex);
                 }
             }
-        }, item => finished(item, committed), kind: TaskQueue.TaskKind.Mutating, retryable: false);
+        }, item => finished(item, committed, item.State == TaskQueue.Phase.Done ? CompletionFeedback() : null),
+            kind: TaskQueue.TaskKind.Mutating, retryable: false);
+
+        UserFeedback? CompletionFeedback()
+        {
+            var key = (committed, pushed) switch
+            {
+                (true, true) => "CommitPushSummarySucceeded",
+                (true, false) => stageAllBeforeCommit ? "ChatGitCommitSucceeded" : "CommitSummarySucceeded",
+                (false, true) => "PushSummarySucceeded",
+                _ => null,
+            };
+            if (key is not null) return UserFeedback.Success(HubStrings.Get(key), "git-succeeded");
+            return action is WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush
+                ? UserFeedback.Info(HubStrings.Get("PushSummaryNothingToPush"), "git-nothing-to-push") : null;
+        }
     }
 
     private static void Check(GitCommitResult result)
