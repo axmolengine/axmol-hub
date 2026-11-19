@@ -12,8 +12,6 @@ namespace AxmolHub;
 /// <summary>The shared palette, typography and gutter for read-only and editable code surfaces.</summary>
 internal static class CodeSurface
 {
-    internal const double DefaultFontSize = 13;
-
     /// <summary>The font a project file is read in. One name for both the gutter and the text, because a gutter
     /// in a different family than the code it numbers drifts by a pixel a line.</summary>
     internal static readonly FontFamily Mono = FontFamily.Parse("Menlo,Consolas,monospace");
@@ -38,7 +36,7 @@ internal static class CodeSurface
         editor.WordWrap = false;
         editor.ShowLineNumbers = true;
         editor.FontFamily = Mono;
-        editor.FontSize = DefaultFontSize;
+        editor.FontSize = 13;
         // AvaloniaEdit's theme rides on a style include rather than the application's, and an editor without it
         // draws a white page under a palette made for a dark well.
         editor.Styles.Add(new StyleInclude(new Uri("avares://AxmolHub/"))

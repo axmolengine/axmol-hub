@@ -14,6 +14,8 @@ namespace AxmolHub;
 /// Authorization and atomic replacement remain with the session-aware caller.</summary>
 internal sealed class CodeEditorView : Grid
 {
+    internal const double DefaultWorkspaceFontSize = 12.5;
+
     private readonly TextEditor _editor;
     private readonly string _path;
     private TextFileSnapshot _baseline;
@@ -54,7 +56,7 @@ internal sealed class CodeEditorView : Grid
         {
             if (ZoomRequested is { } zoom && e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D0 or Key.NumPad0)
             {
-                zoom(CodeSurface.DefaultFontSize);
+                zoom(DefaultWorkspaceFontSize);
                 e.Handled = true;
                 return;
             }

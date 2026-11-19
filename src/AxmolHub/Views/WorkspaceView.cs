@@ -88,7 +88,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private bool _closingTabs;
     private bool _browserObscured;
     private int _openMenus;
-    private double _editorFontSize = CodeSurface.DefaultFontSize;
+    private double _editorFontSize = CodeEditorView.DefaultWorkspaceFontSize;
     private enum TabCloseScope { Single, All, Others, Right }
     internal Control TabStrip { get; }
     internal event Action<string>? FileRequested;
