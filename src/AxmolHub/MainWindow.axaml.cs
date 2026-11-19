@@ -2204,6 +2204,9 @@ public partial class MainWindow : Window
         // on the UI thread, and only while the drawer is open.
         _workspace.Log.Written += (line, level, location) =>
         {
+            // Git's machine-readable output uses NUL record separators. Render them as line breaks
+            // in the drawer without changing the captured process output or the on-disk log.
+            line = line.TrimEnd('\0').Replace('\0', '\n');
             lock (_logGate)
             {
                 var offset = _logHead + _logText.Length;
