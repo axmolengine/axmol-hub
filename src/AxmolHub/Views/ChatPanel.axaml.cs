@@ -4527,6 +4527,8 @@ public partial class ChatPanel : UserControl
             if (isLast)
                 bar.Children.Add(IconActionButton("RegenerateMessage", "Hub.Icon.Refresh", RegenerateCurrent));
             bar.Children.Add(IconActionButton("BranchFromHere", "Hub.Icon.Branch", () => { if (CurrentIndex() is var current && current >= 0) BranchFromHere(current); }));
+            if (isLast && role == ChatRoles.Assistant && actionSession is not null)
+                AddGitShortcuts(bar, actionSession, CurrentIndex);
         }
 
         if (role == ChatRoles.Assistant && at is { } assistantTimestamp)

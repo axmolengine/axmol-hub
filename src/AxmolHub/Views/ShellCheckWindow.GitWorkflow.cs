@@ -39,7 +39,10 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await Git("config", "remote.origin.pushurl", Path.Combine(root, "missing.git"));
             var path = Path.Combine(repo, "sample.txt");
             await File.WriteAllTextAsync(path, "selected\n");
-            using var chat = new ChatWorkspace(Path.Combine(root, "hub"));
+            using var chat = new ChatWorkspace(Path.Combine(root, "hub"))
+            {
+                HubSnapshotProvider = () => new ChatWorkspace.HubReadOnlySnapshot([], [], []),
+            };
             chat.SelectWorkspaceRoot(repo);
             var panel = new ChatPanel(chat);
             var inspector = (InspectorPanel)panel.BuildInspectorContent("changes", -1)!;
@@ -96,6 +99,47 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No push retry")).Completion;
             check(await Git("rev-parse", "HEAD") == head && await Git("--git-dir=" + bare, "rev-parse", "main") == head,
                 "重试仅推送当前分支，未创建第二个提交");
+
+            var provider = chat.AddProvider("Git shortcut check", "http://localhost:1234/v1", "offline-check-model", null, out _)
+                ?? throw new Exception("Could not add the offline check model.");
+            var session = chat.StartConversation(provider.Id);
+            chat.SetWorkspaceRoot(session.Id, repo);
+            chat.OpenConversation(session.Id);
+            chat.SelectMode(ChatModes.Agent);
+            host.Content = panel;
+            host.Width = 920;
+            int modelRequests = 0;
+            chat.ClientOverride = (_, _) => new ScriptedChatClient([++modelRequests == 1
+                ? "Completed.\n\nCommit summary: fix: commit via shortcut" : "Done for this check."]);
+            if (!chat.TryEnqueueSend(session.Id, "Review the change", null, out var refusal)) throw new Exception(refusal);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            host.UpdateLayout();
+            Button? Shortcut(string key) => panel.GetLogicalDescendants().OfType<Button>()
+                .FirstOrDefault(button => Equals(button.Tag, key) && button.IsEffectivelyVisible);
+            await WaitForConditionAsync(() => Shortcut("CommitPushSummaryAction") is not null);
+            (Shortcut("CommitPushSummaryAction") ?? throw new Exception("Commit-and-push shortcut not shown: "
+                + chat.ActiveConversation?.Messages.LastOrDefault()?.Text + " / " + chat.ActiveConversation?.LastNotice)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitForConditionAsync(() => TaskQueue.Instance.ActiveMutating?.StageKey == "GitCommitting");
+            var shortcutTask = TaskQueue.Instance.ActiveMutating ?? throw new Exception("No local shortcut task");
+            await shortcutTask.Completion;
+            var shortcutHead = await Git("rev-parse", "HEAD");
+            check(modelRequests == 1 && shortcutTask.State == TaskQueue.Phase.Done && shortcutTask.StageKey == "GitPushing"
+                && shortcutHead != head && await Git("--git-dir=" + bare, "rev-parse", "main") == shortcutHead
+                && await Git("log", "-1", "--format=%s") == "fix: commit via shortcut" && await Git("diff") == "",
+                "有摘要的会话快捷操作在同一底部任务中完成本地暂存、提交与推送");
+            await File.AppendAllTextAsync(path, "agent path\n");
+            if (!chat.TryEnqueueSend(session.Id, "Review again", null, out refusal)) throw new Exception(refusal);
+            await WaitForIdleAsync(chat);
+            panel.Reload();
+            host.UpdateLayout();
+            await WaitForConditionAsync(() => Shortcut("CommitSummaryAction") is not null);
+            (Shortcut("CommitSummaryAction") ?? throw new Exception("Commit shortcut not shown.")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitForConditionAsync(() => modelRequests == 3);
+            await WaitForIdleAsync(chat);
+            check(modelRequests == 3 && TaskQueue.Instance.ActiveMutating is null
+                && await Git("rev-parse", "HEAD") == shortcutHead,
+                "没有摘要的会话快捷操作只走普通 AI 会话，不创建本地 Git 任务");
         }
         catch (Exception ex) { check(false, "工作区 Git 检查失败：" + ex); }
         finally { host.Close(); TaskQueue.Instance.ClearFinished(); }

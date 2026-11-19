@@ -212,11 +212,19 @@ public sealed partial class ChatWorkspace : IDisposable
     /// sandbox is a fact about one job, not a preference.</summary>
     public string? ActiveWorkspaceRoot { get => _sessions.ActiveWorkspaceRoot; }
 
-    internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool> finished)
+    internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool> finished,
+        bool stageAllBeforeCommit = false)
     {
         if (ActiveWorkspaceRoot != request.Workspace) return null;
         var log = LogProvider?.Invoke();
-        return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(), finished);
+        return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(), finished, stageAllBeforeCommit);
+    }
+
+    internal Task<GitRepositoryState> ReadGitShortcutStateAsync(string workspace)
+    {
+        var log = LogProvider?.Invoke();
+        return GitRepository.ReadAsync(workspace, new ProcessRunner(line => log?.Write(line)),
+            _providers.SensitiveValues(), includeDiffs: false);
     }
 
     /// <summary>Build the current capability scope for one existing conversation. Editor saves call this again

@@ -561,22 +561,31 @@ public static partial class GitRepository
         return new(result.ExitCode == 0, result.ExitCode == 0 ? null : "stage-failed", FirstText(result.Error, result.Output));
     }
 
-    /// <summary>Commit the index exactly as staged. A user-entered title is not constrained by suggested prefixes.</summary>
+    /// <summary>Commit the index. The explicit conversation shortcut can opt into staging the whole repository first.</summary>
     public static async Task<GitCommitResult> CommitStagedAsync(string workspaceRoot, string expectedRoot,
         string summary, IEnumerable<string>? prefixes, ProcessRunner runner,
-        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default, string? expectedBranch = null)
+        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default, string? expectedBranch = null,
+        bool stageAllBeforeCommit = false)
     {
         var git = CommandShells.Resolve("git");
         if (git is null) return new(false, "git-missing", null);
         var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false).ConfigureAwait(false);
         if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure) return new(false, failure, state.Detail);
         var root = state.Root!;
-        if (state.Entries.Any(entry => entry.IndexState == "U" || entry.WorktreeState == "U"))
+        if (state.Entries.Any(entry => entry.Mark is "DD" or "AU" or "UD" or "UA" or "DU" or "AA" or "UU"))
             return new(false, "conflict", null);
-        if (!state.Entries.Any(entry => entry.IndexState != " " && entry.IndexState != "?"))
+        if (!(stageAllBeforeCommit ? state.Entries.Count > 0 : state.Entries.Any(entry => entry.IndexState is not (" " or "?"))))
             return new(false, "nothing-staged", null);
         var titled = prefixes is null ? CommitSummary.IsWellFormedTitle(summary) : CommitSummary.IsValid(summary, prefixes);
         if (!titled) return new(false, "invalid-summary", null);
+        if (stageAllBeforeCommit)
+        {
+            // The bounded status list cannot rule out conflicts outside its displayed entries.
+            if (state.Truncated) return new(false, "repository-unavailable", null);
+            var staged = await runner.RunAsync(git, ["add", "-A", "--", "."], root, timeout: ReadIdleTimeout,
+                sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
+            if (staged.ExitCode != 0) return new(false, "stage-failed", FirstText(staged.Error, staged.Output));
+        }
         var result = await runner.RunAsync(git,
             ["--no-pager", "-c", "core.quotepath=false", "commit", "-m", summary], root,
             timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);

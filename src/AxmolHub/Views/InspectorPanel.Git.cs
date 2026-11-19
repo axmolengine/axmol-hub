@@ -110,7 +110,7 @@ internal sealed partial class InspectorPanel
         var key = (state.Root!, state.Branch);
         var suggestion = SuggestedTitle?.Invoke();
         if (!_gitDrafts.TryGetValue(key, out var draft)) draft = suggestion == _usedSuggestion.GetValueOrDefault(key) ? "" : suggestion ?? "";
-        var title = new TextBox { Classes = { "git-title" }, PlaceholderText = HubStrings.Get("GitTitle"), MaxLength = 120, Text = draft };
+        var title = new TextBox { Classes = { "git-title" }, PlaceholderText = HubStrings.Get("GitCommitMessage"), MaxLength = 120, Text = draft };
         var submit = new Button { Classes = { "git-submit" }, Content = HubStrings.Get(action == WorkspaceGitAction.Commit ? "CommitSummaryAction" : "CommitPushSummaryAction"),
             IsEnabled = CommitSummary.IsWellFormedTitle(draft) };
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6,
