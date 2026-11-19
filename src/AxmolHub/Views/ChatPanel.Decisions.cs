@@ -414,6 +414,7 @@ public partial class ChatPanel
             // The pane asks; this is where the ask turns into a git read, because the panel has no session, no
             // log and no thread to wait on — and a pane that did its own I/O could not be fed a fixture by a check.
             _inspector.RepoRefreshRequested += RefreshChanges;
+            _inspector.ReadLocalBranches = root => _chat!.ReadLocalBranchesAsync(root);
             _inspector.GitRequested = request =>
             {
                 if (_chat?.StartWorkspaceGit(request, (item, committed, feedback) =>

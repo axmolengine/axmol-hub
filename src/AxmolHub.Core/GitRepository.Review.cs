@@ -201,13 +201,16 @@ public static partial class GitRepository
 
     /// <summary>Local and remote branches for the Branch scope's base picker.</summary>
     public static async Task<IReadOnlyList<GitBranchInfo>> ReadBranchesAsync(string repositoryRoot, ProcessRunner runner,
-        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default)
+        IReadOnlyList<string>? sensitiveValues = null, CancellationToken cancellation = default, bool localOnly = false)
     {
         if (CommandShells.Resolve("git") is not { } git) return [];
         try
         {
-            var result = await runner.RunAsync(git,
-                ["for-each-ref", "--format=%(refname:short)" + FieldSeparator + "%(upstream:short)" + FieldSeparator + "%(HEAD)" + FieldSeparator + "%(symref)", "refs/heads", "refs/remotes"],
+            var name = localOnly ? "%(refname:lstrip=2)" : "%(refname:short)";
+            var args = new List<string> { "for-each-ref", "--format=" + name + FieldSeparator + "%(upstream:short)" + FieldSeparator
+                + "%(HEAD)" + FieldSeparator + "%(symref)", "refs/heads" };
+            if (!localOnly) args.Add("refs/remotes");
+            var result = await runner.RunAsync(git, args,
                 Path.GetFullPath(repositoryRoot), timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues,
                 cancellation: cancellation).ConfigureAwait(false);
             if (result.ExitCode != 0) return [];

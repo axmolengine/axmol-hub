@@ -77,6 +77,20 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             Title().Text = "Commit selection";
             Key(Avalonia.Input.Key.Escape);
             if (flyout.IsOpen) throw new Exception("Escape did not dismiss the commit editor.");
+            Click("GitCreateBranch");
+            if (Title().Text != "") throw new Exception("Branch editor reused the commit draft.");
+            Title().Text = "topic";
+            Key(Avalonia.Input.Key.Enter);
+            await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No branch creation task")).Completion;
+            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Branch == "main");
+            anchor.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var branchMenu = (MenuFlyout)Avalonia.Controls.Primitives.FlyoutBase.GetAttachedFlyout(anchor)!;
+            var switcher = branchMenu.Items.OfType<MenuItem>().Single(m => Equals(m.Tag, "GitSwitchBranch"));
+            await WaitForConditionAsync(() => switcher.IsEnabled);
+            if (!switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "topic") && m.IsEnabled)
+                || !switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "main") && m.IsChecked && !m.IsEnabled)
+                || switcher.Items.Count != 2) throw new Exception("Switch submenu did not list only local branches with the current branch checked.");
+            branchMenu.Hide();
             Click("CommitPushSummaryAction");
             if (Title().Text != "Commit selection") throw new Exception("Draft lost between commit commands.");
             Key(Avalonia.Input.Key.ImeProcessed);

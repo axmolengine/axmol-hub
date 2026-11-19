@@ -2,6 +2,14 @@ using AxmolHub.Core;
 
 internal static class AiWorkspaceChecks
 {
+    internal static void WipeRepository(string directory)
+    {
+        // Git objects can be read-only on Windows.
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(directory, recursive: true);
+    }
+
     internal static async Task RunAsync(string root, string[] args)
     {
         // The sandbox is a pure function over strings plus one link check, so it is asserted here rather than
@@ -462,15 +470,6 @@ internal static class AiWorkspaceChecks
         // outcome it advertises rather than a repository nobody could look at.
         if (CommandShells.Resolve("git")is { } probeGit)
         {
-            // git leaves objects read-only, and a recursive delete on Windows answers UnauthorizedAccessException to
-            // that, so the fixture's own removal clears the attribute first. A red run must not poison the next one.
-            static void WipeRepository(string directory)
-            {
-                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(file, FileAttributes.Normal);
-                Directory.Delete(directory, recursive: true);
-            }
-
             var repoRoot = Path.Combine(root, "repo-probe");
             if (Directory.Exists(repoRoot))
                 WipeRepository(repoRoot);

@@ -8,7 +8,9 @@ internal static class WorkspaceGit
     {
         WorkspaceGitAction.StageAll => "GitStageAll", WorkspaceGitAction.Stage => "GitStageFile",
         WorkspaceGitAction.Unstage => "GitUnstageFile", WorkspaceGitAction.Commit => "CommitSummaryAction",
-        WorkspaceGitAction.Push => "PushSummaryAction", _ => "CommitPushSummaryAction",
+        WorkspaceGitAction.Push => "PushSummaryAction", WorkspaceGitAction.CommitPush => "CommitPushSummaryAction",
+        WorkspaceGitAction.CreateBranch => "GitCreateBranch", WorkspaceGitAction.Pull => "GitPull", WorkspaceGitAction.SwitchBranch => "GitSwitchBranch",
+        _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
     internal static TaskQueue.Item? Start(WorkspaceGitRequest request, ProcessRunner runner,
@@ -31,23 +33,35 @@ internal static class WorkspaceGit
                     request.Entry, action == WorkspaceGitAction.Unstage, runner, secrets, token));
                 return;
             }
-            if (action != WorkspaceGitAction.Push)
+            if (action == WorkspaceGitAction.Pull)
+            {
+                Check(await GitRepository.PullAsync(request.Workspace, request.Root, request.Branch, runner, secrets, token));
+                return;
+            }
+            if (action is WorkspaceGitAction.CreateBranch or WorkspaceGitAction.SwitchBranch)
+            {
+                Check(await GitRepository.ChangeBranchAsync(request.Workspace, request.Root, request.Branch, request.Title,
+                    action == WorkspaceGitAction.CreateBranch, runner, secrets, token));
+                return;
+            }
+            if (action is WorkspaceGitAction.Commit or WorkspaceGitAction.CommitPush)
             {
                 Stage("GitCommitting");
                 var result = await GitRepository.CommitStagedAsync(request.Workspace, request.Root, request.Title,
-                    null, runner, secrets, token, request.Branch, stageAllBeforeCommit);
+                    null, runner, secrets, token, request.Branch, stageAllBeforeCommit,
+                    action == WorkspaceGitAction.CommitPush ? request.PushTarget : null);
                 if (!(stageAllBeforeCommit && action == WorkspaceGitAction.CommitPush && result.FailureKey == "nothing-staged"))
                 {
                     Check(result);
                     committed = true;
                 }
             }
-            if (action != WorkspaceGitAction.Commit)
+            if (action is WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush)
             {
                 Stage("GitPushing");
                 try
                 {
-                    var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token, request.Branch);
+                    var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token, request.Branch, request.PushTarget);
                     if (result.FailureKey != "nothing-to-push") Check(result);
                     pushed = result.Success;
                 }
@@ -61,12 +75,14 @@ internal static class WorkspaceGit
 
         UserFeedback? CompletionFeedback()
         {
+            if (action is WorkspaceGitAction.CreateBranch or WorkspaceGitAction.SwitchBranch)
+                return UserFeedback.Success(string.Format(HubStrings.Get(action == WorkspaceGitAction.CreateBranch ? "GitBranchCreated" : "GitBranchSwitched"), request.Title), "git-succeeded");
             var key = (committed, pushed) switch
             {
                 (true, true) => "CommitPushSummarySucceeded",
                 (true, false) => stageAllBeforeCommit ? "ChatGitCommitSucceeded" : "CommitSummarySucceeded",
                 (false, true) => "PushSummarySucceeded",
-                _ => null,
+                _ => action == WorkspaceGitAction.Pull ? "GitPullSucceeded" : null,
             };
             if (key is not null) return UserFeedback.Success(HubStrings.Get(key), "git-succeeded");
             return action is WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush
@@ -84,6 +100,8 @@ internal static class WorkspaceGit
             "repository-unavailable" => "CommitSummaryRepoUnavailable", "conflict" => "CommitSummaryConflict",
             "nothing-staged" => "CommitSummaryNothingStaged", "stage-failed" => "CommitSummaryStageFailed",
             "upstream-unavailable" => "PushSummaryUpstreamUnavailable", "push-failed" => "PushSummaryFailed",
+            "pull-no-upstream" => "GitPullNoUpstream", "pull-failed" => "GitPullFailed",
+            "invalid-branch" => "GitInvalidBranch", "branch-failed" => "GitBranchFailed",
             _ => "CommitSummaryFailed",
         };
         throw new InvalidOperationException(HubStrings.Get(key) + (string.IsNullOrWhiteSpace(result.Detail) ? "" : "\n" + result.Detail));

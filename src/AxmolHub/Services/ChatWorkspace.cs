@@ -220,11 +220,14 @@ public sealed partial class ChatWorkspace : IDisposable
         return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(), finished, stageAllBeforeCommit);
     }
 
+    internal Task<IReadOnlyList<GitBranchInfo>> ReadLocalBranchesAsync(string root)
+        => GitRepository.ReadBranchesAsync(root, new ProcessRunner(_ => { }), _providers.SensitiveValues(), localOnly: true);
+
     internal Task<GitRepositoryState> ReadGitShortcutStateAsync(string workspace)
     {
         var log = LogProvider?.Invoke();
         return GitRepository.ReadAsync(workspace, new ProcessRunner(line => log?.Write(line)),
-            _providers.SensitiveValues(), includeDiffs: false);
+            _providers.SensitiveValues(), includeDiffs: false, includePushTarget: true);
     }
 
     /// <summary>Build the current capability scope for one existing conversation. Editor saves call this again

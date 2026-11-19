@@ -21,12 +21,23 @@ public partial class ChatPanel
             || source.GitWorkspaceRoot is { } replyWorkspace && replyWorkspace != workspace) return;
 
         var buttons = new Dictionary<WorkspaceGitAction, Button>();
+        GitRepositoryState? shown = null;
         void Apply(GitRepositoryState state)
         {
+            shown = state;
+            foreach (var action in new[] { WorkspaceGitAction.Push, WorkspaceGitAction.CommitPush })
+            {
+                var button = buttons[action];
+                button.IsEnabled = state.PushTarget is not null;
+                ToolTip.SetTip(button, state.PushTarget is { } target
+                    ? $"{button.Content} → {target.Display}\n" + HubStrings.Get(action == WorkspaceGitAction.Push ? "GitPushAuthorizationTip"
+                        : ShortcutSummary(source) is null ? "ChatGitUseAgentTip" : "ChatGitStageAllTip")
+                    : HubStrings.Get("PushSummaryUpstreamUnavailable"));
+            }
             bool changes = state.IsReadable && state.Entries.Count > 0;
             buttons[WorkspaceGitAction.Commit].IsVisible = changes;
             buttons[WorkspaceGitAction.CommitPush].IsVisible = changes;
-            buttons[WorkspaceGitAction.Push].IsVisible = changes || state.Ahead > 0;
+            buttons[WorkspaceGitAction.Push].IsVisible = changes || state.CanPush;
         }
 
         bool Current() => Equals(Source(), source) && _chat.ActiveWorkspaceRoot == workspace;
@@ -45,6 +56,7 @@ public partial class ChatPanel
             checking = true;
             try
             {
+                var displayed = shown;
                 var state = await _chat.ReadGitShortcutStateAsync(workspace);
                 if (!Current() || _chat.RunFor(session) is not null || _chat.HasPendingPlanApproval(session))
                 {
@@ -53,7 +65,10 @@ public partial class ChatPanel
                 }
                 Apply(state);
                 if (!state.IsReadable || state.Root is not { } root) { Feedback("CommitSummaryRepoUnavailable"); return; }
-                if (action == WorkspaceGitAction.CommitPush && state.Entries.Count == 0 && state.Ahead > 0)
+                if (displayed?.Root != root || displayed.Branch != state.Branch || (action != WorkspaceGitAction.Commit && displayed.PushTarget != state.PushTarget))
+                { Feedback("CommitSummaryWorkspaceChanged"); return; }
+                if (action != WorkspaceGitAction.Commit && state.PushTarget is null) { Feedback("PushSummaryUpstreamUnavailable"); return; }
+                if (action == WorkspaceGitAction.CommitPush && state.Entries.Count == 0 && state.CanPush)
                     action = WorkspaceGitAction.Push;
                 if (action != WorkspaceGitAction.Push && state.Entries.Count == 0)
                 {
@@ -64,17 +79,19 @@ public partial class ChatPanel
                 if (action != WorkspaceGitAction.Push && summary is null)
                 {
                     if (TaskQueue.Instance.FindActive("git:" + root) is not null) { Feedback("CommitSummaryBusy"); return; }
-                    if (!_chat.TryEnqueueSend(session, HubStrings.Get(WorkspaceGit.ActionKey(action)), null, out var refusal))
+                    var prompt = HubStrings.Get(WorkspaceGit.ActionKey(action));
+                    if (action == WorkspaceGitAction.CommitPush) prompt += " → " + state.PushTarget!.Display;
+                    if (!_chat.TryEnqueueSend(session, prompt, null, out var refusal))
                         Feedback(refusal ?? "ChatFailed");
                     return;
                 }
                 if (state.Branch is null or "HEAD (no branch)") { Feedback("CommitSummaryBranchUnavailable"); return; }
-                if (action == WorkspaceGitAction.Push && state.HasUpstream && state.Ahead == 0)
+                if (action == WorkspaceGitAction.Push && !state.CanPush)
                 {
                     Feedback("PushSummaryNothingToPush", UserFeedbackKind.Info);
                     return;
                 }
-                var request = new WorkspaceGitRequest(workspace, root, state.Branch, action, summary ?? "", null);
+                var request = new WorkspaceGitRequest(workspace, root, state.Branch, action, summary ?? "", null, state.PushTarget);
                 if (_chat.StartWorkspaceGit(request, async (item, committed, feedback) =>
                     {
                         _inspector?.GitFinished(request, item, committed);
@@ -103,8 +120,7 @@ public partial class ChatPanel
             var button = new Button { Content = HubStrings.Get(key), Tag = key, IsVisible = false,
                 Classes = { "quiet", "message-action" }, Padding = new Thickness(8, 2), VerticalAlignment = VerticalAlignment.Center };
             buttons.Add(action, button);
-            ToolTip.SetTip(button, action == WorkspaceGitAction.Push ? HubStrings.Get("GitPushAuthorizationTip")
-                : ShortcutSummary(source) is null ? HubStrings.Get("ChatGitUseAgentTip") : HubStrings.Get("ChatGitStageAllTip"));
+            if (action == WorkspaceGitAction.Commit) ToolTip.SetTip(button, HubStrings.Get(ShortcutSummary(source) is null ? "ChatGitUseAgentTip" : "ChatGitStageAllTip"));
             button.Click += async (_, _) => await RunAsync(action);
             bar.Children.Add(button);
         }

@@ -12,13 +12,14 @@ using AxmolHub.Core;
 
 namespace AxmolHub;
 
-internal enum WorkspaceGitAction { Stage, Unstage, StageAll, Commit, Push, CommitPush }
+internal enum WorkspaceGitAction { Stage, Unstage, StageAll, Commit, Push, CommitPush, CreateBranch, Pull, SwitchBranch }
 internal sealed record WorkspaceGitRequest(string Workspace, string Root, string Branch, WorkspaceGitAction Action,
-    string Title, GitStatusEntry? Entry);
+    string Title, GitStatusEntry? Entry, GitPushTarget? PushTarget = null);
 
 internal sealed partial class InspectorPanel
 {
     internal Action<WorkspaceGitRequest>? GitRequested { get; set; }
+    internal Func<string, Task<IReadOnlyList<GitBranchInfo>>>? ReadLocalBranches { get; set; }
     internal Func<string?>? SuggestedTitle { get; set; }
     internal Func<Control?>? GitTitleResizeHandle { get; set; }
     private readonly Dictionary<(string, string?), string> _gitDrafts = [];
@@ -37,7 +38,7 @@ internal sealed partial class InspectorPanel
     private void RequestGit(GitRepositoryState state, WorkspaceGitAction action, GitStatusEntry? entry = null, string? title = null)
     {
         if (!ReferenceEquals(state, _repository) || _workspaceRoot is null || state.Root is null || state.Branch is null) return;
-        GitRequested?.Invoke(new(_workspaceRoot, state.Root, state.Branch, action, title ?? "", entry));
+        GitRequested?.Invoke(new(_workspaceRoot, state.Root, state.Branch, action, title ?? "", entry, state.PushTarget));
     }
 
     private readonly Grid _gitHeader = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
@@ -71,7 +72,7 @@ internal sealed partial class InspectorPanel
         _gitHeader.Children.Add(_gitButton);
         var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         FlyoutBase.SetAttachedFlyout(_gitButton, menu);
-        _gitButton.Click += (_, _) =>
+        _gitButton.Click += async (_, _) =>
         {
             if (menu.IsOpen) { menu.Hide(); return; }
             if (_repository is not { Root: { } root } state) return;
@@ -80,11 +81,13 @@ internal sealed partial class InspectorPanel
             var blocked = busy is not null ? string.Format(HubStrings.Get("GitWriteBusy"), busy.Title)
                 : state.Branch is null or "HEAD (no branch)" ? HubStrings.Get("CommitSummaryBranchUnavailable") : null;
             var staged = state.Entries.Any(e => e.IndexState is not (" " or "?"));
-            var retry = _pendingPush.Contains((root, state.Branch)) && state.Ahead > 0;
+            var retry = _pendingPush.Contains((root, state.Branch)) && state.CanPush;
             void Add(string key, WorkspaceGitAction action, bool enabled, string? reason = null, bool needsTitle = false)
             {
                 var name = HubStrings.Get(key) + (needsTitle ? "…" : "");
-                var choice = new MenuItem { Header = name, Tag = key, IsEnabled = enabled && blocked is null };
+                if (action is WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush && state.PushTarget is { } target)
+                    name += " → " + target.Display;
+                var choice = new MenuItem { Header = name, Tag = key, IsEnabled = enabled && (action == WorkspaceGitAction.CreateBranch ? busy is null : blocked is null) };
                 if (!choice.IsEnabled) ToolTip.SetTip(choice, blocked ?? reason);
                 menu.Items.Add(choice);
                 choice.Click += (_, _) =>
@@ -97,12 +100,32 @@ internal sealed partial class InspectorPanel
             Add("GitStageAll", WorkspaceGitAction.StageAll, state.Entries.Any(e => e.WorktreeState != " "));
             menu.Items.Add(new Separator());
             var why = !staged ? HubStrings.Get("CommitSummaryNothingStaged") : null;
-            var upstream = !state.HasUpstream ? HubStrings.Get("PushSummaryUpstreamUnavailable") : null;
+            var upstream = state.PushTarget is null ? HubStrings.Get("PushSummaryUpstreamUnavailable") : null;
             Add("CommitSummaryAction", WorkspaceGitAction.Commit, staged, why, true);
-            Add("CommitPushSummaryAction", WorkspaceGitAction.CommitPush, staged && state.HasUpstream, why ?? upstream, true);
-            Add(retry ? "GitRetryPush" : "PushSummaryAction", WorkspaceGitAction.Push, state.HasUpstream && state.Ahead > 0,
+            Add("CommitPushSummaryAction", WorkspaceGitAction.CommitPush, staged && state.PushTarget is not null, why ?? upstream, true);
+            Add("GitPull", WorkspaceGitAction.Pull, state.HasUpstream, HubStrings.Get("GitPullNoUpstream"));
+            Add(retry ? "GitRetryPush" : "PushSummaryAction", WorkspaceGitAction.Push, state.CanPush,
                 upstream ?? HubStrings.Get("PushSummaryNothingToPush"));
+            menu.Items.Add(new Separator());
+            Add("GitCreateBranch", WorkspaceGitAction.CreateBranch, true, needsTitle: true);
+            var branches = new MenuItem { Header = HubStrings.Get("GitSwitchBranch"), Tag = "GitSwitchBranch", IsEnabled = false };
+            menu.Items.Add(branches);
             menu.ShowAt(_gitButton);
+            if (busy is not null || ReadLocalBranches is not { } read) return;
+            var local = await read(root);
+            if (!menu.IsOpen || !menu.Items.Contains(branches)) return;
+            foreach (var branch in local)
+            {
+                var choice = new MenuItem { Header = branch.Name, IsEnabled = !branch.IsCurrent,
+                    ToggleType = MenuItemToggleType.CheckBox, IsChecked = branch.IsCurrent };
+                choice.Click += (_, _) =>
+                {
+                    menu.Hide();
+                    RequestGit(state, WorkspaceGitAction.SwitchBranch, title: branch.Name);
+                };
+                branches.Items.Add(choice);
+            }
+            branches.IsEnabled = local.Count > 0;
         };
         return _gitHeader;
     }
@@ -122,11 +145,13 @@ internal sealed partial class InspectorPanel
         if (!ReferenceEquals(state, _repository) || !_gitHeader.IsEffectivelyVisible) return;
         var workspace = _workspaceRoot;
         var key = (state.Root!, state.Branch);
-        var suggestion = SuggestedTitle?.Invoke();
-        if (!_gitDrafts.TryGetValue(key, out var draft)) draft = suggestion == _usedSuggestion.GetValueOrDefault(key) ? "" : suggestion ?? "";
-        var title = new TextBox { Classes = { "git-title" }, PlaceholderText = HubStrings.Get("GitCommitMessage"), MaxLength = 120, Text = draft };
-        var submit = new Button { Classes = { "git-submit" }, Content = HubStrings.Get(action == WorkspaceGitAction.Commit ? "CommitSummaryAction" : "CommitPushSummaryAction"),
-            IsEnabled = CommitSummary.IsWellFormedTitle(draft) };
+        var create = action == WorkspaceGitAction.CreateBranch;
+        var suggestion = create ? null : SuggestedTitle?.Invoke();
+        var draft = create ? "" : _gitDrafts.GetValueOrDefault(key) ?? (suggestion == _usedSuggestion.GetValueOrDefault(key) ? "" : suggestion ?? "");
+        bool Valid(string? value) => create ? !string.IsNullOrWhiteSpace(value) : CommitSummary.IsWellFormedTitle(value);
+        var title = new TextBox { Classes = { "git-title" }, PlaceholderText = HubStrings.Get(create ? "GitBranchName" : "GitCommitMessage"),
+            MaxLength = create ? 0 : 120, Text = draft };
+        var submit = new Button { Classes = { "git-submit" }, Content = HubStrings.Get(WorkspaceGit.ActionKey(action)), IsEnabled = Valid(draft) };
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6 };
         row.Children.Add(title);
         Grid.SetColumn(submit, 1);
@@ -134,16 +159,16 @@ internal sealed partial class InspectorPanel
         title.PropertyChanged += (_, e) =>
         {
             if (e.Property != TextBox.TextProperty) return;
-            _gitDrafts[key] = title.Text ?? "";
-            submit.IsEnabled = CommitSummary.IsWellFormedTitle(title.Text);
+            if (!create) _gitDrafts[key] = title.Text ?? "";
+            submit.IsEnabled = Valid(title.Text);
         };
         void Confirm()
         {
             if (!_gitTitleFlyout.IsOpen || !submit.IsEnabled) return;
             _gitTitleFlyout.Hide();
             if (_workspaceRoot != workspace || _repository is not { } current || current.Root != key.Item1 || current.Branch != key.Branch) return;
-            _gitDrafts[key] = title.Text!;
-            _usedSuggestion[key] = suggestion;
+            if (!create) _usedSuggestion[key] = suggestion;
+            if (action == WorkspaceGitAction.CommitPush && current.PushTarget != state.PushTarget) return;
             RequestGit(current, action, title: title.Text);
         }
         submit.Click += (_, _) => Confirm();

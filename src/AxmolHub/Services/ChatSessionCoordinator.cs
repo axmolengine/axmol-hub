@@ -1083,7 +1083,7 @@ internal sealed partial class ChatSessionCoordinator
             {
                 RepositoryReadsForCheck++;
                 var runner = new ProcessRunner(line => log?.Write(line));
-                var state = await GitRepository.ReadAsync(workspaceRoot, runner, sensitiveValues)
+                var state = await GitRepository.ReadAsync(workspaceRoot, runner, sensitiveValues, includePushTarget: true)
                     .ConfigureAwait(false);
                 var snapshot = new RepositorySnapshot(workspaceRoot, state);
                 await Execution.ApplyOnUiAsync(() =>

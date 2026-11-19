@@ -119,6 +119,22 @@ internal static class AiCommitSummaryChecks
                     if (noUpstream.Success || noUpstream.FailureKey != "upstream-unavailable")
                         throw new Exception("Push did not stop when the branch had no configured upstream.");
                     await RunGit("remote", "add", "origin", remote);
+                    async Task<GitCommitResult> Branch(string from, string to, bool create = false) =>
+                        await GitRepository.ChangeBranchAsync(repo, repositoryRoot, from, to, create, runner);
+                    if (!(await Branch("main", "topic", create: true)).Success || !(await Branch("main", "topic")).Success)
+                        throw new Exception("Creating a local branch changed HEAD or prevented switching to it.");
+                    var first = new GitPushTarget("origin", "topic", true);
+                    await RunGit("config", "branch.topic.pushRemote", "missing");
+                    if ((await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).FailureKey != "workspace-changed")
+                        throw new Exception("Invalidated first-push target silently fell back to origin.");
+                    await RunGit("config", "--unset", "branch.topic.pushRemote");
+                    if (!(await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).Success
+                        || await ReadHead(remote, "refs/heads/topic") != await ReadHead(repo, "HEAD")
+                        || (await runner.RunAsync(git, ["rev-parse", "--abbrev-ref", "@{upstream}"], repo)).Output.Trim() != first.Display)
+                        throw new Exception("First push did not publish and track exactly the displayed branch.");
+                    if (!(await GitRepository.PullAsync(repo, repositoryRoot, "topic", runner)).Success)
+                        throw new Exception("Pull failed on an up-to-date tracked branch.");
+                    if (!(await Branch("topic", "main")).Success) throw new Exception("Could not switch back to main.");
                     await RunGit("push", "-u", "origin", "main:published");
                     await RunGit("branch", "other");
                     await RunGit("push", "origin", "other");
@@ -167,6 +183,16 @@ internal static class AiCommitSummaryChecks
                         || await ReadHead(remote, "refs/heads/published") != divergent
                         || await ReadHead(repo, "HEAD") != partialHead)
                         throw new Exception("A divergent upstream was not rejected without changing either branch.");
+                    await RunGit("config", "pull.rebase", "true");
+                    await RunGit("config", "rebase.autoStash", "true");
+                    var pull = await GitRepository.PullAsync(repo, repositoryRoot, "main", runner);
+                    if (pull.FailureKey != "pull-failed" || await ReadHead(repo, "HEAD") != partialHead)
+                        throw new Exception("Pull did not refuse divergent history.");
+                    var collision = Path.Combine(repo, "divergent.txt");
+                    await File.WriteAllTextAsync(collision, "keep untracked content");
+                    if ((await Branch("main", "divergent")).Success || await ReadHead(repo, "HEAD") != partialHead
+                        || await File.ReadAllTextAsync(collision) != "keep untracked content")
+                        throw new Exception("Branch switch overwrote a conflicting worktree file.");
                     await RunGit("checkout", "--detach");
                     var detached = await GitRepository.PushAsync(repo, repositoryRoot, runner);
                     if (detached.Success || detached.FailureKey != "branch-unavailable")
@@ -174,12 +200,12 @@ internal static class AiCommitSummaryChecks
                 }
                 finally
                 {
-                    try { Directory.Delete(remote, recursive: true); } catch (IOException) { }
+                    try { AiWorkspaceChecks.WipeRepository(remote); } catch (IOException) { }
                 }
             }
             finally
             {
-                try { Directory.Delete(repo, recursive: true); } catch (IOException) { }
+                try { AiWorkspaceChecks.WipeRepository(repo); } catch (IOException) { }
             }
 
             async Task RunGit(params string[] arguments)
@@ -199,7 +225,7 @@ internal static class AiCommitSummaryChecks
         {
             Console.WriteLine("SKIP: git executable unavailable; repository commit fixture not run.");
         }
-        Console.WriteLine("PASS: commit-summary parsing and legacy defaults; commit preserves unstaged content; push is upstream-only, non-forced and a terminal no-op when current.");
+        Console.WriteLine("PASS: commit-summary parsing and legacy defaults; commit preserves unstaged content; first push sets upstream, tracked push is scoped and non-forced, pull rejects divergence, switch preserves worktree content.");
         return;
     }
 }
