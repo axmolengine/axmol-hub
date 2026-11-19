@@ -88,6 +88,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private bool _closingTabs;
     private bool _browserObscured;
     private int _openMenus;
+    private double _editorFontSize = CodeSurface.DefaultFontSize;
     private enum TabCloseScope { Single, All, Others, Right }
     internal Control TabStrip { get; }
     internal event Action<string>? FileRequested;
@@ -253,7 +254,12 @@ internal sealed class WorkspaceView : Grid, IDisposable
         {
             existing = new Document(path, title, content, dirty ?? (() => false));
             _state.Documents.Add(existing);
-            if (content is CodeEditorView editor) editor.StateChanged += RenderTabs;
+            if (content is CodeEditorView editor)
+            {
+                editor.EditorFontSize = _editorFontSize;
+                editor.ZoomRequested += SetEditorFontSize;
+                editor.StateChanged += RenderTabs;
+            }
         }
         _state.Selected = existing.Path;
         if (!_state.ManuallyHidden && Bounds.Width >= 640) _state.TreeVisible = true;
@@ -266,6 +272,21 @@ internal sealed class WorkspaceView : Grid, IDisposable
             ApplyTreeLayout();
         }
         OpenRequested?.Invoke();
+    }
+
+    private void SetEditorFontSize(double size)
+    {
+        if (_editorFontSize == size) return;
+        _editorFontSize = size;
+        foreach (var document in _states.Values.SelectMany(state => state.Documents))
+            if (document.Content is CodeEditorView editor) editor.EditorFontSize = size;
+    }
+
+    private void UnsubscribeDocument(Document document)
+    {
+        if (document.Content is not CodeEditorView editor) return;
+        editor.ZoomRequested -= SetEditorFontSize;
+        editor.StateChanged -= RenderTabs;
     }
 
     internal bool SelectExisting(string path)
@@ -590,7 +611,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var index = state.Documents.IndexOf(document);
         if (index < 0) return true;
         state.Documents.RemoveAt(index);
-        if (document.Content is CodeEditorView closedEditor) closedEditor.StateChanged -= RenderTabs;
+        UnsubscribeDocument(document);
         if (state.Selected == document.Path) ChooseRemaining(state, index);
         return true;
     }
@@ -648,7 +669,12 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal void DiscardAll()
     {
         foreach (var state in _states.Values)
-            state.Documents.RemoveAll(document => document.Dirty());
+            state.Documents.RemoveAll(document =>
+            {
+                if (!document.Dirty()) return false;
+                UnsubscribeDocument(document);
+                return true;
+            });
         if (_state is not null && !_state.Documents.Any(document => document.Path == _state.Selected)
             && _state.Selected is not ("plan" or "repo") && !_state.Browsers.Any(browser => browser.TabId == _state.Selected)) ChooseRemaining(_state);
         Render();
@@ -701,6 +727,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     {
         foreach (var state in _states.Values)
         {
+            foreach (var document in state.Documents) UnsubscribeDocument(document);
             foreach (var browser in state.Browsers) { browser.StateChanged -= SyncBrowserTab; browser.Dispose(); }
             state.Tree.Dispose();
         }

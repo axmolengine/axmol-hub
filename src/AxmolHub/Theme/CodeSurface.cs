@@ -4,6 +4,7 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using AvaloniaEdit;
 using AvaloniaEdit.Editing;
+using AvaloniaEdit.Highlighting;
 using AvaloniaEdit.Rendering;
 
 namespace AxmolHub;
@@ -11,6 +12,8 @@ namespace AxmolHub;
 /// <summary>The shared palette, typography and gutter for read-only and editable code surfaces.</summary>
 internal static class CodeSurface
 {
+    internal const double DefaultFontSize = 13;
+
     /// <summary>The font a project file is read in. One name for both the gutter and the text, because a gutter
     /// in a different family than the code it numbers drifts by a pixel a line.</summary>
     internal static readonly FontFamily Mono = FontFamily.Parse("Menlo,Consolas,monospace");
@@ -26,17 +29,16 @@ internal static class CodeSurface
     internal static void ApplyLinkInk(TextEditor editor)
         => editor.TextArea.TextView.Bind(TextView.LinkTextForegroundBrushProperty, new DynamicResourceExtension("Hub.Link"));
 
-    internal static TextEditor ForFile(string? path, string text, string? syntaxSource = null, bool manageSyntax = true)
+    internal static TextEditor ForFile(string? path, string text, string? syntaxSource = null, bool manageSyntax = true,
+        bool regularSyntaxWeight = false)
     {
-        var editor = new TextEditor
-        {
-            Text = text,
-            IsReadOnly = true,
-            WordWrap = false,
-            ShowLineNumbers = true,
-            FontFamily = Mono,
-            FontSize = 13,
-        };
+        TextEditor editor = regularSyntaxWeight ? new RegularSyntaxTextEditor() : new TextEditor();
+        editor.Text = text;
+        editor.IsReadOnly = true;
+        editor.WordWrap = false;
+        editor.ShowLineNumbers = true;
+        editor.FontFamily = Mono;
+        editor.FontSize = DefaultFontSize;
         // AvaloniaEdit's theme rides on a style include rather than the application's, and an editor without it
         // draws a white page under a palette made for a dark well.
         editor.Styles.Add(new StyleInclude(new Uri("avares://AxmolHub/"))
@@ -71,5 +73,27 @@ internal static class CodeSurface
             RefreshSyntax();
         }
         return editor;
+    }
+
+    private sealed class RegularSyntaxTextEditor : TextEditor
+    {
+        protected override Type StyleKeyOverride => typeof(TextEditor);
+
+        protected override IVisualLineTransformer CreateColorizer(IHighlightingDefinition highlightingDefinition)
+            => new RegularSyntaxColorizer(highlightingDefinition);
+    }
+
+    private sealed class RegularSyntaxColorizer(IHighlightingDefinition definition) : HighlightingColorizer(definition)
+    {
+        protected override void ApplyColorToElement(VisualLineElement element, HighlightingColor color)
+        {
+            var properties = element.TextRunProperties;
+            var weight = properties.Typeface.Weight;
+            base.ApplyColorToElement(element, color);
+            var typeface = properties.Typeface;
+            // Keep the syntax color and style without letting this rule embolden the text.
+            if (typeface.Weight > weight)
+                properties.SetTypeface(new Typeface(typeface.FontFamily, typeface.Style, weight, typeface.Stretch));
+        }
     }
 }

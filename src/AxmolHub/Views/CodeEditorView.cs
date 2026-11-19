@@ -24,9 +24,11 @@ internal sealed class CodeEditorView : Grid
     private string? _lastObservedIdentity;
     private bool _saving;
     internal event Action? StateChanged;
+    internal event Action<double>? ZoomRequested;
 
     internal CodeEditorView(string path, TextFileSnapshot baseline,
-        Func<TextFileSnapshot, string, TextReplaceResult> save, bool writable, Window? owner, Func<bool>? canRead = null)
+        Func<TextFileSnapshot, string, TextReplaceResult> save, bool writable, Window? owner, Func<bool>? canRead = null,
+        bool isWorkspaceTab = false)
     {
         _path = Path.GetFullPath(path);
         _owner = owner;
@@ -35,15 +37,27 @@ internal sealed class CodeEditorView : Grid
         _save = save;
         _canRead = canRead ?? (() => true);
         RowDefinitions = new RowDefinitions("*,Auto");
-        _editor = CodeSurface.ForFile(path, TextEol.ToLf(baseline.Text));
+        _editor = CodeSurface.ForFile(path, TextEol.ToLf(baseline.Text), regularSyntaxWeight: isWorkspaceTab);
         _editor.IsReadOnly = !writable;
         _editor.ShowLineNumbers = true;
         _editor.Name = "WorkspaceTextEditor";
         _editor.ContextMenu = CreateTextMenu();
         _editor.TextChanged += (_, _) => UpdateStatus();
         _editor.GotFocus += (_, _) => ObserveDisk();
+        _editor.AddHandler(PointerWheelChangedEvent, (_, e) =>
+        {
+            if (ZoomRequested is not { } zoom || e.KeyModifiers != KeyModifiers.Control || e.Delta.Y == 0) return;
+            zoom(Math.Clamp(EditorFontSize + Math.Sign(e.Delta.Y) * 0.5, 9, 24));
+            e.Handled = true;
+        }, RoutingStrategies.Tunnel);
         _editor.AddHandler(KeyDownEvent, (_, e) =>
         {
+            if (ZoomRequested is { } zoom && e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D0 or Key.NumPad0)
+            {
+                zoom(CodeSurface.DefaultFontSize);
+                e.Handled = true;
+                return;
+            }
             var modifier = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
             if (e.Key != Key.S || e.KeyModifiers != modifier) return;
             Save();
@@ -54,6 +68,12 @@ internal sealed class CodeEditorView : Grid
         Grid.SetRow(_status, 1);
         Children.Add(_status);
         UpdateStatus();
+    }
+
+    internal double EditorFontSize
+    {
+        get => _editor.FontSize;
+        set => _editor.FontSize = value;
     }
 
     internal bool IsDirty => !string.Equals(_editor.Text, TextEol.ToLf(_baseline.Text), StringComparison.Ordinal);

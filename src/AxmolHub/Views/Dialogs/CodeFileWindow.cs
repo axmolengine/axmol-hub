@@ -72,7 +72,7 @@ public sealed class CodeFileWindow : Window
         {
             var current = scopeFor();
             return WorkspacePaths.ResolveRead(current.Sandbox, read.Full, current.Guards).IsAllowed;
-        });
+        }, isWorkspaceTab: shell is not null);
         if (shell is not null)
         {
             shell.ShowWorkspaceDocument(read.Full, Path.GetFileName(read.Full), editor, () => editor.IsDirty);
