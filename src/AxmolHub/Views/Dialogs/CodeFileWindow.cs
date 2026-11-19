@@ -53,22 +53,21 @@ public sealed class CodeFileWindow : Window
         if (shell?.SelectWorkspaceDocument(read.Full) == true) return null;
         var baseline = TextFile.Read(read.Full, TextFile.MaxEditorBytes);
         if (baseline.State != TextFileState.Text) return "InspectorOpenFileUnavailable";
-        var write = WorkspacePaths.ResolveWrite(initialScope.Sandbox, read.Full, initialScope.Guards);
-        var writable = write.IsAllowed && WorkspacePaths.IsWritableText(Path.GetFileName(read.Full));
+        var write = WorkspacePaths.ResolveWrite(initialScope.Sandbox, read.Full, initialScope.Guards, allowUnlistedText: true);
         var editor = new CodeEditorView(read.Full, baseline, (snapshot, text) =>
         {
             using var lease = TextFile.AcquireWrite(read.Full);
             var result = lease.Save(() =>
             {
                 var currentScope = scopeFor();
-                var currentPath = WorkspacePaths.ResolveWrite(currentScope.Sandbox, read.Full, currentScope.Guards);
+                var currentPath = WorkspacePaths.ResolveWrite(currentScope.Sandbox, read.Full, currentScope.Guards, allowUnlistedText: true);
                 return currentPath.IsAllowed && WorkspaceFileTree.WorkspacePathComparer.Equals(currentPath.Full, read.Full)
                     ? currentPath
                     : WorkspacePath.Refuse(currentPath.IsAllowed ? WorkspacePathVerdict.ReparsePoint : currentPath.Verdict, read.Full);
             }, snapshot, text);
             if (result.Verdict == TextReplaceVerdict.Written) saved?.Invoke();
             return result;
-        }, writable, owner, () =>
+        }, write.IsAllowed, owner, () =>
         {
             var current = scopeFor();
             return WorkspacePaths.ResolveRead(current.Sandbox, read.Full, current.Guards).IsAllowed;

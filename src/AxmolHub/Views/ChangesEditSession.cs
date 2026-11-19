@@ -71,15 +71,14 @@ internal sealed class ChangesEditBuffer
     {
         var scope = scopeFor();
         var read = WorkspacePaths.ResolveRead(scope.Sandbox, path, scope.Guards);
-        var write = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards);
-        if (!read.IsAllowed || !write.IsAllowed || read.Full != write.Full
-            || !WorkspacePaths.IsWritableText(System.IO.Path.GetFileName(read.Full))) return null;
+        var write = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards, allowUnlistedText: true);
+        if (!read.IsAllowed || !write.IsAllowed || read.Full != write.Full) return null;
         var baseline = TextFile.Read(read.Full, TextFile.MaxDiffBytes);
         if (baseline.State != TextFileState.Text) return null;
         return new ChangesEditBuffer(read.Full, baseline, () =>
         {
             var current = scopeFor();
-            return WorkspacePaths.ResolveWrite(current.Sandbox, path, current.Guards);
+            return WorkspacePaths.ResolveWrite(current.Sandbox, path, current.Guards, allowUnlistedText: true);
         });
     }
 
