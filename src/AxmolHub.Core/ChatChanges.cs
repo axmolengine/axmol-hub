@@ -66,15 +66,27 @@ public static class ChatChanges
 
     public static bool IsManagement(string? name) => name is ToolNames.FsDelete or ToolNames.FsMove;
 
-    private static IEnumerable<ChangedFile> ManagedRows(ChatTurn turn, string callId, int index, string result)
+    private static TextFileSnapshot? ReadDeletedText(string? dataRoot, FsManagedEntry entry)
+    {
+        if (entry.Length > TextFile.MaxDiffBytes) return new(TextFileState.TooLarge);
+        return entry.ContentHash is { } hash && ChatChangeStore.ReadRawObject(dataRoot, hash) is { } bytes
+            ? TextFile.Decode(bytes) : null;
+    }
+
+    private static IEnumerable<ChangedFile> ManagedRows(ChatTurn turn, string callId, int index, string result,
+        string? dataRoot = null)
     {
         if (turn.ManagementBatchId is not { Length: > 0 } batch || turn.ManagementSource is not { Length: > 0 } source)
             yield break;
         foreach (var entry in turn.ManagedEntries)
         {
             var path = entry.RelativePath == "." ? source : Path.Combine(source, entry.RelativePath);
-            yield return new ChangedFile(path, turn.ToolName == ToolNames.FsDelete ? ChangeVerdict.Deleted : ChangeVerdict.Moved,
-                callId, index, turn.ApprovalPreview, null, turn.ToolArguments, FirstLine(result), true,
+            var deleted = turn.ToolName == ToolNames.FsDelete;
+            var lines = deleted && !entry.Directory && dataRoot is not null
+                && ReadDeletedText(dataRoot, entry) is { State: TextFileState.Text } snapshot
+                ? FileDiff.CountChangedLines(snapshot.Text, "") : null;
+            yield return new ChangedFile(path, deleted ? ChangeVerdict.Deleted : ChangeVerdict.Moved,
+                callId, index, turn.ApprovalPreview, null, turn.ToolArguments, FirstLine(result), true, lines,
                 ManagementBatchId: batch, ManagedRelativePath: entry.RelativePath);
         }
     }
@@ -184,7 +196,8 @@ public static class ChatChanges
 
     /// <summary>Returns successful writes for one activity group without collapsing repeated writes to the same
     /// path. Each returned row represents the exact file revision produced by that tool call.</summary>
-    public static IReadOnlyList<ChangedFile> ForCalls(Conversation? conversation, IReadOnlySet<string> callIds)
+    public static IReadOnlyList<ChangedFile> ForCalls(Conversation? conversation, IReadOnlySet<string> callIds,
+        string? dataRoot = null)
     {
         if (conversation is null || callIds.Count == 0) return [];
         var results = conversation.Messages
@@ -198,7 +211,7 @@ public static class ChatChanges
             if (turn.Role == ChatRoles.Assistant && IsManagement(turn.ToolName)
                 && turn.ToolCallId is { Length: > 0 } managementCall && callIds.Contains(managementCall))
             {
-                changes.AddRange(ManagedRows(turn, managementCall, index, results.GetValueOrDefault(managementCall) ?? ""));
+                changes.AddRange(ManagedRows(turn, managementCall, index, results.GetValueOrDefault(managementCall) ?? "", dataRoot));
                 continue;
             }
             if (turn.Role == ChatRoles.Assistant && turn.ToolName == ToolNames.FsReplace
@@ -265,12 +278,12 @@ public static class ChatChanges
             if (entry.Directory) return destination is null ? $"Deleted directory {file.RelativePath}."
                 : $"Moved directory {file.RelativePath} → {destination}.";
             if (destination is not null) return $"Moved {file.RelativePath} → {destination} ({entry.Length} bytes; content unchanged).";
-            if (entry.Length > TextFile.MaxDiffBytes)
+            var text = ReadDeletedText(dataRoot, entry);
+            if (text is null) { state = UndoCopyState.Unreadable; return null; }
+            if (text.State == TextFileState.TooLarge)
                 return $"Deleted file {file.RelativePath} ({entry.Length} bytes; too large for a text diff).";
-            if (entry.ContentHash is not { } hash || ChatChangeStore.ReadRawObject(dataRoot, hash) is not { } bytes)
-            { state = UndoCopyState.Unreadable; return null; }
-            if (TextFile.Decode(bytes) is not { State: TextFileState.Text } text)
-                return $"Deleted file {file.RelativePath} ({bytes.LongLength} bytes; binary or too large for a text diff).";
+            if (text.State != TextFileState.Text)
+                return $"Deleted file {file.RelativePath} ({entry.Length} bytes; binary or too large for a text diff).";
             return FileDiff.Unified(text.Text, "", file.RelativePath, capped);
         }
 

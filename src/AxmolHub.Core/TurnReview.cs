@@ -132,7 +132,7 @@ public sealed record TurnReview(
                 hasManagement = true;
                 if (!turn.UndoConsumed)
                     actions.Add(new TurnReviewAction(batch.Management?.Source ?? "", index, null, managementId));
-                managedRows.AddRange(ChatChanges.ForCalls(conversation, new HashSet<string>(StringComparer.Ordinal) { callId })
+                managedRows.AddRange(ChatChanges.ForCalls(conversation, new HashSet<string>(StringComparer.Ordinal) { callId }, dataRoot)
                     .Select(row => (row, index)));
             }
             var ids = turn.ChangeRefs.Count > 0
@@ -182,7 +182,7 @@ public sealed record TurnReview(
         foreach (var (row, index) in managedRows)
         {
             files.Add(new TurnReviewFile(row.RelativePath, row.RelativePath, row.Verdict,
-                row.ManagementBatchId!, row.ManagementBatchId!, [index], null, row.ManagementBatchId, row.ManagedRelativePath));
+                row.ManagementBatchId!, row.ManagementBatchId!, [index], row.Lines, row.ManagementBatchId, row.ManagedRelativePath));
             rows.Add(row);
         }
         return new TurnReview(files, rows, ranCommands, hasManagement ? actions : null);
