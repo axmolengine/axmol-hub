@@ -82,15 +82,18 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             Title().Text = "topic";
             Key(Avalonia.Input.Key.Enter);
             await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No branch creation task")).Completion;
-            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Branch == "main");
+            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Branch == "topic");
             anchor.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var branchMenu = (MenuFlyout)Avalonia.Controls.Primitives.FlyoutBase.GetAttachedFlyout(anchor)!;
             var switcher = branchMenu.Items.OfType<MenuItem>().Single(m => Equals(m.Tag, "GitSwitchBranch"));
             await WaitForConditionAsync(() => switcher.IsEnabled);
-            if (!switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "topic") && m.IsEnabled)
-                || !switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "main") && m.IsChecked && !m.IsEnabled)
+            var main = switcher.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "main"));
+            if (!main.IsEnabled
+                || !switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "topic") && m.IsChecked && !m.IsEnabled)
                 || switcher.Items.Count != 2) throw new Exception("Switch submenu did not list only local branches with the current branch checked.");
-            branchMenu.Hide();
+            main.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No branch switch task")).Completion;
+            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Branch == "main");
             Click("CommitPushSummaryAction");
             if (Title().Text != "Commit selection") throw new Exception("Draft lost between commit commands.");
             Key(Avalonia.Input.Key.ImeProcessed);

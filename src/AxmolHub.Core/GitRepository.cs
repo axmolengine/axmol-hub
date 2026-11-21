@@ -577,7 +577,7 @@ public static partial class GitRepository
         var valid = await Run("check-ref-format", "--branch", name).ConfigureAwait(false);
         if (valid.ExitCode != 0 || valid.Output.TrimEnd('\r', '\n') != name || name == "-")
             return new(false, "invalid-branch", FirstText(valid.Error));
-        var result = create ? await Run("branch", "--no-track", "--", name, "HEAD").ConfigureAwait(false)
+        var result = create ? await Run("switch", "--no-track", "--create", name, "--", "HEAD").ConfigureAwait(false)
             : await Run("switch", "--no-guess", "--", name).ConfigureAwait(false);
         return new(result.ExitCode == 0, result.ExitCode == 0 ? null : "branch-failed", FirstText(result.Error, result.Output));
     }

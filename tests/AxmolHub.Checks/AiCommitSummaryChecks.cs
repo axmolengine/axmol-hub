@@ -121,8 +121,9 @@ internal static class AiCommitSummaryChecks
                     await RunGit("remote", "add", "origin", remote);
                     async Task<GitCommitResult> Branch(string from, string to, bool create = false) =>
                         await GitRepository.ChangeBranchAsync(repo, repositoryRoot, from, to, create, runner);
-                    if (!(await Branch("main", "topic", create: true)).Success || !(await Branch("main", "topic")).Success)
-                        throw new Exception("Creating a local branch changed HEAD or prevented switching to it.");
+                    if (!(await Branch("main", "topic", create: true)).Success
+                        || (await GitRepository.ReadAsync(repo, runner, includeDiffs: false)).Branch != "topic")
+                        throw new Exception("Creating a local branch did not switch to it.");
                     var first = new GitPushTarget("origin", "topic", true);
                     await RunGit("config", "branch.topic.pushRemote", "missing");
                     if ((await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).FailureKey != "workspace-changed")

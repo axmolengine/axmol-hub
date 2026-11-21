@@ -1483,7 +1483,7 @@ public static class HubTexts
         ["GitPull"] = ("拉取", "Pull"),
         ["GitPullNoUpstream"] = ("请先为当前分支设置上游。", "Set an upstream for the current branch first."),
         ["GitPullSucceeded"] = ("已拉取当前分支。", "Pulled the current branch."),
-        ["GitBranchCreated"] = ("已创建本地分支：{0}", "Created local branch: {0}"),
+        ["GitBranchCreated"] = ("已创建并切换到本地分支：{0}", "Created and switched to local branch: {0}"),
         ["GitBranchSwitched"] = ("已切换到分支：{0}", "Switched to branch: {0}"),
         ["GitPullFailed"] = ("无法快进拉取。", "Fast-forward pull failed."),
         ["GitCreateBranch"] = ("新建本地分支", "Create local branch"),
