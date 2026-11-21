@@ -12,6 +12,7 @@ public sealed record LocalSearchHit(string Title, string Url, string Snippet,
 public static class LocalWebSearch
 {
     public const int MaxResults = 8;
+    private const int MaxResponseBytes = 1024 * 1024;
     private const string RetryHint = " Say you could not search; do not retry immediately.";
     private static readonly Regex DdgTitle = new(@"<a\b(?<attrs>[^>]*\bresult__a\b[^>]*)>(?<text>.*?)</a>",
         RegexOptions.Singleline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
@@ -30,14 +31,14 @@ public static class LocalWebSearch
         try
         {
             var request = new FetchRequest(new Uri($"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}"),
-                WebFetch.MaxBytes);
+                MaxResponseBytes);
             var response = await web.Get(request, deadline.Token).ConfigureAwait(false);
             using var bodyStream = response.Body;
             // Keep requests on the selected search endpoint.
             if (response.RedirectLocation is not null)
                 return "Refused: DuckDuckGo returned a redirect, which is not followed; no results were obtained."
                        + RetryHint;
-            var payload = await WebFetch.ReadBoundedAsync(bodyStream, WebFetch.MaxBytes, deadline.Token)
+            var payload = await WebFetch.ReadBoundedAsync(bodyStream, MaxResponseBytes, deadline.Token)
                 .ConfigureAwait(false);
             var (body, _) = WebFetch.Decode(payload, response.ContentType);
             return Redact(Interpret(response.Status, body));
@@ -49,7 +50,7 @@ public static class LocalWebSearch
         }
         catch (InvalidDataException)
         {
-            return $"Refused: DuckDuckGo's response exceeded the {WebFetch.MaxBytes / 1024} KiB limit and was dropped."
+            return $"Refused: DuckDuckGo's response exceeded the {MaxResponseBytes / 1024} KiB limit and was dropped."
                    + RetryHint;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException

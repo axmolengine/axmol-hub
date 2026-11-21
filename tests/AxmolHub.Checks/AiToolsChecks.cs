@@ -1762,9 +1762,9 @@ internal static class AiToolsChecks
         var binary = await browsing.FetchWebPage("https://example.com/manual.pdf");
         QueuePage(200, "text/plain", new string ('x', WebFetch.MaxBytes + 64));
         var oversized = await browsing.FetchWebPage("https://example.com/huge.txt");
-        if (!binary.Contains("application/pdf", StringComparison.Ordinal) || !binary.Contains("which is not text", StringComparison.Ordinal) || !binary.Contains("run_command", StringComparison.Ordinal) || !oversized.Contains($"larger than {WebFetch.MaxBytes / 1024 / 1024} MiB", StringComparison.Ordinal) || !oversized.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
+        if (!binary.Contains("application/pdf", StringComparison.Ordinal) || !binary.Contains("which is not text", StringComparison.Ordinal) || !binary.Contains("run_command", StringComparison.Ordinal) || !oversized.Contains($"larger than {WebFetch.MaxMebibytes} MiB", StringComparison.Ordinal) || !oversized.Contains("do not retry", StringComparison.OrdinalIgnoreCase))
             throw new Exception($"A binary or an over-cap body was buffered instead of refused:{Environment.NewLine}" + $"{binary}{Environment.NewLine}{oversized}");
-        Console.WriteLine("PASS: web_fetch reads at most a megabyte and only text, and points at run_command for the rest.");
+        Console.WriteLine("PASS: web_fetch reads only text within its size limit, and points at run_command for the rest.");
         // Redirects are where a host policy gets walked past, so each shape is asserted on what was *asked*, not only
         // on what was said.
         sent.Clear();

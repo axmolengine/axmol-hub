@@ -49,7 +49,7 @@ Built with C# and Avalonia, targeting `net8.0` with support for newer runtimes. 
 
 ## Privacy
 
-No telemetry; logs stay on your machine. Hub contacts configured AI providers for sign-in, model lists, and requests, and downloads engine/toolchain metadata and selected files. Web search is on by default. Hub uses a supported model provider's search service when available and falls back to DuckDuckGo otherwise. Some search and fetch services may charge per request. Page fetching is controlled separately, limited to public HTTPS URLs and 1 MiB, and strips scripts and styles.
+No telemetry; logs stay on your machine. Hub contacts configured AI providers for sign-in, model lists, and requests, and downloads engine/toolchain metadata and selected files. Web search is on by default. Hub uses a supported model provider's search service when available and falls back to DuckDuckGo otherwise. Some search and fetch services may charge per request. Page fetching is controlled separately and limited to public HTTPS URLs. Its response size limit is shown in Settings, and scripts and styles are stripped before the text is returned.
 
 ## Code signing
 

@@ -104,9 +104,10 @@ public readonly record struct WebFetchDecision(WebFetchVerdict Verdict, Uri? Tar
 
 public static class WebFetch
 {
-    /// <summary>Bytes read before the fetch is abandoned. The model list's number, for the model list's reason:
-    /// past a megabyte this is not a page the assistant can use, and the transcript would pay for it.</summary>
-    public const int MaxBytes = 1024 * 1024;
+    /// <summary>Maximum response body size before text extraction. The separate character cap keeps large pages
+    /// with small amounts of readable text from inflating the transcript.</summary>
+    public const int MaxMebibytes = 5;
+    public const int MaxBytes = MaxMebibytes * 1024 * 1024;
 
     /// <summary>How much extracted text the model gets unless it asks for more.</summary>
     public const int DefaultCharacters = 6000;
@@ -272,7 +273,7 @@ public static class WebFetch
                 }
                 catch (InvalidDataException)
                 {
-                    return $"Refused: the response from {url.Host} is larger than {MaxBytes / 1024 / 1024} MiB. "
+                    return $"Refused: the response from {url.Host} is larger than {MaxMebibytes} MiB. "
                            + "Ask for a smaller page, or download the file with run_command; do not retry the same "
                            + "address expecting a different size.";
                 }

@@ -580,11 +580,11 @@ public static class HubTexts
         // has to say that "on" is the default, and which class of action a switch-off refuses.
         ["AllowWebFetch"] = ("允许助手抓取网页", "Let the assistant read web pages"),
         ["AllowWebFetchHint"] = (
-            "默认开启。抓取只走 https、只允许公网主机，重定向不许跨出 https，一次最多读 1 MiB；把脚本、样式和导航"
+            $"默认开启。抓取只走 https、只允许公网主机，重定向不许跨出 https，一次最多读 {WebFetch.MaxMebibytes} MiB；把脚本、样式和导航"
             + "去掉之后，正文才交回模型。关掉它只是让这条通道不存在——命令沙箱里的 curl 从来不受这个开关约束，"
             + "「询问审批」档下每一次抓取都照样要过一张卡。",
             "On by default. Fetching is https only, to public hosts, with a redirect never allowed to leave "
-            + "https, and at most 1 MiB is read; scripts, styles and navigation are stripped before the page text "
+            + $"https, and at most {WebFetch.MaxMebibytes} MiB is read; scripts, styles and navigation are stripped before the page text "
             + "reaches the model. Turning this off removes the channel — it has never governed curl inside the "
             + "command sandbox — and in 「询问审批」 every fetch still asks for approval on a card."),
         ["AllowWebSearch"] = ("允许联网搜索", "Allow web search"),

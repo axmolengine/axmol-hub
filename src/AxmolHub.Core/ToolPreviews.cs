@@ -375,7 +375,7 @@ public static class ToolPreviews
         var where = SecretRedaction.Redact($"{target.Host}{target.PathAndQuery}", scope.SensitiveValues);
         return $"web_fetch · {where}\n"
                + $"scheme: https · max_characters: {Number(arguments, "max_characters")} · "
-               + $"reads at most {WebFetch.MaxBytes / 1024 / 1024} MiB, {WebFetch.Timeout.TotalSeconds:0}s";
+               + $"reads at most {WebFetch.MaxMebibytes} MiB, {WebFetch.Timeout.TotalSeconds:0}s";
     }
 
     /// <summary>What a new session is going to be pointed at, and which sandbox it inherits. A person approving

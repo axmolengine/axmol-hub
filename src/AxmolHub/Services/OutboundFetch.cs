@@ -26,12 +26,6 @@ internal static class OutboundFetch
     public static WebBridge Bridge(HttpClient? injected, Func<bool> allowed)
         => new(allowed, (request, cancellation) => GetAsync(injected, request, cancellation));
 
-    /// <summary>Bytes the host copies before it gives up: one more than the cap, so the number that trips
-    /// <see cref="WebFetch"/>'s refusal is Core's own read rather than a claim about what the server said it was
-    /// sending. A chunked response declares no length at all, which is exactly why the copy is bounded and the
-    /// header is not consulted.</summary>
-    private static int CopyLimit => WebFetch.MaxBytes + 1;
-
     private static async Task<FetchResponse> GetAsync(
         HttpClient? injected, FetchRequest request, CancellationToken cancellation)
     {
@@ -55,15 +49,17 @@ internal static class OutboundFetch
             return new FetchResponse(status, type, Absolute(response.RequestMessage?.RequestUri ?? request.Target, location),
                 Stream.Null);
 
+        // Read one byte beyond the request's cap so Core can detect an oversized body without trusting Content-Length.
+        var copyLimit = request.MaxBytes + 1;
         var buffer = new MemoryStream();
         try
         {
             await using var source = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
             var chunk = new byte[81920];
             var total = 0;
-            while (total < CopyLimit)
+            while (total < copyLimit)
             {
-                var read = await source.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, CopyLimit - total)),
+                var read = await source.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, copyLimit - total)),
                     cancellation).ConfigureAwait(false);
                 if (read == 0) break;
                 await buffer.WriteAsync(chunk.AsMemory(0, read), cancellation).ConfigureAwait(false);
