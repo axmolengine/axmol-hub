@@ -55,22 +55,39 @@ internal static class AiToolsChecks
         ChatFileSnapshot? preImage = revisionId is null ? null : ChatChangeStore.ReadSnapshot(dataRoot, revisionId, out _);
         if (revisionId is null || preImage is not { Before: { } before } || !before.Contains("return 0;", StringComparison.Ordinal))
             throw new Exception($"The pre-image was not kept before the write (id='{revisionId ?? "none"}').");
-        var rawPath = Path.Combine(workspace, "src", "raw.txt");
-        var rawBefore = new byte[] { 0xef, 0xbb, 0xbf, (byte)'a', (byte)'\r', (byte)'\n' };
+        const string profile = "1k/build.profiles";
+        var rawPath = Path.Combine(workspace, profile);
+        Directory.CreateDirectory(Path.GetDirectoryName(rawPath)!);
+        byte[] rawBefore = [0xef, 0xbb, 0xbf, .. "ios=old\r\nandroid=old\r\n"u8];
         File.WriteAllBytes(rawPath, rawBefore);
-        var fullFingerprint = WorkspaceTools.WriteFingerprint(scope, "src/raw.txt");
-        var fullWrite = tools.FsWrite("src/raw.txt", "changed\n", overwrite: true);
+        FsReplacement[] profileEdits = [new(profile, "ios=old", "ios=new"), new(profile, "android=old", "android=new")];
+        var profileCard = ToolPreviews.TextEditPreview("fs_replace", JsonSerializer.Serialize(new { edits = profileEdits }), scope);
+        var profileResult = new WorkspaceTools(scope with { ApprovedWriteFingerprint = profileCard.Fingerprint }).FsReplace(profileEdits);
+        var profileBatch = ChatChangeStore.BatchIdFromResult(profileResult);
+        if (!profileCard.Preview.Contains("+ios=new") || !profileCard.Preview.Contains("+android=new")
+            || !File.ReadAllBytes(rawPath).AsSpan().SequenceEqual("ios=new\nandroid=new\n"u8)
+            || profileBatch is null || ChatChangeStore.ReadBatch(dataRoot, profileBatch)?.RevisionIds is not [var profileId]
+            || ChatChangeStore.Restore(dataRoot, scope.ConversationId, profileId, scope.Sandbox, guards, out _, out _) != UndoVerdict.Reverted
+            || !File.ReadAllBytes(rawPath).SequenceEqual(rawBefore))
+            throw new Exception($"Two approved edits of build.profiles did not preview, land and undo byte-for-byte: {profileResult}");
+        var fullArgs = JsonSerializer.Serialize(new { path = profile, content = "changed\n", overwrite = true });
+        if (ToolPreviews.TextEditRisk("fs_write", fullArgs, scope) != ToolRisk.WorkspaceWrite
+            || !ToolApprovalPolicy.RequiresApproval(ToolApprovalModes.Auto,
+                ToolPreviews.TextEditRisk("fs_replace", """{"edits":[{"path":".env","old_string":"v","new_string":"w"}]}""", scope)))
+            throw new Exception("An unknown suffix escalated a routine edit, or an environment edit did not request approval.");
+        var fullFingerprint = ToolPreviews.TextEditPreview("fs_write", fullArgs, scope).Fingerprint;
+        var fullWrite = new WorkspaceTools(scope with { ApprovedWriteFingerprint = fullFingerprint }).FsWrite(profile, "changed\n", overwrite: true);
         var fullRevision = ChatChangeStore.IdFromResult(fullWrite);
-        if (fullRevision is null || fullFingerprint == WorkspaceTools.WriteFingerprint(scope, "src/raw.txt")
+        if (fullRevision is null || fullFingerprint == ToolPreviews.TextEditPreview("fs_write", fullArgs, scope).Fingerprint
             || ChatChangeStore.Restore(dataRoot, scope.ConversationId, fullRevision, scope.Sandbox, guards, out _, out _)
                != UndoVerdict.Reverted || !File.ReadAllBytes(rawPath).SequenceEqual(rawBefore))
             throw new Exception("A full write did not restore the original BOM and CRLF bytes.");
-        if (!tools.FsWrite("src/raw.txt", "no", overwrite: false).Contains("already exists", StringComparison.OrdinalIgnoreCase)
+        if (!tools.FsWrite(profile, "no", overwrite: false).Contains("already exists", StringComparison.OrdinalIgnoreCase)
             || !File.ReadAllBytes(rawPath).SequenceEqual(rawBefore))
             throw new Exception("A full write without overwrite permission changed an existing file.");
         var staleScope = scope with { ApprovedWriteFingerprint = fullFingerprint };
         File.WriteAllText(rawPath, "external\n");
-        if (!new WorkspaceTools(staleScope).FsWrite("src/raw.txt", "no", overwrite: true).Contains("changed since approval", StringComparison.Ordinal)
+        if (!new WorkspaceTools(staleScope).FsWrite(profile, "no", overwrite: true).Contains("changed since approval", StringComparison.Ordinal)
             || File.ReadAllText(rawPath) != "external\n")
             throw new Exception("A full write accepted an approval for a different pre-image.");
         var batchOne = Path.Combine(workspace, "src", "batch-one.txt");
@@ -94,7 +111,7 @@ internal static class AiToolsChecks
         if (File.ReadAllText(batchOne) != "alpha\r\n" || File.ReadAllText(batchTwo) != "beta\n")
             throw new Exception("A batch undo did not restore both original files.");
         var batchArgs = """{"edits":[{"path":"src/batch-one.txt","old_string":"alpha","new_string":"A"},{"path":"src/batch-two.txt","old_string":"beta","new_string":"B"}]}""";
-        var approvedBatch = ToolPreviews.ReplaceFingerprint(batchArgs, scope);
+        var approvedBatch = ToolPreviews.TextEditPreview("fs_replace", batchArgs, scope).Fingerprint;
         File.WriteAllText(batchTwo, "beta changed\n");
         var staleBatch = new WorkspaceTools(scope with { ApprovedWriteFingerprint = approvedBatch }).FsReplace(
             [new("src/batch-one.txt", "alpha", "A"), new("src/batch-two.txt", "beta", "B")]);
@@ -288,8 +305,20 @@ internal static class AiToolsChecks
             throw new Exception("A no-op edit was not reported as Unchanged.");
         if (!tools.FileWrite("src/main.cpp", "", "whole file").Contains("already exists"))
             throw new Exception("An empty anchor against an existing file did not refuse to overwrite it.");
-        if (!tools.FileWrite("src/tool.exe", "", "MZ").Contains("not a text file") || !tools.FileWrite("../escape.cpp", "a", "b").Contains("Refused"))
-            throw new Exception("file_write ignored the write allowlist or the sandbox.");
+        const string plist = "src/binary.plist";
+        var badText = new string('a', 64) + "\0";
+        var badBytes = Encoding.UTF8.GetBytes(badText);
+        File.WriteAllBytes(Path.Combine(workspace, plist), badBytes);
+        var binaryArgs = JsonSerializer.Serialize(new { path = plist, content = "text", overwrite = true });
+        if (!ToolPreviews.PreviewFor("fs_write", binaryArgs, scope).Contains("not supported text")
+            || !tools.FsWrite(plist, "text", true).Contains("not supported text")
+            || !tools.FsReplace([new(profile, "external", "oops"), new(plist, "a", "z", true)]).Contains("not supported text")
+            || !tools.FsReplace([new(profile, "external", badText)]).Contains("not supported text")
+            || !tools.FsWrite(profile, badText, true).Contains("not supported text")
+            || !tools.FsWrite("newfile", badText).Contains("not supported text") || File.Exists(Path.Combine(workspace, "newfile"))
+            || !File.ReadAllBytes(Path.Combine(workspace, plist)).SequenceEqual(badBytes) || File.ReadAllText(rawPath) != "external\n"
+            || !tools.FileWrite("../escape.cpp", "a", "b").Contains("Refused"))
+            throw new Exception("An invalid text edit passed preview or changed a file despite refusal.");
         if (File.ReadAllText(Path.Combine(workspace, "src", "twice.txt")) != "dup\ndup\n")
             throw new Exception("A refused edit changed the file anyway.");
         // A CRLF file comes back LF — the whole file, not only the replaced span, since a file holding both newline
@@ -825,7 +854,7 @@ internal static class AiToolsChecks
         var logFile = Path.Combine(fileGrantRoot, "build.log");
         File.WriteAllText(logFile, "line\n");
         File.WriteAllText(Path.Combine(fileGrantRoot, "neighbour.md"), "beside\n");
-        var fileBox = new WorkspaceSandbox(workspace, [], []) { Files = [looseFile, logFile] };
+        var fileBox = new WorkspaceSandbox(workspace, [], []) { Files = [new(looseFile, FileGrantAccess.TextEdit), new(logFile)] };
         var looseRead = WorkspacePaths.ResolveRead(fileBox, looseFile, guards);
         if (!looseRead.IsAllowed || !looseRead.Granted || looseRead.ReadOnly || looseRead.Display != looseFile
             || !WorkspacePaths.ResolveWrite(fileBox, looseFile, guards).IsAllowed
@@ -848,17 +877,16 @@ internal static class AiToolsChecks
         var protectedFile = Path.Combine(dataRoot, "logs", "hub-check.log");
         Directory.CreateDirectory(Path.GetDirectoryName(protectedFile)!);
         File.WriteAllText(protectedFile, "line\n");
-        var guardFileBox = new WorkspaceSandbox(workspace, [], []) { Files = [protectedFile] };
+        var guardFileBox = new WorkspaceSandbox(workspace, [], []) { Files = [new(protectedFile, FileGrantAccess.TextEdit)] };
         var protectedRead = WorkspacePaths.ResolveRead(guardFileBox, protectedFile, guards);
         if (!protectedRead.IsAllowed || !protectedRead.ReadOnly
             || WorkspacePaths.ResolveWrite(guardFileBox, protectedFile, guards).Verdict != WorkspacePathVerdict.ReadOnlyRoot
             || WorkspacePaths.ResolveDirectory(guardFileBox, dataRoot, guards).Verdict != WorkspacePathVerdict.ProtectedRoot)
             throw new Exception($"A protected file granted by name was not read-only, or it opened the folder around it ({protectedRead.Verdict}).");
-        // A file outside the write allowlist is the same tier for a different reason: readable, never written. That
-        // is what makes a log outside the workspace readable at all, without ever making it editable.
         if (WorkspacePaths.ResolveRead(fileBox, logFile, guards) is not { IsAllowed: true, ReadOnly: true }
-            || WorkspacePaths.ResolveWrite(fileBox, logFile, guards, allowUnlistedText: true).Verdict != WorkspacePathVerdict.ReadOnlyRoot)
-            throw new Exception("A file outside the write allowlist was not granted read-only.");
+            || WorkspacePaths.ResolveWrite(fileBox, logFile, guards).Verdict != WorkspacePathVerdict.ReadOnlyRoot
+            || WorkspacePaths.ResolveManage(fileBox, looseFile, guards).Verdict != WorkspacePathVerdict.TextEditsOnly)
+            throw new Exception("A file grant exceeded the access specified on its card.");
         // A grant is named absolutely and nothing else reaches it: the workspace's own spelling of the same file is
         // still refused, because the grammar a relative path speaks is the workspace and only the workspace.
         var nestedData = Path.Combine(workspace, "hubdata");
@@ -866,34 +894,42 @@ internal static class AiToolsChecks
         var nestedFile = Path.Combine(nestedData, "state.json");
         File.WriteAllText(nestedFile, "{}\n");
         var nestedGuards = new WorkspaceGuards(nestedData, []);
-        var nestedBox = new WorkspaceSandbox(workspace, [], []) { Files = [nestedFile] };
+        var nestedBox = new WorkspaceSandbox(workspace, [], []) { Files = [new(nestedFile)] };
         if (WorkspacePaths.ResolveRead(nestedBox, Path.Combine("hubdata", "state.json"), nestedGuards).Verdict
             != WorkspacePathVerdict.ProtectedRoot
             || !WorkspacePaths.ResolveRead(nestedBox, nestedFile, nestedGuards).IsAllowed)
             throw new Exception("A granted file was reachable by a relative path, or its absolute path stopped working.");
         // ── request_file: the body's own answers, and the sentence that makes the card the permission ──
-        static GrantVerdict GradeFile(WorkspaceSandbox box, WorkspaceGuards g, string path)
-            => WorkspacePaths.ClassifyFileGrant(box, g, path).Verdict;
+        static GrantVerdict GradeFile(WorkspaceSandbox box, WorkspaceGuards g, string path, bool edit = false)
+            => WorkspacePaths.ClassifyFileGrant(box, g, path, edit).Verdict;
         var fileAskTools = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "file-ask", [], log) { Sandbox = fileBox });
         if (!(await fileAskTools.RequestFile(looseFile)).Contains("already granted", StringComparison.Ordinal)
             || !(await tools.RequestFile(grantedRoot)).Contains("is a directory", StringComparison.Ordinal)
             || !(await tools.RequestFile("relative/path")).Contains("not an absolute path", StringComparison.Ordinal)
-            || !(await tools.RequestFile(Path.Combine(fileGrantRoot, "new.log"))).Contains("could never write", StringComparison.Ordinal)
+            || !(await tools.RequestFile(Path.Combine(fileGrantRoot, "new.log"))).Contains("read-only access opens nothing", StringComparison.Ordinal)
             || !(await tools.RequestFile(protectedFile)).Contains("Granted read-only", StringComparison.Ordinal)
             || !(await tools.RequestFile(protectedFile)).Contains("fs_read", StringComparison.Ordinal))
             throw new Exception("request_file answered a file it holds, a directory, a relative path or a dead end with the wrong sentence.");
-        string? askedFile = null;
-        var freshFile = new WorkspaceTools(new WorkspaceToolScope(workspace, guards, dataRoot, "file-fresh", [], log)
+        WorkspaceFileGrant? askedFile = null;
+        var editArgs = JsonSerializer.Serialize(new { path = logFile, edit = true });
+        var editScope = scope with { Sandbox = fileBox, ApplyGrantedFile = grant =>
         {
-            ApplyGrantedFile = path =>
-            {
-                askedFile = path;
-                return Task.FromResult($"Granted: {path}.");
-            },
-        });
-        var freshFileAnswer = await freshFile.RequestFile(looseFile);
-        if (askedFile != looseFile || !freshFileAnswer.Contains($"Granted: {looseFile}", StringComparison.Ordinal))
-            throw new Exception($"A file nobody holds was not handed to the caller to persist:{Environment.NewLine}" + freshFileAnswer);
+            askedFile = grant;
+            return Task.FromResult(WorkspacePaths.FileGrantedResultFor(grant.Path, grant.Access == FileGrantAccess.ReadOnly));
+        } };
+        var upgradeCard = ToolPreviews.PreviewFor("fs_request_access", editArgs, editScope);
+        var oldCard = new WorkspaceTools(editScope with { ApprovedAccessKind = "file" });
+        if (!(await oldCard.FsRequestAccess(logFile, edit: true)).StartsWith("Refused") || askedFile is not null
+            || !upgradeCard.Contains("text edits to this file only"))
+            throw new Exception("A read-only card could approve a later file edit, or the upgrade was not disclosed.");
+        var freshFile = new WorkspaceTools(editScope with { ApprovedAccessKind = ToolPreviews.AccessKind(editArgs, editScope) });
+        await freshFile.FsRequestAccess(logFile, edit: true);
+        if (askedFile != new WorkspaceFileGrant(logFile, FileGrantAccess.TextEdit))
+            throw new Exception("An explicit edit grant did not persist the approved access.");
+        var upgradedTools = new WorkspaceTools(scope with { Sandbox = fileBox with { Files = [askedFile] } });
+        if (!upgradedTools.FsReplace([new(logFile, "line", "updated")]).StartsWith("Edited")
+            || !upgradedTools.FsMove(logFile, looseFile).StartsWith("Refused") || !upgradedTools.FsDelete(logFile).StartsWith("Refused")
+            || File.ReadAllText(logFile) != "updated\n") throw new Exception("A text-edit grant did not edit just the named file.");
         if (WorkspaceTools.AccessKind(grantedRoot, "auto") != "directory"
             || WorkspaceTools.AccessKind(looseFile, "auto") != "file"
             || WorkspaceTools.AccessKind(Path.Combine(fileGrantRoot, "missing.txt"), "auto") != "invalid"
@@ -928,7 +964,7 @@ internal static class AiToolsChecks
         var fileCard = ToolPreviews.PreviewFor("request_file", JsonSerializer.Serialize(new { path = looseFile }), cardScope);
         if (!fileCard.StartsWith("request_file · ", StringComparison.Ordinal)
             || !fileCard.Contains("exists", StringComparison.Ordinal)
-            || !fileCard.Contains("read and write", StringComparison.Ordinal)
+            || !fileCard.Contains("read only", StringComparison.Ordinal)
             || !fileCard.Contains("this session only", StringComparison.Ordinal)
             || !fileCard.Contains("folder around it is not opened", StringComparison.Ordinal))
             throw new Exception($"A file grant card did not say what approving it allows:{Environment.NewLine}{fileCard}");
@@ -945,11 +981,11 @@ internal static class AiToolsChecks
             || GradeFile(WorkspaceSandbox.For(workspace), guards, Path.Combine(toolRoot, "no-such-folder", "x.md")) != GrantVerdict.Missing
             || GradeFile(fileBox, guards, looseFile) != GrantVerdict.AlreadyGranted
             || GradeFile(grantBox, guards, grantedFile) != GrantVerdict.InsideGrant
-            || GradeFile(WorkspaceSandbox.For(workspace), guards, looseFile) != GrantVerdict.Granted
-            || GradeFile(WorkspaceSandbox.For(workspace), guards, protectedFile) != GrantVerdict.GrantedReadOnly
+            || GradeFile(WorkspaceSandbox.For(workspace), guards, looseFile, edit: true) != GrantVerdict.Granted
+            || GradeFile(WorkspaceSandbox.For(workspace), guards, protectedFile, edit: true) != GrantVerdict.GrantedReadOnly
             || GradeFile(WorkspaceSandbox.For(workspace), guards, logFile) != GrantVerdict.GrantedReadOnly
-            || GradeFile(WorkspaceSandbox.For(workspace), guards, Path.Combine(fileGrantRoot, "new.log")) != GrantVerdict.NotWritableText
-            || GradeFile(WorkspaceSandbox.For(workspace), guards, Path.Combine(fileGrantRoot, "new.md")) != GrantVerdict.Granted)
+            || GradeFile(WorkspaceSandbox.For(workspace), guards, Path.Combine(fileGrantRoot, "new.log")) != GrantVerdict.MissingReadOnlyFile
+            || GradeFile(WorkspaceSandbox.For(workspace), guards, Path.Combine(fileGrantRoot, "new.profiles"), edit: true) != GrantVerdict.Granted)
             throw new Exception("ClassifyFileGrant disagreed with the answers request_file gives.");
         // ── the session file is user-editable data, so its grants come back through the same rules ──
         // The store's root has to exist before the first save: `SplitRoots` drops an entry this build cannot reach,
@@ -984,21 +1020,24 @@ internal static class AiToolsChecks
         if (OperatingSystem.IsWindows() && WorkspacePaths.NormalizeRoots([grantedRoot, grantedRoot.ToUpperInvariant()]).Count != 1)
             throw new Exception("One granted directory spelled two ways survived normalization.");
         // ── the granted files ride in the same session file, under shape rules of their own ──
-        // What survives is decided by "can this build still resolve that path", not by the guards: a protected file
-        // is kept on purpose, because the grant is a reading and the reading is what the card gave.
-        var fileSession = Conversation.Create("provider");
-        fileSession.GrantedFiles = [looseFile, looseFile, "", "   ", grantedRoot, Path.Combine(toolRoot, "gone", "x.md"), protectedFile];
-        grantStore.Save(fileSession);
-        var reloadedFiles = grantStore.Load(fileSession.Id)?.GrantedFiles;
-        if (reloadedFiles is null || reloadedFiles.Count != 2
-            || !reloadedFiles.Contains(looseFile) || !reloadedFiles.Contains(protectedFile))
-            throw new Exception($"A session file's granted files were not normalized ({reloadedFiles?.Count} kept): a duplicate, a blank, a directory and a file whose folder is gone must be dropped, and a protected file kept.");
-        var manyFiles = WorkspacePaths.NormalizeFiles(Enumerable.Range(0, WorkspacePaths.MaxGrantedFiles + 3).Select(index =>
+        // Start from actual pre-upgrade JSON; save and reload once more so the ceiling survives migration.
+        const string fileSessionId = "legacy-file-grants";
+        File.WriteAllText(Path.Combine(grantStoreRoot, "ai", "sessions", fileSessionId + ".json"), JsonSerializer.Serialize(new
         {
-            var file = Path.Combine(fileGrantRoot, $"cap-{index}.md");
-            File.WriteAllText(file, "x\n");
-            return file;
+            Id = fileSessionId, GrantedFiles = new[] { looseFile, looseFile, "", grantedRoot, logFile, protectedFile },
         }));
+        grantStore.Save(grantStore.Load(fileSessionId)!);
+        var reloadedFiles = grantStore.Load(fileSessionId)!.FileGrants;
+        var migratedTools = new WorkspaceTools(scope with { Sandbox = fileBox with { Files = reloadedFiles } });
+        var unchangedLog = File.ReadAllBytes(logFile);
+        if (reloadedFiles.Count != 3 || !reloadedFiles.Contains(new(looseFile, FileGrantAccess.LegacyWrite))
+            || !reloadedFiles.Contains(new(logFile, FileGrantAccess.ReadOnly))
+            || !migratedTools.FsWrite(logFile, "no", true).Contains("no write permission")
+            || !migratedTools.FsReplace([new(logFile, "updated", "no")]).Contains("no write permission")
+            || !File.ReadAllBytes(logFile).SequenceEqual(unchangedLog))
+            throw new Exception("Migration lost a file grant or silently upgraded a path-only read grant.");
+        var manyFiles = WorkspacePaths.NormalizeFiles(Enumerable.Range(0, WorkspacePaths.MaxGrantedFiles + 3)
+            .Select(index => new WorkspaceFileGrant(Path.Combine(fileGrantRoot, $"cap-{index}.md"))), guards);
         if (manyFiles.Count != WorkspacePaths.MaxGrantedFiles)
             throw new Exception($"The granted-file list grew past its cap ({manyFiles.Count}).");
         Console.WriteLine("PASS: a granted directory and a granted single file are read and written beside the workspace, "
@@ -1102,9 +1141,7 @@ internal static class AiToolsChecks
             throw new Exception($"** did not cross more than one directory:{Environment.NewLine}{markdown}");
         if (!tools.FindFiles("nothing-here-*.xyz", "probe").Contains("No file matched", StringComparison.Ordinal))
             throw new Exception("find_files found nothing and said something else.");
-        // A log is text whatever it is called. The list a search uses is its own and not the write allowlist — "0
-        // files searched" over a directory of hub-*.log was the answer to a real question about a real directory,
-        // and it is the shape of the request that produced the read-only grant in the first place.
+        // Logs remain discoverable without a file-specific search.
         File.WriteAllText(Path.Combine(probe, "hub-1.log"), "[1] probe-log-marker from the log\n");
         File.WriteAllText(Path.Combine(probe, "hub-2.log"), "[2] nothing here\n");
         var logs = tools.SearchText("probe-log-marker", path: "probe");
@@ -1114,14 +1151,12 @@ internal static class AiToolsChecks
         var oneLog = tools.SearchText("probe-log-marker", path: Path.Combine(probe, "hub-1.log"));
         if (!oneLog.Contains("probe/hub-1.log:1:") || !oneLog.Contains("in probe/hub-1.log", StringComparison.Ordinal))
             throw new Exception($"search_text refused a single file, or searched something else:{Environment.NewLine}{oneLog}");
-        // …and the write allowlist did not move with it: reading a log is not being allowed to edit one.
-        var logWrite = tools.FileWrite(Path.Combine(probe, "hub-1.log"), "probe-log-marker", "x");
-        if (!logWrite.Contains("not a text file", StringComparison.Ordinal))
-            throw new Exception($"A .log became writable when the search learned to read it:{Environment.NewLine}{logWrite}");
         // A file past the per-file cap is named rather than skipped in silence: an answer that quietly ignored the
         // sixteen-megabyte log is an answer whose "no match" the model cannot act on.
         File.WriteAllText(Path.Combine(probe, "huge.log"),
             new string('y', (int)WorkspaceTools.MaxSearchFileBytes + 16));
+        if (!tools.FsWrite("probe/huge.log", "small", true).Contains("too large"))
+            throw new Exception("An oversized text file was not refused by the byte budget.");
         var skippedBig = tools.SearchText("probe-log-marker", path: "probe");
         if (!skippedBig.Contains("bigger than 8 MiB", StringComparison.Ordinal)
             || !skippedBig.Contains("probe/hub-1.log:1:", StringComparison.Ordinal))

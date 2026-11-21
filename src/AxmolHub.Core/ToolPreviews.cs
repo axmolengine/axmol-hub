@@ -20,9 +20,7 @@ public static class ToolPreviews
         var arguments = Parse(argumentsJson);
         return name switch
         {
-            LegacyFileToolNames.FileWrite => WritePreview(arguments, scope),
-            ToolNames.FsWrite => FullWritePreview(arguments, scope),
-            ToolNames.FsReplace => ReplacePreview(arguments, scope),
+            LegacyFileToolNames.FileWrite or ToolNames.FsWrite or ToolNames.FsReplace => TextEditPreview(name, arguments, scope).Preview,
             ToolNames.FsDelete or ToolNames.FsMove => ManagementPreview(name, arguments, scope),
             ToolNames.RunCommand => CommandPreview(arguments, scope),
             LegacyFileToolNames.RequestDirectory => GrantPreview(Text(arguments, "path"), scope, projectPaths),
@@ -69,52 +67,77 @@ public static class ToolPreviews
                + string.Join("\n", plan.Entries.Select(entry => entry.Relative + (entry.IsDirectory ? "/" : "")));
     }
 
-    public static string AccessKind(string? argumentsJson)
-    {
-        var arguments = Parse(argumentsJson);
-        return WorkspaceTools.AccessKind(Text(arguments, "path"), Text(arguments, "kind"));
-    }
+    public static string AccessKind(string? argumentsJson, WorkspaceToolScope scope)
+        => AccessKind(Parse(argumentsJson), scope);
+
+    private static string AccessKind(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+        => WorkspaceTools.AccessDecision(scope, Text(arguments, "path"), Text(arguments, "kind"), Flag(arguments, "edit"));
 
     private static string AccessPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope,
         IReadOnlyList<string>? projectPaths)
     {
         var path = Text(arguments, "path");
-        var kind = WorkspaceTools.AccessKind(path, Text(arguments, "kind"));
+        var kind = AccessKind(arguments, scope);
         return kind switch
         {
             "directory" => GrantPreview(path, scope, projectPaths).Replace("request_directory ·", "fs_request_access · directory ·", StringComparison.Ordinal),
-            "file" => FileGrantPreview(path, scope).Replace("request_file ·", "fs_request_access · file ·", StringComparison.Ordinal),
+            "file" or "file-edit" => FileGrantPreview(path, scope, kind == "file-edit").Replace("request_file ·", "fs_request_access · file ·", StringComparison.Ordinal),
             _ => "fs_request_access · invalid or ambiguous path; specify an existing path or its kind.",
         };
     }
 
-    private static string FullWritePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    // This is an approval rule, not a read restriction or a file-format rule. Resolve the spelling without
+    // touching the disk: a workspace rooted at .vscode can name its configuration with a bare filename.
+    private static bool SensitiveEditPath(string? path, string? workspace)
     {
-        var path = Text(arguments, "path");
-        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards, allowUnlistedText: true);
-        if (!resolved.IsAllowed) return WorkspacePaths.ResultFor(resolved.Verdict, path);
+        if (string.IsNullOrWhiteSpace(path)) return false;
         try
         {
-            var unlisted = !WorkspacePaths.IsWritableText(Path.GetFileName(resolved.Full));
-            if (unlisted && (File.Exists(resolved.Full)
-                    ? !TextFile.HasTextFilePrefix(resolved.Full)
-                    : !TextFile.HasTextContentPrefix(Text(arguments, "content"))))
-                return $"Refused: {resolved.Display} does not begin like text.";
-            var original = File.Exists(resolved.Full) ? WorkspaceTools.ReadAll(resolved.Full) : null;
-            if (File.Exists(resolved.Full) && original is null)
-                return $"Refused: {resolved.Display} is not UTF-8 text.";
-            var edit = FileEdit.Overwrite(original, Text(arguments, "content"), Flag(arguments, "overwrite"));
-            return edit.Changed ? FileDiff.Unified(original ?? "", edit.Updated, resolved.Display)
-                : edit.Verdict == FileEditVerdict.Unchanged ? $"No change: {resolved.Display} already has that content."
-                : edit.Verdict == FileEditVerdict.AlreadyExists ? $"Refused: {resolved.Display} already exists. Pass overwrite=true to replace it."
-                : FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Display);
+            if (Path.IsPathFullyQualified(path)) path = Path.GetFullPath(path);
+            else if (workspace is not null) path = Path.GetFullPath(path, workspace);
+            var name = Path.GetFileName(path);
+            return name.Equals(".env", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), ".vscode", StringComparison.OrdinalIgnoreCase);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { return $"Cannot preview {resolved.Display}: {ex.Message}"; }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { return true; }
     }
 
-    public static string WriteFingerprint(string? argumentsJson, WorkspaceToolScope scope)
-        => WorkspaceTools.WriteFingerprint(scope, Text(Parse(argumentsJson), "path"));
+    public static ToolRisk TextEditRisk(string name, string? argumentsJson, WorkspaceToolScope scope)
+    {
+        var arguments = Parse(argumentsJson);
+        // Grading runs on the UI thread. Inspect paths, not entire replacement strings or file contents.
+        var sensitive = name == ToolNames.FsReplace
+            ? arguments.TryGetValue("edits", out var edits) && edits.ValueKind == JsonValueKind.Array
+              && edits.EnumerateArray().Any(edit => edit.ValueKind == JsonValueKind.Object && edit.EnumerateObject().Any(field =>
+                  field.Name.Equals("path", StringComparison.OrdinalIgnoreCase) && field.Value.ValueKind == JsonValueKind.String
+                  && SensitiveEditPath(field.Value.GetString(), scope.Sandbox.Primary)))
+            : SensitiveEditPath(Text(arguments, "path"), scope.Sandbox.Primary);
+        return sensitive ? ToolRisk.SensitiveEdit : ToolRisk.WorkspaceWrite;
+    }
+
+    private static string EditDiff(WorkspacePath path, string before, string after)
+        => Path.GetFileName(path.Full).Equals(".env", StringComparison.OrdinalIgnoreCase)
+            ? $"Edit {path.Display} · environment file (values omitted from the diff)"
+            : FileDiff.Unified(before, after, path.Display);
+
+    /// <summary>Freeze the diff and approval identity from the same pre-image. Execution rechecks that identity.</summary>
+    public static (string Preview, string Fingerprint) TextEditPreview(string name, string? argumentsJson, WorkspaceToolScope scope)
+        => TextEditPreview(name, Parse(argumentsJson), scope);
+
+    private static (string Preview, string Fingerprint) TextEditPreview(string name,
+        IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        if (name == ToolNames.FsReplace) return ReplacePreview(arguments, scope);
+        var path = Text(arguments, "path");
+        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards);
+        if (!resolved.IsAllowed) return (WorkspacePaths.ResultFor(resolved.Verdict, path), "invalid");
+        var whole = name == ToolNames.FsWrite;
+        var (baseline, edit, message, fingerprint) = WorkspaceTools.PrepareTextWrite(resolved,
+            original => whole ? FileEdit.Overwrite(original, Text(arguments, "content"), Flag(arguments, "overwrite"))
+                : FileEdit.Apply(original, Text(arguments, "old_string"), Text(arguments, "new_string"), Flag(arguments, "replace_all")), whole);
+        return (message ?? EditDiff(resolved, baseline.Text, edit.Updated), fingerprint);
+    }
 
     private static IReadOnlyList<FsReplacement>? ReplacementEdits(IReadOnlyDictionary<string, JsonElement> arguments)
     {
@@ -123,52 +146,23 @@ public static class ToolPreviews
         catch (JsonException) { return null; }
     }
 
-    public static string ReplaceFingerprint(string? argumentsJson, WorkspaceToolScope scope)
-        => WorkspaceTools.PrepareReplacements(scope, ReplacementEdits(Parse(argumentsJson))).Fingerprint;
-
-    private static string ReplacePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    private static (string Preview, string Fingerprint) ReplacePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
     {
         var plan = WorkspaceTools.PrepareReplacements(scope, ReplacementEdits(arguments));
-        if (plan.Error is not null) return plan.Error;
+        if (plan.Error is not null) return (plan.Error, plan.Fingerprint);
         var preview = new System.Text.StringBuilder($"Edit {plan.Changes.Count} file(s)");
+        var sensitive = plan.Changes.Where(c => SensitiveEditPath(c.Path.Full, null)).Select(c => c.Path.Display).ToArray();
+        if (sensitive.Length != 0) preview.Append("\nSensitive targets: ").AppendJoin(", ", sensitive);
         foreach (var change in plan.Changes)
         {
-            preview.Append('\n').Append(FileDiff.Unified(change.Before, change.After, change.Path.Display));
+            preview.Append('\n').Append(EditDiff(change.Path, change.Before, change.After));
             if (preview.Length > 60_000)
             {
                 preview.Append("\n… (preview truncated)");
                 break;
             }
         }
-        return preview.ToString();
-    }
-
-    private static string WritePreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
-    {
-        var path = Text(arguments, "path");
-        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards);
-        if (!resolved.IsAllowed)
-            return WorkspacePaths.ResultFor(resolved.Verdict,
-                resolved.Display.Length > 0 ? resolved.Display : path);
-
-        string? original = null;
-        if (File.Exists(resolved.Full))
-        {
-            try
-            {
-                original = File.ReadAllText(resolved.Full);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return $"Cannot preview {resolved.Display}: {ex.Message}";
-            }
-        }
-
-        var edit = FileEdit.Apply(original, Text(arguments, "old_string"), Text(arguments, "new_string"),
-            Flag(arguments, "replace_all"));
-        return edit.Changed
-            ? FileDiff.Unified(original ?? "", edit.Updated, resolved.Display)
-            : FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Display);
+        return (preview.ToString(), plan.Fingerprint);
     }
 
     /// <summary>
@@ -276,10 +270,9 @@ public static class ToolPreviews
     /// What a card on one <b>file</b> is asking for. Narrower than a directory card in the one way that has to be
     /// visible before the yes: the file is what is being opened, and the folder around it is not. So the facts say
     /// whether it is there, which of the three protected places it sits in when it sits in one, and the tier — and
-    /// the tier is read from <see cref="WorkspacePaths.FileGrantIsReadOnly"/>, the same function every resolution
-    /// asks, never from a second opinion held here.
+    /// the tier is the one requested, capped by the same classifier as execution.
     /// </summary>
-    private static string FileGrantPreview(string path, WorkspaceToolScope scope)
+    private static string FileGrantPreview(string path, WorkspaceToolScope scope, bool edit = false)
     {
         if (string.IsNullOrWhiteSpace(path)) return "request_file · (no path given)";
 
@@ -301,12 +294,14 @@ public static class ToolPreviews
 
         var facts = new List<string> { File.Exists(full) ? "exists" : "does not exist yet" };
         if (WorkspacePaths.ProtectedLocationOf(full, scope.Guards) is { } location) facts.Add(ProtectedFact(location));
-        else if (!WorkspacePaths.IsWritableText(Path.GetFileName(full)))
-            facts.Add("its extension is outside the write allowlist");
-        if (WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, full).Verdict
-            is GrantVerdict.AlreadyGranted or GrantVerdict.InsideGrant)
-            facts.Add("already reachable by this session");
-        facts.Add(WorkspacePaths.FileGrantIsReadOnly(full, scope.Guards) ? "read only" : "read and write");
+        var verdict = WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, full, edit).Verdict;
+        if (verdict == GrantVerdict.Granted)
+            facts.Add("allow text edits to this file only · no moving or deleting");
+        else if (verdict is GrantVerdict.GrantedReadOnly or GrantVerdict.MissingReadOnlyFile)
+            facts.Add("read only");
+        else if (verdict is GrantVerdict.AlreadyGranted or GrantVerdict.InsideGrant or GrantVerdict.InsideWorkspace)
+            facts.Add("already reachable · no change to current access");
+        else facts.Add("no grant available for this path");
         facts.Add("this session only · the folder around it is not opened");
         return $"request_file · {path}\n{string.Join(" · ", facts)}";
     }

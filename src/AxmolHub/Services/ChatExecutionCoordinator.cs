@@ -1466,7 +1466,7 @@ internal sealed partial class ChatExecutionCoordinator
             // granted single files follow the same condition: they are the same answered question, one file wide.
             child.GrantedRoots = request.InheritWorkspace ? [.. parent.GrantedRoots] : [];
             child.ReadOnlyRoots = request.InheritWorkspace ? [.. parent.ReadOnlyRoots] : [];
-            child.GrantedFiles = request.InheritWorkspace ? [.. parent.GrantedFiles] : [];
+            child.FileGrants = request.InheritWorkspace ? [.. parent.FileGrants] : [];
             child.SpawnedBy = parent.Id;
             child.SpawnedTask = request.Task;
             child.SpawnedState = request.Started
@@ -1816,11 +1816,13 @@ internal sealed partial class ChatExecutionCoordinator
                 // read-only grant it lands is the whole of what the card can give.
                 var protectedGrant = ChatTools.OpensProtectedLocation(member.Name, member.ArgumentsJson,
                     scope.Workspace);
+                var fileEditGrant = member.Name == ToolNames.FsRequestAccess
+                    && ToolPreviews.AccessKind(member.ArgumentsJson, scope.Workspace) == "file-edit";
                 var parks = computerUse
                     ? portal && !portalGrant && portalControl?.Paused != true || target is not null && (!computerGrant || computerInput && !control!.Paused
                         && inputRisk.Risk == ComputerRisk.RequireConfirmation)
                     : !granted && !malformed
-                      && (protectedGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
+                      && (protectedGrant || fileEditGrant || ToolApprovalPolicy.RequiresApproval(mode, risk));
                 return new CallVerdict(member, risk, asks, malformed, granted, sessionGrant, verbGrant, parks,
                     protectedGrant);
             }
@@ -1885,20 +1887,19 @@ internal sealed partial class ChatExecutionCoordinator
         waiting = await Task.Run(() => waiting.Select(parked =>
         {
             var member = parked.Call;
-            var isWrite = member.Name is ToolNames.FsWrite or ToolNames.FsReplace or ToolNames.FsDelete or ToolNames.FsMove;
-            var isAccess = member.Name == ToolNames.FsRequestAccess;
-            string? Fingerprint() => member.Name switch
+            if (member.Name is ToolNames.FsWrite or ToolNames.FsReplace)
             {
-                ToolNames.FsReplace => ToolPreviews.ReplaceFingerprint(member.ArgumentsJson, scope.Workspace),
-                ToolNames.FsDelete or ToolNames.FsMove => ToolPreviews.ManagementFingerprint(member.Name,
-                    member.ArgumentsJson, scope.Workspace),
-                _ => ToolPreviews.WriteFingerprint(member.ArgumentsJson, scope.Workspace),
-            };
-            var before = isWrite ? Fingerprint() : null;
-            var accessBefore = isAccess ? ToolPreviews.AccessKind(member.ArgumentsJson) : null;
+                var edit = ToolPreviews.TextEditPreview(member.Name, member.ArgumentsJson, scope.Workspace);
+                return parked with { Preview = edit.Preview, WriteFingerprint = edit.Fingerprint };
+            }
+            var isManage = member.Name is ToolNames.FsDelete or ToolNames.FsMove;
+            var isAccess = member.Name == ToolNames.FsRequestAccess;
+            string? Fingerprint() => isManage ? ToolPreviews.ManagementFingerprint(member.Name, member.ArgumentsJson, scope.Workspace) : null;
+            var before = Fingerprint();
+            var accessBefore = isAccess ? ToolPreviews.AccessKind(member.ArgumentsJson, scope.Workspace) : null;
             var preview = ToolPreviews.PreviewFor(member.Name, member.ArgumentsJson, scope.Workspace, ProjectPaths(scope));
-            var after = isWrite ? Fingerprint() : null;
-            var accessAfter = isAccess ? ToolPreviews.AccessKind(member.ArgumentsJson) : null;
+            var after = Fingerprint();
+            var accessAfter = isAccess ? ToolPreviews.AccessKind(member.ArgumentsJson, scope.Workspace) : null;
             return parked with { Preview = preview, WriteFingerprint = before == after ? before : "invalid",
                 AccessKind = accessBefore == accessAfter ? accessBefore : "invalid" };
         }).ToList(), run.Token).ConfigureAwait(false);
@@ -4167,7 +4168,7 @@ internal sealed partial class ChatExecutionCoordinator
         var (write, read) = WorkspacePaths.SplitRoots(session?.GrantedRoots, session?.ReadOnlyRoots, guards);
         return new WorkspaceSandbox(root, write, read)
         {
-            Files = WorkspacePaths.NormalizeFiles(session?.GrantedFiles),
+            Files = WorkspacePaths.NormalizeFiles(session?.FileGrants, guards),
         };
     }
     private readonly record struct ParkedCall(ChatPipeline.ToolCallInfo Call, string? Preview, bool Asks, bool Seen,

@@ -95,6 +95,10 @@ public enum ToolRisk
     /// permission system — which is exactly what a mode that reasons about tiers rather than tool names cannot
     /// copy, since "full access" would then mean "answer for me".</para></summary>
     AskUser,
+
+    /// <summary>A text edit to environment values or editor configuration. Ordinary tool trust does not
+    /// cover it; ask in automatic mode without widening the file sandbox.</summary>
+    SensitiveEdit,
 }
 
 /// <summary>
@@ -151,7 +155,7 @@ public static class ToolApprovalPolicy
         _ => ToolApprovalModes.Normalize(mode) switch
         {
             ToolApprovalModes.Full => false,
-            ToolApprovalModes.Auto => risk == ToolRisk.SystemCommand,
+            ToolApprovalModes.Auto => risk is ToolRisk.SystemCommand or ToolRisk.SensitiveEdit,
             _ => risk != ToolRisk.ReadOnly,
         },
     };
@@ -160,13 +164,13 @@ public static class ToolApprovalPolicy
     /// independent answers ("does the grant pass the gate", "does the card offer the button") that disagree would
     /// be a button that does nothing or a grant that was never honoured.
     ///
-    /// <para>Three tiers are not grantable, for three different reasons. <see cref="ToolRisk.SystemCommand"/>: a
+    /// <para>A sensitive edit cannot inherit blanket trust in the text tool. <see cref="ToolRisk.SystemCommand"/>: a
     /// grant is about permission and that tier is about reach, so one click on a file write cannot buy the screen.
     /// <see cref="ToolRisk.AskUser"/>: a grant is <i>answering on the person's behalf</i>, which for that call is
     /// not a waived permission but a fabricated result. <see cref="ToolRisk.CacheBreak"/>: the grant is permanent
     /// and the loss is not recoverable, so deleting what the user built needs them awake every single time.</para></summary>
     public static bool IsGrantable(ToolRisk risk)
-        => risk is not (ToolRisk.SystemCommand or ToolRisk.AskUser or ToolRisk.CacheBreak);
+        => risk is not (ToolRisk.SystemCommand or ToolRisk.AskUser or ToolRisk.CacheBreak or ToolRisk.SensitiveEdit);
 }
 
 /// <summary>

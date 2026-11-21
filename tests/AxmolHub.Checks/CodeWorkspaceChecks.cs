@@ -122,7 +122,7 @@ internal static class CodeWorkspaceChecks
             var path = Path.Combine(workspace, "permission.txt");
             File.WriteAllText(path, "original");
             var baseline = TextFile.Read(path);
-            var outside = WorkspaceSandbox.Empty with { Files = [path] };
+            var outside = WorkspaceSandbox.Empty with { Files = [new(path, FileGrantAccess.TextEdit)] };
             var readonlySandbox = new WorkspaceSandbox(null, [], [workspace]);
             Require(Save(path, baseline, "denied", () => WorkspacePaths.ResolveWrite(readonlySandbox, path, guards)).Verdict
                 == TextReplaceVerdict.RefusedPath, "readonly grant wrote");
@@ -136,9 +136,7 @@ internal static class CodeWorkspaceChecks
                 == TextReplaceVerdict.RefusedPath, "protected root wrote");
             if (!OperatingSystem.IsWindows())
             {
-                // A file link inside the workspace must not be a road to a file outside it: the resolver only
-                // stops at directory links, so what keeps the target safe here is that the replacement path
-                // never follows the link. Asserting the outside bytes is the claim; the verdict is an observation.
+                // A file link is not a writable text target, even when the link itself is inside the workspace.
                 var outsideFolder = Path.Combine(folder, "outside");
                 Directory.CreateDirectory(outsideFolder);
                 var target = Path.Combine(outsideFolder, "target.txt");
@@ -146,9 +144,8 @@ internal static class CodeWorkspaceChecks
                 var link = Path.Combine(workspace, "link.txt");
                 File.CreateSymbolicLink(link, target);
                 var linked = Save(link, TextFile.Read(link), "hub-text");
-                Require(File.ReadAllText(target) == "outside-content",
-                    $"a save through a file link wrote outside the workspace: {linked}");
-                Console.WriteLine($"  file link save verdict: {linked.Verdict}");
+                Require(linked.Verdict == TextReplaceVerdict.RefusedPath && File.ReadAllText(target) == "outside-content",
+                    $"a save through a file link was not refused: {linked}");
             }
             else Console.WriteLine("SKIP: symlink creation requires a Windows host privilege not assumed by this fixture.");
             return Task.CompletedTask;

@@ -28,8 +28,10 @@ public enum UndoVerdict
     /// <summary>The file is gone. Nothing to restore over, and Hub does not recreate a file the user deleted.</summary>
     TargetMissing,
 
-    /// <summary>Not UTF-8 text any more.</summary>
+    /// <summary>The target or saved pre-image is not supported text.</summary>
     NotText,
+
+    TooLarge,
 
     /// <summary>The recorded path no longer sits inside the session's sandbox, or points at a protected root.</summary>
     RefusedPath,
@@ -83,6 +85,15 @@ public enum UndoCopyState
 /// </summary>
 public static class ChatUndoStore
 {
+    internal static UndoVerdict? TextRefusal(TextFileState state) => state switch
+    {
+        TextFileState.Text => null,
+        TextFileState.TooLarge => UndoVerdict.TooLarge,
+        TextFileState.Binary or TextFileState.UnsupportedEncoding => UndoVerdict.NotText,
+        TextFileState.Missing => UndoVerdict.TargetMissing,
+        _ => UndoVerdict.WriteFailed
+    };
+
     public const int MaxFiles = 64;
     public const long MaxBytes = 8 * 1024 * 1024;
 
@@ -175,36 +186,31 @@ public static class ChatUndoStore
         var resolved = WorkspacePaths.ResolveWrite(sandbox, path, guards);
         if (!resolved.IsAllowed) return UndoVerdict.RefusedPath;
 
-        string? original;
-        try
-        {
-            original = File.ReadAllText(copy);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return UndoVerdict.CopyMissing;
-        }
+        using var lease = TextFile.AcquireWrite(resolved.Full);
+        if (!WorkspacePaths.ResolveWrite(sandbox, path, guards).IsAllowed) return UndoVerdict.RefusedPath;
+        var original = TextFile.Read(copy, TextFile.MaxWriteBytes);
+        if (original.State == TextFileState.Missing) return UndoVerdict.CopyMissing;
+        if (TextRefusal(original.State) is { } copyError) return copyError;
+        var current = TextFile.Read(resolved.Full, TextFile.MaxWriteBytes);
+        if (TextRefusal(current.State) is { } targetError) return targetError;
 
-        if (!File.Exists(resolved.Full)) return UndoVerdict.TargetMissing;
-        if (WorkspaceTools.ReadAll(resolved.Full) is not { } current) return UndoVerdict.NotText;
-
-        var expected = FileEdit.Apply(original, oldString, newString, replaceAll);
+        var expected = FileEdit.Apply(original.Text, oldString, newString, replaceAll);
         // Both sides folded to LF before comparing: an edit may have normalized a CRLF file, so replaying a
         // record whose pre-image is CRLF produces LF while the disk still holds CRLF. The guard therefore
         // proves "nothing but this write changed the LF text", not "nothing touched the bytes" — and the
         // revert below still restores the pre-image's own bytes, newline style included.
         if (!expected.Changed
-            || !string.Equals(TextEol.ToLf(current), TextEol.ToLf(expected.Updated), StringComparison.Ordinal))
+            || !string.Equals(TextEol.ToLf(current.Text), TextEol.ToLf(expected.Updated), StringComparison.Ordinal))
             return UndoVerdict.ChangedSince;
 
-        try
-        {
-            File.WriteAllText(resolved.Full, original);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return UndoVerdict.WriteFailed;
-        }
+        var restored = lease.ReplaceRaw(() => WorkspacePaths.ResolveWrite(sandbox, path, guards), current.Bytes, original.Bytes!);
+        if (restored.Verdict != TextReplaceVerdict.Written)
+            return restored.Verdict switch
+            {
+                TextReplaceVerdict.RefusedPath => UndoVerdict.RefusedPath,
+                TextReplaceVerdict.ChangedSince => UndoVerdict.ChangedSince,
+                _ => UndoVerdict.WriteFailed
+            };
 
         // The copy has been spent: keeping it would offer the same revert twice, and the second attempt would
         // then refuse for a reason that has nothing to do with what the user just did. A copy that will not

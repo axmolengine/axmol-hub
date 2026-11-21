@@ -79,7 +79,7 @@ public sealed record WorkspaceToolScope(
     // The second door onto a grant, and the narrower one: one file rather than one place. Its own seam because a
     // session keeps the two apart — a file grant has no folder behind it — and because the answer the model reads
     // has to say exactly that.
-    Func<string, Task<string>>? ApplyGrantedFile = null)
+    Func<WorkspaceFileGrant, Task<string>>? ApplyGrantedFile = null)
 {
     internal ComputerUseBridge? ComputerUse { get; init; }
     internal PortalComputerBridge? PortalComputer { get; init; }
@@ -248,8 +248,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     public string FileWrite(
         [Description("Path relative to the session workspace, or an absolute path inside a directory the user "
                      + "granted this session, or to a single file granted with fs_request_access (such a file is "
-                     + "read-only when it sits in a protected location or is not a text file type the assistant may "
-                     + "write, and this call then refuses it).")]
+                     + "read-only unless text edits were granted, and protected locations stay read-only).")]
         string path,
         [Description("The exact text to replace, copied verbatim from fs_read including indentation and line "
                      + "breaks. Leave empty only to create a file that does not exist yet.")]
@@ -259,67 +258,34 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         bool replace_all = false)
         => WriteText(path, original => FileEdit.Apply(original, old_string, new_string, replace_all));
 
-    [Description("Create a UTF-8 text file or replace its entire contents. Known text extensions are allowed; "
-                 + "other extensions are accepted when the existing file or new content begins like text. Set overwrite "
-                 + "to true only when the existing file should be replaced. For localized changes use fs_replace.")]
+    [Description("Create a UTF-8 text file or replace its entire contents, regardless of filename. Both the "
+                 + "original and proposed contents must be supported text. Set overwrite to true only when the "
+                 + "existing file should be replaced. For localized changes use fs_replace.")]
     public string FsWrite(
-        [Description("Path in the session workspace or a granted writable directory.")] string path,
+        [Description("Path in the workspace, a writable directory grant, or an exact file granted for text edits.")] string path,
         [Description("The complete new text of the file.")] string content,
         [Description("Explicitly allow replacing an existing file.")] bool overwrite = false)
     {
-        return WriteText(path, original => FileEdit.Overwrite(original, content, overwrite),
-            context.ApprovedWriteFingerprint, wholeFile: true, allowUnlistedText: true, unlistedContent: content ?? "");
+        return WriteText(path, original => FileEdit.Overwrite(original, content, overwrite), wholeFile: true);
     }
 
-    private string WriteText(string path, Func<string?, FileEditResult> makeEdit, string? approvedFingerprint = null,
-        bool wholeFile = false, bool allowUnlistedText = false, string? unlistedContent = null)
+    private string WriteText(string path, Func<string?, FileEditResult> makeEdit, bool wholeFile = false)
     {
-        var resolved = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText);
+        var resolved = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards);
         if (!resolved.IsAllowed) return Refusal(resolved.Verdict, resolved.Display, path);
 
         using var write = TextFile.AcquireWrite(resolved.Full);
         // Resolve again after waiting: another Hub writer or a permission change may have intervened.
-        var permitted = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText);
+        var permitted = WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards);
         if (!permitted.IsAllowed || permitted.Full != resolved.Full)
             return $"Refused: the permitted path changed before writing {resolved.Display}. Read it again.";
 
-        if (allowUnlistedText && !WorkspacePaths.IsWritableText(Path.GetFileName(resolved.Full)))
-        {
-            var looksLikeText = File.Exists(resolved.Full)
-                ? TextFile.HasTextFilePrefix(resolved.Full)
-                : TextFile.HasTextContentPrefix(unlistedContent ?? "");
-            if (!looksLikeText) return NotText(resolved.Display);
-        }
-
-        string? original = null;
-        byte[]? originalBytes = null;
-        if (File.Exists(resolved.Full))
-        {
-            try
-            {
-                originalBytes = ReadFileBytes(resolved.Full);
-                using var memory = new MemoryStream(originalBytes);
-                using var reader = new StreamReader(memory, new UTF8Encoding(false, true), true);
-                original = reader.ReadToEnd();
-            }
-            catch (DecoderFallbackException) { return NotText(resolved.Display); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return $"Could not read {resolved.Display}: {ex.Message}";
-            }
-        }
-
-        if (approvedFingerprint is not null
-            && !string.Equals(approvedFingerprint, Fingerprint(resolved.Full, originalBytes), StringComparison.Ordinal))
+        var (baseline, edit, message, fingerprint) = PrepareTextWrite(resolved, makeEdit, wholeFile);
+        if (message is not null) return message;
+        if (context.ApprovedWriteFingerprint is { } approved && approved != fingerprint)
             return $"Refused: {resolved.Display} changed since approval. Review the operation again.";
-
-        var edit = makeEdit(original);
-        if (!edit.Changed)
-            return wholeFile && edit.Verdict == FileEditVerdict.Unchanged
-                ? $"No change: {resolved.Display} already has that content."
-                : wholeFile && edit.Verdict == FileEditVerdict.AlreadyExists
-                ? $"Refused: {resolved.Display} already exists. Pass overwrite=true to replace it."
-                : FileEdit.ResultFor(edit.Verdict, edit.Matches, resolved.Display);
+        var originalBytes = baseline.Bytes;
+        var original = originalBytes is null ? null : baseline.Text;
 
         ChatFileRevision revision;
         try
@@ -332,7 +298,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             return $"Refused: could not save complete before/after snapshots for {resolved.Display}: {ex.Message}";
         }
 
-        var replaced = write.Replace(() => WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards, allowUnlistedText),
+        var replaced = write.Replace(() => WorkspacePaths.ResolveWrite(context.Sandbox, path, context.Guards),
             originalBytes, edit.Updated);
         if (replaced.Verdict != TextReplaceVerdict.Written)
         {
@@ -365,24 +331,31 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                + ChatChangeStore.Marker + revision.Id + journalWarning;
     }
 
-    /// <summary>Capture the file identity for a parked full-write call. Invalid paths fail closed.</summary>
-    public static string WriteFingerprint(WorkspaceToolScope scope, string path)
+    internal static (TextFileSnapshot Baseline, FileEditResult Edit, string? Message, string Fingerprint) PrepareTextWrite(
+        WorkspacePath path, Func<string?, FileEditResult> makeEdit, bool wholeFile)
     {
-        var resolved = WorkspacePaths.ResolveWrite(scope.Sandbox, path, scope.Guards, allowUnlistedText: true);
-        if (!resolved.IsAllowed) return "invalid";
-        try
+        var baseline = TextFile.Read(path.Full, TextFile.MaxWriteBytes);
+        if (TextFile.EditReadError(baseline, path.Display, allowMissing: true) is { } error)
+            return (baseline, default, error, "invalid");
+        var edit = makeEdit(baseline.Bytes is null ? null : baseline.Text);
+        if (!edit.Changed)
         {
-            var bytes = File.Exists(resolved.Full) ? ReadFileBytes(resolved.Full) : null;
-            return Fingerprint(resolved.Full, bytes);
+            var message = wholeFile && edit.Verdict == FileEditVerdict.Unchanged
+                ? $"No change: {path.Display} already has that content."
+                : wholeFile && edit.Verdict == FileEditVerdict.AlreadyExists
+                ? $"Refused: {path.Display} already exists. Pass overwrite=true to replace it."
+                : FileEdit.ResultFor(edit.Verdict, edit.Matches, path.Display);
+            return (baseline, edit, message, "invalid");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        { return "invalid"; }
+        try { return (baseline, edit, null, Fingerprint(path.Full, baseline)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return (baseline, edit, $"Could not inspect {path.Display}: {ex.Message}", "invalid"); }
     }
 
-    private static string Fingerprint(string path, byte[]? bytes)
+    private static string Fingerprint(string path, TextFileSnapshot baseline)
     {
-        var identity = path + "\n" + (bytes is null ? "missing" : Convert.ToHexString(SHA256.HashData(bytes)));
-        if (bytes is not null)
+        var identity = path + "\n" + (baseline.Identity?.ToUpperInvariant() ?? "missing");
+        if (baseline.Bytes is not null)
         {
             identity += "\n" + (int)File.GetAttributes(path);
             if (!OperatingSystem.IsWindows()) identity += "\n" + (int)File.GetUnixFileMode(path);
@@ -660,20 +633,34 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         return kind == "auto" ? "invalid" : kind;
     }
 
+    // Bind the permission shown, not just the target type. A pre-upgrade card recorded only "file" and
+    // can never approve an edit. A directory request cannot accidentally turn a file edit into a wider grant.
+    internal static string AccessDecision(WorkspaceToolScope scope, string path, string kind, bool edit)
+    {
+        var actual = AccessKind(path, kind);
+        if (!edit) return actual;
+        if (actual != "file") return "invalid";
+        return WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, path, edit: true).Verdict == GrantVerdict.Granted
+            ? "file-edit" : "file";
+    }
+
     [Description("Request access to one user-named absolute file or directory. Calling this tool is the request; "
-                 + "the approval card decides it. A file grant never opens its parent directory. Protected "
-                 + "locations and unsupported file types remain read-only. Never ask for permission in prose first: "
+                 + "the approval card decides it. A single file is read-only unless edit=true explicitly requests "
+                 + "text edits on that file. Its parent is never granted. Protected locations stay read-only. Never ask for permission in prose first: "
                  + "call this tool when the user named the path. Never guess a path.")]
     public Task<string> FsRequestAccess(
         [Description("Absolute path of the file or directory named by the user.")] string path,
-        [Description("auto detects an existing path; use file or directory to identify a missing target.")] string kind = "auto")
+        [Description("auto detects an existing path; use file or directory to identify a missing target.")] string kind = "auto",
+        [Description("Only for one file the user wants edited or created. Requests text edits, not moving, deleting, or command access.")] bool edit = false)
     {
-        var actual = AccessKind(path, kind);
+        var actual = AccessDecision(context, path, kind, edit);
         if (actual == "invalid")
             return Task.FromResult("Refused: provide an absolute existing path or specify kind=file or kind=directory for a missing target; the kind must match the target.");
         if (context.ApprovedAccessKind is { } expected && actual != expected)
-            return Task.FromResult("Refused: the target type changed since approval. Request access again.");
-        return actual == "directory" ? RequestDirectory(path) : RequestFile(path);
+            return Task.FromResult("Refused: the target type changed or its access changed since approval. Request access again.");
+        if (actual == "file-edit" && context.ApprovedAccessKind != actual)
+            return Task.FromResult("Refused: text edits to an external file require explicit approval for that file.");
+        return actual == "directory" ? RequestDirectory(path) : RequestFile(path, actual == "file-edit");
     }
 
     [Description("Ask the user to grant this session read and write access to one directory outside the "
@@ -739,27 +726,21 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         }
     }
 
-    [Description("Ask the user to grant this session access to one single file outside the workspace: a log a "
-                 + "diagnosis needs, a config in another checkout — the file the task or the user's own words "
-                 + "named. One approval card opens that one file for the rest of this session, by absolute path in "
-                 + "fs_read and fs_replace; its folder is not part of it, so listing, searching and a command's "
-                 + "cwd still cannot reach it. A file inside a protected location (Hub's data directory, an engine "
-                 + "installation, a .git) or outside the write allowlist is granted for reading only, and the card "
-                 + "says so. Never ask the user for permission in prose first: calling this tool *is* the request, "
-                 + "and the card it shows *is* the approval, so a sentence that waits for the user to authorize you "
-                 + "in words parks the task forever. If the user's own words already named the file, call this tool "
-                 + "now, once, and let the card decide, and never guess a path. When the task needs more than one "
-                 + "file in a folder, ask for the folder with fs_request_access instead.")]
-    public async Task<string> RequestFile(
+    [Description("Request a single user-named external file for reading only, never its folder. "
+                 + "Never ask the user for permission in prose first: calling the tool is the request, "
+                 + "and the card it shows *is* the approval. For text edits use fs_request_access with edit=true.")]
+    public Task<string> RequestFile(
         [Description("Absolute path of the single file to grant, for example D:\\dev\\other-project\\notes.md")]
-        string path)
+        string path) => RequestFile(path, false);
+
+    private async Task<string> RequestFile(string path, bool edit)
     {
-        var (verdict, full, detail) = WorkspacePaths.ClassifyFileGrant(context.Sandbox, context.Guards, path);
+        var (verdict, full, detail) = WorkspacePaths.ClassifyFileGrant(context.Sandbox, context.Guards, path, edit);
         switch (verdict)
         {
             case GrantVerdict.Granted or GrantVerdict.GrantedReadOnly:
                 return context.ApplyGrantedFile is { } apply
-                    ? await apply(full).ConfigureAwait(false)
+                    ? await apply(new(full, verdict == GrantVerdict.Granted ? FileGrantAccess.TextEdit : FileGrantAccess.ReadOnly)).ConfigureAwait(false)
                     : WorkspacePaths.FileGrantedResultFor(full, verdict == GrantVerdict.GrantedReadOnly);
             case GrantVerdict.NoPath:
                 return "Refused: fs_request_access needs the absolute path of one file. Do not retry it empty.";
@@ -775,17 +756,14 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             case GrantVerdict.Missing:
                 return $"Refused: '{full}' does not exist and neither does its folder. Ask the user to confirm the "
                        + "path; do not guess another one.";
-            case GrantVerdict.NotWritableText:
-                return $"Refused: '{full}' does not exist and the assistant could never write it — the name is "
-                       + "outside the text allowlist, or the place is protected — so this card would open nothing. "
-                       + "Ask the user to create the file, then ask again with the same path; do not retry another "
-                       + "name.";
+            case GrantVerdict.MissingReadOnlyFile:
+                return $"Refused: '{full}' does not exist, so read-only access opens nothing. A new text file needs "
+                       + "an explicit edit grant (kind=file, edit=true) outside protected locations.";
             case GrantVerdict.InsideWorkspace:
                 return $"'{full}' is inside the session workspace, so a relative path already reaches it. Use one "
                        + "like src/main.cpp; do not retry this call.";
             case GrantVerdict.AlreadyGranted:
-                return $"'{full}' is already granted to this session. Name it by absolute path in fs_read or "
-                       + "fs_replace; do not ask again.";
+                return $"'{full}' is already granted to this session. No access was changed. Use its absolute path.";
             case GrantVerdict.InsideGrant:
                 return $"'{full}' is already inside '{detail}', which this session holds. Work there with absolute "
                        + "paths; do not ask again.";
@@ -1517,7 +1495,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             // file the caller named.
             var within = oneFile ? Path.GetFileName(file) : RelativeOf(directory.Full, file);
             if (!oneFile && !wants(within)) continue;
-            // A log is text whatever it is called — that list is the search's own, and not the write allowlist.
+            // A log is text whatever it is called; this list only limits discovery cost.
             if (!WorkspacePaths.IsSearchableText(Path.GetFileName(file))) continue;
             searched++;
             var length = new FileInfo(file).Length;

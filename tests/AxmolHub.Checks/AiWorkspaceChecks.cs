@@ -138,73 +138,15 @@ internal static class AiWorkspaceChecks
             throw new Exception("A file, or nothing at all, was accepted as a directory to search.");
         if (WorkspacePaths.ResolveDirectory(WorkspaceSandbox.For(null), "src", guards).Verdict != WorkspacePathVerdict.NoWorkspace || WorkspacePaths.ResolveDirectory(Path.Combine(guardRoot, "nope"), "src", guards).Verdict != WorkspacePathVerdict.MissingWorkspace)
             throw new Exception("The directory verb did not answer a missing workspace in words.");
-        // The allowlist is a WRITE rule: reading a build log is legitimate, writing one is not.
-        File.WriteAllText(Path.Combine(workspace, "src", "build.log"), "error: nope\n");
-        if (WorkspacePaths.ResolveRead(workspace, "src/build.log", guards).Verdict != WorkspacePathVerdict.Allowed)
-            throw new Exception("A build log inside the workspace could not be read.");
-        foreach (var blocked in new[]
-        {
-            "src/build.log",
-            "src/tool.exe",
-            "src/notes.nitwit"
-        }
-
-        )
-            if (WorkspacePaths.ResolveWrite(workspace, blocked, guards).Verdict != WorkspacePathVerdict.ExtensionNotAllowed)
-                throw new Exception($"Writing '{blocked}' was not refused by the extension allowlist.");
+        // This is authorization, not format detection: no filename proves or disproves that its bytes are text.
+        foreach (var path in new[] { "1k/build.profiles", "NuGet.config", "no-extension", "ios/icon.plist", "src/tool.exe" })
+            if (!WorkspacePaths.ResolveWrite(workspace, path, guards).IsAllowed)
+                throw new Exception($"A filename decided write permission for '{path}'.");
         // A file that is absent is a write target, not a read target; a directory is neither.
         if (WorkspacePaths.ResolveWrite(workspace, "src/new.cpp", guards).Verdict != WorkspacePathVerdict.Allowed)
             throw new Exception("A new .cpp file was refused as a write target.");
         if (WorkspacePaths.ResolveRead(workspace, "src/new.cpp", guards).Verdict != WorkspacePathVerdict.NotAFile || WorkspacePaths.ResolveRead(workspace, "src", guards).Verdict != WorkspacePathVerdict.NotAFile || WorkspacePaths.ResolveWrite(workspace, "src", guards).Verdict != WorkspacePathVerdict.NotAFile)
             throw new Exception("A missing file or a directory was not reported as NotAFile.");
-        // Names without a usable extension are still writable when the name itself is known build metadata.
-        foreach (var name in new[]
-        {
-            "CMakeLists.txt",
-            ".gitignore",
-            "Makefile"
-        }
-
-        )
-            if (WorkspacePaths.ResolveWrite(workspace, name, guards).Verdict != WorkspacePathVerdict.Allowed)
-                throw new Exception($"{name} was refused as a write target.");
-        // Every platform's project format is text, and the extension is what says so. An assistant that cannot write
-        // a .pbxproj cannot help with the iOS build it is being shown, and a .axaml is Hub's own UI language. An .svg
-        // is on the list because a vector document reaches a model as markup: no vision endpoint takes one as an image.
-        foreach (var text in new[]
-        {
-            "src/ui.axaml",
-            "src/Main.xaml",
-            "ios/App.xcconfig",
-            "ios/project.pbxproj",
-            "ios/App.entitlements",
-            "ios/LaunchScreen.storyboard",
-            "ios/Icon.xib",
-            "ios/en.strings",
-            "ios/plural.stringsdict",
-            "android/callback.aidl",
-            "qt/app.pro",
-            "server/app.cfg",
-            "email/welcome.tmpl",
-            "assets/icon.svg",
-            "AxmolHub.slnx",
-        }
-
-        )
-            if (WorkspacePaths.ResolveWrite(workspace, text, guards).Verdict != WorkspacePathVerdict.Allowed)
-                throw new Exception($"{text} was refused as a write target even though it is a text project file " + $"({WorkspacePaths.ResolveWrite(workspace, text, guards).Verdict}).");
-        // Exact match, not a prefix: a made-up extension that merely starts like a known one is still unknown, and a
-        // prefix rule would let a binary masquerade as a project file.
-        foreach (var invented in new[]
-        {
-            "src/bad.axamlx",
-            "ios/bad.pbxproxx",
-            "app.cfgg"
-        }
-
-        )
-            if (WorkspacePaths.ResolveWrite(workspace, invented, guards).Verdict != WorkspacePathVerdict.ExtensionNotAllowed)
-                throw new Exception($"{invented} was writable on a prefix match rather than on its extension.");
         // A directory the project has not grown yet is not a link. Asking a missing ancestor for its attributes answers
         // with an error value whose bits include the reparse flag, which refused every new file in a new folder — the
         // junction assertion below is the same rule with a link that really is there.
@@ -222,7 +164,7 @@ internal static class AiWorkspaceChecks
             WorkspacePathVerdict.OutsideRoots,
             WorkspacePathVerdict.ProtectedRoot,
             WorkspacePathVerdict.ReparsePoint,
-            WorkspacePathVerdict.ExtensionNotAllowed,
+            WorkspacePathVerdict.TextEditsOnly,
             WorkspacePathVerdict.NotADirectory,
         }
 

@@ -62,7 +62,7 @@ internal sealed class ConversationRegistry(ConversationStore store)
                     {
                         var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots, guards);
                         var sandbox = new WorkspaceSandbox(conversation.WorkspaceRoot, write, read)
-                            { Files = WorkspacePaths.NormalizeFiles(conversation.GrantedFiles) };
+                            { Files = WorkspacePaths.NormalizeFiles(conversation.FileGrants, guards) };
                         var batches = ChatChangeStore.BatchesForConversation(store.DataRoot, id);
                         migrated |= ChatChangeStore.RecoverBatchCalls(store.DataRoot, conversation, batches, sandbox, guards) > 0;
                     }

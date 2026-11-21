@@ -10,6 +10,8 @@ public enum FileEditVerdict
     Ambiguous,
     Unchanged,
     AlreadyExists,
+    NotText,
+    TooLarge,
 }
 
 public readonly record struct FileEditResult(FileEditVerdict Verdict, string Updated, int Matches)
@@ -24,15 +26,22 @@ public readonly record struct FileEditResult(FileEditVerdict Verdict, string Upd
 /// </summary>
 public static class FileEdit
 {
+    private static FileEditResult Output(FileEditVerdict verdict, string text, int matches) => TextFile.CheckOutput(text) switch
+    {
+        TextFileState.Text => new(verdict, text, matches),
+        TextFileState.TooLarge => new(FileEditVerdict.TooLarge, "", 0),
+        _ => new(FileEditVerdict.NotText, "", 0)
+    };
+
     /// <summary>Replace a whole file only when overwriting was explicitly requested.</summary>
     public static FileEditResult Overwrite(string? original, string? content, bool overwrite)
     {
         var updated = TextEol.ToLf(content ?? "");
-        if (original is null) return new(FileEditVerdict.Created, updated, 0);
+        if (original is null) return Output(FileEditVerdict.Created, updated, 0);
         if (!overwrite) return new(FileEditVerdict.AlreadyExists, original, 0);
         if (string.Equals(original, updated, StringComparison.Ordinal))
             return new(FileEditVerdict.Unchanged, original, 0);
-        return new(FileEditVerdict.Applied, updated, 1);
+        return Output(FileEditVerdict.Applied, updated, 1);
     }
 
     /// <param name="original">The current text, or <see langword="null"/> when the file does not exist.</param>
@@ -44,7 +53,7 @@ public static class FileEdit
         if (original is null)
         {
             return oldString.Length == 0
-                ? new FileEditResult(FileEditVerdict.Created, TextEol.ToLf(newString), 0)
+                ? Output(FileEditVerdict.Created, TextEol.ToLf(newString), 0)
                 : new FileEditResult(FileEditVerdict.NotFound, "", 0);
         }
 
@@ -64,10 +73,14 @@ public static class FileEdit
         if (string.Equals(anchor, replacement, StringComparison.Ordinal))
             return new FileEditResult(FileEditVerdict.Unchanged, original, matches);
 
+        // Bound replace-all expansion before allocating; Output also checks the exact UTF-8 byte count.
+        var count = replaceAll ? matches : 1;
+        if (baseline.Length + (long)count * (replacement.Length - anchor.Length) > TextFile.MaxWriteBytes)
+            return new(FileEditVerdict.TooLarge, "", 0);
         var updated = replaceAll
             ? baseline.Replace(anchor, replacement, StringComparison.Ordinal)
             : ReplaceFirst(baseline, anchor, replacement);
-        return new FileEditResult(FileEditVerdict.Applied, updated, replaceAll ? matches : 1);
+        return Output(FileEditVerdict.Applied, updated, count);
     }
 
     internal static int CountMatches(string text, string value)
@@ -90,6 +103,8 @@ public static class FileEdit
     public static string ResultFor(FileEditVerdict verdict, int matches, string relativePath) => verdict switch
     {
         FileEditVerdict.Created => $"Created {relativePath}.",
+        FileEditVerdict.TooLarge => TextFile.SizeRefusal(relativePath),
+        FileEditVerdict.NotText => $"Refused: the proposed content for {relativePath} is not supported text.",
         FileEditVerdict.NotFound =>
             $"No change: old_string was not found in {relativePath}. Read the file and copy the exact text "
             + "(including indentation and line breaks) before trying again.",

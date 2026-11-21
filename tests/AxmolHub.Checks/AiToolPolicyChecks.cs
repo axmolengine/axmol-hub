@@ -33,6 +33,9 @@ internal static class AiToolPolicyChecks
             (ToolApprovalModes.Auto, ToolRisk.SystemCommand, true),
             (ToolApprovalModes.Full, ToolRisk.ReadOnly, false),
             (ToolApprovalModes.Full, ToolRisk.WorkspaceWrite, false),
+            (ToolApprovalModes.Ask, ToolRisk.SensitiveEdit, true),
+            (ToolApprovalModes.Auto, ToolRisk.SensitiveEdit, true),
+            (ToolApprovalModes.Full, ToolRisk.SensitiveEdit, false),
             (ToolApprovalModes.Full, ToolRisk.WorkspaceCommand, false),
             (ToolApprovalModes.Full, ToolRisk.SystemCommand, false),
             // The assistant's own notes never ask, in any mode: a note that costs a card is a note never written.
@@ -64,7 +67,7 @@ internal static class AiToolPolicyChecks
         Console.WriteLine("PASS: the approval decision table asks exactly where it should.");
         // Which tiers a 「总是允许」 grant cannot open, as its own table: the gate and the card's button read this one
         // predicate now, so the failure this guards against — a button that parks a call the gate would keep parking —
-        // cannot come back by editing one side. Three tiers, three reasons, and a new tier defaults to grantable, so
+        // cannot come back by editing one side. A new tier defaults to grantable, so
         // forgetting to name it here is a visible omission rather than a silent one.
         var grantable = new (ToolRisk Risk, bool Expected)[]
         {
@@ -80,6 +83,7 @@ internal static class AiToolPolicyChecks
             (ToolRisk.SystemCommand, false),
             (ToolRisk.AskUser, false),
             (ToolRisk.CacheBreak, false),
+            (ToolRisk.SensitiveEdit, false),
         };
         foreach (var(risk, expected)in grantable)
         {
@@ -87,7 +91,7 @@ internal static class AiToolPolicyChecks
                 throw new Exception($"A grant {(expected ? "should" : "must never")} open {risk}, and it does not agree.");
         }
 
-        Console.WriteLine("PASS: no grant opens the reach tier, the question tier or the cache-break tier, and every " + "other tier — building included — stays grantable.");
+        Console.WriteLine("PASS: blanket tool grants exclude sensitive edits, system reach, questions and cache breaks.");
         // What a command line has to look like before Hub asks the person awake about it. Asserted as a table because
         // the shape of the failure is a miss in both directions. The negatives are rows too, and so is every pair that
         // separates the two answers: a compile into the directory (`BuildRun`) and a removal of what is already in it

@@ -40,8 +40,8 @@ public static class TextFile
 {
     public const int MaxEditorBytes = 2 * 1024 * 1024;
     public const int MaxDiffBytes = 1024 * 1024;
-    private const int TextDetectionCharacters = 20;
-    private const int MaxTextDetectionBytes = 84;
+    public const int MaxWriteBytes = 8 * 1024 * 1024;
+    private static readonly UTF8Encoding WriteEncoding = new(false, true);
     private sealed class Gate
     {
         internal readonly SemaphoreSlim Semaphore = new(1, 1);
@@ -65,7 +65,7 @@ public static class TextFile
                 if (buffer.Length + count > maxBytes) return new(TextFileState.TooLarge, detail: $"File exceeds {maxBytes} bytes.");
                 buffer.Write(chunk, 0, count);
             }
-            return Decode(buffer.ToArray());
+            return Decode(buffer.ToArray(), owned: true);
         }
         catch (FileNotFoundException) { return new(TextFileState.Missing); }
         catch (DirectoryNotFoundException) { return new(TextFileState.Missing); }
@@ -73,70 +73,36 @@ public static class TextFile
         { return new(TextFileState.Failed, detail: ex.Message); }
     }
 
-    /// <summary>Quickly classify the first 20 characters of a file without loading its full contents.</summary>
-    public static bool HasTextFilePrefix(string path)
+    internal static string SizeRefusal(string path) => $"Refused: {path} is too large for a text edit (limit {MaxWriteBytes} bytes).";
+
+    internal static string? EditReadError(TextFileSnapshot snapshot, string path, bool allowMissing = false) => snapshot.State switch
     {
-        try
-        {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-            Span<byte> sample = stackalloc byte[MaxTextDetectionBytes];
-            var length = 0;
-            while (length < sample.Length)
-            {
-                var count = stream.Read(sample[length..]);
-                if (count == 0) break;
-                length += count;
-            }
-            return HasTextPrefix(sample[..length]);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            return false;
-        }
+        TextFileState.Text => null,
+        TextFileState.Missing when allowMissing => null,
+        TextFileState.Missing => $"Refused: {path} does not exist; use fs_write to create it.",
+        TextFileState.TooLarge => SizeRefusal(path),
+        TextFileState.Binary or TextFileState.UnsupportedEncoding => $"Refused: {path} is not supported text. {snapshot.Detail}",
+        _ => $"Could not read {path}: {snapshot.Detail}"
+    };
+
+    internal static TextFileState CheckOutput(string text)
+    {
+        if (text.Length > MaxWriteBytes) return TextFileState.TooLarge;
+        if (!IsText(text)) return TextFileState.Binary;
+        try { return WriteEncoding.GetByteCount(text) <= MaxWriteBytes ? TextFileState.Text : TextFileState.TooLarge; }
+        catch (EncoderFallbackException) { return TextFileState.UnsupportedEncoding; }
     }
 
-    /// <summary>Classify at most the first 20 characters of proposed text content.</summary>
-    public static bool HasTextContentPrefix(string text)
-        => IsTextSample(text.AsSpan(0, Math.Min(text.Length, TextDetectionCharacters)));
-
-    private static bool HasTextPrefix(ReadOnlySpan<byte> bytes)
+    private static bool IsText(string text)
     {
-        Encoding encoding;
-        var skip = 0;
-        if (bytes.StartsWith(new byte[] { 0xff, 0xfe, 0, 0 }))
-        { encoding = new UTF32Encoding(false, true, true); skip = 4; }
-        else if (bytes.StartsWith(new byte[] { 0, 0, 0xfe, 0xff }))
-        { encoding = new UTF32Encoding(true, true, true); skip = 4; }
-        else if (bytes.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }))
-        { encoding = new UTF8Encoding(true, true); skip = 3; }
-        else if (bytes.StartsWith(new byte[] { 0xff, 0xfe }))
-        { encoding = new UnicodeEncoding(false, true, true); skip = 2; }
-        else if (bytes.StartsWith(new byte[] { 0xfe, 0xff }))
-        { encoding = new UnicodeEncoding(true, true, true); skip = 2; }
-        else encoding = new UTF8Encoding(false, true);
-
-        var length = bytes.Length - skip;
-        while (length >= 0)
-        {
-            try
-            {
-                var sample = encoding.GetString(bytes.Slice(skip, length));
-                return IsTextSample(sample.AsSpan(0, Math.Min(sample.Length, TextDetectionCharacters)));
-            }
-            catch (DecoderFallbackException) when (length > 0) { length--; }
-        }
-        return false;
-    }
-
-    private static bool IsTextSample(ReadOnlySpan<char> sample)
-    {
-        foreach (var character in sample)
+        foreach (var character in text)
             if (char.IsControl(character) && character is not ('\t' or '\r' or '\n' or '\f')) return false;
         return true;
     }
 
-    public static TextFileSnapshot Decode(byte[] bytes)
+    public static TextFileSnapshot Decode(byte[] bytes) => Decode(bytes, owned: false);
+
+    private static TextFileSnapshot Decode(byte[] bytes, bool owned)
     {
         // UTF-32 LE must precede UTF-16 LE because the first two BOM bytes are identical.
         Encoding encoding;
@@ -155,9 +121,9 @@ public static class TextFile
         try
         {
             var text = encoding.GetString(bytes, skip, bytes.Length - skip);
-            if (text.Any(c => char.IsControl(c) && c is not ('\t' or '\r' or '\n' or '\f')))
+            if (!IsText(text))
                 return new(TextFileState.Binary, detail: "Text contains binary control characters.");
-            return new(TextFileState.Text, (byte[])bytes.Clone(), text, encoding);
+            return new(TextFileState.Text, owned ? bytes : (byte[])bytes.Clone(), text, encoding);
         }
         catch (DecoderFallbackException ex)
         { return new(TextFileState.UnsupportedEncoding, detail: ex.Message); }

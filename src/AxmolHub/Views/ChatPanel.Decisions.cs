@@ -781,6 +781,7 @@ public partial class ChatPanel
         // is being asked to spend is already built, and nothing they do after this answer can put it back.
         var risk = risks.Contains(ToolRisk.CacheBreak) ? ToolRisk.CacheBreak
             : risks.Contains(ToolRisk.SystemCommand) ? ToolRisk.SystemCommand
+            : risks.Contains(ToolRisk.SensitiveEdit) ? ToolRisk.SensitiveEdit
             : risks.Contains(ToolRisk.WorkspaceWrite) ? ToolRisk.WorkspaceWrite
             : _chat.RiskFor(conversationId, turn.ToolName ?? "", turn.ToolArguments);
         var title = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
@@ -798,7 +799,7 @@ public partial class ChatPanel
                 // A write, and the same glyph a file write gets: the tier a commit lands on was carved out to say
                 // "this is ordinary work", which it does by asking in 询问审批 — and a card that drew the auto
                 // glyph while it waited for an answer would be contradicting the mode it is asking under.
-                ToolRisk.WorkspaceWrite or ToolRisk.RepositoryWrite => "Hub.Icon.PermissionAsk",
+                ToolRisk.WorkspaceWrite or ToolRisk.RepositoryWrite or ToolRisk.SensitiveEdit => "Hub.Icon.PermissionAsk",
                 _ => "Hub.Icon.PermissionAuto",
             }),
         };
@@ -825,7 +826,7 @@ public partial class ChatPanel
         // under the card must not be pushed out either. Past twelve lines the block says so and offers the rest.
         var detail = new StackPanel { Spacing = 4 };
         var longestPreview = 0;
-        foreach (var member in group)
+        foreach (var (member, memberRisk) in group.Zip(risks))
         {
             // Named per member only when the card has more than one to tell apart; a single call says its own name
             // in the title already, and repeating it under the title is the second label the charter forbids.
@@ -837,7 +838,8 @@ public partial class ChatPanel
                     Classes = { "approval-label", "approval-member" },
                     Text = member.ToolName ?? "",
                 });
-            AddApprovalDetail(detail, "ChatApprovalArguments", member.ToolArguments);
+            // Do not re-expose environment values beside a deliberately redacted edit preview.
+            if (memberRisk != ToolRisk.SensitiveEdit) AddApprovalDetail(detail, "ChatApprovalArguments", member.ToolArguments);
             AddApprovalDetail(detail, "ChatApprovalChangePreview", member.ApprovalPreview);
             longestPreview = Math.Max(longestPreview, (member.ApprovalPreview ?? "").Split('\n').Length);
         }

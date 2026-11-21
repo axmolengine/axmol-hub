@@ -11,7 +11,7 @@ public sealed record FsReplacement(
     [property: Description("Replacement text.")] string new_string,
     [property: Description("Replace all matches; otherwise multiple matches are refused.")] bool replace_all = false);
 
-internal sealed record FsTextChange(WorkspacePath Path, byte[] BeforeBytes, string Before, string After);
+internal sealed record FsTextChange(WorkspacePath Path, byte[] BeforeBytes, string Before, string After, string Fingerprint);
 internal sealed record FsReplacePlan(IReadOnlyList<FsTextChange> Changes, string? Error, string Fingerprint);
 
 public sealed partial class WorkspaceTools
@@ -43,15 +43,11 @@ public sealed partial class WorkspaceTools
             {
                 try
                 {
-                    var info = new FileInfo(path.Full);
-                    if (!info.Exists) return Refuse($"Refused: {path.Display} does not exist; use fs_write to create it.");
-                    var bytes = ReadFileBytes(path.Full);
-                    using var stream = new MemoryStream(bytes);
-                    using var reader = new StreamReader(stream, new UTF8Encoding(false, true), true);
-                    var text = reader.ReadToEnd();
-                    current = new FsTextChange(path, bytes, text, text);
+                    var baseline = TextFile.Read(path.Full, TextFile.MaxWriteBytes);
+                    if (TextFile.EditReadError(baseline, path.Display) is { } error) return Refuse(error);
+                    current = new FsTextChange(path, baseline.Bytes!, baseline.Text, baseline.Text, Fingerprint(path.Full, baseline));
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 { return Refuse($"Could not read {path.Display}: {ex.Message}"); }
             }
             var edit = FileEdit.Apply(current.After, item.old_string, item.new_string ?? "", item.replace_all);
@@ -61,14 +57,9 @@ public sealed partial class WorkspaceTools
         }
 
         var ordered = changes.Values.OrderBy(change => change.Path.Full, comparer).ToArray();
-        try
-        {
-            var identity = string.Join("\n", ordered.Select(change => Fingerprint(change.Path.Full, change.BeforeBytes)));
-            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-            return new(ordered.Where(change => change.Before != change.After).ToArray(), null, fingerprint);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { return Refuse($"Could not inspect files: {ex.Message}"); }
+        var identity = string.Join("\n", ordered.Select(change => change.Fingerprint));
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        return new(ordered.Where(change => change.Before != change.After).ToArray(), null, fingerprint);
     }
 
     [Description("Apply exact replacements to one or more existing text files. Every edit is checked before writing.")]

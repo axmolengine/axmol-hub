@@ -304,37 +304,37 @@ internal sealed partial class ChatSessionCoordinator
         => _active is { } session ? (_sessions.Peek(session.Id) ?? session).ReadOnlyRoots : [];
 
     /// <summary>
-    /// The same record for a card on one file: one exact path on the session, and the answer the model reads says
-    /// what it may do with that file and what the grant does not cover. The permission is asked here rather than
-    /// stored, for the reason <see cref="WorkspacePaths.FileGrantIsReadOnly"/> gives — the audit line and the answer
-    /// agree with every later resolution because they all ask the guard.
+    /// Persist exactly the access on the card, narrowed if the path has since become protected.
     /// </summary>
-    internal async Task<string> ApplyGrantedFileAsync(string conversationId, string path)
+    internal async Task<string> ApplyGrantedFileAsync(string conversationId, WorkspaceFileGrant grant)
     {
-        var guards = Execution.Guards;
-        var readOnly = WorkspacePaths.FileGrantIsReadOnly(path, guards);
+        var path = grant.Path;
+        WorkspaceFileGrant? stored = null;
         var added = false;
         await Execution.ApplyOnUiAsync(() =>
         {
             added = _sessions.TryUpdate(conversationId, opened =>
             {
-                // Through the shape rules: one exact path, deduped, bounded, and never a directory.
-                opened.GrantedFiles = WorkspacePaths.NormalizeFiles([.. opened.GrantedFiles, path]);
+                var key = WorkspacePaths.CanonicalRoot(path);
+                var kept = opened.FileGrants.Where(file => WorkspacePaths.CanonicalRoot(file.Path) != key);
+                opened.FileGrants = WorkspacePaths.NormalizeFiles(kept.Append(grant), Execution.Guards);
+                stored = opened.FileGrants.FirstOrDefault(file => WorkspacePaths.CanonicalRoot(file.Path) == key);
             });
             if (added) Execution.Changed?.Invoke();
         }).ConfigureAwait(false);
 
         if (!added)
             return $"Refused: session {conversationId} is gone, so nothing could be granted. Do not retry this call.";
-        Execution.Audit(conversationId, $"Granted file{(readOnly ? " (read-only)" : "")}: {path}");
+        if (stored is null) return "Refused: the file path was unavailable or the session's file grant limit was reached.";
+        var readOnly = WorkspacePaths.FileGrantIsReadOnly(stored, Execution.Guards);
+        Execution.Audit(conversationId, $"Granted file ({(readOnly ? "read only" : "text edits only")}): {path}");
         return WorkspacePaths.FileGrantedResultFor(path, readOnly);
     }
 
     internal IReadOnlyList<(string Path, bool ReadOnly)> ActiveGrantedFiles
         => _active is { } session
-           && (_sessions.Peek(session.Id) ?? session).GrantedFiles is { Count: > 0 } files
-            ? WorkspacePaths.FileGrants(files,
-                Execution.Guards)
+           && (_sessions.Peek(session.Id) ?? session).FileGrants is { Count: > 0 } files
+            ? files.Select(file => (file.Path, WorkspacePaths.FileGrantIsReadOnly(file, Execution.Guards))).ToList()
             : [];
 
     internal bool RevokeGrantedFile(string conversationId, string path)
@@ -343,11 +343,9 @@ internal sealed partial class ChatSessionCoordinator
         var revoked = false;
         _sessions.TryUpdate(conversationId, opened =>
         {
-            var kept = opened.GrantedFiles
-                .Where(file => !string.Equals(WorkspacePaths.CanonicalRoot(file), key, StringComparison.Ordinal))
-                .ToList();
-            if (kept.Count == opened.GrantedFiles.Count) return;
-            opened.GrantedFiles = kept;
+            var kept = opened.FileGrants.Where(file => WorkspacePaths.CanonicalRoot(file.Path) != key).ToList();
+            if (kept.Count == opened.FileGrants.Count) return;
+            opened.FileGrants = kept;
             revoked = true;
         });
         if (!revoked) return false;
@@ -842,7 +840,7 @@ internal sealed partial class ChatSessionCoordinator
             // other, and the folder a fork works in has nothing to do with which files were opened by name.
             GrantedRoots = [.. source.GrantedRoots],
             ReadOnlyRoots = [.. source.ReadOnlyRoots],
-            GrantedFiles = [.. source.GrantedFiles],
+            FileGrants = [.. source.FileGrants],
             Messages = prefix,
             ChangeHistoryIds = [.. source.ChangeHistoryIds
                 .Concat(prefix.SelectMany(turn => new[] { turn.ChangeId, turn.UndoRevisionId }))

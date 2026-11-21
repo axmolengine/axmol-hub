@@ -478,28 +478,35 @@ public static class ChatChangeStore
         using var write = TextFile.AcquireWrite(resolved.Full);
         var permitted = WorkspacePaths.ResolveWrite(sandbox, last.Path, guards);
         if (!permitted.IsAllowed || permitted.Full != resolved.Full) return UndoVerdict.RefusedPath;
-        // Keep the existing whole-revision contract; the editor's smaller opening budget is not an undo limit.
-        var baseline = TextFile.Read(resolved.Full, int.MaxValue);
-        if (baseline.State == TextFileState.Missing) return UndoVerdict.TargetMissing;
-        if (baseline.State != TextFileState.Text) return UndoVerdict.NotText;
+        var baseline = TextFile.Read(resolved.Full, TextFile.MaxWriteBytes);
+        if (ChatUndoStore.TextRefusal(baseline.State) is { } targetError) return targetError;
         var current = baseline.Text;
         if (Hash(Encoding.UTF8.GetBytes(TextEol.ToLf(current))) != last.AfterHash)
             return UndoVerdict.ChangedSince;
 
-        var before = first.BeforeHash is null ? null : ReadContent(dataRoot, first.BeforeHash);
-        if (first.BeforeHash is not null && before is null) return UndoVerdict.CopyMissing;
-        var beforeBytes = first.BeforeRawHash is null ? null : ReadBytes(dataRoot, first.BeforeRawHash);
-        if (first.BeforeRawHash is not null && beforeBytes is null) return UndoVerdict.CopyMissing;
+        // Restore exactly the validated object. Older revisions without raw bytes kept UTF-8/LF instead.
+        TextFileSnapshot? preImage = null;
+        if ((first.BeforeRawHash ?? first.BeforeHash) is { } hash)
+        {
+            if (hash.Length != 64 || !hash.All(Uri.IsHexDigit) || DirectoryFor(dataRoot) is not { } root)
+                return UndoVerdict.CopyMissing;
+            preImage = TextFile.Read(ObjectPath(root, hash), TextFile.MaxWriteBytes);
+            if (preImage.State == TextFileState.Missing) return UndoVerdict.CopyMissing;
+            if (ChatUndoStore.TextRefusal(preImage.State) is { } copyError) return copyError;
+            if (!string.Equals(hash, preImage.Identity, StringComparison.OrdinalIgnoreCase)
+                || first.BeforeRawHash is not null && Hash(Encoding.UTF8.GetBytes(TextEol.ToLf(preImage.Text))) != first.BeforeHash)
+                return UndoVerdict.CopyMissing;
+        }
         ChatFileRevision inverse;
-        try { inverse = Prepare(dataRoot, conversationId, resolved.Full, resolved.Root, current, before, baseline.Bytes); }
+        try { inverse = Prepare(dataRoot, conversationId, resolved.Full, resolved.Root, current, preImage?.Text, baseline.Bytes); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return UndoVerdict.WriteFailed;
         }
 
-        var replaced = beforeBytes is null
-            ? write.Replace(() => WorkspacePaths.ResolveWrite(sandbox, last.Path, guards), baseline.Bytes, before)
-            : write.ReplaceRaw(() => WorkspacePaths.ResolveWrite(sandbox, last.Path, guards), baseline.Bytes, beforeBytes);
+        var replaced = preImage is null
+            ? write.Replace(() => WorkspacePaths.ResolveWrite(sandbox, last.Path, guards), baseline.Bytes, null)
+            : write.ReplaceRaw(() => WorkspacePaths.ResolveWrite(sandbox, last.Path, guards), baseline.Bytes, preImage.Bytes!);
         if (replaced.Verdict != TextReplaceVerdict.Written)
         {
             Abandon(dataRoot, inverse);

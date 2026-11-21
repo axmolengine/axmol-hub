@@ -22,12 +22,10 @@ public enum WorkspacePathVerdict
     /// </summary>
     ProtectedRoot,
     /// <summary>A directory or one file this session holds for reading only: the read verbs may use it, and every
-    /// write and a shell's <c>cwd</c> may not. Two things make a grant read-only — it sits in a protected location,
-    /// or it is a file the assistant may not write (its extension is outside the write allowlist). Both are guard
-    /// facts about the path, so one verdict names both and the sentence says which.</summary>
+    /// write and a shell's <c>cwd</c> may not.</summary>
     ReadOnlyRoot,
+    TextEditsOnly,
     ReparsePoint,
-    ExtensionNotAllowed,
     NotAFile,
     NotADirectory,
     AlreadyExists,
@@ -79,13 +77,16 @@ public enum ProtectedKind
     Git,
 }
 
+/// <summary>LegacyWrite preserves management access that existing writable grants already had. New file cards
+/// only grant reading or text editing; neither opens a directory or authorizes moving or deleting the file.</summary>
+public enum FileGrantAccess { ReadOnly, TextEdit, LegacyWrite }
+public sealed record WorkspaceFileGrant(string Path, FileGrantAccess Access = FileGrantAccess.ReadOnly);
+
 /// <summary>
 /// Every path one request's file and command tools may touch: the session's workspace — the root the person
 /// pointed the session at, and the only one a relative path resolves against — plus the directories the person has
 /// granted this session, which are addressed absolutely, and the single files granted the same way. A grant is
-/// read-and-write, except on a protected location and on a file the assistant may not write, where it is read only:
-/// that second list is <see cref="ReadOnly"/> for directories, and for a file it is decided by
-/// <see cref="WorkspacePaths.FileGrantIsReadOnly"/> at every resolution rather than stored.
+/// capped by the access on its card and by the protected-location guard at the time of use.
 ///
 /// <para>A grant adds a place to work; it never moves the workspace. Moving it stays the person's own move, made
 /// on the composer's chip, because the directory a session is born into is what the sidebar groups it by, what the
@@ -107,7 +108,7 @@ public sealed record WorkspaceSandbox(
     /// <see cref="Roots"/> on purpose, so every verb that means "a place" (a listing, a search, a command's cwd)
     /// keeps answering for places, and the one arm that matches an exact path is the one that reads or writes it.
     /// </summary>
-    public IReadOnlyList<string> Files { get; init; } = [];
+    public IReadOnlyList<WorkspaceFileGrant> Files { get; init; } = [];
 
     /// <summary>The directories a person approved for reading only. A protected location is the only thing that can
     /// land here — the write floor is what no grant opens — and it is its own list rather than a flag on a grant
@@ -177,9 +178,8 @@ public enum GrantVerdict
     /// exists and is a different tool: <c>fs_request_access</c> opens a whole place — read-only when it is protected
     /// — while a card on one file cannot.</summary>
     IsDirectory,
-    /// <summary>The file is not there, and the grant it would get could only read: a protected location, or a name
-    /// outside the write allowlist. A card that opens nothing is not worth showing.</summary>
-    NotWritableText,
+    /// <summary>Nothing exists at this path for a read-only grant to open.</summary>
+    MissingReadOnlyFile,
     /// <summary>The session's own workspace, which needs no grant.</summary>
     SameAsWorkspace,
     /// <summary>Inside the workspace, where a relative path already reaches.</summary>
@@ -214,13 +214,9 @@ public static class WorkspacePaths
     /// Composed rather than a literal so it carries the host's separator.</summary>
     public static string MemoryDirectory => Path.Combine(".agents", "memory");
 
-    /// <summary>Plain-text source and project files, by extension rather than by sniffing bytes: the same set
-    /// gates reading and writing, so anything not listed here is a file the assistant has to ask a person to
-    /// change. The platform project formats are all text (.pbxproj, .xcconfig, .storyboard, .entitlements,
-    /// .aidl, .pro), and an assistant that cannot edit them cannot help with that platform. An .svg is listed
-    /// for that same reason even though it draws something: it is an XML document, no vision endpoint takes a
-    /// vector file as an image, and seeing it therefore means reading its markup.</summary>
-    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>Frozen names for migrating old path-only file grants. Discovery can recognize additional names
+    /// in IsTextFile without changing what an old approval meant. Never use these to authorize a new edit.</summary>
+    private static readonly HashSet<string> LegacyTextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".aidl", ".axaml", ".axproj", ".bat", ".c", ".cc", ".cfg", ".cmake", ".cpp", ".cs", ".css", ".cxx",
         ".def", ".dart", ".editorconfig", ".entitlements", ".filters", ".frag", ".gitattributes", ".gitignore", ".glsl",
@@ -231,7 +227,7 @@ public static class WorkspacePaths
         ".xib", ".xml", ".yaml", ".yml",
     };
 
-    private static readonly HashSet<string> TextFileNames = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> LegacyTextFileNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "CMakeLists.txt", ".gitignore", ".gitattributes", ".clang-format", "Makefile", "Dockerfile", "LICENSE",
     };
@@ -241,27 +237,21 @@ public static class WorkspacePaths
         ".git", ".idea", ".vs", "bin", "build", "dist", "node_modules", "obj", "out",
     };
 
-    /// <summary>Plain-text files a tool leaves behind rather than a person naming them. A log is text whatever it
-    /// is called, and "0 file(s) searched" over a directory of <c>hub-*.log</c> is the wrong answer to a question
-    /// about text — that is one of the places the assistant is asked to look at. Kept apart from
-    /// <see cref="TextExtensions"/> on purpose: that list is the <i>write</i> allowlist, and widening it to read a
-    /// log would widen what the assistant may edit, which is not what a search needs.</summary>
+    /// <summary>Tool outputs included in text searches, not in source discovery.</summary>
     private static readonly HashSet<string> DataTextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".log", ".out", ".err", ".trace", ".csv", ".tsv", ".diff",
     };
 
-    public static bool IsTextFile(string fileName)
-        => TextExtensions.Contains(Path.GetExtension(fileName)) || TextFileNames.Contains(fileName);
+    private static bool LegacyWritableName(string fileName)
+        => LegacyTextExtensions.Contains(Path.GetExtension(fileName)) || LegacyTextFileNames.Contains(fileName);
+
+    public static bool IsTextFile(string fileName) => LegacyWritableName(fileName);
 
     /// <summary>Whether a search may open this file: a source file, or one of the plain-text outputs a tool writes.
     /// The bytes are checked before anything is scanned, so this decides cost and noise rather than safety.</summary>
     public static bool IsSearchableText(string fileName)
         => IsTextFile(fileName) || DataTextExtensions.Contains(Path.GetExtension(fileName));
-
-    /// <summary>The write allowlist is the read allowlist: nothing outside it is ever written, so a model that
-    /// wants to touch a binary or a build artifact has to ask the user instead.</summary>
-    public static bool IsWritableText(string fileName) => IsTextFile(fileName);
 
     public static bool IsExcludedDirectory(string directoryName) => ExcludedDirectories.Contains(directoryName);
 
@@ -371,32 +361,26 @@ public static class WorkspacePaths
     /// watching must not be able to grow the session file without a bound.</summary>
     public const int MaxGrantedFiles = 8;
 
-    /// <summary>
-    /// The shape a session's granted files are read and written through, and the one place this parts company with
-    /// <see cref="SplitRoots"/>: it deliberately takes <b>no guards</b>. A protected <i>directory</i> is demoted to
-    /// the read-only list, while a protected <i>file</i> is kept exactly where it is, because what its grant means
-    /// is decided at every resolution by <see cref="FileGrantIsReadOnly"/> — so a session file edited by hand buys
-    /// no write in the data directory, and a file outside the write allowlist is never writable either way.
-    ///
-    /// <para>An entry survives when it is a path this build can still resolve: not a directory, and its folder is
-    /// there. Requiring the file itself would drop the grant the moment it was made for a file that does not exist
-    /// yet — "write this log here" is a grant to a path, not to a block of bytes.</para>
-    /// </summary>
-    public static List<string> NormalizeFiles(IEnumerable<string>? files)
+    internal static WorkspaceFileGrant LegacyFileGrant(string path) => new(path,
+        LegacyWritableName(Path.GetFileName(path?.Trim()) ?? "") ? FileGrantAccess.LegacyWrite : FileGrantAccess.ReadOnly);
+
+    /// <summary>Keep the permission that was approved, capped by current guards. A missing file with an
+    /// existing parent may still be created through an explicit edit grant.</summary>
+    public static List<WorkspaceFileGrant> NormalizeFiles(IEnumerable<WorkspaceFileGrant>? files, WorkspaceGuards guards)
     {
-        var kept = new List<string>();
+        var kept = new List<WorkspaceFileGrant>();
         if (files is null) return kept;
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var file in files)
         {
             if (kept.Count >= MaxGrantedFiles) break;
-            if (string.IsNullOrWhiteSpace(file)) continue;
+            if (string.IsNullOrWhiteSpace(file?.Path) || !Path.IsPathFullyQualified(file.Path)) continue;
 
             string full;
             try
             {
-                full = Path.GetFullPath(file.Trim());
+                full = Path.GetFullPath(file.Path.Trim());
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException
                                            or System.Security.SecurityException)
@@ -409,38 +393,21 @@ public static class WorkspacePaths
             // Folded to compare and never to store, exactly as a directory grant is: one file spelled two ways is
             // one revoke button.
             if (CanonicalRoot(full) is not { } key || !seen.Add(key)) continue;
-            kept.Add(full);
+            var access = IsProtected(full, guards) || !Enum.IsDefined(file.Access)
+                || file.Access == FileGrantAccess.LegacyWrite && !LegacyWritableName(Path.GetFileName(full))
+                ? FileGrantAccess.ReadOnly : file.Access;
+            kept.Add(new(full, access));
         }
 
         return kept;
     }
 
-    /// <summary>
-    /// The one place a file grant's permission is decided, asked afresh at every resolution rather than stored.
-    /// Two facts make it read-only, and neither is a caller's choice: the file sits in a protected location, whose
-    /// writing no mode opens, or it is not a file the assistant may write at all — a log, a binary, a build
-    /// artifact. Both are properties of the path, so no session file can be edited into a permission.
-    /// </summary>
-    public static bool FileGrantIsReadOnly(string fullPath, WorkspaceGuards guards)
-        => IsProtected(fullPath, guards) || !IsWritableText(Path.GetFileName(fullPath));
+    public static WorkspaceFileGrant? GrantedFileAt(WorkspaceSandbox sandbox, string fullPath)
+        => sandbox.Files.Count != 0 && CanonicalRoot(fullPath) is { } key
+            ? sandbox.Files.FirstOrDefault(file => CanonicalRoot(file.Path) == key) : null;
 
-    /// <summary>Whether this exact path is one of the files this session was granted. Exact and canonical: a file
-    /// grant is one file, so nothing under it and nothing beside it counts.</summary>
-    public static bool IsGrantedFile(WorkspaceSandbox sandbox, string fullPath)
-    {
-        if (sandbox.Files.Count == 0) return false;
-        if (CanonicalRoot(fullPath) is not { } wanted) return false;
-        return sandbox.Files.Any(file => string.Equals(CanonicalRoot(file), wanted, StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// One granted file as a surface shows it: the exact path, and whether the grant is a reading only. The second
-    /// half is asked of <see cref="FileGrantIsReadOnly"/> every time rather than remembered, so the chip that lists
-    /// the grant says exactly what the card said when it was given.
-    /// </summary>
-    public static IReadOnlyList<(string Path, bool ReadOnly)> FileGrants(IReadOnlyList<string> files,
-        WorkspaceGuards guards)
-        => [.. files.Select(file => (file, FileGrantIsReadOnly(file, guards)))];
+    public static bool FileGrantIsReadOnly(WorkspaceFileGrant file, WorkspaceGuards guards)
+        => file.Access is not (FileGrantAccess.TextEdit or FileGrantAccess.LegacyWrite) || IsProtected(file.Path, guards);
 
     public static WorkspacePath ResolveRead(WorkspaceSandbox sandbox, string relative, WorkspaceGuards guards)
     {
@@ -456,8 +423,8 @@ public static class WorkspacePaths
     public static WorkspacePath ResolveRead(string? root, string relative, WorkspaceGuards guards)
         => ResolveRead(WorkspaceSandbox.For(root), relative, guards);
 
-    public static WorkspacePath ResolveWrite(WorkspaceSandbox sandbox, string relative, WorkspaceGuards guards,
-        bool allowUnlistedText = false)
+    /// <summary>Authorize a write target, not its format. Text writers validate the bytes they actually edit.</summary>
+    public static WorkspacePath ResolveWrite(WorkspaceSandbox sandbox, string relative, WorkspaceGuards guards)
     {
         var resolved = Resolve(sandbox, relative, guards);
         if (!resolved.IsAllowed) return resolved;
@@ -472,14 +439,14 @@ public static class WorkspacePaths
         if (IsProtected(resolved.Full, guards))
             return WorkspacePath.Refuse(WorkspacePathVerdict.ReadOnlyRoot, resolved.Display);
         if (Directory.Exists(resolved.Full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotAFile, resolved.Display);
-        if (!allowUnlistedText && !IsWritableText(Path.GetFileName(resolved.Full)))
-            return WorkspacePath.Refuse(WorkspacePathVerdict.ExtensionNotAllowed, resolved.Display);
+        // The ancestor walk handles directory links. Never open a linked file as the pre-image of a text edit.
+        if (new FileInfo(resolved.Full).LinkTarget is not null)
+            return WorkspacePath.Refuse(WorkspacePathVerdict.ReparsePoint, resolved.Display);
         return resolved;
     }
 
-    public static WorkspacePath ResolveWrite(string? root, string relative, WorkspaceGuards guards,
-        bool allowUnlistedText = false)
-        => ResolveWrite(WorkspaceSandbox.For(root), relative, guards, allowUnlistedText);
+    public static WorkspacePath ResolveWrite(string? root, string relative, WorkspaceGuards guards)
+        => ResolveWrite(WorkspaceSandbox.For(root), relative, guards);
 
     /// <summary>Resolve a file or directory for management without widening an exact-file or protected grant.</summary>
     public static WorkspacePath ResolveManage(WorkspaceSandbox sandbox, string path, WorkspaceGuards guards)
@@ -488,6 +455,8 @@ public static class WorkspacePaths
         if (!resolved.IsAllowed) return resolved;
         if (resolved.ReadOnly || IsProtected(resolved.Full, guards))
             return WorkspacePath.Refuse(WorkspacePathVerdict.ReadOnlyRoot, resolved.Display);
+        if (GrantedFileAt(sandbox, resolved.Full) is { Access: FileGrantAccess.TextEdit })
+            return WorkspacePath.Refuse(WorkspacePathVerdict.TextEditsOnly, resolved.Display);
         var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         // A root, or an ancestor containing another authorized/protected root, is never a manageable item.
@@ -731,7 +700,7 @@ public static class WorkspacePaths
         if (RefusedAsProtected(sandbox, full, guards)) return WorkspacePath.Refuse(WorkspacePathVerdict.ProtectedRoot, relative);
         if (ContainsReparsePoint(full, workspaceRoot)) return WorkspacePath.Refuse(WorkspacePathVerdict.ReparsePoint, relative);
         return new WorkspacePath(WorkspacePathVerdict.Allowed, full, Path.GetRelativePath(workspaceRoot, full), workspaceRoot,
-            ReadOnly: ReadOnlyHere(sandbox, full));
+            ReadOnly: ReadOnlyHere(sandbox, full) || GrantedFileAt(sandbox, full) is { } file && FileGrantIsReadOnly(file, guards));
     }
 
     /// <summary>
@@ -763,12 +732,13 @@ public static class WorkspacePaths
 
         // One file, by the exact path a card named. Its own directory is the boundary the link walk stops at: the
         // file's name is the last thing between the grant and the bytes, and nothing under it can exist.
-        if (IsGrantedFile(sandbox, full))
+        if (GrantedFileAt(sandbox, full) is { } file)
         {
+            if (Directory.Exists(full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotAFile, path);
             var folder = Path.GetDirectoryName(full) ?? full;
             if (ContainsReparsePoint(full, folder)) return WorkspacePath.Refuse(WorkspacePathVerdict.ReparsePoint, path);
             return new WorkspacePath(WorkspacePathVerdict.Allowed, full, Path.GetFileName(full), folder,
-                Granted: true, ReadOnly: FileGrantIsReadOnly(full, guards));
+                Granted: true, ReadOnly: FileGrantIsReadOnly(file, guards) || ReadOnlyHere(sandbox, full));
         }
 
         if (RefusedAsProtected(sandbox, full, guards)) return WorkspacePath.Refuse(WorkspacePathVerdict.ProtectedRoot, path);
@@ -905,12 +875,9 @@ public static class WorkspacePaths
     /// there is no <see cref="GrantVerdict.ContainsWorkspace"/> or <see cref="GrantVerdict.ContainsGrant"/>: a file
     /// contains nothing, so the only nesting a file can raise is whether the session already reaches it.</para>
     ///
-    /// <para><see cref="GrantVerdict.NotWritableText"/> is the one dead end: a file that is not there <i>and</i>
-    /// would be read-only once it existed — a protected location, or a name outside the write allowlist — is a grant
-    /// that could never do anything, so the card is not worth showing.</para>
     /// </summary>
     public static (GrantVerdict Verdict, string Full, string Detail) ClassifyFileGrant(
-        WorkspaceSandbox sandbox, WorkspaceGuards guards, string? path)
+        WorkspaceSandbox sandbox, WorkspaceGuards guards, string? path, bool edit = false)
     {
         if (string.IsNullOrWhiteSpace(path)) return (GrantVerdict.NoPath, "", "");
         if (!Path.IsPathRooted(path)) return (GrantVerdict.NotAbsolute, "", "");
@@ -931,18 +898,17 @@ public static class WorkspacePaths
             return (GrantVerdict.Missing, full, "");
 
         var guarded = IsProtected(full, guards);
-        var readOnly = FileGrantIsReadOnly(full, guards);
+        var readOnly = !edit || guarded || ReadOnlyHere(sandbox, full);
+        // An explicit edit card can upgrade this exact file, never the grant on its folder.
+        if (GrantedFileAt(sandbox, full) is { } held)
+            return (!readOnly && FileGrantIsReadOnly(held, guards) ? GrantVerdict.Granted : GrantVerdict.AlreadyGranted, full, "");
         // A file the workspace already reaches needs no card — with the same exception the directory door makes: a
         // protected location is never reached by a relative path however the workspace is spelled, so promising
         // "a relative path already reaches it" about one would be a card the tools refuse.
         if (!guarded && CanonicalRoot(sandbox.Primary) is { } workspace && IsUnder(workspace, full))
             return (GrantVerdict.InsideWorkspace, full, "");
         // Nothing to open: the file is not there, and the grant that would be recorded could only read.
-        if (!File.Exists(full) && readOnly) return (GrantVerdict.NotWritableText, full, "");
-
-        var wanted = CanonicalRoot(full);
-        if (sandbox.Files.Any(file => string.Equals(CanonicalRoot(file), wanted, StringComparison.Ordinal)))
-            return (GrantVerdict.AlreadyGranted, full, "");
+        if (!File.Exists(full) && readOnly) return (GrantVerdict.MissingReadOnlyFile, full, "");
         // "You can already read this" is one fact however it arrived: a directory grant covers what is under it,
         // and a read-only one is still a reading.
         if (sandbox.Grants.FirstOrDefault(granted => IsUnder(granted, full)) is { } alreadyHeld)
@@ -1006,16 +972,14 @@ public static class WorkspacePaths
             + "refused in every approval mode, so a change is the user's to make. Do not retry another spelling of "
             + "this path.",
         WorkspacePathVerdict.ReadOnlyRoot =>
-            $"Refused: '{detail}' is granted to this session for reading only — it is inside a protected location, "
-            + "or it is not a file the assistant may write (its extension is outside the write allowlist). fs_read "
-            + "reads it, and a directory grant also lists and searches it; fs_replace refuses it, and no command can "
-            + "run there, because a shell runs with write access. Ask the user to make that change; do not retry.",
+            $"Refused: '{detail}' is granted for reading only; this session has no write permission here. "
+            + "Protected locations cannot be made writable. For an ordinary external file the user asked to edit, "
+            + "request text edits on that file only with fs_request_access (edit=true). Do not retry the write unchanged.",
+        WorkspacePathVerdict.TextEditsOnly =>
+            $"Refused: '{detail}' is granted for text edits only, not moving or deleting. Do not retry.",
         WorkspacePathVerdict.ReparsePoint =>
             $"Refused: '{detail}' resolves through a symbolic link or junction, which could point outside the "
             + "workspace. Do not retry through the link; ask the user for the real path.",
-        WorkspacePathVerdict.ExtensionNotAllowed =>
-            $"Refused: '{detail}' is not a text file the assistant may write (extension not in the allowlist). "
-            + "Do not retry with a different extension; ask the user to make this change themselves.",
         WorkspacePathVerdict.NotAFile =>
             $"Refused: '{detail}' is not a readable file (it is missing or a directory). List the directory or "
             + "ask the user for the correct path; do not guess another spelling.",
@@ -1053,11 +1017,7 @@ public static class WorkspacePaths
     /// </summary>
     public static string FileGrantedResultFor(string full, bool readOnly)
         => readOnly
-            ? $"Granted read-only: '{full}' is one file this session may read and may never write — it is inside a "
-              + "protected location, or it is not a file the assistant may write. Read it with fs_read by that "
-              + "absolute path. fs_replace will refuse it, its folder is not granted, and no command can run there; "
-              + "ask the user for a change, and do not ask for this file again."
-            : $"Granted: '{full}' is one file this session may read and write. Name it by absolute path in "
-              + "fs_read and fs_replace. Its folder is not part of the grant, so listing, searching and "
-              + "run_command's cwd cannot reach it; do not ask again for this file.";
+            ? $"Granted read-only: '{full}'. Use fs_read by absolute path. No write or parent directory access was granted."
+            : $"Granted: '{full}' for reading and text edits only. Use its absolute path in fs_read, fs_replace or fs_write. "
+              + "No move, delete, parent directory access or command cwd was granted.";
 }

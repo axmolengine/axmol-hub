@@ -53,14 +53,14 @@ public sealed class CodeFileWindow : Window
         if (shell?.SelectWorkspaceDocument(read.Full) == true) return null;
         var baseline = TextFile.Read(read.Full, TextFile.MaxEditorBytes);
         if (baseline.State != TextFileState.Text) return "InspectorOpenFileUnavailable";
-        var write = WorkspacePaths.ResolveWrite(initialScope.Sandbox, read.Full, initialScope.Guards, allowUnlistedText: true);
+        var write = WorkspacePaths.ResolveWrite(initialScope.Sandbox, read.Full, initialScope.Guards);
         var editor = new CodeEditorView(read.Full, baseline, (snapshot, text) =>
         {
             using var lease = TextFile.AcquireWrite(read.Full);
             var result = lease.Save(() =>
             {
                 var currentScope = scopeFor();
-                var currentPath = WorkspacePaths.ResolveWrite(currentScope.Sandbox, read.Full, currentScope.Guards, allowUnlistedText: true);
+                var currentPath = WorkspacePaths.ResolveWrite(currentScope.Sandbox, read.Full, currentScope.Guards);
                 return currentPath.IsAllowed && WorkspaceFileTree.WorkspacePathComparer.Equals(currentPath.Full, read.Full)
                     ? currentPath
                     : WorkspacePath.Refuse(currentPath.IsAllowed ? WorkspacePathVerdict.ReparsePoint : currentPath.Verdict, read.Full);

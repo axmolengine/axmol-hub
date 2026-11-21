@@ -167,8 +167,7 @@ public sealed class ConversationStore(string root)
     /// exactly that. The workspace root gets the same treatment, for the same reason and one more: every door that
     /// sets a workspace refuses a protected location, so a session file still holding one was never going to be
     /// written through — it reads as the grant it really was, and the session moves to where its work can happen.
-    /// The granted files go through <see cref="WorkspacePaths.NormalizeFiles"/>, which takes no guards on purpose: a
-    /// file's permission is asked at every resolution, so there is no half to move it to.
+    /// A legacy file name has only its old ceiling, never a new affirmative text-edit grant.
     /// </summary>
     private void NormalizeGrants(Conversation conversation)
     {
@@ -189,7 +188,9 @@ public sealed class ConversationStore(string root)
             conversation.ReadOnlyRoots.Add(workspace);
             conversation.WorkspaceRoot = null;
         }
-        conversation.GrantedFiles = WorkspacePaths.NormalizeFiles(conversation.GrantedFiles);
+        conversation.FileGrants = WorkspacePaths.NormalizeFiles((conversation.FileGrants ?? [])
+            .Concat((conversation.GrantedFiles ?? []).Select(WorkspacePaths.LegacyFileGrant)), OwnGuards);
+        conversation.GrantedFiles = null;
     }
 
     /// <summary>Loads one conversation; <c>null</c> when the id is unknown.

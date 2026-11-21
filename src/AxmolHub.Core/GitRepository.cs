@@ -88,8 +88,7 @@ public sealed record GitRepositoryState(
 /// <c>.git</c> refusal is not in the way, because the guard owns <i>model-facing</i> reads and writes while git
 /// owns its own directory. The one rule kept on this side: a reported path is only ever re-opened as
 /// <see cref="GitRepositoryState.Root"/> combined with it after a containment check, and never handed to
-/// <see cref="WorkspacePaths.ResolveWrite"/>, whose text-extension allowlist would refuse a legitimate
-/// <c>logo.png</c> and whose <c>.git</c> refusal would refuse the whole point.
+/// <see cref="WorkspacePaths.ResolveWrite"/>: listing repository state is not authorization to edit it.
 ///
 /// Flags, each measured rather than assumed: <c>--no-optional-locks</c> so a read never takes
 /// <c>index.lock</c> and never blocks the user's editor; <c>--no-pager</c> because a pager attached to a

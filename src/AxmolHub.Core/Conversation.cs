@@ -761,13 +761,11 @@ public sealed class Conversation
     /// demotion of anything this list must hold when it is found in the writable one.</summary>
     public List<string> ReadOnlyRoots { get; set; } = [];
 
-    /// <summary>Single files this session was granted, beyond its directories, after a person approved a
-    /// <c>request_file</c> card: one exact absolute path each, never a folder. Whether the grant is writable is
-    /// deliberately not stored — it is <see cref="WorkspacePaths.FileGrantIsReadOnly"/> asked afresh at every
-    /// resolution, so a session file edited by hand buys no write in a protected location, and a file outside the
-    /// write allowlist is never writable either way. Shape rules live in
-    /// <see cref="WorkspacePaths.NormalizeFiles"/>, which every reader and writer goes through.</summary>
-    public List<string> GrantedFiles { get; set; } = [];
+    /// <summary>Legacy path-only grants; the store converts these to explicit ceilings on load.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? GrantedFiles { get; set; }
+
+    public List<WorkspaceFileGrant> FileGrants { get; set; } = [];
 
     /// <summary>Longest auto-title before ellipsis; short enough to fit the session list.</summary>
     private const int MaxTitleLength = 48;

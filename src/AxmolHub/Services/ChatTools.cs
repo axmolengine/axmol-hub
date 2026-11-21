@@ -81,7 +81,8 @@ internal static class ChatTools
             or ToolNames.ListSessions or ToolNames.ReadSession
             or ToolNames.FsGrep or ToolNames.FsList or ToolNames.FsFind or ToolNames.WorkspaceMap
             => ToolRisk.ReadOnly,
-        ToolNames.FsWrite or ToolNames.FsReplace or ToolNames.SendToSession => ToolRisk.WorkspaceWrite,
+        ToolNames.FsWrite or ToolNames.FsReplace => ToolPreviews.TextEditRisk(name, argumentsJson, scope),
+        ToolNames.SendToSession => ToolRisk.WorkspaceWrite,
         ToolNames.FsDelete or ToolNames.FsMove => ManagementRisk(name, argumentsJson, scope),
         ToolNames.UpdatePlanTask => ToolRisk.AssistantNote,
         // Decided by one method rather than an inline ternary, because there are now two things that can make a
@@ -239,17 +240,14 @@ internal static class ChatTools
     /// would land a read-only grant here", and the same value is what the gate turns into a card in 完全访问 as well
     /// as in the two modes that ask anyway.
     ///
-    /// <para>A file grant that is read-only <i>only</i> because of its extension is not this: a log outside any
-    /// protected location is an ordinary grant, and 完全访问 is allowed to answer it silently. What the extra
-    /// <see cref="WorkspacePaths.IsProtected"/> asks is the place, which is the part no mode can wave through.</para>
     /// </summary>
     public static bool OpensProtectedLocation(string name, string? argumentsJson, WorkspaceToolScope scope)
         => ArgumentOf(argumentsJson, "path") is { Length: > 0 } path
            && (string.Equals(name, ToolNames.FsRequestAccess, StringComparison.Ordinal)
                && WorkspacePaths.IsProtected(path, scope.Guards)
-               && (ToolPreviews.AccessKind(argumentsJson) == "directory"
+               && (ToolPreviews.AccessKind(argumentsJson, scope) == "directory"
                    && WorkspacePaths.ClassifyGrant(scope.Sandbox, scope.Guards, path).Verdict == GrantVerdict.GrantedReadOnly
-                   || ToolPreviews.AccessKind(argumentsJson) == "file"
+                   || ToolPreviews.AccessKind(argumentsJson, scope) == "file"
                    && WorkspacePaths.ClassifyFileGrant(scope.Sandbox, scope.Guards, path).Verdict == GrantVerdict.GrantedReadOnly));
 
     /// <summary>One string argument, exactly as the model wrote it: empty when the call names none, null when the
