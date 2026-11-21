@@ -249,6 +249,10 @@ public static class ModelCatalog
         var efforts = SelectableReasoningEfforts(provider, modelName);
         var normalized = ChatReasoningEfforts.Normalize(preferred);
         if (efforts.Contains(normalized, StringComparer.OrdinalIgnoreCase)) return normalized;
+        // Restore the former built-in top tier without changing any custom ladder.
+        if (normalized == ChatReasoningEfforts.Ultra && efforts.Contains(ChatReasoningEfforts.Max)
+            && GptEffortsFor(modelName) is not null && CustomReasoningEfforts(provider, modelName) is null)
+            return ChatReasoningEfforts.Max;
         var declared = DefaultReasoningEffort(provider, modelName);
         if (efforts.Contains(declared, StringComparer.OrdinalIgnoreCase)) return declared;
         if (efforts.Contains(ChatReasoningEfforts.Medium, StringComparer.OrdinalIgnoreCase))
@@ -256,8 +260,7 @@ public static class ModelCatalog
         return efforts.Count > 0 ? efforts[efforts.Count / 2] : ChatReasoningEfforts.Default;
     }
 
-    /// <summary>Known GPT model families have a documented selectable ladder even when the endpoint's model
-    /// list omits capability metadata. Other unrecognized models use the conservative three-tier fallback.</summary>
+    /// <summary>Default GPT ladder when no custom tiers are configured.</summary>
     private static string[]? GptEffortsFor(string? modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName)
@@ -266,7 +269,7 @@ public static class ModelCatalog
             ? [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
                 ChatReasoningEfforts.XHigh]
             : [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
-                ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Ultra];
+                ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Max];
     }
 
     /// <summary>Resolve an automatic decision against the same ordered ladder as the slider. An absent

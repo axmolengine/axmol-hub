@@ -373,7 +373,7 @@ sealed class InsistentToolClient : IChatClient
 /// <summary>Answers the shipped OpenAI bridges from memory at a loopback URL and keeps the body they serialized.
 /// The hosted-search cells need the bytes rather than the intention: a declaration that lands in the wrong field
 /// is invisible from every other vantage point in this repository, and this one costs no request.</summary>
-sealed class WireRecorder : System.Net.Http.HttpMessageHandler
+sealed class WireRecorder(bool streaming = false) : System.Net.Http.HttpMessageHandler
 {
     public string Body = "";
 
@@ -385,9 +385,12 @@ sealed class WireRecorder : System.Net.Http.HttpMessageHandler
         var json = responses
             ? "{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":0,\"status\":\"completed\",\"model\":\"m\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}"
             : "{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}";
+        var body = !streaming ? json : responses
+            ? $"event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{json}}}\n\n"
+            : "data: [DONE]\n\n";
         return new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            Content = new StringContent(body, Encoding.UTF8, streaming ? "text/event-stream" : "application/json"),
         };
     }
 }

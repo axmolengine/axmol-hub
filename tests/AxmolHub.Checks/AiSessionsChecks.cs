@@ -392,12 +392,13 @@ internal static class AiSessionsChecks
             || ModelCatalog.EffortAtLevel(openAiProvider, "unknown-model", 2) != ChatReasoningEfforts.High)
             throw new Exception("An unrecognized model did not fall back to the Low, Medium, High ladder.");
         if (!ModelCatalog.SelectableReasoningEfforts(openAiProvider, "gpt-6-luna")
-                .SequenceEqual([ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
-                    ChatReasoningEfforts.XHigh])
-            || !ModelCatalog.SelectableReasoningEfforts(openAiProvider, "gpt-6.1-sol")
-                .SequenceEqual([ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
-                    ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Ultra]))
-            throw new Exception("GPT Luna and non-Luna models did not expose their distinct reasoning tiers.");
+                .SequenceEqual(["low", "medium", "high", "xhigh"]))
+            throw new Exception("GPT Luna's built-in reasoning tiers changed.");
+        foreach (var model in new[] { "gpt-6.1-sol", "gpt-7.1" })
+            if (!ModelCatalog.SelectableReasoningEfforts(openAiProvider, model)
+                    .SequenceEqual(["low", "medium", "high", "xhigh", "max"])
+                || ModelCatalog.ResolveReasoningEffort(openAiProvider, model, "ultra") != "max")
+                throw new Exception($"{model} did not resolve to the built-in GPT Max tier.");
         var gptLunaWithMax = ProviderWith("gpt-6-luna", new AiModelReasoning
         {
             Efforts = [ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
@@ -413,8 +414,8 @@ internal static class AiSessionsChecks
                     ChatReasoningEfforts.XHigh])
             || !ModelCatalog.SelectableReasoningEfforts(gptOtherWithMax, "gpt-6.1-sol")
                 .SequenceEqual([ChatReasoningEfforts.Low, ChatReasoningEfforts.Medium, ChatReasoningEfforts.High,
-                    ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Ultra]))
-            throw new Exception("GPT metadata leaked Max into the model-specific reasoning ladder.");
+                    ChatReasoningEfforts.XHigh, ChatReasoningEfforts.Max]))
+            throw new Exception("The built-in GPT ladder depended on the provider or exposed an extra tier from metadata.");
         // A gateway's explicit configuration must survive storage and override name guesses and refusals.
         var customGpt = ProviderWith("gpt-6.1-sol", new AiModelReasoning
         {
@@ -431,33 +432,21 @@ internal static class AiSessionsChecks
                 ModelCatalog.SelectableReasoningEfforts(savedGpt, "gpt-6.1-sol"))
             || ModelCatalog.EffortAtLevel(savedGpt, "gpt-6.1-sol", 4) != "max"
             || !ModelCatalog.MaySendEffort(customGpt, "gpt-6.1-sol", "max")
-            || ModelCatalog.MaySendEffort(customGpt, "gpt-6.1-sol", "ultra")
-            || ModelCatalog.EffortAtLevel(openAiProvider, "gpt-6.1-sol", 4) != "ultra")
+            || ModelCatalog.MaySendEffort(customGpt, "gpt-6.1-sol", "ultra"))
             throw new Exception("Custom reasoning tiers did not persist or leaked across providers or refusals.");
         savedGpt.Models[0].ReasoningEfforts = null;
-        if (ModelCatalog.EffortAtLevel(savedGpt, "gpt-6.1-sol", 4) != "ultra")
+        if (ModelCatalog.EffortAtLevel(savedGpt, "gpt-6.1-sol", 4) != "max")
             throw new Exception("Restoring detection did not restore the model's detected ladder.");
         if (ModelCatalog.ReachableReasoningEffort(customGpt, "gpt-6.1-sol", "ultra") != "xhigh"
-            || ModelCatalog.ReachableReasoningEffort(openAiProvider, "gpt-6.1-sol", "max") != "xhigh")
+            || ModelCatalog.ReachableReasoningEffort(gptOtherWithMax, "gpt-6.1-sol", "max") != "max")
             throw new Exception("Automatic reasoning substituted max and ultra instead of using the configured ladder.");
-        foreach (var (target, expected) in new[] { (customGpt, "max"), (openAiProvider, "ultra") })
-        {
-            var client = new FakeChatClient(["ok"]);
-            var selected = ModelCatalog.EffortAtLevel(target, "gpt-6.1-sol", 4);
-            await foreach (var _ in new ChatPipeline(client).SendAsync(target, [ChatTurn.User("test")],
-                               reasoningEffort: selected, modelName: "gpt-6.1-sol")) { }
-            var fields = client.LastOptions?.AdditionalProperties?.GetValueOrDefault(ChatPipeline.RequestOptionsKey)
-                as IReadOnlyDictionary<string, JsonElement>;
-            if (fields is null || fields["reasoning_effort"].GetString() != expected)
-                throw new Exception("The last slider level did not send the provider's exact wire value.");
-        }
         var staleTierClient = new FakeChatClient(["ok"]);
         await foreach (var _ in new ChatPipeline(staleTierClient).SendAsync(customGpt, [ChatTurn.User("test")],
                            reasoningEffort: "ultra", modelName: "gpt-6.1-sol")) { }
         if (ModelCatalog.ResolveReasoningEffort(customGpt, "gpt-6.1-sol", "ultra") != "medium"
             || staleTierClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.Medium)
             throw new Exception("An obsolete tier disagrees between the visible resolved choice and the request.");
-        Console.WriteLine("PASS: reasoning efforts honor per-provider model overrides, exact wire values and restore detection.");
+        Console.WriteLine("PASS: reasoning efforts honor per-provider model overrides and restore detection.");
         // What a model was seen to do outranks what a file said, and what it refused closes only that one tier.
         static ModelProvider ProviderWith(string model, AiModelReasoning profile)
         {
@@ -682,37 +671,40 @@ internal static class AiSessionsChecks
         if (extraHighClient.LastOptions?.Reasoning?.Effort != ReasoningEffort.ExtraHigh)
             throw new Exception("GPT-6.1-Sol xhigh was not mapped to Microsoft.Extensions.AI ExtraHigh.");
         Console.WriteLine("PASS: GPT-6.1-Sol xhigh maps to the OpenAI adapter's ExtraHigh effort.");
-        var ultraClient = new FakeChatClient(["ok"]);
-        await foreach (var _ in new ChatPipeline(ultraClient).SendAsync(openAiProvider, [ChatTurn.User("test")], reasoningEffort: ChatReasoningEfforts.Ultra, modelName: "gpt-6.1-sol"))
+        // Capture the SDK's actual request: the Chat patch alone cannot show what reaches Responses.
+        var openAiWireProvider = AiProviderManifest.CreateBuiltIn("openai")!;
+        openAiWireProvider.Credential = new ProviderCredential { Secret = "fixture-key" };
+        customGpt.IsCustom = true;
+        customGpt.Models[0].ReasoningEfforts!.Add("ultra");
+        foreach (var (target, model, protocol, selected, expected) in new[]
         {
-        }
-
-        var rawUltraOptions = ultraClient.LastOptions?.RawRepresentationFactory?.Invoke(ultraClient) as OpenAI.Chat.ChatCompletionOptions;
-#pragma warning disable SCME0001
-        var ultraPatch = rawUltraOptions?.Patch.ToString();
-#pragma warning restore SCME0001
-        if (ultraPatch is null || !ultraPatch.Contains("\"ultra\"", StringComparison.Ordinal))
-            throw new Exception("GPT-6.1-Sol ultra was not forwarded as an API effort value.");
-        Console.WriteLine("PASS: GPT-6.1-Sol ultra is forwarded through the provider-specific request field.");
-        // Asking for the token report is a field in the same body as the reasoning tier, and the pinned OpenAI SDK
-        // exposes neither as a property — both go through one JSON patch on one raw representation. Two assignments
-        // to RawRepresentationFactory would compile and the second would win, so the request would quietly stop
-        // carrying the tier while the screen still showed it. This is the assertion that catches that shape.
-        var wireClient = new FakeChatClient(["ok"]);
-        await foreach (var _ in new ChatPipeline(wireClient).SendAsync(openAiProvider, [ChatTurn.User("hi")], reasoningEffort: ChatReasoningEfforts.Ultra, modelName: "gpt-6.1-sol"))
+            (openAiWireProvider, "gpt-6.1-sol", ModelProtocols.Chat, "max", "max"),
+            (openAiWireProvider, "gpt-6.2-astra", ModelProtocols.Responses, "ultra", "max"),
+            (customGpt, "gpt-6.1-sol", ModelProtocols.Chat, "max", "max"),
+            (customGpt, "gpt-6.1-sol", ModelProtocols.Chat, "ultra", "ultra"),
+        })
         {
+            target.Protocol = protocol;
+            using var wire = new WireRecorder(streaming: true);
+            using var wireClient = ChatClientFactory.Create(target, model, null, interactionId: "fixture-session", transport: wire);
+            var effort = ModelCatalog.ResolveReasoningEffort(target, model, selected);
+            await foreach (var _ in new ChatPipeline(wireClient).SendAsync(target, [ChatTurn.User("hi")],
+                               reasoningEffort: effort, modelName: model)) { }
+            using var json = JsonDocument.Parse(wire.Body);
+            var request = json.RootElement;
+            var correct = protocol == ModelProtocols.Responses
+                ? request.GetProperty("reasoning").GetProperty("effort").GetString() == expected
+                  && !request.TryGetProperty("reasoning_effort", out _)
+                  && request.GetProperty("prompt_cache_key").GetString() == "fixture-session"
+                : request.GetProperty("reasoning_effort").GetString() == expected
+                  && request.GetProperty("stream_options").GetProperty("include_usage").GetBoolean();
+            if (!correct) throw new Exception($"{target.Id}/{model} on {protocol} did not send {expected} alongside its other request options.");
         }
-
-#pragma warning disable SCME0001
-        var wirePatch = (wireClient.LastOptions?.RawRepresentationFactory?.Invoke(wireClient) as OpenAI.Chat.ChatCompletionOptions)?.Patch.ToString();
-#pragma warning restore SCME0001
-        if (wirePatch is null || !wirePatch.Contains("stream_options", StringComparison.Ordinal) || !wirePatch.Contains("include_usage", StringComparison.Ordinal) || !wirePatch.Contains("\"ultra\"", StringComparison.Ordinal))
-            throw new Exception($"The usage ask and the reasoning field did not both reach one request ({wirePatch}).");
-        Console.WriteLine("PASS: the request asks for a usage report without displacing the reasoning field beside it.");
+        Console.WriteLine("PASS: OpenAI sends Max on both wires, and custom gateway efforts pass through unchanged.");
         var declined = AiProviderManifest.CreateBuiltIn("openai")!;
         declined.ExtraOptions[ModelProvider.StreamUsageOption] = "false";
         var declinedClient = new FakeChatClient(["ok"]);
-        await foreach (var _ in new ChatPipeline(declinedClient).SendAsync(declined, [ChatTurn.User("hi")], reasoningEffort: ChatReasoningEfforts.Ultra, modelName: "gpt-6.1-sol"))
+        await foreach (var _ in new ChatPipeline(declinedClient).SendAsync(declined, [ChatTurn.User("hi")], reasoningEffort: ChatReasoningEfforts.Max, modelName: "gpt-6.1-sol"))
         {
         }
 

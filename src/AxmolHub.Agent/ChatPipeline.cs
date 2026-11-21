@@ -5,6 +5,7 @@ using System.ClientModel.Primitives;
 using Anthropic.Models.Messages;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 namespace AxmolHub.Agent;
 
@@ -996,7 +997,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         int? maxOutputTokens = null, ChatToolMode? toolMode = null)
     {
         var options = new ChatOptions();
-        var messagesWire = ChatClientFactory.ProtocolFor(provider, modelName) == ModelProtocols.Messages;
+        var protocol = ChatClientFactory.ProtocolFor(provider, modelName);
+        var messagesWire = protocol == ModelProtocols.Messages;
         var any = false;
         var modelReasoning = ModelCatalog.ReasoningFor(provider, modelName);
         // The switch that turns reasoning on is asked for on its own: a model whose catalog declared its tiers
@@ -1108,6 +1110,17 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
             options.RawRepresentationFactory = _ =>
             {
+                // M.E.AI has no Max tier. Responses needs native options so the SDK writes reasoning.effort.
+                if (protocol == ModelProtocols.Responses
+                    && string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.Max, StringComparison.OrdinalIgnoreCase))
+                {
+#pragma warning disable OPENAI001 // Native reasoning options for the Responses SDK.
+                    return new CreateResponseOptions
+                    {
+                        ReasoningOptions = new() { ReasoningEffortLevel = ResponseReasoningEffortLevel.Max },
+                    };
+#pragma warning restore OPENAI001
+                }
                 var rawOptions = new OpenAI.Chat.ChatCompletionOptions();
 #pragma warning disable SCME0001 // Required to add provider-specific JSON fields not modeled by ChatOptions.
                 var patch = new JsonPatch(BinaryData.FromString("[]").ToMemory());
