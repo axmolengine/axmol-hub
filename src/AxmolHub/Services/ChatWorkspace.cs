@@ -33,14 +33,14 @@ public sealed partial class ChatWorkspace : IDisposable
         // The store owns the guards: they decide which half a grant is written into as well as how a recovered
         // batch is graded, and the two answers disagreeing is what put a read-only grant back into the writable
         // half on the next save.
-        _sessions.Registry.Store.GuardsProvider = () => _execution.Guards;
+        _sessions.Registry.Store.GuardsProvider = _execution.GuardsForWorkspace;
         _providers.LoadProviders();
     }
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get => _execution.HubSnapshotProvider; set => _execution.HubSnapshotProvider = value; }
     /// <summary>Engine installation roots, which stay read-only for the assistant in every approval mode. Set by
     /// the shell because it owns the engine list; the data root needs no seam, it is what this workspace was
     /// constructed with.</summary>
-    internal Func<IReadOnlyList<string>>? EngineRootsProvider { get => _execution.EngineRootsProvider; set => _execution.EngineRootsProvider = value; }
+    internal Func<IReadOnlyList<EngineEntry>>? EnginesProvider { get => _execution.EnginesProvider; set => _execution.EnginesProvider = value; }
     /// <summary>Hub's activity log. Command output goes through it in full, so a result truncated for the model
     /// can still name a file where nothing was lost.</summary>
     internal Func<HubLog?>? LogProvider { get => _execution.LogProvider; set => _execution.LogProvider = value; }

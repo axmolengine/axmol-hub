@@ -595,7 +595,7 @@ public static class WorkspacePaths
 
         // Rewriting history or hooks is never what a coding request meant, however deep in the tree it is asked.
         var segments = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var at = Array.FindIndex(segments, segment => segment.Equals(".git", StringComparison.Ordinal));
+        var at = Array.FindIndex(segments, segment => segment.Equals(".git", comparison));
         return at < 0
             ? null
             : (ProtectedKind.Git, string.Join(Path.DirectorySeparatorChar.ToString(), segments, 0, at + 1));
@@ -623,6 +623,17 @@ public static class WorkspacePaths
         {
             return false;
         }
+    }
+
+    /// <summary>A local import is writable as primary workspace only, not through another workspace or grant.
+    /// Omit just the matching registration; the data, auth, Git and other engine guards still apply.</summary>
+    public static WorkspaceGuards GuardsForWorkspace(string? dataRoot, IEnumerable<EngineEntry> engines,
+        string? authRoot = null, string? workspaceRoot = null)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return new(dataRoot, [.. engines
+            .Where(engine => !engine.IsLocalImport || !SameRoot(engine.Path, workspaceRoot, comparison))
+            .Select(engine => engine.Path)], authRoot);
     }
 
     public static bool IsProtected(string fullPath, WorkspaceGuards guards)

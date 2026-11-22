@@ -2224,7 +2224,7 @@ internal sealed class ShellApprovalsChecks
                 PreferencesProvider = chat.PreferencesProvider,
                 // The guards travel with it: a restarted Hub that forgot which directories are read-only would be
                 // a different, more dangerous program than the one that parked the call.
-                EngineRootsProvider = chat.EngineRootsProvider,
+                EnginesProvider = chat.EnginesProvider,
                 LogProvider = chat.LogProvider,
                 AuditWrite = chat.AuditWrite,
             };

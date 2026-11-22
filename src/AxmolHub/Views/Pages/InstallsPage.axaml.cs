@@ -39,6 +39,8 @@ public partial class InstallsPage : UserControl
     private bool _ready;
     private int _sortMode;
 
+    internal Action<string>? OpenEngineWorkspace { get; init; }
+
     public InstallsPage() { _workspace = null!; InitializeComponent(); }
 
     public InstallsPage(HubWorkspace workspace)
@@ -211,6 +213,12 @@ public partial class InstallsPage : UserControl
             canBuildLibraries ? null : HubStrings.Get("PrebuiltUnsupportedHost"));
         menu.Items.Add(new Separator());
         Add("OpenFolder", async () => await _workspace.OpenEngineFolderAsync(engine));
+        if (engine.IsLocalImport && OpenEngineWorkspace is { } openWorkspace)
+        {
+            var open = new MenuItem { Header = HubStrings.Get("OpenEngineWorkspace") };
+            open.Click += (_, _) => openWorkspace(engine.Path);
+            menu.Items.Add(open);
+        }
         Add("VerifyEngine", async () => await _workspace.VerifyEngineAsync(engine));
         menu.Items.Add(new Separator());
         Add("Repair", async () => await _workspace.RepairEngineAsync(engine));

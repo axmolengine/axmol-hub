@@ -10,6 +10,37 @@ internal static class AiWorkspaceChecks
         Directory.Delete(directory, recursive: true);
     }
 
+    // The exception must survive a save/reopen without turning the same engine into a writable grant elsewhere.
+    private static void CheckLocalEngineWorkspace(string workspace, string hubData)
+    {
+        var local = Path.Combine(workspace, "local-engine");
+        var source = Path.Combine(local, "core", "axmol.h");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        File.WriteAllText(source, "// Local source\n");
+        var installed = Path.Combine(workspace, "engine-2.11.5");
+        EngineEntry[] engines = [new("3.0.0", local), new("2.11.5", installed, "official-lts")];
+        WorkspaceGuards Guards(string? primary) => WorkspacePaths.GuardsForWorkspace(hubData, engines, workspaceRoot: primary);
+
+        var store = new ConversationStore(hubData) { GuardsProvider = Guards };
+        var localSession = new Conversation { Id = "local-engine", WorkspaceRoot = local };
+        store.Save(localSession);
+        var reopened = store.Load(localSession.Id)?.WorkspaceRoot;
+        if (reopened != local || !WorkspacePaths.ResolveRead(reopened, "core/axmol.h", Guards(reopened)).IsAllowed
+            || !WorkspacePaths.ResolveWrite(reopened, "core/axmol.h", Guards(reopened)).IsAllowed
+            || WorkspacePaths.VerifyCommandRoot(reopened, Guards(reopened)) != WorkspacePathVerdict.Allowed
+            || !WorkspacePaths.IsProtected(Path.Combine(local, ".git", "config"), Guards(reopened)))
+            throw new Exception("A local engine did not reopen as a normal workspace with .git still protected.");
+
+        var other = new WorkspaceSandbox(workspace, [], [local]);
+        if (WorkspacePaths.ResolveWrite(workspace, source, Guards(workspace)).Verdict != WorkspacePathVerdict.ProtectedRoot
+            || WorkspacePaths.ResolveWrite(other, source, Guards(workspace)).Verdict != WorkspacePathVerdict.ReadOnlyRoot
+            || WorkspacePaths.VerifyCommandRoot(other, local, Guards(workspace)) != WorkspacePathVerdict.ReadOnlyRoot
+            || !WorkspacePaths.IsProtected(Path.GetDirectoryName(source)!, Guards(Path.GetDirectoryName(source)))
+            || WorkspacePaths.VerifyCommandRoot(installed, Guards(installed)) != WorkspacePathVerdict.ProtectedRoot)
+            throw new Exception("A parent, subdirectory, grant or Hub install incorrectly inherited the local workspace exception.");
+        Console.WriteLine("PASS: only a local engine selected as the primary workspace is writable, including after reload.");
+    }
+
     internal static async Task RunAsync(string root, string[] args)
     {
         // The sandbox is a pure function over strings plus one link check, so it is asserted here rather than
@@ -191,6 +222,7 @@ internal static class AiWorkspaceChecks
         }
 
         Console.WriteLine("PASS: workspace paths stay inside the sandbox and refuse protected roots.");
+        CheckLocalEngineWorkspace(workspace, hubData);
         if (OperatingSystem.IsWindows())
         {
             var outside = Path.Combine(guardRoot, "outside");

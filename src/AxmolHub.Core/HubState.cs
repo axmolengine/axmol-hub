@@ -6,6 +6,9 @@ namespace AxmolHub.Core;
 
 public sealed record EngineEntry(string Version, string Path, string Channel = "local")
 {
+    [JsonIgnore]
+    public bool IsLocalImport => string.Equals(Channel, "local", StringComparison.OrdinalIgnoreCase);
+
     public override string ToString() => $"Axmol {Version} ({Channel})";
 }
 public sealed class ProjectEntry

@@ -156,9 +156,9 @@ public sealed class ConversationStore(string root)
     /// <para>A store nobody wired — a headless check — keeps the old answer: its own data root and no engines. Every
     /// path is graded against the full guards again when a tool uses it, which is the floor under both.</para>
     /// </summary>
-    public Func<WorkspaceGuards>? GuardsProvider { get; set; }
+    public Func<string?, WorkspaceGuards>? GuardsProvider { get; set; }
 
-    private WorkspaceGuards OwnGuards => GuardsProvider?.Invoke() ?? new(root, []);
+    private WorkspaceGuards GuardsFor(string? workspaceRoot = null) => GuardsProvider?.Invoke(workspaceRoot) ?? new(root, []);
 
     /// <summary>
     /// Both grant lists through their shape rules, at the one door both the load and the save go through — see
@@ -178,18 +178,19 @@ public sealed class ConversationStore(string root)
         conversation.GoalEstimatedTokens = Math.Max(0, conversation.GoalEstimatedTokens);
         if (conversation.GoalState == ChatGoalStates.Paused && conversation.GoalStopReason == "blocked")
             conversation.GoalState = ChatGoalStates.Blocked;
-        var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots,
-            OwnGuards);
+        // Persist grants without the primary workspace's exception so changing workspaces cannot widen them.
+        var grantGuards = GuardsFor();
+        var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots, grantGuards);
         conversation.GrantedRoots = write;
         conversation.ReadOnlyRoots = read;
         if (conversation.WorkspaceRoot is { Length: > 0 } workspace
-            && WorkspacePaths.IsProtected(workspace, OwnGuards))
+            && WorkspacePaths.IsProtected(workspace, GuardsFor(workspace)))
         {
             conversation.ReadOnlyRoots.Add(workspace);
             conversation.WorkspaceRoot = null;
         }
         conversation.FileGrants = WorkspacePaths.NormalizeFiles((conversation.FileGrants ?? [])
-            .Concat((conversation.GrantedFiles ?? []).Select(WorkspacePaths.LegacyFileGrant)), OwnGuards);
+            .Concat((conversation.GrantedFiles ?? []).Select(WorkspacePaths.LegacyFileGrant)), grantGuards);
         conversation.GrantedFiles = null;
     }
 

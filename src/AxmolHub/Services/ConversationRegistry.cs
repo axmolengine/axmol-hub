@@ -58,7 +58,7 @@ internal sealed class ConversationRegistry(ConversationStore store)
                                                       && turn.ToolCallId is { Length: > 0 })
                     && conversation.HasUnansweredToolCall())
                 {
-                    if (store.GuardsProvider?.Invoke() is { } guards)
+                    if (store.GuardsProvider?.Invoke(conversation.WorkspaceRoot) is { } guards)
                     {
                         var (write, read) = WorkspacePaths.SplitRoots(conversation.GrantedRoots, conversation.ReadOnlyRoots, guards);
                         var sandbox = new WorkspaceSandbox(conversation.WorkspaceRoot, write, read)

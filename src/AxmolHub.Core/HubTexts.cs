@@ -286,6 +286,7 @@ public static class HubTexts
         ["MirrorStoragePrefix"] = ("写入位置", "Writes"),
         ["Apply"] = ("应用", "Apply"),
         ["ImportEngine"] = ("导入引擎", "Import engine"),
+        ["OpenEngineWorkspace"] = ("作为 AI 工作区打开", "Open as AI workspace"),
         ["Channel"] = ("通道", "Channel"),
         ["SetDefault"] = ("设为默认", "Set default"),
         ["VerifyEngine"] = ("验证", "Verify"),

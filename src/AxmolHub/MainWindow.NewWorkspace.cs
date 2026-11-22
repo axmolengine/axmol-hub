@@ -50,6 +50,19 @@ public partial class MainWindow
         return null;
     }
 
+    private void OpenEngineWorkspace(string path)
+    {
+        try
+        {
+            if (OpenWorkspaceFolder(path) is { } verdict)
+                ShowFeedback(UserFeedback.Warning(WorkspaceRejectionMessage(verdict, path), "open-workspace"));
+        }
+        catch (Exception ex)
+        {
+            ShowFeedback(UserFeedback.Warning(ex.Message, "open-workspace"));
+        }
+    }
+
     private void RegisterCreatedWorkspace(ProjectEntry project)
     {
         try

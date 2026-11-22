@@ -237,7 +237,7 @@ internal sealed partial class ChatSessionCoordinator
 
         if (!Path.IsPathRooted(path)) return (WorkspacePathVerdict.EscapesWorkspace, "");
         if (!Directory.Exists(full)) return (WorkspacePathVerdict.MissingWorkspace, "");
-        if (WorkspacePaths.IsProtected(full, Execution.Guards))
+        if (WorkspacePaths.IsProtected(full, Execution.GuardsForWorkspace(full)))
             return (WorkspacePathVerdict.ProtectedRoot, "");
 
         return (null, full);

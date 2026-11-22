@@ -418,7 +418,7 @@ public partial class MainWindow : Window
             page = name switch
             {
                 "Projects" => new ProjectsPage(_workspace) { RegisterCreatedWorkspace = RegisterCreatedWorkspace },
-                "Installs" => new InstallsPage(_workspace),
+                "Installs" => new InstallsPage(_workspace) { OpenEngineWorkspace = OpenEngineWorkspace },
                 "Toolchains" => new ToolchainsPage(_workspace),
                 "Assistant" => _chatPanel ??= CreateChatPanel(),
                 _ => throw new ArgumentException("Unknown page: " + name, nameof(name)),
@@ -506,7 +506,7 @@ public partial class MainWindow : Window
         _chat.AuditWrite = _workspace.Log.Write;
         _chat.LogProvider = () => _workspace.Log;
         _chat.BeginGitStatus = _workspace.BeginGitStatus;
-        _chat.EngineRootsProvider = () => [.. _workspace.State.Engines.Select(engine => engine.Path)];
+        _chat.EnginesProvider = () => _workspace.State.Engines;
         // Read through the field on every call, not captured: switching the data root replaces _workspace, and a
         // seam that kept the old one would have the assistant hold the gate of a workspace nobody is looking at.
     }

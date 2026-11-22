@@ -22,10 +22,12 @@ internal sealed partial class ChatExecutionCoordinator
 
     private readonly string _dataRoot;
     internal string? AuthRoot { get; set; }
-    internal WorkspaceGuards Guards => new(_dataRoot, EngineRootsProvider?.Invoke() ?? [], AuthRoot);
+    internal WorkspaceGuards Guards => GuardsForWorkspace(null);
+    internal WorkspaceGuards GuardsForWorkspace(string? workspaceRoot)
+        => WorkspacePaths.GuardsForWorkspace(_dataRoot, EnginesProvider?.Invoke() ?? [], AuthRoot, workspaceRoot);
     private readonly HashSet<string> _compressingConversations = new(StringComparer.Ordinal);
     internal Func<HubReadOnlySnapshot?>? HubSnapshotProvider { get; set; }
-    internal Func<IReadOnlyList<string>>? EngineRootsProvider { get; set; }
+    internal Func<IReadOnlyList<EngineEntry>>? EnginesProvider { get; set; }
     internal Func<HubLog?>? LogProvider { get; set; }
     internal Func<ModelProvider, string, IChatClient>? ClientOverride { get; set; }
 
@@ -345,7 +347,7 @@ internal sealed partial class ChatExecutionCoordinator
     {
         var session = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
         var root = session?.WorkspaceRoot;
-        var guards = Guards;
+        var guards = GuardsForWorkspace(root);
         var snapshot = HubSnapshotProvider?.Invoke();
         var screenBridge = ScreenCaptureBridgeProvider is { } screenProvider
             ? screenProvider()
@@ -466,7 +468,7 @@ internal sealed partial class ChatExecutionCoordinator
     }
 
     internal WorkspaceToolScope WorkspaceOnlyScope(string? root)
-        => new(root, Guards, _dataRoot,
+        => new(root, GuardsForWorkspace(root), _dataRoot,
             "", Providers.SensitiveValues(), LogProvider?.Invoke());
 
     private string UpdatePlanTaskStatus(string conversationId, int taskNumber, string status)
@@ -656,7 +658,7 @@ internal sealed partial class ChatExecutionCoordinator
     internal string? DiffForChange(ChangedFile file, string conversationId, out UndoCopyState state, bool wholeFile = false)
     {
         var session = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
-        var guards = Guards;
+        var guards = GuardsForWorkspace(session?.WorkspaceRoot);
         return ChatChanges.DiffFor(
             file,
             conversationId,
