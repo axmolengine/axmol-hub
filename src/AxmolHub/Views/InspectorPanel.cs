@@ -192,7 +192,7 @@ internal sealed partial class InspectorPanel : UserControl
             Margin = new Thickness(4, 0, 0, 0),
         };
         _refreshChanges.Bind(ToolTip.TipProperty, new DynamicResourceExtension("InspectorRepoRefresh"));
-        _refreshChanges.Click += (_, _) => RepoRefreshRequested?.Invoke();
+        _refreshChanges.Click += (_, _) => RefreshChanges();
         var viewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0,
             VerticalAlignment = VerticalAlignment.Center };
         viewActions.Children.Add(_refreshChanges);
@@ -510,22 +510,13 @@ internal sealed partial class InspectorPanel : UserControl
         Focusable = false,
     };
 
-    internal event Action? RepositoryNavigationRequested;
+    internal void RefreshChanges() => RepoRefreshRequested?.Invoke();
 
-    internal void SelectWorkspaceTool(string tab)
-    {
-        // Reload selects a tab too, but only this entry is workspace navigation. A missing snapshot is loaded
-        // by TabSelected; an existing one must be refreshed rather than silently reused on re-entry.
-        if (tab is "changes" or "repo" && _scope != GitReviewScope.LastTurn && _repository is not null)
-            RepositoryNavigationRequested?.Invoke();
-        SelectTab(tab);
-    }
     internal bool IsChangesTabVisible => _changesHost.IsVisible;
-    internal bool NeedsRepository => _repository is null;
     internal bool HasContext(string conversationId, string? workspaceRoot)
         => _changesLoaded && _conversationId == conversationId && _workspaceRoot == workspaceRoot;
 
-    private void SelectTab(string tab)
+    internal void SelectTab(string tab)
     {
         // "changes" and "repo" are both the Changes tab: the older name for it stays a way in, and it lands on
         // whichever scope the picker is showing rather than resetting it behind the reader's back. Choosing a
@@ -1486,7 +1477,7 @@ internal sealed partial class InspectorPanel : UserControl
         {
             menu.Hide();
             if (_scope == scope && scope != GitReviewScope.LastTurn)
-                RepositoryNavigationRequested?.Invoke();
+                RefreshChanges();
             SetScope(scope);
         };
         return item;

@@ -449,7 +449,6 @@ public partial class ChatPanel
                     BuildInspectorContent(_inspector.IsChangesTabVisible ? "repo" : "plan", -1, refreshChanges: true);
                 else RequestRepositoryRead();
             };
-            _inspector.RepositoryNavigationRequested += () => RequestRepositoryRead();
             // Repository file rows ask for a single HEAD-to-working-tree snapshot, including staged and unstaged edits.
             _inspector.WholeDiffRequested = async (state, entry) =>
             {
@@ -488,13 +487,7 @@ public partial class ChatPanel
             // landing on a tab can mean opening a column that is shut, and only the shell knows the page it is on.
             // And whichever tab the pane ends up showing, the shell is told, because the next repaint asks for a
             // tab by name. Without this the reader's own click is undone by the next streamed token.
-            _inspector.TabSelected += tab =>
-            {
-                InspectorTabFollowed?.Invoke(tab);
-                // Workspace tabs select the existing pane without building it again. Start the first read here,
-                // after Reload has installed its context, so every entrance can receive the result.
-                if (tab == "repo") EnsureRepositoryLoaded();
-            };
+            _inspector.TabSelected += tab => InspectorTabFollowed?.Invoke(tab);
             _inspector.OpenFileRequested += relativePath =>
             {
                 if (_chat is null) return;
@@ -535,25 +528,15 @@ public partial class ChatPanel
         return _inspector;
     }
 
-    private void EnsureRepositoryLoaded()
-    {
-        var workspace = _chat?.ActiveWorkspaceRoot;
-        if (workspace is not { Length: > 0 } || _inspector?.NeedsRepository != true
-            || !_inspector.HasContext(_chat?.ActiveConversation?.Id ?? "", workspace)) return;
-        if (_chat?.RepositoryFor(workspace) is { } cached)
-            _inspector.ReloadRepository(cached.State);
-        else RequestRepositoryRead(refresh: false);
-    }
-
     /// <summary>Starts a repository read for the workspace on screen without blocking the click. The result
     /// arrives through <see cref="OnRepositoryChanged"/> and updates only the matching repository list.</summary>
-    private void RequestRepositoryRead(bool refresh = true)
+    private void RequestRepositoryRead()
     {
         var conversation = _chat?.ActiveConversation;
         if (_chat is null || _chat.ActiveWorkspaceRoot is not { Length: > 0 }) return;
         _inspector?.BeginRepositoryRefresh();
-        _ = conversation is null ? _chat.RefreshActiveWorkspaceRepositoryAsync(refresh)
-            : _chat.RefreshRepositoryAsync(conversation.Id, refresh);
+        _ = conversation is null ? _chat.RefreshActiveWorkspaceRepositoryAsync()
+            : _chat.RefreshRepositoryAsync(conversation.Id);
     }
 
     private void RefreshChanges()

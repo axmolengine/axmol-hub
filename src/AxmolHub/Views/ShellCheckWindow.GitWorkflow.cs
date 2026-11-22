@@ -39,17 +39,19 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await Git("push", "-u", "origin", "main");
             await Git("config", "remote.origin.pushurl", Path.Combine(root, "missing.git"));
             var path = Path.Combine(repo, "sample.txt");
-            await File.WriteAllTextAsync(path, "selected\n");
             var shell = fixture.OpenShell(Path.Combine(root, "hub"));
             shell.Show();
             var chat = shell.Chat;
             bool Dot(string key) => ThemeProbe.IsToken(shell.StatusDot.Fill, key);
             chat.SelectWorkspaceRoot(repo);
-            var panel = new ChatPanel(chat);
-            var inspector = (InspectorPanel)panel.BuildInspectorContent("changes", -1)!;
-            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Entries.Count == 1);
-            host.Content = inspector;
-            host.Show();
+            shell.NavigateTo("Assistant");
+            shell.OpenInspector("changes");
+            var inspector = shell.InspectorPaneForCheck!;
+            await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Entries.Count == 0);
+            shell.ClickInspectorToggleForCheck();
+            await File.WriteAllTextAsync(path, "selected\n");
+            shell.ClickInspectorToggleForCheck();
+            await WaitForConditionAsync(() => inspector.RepoRowCountForCheck == 1);
             var anchor = inspector.GetLogicalDescendants().OfType<Button>().Single(b => b.Name == "GitMenuButton");
             void Click(string key)
             {
@@ -101,7 +103,7 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             if (!flyout.IsOpen || TaskQueue.Instance.ActiveMutating is not null) throw new Exception("Candidate confirmation submitted the draft.");
             Key(Avalonia.Input.Key.Enter);
             var task = TaskQueue.Instance.ActiveMutating ?? throw new Exception("No Git task");
-            inspector.SelectWorkspaceTool("plan");
+            shell.CloseInspector();
             check(task.StageKey == "GitCommitting" && task.Fill is null && !task.CanCancel && TaskQueue.Instance.Items.Contains(task) && Dot("Hub.StatusWorking"),
                 "收起更改后提交仍占用底部同一不定进度任务，不可重复或中断");
             await task.Completion;
@@ -111,7 +113,7 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
                 && await Git("show", "HEAD:sample.txt") == "selected" && (await Git("diff")).Contains("not selected"),
                 "无会话组合操作只提交暂存内容，推送失败不丢失提交");
             await Git("config", "--unset", "remote.origin.pushurl");
-            inspector.SelectWorkspaceTool("repo");
+            shell.OpenInspector("repo");
             await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Ahead == 1);
             Click("GitRetryPush");
             await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No push retry")).Completion;
@@ -130,8 +132,10 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             chat.SetWorkspaceRoot(session.Id, repo);
             chat.OpenConversation(session.Id);
             chat.SelectMode(ChatModes.Agent);
+            var panel = new ChatPanel(chat);
             host.Content = panel;
             host.Width = 920;
+            host.Show();
             int modelRequests = 0;
             chat.ClientOverride = (_, _) => new ScriptedChatClient([++modelRequests == 1
                 ? "Completed.\n\nCommit summary: fix: commit via shortcut" : "Done for this check."]);

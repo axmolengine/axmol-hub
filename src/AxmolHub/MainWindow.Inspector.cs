@@ -239,6 +239,7 @@ public partial class MainWindow
         // drawer the reader could not see is worse than one that comes back with the column it belongs to. Every
         // route in and out of the lifted state ends here, so leaving the assistant page puts all three back.
         InspectorTabSlot.IsVisible = _inspectorOpen && _currentKey == "Assistant";
+        _workspaceView?.SetPaneShown(InspectorTabSlot.IsVisible);
         Grid.SetColumn(InspectorTabSlot, _inspectorExpanded ? 0 : 2);
         Grid.SetColumnSpan(InspectorTabSlot, _inspectorExpanded ? 3 : 1);
         SyncInspectorTabInset();

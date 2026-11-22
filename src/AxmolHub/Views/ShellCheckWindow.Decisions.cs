@@ -1686,8 +1686,7 @@ internal sealed partial class ShellDecisionsChecks
                   StringComparison.Ordinal),
             "仓库页把读取请求递出去、读完自己落回面板，并说清这个会话还没有工作目录（实际「"
             + (shell.InspectorPaneForCheck?.RepoNoticeForCheck ?? "") + "」）");
-        // And one read for one question: the same tab opened twice must not start two gits, because the pane is
-        // Reopening Changes shows the same repository scope and reuses the cached repository state.
+        // Without a workspace, reopening Changes still needs no Git read.
         var readsAfterFirst = shell.Chat.RepositoryReadsForCheck;
         shell.CloseInspector();
         shell.OpenInspector("changes", -1);
@@ -1696,7 +1695,7 @@ internal sealed partial class ShellDecisionsChecks
               && shell.InspectorPaneForCheck is { } repoAgain
               && repoAgain.RepoNoticeForCheck.Contains(HubStrings.Get("InspectorRepoNoWorkspace"),
                   StringComparison.Ordinal),
-            "重新打开 Changes 仍显示 Repo，并复用已读取的仓库状态（新增读取 "
+            "无工作目录时重新打开 Changes 仍显示 Repo，不启动 Git（新增读取 "
             + (shell.Chat.RepositoryReadsForCheck - readsAfterFirst) + " 次）");
         shell.CloseInspector();
         shell.Chat.DeleteConversation(repoSession.Id);

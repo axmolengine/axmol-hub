@@ -313,13 +313,32 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _content.Content = null;
         if (_state.Selected is "plan" or "repo")
         {
-            _inspector.SelectWorkspaceTool(_state.Selected);
+            _inspector.SelectTab(_state.Selected);
             _content.Content = _inspector;
         }
         else if (_state.Browsers.Any(browser => browser.TabId == _state.Selected)) _content.Content = null;
         else _content.Content = _state.Documents.Find(document => document.Path == _state.Selected)?.Content ?? _empty;
         RenderTabs();
         ApplyTreeLayout();
+        SyncChangesVisibility();
+    }
+
+    private bool _paneShown;
+    private State? _visibleChanges;
+
+    internal void SetPaneShown(bool shown)
+    {
+        _paneShown = shown;
+        SyncChangesVisibility();
+    }
+
+    private void SyncChangesVisibility()
+    {
+        // A workspace switch can replace one visible Changes list with another without hiding the pane.
+        var showing = _paneShown && _state?.Selected == "repo" ? _state : null;
+        if (ReferenceEquals(showing, _visibleChanges)) return;
+        _visibleChanges = showing;
+        if (showing is not null) _inspector.RefreshChanges();
     }
 
     private void RenderTabs()
