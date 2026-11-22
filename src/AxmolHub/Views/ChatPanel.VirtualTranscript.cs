@@ -85,8 +85,10 @@ public partial class ChatPanel
 
     private void InitializeVirtualTranscript()
     {
+        MessageScroller.DetachedFromVisualTree += (_, _) => DisarmTranscriptRepair();
         MessageScroller.LayoutUpdated += (_, _) =>
         {
+            if (!HasTranscriptViewport()) return;
             UpdateTranscriptScrollMapping();
             if (TranscriptTailVisible()) _tailFollowMisses = 0;
             var wantsTail = _pendingTailFollow;
@@ -628,7 +630,7 @@ public partial class ChatPanel
         void AlignBottom()
         {
             _followRuns++;
-            if (_thumbDragging || _virtualFollowSession != _renderedConversationId
+            if (!HasTranscriptViewport() || _thumbDragging || _virtualFollowSession != _renderedConversationId
                 || _virtualFollowGeneration != _transcriptGeneration || _transcriptItems.Count == 0
                 || (!_stickToBottom && !_pendingTailFollow))
             {

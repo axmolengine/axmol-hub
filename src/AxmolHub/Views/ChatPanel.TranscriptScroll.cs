@@ -35,6 +35,7 @@ public partial class ChatPanel
     private bool _programmaticScroll;
     private bool _repairQueued;
     private bool _repairRunning;
+    private const int TranscriptRepairLimit = 3;
     private int _repairFailures;
     private int _repairCount;
     private string _lastRepairTrigger = "";
@@ -97,20 +98,24 @@ public partial class ChatPanel
         return new(spans.Length > 0 && gap <= TranscriptBlankBand, gap, topGap, bottomGap, spans.Length, emptyHosts, detail);
     }
 
+    // A cached page can retain its old viewport size and effective visibility after navigation.
+    private bool HasTranscriptViewport() => MessageScroller.IsAttachedToVisualTree()
+        && MessageScroller.IsEffectivelyVisible && MessageScroller.Viewport.Height > 0;
+
     /// <summary>One coalesced repair request. A held thumb owns the reading position, so a repair may not move
     /// it; a run of failed repairs stops after three rather than fighting the layout, and the next hand gesture
     /// or session switch starts the budget over.</summary>
     private void RequestTranscriptRepair(string trigger)
     {
         if (_transcriptItems.Count == 0 || _chat is null || _repairQueued || _repairRunning) return;
-        if (_repairFailures >= 3) return;
+        if (_repairFailures >= TranscriptRepairLimit || !HasTranscriptViewport()) return;
         DisarmTranscriptRepair();
         var session = _renderedConversationId;
         _repairQueued = true;
         Dispatcher.UIThread.Post(() =>
         {
             _repairQueued = false;
-            if (session != _renderedConversationId || _thumbDragging || _heldItems is not null
+            if (!HasTranscriptViewport() || session != _renderedConversationId || _thumbDragging || _heldItems is not null
                 || _reconcilingTranscript || _transcriptItems.Count == 0) return;
             RepairTranscriptCoverage(trigger);
         }, DispatcherPriority.Loaded);
@@ -122,14 +127,15 @@ public partial class ChatPanel
     /// a position still blank after the hand stopped is worth a rebuild.</summary>
     private void ArmTranscriptRepairAfterIdle()
     {
-        if (_unmappedRepairTimer is not null || _repairQueued) return;
+        if (_unmappedRepairTimer is not null || _repairQueued || _repairFailures >= TranscriptRepairLimit
+            || !HasTranscriptViewport()) return;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _unmappedRepairTimer = timer;
         timer.Tick += (_, _) =>
         {
             timer.Stop();
             if (ReferenceEquals(_unmappedRepairTimer, timer)) _unmappedRepairTimer = null;
-            if (_transcriptItems.Count == 0 || _thumbDragging || _heldItems is not null
+            if (!HasTranscriptViewport() || _transcriptItems.Count == 0 || _thumbDragging || _heldItems is not null
                 || _reconcilingTranscript) return;
             var coverage = MeasureTranscriptCoverage();
             if (coverage.Visible == 0 || coverage.Gap > TranscriptBlankBand)
@@ -183,7 +189,6 @@ public partial class ChatPanel
                         // A tail that still cannot be reached is not worth another reset cycle; stop the
                         // automatic attempts and leave the next gesture or the next session to retry.
                         _pendingTailFollow = false;
-                        _repairFailures++;
                     }
                     return;
                 }
@@ -228,7 +233,12 @@ public partial class ChatPanel
             _repairFailures++;
             NoteTranscriptRepair(trigger, 3, MeasureTranscriptCoverage(), "gave-up");
         }
-        finally { _repairRunning = false; }
+        finally
+        {
+            _repairRunning = false;
+            // Layout during a reset may already have armed the next idle tick.
+            if (_repairFailures >= TranscriptRepairLimit) DisarmTranscriptRepair();
+        }
     }
 
     private int ChooseTranscriptReference(TranscriptCoverage coverage)
@@ -363,11 +373,14 @@ public partial class ChatPanel
         if (tail) AlignTailOnce();
         else ScrollTranscriptToReference(ordinal);
         MessageFlow.UpdateLayout();
+        var coverage = MeasureTranscriptCoverage();
+        var missedTail = tail && !TranscriptTailVisible();
+        _repairFailures = coverage.Covered && !missedTail ? 0 : _repairFailures + 1;
         UpdateTranscriptScrollMapping();
-        NoteTranscriptRepair(trigger + ":host-reset", 0, MeasureTranscriptCoverage(),
+        NoteTranscriptRepair(trigger + ":host-reset", 0, coverage,
             (tail ? "tail#" : "row#") + ordinal + " pending=" + _pendingTailFollow
             + " lastReading=" + _lastReadingOrdinal);
-        _pendingTailFollow = tail && !TranscriptTailVisible();
+        _pendingTailFollow = missedTail;
     }
 
     private void NoteTranscriptRepair(string trigger, int pass, TranscriptCoverage coverage, string outcome)
