@@ -343,8 +343,27 @@ public sealed class ProcessRunner(Action<string> log)
 
             if (idleTimeout == Infinite)
             {
-                // No timeout at all (long-running processes, e.g. a game): just wait for process exit or user cancellation.
-                await process.WaitForExitAsync(cancellation);
+                // No idle deadline, but cancellation still owns the child, not just the wait.
+                try
+                {
+                    await process.WaitForExitAsync(cancellation).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                    try
+                    {
+                        if (!StopProcess(process))
+                            throw new TimeoutException($"Could not stop {executable} (pid {process.Id}) within {KillGrace}.");
+                    }
+                    catch (InvalidOperationException) when (process.HasExited)
+                    {
+                        // The child exited between the exit check and the kill.
+                    }
+
+                    await DrainAfterExitAsync(output, error, outputSink, errorSink, executable).ConfigureAwait(false);
+                    log("Process stopped: cancelled");
+                    throw;
+                }
             }
             else
             {

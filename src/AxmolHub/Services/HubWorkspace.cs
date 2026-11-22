@@ -1502,8 +1502,12 @@ public sealed partial class HubWorkspace : IDisposable
                 }
                 else
                 {
-                    await StartWebPreviewAsync(project, engine);
-                    SetTaskStatus(HubStrings.Get("Run project") + " · " + WebPreviewUrl, launchToken.Value, StatusPhase.Ready);
+                    var preview = await _platformBuilds.StartWebPreviewAsync(project, engine, openBrowser: true, CancellationToken.None);
+                    _webPreview = preview;
+                    _webPreviewProjectPath = project.Path;
+                    RecordProjectActivity(project);
+                    SetTaskStatus(HubStrings.Get("Run project") + " · " + preview.Url, launchToken.Value, StatusPhase.Ready);
+                    _ = WatchWebPreviewExitAsync(preview);
                 }
                 return;
             }
@@ -1626,41 +1630,42 @@ public sealed partial class HubWorkspace : IDisposable
 
     public string WebPreviewUrl => _webPreview?.Url ?? "";
 
-    private async Task StartWebPreviewAsync(ProjectEntry project, EngineEntry engine)
+    private async Task WatchWebPreviewExitAsync(PlatformBuildService.WebPreview preview)
     {
-        var preview = await _platformBuilds.StartWebPreviewAsync(project, engine, openBrowser: true, CancellationToken.None);
-        _webPreview = preview;
-        _webPreviewProjectPath = project.Path;
-        RecordProjectActivity(project);
-
-        // The server going away — a crash, a Ctrl+C in its console, the browser tab ending the session — has to
-        // put the button back by itself. Guarded on identity because stopping one preview must not erase a
-        // newer one that already replaced it.
-        _ = preview.Server.ContinueWith(_ =>
+        Exception? failure = null;
+        try
         {
-            if (!ReferenceEquals(_webPreview, preview))
-            {
-                return;
-            }
-
-            _webPreview = null;
-            _webPreviewProjectPath = null;
-            preview.Stop.Dispose();
-            Dispatcher.UIThread.Post(() => Changed?.Invoke());
-        }, TaskScheduler.Default);
-    }
-
-    /// <summary>Take the preview server down. The token source is disposed by the continuation that notices the
-    /// server came down, so the repaint and the cleanup ride the same event whoever pressed the button.</summary>
-    public void StopWebPreview()
-    {
-        if (_webPreview is not { } preview)
+            await preview.Server;
+        }
+        catch (OperationCanceledException) when (preview.Stop.IsCancellationRequested)
         {
-            return;
+            // The runner confirms exit before propagating cancellation.
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
         }
 
+        var requested = preview.Stop.IsCancellationRequested;
+        preview.Stop.Dispose();
+        if (!ReferenceEquals(_webPreview, preview)) return;
+        _webPreview = null;
+        _webPreviewProjectPath = null;
+        Changed?.Invoke();
+
+        if (failure is not null)
+            await ReportFailureAsync(requested
+                ? new IOException(HubStrings.Get("WebPreviewStopFailed") + " · " + preview.Url, failure)
+                : failure);
+        else if (requested)
+            SetStatus(HubStrings.Get("WebPreviewStopped") + " · " + preview.Url);
+    }
+
+    private void StopWebPreview()
+    {
+        if (_webPreview is not { } preview || preview.Stop.IsCancellationRequested) return;
+        SetStatus(HubStrings.Get("WebPreviewStopping") + " · " + preview.Url, StatusPhase.Working);
         PlatformBuildService.StopWebPreview(preview);
-        SetStatus(HubStrings.Get("Stop") + " · " + preview.Url);
     }
 
     /// <summary>Opens the Android release settings. The projects page's "Android release settings" button calls it directly.</summary>

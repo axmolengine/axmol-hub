@@ -700,6 +700,9 @@ public static class HubTexts
         ["NoAvailableChatModels"] = ("请先在设置中鉴权并添加可用模型。", "Authenticate a provider and add an available model in Settings first."),
         ["Send"] = ("发送", "Send"),
         ["Stop"] = ("停止", "Stop"),
+        ["WebPreviewStopping"] = ("正在停止预览服务", "Stopping preview server"),
+        ["WebPreviewStopped"] = ("预览服务已停止", "Preview server stopped"),
+        ["WebPreviewStopFailed"] = ("未能确认预览服务已停止", "Could not confirm the preview server stopped"),
         ["ChatSteer"] = ("引导", "Steer"),
         ["ChatSteering"] = ("正在引导…", "Steering"),
         // The keyboard used to be the only thing this hint named, and a screenshot arriving from Explorer or
