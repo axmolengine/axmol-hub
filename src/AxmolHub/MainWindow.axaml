@@ -204,6 +204,15 @@
     <Style Selector="Button.icon-ghost:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
+    <Style Selector="Ellipse#StatusDot">
+      <Setter Property="Fill" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="Ellipse#StatusDot.working">
+      <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
+    </Style>
+    <Style Selector="Ellipse#StatusDot.error">
+      <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
     <Style Selector="ProgressBar.status-progress">
       <Setter Property="Height" Value="3" />
       <Setter Property="MinHeight" Value="0" />
@@ -1100,9 +1109,7 @@
       <!-- Slim status strip. -->
       <Grid x:Name="StatusStrip" Grid.Row="2" Height="28" Margin="18,0,18,0"
             ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
-        <Ellipse Grid.Column="0" Width="6" Height="6"
-                 Fill="{DynamicResource Hub.Success}"
-                 VerticalAlignment="Center" />
+        <Ellipse x:Name="StatusDot" Grid.Column="0" Width="6" Height="6" VerticalAlignment="Center" />
         <TextBlock x:Name="Status" Grid.Column="1"
                    Text="{DynamicResource Ready}"
                    Foreground="{DynamicResource Hub.TextSecondary}"

@@ -680,7 +680,9 @@ internal sealed class ShellLayoutChecks
         fresh.Show();
         fresh.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(fresh.CurrentPage is ProjectsPage && fresh.NavProjects.IsChecked == true, "启动默认停在项目页，与 WPF 版一致");
+        Check(fresh.CurrentPage is ProjectsPage && fresh.NavProjects.IsChecked == true
+              && fresh.Status.Text == HubStrings.Get("Ready") && IsToken(fresh.StatusDot.Fill, "Hub.Success"),
+            "启动默认停在项目页，底部状态为绿色就绪");
         fresh.Close();
         return shell;
     }
@@ -1573,15 +1575,15 @@ internal sealed class ShellLayoutChecks
             token => Task.Delay(int.MaxValue, token));
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.Workspace.IsBusy && shell.CanCancelForCheck
+        Check(shell.Workspace.IsBusy && shell.CanCancelForCheck && IsToken(shell.StatusDot.Fill, "Hub.AccentBorder")
               && TaskQueue.Instance.Items.Count == 0 && !shell.TaskSlotVisibleForCheck,
-            "秒级操作占着同一个闸、也取消得掉，但不占行也不点亮槽位");
+            "秒级操作状态点为蓝色，占闸且可取消，但不占任务槽位");
         shell.Workspace.Cancel();
         await quiet;
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(!shell.Workspace.IsBusy && !shell.CanCancelForCheck,
-            "取消那条秒级操作后闸空出来，状态条的取消也跟着熄灭");
+        Check(!shell.Workspace.IsBusy && !shell.CanCancelForCheck && IsToken(shell.StatusDot.Fill, "Hub.Success"),
+            "取消完成后状态点恢复绿色，状态条的取消也跟着熄灭");
 
         // The row reads its own process and nothing else. This is the defect the progress window carried: it
         // was fed from the global log, so a line printed by an unrelated tool moved its stage and its
@@ -1706,14 +1708,22 @@ internal sealed class ShellLayoutChecks
         Dispatcher.UIThread.RunJobs();
         var blocker = HubDialogWindows().LastOrDefault();
         var blockerText = blocker is null ? "" : NamedDescendant<TextBlock>(blocker, "DialogMessage")?.Text ?? "";
-        Check(blockerText.Contains(HubTexts.Get("ProjectStillRunning", HubStrings.Language), StringComparison.Ordinal),
-            "游戏占着输出目录时，构建给的是能行动的一句话（弹窗 " + blockerText + "）");
+        var failedRed = IsToken(shell.StatusDot.Fill, "Hub.DangerText");
         if (blocker is not null)
         {
             ActionButtons(blocker).FirstOrDefault()?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }
 
         await blocked;
+        var nextWasBlue = false;
+        await shell.Workspace.ExecuteAsync("status recovery", async _ =>
+        {
+            nextWasBlue = IsToken(shell.StatusDot.Fill, "Hub.AccentBorder");
+            await Task.Yield();
+        });
+        Check(blockerText.Contains(HubTexts.Get("ProjectStillRunning", HubStrings.Language), StringComparison.Ordinal)
+              && failedRed && nextWasBlue && IsToken(shell.StatusDot.Fill, "Hub.Success"),
+            "构建预检失败时红点与错误同时出现，新操作转蓝，成功后恢复绿色（" + blockerText + "）");
         shell.Workspace.ForgetGamesForCheck();
         shell.Workspace.SelectedProject = null;
         // The failure opened the drawer, as it should — and the geometry cells downstream measure the shell

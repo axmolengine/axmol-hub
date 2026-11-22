@@ -88,13 +88,13 @@ public sealed partial class HubWorkspace : IDisposable
         AndroidRunStateChanged?.Invoke();
     }
 
-    private void ShowAndroidRunOutcome(string text, bool temporary = true)
+    private void ShowAndroidRunOutcome(string text, long owner, bool failed)
     {
-        SetStatus(text);
-        if (!temporary) return;
+        SetTaskStatus(text, owner, failed ? StatusPhase.Error : StatusPhase.Ready);
+        if (failed) return;
         DispatcherTimer.RunOnce(() =>
         {
-            if (!_androidRunPending && !IsBusy && StatusText == text) SetStatus("");
+            if (_displayedTaskToken == owner) SetStatus(HubStrings.Get("Ready"));
         }, TimeSpan.FromSeconds(4));
     }
 
@@ -240,9 +240,11 @@ public sealed partial class HubWorkspace : IDisposable
     /// <summary>State/lists changed and pages should repaint. Equivalent to the WPF version's trailing <c>Refresh()</c>.</summary>
     public event Action? Changed;
 
-    /// <summary>A status update for the shell's bottom status text or a transient feedback item.</summary>
-    public readonly record struct StatusUpdate(string Text, long? TaskToken, bool TaskFinished, bool TaskActivated,
-        UserFeedback? Feedback = null);
+    public enum StatusPhase { Ready, Working, Error }
+
+    /// <summary>The phase belongs to the same operation as the text; feedback goes to a separate toast.</summary>
+    public readonly record struct StatusUpdate(string Text, StatusPhase Phase, long? TaskToken = null,
+        bool TaskActivated = false, UserFeedback? Feedback = null);
 
     /// <summary>Status bar text.</summary>
     public event Action<StatusUpdate>? StatusChanged;
@@ -307,6 +309,7 @@ public sealed partial class HubWorkspace : IDisposable
     public bool IsBusy => _tasks.ActiveMutating is not null;
 
     public string StatusText { get; private set; } = "";
+    private long? _displayedTaskToken;
     private static long _nextTaskStatusToken;
     private readonly AsyncLocal<long?> _taskStatusContext = new();
     private readonly Dictionary<long, string> _taskStatuses = [];
@@ -320,38 +323,40 @@ public sealed partial class HubWorkspace : IDisposable
 
     // ───────────────────────── Common shell ─────────────────────────
 
-    private void SetStatus(string text, long? taskToken = null, bool taskFinished = false)
+    private void SetStatus(string text, StatusPhase? phase = null)
     {
-        var owner = taskToken ?? _taskStatusContext.Value;
-        if (owner is { } taskOwner)
+        if (_taskStatusContext.Value is { } owner)
         {
-            SetTaskStatus(text, taskOwner, taskFinished);
+            SetTaskStatus(text, owner, phase ?? StatusPhase.Working);
             return;
         }
 
-        StatusText = text;
-        StatusChanged?.Invoke(new StatusUpdate(text, null, false, false));
+        lock (_taskStatusGate)
+            if (_taskStatuses.Count != 0) return;
+        PublishStatus(new StatusUpdate(text, phase ?? StatusPhase.Ready));
+    }
+
+    private void PublishStatus(StatusUpdate update)
+    {
+        _displayedTaskToken = update.TaskToken;
+        StatusText = update.Text;
+        StatusChanged?.Invoke(update);
     }
 
     private void SetFeedback(UserFeedback feedback)
-        => StatusChanged?.Invoke(new StatusUpdate(feedback.Text, null, false, false, feedback));
+        => StatusChanged?.Invoke(new StatusUpdate(feedback.Text, StatusPhase.Ready, Feedback: feedback));
 
     private long BeginTaskStatus(string text)
     {
         var token = Interlocked.Increment(ref _nextTaskStatusToken);
         lock (_taskStatusGate) _taskStatuses[token] = text;
-        StatusText = text;
-        StatusChanged?.Invoke(new StatusUpdate(text, token, false, true));
+        PublishStatus(new StatusUpdate(text, StatusPhase.Working, token, TaskActivated: true));
         return token;
     }
 
-    private void DiscardTaskStatus(long taskToken)
+    private void SetTaskStatus(string text, long taskToken, StatusPhase phase = StatusPhase.Working)
     {
-        lock (_taskStatusGate) _taskStatuses.Remove(taskToken);
-    }
-
-    private void SetTaskStatus(string text, long taskToken, bool finished = false)
-    {
+        var finished = phase != StatusPhase.Working;
         StatusUpdate[] updates;
         lock (_taskStatusGate)
         {
@@ -364,21 +369,17 @@ public sealed partial class HubWorkspace : IDisposable
             var next = new List<StatusUpdate>();
             if (wasCurrent)
             {
-                next.Add(new StatusUpdate(text, taskToken, finished, false));
+                next.Add(new StatusUpdate(text, phase, taskToken));
                 if (finished && _taskStatuses.Count > 0)
                 {
                     var fallbackToken = _taskStatuses.Keys.Max();
-                    next.Add(new StatusUpdate(_taskStatuses[fallbackToken], fallbackToken, false, true));
+                    next.Add(new StatusUpdate(_taskStatuses[fallbackToken], StatusPhase.Working, fallbackToken, TaskActivated: true));
                 }
             }
             updates = [.. next];
         }
 
-        StatusText = text;
-        foreach (var update in updates)
-        {
-            StatusChanged?.Invoke(update);
-        }
+        foreach (var update in updates) PublishStatus(update);
     }
 
     private IProgress<DownloadProgress> DownloadProgress()
@@ -444,76 +445,7 @@ public sealed partial class HubWorkspace : IDisposable
         }
 
         LastError = "";
-        if (_tasks.FindActive(identity) is not null)
-        {
-            // The task already on screen owns the status line; do not create an abandoned owner for
-            // a duplicate request that the queue is about to reject.
-            Refresh();
-            return;
-        }
-
-        var statusTitle = FormatTaskTitle(titleKey, subject);
-        var taskToken = BeginTaskStatus(statusTitle);
-        Log.Write(titleKey);
-
-        var item = _tasks.Enqueue(identity, titleKey, subject,
-            async (queuedItem, cancellationToken) =>
-            {
-                var previous = _taskStatusContext.Value;
-                _taskStatusContext.Value = taskToken;
-                try
-                {
-                    await work(queuedItem, cancellationToken);
-                }
-                finally
-                {
-                    _taskStatusContext.Value = previous;
-                }
-            },
-            onFinished: settled => FinishGated(settled, taskToken), kind: TaskQueue.TaskKind.Mutating,
-            listed: listed, retryable: retryable, getFailureLog: () => Log);
-        if (item is null)
-        {
-            // Already running under this identity: the row on screen is the answer, and the repaint the first
-            // one owed must not be skipped because the second request was turned away.
-            DiscardTaskStatus(taskToken);
-            Refresh();
-            return;
-        }
-
-        // Nothing is announced here. The shell reads the queue for its cancel button and the strip's label, so
-        // the one fact — 「a change is running」 — has one owner, and a work delegate that settles on the spot
-        // cannot leave a flag standing after its own finisher has run.
-        await item.Completion;
-    }
-
-    /// <summary>What a settled change leaves behind. Mirrors the success / cancel / failure arms the WPF
-    /// port carried sentence-for-sentence, including the reason a failure keeps its exception <b>type</b>:
-    /// <see cref="ShowOperationErrorAsync"/> chooses the advice the user can act on from that type.</summary>
-    private static string FormatTaskTitle(string titleKey, string? subject)
-        => subject is { Length: > 0 }
-            ? HubStrings.Get(titleKey) + " " + subject
-            : HubStrings.Get(titleKey);
-
-    private void FinishGated(TaskQueue.Item item, long taskToken)
-    {
-        var title = item.Title;
-        if (item.Fault is { } error)
-        {
-            _ = ReportFailureAsync(error, taskToken, item.TitleWithPhase);
-        }
-        else if (item.State == TaskQueue.Phase.Done)
-        {
-            Store.Save(State);
-            SetTaskStatus(title + " · " + HubStrings.Get("Done"), taskToken, finished: true);
-        }
-        else
-        {
-            SetTaskStatus(title + " · " + HubStrings.Get("Cancelled"), taskToken, finished: true);
-            Log.Write(StatusText);
-        }
-
-        Refresh();
+        await EnqueueTask(identity, titleKey, subject, titleKey, work, TaskQueue.TaskKind.Mutating, listed, retryable);
     }
 
     /// <summary>
@@ -527,7 +459,8 @@ public sealed partial class HubWorkspace : IDisposable
         // The queue already wrote task failures with a location before notifying the shell.
         if (taskStatus is null) Log.Write(LastError, HubLog.Level.Error);
         var message = taskStatus ?? (HubStrings.Get("ErrorHint") + " " + HubStrings.Get(error.Message.Split('\n')[0]));
-        SetStatus(message, taskToken, taskFinished: taskToken is not null);
+        if (taskToken is { } owner) SetTaskStatus(message, owner, StatusPhase.Error);
+        else SetStatus(message, StatusPhase.Error);
         Failed?.Invoke();
         // In verification mode don't pop up: ExpectedFailure is the norm for this group (e.g.
         // importing an incomplete engine), and a dialog would make the await never return (see
@@ -550,12 +483,8 @@ public sealed partial class HubWorkspace : IDisposable
     public bool CanCancel => _tasks.ActiveMutating is { CanCancel: true };
 
     /// <summary>
-    /// Runs one download on <see cref="TaskQueue"/> instead of under the exclusive lock, and gives it
-    /// the parts of <see cref="ExecuteAsync"/>'s lifecycle that still apply: a log line for the title, a
-    /// state save and a page refresh when it lands, and the typed error dialog when it does not.
-    ///
-    /// Downloads do not take the exclusive busy gate, but they still own the bottom status line while
-    /// they are active. Their progress belongs to the same task-owned status channel as builds.
+    /// Each accepted attempt, including a retry, owns a fresh status token from enqueue to settlement.
+    /// Transfers and gated changes share that lifecycle, whether or not they need a visible queue row.
     /// </summary>
     /// <returns>A task that completes when the transfer settles — the same thing
     /// <see cref="ExecuteAsync"/> awaited, so a caller that needs "is it installed yet" (the deep link,
@@ -566,38 +495,34 @@ public sealed partial class HubWorkspace : IDisposable
         string titleKey,
         string? subject,
         string logTitleKey,
-        Func<TaskQueue.Item, CancellationToken, Task> work)
+        Func<TaskQueue.Item, CancellationToken, Task> work,
+        TaskQueue.TaskKind kind = TaskQueue.TaskKind.Transfer, bool listed = true, bool retryable = true)
     {
-        if (_tasks.FindActive(identity) is not null)
-        {
-            return Task.CompletedTask;
-        }
-
         long taskToken = 0;
         var item = _tasks.Enqueue(identity, titleKey, subject,
             async (queuedItem, cancellationToken) =>
             {
-                taskToken = BeginTaskStatus(FormatTaskTitle(titleKey, subject));
                 var previous = _taskStatusContext.Value;
                 _taskStatusContext.Value = taskToken;
                 try
                 {
                     await work(queuedItem, cancellationToken);
+                    Store.Save(State);
                 }
                 finally
                 {
                     _taskStatusContext.Value = previous;
                 }
             },
-            onFinished: finished => FinishTask(finished, logTitleKey, taskToken), getFailureLog: () => Log);
-        if (item is null)
-        {
-            DiscardTaskStatus(taskToken);
-            return Task.CompletedTask;
-        }
-
-        Log.Write(logTitleKey);
-        return item.Completion;
+            onFinished: finished => FinishTask(finished, logTitleKey, taskToken), kind: kind,
+            listed: listed, retryable: retryable, getFailureLog: () => Log,
+            onQueued: queued =>
+            {
+                taskToken = BeginTaskStatus(queued.Title);
+                Log.Write(logTitleKey);
+            });
+        if (item is null && kind == TaskQueue.TaskKind.Mutating) Refresh();
+        return item?.Completion ?? Task.CompletedTask;
     }
 
     /// <summary>What a settled transfer leaves behind. Mirrors the success / cancel / failure arms of
@@ -605,21 +530,18 @@ public sealed partial class HubWorkspace : IDisposable
     /// <see cref="ShowOperationErrorAsync"/> chooses the advice the user can act on from that type.</summary>
     private void FinishTask(TaskQueue.Item item, string logTitleKey, long taskToken)
     {
-        var title = HubStrings.Get(logTitleKey);
         if (item.Fault is { } error)
         {
             _ = ReportFailureAsync(error, taskToken, item.TitleWithPhase);
         }
-        else if (item.State == TaskQueue.Phase.Done)
-        {
-            Store.Save(State);
-            SetTaskStatus(title + " · " + HubStrings.Get("Done"), taskToken, finished: true);
-            Log.Write(title + " · " + HubStrings.Get("Done"));
-        }
         else
         {
-            SetTaskStatus(title + " · " + HubStrings.Get("Cancelled"), taskToken, finished: true);
-            Log.Write(title + " · " + HubStrings.Get("Cancelled"));
+            var done = item.State == TaskQueue.Phase.Done;
+            var transfer = item.Kind == TaskQueue.TaskKind.Transfer;
+            var title = transfer ? HubStrings.Get(logTitleKey) : item.Title;
+            var text = title + " · " + HubStrings.Get(done ? "Done" : "Cancelled");
+            SetTaskStatus(text, taskToken, StatusPhase.Ready);
+            if (transfer || !done) Log.Write(text);
         }
 
         Refresh();
@@ -1532,6 +1454,7 @@ public sealed partial class HubWorkspace : IDisposable
             return;
         }
 
+        long? launchToken = null;
         var ownsAndroidRun = false;
         string? androidOutcome = null;
         var androidFailed = false;
@@ -1550,16 +1473,34 @@ public sealed partial class HubWorkspace : IDisposable
             var engine = RequiredEngine(project);
             string? androidSerial = null;
             string? androidDeviceName = null;
-            if (family == "windows")
+            if (family is "windows" or "wasm")
             {
-                UpdateTools(await DetectAsync(CancellationToken.None));
+                var title = HubStrings.Get("Run project") + " · " + project.Name;
+                launchToken = BeginTaskStatus(title);
+                if (family == "windows")
+                {
+                    UpdateTools(await DetectAsync(CancellationToken.None));
+                    var pid = await _projects.LaunchAsync(project, engine);
+                    _launchedGames[project.Path] = pid;
+                    RecordProjectActivity(project);
+                    Log.Write($"{project.Name} launched (pid {pid}).");
+                    SetTaskStatus(title, launchToken.Value, StatusPhase.Ready);
+                    WatchEarlyExit(project, pid, launchToken.Value);
+                }
+                else
+                {
+                    await StartWebPreviewAsync(project, engine);
+                    SetTaskStatus(HubStrings.Get("Run project") + " · " + WebPreviewUrl, launchToken.Value, StatusPhase.Ready);
+                }
+                return;
             }
-            else if (family == "android")
+
+            if (family == "android")
             {
                 if (_androidRunPending || RefuseIfBusy()) return;
                 _androidRunPending = ownsAndroidRun = true;
                 SetAndroidRunState(project.Path, "AndroidRunDetecting");
-                SetStatus(HubStrings.Get("AndroidRunDetectingStatus"));
+                launchToken = BeginTaskStatus(HubStrings.Get("AndroidRunDetectingStatus"));
                 var devices = await QueryAndroidDevicesAsync(engine, CancellationToken.None);
                 var available = devices.Where(device => device.State == "device").ToArray();
                 if (available.Length == 0)
@@ -1574,7 +1515,7 @@ public sealed partial class HubWorkspace : IDisposable
                 else if (pickAndroidDevice is not null)
                 {
                     SetAndroidRunState(project.Path, "AndroidRunChoosing");
-                    SetStatus(HubStrings.Get("AndroidRunChoosingStatus"));
+                    SetTaskStatus(HubStrings.Get("AndroidRunChoosingStatus"), launchToken.Value);
                     chosen = await pickAndroidDevice(devices);
                 }
                 else throw new InvalidOperationException(HubStrings.Get("SelectAndroidDevice"));
@@ -1588,23 +1529,6 @@ public sealed partial class HubWorkspace : IDisposable
                 androidSerial = chosen.Serial;
                 androidDeviceName = chosen.DisplayName;
                 Log.Write("Android run device: " + androidSerial);
-            }
-
-            if (family == "windows")
-            {
-                var pid = await _projects.LaunchAsync(project, engine);
-                _launchedGames[project.Path] = pid;
-                RecordProjectActivity(project);
-                Log.Write($"{project.Name} launched (pid {pid}).");
-                SetStatus(HubStrings.Get("Run project") + " · " + project.Name);
-                WatchEarlyExit(project, pid);
-                return;
-            }
-
-            if (family == "wasm")
-            {
-                await StartWebPreviewAsync(project, engine);
-                return;
             }
 
             // Every other target goes through the engine's own command, and that one is awaited: for a deploy,
@@ -1645,7 +1569,7 @@ public sealed partial class HubWorkspace : IDisposable
                 androidFailed = true;
                 androidOutcome = HubStrings.Get("AndroidRunFailed");
             }
-            await ReportFailureAsync(ex);
+            await ReportFailureAsync(ex, launchToken);
         }
         finally
         {
@@ -1653,7 +1577,8 @@ public sealed partial class HubWorkspace : IDisposable
             {
                 _androidRunPending = false;
                 SetAndroidRunState(null, null);
-                if (androidOutcome is not null) ShowAndroidRunOutcome(androidOutcome, temporary: !androidFailed);
+                if (launchToken is { } owner)
+                    ShowAndroidRunOutcome(androidOutcome ?? HubStrings.Get("AndroidRunCancelled"), owner, androidFailed);
             }
         }
     }
@@ -1663,7 +1588,7 @@ public sealed partial class HubWorkspace : IDisposable
     /// which is not an event Hub reports. The pid is polled rather than waited on precisely because no handle
     /// is kept: Hub asked for a launch, not for a session.
     /// </summary>
-    private async void WatchEarlyExit(ProjectEntry project, int pid)
+    private async void WatchEarlyExit(ProjectEntry project, int pid, long owner)
     {
         await Task.Delay(TimeSpan.FromSeconds(3));
         if (ProcessRunner.IsRunning(pid))
@@ -1674,7 +1599,7 @@ public sealed partial class HubWorkspace : IDisposable
         _launchedGames.Remove(project.Path);
         var sentence = string.Format(HubStrings.Get("GameExitedEarly"), project.Name);
         Log.Write(sentence);
-        SetStatus(sentence);
+        if (_displayedTaskToken == owner) SetStatus(sentence, StatusPhase.Error);
         if (!SuppressDialogs)
         {
             await HubDialog.ShowAsync(Owner, HubStrings.Get("OperationFailed"), sentence);
@@ -1693,7 +1618,6 @@ public sealed partial class HubWorkspace : IDisposable
         var preview = await _platformBuilds.StartWebPreviewAsync(project, engine, openBrowser: true, CancellationToken.None);
         _webPreview = preview;
         _webPreviewProjectPath = project.Path;
-        SetStatus(HubStrings.Get("Run project") + " · " + preview.Url);
         RecordProjectActivity(project);
 
         // The server going away — a crash, a Ctrl+C in its console, the browser tab ending the session — has to
@@ -2124,11 +2048,19 @@ public sealed partial class HubWorkspace : IDisposable
     /// </summary>
     public async Task InstallHostShellAsync()
     {
-        await HostEnvironment.EnsureAsync();
-        // Re-probe first: the card may be showing the state as of app start, and the user might have installed
-        // pwsh in a terminal since then. This is the filesystem walk, not a spawn.
-        HostShell = HostPowerShell.Probe();
-        HostShellChanged?.Invoke();
+        var preflight = BeginTaskStatus(HubStrings.Get("Install PowerShell 7"));
+        try
+        {
+            await HostEnvironment.EnsureAsync();
+            HostShell = HostPowerShell.Probe();
+            HostShellChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            await ReportFailureAsync(ex, preflight);
+            return;
+        }
+        SetTaskStatus(HubStrings.Get("Ready"), preflight, StatusPhase.Ready);
 
         // Only the MSI road is a download, so only it goes on the queue. <see cref="HostShellPlan"/> answers
         // MSI exactly when nothing named winget is on PATH, and <c>InstallAsync</c>'s own rule then has no

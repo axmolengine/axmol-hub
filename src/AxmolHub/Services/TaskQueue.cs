@@ -244,6 +244,7 @@ internal sealed partial class TaskQueue
         internal Task? Running { get; set; }
         /// <summary>The work itself. Gets its own row so it can report what it is doing.</summary>
         internal Func<Item, CancellationToken, Task> Work { get; init; } = (_, _) => Task.CompletedTask;
+        internal Action<Item>? OnQueued { get; init; }
         internal Action<Item>? OnFinished { get; init; }
 
         /// <summary>Wired when the task starts. A measurement is a state change as far as the strip is
@@ -593,7 +594,8 @@ internal sealed partial class TaskQueue
         bool listed = true,
         bool retryable = true,
         bool exclusive = false,
-        Func<HubLog>? getFailureLog = null)
+        Func<HubLog>? getFailureLog = null,
+        Action<Item>? onQueued = null)
     {
         if (_items.Any(item => item.IsActive && item.Exclusive)
             || exclusive && _items.Any(item => item.IsActive)) return null;
@@ -618,6 +620,7 @@ internal sealed partial class TaskQueue
         var item = new Item(identity, titleKey, subject)
         {
             Work = work,
+            OnQueued = onQueued,
             OnFinished = onFinished,
             Kind = kind,
             Listed = listed,
@@ -626,6 +629,7 @@ internal sealed partial class TaskQueue
             GetFailureLog = getFailureLog,
         };
         _items.Add(item);
+        item.OnQueued?.Invoke(item);
         Publish();
         Pump();
         return item;
@@ -650,8 +654,7 @@ internal sealed partial class TaskQueue
         }
 
         item.Abort();
-        Changed?.Invoke();
-        Pump();
+        Settle(item);
     }
 
     /// <summary>
@@ -674,6 +677,7 @@ internal sealed partial class TaskQueue
         }
 
         item.ResetForRetry();
+        item.OnQueued?.Invoke(item);
         Changed?.Invoke();
         Pump();
     }
@@ -772,35 +776,26 @@ internal sealed partial class TaskQueue
             item.CancelAction = null;
             item.OnProgress = null;
 
-            // The caller's completion work (save state, log, surface the failure) runs once the item has
-            // settled, so a handler that throws cannot leave the list showing a transfer that is no
-            // longer running: it turns a finished download into a failed one, which is the honest reading
-            // of "the bytes arrived but the app could not record them". All of this stays on this thread
-            // on purpose — see the threading note on this type.
-            try
-            {
-                item.OnFinished?.Invoke(item);
-            }
-            catch (Exception ex)
-            {
-                if (item.State == Phase.Done)
-                {
-                    item.Fail(ex);
-                }
-            }
-
-            // A gate-holder that never showed a row leaves the table as soon as it settles: nothing can act
-            // on it, and <see cref="Retry"/> has no row to offer the press from. The object itself stays
-            // alive for whoever awaited its Completion.
-            if (!item.Listed)
-            {
-                _items.Remove(item);
-            }
-
-            item.Complete();
-            Publish();
-            Changed?.Invoke();
-            Pump();
+            Settle(item);
         }
+    }
+
+    // A queued cancellation has the same status owner and completion waiter as a started attempt.
+    private void Settle(Item item)
+    {
+        try
+        {
+            item.OnFinished?.Invoke(item);
+        }
+        catch (Exception ex)
+        {
+            if (item.State == Phase.Done) item.Fail(ex);
+        }
+
+        if (!item.Listed) _items.Remove(item);
+        item.Complete();
+        Publish();
+        Changed?.Invoke();
+        Pump();
     }
 }

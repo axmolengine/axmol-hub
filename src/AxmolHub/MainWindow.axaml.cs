@@ -552,12 +552,17 @@ public partial class MainWindow : Window
 
     private long? _activeTaskStatusToken;
     private long _latestTaskStatusToken;
-    private long _lastFinishedTaskStatusToken;
 
-    internal void SetStatus(string text)
+    internal void SetStatus(string text, HubWorkspace.StatusPhase phase = HubWorkspace.StatusPhase.Ready)
     {
-        // Kept for task-independent shell callers that have not yet moved to structured feedback.
-        if (_activeTaskStatusToken is null) Status.Text = text;
+        if (_activeTaskStatusToken is null) PaintStatus(text, phase);
+    }
+
+    private void PaintStatus(string text, HubWorkspace.StatusPhase phase)
+    {
+        Status.Text = text;
+        StatusDot.Classes.Set("working", phase == HubWorkspace.StatusPhase.Working);
+        StatusDot.Classes.Set("error", phase == HubWorkspace.StatusPhase.Error);
     }
 
     internal void ShowFeedback(UserFeedback feedback) => ShowToast(feedback);
@@ -653,31 +658,11 @@ public partial class MainWindow : Window
                 if (_activeTaskStatusToken is not null && taskToken < _latestTaskStatusToken) return;
                 _activeTaskStatusToken = taskToken;
                 _latestTaskStatusToken = Math.Max(_latestTaskStatusToken, taskToken);
-                Status.Text = update.Text;
-                return;
             }
+            else if (_activeTaskStatusToken != taskToken) return;
 
-            if (_activeTaskStatusToken != taskToken
-                && (taskToken < _latestTaskStatusToken
-                    || !update.TaskFinished && taskToken <= _lastFinishedTaskStatusToken)) return;
-
-            if (update.TaskFinished)
-            {
-                if (_activeTaskStatusToken != taskToken) return;
-                Status.Text = update.Text;
-                _activeTaskStatusToken = null;
-                _latestTaskStatusToken = taskToken;
-                _lastFinishedTaskStatusToken = taskToken;
-                return;
-            }
-
-            if (_activeTaskStatusToken is null || _activeTaskStatusToken == taskToken)
-            {
-                _activeTaskStatusToken = taskToken;
-                _latestTaskStatusToken = taskToken;
-                Status.Text = update.Text;
-            }
-
+            if (update.Phase != HubWorkspace.StatusPhase.Working) _activeTaskStatusToken = null;
+            PaintStatus(update.Text, update.Phase);
             return;
         }
 
@@ -687,7 +672,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        SetStatus(update.Text);
+        SetStatus(update.Text, update.Phase);
     }
 
     /// <summary>
