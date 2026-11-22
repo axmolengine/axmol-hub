@@ -22,6 +22,7 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             return result.Output.Trim();
         }
         var host = new Window { Title = "Git Changes verification", Width = 300, Height = 440 };
+        using var fixture = new ShellCheckFixture(host);
         try
         {
             await Git("init", "-b", "main");
@@ -39,10 +40,10 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await Git("config", "remote.origin.pushurl", Path.Combine(root, "missing.git"));
             var path = Path.Combine(repo, "sample.txt");
             await File.WriteAllTextAsync(path, "selected\n");
-            using var chat = new ChatWorkspace(Path.Combine(root, "hub"))
-            {
-                HubSnapshotProvider = () => new ChatWorkspace.HubReadOnlySnapshot([], [], []),
-            };
+            var shell = fixture.OpenShell(Path.Combine(root, "hub"));
+            shell.Show();
+            var chat = shell.Chat;
+            bool Dot(string key) => ThemeProbe.IsToken(shell.StatusDot.Fill, key);
             chat.SelectWorkspaceRoot(repo);
             var panel = new ChatPanel(chat);
             var inspector = (InspectorPanel)panel.BuildInspectorContent("changes", -1)!;
@@ -101,12 +102,12 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             Key(Avalonia.Input.Key.Enter);
             var task = TaskQueue.Instance.ActiveMutating ?? throw new Exception("No Git task");
             inspector.SelectWorkspaceTool("plan");
-            check(task.StageKey == "GitCommitting" && task.Fill is null && !task.CanCancel && TaskQueue.Instance.Items.Contains(task),
+            check(task.StageKey == "GitCommitting" && task.Fill is null && !task.CanCancel && TaskQueue.Instance.Items.Contains(task) && Dot("Hub.StatusWorking"),
                 "收起更改后提交仍占用底部同一不定进度任务，不可重复或中断");
             await task.Completion;
             var head = await Git("rev-parse", "HEAD");
             check(chat.ActiveConversation is null && task.StageKey == "GitPushing" && task.State == TaskQueue.Phase.Failed
-                && !task.Retryable && task.Error!.Contains(HubStrings.Get("CommitPushPartialFailure"))
+                && Dot("Hub.DangerText") && !task.Retryable && task.Error!.Contains(HubStrings.Get("CommitPushPartialFailure"))
                 && await Git("show", "HEAD:sample.txt") == "selected" && (await Git("diff")).Contains("not selected"),
                 "无会话组合操作只提交暂存内容，推送失败不丢失提交");
             await Git("config", "--unset", "remote.origin.pushurl");
@@ -114,8 +115,14 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             await WaitForConditionAsync(() => chat.RepositoryFor(repo)?.State.Ahead == 1);
             Click("GitRetryPush");
             await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No push retry")).Completion;
-            check(await Git("rev-parse", "HEAD") == head && await Git("--git-dir=" + bare, "rev-parse", "main") == head,
-                "重试仅推送当前分支，未创建第二个提交");
+            var pushed = Dot("Hub.Success");
+            Click("GitPull");
+            var pull = TaskQueue.Instance.ActiveMutating ?? throw new Exception("No pull task");
+            var pulling = Dot("Hub.StatusWorking");
+            await pull.Completion;
+            check(pushed && pulling && pull.State == TaskQueue.Phase.Done && Dot("Hub.Success")
+                && await Git("rev-parse", "HEAD") == head && await Git("--git-dir=" + bare, "rev-parse", "main") == head,
+                "重试仅推送当前分支，随后拉取时状态点转为琥珀黄，完成后恢复绿色");
 
             var provider = chat.AddProvider("Git shortcut check", "http://localhost:1234/v1", "offline-check-model", null, out _)
                 ?? throw new Exception("Could not add the offline check model.");

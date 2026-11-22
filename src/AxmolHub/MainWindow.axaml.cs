@@ -505,6 +505,7 @@ public partial class MainWindow : Window
         _chat.PreferencesPersist = _preferencesStore.Save;
         _chat.AuditWrite = _workspace.Log.Write;
         _chat.LogProvider = () => _workspace.Log;
+        _chat.BeginGitStatus = _workspace.BeginGitStatus;
         _chat.EngineRootsProvider = () => [.. _workspace.State.Engines.Select(engine => engine.Path)];
         // Read through the field on every call, not captured: switching the data root replaces _workspace, and a
         // seam that kept the old one would have the assistant hold the gate of a workspace nobody is looking at.

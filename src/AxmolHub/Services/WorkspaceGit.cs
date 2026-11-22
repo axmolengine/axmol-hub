@@ -14,7 +14,8 @@ internal static class WorkspaceGit
     };
 
     internal static TaskQueue.Item? Start(WorkspaceGitRequest request, ProcessRunner runner,
-        IReadOnlyList<string> secrets, Action<TaskQueue.Item, bool, UserFeedback?> finished, bool stageAllBeforeCommit = false)
+        IReadOnlyList<string> secrets, Action<TaskQueue.Item, bool, UserFeedback?> finished,
+        Func<TaskQueue.Item, Action>? beginStatus, bool stageAllBeforeCommit = false)
     {
         var queue = TaskQueue.Instance;
         if (queue.ActiveMutating is not null) return null;
@@ -22,6 +23,7 @@ internal static class WorkspaceGit
         var label = ActionKey(action);
         bool committed = false;
         bool pushed = false;
+        Action? finishStatus = null;
         return queue.Enqueue("git:" + request.Root, label, request.Root + " · " + request.Branch, async (item, token) =>
         {
             token.ThrowIfCancellationRequested();
@@ -70,8 +72,11 @@ internal static class WorkspaceGit
                     throw new InvalidOperationException(HubStrings.Get("CommitPushPartialFailure") + " " + ex.Message, ex);
                 }
             }
-        }, item => finished(item, committed, item.State == TaskQueue.Phase.Done ? CompletionFeedback() : null),
-            kind: TaskQueue.TaskKind.Mutating, retryable: false);
+        }, item =>
+        {
+            finishStatus?.Invoke();
+            finished(item, committed, item.State == TaskQueue.Phase.Done ? CompletionFeedback() : null);
+        }, kind: TaskQueue.TaskKind.Mutating, retryable: false, onQueued: item => finishStatus = beginStatus?.Invoke(item));
 
         UserFeedback? CompletionFeedback()
         {

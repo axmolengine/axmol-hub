@@ -346,6 +346,19 @@ public sealed partial class HubWorkspace : IDisposable
     private void SetFeedback(UserFeedback feedback)
         => StatusChanged?.Invoke(new StatusUpdate(feedback.Text, StatusPhase.Ready, Feedback: feedback));
 
+    // A local Git action owns the strip like a build, but keeps its own queue row and completion feedback.
+    internal Action BeginGitStatus(TaskQueue.Item item)
+    {
+        var token = BeginTaskStatus(item.Title);
+        return () =>
+        {
+            var failed = item.State == TaskQueue.Phase.Failed;
+            var text = failed ? item.TitleWithPhase
+                : item.Title + " · " + HubStrings.Get(item.State == TaskQueue.Phase.Done ? "Done" : "Cancelled");
+            SetTaskStatus(text, token, failed ? StatusPhase.Error : StatusPhase.Ready);
+        };
+    }
+
     private long BeginTaskStatus(string text)
     {
         var token = Interlocked.Increment(ref _nextTaskStatusToken);
