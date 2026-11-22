@@ -1575,9 +1575,9 @@ internal sealed class ShellLayoutChecks
             token => Task.Delay(int.MaxValue, token));
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        Check(shell.Workspace.IsBusy && shell.CanCancelForCheck && IsToken(shell.StatusDot.Fill, "Hub.AccentBorder")
+        Check(shell.Workspace.IsBusy && shell.CanCancelForCheck && IsToken(shell.StatusDot.Fill, "Hub.StatusWorking")
               && TaskQueue.Instance.Items.Count == 0 && !shell.TaskSlotVisibleForCheck,
-            "秒级操作状态点为蓝色，占闸且可取消，但不占任务槽位");
+            "秒级操作状态点为琥珀黄，占闸且可取消，但不占任务槽位");
         shell.Workspace.Cancel();
         await quiet;
         shell.UpdateLayout();
@@ -1715,15 +1715,15 @@ internal sealed class ShellLayoutChecks
         }
 
         await blocked;
-        var nextWasBlue = false;
+        var nextWasWorking = false;
         await shell.Workspace.ExecuteAsync("status recovery", async _ =>
         {
-            nextWasBlue = IsToken(shell.StatusDot.Fill, "Hub.AccentBorder");
+            nextWasWorking = IsToken(shell.StatusDot.Fill, "Hub.StatusWorking");
             await Task.Yield();
         });
         Check(blockerText.Contains(HubTexts.Get("ProjectStillRunning", HubStrings.Language), StringComparison.Ordinal)
-              && failedRed && nextWasBlue && IsToken(shell.StatusDot.Fill, "Hub.Success"),
-            "构建预检失败时红点与错误同时出现，新操作转蓝，成功后恢复绿色（" + blockerText + "）");
+              && failedRed && nextWasWorking && IsToken(shell.StatusDot.Fill, "Hub.Success"),
+            "构建预检失败时红点与错误同时出现，新操作转为琥珀黄，成功后恢复绿色（" + blockerText + "）");
         shell.Workspace.ForgetGamesForCheck();
         shell.Workspace.SelectedProject = null;
         // The failure opened the drawer, as it should — and the geometry cells downstream measure the shell

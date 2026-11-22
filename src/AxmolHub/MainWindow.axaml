@@ -208,7 +208,7 @@
       <Setter Property="Fill" Value="{DynamicResource Hub.Success}" />
     </Style>
     <Style Selector="Ellipse#StatusDot.working">
-      <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="Fill" Value="{DynamicResource Hub.StatusWorking}" />
     </Style>
     <Style Selector="Ellipse#StatusDot.error">
       <Setter Property="Fill" Value="{DynamicResource Hub.DangerText}" />
