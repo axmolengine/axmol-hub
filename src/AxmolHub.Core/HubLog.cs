@@ -55,7 +55,7 @@ public sealed partial class HubLog
         Directory.CreateDirectory(folder);
         FilePath = Path.Combine(folder, $"hub-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
     }
-    public void Write(string message) => Write(message, ClassifyDiagnostic(message));
+    public void Write(string message) => Write(message, null, null);
 
     internal void Write(string message, Level level) => Write(message, level, null);
 
@@ -65,6 +65,10 @@ public sealed partial class HubLog
         Write(message, level, location);
         return location;
     }
+
+    // Strip only complete SGR sequences; other escapes and ordinary bracketed text are not styling.
+    [GeneratedRegex(@"\x1B\[[0-9;:]*m")]
+    private static partial Regex SgrSequence();
 
     // Only explicit diagnostic headers from tools such as Clang, MSBuild, Ninja and CMake count.
     // Both output streams can contain diagnostics, and stderr alone does not make a line an error.
@@ -81,8 +85,10 @@ public sealed partial class HubLog
             : match.Success ? Level.Warning : Level.Info;
     }
 
-    private void Write(string message, Level level, Location? location)
+    private void Write(string message, Level? explicitLevel, Location? location)
     {
+        if (message.Contains('\x1b')) message = SgrSequence().Replace(message, "");
+        var level = explicitLevel ?? ClassifyDiagnostic(message);
         // Folded at the sink as well as at the source: this is a Hub file, and a log whose newline depends on
         // which host wrote it cannot be read side by side with one written on another.
         var line = $"{DateTimeOffset.Now:O} {TextEol.ToLf(message)}";
