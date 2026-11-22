@@ -7,9 +7,19 @@ param(
     [string]$RepoUrl = 'https://github.com/axmolengine/axmol-hub',
     [string]$Version,
     [string]$Channel,
+    [string]$OutputDir,
+    [string]$SigningThumbprint,
+    [string]$TimestampUrl,
     [switch]$PrereleaseBuild
 )
 $ErrorActionPreference = 'Stop'
+$taskSigning = @{}
+if ($SigningThumbprint -or $TimestampUrl) {
+    if ($Stage -ne 'Build' -or -not $IsWindows -or $Runtime -notlike 'win-*' -or -not $SigningThumbprint -or -not $TimestampUrl) {
+        throw 'Pass both signing options with -Stage Build on Windows. Use Release-WindowsSigned.ps1 to publish.'
+    }
+    $taskSigning = @{ SigningThumbprint = $SigningThumbprint; TimestampUrl = $TimestampUrl }
+}
 . "$PSScriptRoot/GitHubRelease.ps1"
 . "$PSScriptRoot/AssetNames.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
@@ -42,28 +52,62 @@ if ($Stage -eq 'Upload' -and $env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME -ne 
 }
 
 $taskSlug = ($RepoUrl -replace '^https?://[^/]+/', '') -replace '\.git$', ''
-$taskOutput = Join-Path $taskRoot "artifacts/releases/$Runtime"
+$taskOutput = if ($OutputDir) { $OutputDir } else { Join-Path $taskRoot "artifacts/releases/$Runtime" }
 $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk.exe'
 if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk' }
 
 if ($Stage -in @('All', 'Build')) {
     if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskManifest.packages[0].version) first." }
+    # Do not consume stale packages or delete caller-owned files on a retry.
     New-Item -ItemType Directory -Force -Path $taskOutput | Out-Null
-
-    # Delta packages require the previous release to sit in the output directory before
-    # packing. Missing or empty releases are not an error: the first published version
-    # has nothing to diff against and ships as a full package.
-    $taskDownload = @('download', 'github', '--outputDir', $taskOutput, '--channel', $Channel, '--repoUrl', $RepoUrl)
-    if ($env:GH_TOKEN) { $taskDownload += @('--token', $env:GH_TOKEN) }
-    try {
-        & $taskVpk @taskDownload
-        if ($LASTEXITCODE -ne 0) { throw "vpk download exited with $LASTEXITCODE." }
-    } catch {
-        Write-Warning "No previous release could be downloaded ($($_.Exception.Message)). This release will be full-only."
+    if (Get-ChildItem -LiteralPath $taskOutput -Force | Select-Object -First 1) {
+        throw "Release output directory must be empty: $taskOutput. Use -OutputDir to choose a fresh directory."
     }
 
-    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -OutputDir $taskOutput -NoClean -PrereleaseBuild:$taskIsPrerelease -ReleaseAssetNames
+    $taskDownload = @('download', 'github', '--outputDir', $taskOutput, '--channel', $Channel, '--repoUrl', $RepoUrl)
+    if ($taskIsPrerelease) { $taskDownload += '--pre' }
+    if ($env:GH_TOKEN) { $taskDownload += @('--token', $env:GH_TOKEN) }
+    & $taskVpk @taskDownload
+    if ($LASTEXITCODE -ne 0) { throw "Previous release lookup/download for $Channel failed (vpk exit $LASTEXITCODE)." }
+    # vpk 1.2.161 checks the feed digest before renaming .incomplete to .nupkg, but a checksum
+    # mismatch can return exit 0. Do not mistake that for a channel without a previous release.
+    if (Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.incomplete') {
+        throw "Previous release download or checksum verification failed for $Channel."
+    }
+    $taskBases = @(Get-ChildItem -LiteralPath $taskOutput -File -Filter '*.nupkg')
+    if ($taskBases.Count -gt 1) { throw "Expected at most one previous full package for $Channel." }
+    if ($taskBases.Count -eq 0) {
+        Write-Host "No previous full release found for $Channel. Building a full-only release."
+    } else {
+        $taskBase = $taskBases[0]
+        $taskZip = [IO.Compression.ZipFile]::OpenRead($taskBase.FullName)
+        try {
+            $taskSpec = @($taskZip.Entries | Where-Object { $_.FullName -like '*.nuspec' -and $_.FullName -eq $_.Name })
+            if ($taskSpec.Count -ne 1) { throw "Missing or ambiguous nuspec in $($taskBase.Name)." }
+            $taskReader = [IO.StreamReader]::new($taskSpec[0].Open())
+            try { [xml]$taskBaseSpec = $taskReader.ReadToEnd() } finally { $taskReader.Dispose() }
+        } finally { $taskZip.Dispose() }
+        $taskBaseMetadata = $taskBaseSpec.package.metadata
+        if ($taskBaseMetadata.id -ne $taskPackId -or $taskBaseMetadata.rid -ne $Runtime -or $taskBaseMetadata.channel -ne $Channel -or $taskBase.Name -notlike '*-full.nupkg') {
+            throw "Previous package $($taskBase.Name) is not a full $taskPackId package for $Runtime ($Channel)."
+        }
+        if ([semver]$taskBaseMetadata.version -ge [semver]$Version) {
+            throw "Previous package version $($taskBaseMetadata.version) is not older than $Version for $Channel."
+        }
+        Write-Host "Using verified base package $($taskBase.Name) for $Version ($Channel)."
+    }
+
+    & "$PSScriptRoot/Build.ps1" -Runtime $Runtime -Version $Version -Channel $Channel -OutputDir $taskOutput -NoClean -PrereleaseBuild:$taskIsPrerelease -ReleaseAssetNames @taskSigning
     if ($LASTEXITCODE -ne 0) { throw 'Build.ps1 failed.' }
+    $taskFeed = Join-Path $taskOutput "releases.$Channel.json"
+    $taskBuilt = Get-Content -Raw -LiteralPath $taskFeed | ConvertFrom-Json
+    $taskExpected = if ($taskBases.Count -eq 0) { @('Full') } else { @('Full', 'Delta') }
+    foreach ($taskType in $taskExpected) {
+        $taskEntry = @($taskBuilt.Assets | Where-Object { $_.Version -eq $Version -and $_.Type -ieq $taskType })
+        if ($taskEntry.Count -ne 1 -or -not (Test-Path -LiteralPath (Join-Path $taskOutput $taskEntry[0].FileName) -PathType Leaf)) {
+            throw "The $Channel build did not produce an indexed $taskType package for $Version."
+        }
+    }
 }
 
 if ($Stage -in @('All', 'Upload')) {

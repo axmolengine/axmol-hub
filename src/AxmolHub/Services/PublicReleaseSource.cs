@@ -17,7 +17,7 @@ internal sealed class PublicReleaseSource(bool includePrereleases, HttpClient? c
     public async Task<VelopackAssetFeed> GetReleaseFeed(IVelopackLogger logger, string? appId, string channel,
         Guid? stagingId = null, VelopackAsset? latestLocalRelease = null)
     {
-        if (channel is not ("osx-arm64" or "osx-x64" or "win-x64" or "linux-x64"))
+        if (channel is not ("osx-arm64" or "osx-x64" or "win-x64" or "win-arm64" or "linux-x64"))
             throw new InvalidDataException("Unsupported Hub update channel: " + channel);
 
         var tags = await DiscoverTags();

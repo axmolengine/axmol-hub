@@ -8,12 +8,21 @@ param(
     [string]$PublishDir,
     [switch]$PrereleaseBuild,
     [switch]$ReleaseAssetNames,
+    [ValidatePattern('\A[0-9a-fA-F]{40}\z')]
+    [string]$SigningThumbprint,
+    [ValidatePattern('\Ahttps?://[a-zA-Z0-9.-]+(?::[0-9]+)?(?:/[a-zA-Z0-9._~/-]*)?\z')]
+    [string]$TimestampUrl,
     # Delta packages presuppose the previous version's .nupkg already present in the output
     # directory at pack time. Publish.ps1 first fetches it with `vpk download github`, then
     # calls this script with -NoClean; the default still cleans, because releases.<channel>.json is a single index and leftover old versions would be pulled into the release content.
     [switch]$NoClean
 )
 $ErrorActionPreference = 'Stop'
+if ([bool]$SigningThumbprint -ne [bool]$TimestampUrl) { throw 'Signing requires both -SigningThumbprint and -TimestampUrl.' }
+if ($SigningThumbprint -and (-not $IsWindows -or $Runtime -notlike 'win-*')) { throw 'USB Token signing requires a Windows host and target.' }
+if ($SigningThumbprint -and -not (Test-Path -LiteralPath "Cert:\CurrentUser\My\$SigningThumbprint")) {
+    throw "Signing certificate $SigningThumbprint is not in the current user's Personal certificate store."
+}
 . "$PSScriptRoot/AssetNames.ps1"
 $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskManifest = Get-Content -Raw -LiteralPath "$PSScriptRoot/packaging-manifest.json" | ConvertFrom-Json
@@ -130,6 +139,11 @@ if ($Runtime -like 'win-*') {
     # Shortcut locations: Velopack's legal values are only Desktop and StartMenuRoot (comma-separated, multi-select).
     # One-click install has no wizard to carry a "create desktop shortcut?" option, so this is fixed to one on the desktop + one in the Start menu.
     $taskArguments += @('--shortcuts', 'Desktop,StartMenuRoot')
+    if ($SigningThumbprint) {
+        # vpk signs the staged payload before packaging and the installer after embedding it.
+        # The token middleware prompts in the release operator's Windows session; no PIN is passed.
+        $taskArguments += @('--signParams', "/sha1 $SigningThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256")
+    }
 }
 if ($Runtime -like 'linux-*') {
     # vpk's generated desktop entry defaults Categories to Utility, so the app grid files Hub under system tools.

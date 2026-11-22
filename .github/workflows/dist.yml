@@ -21,7 +21,8 @@ permissions:
 jobs:
   dist:
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Once the USB Token is accepted, only the local signed publisher may cut a release.
+    if: ${{ vars.WINDOWS_SIGNED_RELEASES != 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -63,29 +64,12 @@ jobs:
         run: |
           . ./installer/ReleaseMetadata.ps1
           $targetCommit = "$(git rev-parse HEAD)"
-          $previousTag = "$(git describe --tags --abbrev=0 --exclude=$env:RELEASE_TAG $targetCommit 2>$null)"
-          if ($LASTEXITCODE -ne 0) { $previousTag = '' }
-
-          $range = if ($previousTag) { "$previousTag..$targetCommit" } else { $targetCommit }
-          # One note per commit, and that note is the title. %s cannot give that: it is git's first
-          # *paragraph*, so a body written without a blank line under the title folds into the
-          # "subject" and pastes the whole essay into the release. Read %B and keep only the line that
-          # opens a record ('<full sha>\t<short>\t<title>'); every other line of the record is body.
-          $logLines = @(& git log --reverse --format='%H%x09%h%x09%B' $range)
-          if ($LASTEXITCODE -ne 0) { throw "git log failed with $LASTEXITCODE." }
-          if ($logLines.Count -eq 0) { throw "No commits found for release range $range." }
-
-          $notes = Get-ReleaseNotes -LogLines $logLines -RepositoryUrl $env:REPOSITORY_URL -PreviousTag $previousTag -ReleaseTag $env:RELEASE_TAG -ReadTouchedFiles {
-            param($sha)
-            $touched = @(& git show --name-only --format='' $sha | Where-Object { $_ })
-            if ($LASTEXITCODE -ne 0) { throw "git show failed with $LASTEXITCODE for $sha." }
-            $touched
-          }
+          $notes = Get-ReleaseNotesForCommit -Root . -Commit $targetCommit -Tag $env:RELEASE_TAG -RepositoryUrl $env:REPOSITORY_URL
           foreach ($warning in $notes.Warnings) { Write-Host $warning }
 
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           Set-Content -LiteralPath $notesPath -Encoding UTF8 -Value $notes.Lines
-          Write-Host "Release notes contain $($notes.CommitCount) commit(s) after '$previousTag'."
+          Write-Host "Release notes contain $($notes.CommitCount) commit(s)."
           Get-Content -LiteralPath $notesPath
           "notes_file=$notesPath" >> $env:GITHUB_OUTPUT
 

@@ -17,11 +17,14 @@ internal static class PublicReleaseSourceSelfCheck
         var log = new NullVelopackLogger();
         Directory.CreateDirectory(scratchRoot);
 
-        static string Feed(string rid, string version, string type = "Full") => JsonSerializer.Serialize(new
+        static string Feed(string rid, string version, params string[] types) => JsonSerializer.Serialize(new
         {
-            Assets = new[] { new { PackageId = id, Version = version, Type = type,
+            Assets = (types.Length == 0 ? ["Full"] : types).Select(type => new
+            {
+                PackageId = id, Version = version, Type = type,
                 FileName = $"axmol-hub-{version}-{rid}-{type.ToLowerInvariant()}.nupkg",
-                SHA1 = new string('A', 40), SHA256 = new string('B', 64), Size = 3 } }
+                SHA1 = new string('A', 40), SHA256 = new string('B', 64), Size = 3
+            })
         });
         static string Atom(params string[] tags) =>
             "<feed xmlns=\"http://www.w3.org/2005/Atom\">" + string.Concat(tags.Select(tag =>
@@ -38,7 +41,8 @@ internal static class PublicReleaseSourceSelfCheck
             failures.Add(rid);
         }
 
-        foreach (var rid in new[] { "osx-arm64", "osx-x64", "win-x64", "linux-x64" })
+        string[] rids = ["osx-arm64", "osx-x64", "win-x64", "win-arm64", "linux-x64"];
+        foreach (var rid in rids)
         {
             var requests = new List<string>();
             using var client = new HttpClient(new Handler(request =>
@@ -46,8 +50,8 @@ internal static class PublicReleaseSourceSelfCheck
                 var url = request.RequestUri!.AbsoluteUri;
                 requests.Add(url);
                 if (url.EndsWith("releases.atom")) return Reply(Atom("v0.12.3", "v0.12.2", "v0.12.1"));
-                if (url.EndsWith($"v0.12.3/releases.{rid}.json")) return Reply(Feed(rid, "0.12.3"));
-                if (url.EndsWith($"v0.12.2/releases.{rid}.json")) return Reply(Feed(rid, "0.12.2", "Delta"));
+                if (url.EndsWith($"v0.12.3/releases.{rid}.json")) return Reply(Feed(rid, "0.12.3", "Full", "Delta"));
+                if (url.EndsWith($"v0.12.2/releases.{rid}.json")) return Reply(Feed(rid, "0.12.2"));
                 if (url.EndsWith($"v0.12.1/releases.{rid}.json")) return Reply("", HttpStatusCode.NotFound);
                 if (url.EndsWith(".nupkg")) return Reply("pkg");
                 throw new InvalidOperationException("Unexpected request: " + url);
@@ -55,7 +59,7 @@ internal static class PublicReleaseSourceSelfCheck
             var source = new PublicReleaseSource(true, client);
             var feed = await source.GetReleaseFeed(log, id, rid);
             RecordRid("RID feeds remain isolated and missing history is skipped",
-                feed.Assets.Length == 2 && feed.Assets.All(asset => asset.FileName.Contains(rid)), rid);
+                feed.Assets.Length == 3 && feed.Assets.All(asset => asset.FileName.Contains(rid)), rid);
 
             // A fresh source must still download assets from the exact release that supplied them.
             var downloadSource = new PublicReleaseSource(true, client);
@@ -77,8 +81,10 @@ internal static class PublicReleaseSourceSelfCheck
                     FileName = "local-full.nupkg", Size = 3 });
             var manager = new UpdateManager(source, new UpdateOptions(), locator);
             var update = await manager.CheckForUpdatesAsync();
-            RecordRid("Velopack discovers the next release without applying it",
-                update?.TargetFullRelease.Version.ToString() == "0.12.3", rid);
+            RecordRid("Velopack selects the next release's delta when a local base is present",
+                update?.TargetFullRelease.Version.ToString() == "0.12.3"
+                && update.BaseRelease?.FileName == "local-full.nupkg"
+                && update.DeltasToTarget.SingleOrDefault()?.FileName == $"axmol-hub-0.12.3-{rid}-delta.nupkg", rid);
             var currentLocator = new TestVelopackLocator(id, "0.12.3", scratchRoot, scratchRoot, scratchRoot,
                 Path.Combine(scratchRoot, "unused-updater"), rid, localPackage: feed.Assets[0]);
             RecordRid("an equal installed version is reported up to date",
@@ -101,14 +107,14 @@ internal static class PublicReleaseSourceSelfCheck
                      "RID feeds remain isolated and missing history is skipped",
                      "full and delta packages download from their originating release",
                      "discovery and downloads use only public release URLs",
-                     "Velopack discovers the next release without applying it",
+                     "Velopack selects the next release's delta when a local base is present",
                      "an equal installed version is reported up to date",
                      "package download cancellation is respected"
                  })
         {
             var failures = ridFailures.GetValueOrDefault(claim) ?? [];
             check(failures.Count == 0,
-                claim + " across osx-arm64, osx-x64, win-x64, linux-x64"
+                claim + " across " + string.Join(", ", rids)
                 + (failures.Count == 0 ? string.Empty : " (failed: " + string.Join(", ", failures) + ")"));
         }
 

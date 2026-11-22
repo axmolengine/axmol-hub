@@ -35,6 +35,22 @@ function Get-ReleaseMetadata {
     }
 }
 
+function Get-ReleaseNotesForCommit {
+    param([string]$Root, [string]$Commit, [string]$Tag, [string]$RepositoryUrl)
+    $previousTag = "$(git -C $Root describe --tags --abbrev=0 --exclude=$Tag $Commit 2>$null)"
+    if ($LASTEXITCODE -ne 0) { $previousTag = '' }
+    $range = if ($previousTag) { "$previousTag..$Commit" } else { $Commit }
+    # Keep the subject on its own line even when the body lacks a leading blank line.
+    $logLines = @(& git -C $Root log --reverse --format='%H%x09%h%x09%B' $range)
+    if ($LASTEXITCODE -ne 0 -or $logLines.Count -eq 0) { throw "Could not read commits for release range $range." }
+    Get-ReleaseNotes -LogLines $logLines -RepositoryUrl $RepositoryUrl -PreviousTag $previousTag -ReleaseTag $Tag -ReadTouchedFiles {
+        param($sha)
+        $touched = @(& git -C $Root show --name-only --format='' $sha | Where-Object { $_ })
+        if ($LASTEXITCODE -ne 0) { throw "git show failed with $LASTEXITCODE for $sha." }
+        $touched
+    }
+}
+
 function Get-ReleaseNotes {
     param(
         [string[]]$LogLines,

@@ -333,7 +333,7 @@ jobs:
   #    exactly (win-x64 and so on), because dist's Publish-All.ps1 looks for a subdirectory by that
   #    platform directory name (Dir) inside the download directory. ──
   package-win-x64:
-    name: Package Windows x64
+    name: Package and test Windows x64
     needs: meta
     if: needs.meta.outputs.should_package == 'true'
     runs-on: windows-latest
@@ -356,7 +356,8 @@ jobs:
       - name: Prepare pinned Velopack CLI
         run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
-      - name: Build release packages
+      - name: Build unsigned release packages before signing cutover
+        if: vars.WINDOWS_SIGNED_RELEASES != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -373,6 +374,7 @@ jobs:
         run: ./installer/Test.ps1 -Isolated
 
       - name: Upload release artifacts
+        if: vars.WINDOWS_SIGNED_RELEASES != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: win-x64
@@ -502,7 +504,7 @@ jobs:
   package-win-arm64:
     name: Package Windows arm64
     needs: meta
-    if: needs.meta.outputs.should_package == 'true'
+    if: needs.meta.outputs.should_package == 'true' && vars.WINDOWS_SIGNED_RELEASES != 'true'
     runs-on: windows-11-arm
     steps:
       - name: Check out
