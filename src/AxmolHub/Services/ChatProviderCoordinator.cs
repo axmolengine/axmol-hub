@@ -162,6 +162,7 @@ internal sealed partial class ChatProviderCoordinator
                 provider.Model = provider.Model.Length == 0 ? builtIn.Model : provider.Model;
                 provider.Affiliate = builtIn.Affiliate;
                 provider.ReferralUrl ??= builtIn.ReferralUrl;
+                provider.ApiKeyUrl = builtIn.ApiKeyUrl;
                 // The blurb and auth methods are never persisted, so they can simply be refreshed from the
                 // manifest each load. Auth methods in particular must follow the manifest: a provider that
                 // gains OAuth support in a later release should offer it without a reinstall.
@@ -812,36 +813,32 @@ internal sealed partial class ChatProviderCoordinator
         if (!AiProviderEntry.IsUsableBaseUrl(provider.BaseUrl)) return KeyCheckOutcome.Unreachable;
         if (!CanStoreSecrets) return KeyCheckOutcome.Unsupported;
 
-        // The probe goes to the provider's own base URL, so a preset pointed at a different deployment
-        // checks that deployment. The trailing slash matters: "https://host/v1" + "/models" is
-        // "https://host/v1/models", but a base written as "https://host/v1/" would otherwise produce "//".
-        var baseUrl = provider.BaseUrl.TrimEnd('/');
-        var url = baseUrl + validation.Path;
-
         try
         {
             // Not disposed when injected: the caller owns it and may reuse it for several probes. Disposing
             // here would make the second key check fail with ObjectDisposedException, which this method
             // reports as Unreachable — "could not ask" — for a reason that has nothing to do with the network.
             using var owned = _oauthHttp is null ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) } : null;
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-            // The same static headers an inference call carries, including Anthropic's API version. A missing
-            // required header must not make a valid credential look rejected.
-            ProviderStaticHeaders.ApplyTo(request, provider.Headers);
-
-            using var response = await (_oauthHttp ?? owned!).SendAsync(request, cancellationToken).ConfigureAwait(false);
-
-            // 401/403 is the answer, and it is an answer about the key: the endpoint understood the request
-            // and refused the credential. A 404 or a 5xx means the probe itself is wrong, not the key, and
-            // reporting those as "invalid key" would be the fail-closed behaviour this design avoids.
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized
-                or System.Net.HttpStatusCode.Forbidden)
+            var isGemini = validation.Type == AiProviderKeyValidation.GeminiModels;
+            using var request = isGemini
+                ? GeminiModelsSource.CreateRequest(provider, apiKey)
+                : new HttpRequestMessage(HttpMethod.Get, provider.BaseUrl.TrimEnd('/') + validation.Path);
+            if (!isGemini)
             {
-                return KeyCheckOutcome.Rejected;
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                // Include the same static headers as inference, such as Anthropic's API version.
+                ProviderStaticHeaders.ApplyTo(request, provider.Headers);
             }
 
-            return response.IsSuccessStatusCode ? KeyCheckOutcome.Accepted : KeyCheckOutcome.Unreachable;
+            using var response = await (_oauthHttp ?? owned!).SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return KeyCheckOutcome.Accepted;
+
+            // A missing route or service failure is not a verdict about the key.
+            var rejected = isGemini
+                ? await GeminiModelsSource.IsKeyRejectedAsync(response, cancellationToken).ConfigureAwait(false)
+                : response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden;
+            return rejected ? KeyCheckOutcome.Rejected : KeyCheckOutcome.Unreachable;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

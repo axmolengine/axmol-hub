@@ -16,6 +16,7 @@ public static class ModelCapabilitySources
         new OpenAiCompatibleModelsSource(),
         new GithubCopilotModelsSource(),
         new AnthropicModelsSource(),
+        new GeminiModelsSource(),
         new OllamaModelsSource(),
     ];
 

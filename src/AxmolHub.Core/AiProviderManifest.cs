@@ -182,20 +182,19 @@ public sealed class AiProviderOAuth
 /// <summary>
 /// A declared way of asking a provider "is this key any good?" before it is stored.
 ///
-/// <para>Only <see cref="HttpGetModels"/> exists today, and that is deliberate: a validation protocol is
-/// something a provider either honours or does not, and inventing shapes for endpoints we have not seen
-/// would give the manifest fields that look meaningful and are never exercised. A provider with no such
-/// protocol simply omits <c>keyValidation</c> and its keys are stored unverified.</para>
+/// <para>Providers can use a bearer-authenticated GET relative to their chat base URL, or Gemini's native
+/// model catalog. A provider with no probe simply omits <c>keyValidation</c>.</para>
 /// </summary>
 public sealed class AiProviderKeyValidation
 {
     public const string HttpGetModels = "httpGetModels";
+    public const string GeminiModels = "geminiModels";
 
     /// <summary>Which probe to run. Unknown values are ignored, the same way an unknown auth method is dropped.</summary>
     public string Type { get; set; } = HttpGetModels;
 
     /// <summary>
-    /// The path appended to <c>BaseUrl</c> for the probe. A relative path starting with <c>/</c>; an absolute
+    /// For <see cref="HttpGetModels"/>, the path appended to <c>BaseUrl</c>. A relative path starting with <c>/</c>; an absolute
     /// URL is rejected, because a manifest that could point a probe at someone else's host would turn a
     /// validation feature into a request forgery primitive.
     /// </summary>
@@ -203,7 +202,7 @@ public sealed class AiProviderKeyValidation
 
     /// <summary>Whether this declaration describes a probe we actually know how to run.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool IsKnown => Type == HttpGetModels
+    public bool IsKnown => Type == GeminiModels || Type == HttpGetModels
         && Path.StartsWith('/')
         && !Path.StartsWith("//", StringComparison.Ordinal)
         && !Path.Contains("://", StringComparison.Ordinal);
@@ -371,6 +370,8 @@ public sealed class AiProviderEntry
     public Dictionary<string, AiModelReasoning> ReasoningModels { get; set; } = [];
     public bool Affiliate { get; set; }
     public string? ReferralUrl { get; set; }
+    /// <summary>HTTPS page where users can obtain an API key for this preset.</summary>
+    public string? ApiKeyUrl { get; set; }
 
     /// <summary>
     /// How this provider can be authenticated, in the order the picker should offer them.
@@ -572,6 +573,8 @@ public static class AiProviderManifest
                 ServerTools = [.. entry.ServerTools],
                 Affiliate = entry.Affiliate,
                 ReferralUrl = entry.ReferralUrl,
+                ApiKeyUrl = Uri.TryCreate(entry.ApiKeyUrl, UriKind.Absolute, out var keyUri)
+                    && keyUri.Scheme == Uri.UriSchemeHttps ? keyUri.AbsoluteUri : null,
                 AuthMethods = [.. entry.EffectiveAuthMethods],
                 // Copied field by field rather than by reference: the manifest document is re-read on every
                 // call, but a provider that outlives the call must not hold a reference into it.

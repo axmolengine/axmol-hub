@@ -449,6 +449,9 @@ public sealed class ModelProvider
     /// <summary>The referral URL shown together with the affiliate disclosure.</summary>
     public string? ReferralUrl { get; set; }
 
+    [JsonIgnore]
+    public string? ApiKeyUrl { get; set; }
+
     /// <summary>
     /// The provider picker binds the object directly, so what it shows is this. Returning the display name
     /// (falling back to the id) keeps the ComboBox free of a display-member binding and means a rename in the

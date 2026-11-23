@@ -143,6 +143,23 @@ public sealed partial class AuthDialog : Window
             keyRow.Children.Add(_connect);
             _content.Children.Add(keyRow);
 
+            if (_provider.ApiKeyUrl is { } url)
+            {
+                var getKey = new Button
+                {
+                    Content = HubStrings.Get("AuthGetApiKey"),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Classes = { "compact", "quiet" },
+                };
+                ToolTip.SetTip(getKey, url);
+                getKey.Click += (_, _) =>
+                {
+                    if (!UrlLauncher.TryOpen(url))
+                        SetStatus(HubStrings.Get("AuthNoBrowserLink") + url, error: true);
+                };
+                _content.Children.Add(getKey);
+            }
+
             _status = new TextBlock
             {
                 Classes = { "muted" },

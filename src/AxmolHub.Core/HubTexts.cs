@@ -1817,6 +1817,7 @@ public static class HubTexts
         ["AuthDo"] = ("鉴权", "Authenticate"),
         ["AuthKeyStepHint"] = ("输入 API Key；仅在本机安全保存，连接前会先验证该密钥是否可用于 {0} 鉴权。", "Enter an API key. It is stored securely on this machine and checked with {0} before saving."),
         ["AuthKeyStepHintNoCheck"] = ("输入 API Key；仅在本机安全保存。", "Enter an API key. It is stored securely on this machine."),
+        ["AuthGetApiKey"] = ("获取 API Key", "Get an API key"),
         ["AuthKeyChecking"] = ("正在验证 API Key 是否可用于鉴权…", "Checking API key…"),
         ["AuthKeyRejected"] = ("鉴权失败：{0} 拒绝了该 API Key，请检查后重试。", "{0} rejected this API key. Check it and try again."),
         // When the verification request itself fails, the key is still saved: inability to ask is not proof that the key is invalid.
