@@ -11,8 +11,10 @@ internal static class ClaudeMessagesChecks
     internal static async Task RunAsync()
     {
         using var spy = new Spy();
-        var provider = new ModelProvider { Id = "offline", Name = "Offline", IsCustom = true,
-            Protocol = ModelProtocols.Messages, BaseUrl = "https://example.invalid/v1", Model = "claude-opus-5-5" };
+        var provider = AiProviderManifest.CreateBuiltIn("anthropic")
+            ?? throw new Exception("The official Anthropic preset is missing.");
+        provider.Model = "claude-opus-5-5";
+        provider.Credential = new ProviderCredential { Id = "offline", ProviderId = provider.Id, Secret = "fixture-key" };
         using var client = ChatClientFactory.Create(provider, provider.Model, null, transport: spy, maxRetries: 0);
         var pipeline = new ChatPipeline(client);
         var function = AIFunctionFactory.Create(() => "ok", "inspect");
@@ -31,7 +33,7 @@ internal static class ClaudeMessagesChecks
         turns.Add(ChatTurn.Assistant("done") with { ClaudeContent = finalContent });
         var restored = JsonSerializer.Deserialize<List<ChatTurn>>(JsonSerializer.Serialize(turns))!;
         restored.Add(ChatTurn.User("continue"));
-        await foreach (var _ in pipeline.SendAsync(provider, restored, tools: [function], reasoningEffort: "low",
+        await foreach (var _ in pipeline.SendAsync(provider, restored, tools: [function], reasoningEffort: "max",
             maxOutputTokens: 100)) { }
         if (spy.Requests.Count != 3) throw new Exception("Messages did not complete a tool round and restore.");
         for (var index = 1; index < spy.Requests.Count; index++)
@@ -56,7 +58,8 @@ internal static class ClaudeMessagesChecks
                 || Text(blocks[3], "text") != "between calls \n")
                 throw new Exception("Replayed signed or text blocks changed their bytes.");
             if (Text(root.GetProperty("thinking"), "type") != "adaptive"
-                || Text(root.GetProperty("output_config"), "effort") != "low")
+                || Text(root.GetProperty("output_config"), "effort") != (index == 2 ? "max" : "low")
+                || root.GetProperty("max_tokens").GetInt32() != 100)
                 throw new Exception("Messages reasoning parameters are not the Claude form.");
         }
         if (finalContent is not { Count: 1 } || answer.ToString() != "between calls \ndone")
@@ -69,8 +72,11 @@ internal static class ClaudeMessagesChecks
         internal List<string> Requests { get; } = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
-            if (!request.RequestUri!.AbsolutePath.Equals("/v1/messages", StringComparison.Ordinal))
-                throw new Exception("Wrong Messages endpoint path.");
+            if (!request.RequestUri!.AbsolutePath.Equals("/v1/messages", StringComparison.Ordinal)
+                || request.Headers.Authorization?.ToString() != "Bearer fixture-key"
+                || !request.Headers.TryGetValues("anthropic-version", out var versions)
+                || versions.Single() != "2026-10-21")
+                throw new Exception("The official Messages endpoint or authentication headers are wrong.");
             Requests.Add(await request.Content!.ReadAsStringAsync(token));
             var frames = new List<object> {
                 new { type = "message_start", message = new { id = "msg_" + Requests.Count, type = "message",

@@ -34,6 +34,20 @@
       "keyValidation": { "type": "httpGetModels", "path": "/models" }
     },
     {
+      "id": "anthropic",
+      "name": "Anthropic (Claude)",
+      "description": "Anthropic's official Claude API. Use an API key from Claude Console; API usage is billed against applicable Console credits, not the Claude app's free chat allowance. Hub fetches available models and their capabilities after authentication.",
+      "descriptionZh": "Anthropic 官方 Claude API。使用 Claude Console 的 API 密钥，按 API 用量计费，可抵扣适用的 Console credits，不使用 Claude 应用的免费聊天额度。鉴权后 Hub 会拉取可用模型及其能力。",
+      "baseUrl": "https://api.anthropic.com/v1",
+      "protocol": "messages",
+      "capabilitySource": "anthropic-models",
+      "authMethods": ["apiKey"],
+      "keyValidation": { "type": "httpGetModels", "path": "/models" },
+      "extraHeaders": {
+        "anthropic-version": "2026-10-21"
+      }
+    },
+    {
       "id": "openrouter",
       "name": "OpenRouter",
       "description": "OpenRouter provides one OpenAI-compatible API for models from many providers. Sign in with your OpenRouter account, or paste an existing API key; Hub fetches the available models after you authenticate.",

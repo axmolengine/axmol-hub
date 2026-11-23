@@ -10,6 +10,7 @@ internal static class AiProvidersChecks
     internal static async Task RunAsync(string root, string[] args)
     {
         await ClaudeMessagesChecks.RunAsync();
+        await CheckAnthropicCatalogAsync();
         await RequestRetryChecks.RunAsync();
         await ChatStreamCompatibilityChecks.RunAsync(root);
         void AssertRejects(Action action, string name)
@@ -920,6 +921,60 @@ internal static class AiProvidersChecks
     {
         if (!condition) throw new Exception("FAILED: " + name);
         Console.WriteLine("PASS: " + name);
+    }
+
+    // One paginated offline catalog covers the new protocol's cache-integrity boundary and reported metadata.
+    private static async Task CheckAnthropicCatalogAsync()
+    {
+        var provider = AiProviderManifest.CreateBuiltIn("anthropic") ?? throw new Exception("Anthropic preset is missing.");
+        Assert(provider.Protocol == ModelProtocols.Messages && ModelCapabilitySources.For(provider) is AnthropicModelsSource
+               && provider.EffectiveAuthMethods.SequenceEqual([ProviderAuthMethods.ApiKey]) && !provider.SupportsOAuth
+               && provider.KeyValidation is { IsKnown: true, Path: "/models" } && provider.Models.Count == 0,
+            "the official Anthropic preset declares API-key validation and its native catalog, without OAuth or seeded models");
+        provider.Credential = new ProviderCredential { Id = "catalog", ProviderId = provider.Id, Secret = "fixture-key" };
+        const string first = """
+            {"data":[{"id":"fixture-claude","max_input_tokens":200000,"max_tokens":8192,"capabilities":{
+              "effort":{"supported":true,"high":{"supported":true},"low":{"supported":true},"max":{"supported":false}},
+              "image_input":{"supported":true},"pdf_input":{"supported":false},
+              "context_management":{"supported":true,"clear_tool_uses_20250919":{"supported":true}}}},
+              {"id":"retired-model","lifecycle":"retired"}],"has_more":true,"last_id":"page/one"}
+            """;
+        var requests = 0;
+        var failNextPage = false;
+        using var handler = new BrowserKeyHandler((request, _) =>
+        {
+            requests++;
+            if (request.Method != HttpMethod.Get || request.RequestUri!.AbsolutePath != "/v1/models"
+                || request.Headers.Authorization?.ToString() != "Bearer fixture-key"
+                || !request.Headers.TryGetValues("anthropic-version", out var versions) || versions.Single() != "2026-10-21")
+                throw new Exception("The official catalog request lost its route or authentication headers.");
+            var next = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["after_id"];
+            if (next is not null && next != "page/one") throw new Exception("The pagination cursor changed.");
+            return Task.FromResult(new HttpResponseMessage(next is not null && failNextPage
+                ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
+            {
+                Content = new StringContent(next is null ? first : """
+                    {"data":[{"id":"fixture-claude"},{"id":"plain-model","capabilities":null}],"has_more":false}
+                    """, Encoding.UTF8, "application/json"),
+            });
+        });
+        using var http = new HttpClient(handler);
+        var result = await ModelList.FetchAsync(http, provider);
+        var caps = result.Capabilities.GetValueOrDefault("fixture-claude");
+        Assert(requests == 2 && result.Reachable && result.Models.SequenceEqual(["fixture-claude", "plain-model"])
+               && caps is { ContextTokens: 200000, MaxOutputTokens: 8192, Source: CapabilitySource.EndpointReported }
+               && caps.InputModalities.SequenceEqual(["text", "image"])
+               && caps.ContextStrategies.SequenceEqual(["clear_tool_uses_20250919"])
+               && result.ReasoningModels["fixture-claude"].Efforts.SequenceEqual(["low", "high"])
+               && result.Capabilities["plain-model"].InputModalities.Count == 0,
+            "Anthropic pagination preserves reported limits and supported capabilities without duplicates or retired models");
+        failNextPage = true;
+        var failed = await ModelList.FetchAsync(http, provider);
+        Assert(!failed.Reachable && failed.Models.Count == 0
+               && !AnthropicModelsSource.Parse(Encoding.UTF8.GetBytes("not JSON")).Reachable
+               && !AnthropicModelsSource.Parse(Encoding.UTF8.GetBytes("""{"data":[],"has_more":true}""")).Reachable
+               && AnthropicModelsSource.Parse(Encoding.UTF8.GetBytes("""{"data":[],"has_more":false}""")).Reachable,
+            "incomplete or malformed Anthropic catalogs fail instead of publishing a partial list, while an empty catalog is valid");
     }
 
     // Exercise the new provider dialect through the same listener used by OrcaRouter, without real accounts.

@@ -6,14 +6,10 @@ namespace AxmolHub.Core;
 /// A user-facing model provider, assembled from a built-in manifest entry (see
 /// <see cref="AiProviderManifest"/>) plus any user overrides persisted in <c>user-profile/ai/providers.json</c>.
 ///
-/// The provider layer has exactly one wire protocol Hub builds a body for — OpenAI-compatible — so every
-/// provider, built-in or custom, drives the same <c>IChatClient</c> factory (see <c>ChatClientFactory</c> in the
-/// Agent project). The fields below differ only in their defaults, not in their meaning. This is the reason "add
-/// another provider" is a data change (one more manifest entry), never a protocol change.
-///
-/// <para><see cref="Protocol"/> is the one field that names a wire rather than a default, and it does not break
-/// the sentence above: declaring a wire Hub cannot speak yet is refused by name at the factory, never answered
-/// with an OpenAI body sent in the wrong hopes.</para>
+/// All providers drive the same <c>IChatClient</c> factory (see <c>ChatClientFactory</c> in the Agent project),
+/// which selects the OpenAI Chat, Responses or Anthropic Messages SDK connector from the declared wire.
+/// Preset defaults belong in the manifest; provider-specific model catalog parsing belongs in an
+/// <see cref="IModelCapabilitySource"/> rather than a second chat implementation.
 /// </summary>
 public sealed class ModelProvider
 {
@@ -47,7 +43,7 @@ public sealed class ModelProvider
     /// <summary>Whether this provider is a user-defined custom endpoint rather than a built-in manifest entry.</summary>
     public bool IsCustom { get; set; }
 
-    /// <summary>OpenAI-compatible base URL. Built-in providers have a default; a custom provider requires the user to fill it.</summary>
+    /// <summary>API base URL. Built-in providers have a default; a custom provider requires the user to fill it.</summary>
     public string BaseUrl { get; set; } = "";
 
     /// <summary>The web tools implementation selected for this provider.</summary>
