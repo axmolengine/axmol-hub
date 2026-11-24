@@ -734,6 +734,10 @@ public sealed class Conversation
     /// what separates "never set" from "deliberately ask". Values come from <see cref="ToolApprovalModes"/>.</summary>
     public string? ApprovalMode { get; set; }
 
+    /// <summary>Speed tier override for this session, or <c>null</c> to follow <see cref="HubPreferences.DefaultSpeedTier"/>.
+    /// Values come from <see cref="ChatSpeedTiers"/>.</summary>
+    public string? SpeedTier { get; set; }
+
     /// <summary>Tools the user answered "always allow in this session" to. Persisted for the same reason a
     /// pending approval is: the grant outlives the window that made it.</summary>
     public List<string> AutoApprovedTools { get; set; } = [];

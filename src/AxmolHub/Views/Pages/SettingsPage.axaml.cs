@@ -144,6 +144,7 @@ public partial class SettingsPage : UserControl
         // writes the settings file, and "typed half a URL" is not a state worth persisting.
         DownloadSourcePicker.SelectionChanged += (_, _) => OnDownloadSourceChanged();
         ToolApprovalPicker.SelectionChanged += (_, _) => OnToolApprovalChanged();
+        DefaultSpeedTierPicker.SelectionChanged += (_, _) => OnDefaultSpeedTierChanged();
         // The revoke-all button is the one escape from a grant the user cannot find the card for any more — the
         // session that made it may be long archived, while the trust it wrote is still answering for every session.
         RevokeAllTrustedToolsButton.Click += (_, _) => RevokeAllTrusted();
@@ -308,6 +309,7 @@ public partial class SettingsPage : UserControl
             LocalizeThemeItems();
             LocalizeDownloadSourceItems();
             LocalizeToolApprovalItems();
+            LocalizeSpeedTierItems();
             // The ledger is rebuilt rather than re-bound, for the same reason the provider groups are: every row
             // carries the key its revoke button has to write back, and the empty line is a property of all three
             // lists together.
@@ -317,6 +319,7 @@ public partial class SettingsPage : UserControl
             SelectTheme(_preferences.Theme);
             SelectDownloadSource(_preferences.DownloadSource);
             SelectToolApproval(_preferences.ToolApprovalMode);
+            SelectDefaultSpeedTier(_preferences.DefaultSpeedTier);
             SelectUpdateChannel(HubReleaseInfo.IsPrereleaseBuild ? UpdateChannels.Preview : _preferences.UpdateChannel);
             UpdateChannelPicker.IsEnabled = !HubReleaseInfo.IsPrereleaseBuild;
             CustomDownloadSourceBox.Text = _preferences.CustomDownloadSource ?? "";
@@ -509,6 +512,37 @@ public partial class SettingsPage : UserControl
         ToolApprovalPicker.SelectedIndex = 0;
     }
 
+    private void LocalizeSpeedTierItems()
+    {
+        foreach (var item in DefaultSpeedTierPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } tierItem && ChatSpeedTiers.TryParse(tag, out var normalized))
+            {
+                var label = HubStrings.Get(ChatPanel.SpeedTierLabelKey(normalized));
+                if (ChatPanel.SpeedTierCostBadgeKey(normalized) is { } badgeKey)
+                    label += " · " + HubStrings.Get(badgeKey);
+                tierItem.Content = label;
+                ToolTip.SetTip(tierItem, HubStrings.Get(ChatPanel.SpeedTierHintKey(normalized)));
+            }
+        }
+    }
+
+    internal void SelectDefaultSpeedTier(string tier)
+    {
+        var normalized = ChatSpeedTiers.Normalize(tier);
+        var index = 0;
+        foreach (var item in DefaultSpeedTierPicker.Items)
+        {
+            if (item is ComboBoxItem { Tag: string tag } && tag == normalized)
+            {
+                DefaultSpeedTierPicker.SelectedIndex = index;
+                return;
+            }
+            index++;
+        }
+        DefaultSpeedTierPicker.SelectedIndex = 0;
+    }
+
     private void LocalizeUpdateChannelItems()
     {
         foreach (var item in UpdateChannelPicker.Items)
@@ -566,6 +600,12 @@ public partial class SettingsPage : UserControl
         // meaning for "the default moved", and the one that skips the audit line is the one that leaves a mystery
         // in the log the next time a call asks — or stops asking — for a reason nobody can read back.
         _chat.SetDefaultApprovalMode(SelectedToolApprovalMode);
+    }
+
+    private void OnDefaultSpeedTierChanged()
+    {
+        if (!_ready) return;
+        _chat.SetDefaultSpeedTier(SelectedDefaultSpeedTier);
     }
 
     /// <summary>
@@ -3499,4 +3539,5 @@ public partial class SettingsPage : UserControl
         internal const string AddDraftSave = "provider-add-save";
     }
 private string SelectedToolApprovalMode=> ToolApprovalPicker.SelectedItem is ComboBoxItem { Tag: string tag } && IsToolApprovalMode(tag) ? tag : ToolApprovalModes.Ask;
+private string SelectedDefaultSpeedTier => DefaultSpeedTierPicker.SelectedItem is ComboBoxItem { Tag: string tag } && ChatSpeedTiers.TryParse(tag, out var tier) ? tier : ChatSpeedTiers.Default;
 }

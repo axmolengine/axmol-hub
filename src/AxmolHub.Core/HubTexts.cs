@@ -1870,5 +1870,27 @@ public static class HubTexts
         ["AssistantSuggestWriteScript"] = ("写一个脚本并运行验证", "Write a script and run it to verify"),
         ["AssistantSuggestRefactor"] = ("把一段代码重构得更易读", "Refactor some code to be easier to read"),
         ["ModelChangedFormat"] = ("已切换模型：{0}", "Model changed to {0}"),
+
+        // Speed tier selector, slash commands, high-cost badges, settings, and fallback toasts.
+        ["SpeedTierMenuTitle"] = ("速度档", "Speed tier"),
+        ["ChatSpeedLevelFormat"] = ("速度：{0}", "Speed: {0}"),
+        ["SpeedTierDefault"] = ("默认", "Default"),
+        ["SpeedTierFlex"] = ("省钱", "Flex"),
+        ["SpeedTierFast"] = ("快速", "Fast"),
+        ["SpeedTierUltrafast"] = ("极速", "Ultrafast"),
+        ["SpeedTierDefaultHint"] = ("遵循服务端默认调度策略，不额外附加速度参数。", "Follow server default scheduling with no extra speed parameter."),
+        ["SpeedTierFlexHint"] = ("低优先级、更低费率，适合后台批处理或非交互式任务。", "Lower priority and lower cost, suited for background or batch tasks."),
+        ["SpeedTierFastHint"] = ("优先调度与低延迟通道，适合日常高频交互开发（高消耗）。", "Priority low-latency channel for interactive development (higher cost)."),
+        ["SpeedTierUltrafastHint"] = ("专用高速推理硬件通道，极低延迟（极高消耗，请留意额度或预算）。", "Dedicated high-speed hardware channel for minimal latency (very high cost)."),
+        ["SpeedTierHighCostBadge"] = ("高消耗", "High cost"),
+        ["SpeedTierUltraCostBadge"] = ("极高消耗", "Very high cost"),
+        ["SpeedTierUnsupportedHint"] = ("当前模型不支持此速度档。", "Not supported by the current model."),
+        ["SpeedTierModelFallbackFormat"] = ("当前模型 {0} 不支持「{1}」速度档，已自动回退为默认。", "{0} does not support the {1} speed tier; switched back to Default."),
+        ["SpeedTierRuntimeFallbackFormat"] = ("「{0}」速度档不可用或超出限制，已自动降级为默认重试。", "The {0} speed tier was unavailable or declined; retried with Default."),
+        ["SpeedTierChangedFormat"] = ("已切换速度档：{0}", "Speed tier set to {0}"),
+        ["SpeedTierCommandUnsupportedFormat"] = ("当前模型不支持「{0}」速度档。", "Current model does not support the {0} speed tier."),
+        ["SpeedTierCommandUsage"] = ("用法：/speed default|flex|fast|ultrafast（或 /fast、/ultrafast）", "Usage: /speed default|flex|fast|ultrafast (or /fast, /ultrafast)"),
+        ["DefaultSpeedTierTitle"] = ("默认速度档", "Default speed tier"),
+        ["DefaultSpeedTierHint"] = ("新会话默认使用的速度档；单个会话可在输入框工具栏单独覆盖，后台子任务默认不继承极速档。", "Default speed tier for new sessions. Individual sessions can override it in the composer; subtasks never inherit Ultrafast."),
     };
 }

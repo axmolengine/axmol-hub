@@ -48,6 +48,10 @@ public sealed partial class ChatWorkspace : IDisposable
     /// <summary>Raised when the provider or conversation lists change and the panel should repaint.</summary>
     public event Action? Changed { add => _execution.Changed += value; remove => _execution.Changed -= value; }
 
+    /// <summary>Raised when a speed tier is automatically downgraded to <see cref="ChatSpeedTiers.Default"/>
+    /// after switching models (<c>isModelSwitch == true</c>) or after a runtime provider refusal.</summary>
+    public event Action<string, string, bool>? SpeedTierFallback { add => _execution.SpeedTierFallback += value; remove => _execution.SpeedTierFallback -= value; }
+
     /// <summary>A tool started or finished in a given session. The id travels because the status line a tool
     /// updates belongs to the session being looked at, and a background session's tool must not rewrite it.</summary>
     internal event Action<string, string, bool>? ToolActivityChanged { add => _execution.ToolActivityChanged += value; remove => _execution.ToolActivityChanged -= value; }
@@ -856,6 +860,16 @@ public sealed partial class ChatWorkspace : IDisposable
     /// <summary>Picks the permission mode: this session's override when one is on screen, the pending choice
     /// every later session starts from when none is.</summary>
     public bool SelectApprovalMode(string? mode) => _execution.SelectApprovalMode(mode);
+
+    public string DefaultSpeedTier => _execution.DefaultSpeedTier;
+    public bool SetDefaultSpeedTier(string tier) => _execution.SetDefaultSpeedTier(tier);
+    public string? SelectedSpeedTier => _execution.SelectedSpeedTier;
+    public string ActiveSpeedTier => _execution.ActiveSpeedTier;
+    public IReadOnlyList<string> SupportedSpeedTiers => _execution.SupportedSpeedTiers;
+    public bool IsSpeedTierSupported(string tier) => _execution.IsSpeedTierSupported(tier);
+    public bool SelectSpeedTier(string? tier) => _execution.SelectSpeedTier(tier);
+    public string SpeedTierFor(string conversationId) => _execution.SpeedTierFor(conversationId);
+    public bool SetSpeedTier(string conversationId, string? tier) => _execution.SetSpeedTier(conversationId, tier);
     /// <summary>
     /// The tier a recorded call would be given right now, asked by the card that draws it. It runs through the same
     /// <see cref = "ChatTools.RiskOf"/> as the gate with this session's own scope, so a card cannot paint a reason

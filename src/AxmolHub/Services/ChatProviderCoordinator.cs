@@ -107,6 +107,9 @@ internal sealed partial class ChatProviderCoordinator
         if (choice is null) return false;
 
         var reasoningEffort = Sessions.SelectModelReasoningEffort(choice);
+        var previousSpeedTier = Execution.ActiveSpeedTierRaw;
+        var speedTierUnsupported = previousSpeedTier != ChatSpeedTiers.Default
+            && !SpeedTierPolicy.IsSupported(choice.Provider, choice.ModelName, previousSpeedTier);
         _selectedProviderId = choice.Provider.Id;
         _selectedModelName = choice.ModelName;
         if (Sessions.Active is not null)
@@ -124,12 +127,21 @@ internal sealed partial class ChatProviderCoordinator
                 conversation.ProviderId = choice.Provider.Id;
                 conversation.ModelName = choice.ModelName;
                 conversation.ReasoningEffort = reasoningEffort;
+                if (speedTierUnsupported)
+                    conversation.SpeedTier = ChatSpeedTiers.Default;
                 if (switched)
                     conversation.Append(ChatTurn.Notice(string.Format(
                         System.Globalization.CultureInfo.CurrentCulture,
                         HubStrings.Get("ModelChangedFormat"), choice.ToString())));
             });
         }
+        else if (speedTierUnsupported)
+        {
+            Sessions.SelectedSpeedTier = ChatSpeedTiers.Default;
+        }
+
+        if (speedTierUnsupported)
+            Execution.RaiseSpeedTierFallback(previousSpeedTier, choice.ModelName, isModelSwitch: true);
 
         Execution.Changed?.Invoke();
         return true;

@@ -33,6 +33,11 @@ internal sealed partial class ChatExecutionCoordinator
 
     /// <summary>Raised when the provider or conversation lists change and the panel should repaint.</summary>
     internal Action? Changed;
+    /// <summary>Raised when a speed tier is automatically downgraded to default after a model switch or a
+    /// runtime provider refusal.</summary>
+    internal Action<string, string, bool>? SpeedTierFallback;
+    internal void RaiseSpeedTierFallback(string previousTier, string modelName, bool isModelSwitch)
+        => RaiseOnUi(() => SpeedTierFallback?.Invoke(previousTier, modelName, isModelSwitch));
     /// <summary>A tool started or finished in a given session. The id travels because the status line a tool
     /// updates belongs to the session being looked at, and a background session's tool must not rewrite it.</summary>
     internal Action<string, string, bool>? ToolActivityChanged;
@@ -1462,6 +1467,8 @@ internal sealed partial class ChatExecutionCoordinator
             // The parent's permission posture comes with it: a helper the assistant invented must not end up with
             // more access than the session that asked for it, and must not lose the sandbox it needs either.
             child.ApprovalMode = parent.ApprovalMode;
+            // Child sessions never inherit Ultrafast so concurrent subtasks do not multiply high-cost inference.
+            child.SpeedTier = ChatSpeedTiers.ForSubtask(parent.SpeedTier, PreferencesProvider?.Invoke()?.DefaultSpeedTier);
             child.WorkspaceRoot = request.InheritWorkspace ? parent.WorkspaceRoot : null;
             // The granted directories travel with the workspace, not instead of it: a helper sent to fix something
             // in the project the parent was granted would otherwise have to ask for the same card again — and the
@@ -1717,6 +1724,84 @@ internal sealed partial class ChatExecutionCoordinator
         var normalized = mode is null ? null : ToolApprovalModes.Normalize(mode);
         if (Sessions.Active is { } session) return SetApprovalMode(session.Id, normalized);
         Sessions.SelectedApprovalMode = normalized;
+        Changed?.Invoke();
+        return true;
+    }
+
+    internal string DefaultSpeedTier
+        => ChatSpeedTiers.Normalize(PreferencesProvider?.Invoke()?.DefaultSpeedTier);
+
+    internal bool SetDefaultSpeedTier(string tier)
+    {
+        var preferences = PreferencesProvider?.Invoke();
+        var normalized = ChatSpeedTiers.Normalize(tier);
+        if (preferences is null || preferences.DefaultSpeedTier == normalized) return false;
+        preferences.DefaultSpeedTier = normalized;
+        PersistPreferences(preferences);
+        AuditWrite?.Invoke($"Speed tier default: {normalized}");
+        NotifyAppSettingsChanged();
+        return true;
+    }
+
+    internal string SpeedTierFor(string conversationId)
+    {
+        var conversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
+        var requested = ChatSpeedTiers.Normalize(conversation?.SpeedTier ?? PreferencesProvider?.Invoke()?.DefaultSpeedTier);
+        var choice = Providers.ModelFor(conversationId);
+        return choice is not null
+            ? SpeedTierPolicy.ResolveForModel(choice.Provider, choice.ModelName, requested)
+            : requested;
+    }
+
+    internal bool SetSpeedTier(string conversationId, string? tier)
+    {
+        var normalized = tier is null ? null : ChatSpeedTiers.Normalize(tier);
+        if (!Sessions.Registry.TryUpdate(conversationId, conversation => conversation.SpeedTier = normalized)) return false;
+        Audit(conversationId, $"Speed tier: {normalized ?? "follow default"}");
+        Changed?.Invoke();
+        return true;
+    }
+
+    internal string? SelectedSpeedTier => Sessions.SelectedSpeedTier;
+
+    internal string ActiveSpeedTierRaw
+        => Sessions.Active is { } session
+            ? ChatSpeedTiers.Normalize((Sessions.Registry.Peek(session.Id)?.SpeedTier ?? session.SpeedTier)
+                ?? PreferencesProvider?.Invoke()?.DefaultSpeedTier)
+            : ChatSpeedTiers.Normalize(Sessions.SelectedSpeedTier ?? PreferencesProvider?.Invoke()?.DefaultSpeedTier);
+
+    internal string ActiveSpeedTier
+    {
+        get
+        {
+            var choice = Providers.SelectedChatModel;
+            return choice is not null
+                ? SpeedTierPolicy.ResolveForModel(choice.Provider, choice.ModelName, ActiveSpeedTierRaw)
+                : ActiveSpeedTierRaw;
+        }
+    }
+
+    internal IReadOnlyList<string> SupportedSpeedTiers
+    {
+        get
+        {
+            var choice = Providers.SelectedChatModel;
+            return SpeedTierPolicy.SupportedTiers(choice?.Provider, choice?.ModelName);
+        }
+    }
+
+    internal bool IsSpeedTierSupported(string tier)
+    {
+        var choice = Providers.SelectedChatModel;
+        return SpeedTierPolicy.IsSupported(choice?.Provider, choice?.ModelName, tier);
+    }
+
+    internal bool SelectSpeedTier(string? tier)
+    {
+        var normalized = tier is null ? null : ChatSpeedTiers.Normalize(tier);
+        if (normalized is not null && !IsSpeedTierSupported(normalized)) return false;
+        if (Sessions.Active is { } session) return SetSpeedTier(session.Id, normalized);
+        Sessions.SelectedSpeedTier = normalized;
         Changed?.Invoke();
         return true;
     }
@@ -3115,6 +3200,21 @@ internal sealed partial class ChatExecutionCoordinator
             Audit(run.ConversationId, $"Provider authentication failed: {ex.Message}");
             return (RunResult.Failed, "ChatAuthExpired", true, ex.Message);
         }
+        catch (Exception ex) when (mayRecover && ChatPipeline.ShouldFallbackSpeedTier(ex, request.Value.SpeedTier))
+        {
+            var previousTier = request.Value.SpeedTier!;
+            Audit(run.ConversationId,
+                $"Speed tier fallback: {previousTier} declined on {request.Value.ModelName} ({ex.Message}); downgrading to default and retrying once");
+            await ApplyOnUiAsync(() =>
+            {
+                Sessions.Registry.TryUpdate(run.ConversationId, opened => opened.SpeedTier = ChatSpeedTiers.Default);
+                Changed?.Invoke();
+            }).ConfigureAwait(false);
+            RaiseSpeedTierFallback(previousTier, request.Value.ModelName, isModelSwitch: false);
+            var retry = await StreamSegmentAsync(run, mayRecover: false).ConfigureAwait(false);
+            replyRecorded = true;
+            return retry;
+        }
         catch (Exception ex) when (ChatPipeline.UsageExhausted(ex.Message)
             || ex is ProviderResponseException streamError && ProviderFailure.QuotaExhausted(streamError.ErrorCode))
         {
@@ -3435,13 +3535,16 @@ internal sealed partial class ChatExecutionCoordinator
             history = [.. history, ChatTurn.User(
                 "[Automated message from the app, not from the user]\n" + string.Join("\n\n", corrections))];
 
+        var resolvedSpeedTier = SpeedTierPolicy.ResolveForModel(
+            choice.Provider, modelName, conversation.SpeedTier ?? PreferencesProvider?.Invoke()?.DefaultSpeedTier);
         return new ChatRequest(choice.Provider, modelName, reasoning, tools, scope,
             systemPrompt,
             history,
             image => Sessions.Registry.Store.ReadImage(conversationId, image.File) is { } bytes
                 ? BinaryData.FromBytes(bytes)
                 : null,
-            declared);
+            declared,
+            resolvedSpeedTier == ChatSpeedTiers.Default ? null : resolvedSpeedTier);
     }
 
     private readonly Dictionary<string, int> _schemaTokensByMode = new(StringComparer.Ordinal);
@@ -3513,6 +3616,7 @@ internal sealed partial class ChatExecutionCoordinator
             request.Reasoning,
             request.Tools,
             declaredTools: request.DeclaredTools,
+            speedTier: request.SpeedTier,
             retryOptions: retry,
             images: request.Images,
             toolImages: callId => liveFrames.TryGetValue(callId, out var frames) ? frames : [],
@@ -4368,7 +4472,8 @@ internal sealed partial class ChatExecutionCoordinator
     // tier and the execution reading one directory if that ever stops being true.
     ChatToolScope Scope, string SystemPrompt, IReadOnlyList<ChatTurn> History, Func<ChatImage, BinaryData?>? Images, // Declarations that ride for their schema only, executed by nothing — Ask over tool history, where a
     // tool-less request is the shape a model answers in native call markup. Null is the common case.
-    IReadOnlyList<AITool>? DeclaredTools = null);
+    IReadOnlyList<AITool>? DeclaredTools = null,
+    string? SpeedTier = null);
     private readonly record struct ContextCompressionRequest(ModelProvider Provider, string ModelName, string SystemPrompt, // The session's own declarations. They ride for their schema and run nothing: a summarizing request
     // over a transcript saturated with tool calls, declaring nothing at all, is the shape a model answers
     // in its native call markup instead of prose — a compaction summary came back that way once. Declared,

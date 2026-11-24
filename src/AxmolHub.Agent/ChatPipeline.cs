@@ -171,6 +171,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         ChatToolMode? toolMode = null,
         Action<List<ClaudeThinkingBlock>>? onClaudeThinking = null,
         Action<List<JsonElement>>? onClaudeContent = null,
+        string? speedTier = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The tool declarations ride every request, and nothing used to price them: seventeen functions of
@@ -191,7 +192,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // measuring a growing loop against the first request's size would calibrate the wrong number.
         var firstRequestEstimate = trimmed.Sum(ContextTrimmer.EstimateTokens) + schemaTokens;
         var observed = new ContextReport();
-        var options = BuildOptions(provider, modelName, reasoningEffort, wireTools, maxOutputTokens, toolMode);
+        var options = BuildOptions(provider, modelName, reasoningEffort, wireTools, maxOutputTokens, toolMode, speedTier);
         var parked = new GateState();
         // Refusals of one signature within this run, so a second one ends the turn instead of buying a third
         // paid round. Per SendAsync, which is per segment: a new question gets a fresh chance.
@@ -714,6 +715,55 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
            && (message.Contains("stream_options", StringComparison.OrdinalIgnoreCase)
                || message.Contains("include_usage", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Whether a provider error explicitly rejects a speed-tier / service_tier field or value.</summary>
+    public static bool DeclinedSpeedTier(string? message)
+        => message is { Length: > 0 }
+           && (message.Contains("service_tier", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("speed_tier", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("ultrafast", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("fast mode", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("priority tier", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("flex tier", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Whether a request sent with a non-default speed tier should automatically fall back to
+    /// <see cref="ChatSpeedTiers.Default"/> and retry once (e.g. plan entitlement, unsupported tier parameter,
+    /// or tier quota exhaustion).</summary>
+    public static bool ShouldFallbackSpeedTier(Exception exception, string? requestedSpeedTier)
+    {
+        if (ChatSpeedTiers.Normalize(requestedSpeedTier) == ChatSpeedTiers.Default) return false;
+        var message = exception.Message;
+        if (string.IsNullOrWhiteSpace(message)) return false;
+        if (DeclinedSpeedTier(message)) return true;
+        // Do not mask invalid API keys or context-length failures as speed-tier rejections.
+        if (ContextOverflow.IsContextOverflow(message) || DeclinedStreamUsage(message)) return false;
+        var status = ProviderFailure.StatusOf(exception);
+        if (status == 401) return false;
+        if (status is 400 or 403 or 429)
+            return message.Contains("permission", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("forbidden", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("not entitled", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("not available", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("not supported", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("invalid parameter", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("unknown parameter", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("upgrade", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("plan", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("tier", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("usage_limit", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("limit reached", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("capacity", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("rate_limit", StringComparison.OrdinalIgnoreCase);
+        return ProviderFailure.QuotaExhausted(message)
+               || message.Contains("permission", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("not entitled", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("not supported", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Whether a failure is the provider saying "not now" rather than "not like that".
     ///
     /// <para>Narrow on purpose, in both directions. <see cref="ProviderRetryDefaults.MaxRetries"/> retries already
@@ -997,9 +1047,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// than rejected, so a manifest entry can carry an option this build does not know yet.
     /// <paramref name="maxOutputTokens"/> is the caller's own answer budget and wins over the provider's: a
     /// request whose size was worked out against one window should not inherit a cap typed for another.</summary>
-    private static ChatOptions? BuildOptions(
+    internal static ChatOptions? BuildOptions(
         ModelProvider provider, string? modelName, string? reasoningEffort, IReadOnlyList<AITool>? tools,
-        int? maxOutputTokens = null, ChatToolMode? toolMode = null)
+        int? maxOutputTokens = null, ChatToolMode? toolMode = null, string? speedTier = null)
     {
         var options = new ChatOptions();
         var protocol = ChatClientFactory.ProtocolFor(provider, modelName);
@@ -1067,6 +1117,14 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
         }
 
+        var wireSpeed = SpeedTierPolicy.WireParameter(provider, modelName, speedTier);
+        if (wireSpeed is { } speedParam)
+        {
+            requestOptions ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            requestOptions[speedParam.Key] = JsonSerializer.SerializeToElement(speedParam.Value);
+            any = true;
+        }
+
         if (messagesWire)
         {
             options.Reasoning = options.Reasoning is { } requested
@@ -1115,15 +1173,25 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
             options.RawRepresentationFactory = _ =>
             {
-                // M.E.AI has no Max tier. Responses needs native options so the SDK writes reasoning.effort.
-                if (protocol == ModelProtocols.Responses
-                    && string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.Max, StringComparison.OrdinalIgnoreCase))
+                if (protocol == ModelProtocols.Responses)
                 {
-#pragma warning disable OPENAI001 // Native reasoning options for the Responses SDK.
-                    return new CreateResponseOptions
+#pragma warning disable OPENAI001 // Native options for the Responses SDK.
+                    var responseOptions = new CreateResponseOptions();
+                    if (string.Equals(effectiveReasoningEffort, ChatReasoningEfforts.Max, StringComparison.OrdinalIgnoreCase))
+                        responseOptions.ReasoningOptions = new() { ReasoningEffortLevel = ResponseReasoningEffortLevel.Max };
+#pragma warning disable SCME0001 // Required to add provider-specific JSON fields such as service_tier.
+                    if (requestOptions is { Count: > 0 })
                     {
-                        ReasoningOptions = new() { ReasoningEffortLevel = ResponseReasoningEffortLevel.Max },
-                    };
+                        var responsePatch = new JsonPatch(BinaryData.FromString("[]").ToMemory());
+                        foreach (var (key, value) in requestOptions)
+                            if (!string.Equals(key, "reasoning_effort", StringComparison.Ordinal))
+                                responsePatch.Set(
+                                    System.Text.Encoding.UTF8.GetBytes("$." + key),
+                                    BinaryData.FromString(value.GetRawText()));
+                        responseOptions.Patch = responsePatch;
+                    }
+#pragma warning restore SCME0001
+                    return responseOptions;
 #pragma warning restore OPENAI001
                 }
                 var rawOptions = new OpenAI.Chat.ChatCompletionOptions();

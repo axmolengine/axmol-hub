@@ -932,6 +932,100 @@
     <Style Selector="Button.permission-chip.danger TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Hub.WarningText}" />
     </Style>
+    <!-- Compact speed-tier badge inside ModelPicker, shown only when a non-Default tier is active. -->
+    <Style Selector="StackPanel.speed-badge.flex Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.SuccessText}" />
+    </Style>
+    <Style Selector="StackPanel.speed-badge.flex TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.SuccessText}" />
+    </Style>
+    <Style Selector="StackPanel.speed-badge.fast Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="StackPanel.speed-badge.fast TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="StackPanel.speed-badge.ultrafast Path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="StackPanel.speed-badge.ultrafast TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <!-- Theme-adaptive color-coded speed slider inside ModelSettingsPopup (Light & Dark via HubTokens). -->
+    <Style Selector="Slider.speed-slider.flex /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.flex /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.flex:pointerover /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.flex:pointerover /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.Success}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.default /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.default /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.fast /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.fast /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.fast:pointerover /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.fast:pointerover /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.WarningText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.ultrafast /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.ultrafast /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.ultrafast:pointerover /template/ RepeatButton#PART_DecreaseButton">
+      <Setter Property="Background" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <Style Selector="Slider.speed-slider.ultrafast:pointerover /template/ Thumb">
+      <Setter Property="Background" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
+    <!-- Clickable tick captions under both reasoning and speed sliders. -->
+    <Style Selector="Button.model-level-caption-btn">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="2,2" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.model-level-caption-btn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.model-level-caption-btn:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.model-level-caption-btn:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.speed-cost-pill">
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+    </Style>
+    <Style Selector="Border.speed-cost-pill.fast">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.PreviewBadgeBorder}" />
+    </Style>
+    <Style Selector="Border.speed-cost-pill.ultrafast">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerBorder}" />
+    </Style>
     <!-- The caret every composer chip carries, so they read as one affordance: "this opens a menu".
          Declared after the permission chip's own Path rules on purpose — the caret keeps its muted colour
          even when the tier it sits beside uses warning orange. -->
@@ -1454,6 +1548,13 @@
                   <TextBlock x:Name="SelectedReasoningLabel" MaxWidth="76"
                              TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                              Foreground="{DynamicResource Hub.TextTertiary}" />
+                  <StackPanel x:Name="SelectedSpeedBadge" Classes="speed-badge" Orientation="Horizontal"
+                              Spacing="3" VerticalAlignment="Center" IsVisible="False">
+                    <Path Width="11" Height="11" Stretch="Uniform" Data="{StaticResource Hub.Icon.Speed}"
+                          Fill="Transparent" StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round"
+                          VerticalAlignment="Center" />
+                    <TextBlock x:Name="SelectedSpeedLabel" FontSize="12" VerticalAlignment="Center" />
+                  </StackPanel>
                   <Path Classes="chip-caret" Data="{StaticResource Hub.Icon.Caret}" />
                 </StackPanel>
               </Button>
@@ -1497,10 +1598,32 @@
             <TextBlock Text="{DynamicResource ChatAutoReasoning}" Classes="model-settings-title" VerticalAlignment="Center" />
             <ToggleSwitch x:Name="AutoReasoningSwitch" Grid.Column="1" />
           </Grid>
-          <TextBlock x:Name="ReasoningLevelLabel" Classes="context-popover-detail" />
-          <Slider x:Name="ReasoningLevelSlider" Minimum="0" Maximum="2" TickFrequency="1"
-                  IsSnapToTickEnabled="True" />
-          <Grid x:Name="ReasoningEffortLabels" />
+          <StackPanel Spacing="2">
+            <TextBlock x:Name="ReasoningLevelLabel" Classes="context-popover-detail" />
+            <Slider x:Name="ReasoningLevelSlider" Minimum="0" Maximum="2" TickFrequency="1"
+                    IsSnapToTickEnabled="True" Margin="0,-6,0,-6" />
+            <Grid x:Name="ReasoningEffortLabels" />
+          </StackPanel>
+          <StackPanel x:Name="SpeedSettingsPanel" Spacing="2" IsVisible="False">
+            <Border Height="1" Background="{DynamicResource Hub.BorderSubtle}" Margin="0,0,0,10" />
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                <Path x:Name="SpeedTierTitleIcon" Width="12" Height="12" Stretch="Uniform"
+                      Data="{StaticResource Hub.Icon.Speed}"
+                      Fill="Transparent" StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round"
+                      VerticalAlignment="Center" />
+                <TextBlock x:Name="SpeedTierLevelLabel" Classes="context-popover-detail" VerticalAlignment="Center" />
+              </StackPanel>
+              <Border x:Name="SpeedTierCostPill" Grid.Column="1" Classes="speed-cost-pill"
+                      VerticalAlignment="Center" IsVisible="False">
+                <TextBlock x:Name="SpeedTierCostBadge" FontSize="11" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+              </Border>
+            </Grid>
+            <Slider x:Name="SpeedTierSlider" Classes="speed-slider" Minimum="0" Maximum="3" TickFrequency="1"
+                    IsSnapToTickEnabled="True" Margin="0,-6,0,-6" />
+            <Grid x:Name="SpeedTierLabels" />
+          </StackPanel>
           <Button x:Name="OpenModelMenuButton" Classes="model-menu-button" HorizontalContentAlignment="Stretch">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock x:Name="ModelSettingsSelectedModel" TextTrimming="CharacterEllipsis" />

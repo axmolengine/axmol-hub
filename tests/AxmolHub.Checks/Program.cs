@@ -129,6 +129,12 @@ internal static class Program
             return;
         }
 
+        if (args.Contains("--check-ai-speed-tier"))
+        {
+            await AiSpeedTierChecks.RunAsync();
+            return;
+        }
+
         if (args.Contains("--check-release-receipt"))
         {
             await ReleaseReceiptChecks.RunAsync(root, args);

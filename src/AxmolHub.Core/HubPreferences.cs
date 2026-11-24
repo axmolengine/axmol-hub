@@ -49,6 +49,13 @@ public sealed class HubPreferences
     public string ToolApprovalMode { get; set; } = ToolApprovalModes.Ask;
 
     /// <summary>
+    /// Default speed tier for assistant requests: <see cref="ChatSpeedTiers.Default"/> /
+    /// <see cref="ChatSpeedTiers.Flex"/> / <see cref="ChatSpeedTiers.Fast"/> /
+    /// <see cref="ChatSpeedTiers.Ultrafast"/>. A session can override it via <see cref="Conversation.SpeedTier"/>.
+    /// </summary>
+    public string DefaultSpeedTier { get; set; } = ChatSpeedTiers.Default;
+
+    /// <summary>
     /// Tools the user told Hub to stop asking about, for <b>every</b> session: the app-wide half of the grant a
     /// card's "Always allow" writes, kept beside the default mode because both are answers to "how much do I let this
     /// assistant do without me". A session still has its own shorter list
@@ -237,6 +244,7 @@ public sealed class PreferencesStore(string path)
         // Same for the assistant's permission mode, and the fallback matters more here: an unrecognized value
         // has to come back as "ask", never as "let it through".
         preferences.ToolApprovalMode = ToolApprovalModes.Normalize(preferences.ToolApprovalMode);
+        preferences.DefaultSpeedTier = ChatSpeedTiers.Normalize(preferences.DefaultSpeedTier);
         // The trust list is read with the same care: a hand-edited or newer-Hub file can put anything in it, and
         // the shape rules belong to ToolTrust so the store, the card and the settings page cannot disagree about
         // what a stored grant means. Unknown names are kept rather than dropped — they match no call, and a

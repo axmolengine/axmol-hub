@@ -25,6 +25,7 @@ internal sealed partial class ChatSessionCoordinator
     internal ConversationRegistry Registry => _sessions;
     internal Conversation? Active => _active;
     internal string? SelectedApprovalMode { get => _selectedApprovalMode; set => _selectedApprovalMode = value; }
+    internal string? SelectedSpeedTier { get => _selectedSpeedTier; set => _selectedSpeedTier = value; }
     private readonly WorkspaceStore _workspaces;
     private Conversation? _active;
     private string _selectedMode = ChatModes.Ask;
@@ -32,6 +33,7 @@ internal sealed partial class ChatSessionCoordinator
     private string _selectedReasoningEffort = ChatReasoningEfforts.Default;
     private string _selectedRouting = ChatRouting.Manual;
     private string? _selectedApprovalMode;
+    private string? _selectedSpeedTier;
     private string? _selectedWorkspaceRoot;
     internal Conversation? ActiveConversation => _active;
     internal string ActiveMode => _active is null ? _selectedMode : NormalizeMode(_active.Mode);
@@ -417,6 +419,8 @@ internal sealed partial class ChatSessionCoordinator
         // it is taken only from that state: a session started from a live one follows the app default again.
         var approvalMode = _active is null ? _selectedApprovalMode : null;
         _selectedApprovalMode = null;
+        var speedTier = _active is null ? _selectedSpeedTier : null;
+        _selectedSpeedTier = null;
         // Same rule for the sandbox: a directory picked before the first message was meant for the session that
         // follows, and a session started from a live one gets its own.
         var workspaceRoot = _active is null ? _selectedWorkspaceRoot : null;
@@ -448,6 +452,7 @@ internal sealed partial class ChatSessionCoordinator
         conversation.Routing = ChatRouting.Normalize(_selectedRouting);
         _selectedReasoningEffort = conversation.ReasoningEffort;
         conversation.ApprovalMode = approvalMode;
+        conversation.SpeedTier = speedTier;
         conversation.WorkspaceRoot = workspaceRoot;
         _sessions.Adopt(conversation);
         _active = conversation;

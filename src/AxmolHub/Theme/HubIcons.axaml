@@ -254,4 +254,7 @@
        and right points. -->
   <StreamGeometry x:Key="Hub.Icon.Globe">M4 12A8 8 0 0 1 20 12A8 8 0 0 1 4 12ZM12 4A3.8 8 0 0 0 12 20A3.8 8 0 0 0 12 4ZM4 12H20</StreamGeometry>
 
+  <!-- A lightning bolt on the 24 grid for the composer's speed-tier chip and menu items. -->
+  <StreamGeometry x:Key="Hub.Icon.Speed">M13.2 3.5L5.8 13.2H11.6L10.8 20.5L18.2 10.8H12.4Z</StreamGeometry>
+
 </ResourceDictionary>

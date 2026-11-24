@@ -357,6 +357,17 @@ public partial class ChatPanel : UserControl
             UpdateSendState();
             ConversationStateChanged?.Invoke();
         };
+        _chat.SpeedTierFallback += (previousTier, modelName, isModelSwitch) =>
+        {
+            RefreshComposerChoices();
+            var tierLabel = HubStrings.Get(SpeedTierLabelKey(previousTier));
+            var message = isModelSwitch
+                ? string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("SpeedTierModelFallbackFormat"), modelName, tierLabel)
+                : string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("SpeedTierRuntimeFallbackFormat"), tierLabel);
+            StatusMessage?.Invoke(UserFeedback.Warning(message, "speed-tier-fallback"));
+        };
         TurnChangesPill.Click += (_, _) => OpenTurnReview(_chat.ActiveConversation);
         ModelPicker.Click += (_, _) => ShowModelSettings();
         ModelSettingsPopup.PlacementTarget = ModelPicker;
@@ -375,6 +386,15 @@ public partial class ChatPanel : UserControl
             var level = (int)Math.Round(ReasoningLevelSlider.Value);
             _chat.SelectReasoningLevel(level);
             UpdateModelSettingsPopup();
+            RefreshModelPicker();
+        };
+        SpeedTierSlider.ValueChanged += (_, _) =>
+        {
+            if (_updatingSpeedControls) return;
+            var supported = _chat.SupportedSpeedTiers;
+            if (supported.Count <= 1) return;
+            var index = Math.Clamp((int)Math.Round(SpeedTierSlider.Value), 0, supported.Count - 1);
+            _chat.SelectSpeedTier(supported[index]);
             RefreshModelPicker();
         };
         OpenModelMenuButton.Click += (_, _) =>
@@ -727,6 +747,14 @@ public partial class ChatPanel : UserControl
                 ? $"{chosen.Model} · {ReasoningEffortLabel(chosen.Effort)} — {chosen.Reason}"
                 : HubStrings.Get("ChatRoutingAuto")
             : null);
+        var speedTier = _chat.ActiveSpeedTier;
+        var showSpeedBadge = selected is not null && speedTier != ChatSpeedTiers.Default;
+        SelectedSpeedBadge.IsVisible = showSpeedBadge;
+        SelectedSpeedBadge.Classes.Set("flex", speedTier == ChatSpeedTiers.Flex);
+        SelectedSpeedBadge.Classes.Set("fast", speedTier == ChatSpeedTiers.Fast);
+        SelectedSpeedBadge.Classes.Set("ultrafast", speedTier == ChatSpeedTiers.Ultrafast);
+        SelectedSpeedLabel.Text = showSpeedBadge ? HubStrings.Get(SpeedTierLabelKey(speedTier)) : "";
+        ToolTip.SetTip(SelectedSpeedBadge, showSpeedBadge ? HubStrings.Get(SpeedTierHintKey(speedTier)) : null);
         ModelPicker.IsEnabled = choices.Length > 0;
         ToolTip.SetTip(ModelPicker, selected is null
             ? HubStrings.Get("NoAvailableChatModels")
@@ -778,15 +806,34 @@ public partial class ChatPanel : UserControl
                 : 0;
             ReasoningEffortLabels.Children.Clear();
             ReasoningEffortLabels.ColumnDefinitions.Clear();
+            var activeReasoningLevel = supportsReasoning
+                ? Math.Clamp(_chat.ActiveReasoningLevel, 0, efforts.Length - 1)
+                : -1;
             for (var index = 0; index < efforts.Length; index++)
             {
-                ReasoningEffortLabels.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-                var caption = new TextBlock
+                // Edge columns are 1* and interior columns 2* so tick centers land on exact i/(N-1) slider fractions.
+                var weight = efforts.Length > 2 && index > 0 && index < efforts.Length - 1 ? 2 : 1;
+                ReasoningEffortLabels.ColumnDefinitions.Add(new ColumnDefinition(weight, GridUnitType.Star));
+                var targetLevel = index;
+                var caption = new Button
                 {
-                    Text = ReasoningEffortLabel(efforts[index]),
+                    Content = ReasoningEffortLabel(efforts[index]),
                     HorizontalAlignment = index == 0 ? HorizontalAlignment.Left
                         : index == efforts.Length - 1 ? HorizontalAlignment.Right : HorizontalAlignment.Center,
-                    Classes = { "model-level-caption" },
+                    Classes = { "model-level-caption-btn" },
+                    IsEnabled = supportsReasoning && !routingAuto,
+                };
+                if (index == activeReasoningLevel && !routingAuto)
+                {
+                    caption.FontWeight = FontWeight.SemiBold;
+                    caption.Bind(Button.ForegroundProperty, new DynamicResourceExtension("Hub.Accent"));
+                }
+                caption.Click += (_, _) =>
+                {
+                    if (AutoReasoningSwitch.IsChecked == true) return;
+                    _chat.SelectReasoningLevel(targetLevel);
+                    UpdateModelSettingsPopup();
+                    RefreshModelPicker();
                 };
                 Grid.SetColumn(caption, index);
                 ReasoningEffortLabels.Children.Add(caption);
@@ -809,6 +856,7 @@ public partial class ChatPanel : UserControl
                 ReasoningEffortLabel(actual));
             ToolTip.SetTip(ReasoningLevelSlider, actual);
         }
+        UpdateSpeedSettingsSection(hasModel);
         ModelSettingsSelectedModel.Text = selected is null
             ? HubStrings.Get("NoAvailableChatModels")
             : selected.Provider.Name + " · " + selected.ModelName;
@@ -1629,6 +1677,180 @@ public partial class ChatPanel : UserControl
         ToolApprovalModes.Full => "ToolApprovalFullHint",
         _ => "ToolApprovalAskHint",
     };
+
+    private bool _updatingSpeedControls;
+
+    private void UpdateSpeedSettingsSection(bool hasModel)
+    {
+        var supported = hasModel ? _chat.SupportedSpeedTiers : Array.Empty<string>();
+        var supportsSpeed = supported.Count > 1;
+        SpeedSettingsPanel.IsVisible = supportsSpeed;
+        if (!supportsSpeed)
+        {
+            ToolTip.SetTip(SpeedTierSlider, null);
+            return;
+        }
+
+        var active = _chat.ActiveSpeedTier;
+        var activeIndex = 0;
+        for (var i = 0; i < supported.Count; i++)
+        {
+            if (supported[i] == active)
+            {
+                activeIndex = i;
+                break;
+            }
+        }
+
+        _updatingSpeedControls = true;
+        try
+        {
+            SpeedTierSlider.Minimum = 0;
+            SpeedTierSlider.Maximum = supported.Count - 1;
+            SpeedTierSlider.TickFrequency = 1;
+            SpeedTierSlider.Value = activeIndex;
+            SpeedTierSlider.Classes.Set("flex", active == ChatSpeedTiers.Flex);
+            SpeedTierSlider.Classes.Set("default", active == ChatSpeedTiers.Default);
+            SpeedTierSlider.Classes.Set("fast", active == ChatSpeedTiers.Fast);
+            SpeedTierSlider.Classes.Set("ultrafast", active == ChatSpeedTiers.Ultrafast);
+
+            SpeedTierLabels.Children.Clear();
+            SpeedTierLabels.ColumnDefinitions.Clear();
+            for (var index = 0; index < supported.Count; index++)
+            {
+                var tier = supported[index];
+                // Edge columns are 1* and interior columns 2* so tick centers land on exact i/(N-1) slider fractions.
+                var weight = supported.Count > 2 && index > 0 && index < supported.Count - 1 ? 2 : 1;
+                SpeedTierLabels.ColumnDefinitions.Add(new ColumnDefinition(weight, GridUnitType.Star));
+                var caption = new Button
+                {
+                    Content = HubStrings.Get(SpeedTierLabelKey(tier)),
+                    HorizontalAlignment = index == 0 ? HorizontalAlignment.Left
+                        : index == supported.Count - 1 ? HorizontalAlignment.Right : HorizontalAlignment.Center,
+                    Classes = { "model-level-caption-btn" },
+                };
+                ToolTip.SetTip(caption, HubStrings.Get(SpeedTierHintKey(tier)));
+                if (tier == active)
+                {
+                    caption.FontWeight = FontWeight.SemiBold;
+                    caption.Bind(Button.ForegroundProperty,
+                        new DynamicResourceExtension(SpeedTierAccentResource(tier)));
+                }
+                caption.Click += (_, _) =>
+                {
+                    _chat.SelectSpeedTier(tier);
+                    RefreshModelPicker();
+                };
+                Grid.SetColumn(caption, index);
+                SpeedTierLabels.Children.Add(caption);
+            }
+        }
+        finally
+        {
+            _updatingSpeedControls = false;
+        }
+
+        SpeedTierTitleIcon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty,
+            new DynamicResourceExtension(SpeedTierAccentResource(active)));
+        SpeedTierLevelLabel.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("ChatSpeedLevelFormat"), HubStrings.Get(SpeedTierLabelKey(active)));
+        ToolTip.SetTip(SpeedTierSlider, HubStrings.Get(SpeedTierHintKey(active)));
+
+        var badgeKey = SpeedTierCostBadgeKey(active);
+        SpeedTierCostPill.IsVisible = badgeKey is not null;
+        SpeedTierCostPill.Classes.Set("fast", active == ChatSpeedTiers.Fast);
+        SpeedTierCostPill.Classes.Set("ultrafast", active == ChatSpeedTiers.Ultrafast);
+        if (badgeKey is not null)
+        {
+            SpeedTierCostBadge.Text = HubStrings.Get(badgeKey);
+            SpeedTierCostBadge.Bind(TextBlock.ForegroundProperty,
+                new DynamicResourceExtension(SpeedTierAccentResource(active)));
+        }
+    }
+
+    private static string SpeedTierAccentResource(string tier) => ChatSpeedTiers.Normalize(tier) switch
+    {
+        ChatSpeedTiers.Flex => "Hub.SuccessText",
+        ChatSpeedTiers.Fast => "Hub.WarningText",
+        ChatSpeedTiers.Ultrafast => "Hub.DangerText",
+        _ => "Hub.Accent",
+    };
+
+    internal static string SpeedTierLabelKey(string tier) => ChatSpeedTiers.Normalize(tier) switch
+    {
+        ChatSpeedTiers.Flex => "SpeedTierFlex",
+        ChatSpeedTiers.Fast => "SpeedTierFast",
+        ChatSpeedTiers.Ultrafast => "SpeedTierUltrafast",
+        _ => "SpeedTierDefault",
+    };
+
+    internal static string SpeedTierHintKey(string tier) => ChatSpeedTiers.Normalize(tier) switch
+    {
+        ChatSpeedTiers.Flex => "SpeedTierFlexHint",
+        ChatSpeedTiers.Fast => "SpeedTierFastHint",
+        ChatSpeedTiers.Ultrafast => "SpeedTierUltrafastHint",
+        _ => "SpeedTierDefaultHint",
+    };
+
+    internal static string? SpeedTierCostBadgeKey(string tier) => ChatSpeedTiers.Normalize(tier) switch
+    {
+        ChatSpeedTiers.Fast => "SpeedTierHighCostBadge",
+        ChatSpeedTiers.Ultrafast => "SpeedTierUltraCostBadge",
+        _ => null,
+    };
+
+    private bool TryHandleSpeedSlashCommand(string text)
+    {
+        if (!text.StartsWith('/')) return false;
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return false;
+
+        string? requested = null;
+        var command = parts[0].ToLowerInvariant();
+        if (command == "/fast" && parts.Length == 1)
+        {
+            requested = ChatSpeedTiers.Fast;
+        }
+        else if (command == "/ultrafast" && parts.Length == 1)
+        {
+            requested = ChatSpeedTiers.Ultrafast;
+        }
+        else if (command == "/speed")
+        {
+            if (parts.Length == 1)
+            {
+                StatusMessage?.Invoke(UserFeedback.Info(HubStrings.Get("SpeedTierCommandUsage"), "speed-tier-command"));
+                return true;
+            }
+            if (!ChatSpeedTiers.TryParse(parts[1], out var parsed))
+            {
+                StatusMessage?.Invoke(UserFeedback.Warning(HubStrings.Get("SpeedTierCommandUsage"), "speed-tier-command"));
+                return true;
+            }
+            requested = parsed;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!_chat.IsSpeedTierSupported(requested))
+        {
+            var msg = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("SpeedTierCommandUnsupportedFormat"),
+                HubStrings.Get(SpeedTierLabelKey(requested)));
+            StatusMessage?.Invoke(UserFeedback.Warning(msg, "speed-tier-command"));
+            return true;
+        }
+
+        _chat.SelectSpeedTier(requested);
+        RefreshComposerChoices();
+        var changed = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("SpeedTierChangedFormat"),
+            HubStrings.Get(SpeedTierLabelKey(requested)));
+        StatusMessage?.Invoke(UserFeedback.Info(changed, "speed-tier-command"));
+        return true;
+    }
 
     private MenuFlyout BuildComposerMenu()
     {
@@ -5071,6 +5293,11 @@ public partial class ChatPanel : UserControl
         // A picture with no question under it is a message: "look at this" is what people actually send, and a
         // send button that stays grey because the box is empty would say otherwise.
         if (text.Length == 0 && _pendingPictures.Count == 0) return;
+        if (_pendingPictures.Count == 0 && TryHandleSpeedSlashCommand(text))
+        {
+            InputBox.Text = "";
+            return;
+        }
         if (_chat.SelectedChatModel is null)
         {
             // One sentence, one door: the pre-check and the refusal behind <c>TryEnqueueSend</c> both come through

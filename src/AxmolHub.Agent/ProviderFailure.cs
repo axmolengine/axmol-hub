@@ -82,7 +82,8 @@ public static class ProviderFailure
             || AuthenticationFailed(exception) || QuotaExhausted(exception.Message)
             || exception is ProviderResponseException coded && QuotaExhausted(coded.ErrorCode)
             || Core.ContextOverflow.IsContextOverflow(exception.Message)
-            || ChatPipeline.DeclinedStreamUsage(exception.Message)) return false;
+            || ChatPipeline.DeclinedStreamUsage(exception.Message)
+            || ChatPipeline.DeclinedSpeedTier(exception.Message)) return false;
         if (StatusOf(exception) is { } status) return RetryableStatus(status);
         if (exception is ProviderResponseException stream)
             // An endpoint error without an HTTP status is transient unless it explicitly identifies a
