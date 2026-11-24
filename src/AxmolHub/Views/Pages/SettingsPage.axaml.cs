@@ -85,11 +85,11 @@ public partial class SettingsPage : UserControl
     private bool _addingProvider;
     private Task? _addProviderCommitTask;
 
-    /// <summary>Whether an "add model" draft row is open inside a provider.</summary>
-    private bool _addingModel;
-
-    /// <summary>The name of the model being edited (context-window draft), or <c>null</c> when none.</summary>
+    /// <summary>The name of the model being edited, or <c>null</c> for an add draft or no model draft.</summary>
     private string? _editingModelName;
+
+    // Keep the live row across provider rebuilds so uncommitted token and reasoning inputs survive.
+    private Control? _modelDraftRow;
 
     /// <summary>True while any draft is open, which suspends the group rebuild (see the note above).</summary>
     private bool DraftOpen => _editingProviderId is not null || _addingProvider || _modelDraftProviderId is not null;
@@ -1365,6 +1365,15 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private void RebuildProviderGroups()
     {
+        if (_editingModelName is { } name && _chat?.Providers
+                .FirstOrDefault(provider => provider.Id == _modelDraftProviderId)?.Models
+                .Any(model => string.Equals(model.Name, name, StringComparison.OrdinalIgnoreCase)) != true)
+        {
+            ClearModelDraft();
+        }
+
+        // A surviving draft is inserted into the rebuilt list, not recreated from saved settings.
+        if (_modelDraftRow is { Parent: Panel list } draft) list.Children.Remove(draft);
         ProviderGroupList.Children.Clear();
         if (_chat is null) return;
 
@@ -2013,10 +2022,15 @@ public partial class SettingsPage : UserControl
     {
         _editingProviderId = provider.Id;
         _addingProvider = false;
-        _modelDraftProviderId = null;
-        _addingModel = false;
-        _editingModelName = null;
+        ClearModelDraft();
         RebuildProviderGroups();
+    }
+
+    private void ClearModelDraft()
+    {
+        _modelDraftProviderId = null;
+        _editingModelName = null;
+        _modelDraftRow = null;
     }
 
     /// <summary>
@@ -2032,9 +2046,7 @@ public partial class SettingsPage : UserControl
         var wasOpen = DraftOpen;
         _editingProviderId = null;
         _addingProvider = false;
-        _modelDraftProviderId = null;
-        _addingModel = false;
-        _editingModelName = null;
+        ClearModelDraft();
         if (wasOpen || _pendingReload)
         {
             _pendingReload = false;
@@ -2200,8 +2212,7 @@ public partial class SettingsPage : UserControl
         // The model draft belongs only to its provider — without the id gate every group would render a copy.
         // Add drafts lead the list; an edit draft replaces its model row in place. _modelDraftProviderId answers
         // "whose model draft is this"; it is not _editingProviderId, which owns the provider edit form.
-        var modelDraftOpen = _modelDraftProviderId == provider.Id
-            && (_addingModel || _editingModelName is not null);
+        var modelDraftOpen = _modelDraftProviderId == provider.Id;
         if (provider.Models.Count == 0 && !modelDraftOpen)
         {
             // Empty state is one quiet line. The toolbar already carries ＋ 手动添加 and 🔍 浏览目录 —
@@ -2225,29 +2236,20 @@ public partial class SettingsPage : UserControl
         }
 
         var editingModel = modelDraftOpen && _editingModelName is not null;
-        var editDraftInserted = false;
         if (modelDraftOpen && !editingModel)
         {
-            listContent.Children.Add(BuildModelDraftRow(provider));
+            listContent.Children.Add(_modelDraftRow ??= BuildModelDraftRow(provider));
         }
 
         foreach (var model in provider.Models)
         {
-            if (editingModel && string.Equals(model.Name, _editingModelName, StringComparison.Ordinal))
+            if (editingModel && string.Equals(model.Name, _editingModelName, StringComparison.OrdinalIgnoreCase))
             {
-                listContent.Children.Add(BuildModelDraftRow(provider));
-                editDraftInserted = true;
+                listContent.Children.Add(_modelDraftRow ??= BuildModelDraftRow(provider));
                 continue;
             }
 
             listContent.Children.Add(BuildModelRow(provider, model));
-        }
-
-        // Keep a stale edit draft reachable if the model disappeared during a refresh; normally edits replace
-        // exactly the matching model row above.
-        if (editingModel && !editDraftInserted)
-        {
-            listContent.Children.Insert(0, BuildModelDraftRow(provider));
         }
 
         section.Children.Add(listContent);
@@ -2425,9 +2427,9 @@ public partial class SettingsPage : UserControl
     /// <b>model</b>-draft id only — the group's header stays collapsed.</summary>
     private void OpenModelEditDraft(ModelProvider provider, ProviderModel model)
     {
+        ClearModelDraft();
         _modelDraftProviderId = provider.Id;
         _editingModelName = model.Name;
-        _addingModel = false;
         RebuildProviderGroups();
     }
 
@@ -2864,8 +2866,8 @@ public partial class SettingsPage : UserControl
 
         // The draft row replaces the old PromptWindow modal: it stays where the list is, and it is always the
         // first row so the input never scrolls out from under the person who just clicked "add".
+        ClearModelDraft();
         _modelDraftProviderId = provider.Id;
-        _addingModel = true;
         RebuildProviderGroups();
         await Task.CompletedTask;
     }
@@ -3110,8 +3112,7 @@ public partial class SettingsPage : UserControl
     {
         _addingProvider = true;
         _editingProviderId = null;
-        _modelDraftProviderId = null;
-        _addingModel = false;
+        ClearModelDraft();
         RebuildProviderGroups();
     }
 
