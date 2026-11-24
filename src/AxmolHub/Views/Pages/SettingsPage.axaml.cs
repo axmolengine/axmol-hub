@@ -172,6 +172,7 @@ public partial class SettingsPage : UserControl
         WebSearchCheck.IsCheckedChanged += (_, _) => OnWebSearchChanged();
         ShowThinkingCheck.IsCheckedChanged += (_, _) => OnShowThinkingChanged();
         CommitSummaryPrefixesBox.LostFocus += (_, _) => OnCommitSummaryPrefixesChanged();
+        WireMacSystemPermissions();
         WireProviders();
         InitializeCategories();
 
@@ -181,8 +182,16 @@ public partial class SettingsPage : UserControl
         // the user pressed 「检查更新」: it says where the bytes are going, and it turns its own button into the
         // restart once they have landed. Hooked while the page is on screen only: a cached page that has been
         // navigated away shouldn't keep rendering.
-        AttachedToVisualTree += (_, _) => HookUpdateService();
-        DetachedFromVisualTree += (_, _) => UnhookUpdateService();
+        AttachedToVisualTree += (_, _) =>
+        {
+            HookUpdateService();
+            HookMacSystemPermissions();
+        };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            UnhookUpdateService();
+            UnhookMacSystemPermissions();
+        };
 
         // DataRootNote's copy goes through XAML's {DynamicResource}; **don't** assign it imperatively here:
         // an imperative value won't change on language switch, and the self-check reads this control's text to judge whether localization works.
@@ -252,6 +261,11 @@ public partial class SettingsPage : UserControl
             var shown = candidate == key;
             row.IsChecked = shown;
             pane.IsVisible = shown;
+        }
+
+        if (key == "permission")
+        {
+            RefreshMacSystemPermissions();
         }
 
         // Every group shares the one detail scroll, so an offset left over from the bottom of a long provider
@@ -334,6 +348,7 @@ public partial class SettingsPage : UserControl
             // Re-render the update card from the last known check: this re-localizes the status line
             // on a language switch (it is written imperatively) and reflects a check the shell already
             // ran at startup (the update dot and this card share UpdateService.Last).
+            RefreshMacSystemPermissions();
             RenderUpdateState();
             ReloadProviders();
         }
@@ -652,6 +667,117 @@ public partial class SettingsPage : UserControl
     private void RevokeAllTrustedComputerApps()
     {
         if (_chat.RevokeAllTrustedComputerApps()) RebuildTrustedGrants();
+    }
+
+    private bool _macPermissionsHooked;
+    private bool _macPermissionResetting;
+
+    private void WireMacSystemPermissions()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        MacSystemPermissionsGroup.IsVisible = true;
+        MacPermissionsRecheckButton.Click += (_, _) =>
+        {
+            SetMacPermissionsStatus(false, "");
+            RefreshMacSystemPermissions();
+        };
+        MacScreenSettingsButton.Click += async (_, _) => await OpenMacPermissionSettingsAsync(MacOsComputerPermission.ScreenRecording);
+        MacAccessibilitySettingsButton.Click += async (_, _) => await OpenMacPermissionSettingsAsync(MacOsComputerPermission.Accessibility);
+        MacScreenResetButton.Click += async (_, _) => await ResetMacPermissionAsync(MacOsComputerPermission.ScreenRecording);
+        MacAccessibilityResetButton.Click += async (_, _) => await ResetMacPermissionAsync(MacOsComputerPermission.Accessibility);
+    }
+
+    private void HookMacSystemPermissions()
+    {
+        if (!OperatingSystem.IsMacOS() || _macPermissionsHooked) return;
+        _macPermissionsHooked = true;
+        MacOsComputerPermissions.Changed += OnMacPermissionsChanged;
+        RefreshMacSystemPermissions();
+    }
+
+    private void UnhookMacSystemPermissions()
+    {
+        if (!_macPermissionsHooked) return;
+        _macPermissionsHooked = false;
+        MacOsComputerPermissions.Changed -= OnMacPermissionsChanged;
+    }
+
+    private void OnMacPermissionsChanged() => Dispatcher.UIThread.Post(RefreshMacSystemPermissions);
+
+    private void RefreshMacSystemPermissions()
+    {
+        if (!OperatingSystem.IsMacOS() || MacSystemPermissionsGroup is null) return;
+        MacSystemPermissionsGroup.IsVisible = true;
+        UpdateMacPermissionState(MacScreenPermissionState, MacOsComputerPermissions.IsGranted(MacOsComputerPermission.ScreenRecording));
+        UpdateMacPermissionState(MacAccessibilityPermissionState, MacOsComputerPermissions.IsGranted(MacOsComputerPermission.Accessibility));
+    }
+
+    private static void UpdateMacPermissionState(TextBlock label, bool granted)
+    {
+        label.Text = HubStrings.Get(granted ? "MacPermissionGranted" : "MacPermissionNotGranted");
+        label.Bind(TextBlock.ForegroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
+                granted ? "Hub.Success" : "Hub.TextTertiary"));
+    }
+
+    private async Task OpenMacPermissionSettingsAsync(MacOsComputerPermission permission)
+    {
+        if (!await MacOsComputerPermissions.OpenSystemSettingsAsync(permission))
+            SetMacPermissionsStatus(true, HubStrings.Get("MacComputerSettingsFailed"));
+    }
+
+    private async Task ResetMacPermissionAsync(MacOsComputerPermission permission)
+    {
+        if (!OperatingSystem.IsMacOS() || _macPermissionResetting) return;
+        _macPermissionResetting = true;
+        MacScreenResetButton.IsEnabled = false;
+        MacAccessibilityResetButton.IsEnabled = false;
+        SetMacPermissionsStatus(false, HubStrings.Get("MacPermissionResetting"));
+        try
+        {
+            var result = await MacOsComputerPermissions.ResetAsync(permission);
+            var name = HubStrings.Get(permission == MacOsComputerPermission.ScreenRecording
+                ? "MacPermissionScreenRecording" : "MacPermissionAccessibility");
+            if (result.NotBundled)
+            {
+                SetMacPermissionsStatus(true, HubStrings.Get("MacPermissionResetNotBundled"));
+                return;
+            }
+            if (!result.Succeeded)
+            {
+                SetMacPermissionsStatus(true, string.Format(
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("MacPermissionResetFailedFormat"),
+                    name, result.Error ?? ""));
+                return;
+            }
+
+            // Re-register with TCC and open the matching System Settings pane so the user can re-enable access.
+            MacOsComputerPermissions.Request(permission);
+            RefreshMacSystemPermissions();
+            var opened = await MacOsComputerPermissions.OpenSystemSettingsAsync(permission);
+            SetMacPermissionsStatus(!opened, opened
+                ? string.Format(
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get("MacPermissionResetDoneFormat"),
+                    name, result.BundleIdentifier)
+                : HubStrings.Get("MacComputerSettingsFailed"));
+        }
+        finally
+        {
+            _macPermissionResetting = false;
+            MacScreenResetButton.IsEnabled = true;
+            MacAccessibilityResetButton.IsEnabled = true;
+            RefreshMacSystemPermissions();
+        }
+    }
+
+    private void SetMacPermissionsStatus(bool error, string text)
+    {
+        MacPermissionsStatusLine.Text = text;
+        MacPermissionsStatusLine.Classes.Set("muted", !error);
+        MacPermissionsStatusLine.Classes.Set("danger", error);
+        MacPermissionsStatusLine.IsVisible = text.Length > 0;
     }
 
     /// <summary>The <c>Tag</c> a ledger row carries, one per list. What the self-checks count a row by lives here,

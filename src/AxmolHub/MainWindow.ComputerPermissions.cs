@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace AxmolHub;
 
 public partial class MainWindow
@@ -60,20 +58,8 @@ public partial class MainWindow
 
     private async Task OpenMacComputerSettingsAsync(MacOsComputerPermission permission)
     {
-        var pane = permission == MacOsComputerPermission.ScreenRecording ? "Privacy_ScreenCapture" : "Privacy_Accessibility";
-        try
-        {
-            var start = new ProcessStartInfo("/usr/bin/open") { UseShellExecute = false };
-            start.ArgumentList.Add("x-apple.systempreferences:com.apple.preference.security?" + pane);
-            using var process = Process.Start(start);
-            if (process is null) throw new InvalidOperationException("System Settings did not start.");
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0) throw new InvalidOperationException("System Settings did not open.");
-            // The window's Activated event rechecks on return. It never resumes the tool call.
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
+        // The window's Activated event rechecks on return. It never resumes the tool call.
+        if (!await MacOsComputerPermissions.OpenSystemSettingsAsync(permission))
             MacComputerPermissionText.Text = HubStrings.Get("MacComputerSettingsFailed");
-        }
     }
 }

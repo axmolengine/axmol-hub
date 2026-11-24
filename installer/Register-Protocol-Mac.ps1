@@ -1,6 +1,10 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$PackagePath
+    [string]$PackagePath,
+    # Optional code-signing identity for local macOS builds (self-signed or Apple Development).
+    # Signs the expanded .app bundle before re-flattening so TCC (Screen Recording / Accessibility)
+    # and Keychain grants survive rebuilds instead of changing the designated requirement to a cdhash.
+    [string]$SignIdentity = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -37,6 +41,18 @@ try {
             & /usr/libexec/PlistBuddy -c $taskCommand $taskPlist
             if ($LASTEXITCODE -ne 0) { throw "PlistBuddy failed: $taskCommand" }
         }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($SignIdentity)) {
+        $taskAppBundle = Split-Path -Parent (Split-Path -Parent $taskPlist)
+        # Hardened runtime and timestamping are intentionally omitted for local certificates:
+        # self-signed certificates cannot use Apple's timestamp server, and local builds are not notarized.
+        & /usr/bin/codesign --force --deep --sign $SignIdentity --timestamp=none $taskAppBundle
+        if ($LASTEXITCODE -ne 0) { throw "codesign failed to sign $taskAppBundle with identity '$SignIdentity'." }
+        & /usr/bin/codesign --verify --deep --strict $taskAppBundle
+        if ($LASTEXITCODE -ne 0) { throw "codesign verification failed for $taskAppBundle." }
+        Write-Host "Signed macOS app bundle with identity: $SignIdentity"
+        & /usr/bin/codesign -d -r- $taskAppBundle 2>&1 | Select-String -Pattern '^designated' | ForEach-Object { Write-Host $_.Line }
     }
 
     # Fully expanded payloads must be archived again, not stored as directories in the XAR.

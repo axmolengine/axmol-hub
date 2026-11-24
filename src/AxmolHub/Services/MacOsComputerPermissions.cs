@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia.Threading;
 using AxmolHub.Core;
@@ -12,7 +13,13 @@ internal enum MacOsComputerPermission
     Accessibility = 2,
 }
 
-/// <summary>On-demand TCC requests. A missing permission ends the current call; no input is queued for replay.</summary>
+internal sealed record MacOsPermissionResetResult(
+    bool Succeeded,
+    string? BundleIdentifier,
+    bool NotBundled,
+    string? Error);
+
+/// <summary>On-demand TCC requests, live status checks, and per-service reset helpers for macOS.</summary>
 internal static class MacOsComputerPermissions
 {
     private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
@@ -64,7 +71,7 @@ internal static class MacOsComputerPermissions
     /// "already asked" flag is what left a cleared record unable to prompt again until Hub was restarted.</summary>
     internal static void Request(MacOsComputerPermission permission)
     {
-        if (permission == MacOsComputerPermission.None || IsGranted(permission)) return;
+        if (!OperatingSystem.IsMacOS() || permission == MacOsComputerPermission.None || IsGranted(permission)) return;
         var slot = permission == MacOsComputerPermission.ScreenRecording ? 0 : 1;
         var now = Environment.TickCount64;
         var last = Volatile.Read(ref LastRequested[slot]);
@@ -85,8 +92,95 @@ internal static class MacOsComputerPermissions
             ? "MacComputerScreenMissing" : "MacComputerAccessibilityMissing", HubTexts.EnglishLanguage)
            + " " + HubTexts.Get("MacComputerPermissionRetry", HubTexts.EnglishLanguage);
 
-    private static bool IsGranted(MacOsComputerPermission permission)
-        => permission == MacOsComputerPermission.ScreenRecording ? CGPreflightScreenCaptureAccess() : AXIsProcessTrusted();
+    internal static bool IsGranted(MacOsComputerPermission permission)
+    {
+        if (!OperatingSystem.IsMacOS() || permission == MacOsComputerPermission.None) return false;
+        return permission == MacOsComputerPermission.ScreenRecording
+            ? CGPreflightScreenCaptureAccess()
+            : AXIsProcessTrusted();
+    }
+
+    internal static string? CurrentBundleIdentifier()
+    {
+        if (!OperatingSystem.IsMacOS()) return null;
+        MacUserNotifications.Prepare();
+        return MacUserNotifications.Bundled ? MacUserNotifications.BundleIdentifier : null;
+    }
+
+    internal static async Task<bool> OpenSystemSettingsAsync(MacOsComputerPermission permission)
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+        var pane = permission == MacOsComputerPermission.ScreenRecording ? "Privacy_ScreenCapture" : "Privacy_Accessibility";
+        try
+        {
+            var start = new ProcessStartInfo("/usr/bin/open") { UseShellExecute = false };
+            start.ArgumentList.Add("x-apple.systempreferences:com.apple.preference.security?" + pane);
+            using var process = Process.Start(start);
+            if (process is null) return false;
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Resets a single TCC service record for the running .app bundle via <c>tccutil</c>.
+    /// Uses granular service names (<c>ScreenCapture</c> / <c>Accessibility</c>) rather than <c>All</c> so
+    /// unrelated grants such as Notifications or Folders stay intact.</summary>
+    internal static async Task<MacOsPermissionResetResult> ResetAsync(MacOsComputerPermission permission)
+    {
+        if (!OperatingSystem.IsMacOS())
+            return new(false, null, NotBundled: true, Error: "macOS only.");
+
+        var bundleId = CurrentBundleIdentifier();
+        if (string.IsNullOrWhiteSpace(bundleId))
+            return new(false, null, NotBundled: true, Error: null);
+
+        var service = permission == MacOsComputerPermission.ScreenRecording ? "ScreenCapture" : "Accessibility";
+        try
+        {
+            var start = new ProcessStartInfo("/usr/bin/tccutil")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            start.ArgumentList.Add("reset");
+            start.ArgumentList.Add(service);
+            start.ArgumentList.Add(bundleId);
+
+            using var process = Process.Start(start);
+            if (process is null)
+                return new(false, bundleId, false, "Could not start tccutil.");
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            var stderr = (await stderrTask).Trim();
+            var stdout = (await stdoutTask).Trim();
+
+            if (process.ExitCode != 0)
+            {
+                var detail = stderr.Length > 0 ? stderr
+                    : stdout.Length > 0 ? stdout
+                    : $"tccutil exited with code {process.ExitCode}.";
+                return new(false, bundleId, false, detail);
+            }
+
+            // Clear the prompt cooldown so an immediate follow-up Request() re-registers the app with TCC.
+            var slot = permission == MacOsComputerPermission.ScreenRecording ? 0 : 1;
+            Volatile.Write(ref LastRequested[slot], 0);
+            Changed?.Invoke();
+            return new(true, bundleId, false, null);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException)
+        {
+            return new(false, bundleId, false, ex.Message);
+        }
+    }
 
     private static void RequestAccessibility()
     {

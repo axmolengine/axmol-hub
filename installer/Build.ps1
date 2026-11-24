@@ -1,5 +1,5 @@
 param(
-    [string]$Runtime = 'win-x64',
+    [string]$Runtime,
     [string]$Version,
     [string]$Channel,
     [string]$PackId,
@@ -12,12 +12,25 @@ param(
     [string]$SigningThumbprint,
     [ValidatePattern('\Ahttps?://[a-zA-Z0-9.-]+(?::[0-9]+)?(?:/[a-zA-Z0-9._~/-]*)?\z')]
     [string]$TimestampUrl,
+    # Optional macOS code-signing identity (subject name, SHA-1, or 'auto' for the first valid
+    # code-signing identity in the login keychain). Local non-CI builds also read HUB_MAC_SIGN_IDENTITY.
+    [string]$MacSignIdentity,
     # Delta packages presuppose the previous version's .nupkg already present in the output
     # directory at pack time. Publish.ps1 first fetches it with `vpk download github`, then
     # calls this script with -NoClean; the default still cleans, because releases.<channel>.json is a single index and leftover old versions would be pulled into the release content.
     [switch]$NoClean
 )
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Runtime)) {
+    $taskArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $Runtime = if ($IsMacOS) {
+        if ($taskArch -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'osx-arm64' } else { 'osx-x64' }
+    } elseif ($IsLinux) {
+        if ($taskArch -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'linux-arm64' } else { 'linux-x64' }
+    } else {
+        if ($taskArch -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'win-arm64' } else { 'win-x64' }
+    }
+}
 if ([bool]$SigningThumbprint -ne [bool]$TimestampUrl) { throw 'Signing requires both -SigningThumbprint and -TimestampUrl.' }
 if ($SigningThumbprint -and (-not $IsWindows -or $Runtime -notlike 'win-*')) { throw 'USB Token signing requires a Windows host and target.' }
 if ($SigningThumbprint -and -not (Test-Path -LiteralPath "Cert:\CurrentUser\My\$SigningThumbprint")) {
@@ -152,7 +165,21 @@ if ($Runtime -like 'linux-*') {
     $taskArguments += @('--categories', 'Development;Utility')
 }
 $taskMacPlist = $null
+$taskMacLocalSignIdentity = ''
 if ($Runtime -like 'osx-*') {
+    $taskIsCi = $env:CI -in @('true', '1') -or $env:GITHUB_ACTIONS -eq 'true'
+    $taskMacSignIdentity = $MacSignIdentity
+    if ([string]::IsNullOrWhiteSpace($taskMacSignIdentity) -and -not $taskIsCi -and -not [string]::IsNullOrWhiteSpace($env:HUB_MAC_SIGN_IDENTITY)) {
+        $taskMacSignIdentity = $env:HUB_MAC_SIGN_IDENTITY.Trim()
+    }
+    if ($taskMacSignIdentity -eq 'auto') {
+        $taskFoundIdentity = & /usr/bin/security find-identity -v -p codesigning | Select-String -Pattern '"([^"]+)"' | Select-Object -First 1
+        if (-not $taskFoundIdentity) {
+            throw 'No code-signing identity found in the login keychain. Create a Code Signing certificate in Keychain Access -> Certificate Assistant -> Create a Certificate..., or omit -MacSignIdentity.'
+        }
+        $taskMacSignIdentity = [regex]::Match($taskFoundIdentity.Line, '"([^"]+)"').Groups[1].Value
+    }
+
     # The same custom plist goes into both the installer and Velopack's update payload. Editing only the .pkg after
     # `vpk pack` leaves the .nupkg used by in-app updates without the URL scheme.
     # The bundle id is macOS's identity for this app: TCC (screen recording / accessibility), notification
@@ -174,6 +201,19 @@ if ($Runtime -like 'osx-*') {
     # into Info.plist) and aborts with "Cannot use 'bundleId' and 'plist' options together, please choose one." before
     # packing anything. The plist is the one we need, so the identity travels in it as __BUNDLE_ID__ above.
     $taskArguments += @('--plist', $taskMacPlist)
+
+    if (-not [string]::IsNullOrWhiteSpace($taskMacSignIdentity)) {
+        if ($taskMacSignIdentity -like 'Developer ID Application:*') {
+            # Developer ID builds use Velopack's hardened-runtime signing with .NET JIT entitlements so both
+            # the .pkg and the .nupkg update payload carry notarization-ready signatures.
+            $taskArguments += @('--signAppIdentity', $taskMacSignIdentity, '--signEntitlements', (Join-Path $PSScriptRoot 'HubMacEntitlements.plist'))
+        }
+        else {
+            # Local self-signed / Apple Development certificates cannot use Apple's secure timestamp service.
+            # Sign the .app bundle offline during Register-Protocol-Mac.ps1 with --timestamp=none instead.
+            $taskMacLocalSignIdentity = $taskMacSignIdentity
+        }
+    }
 }
 try {
     & $taskVpk @taskArguments
@@ -211,7 +251,7 @@ $taskSetup = switch -Wildcard ($Runtime) {
 }
 if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput for $Runtime, found $($taskSetup.Count)." }
 if ($Runtime -like 'osx-*') {
-    & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
+    & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName -SignIdentity $taskMacLocalSignIdentity
 }
 $taskSetupName = Get-HubAssetName -AssetPrefix $taskManifest.assetPrefix -Version $Version -Runtime $Runtime `
     -Extension $taskSetup[0].Extension -ReleaseAssetNames:$ReleaseAssetNames

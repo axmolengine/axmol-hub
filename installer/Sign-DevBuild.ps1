@@ -46,9 +46,16 @@ if (-not $Identity) {
 # toolchain, the output path or the build's contents change, which is exactly what the cdhash used to do.
 # Hardened runtime is left off on purpose — it needs JIT entitlements before a .NET host can start at all, and a
 # dev build is not the artifact that gets notarized.
-& /usr/bin/codesign --force --sign $Identity --identifier AxmolHub --timestamp=none $target
-if ($LASTEXITCODE -ne 0) { throw "codesign could not sign with $Identity." }
-& /usr/bin/codesign --verify --strict $target
+# When signing a .app bundle, preserve its Info.plist CFBundleIdentifier and sign deeply instead of overriding it.
+if ($target.EndsWith('.app', [StringComparison]::OrdinalIgnoreCase)) {
+    & /usr/bin/codesign --force --deep --sign $Identity --timestamp=none $target
+    if ($LASTEXITCODE -ne 0) { throw "codesign could not sign $target with $Identity." }
+    & /usr/bin/codesign --verify --deep --strict $target
+} else {
+    & /usr/bin/codesign --force --sign $Identity --identifier AxmolHub --timestamp=none $target
+    if ($LASTEXITCODE -ne 0) { throw "codesign could not sign with $Identity." }
+    & /usr/bin/codesign --verify --strict $target
+}
 if ($LASTEXITCODE -ne 0) { throw 'The signature does not verify.' }
 
 Write-Host "signed $target"

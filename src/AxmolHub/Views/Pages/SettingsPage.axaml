@@ -241,6 +241,47 @@
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebFetchHint}" />
           <CheckBox x:Name="WebSearchCheck" Content="{DynamicResource AllowWebSearch}" Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebSearchHint}" />
+
+          <!-- macOS TCC diagnostics and per-service reset. Shown on macOS only so unsigned local builds or
+               stale TCC entries can be checked and cleared without opening a terminal. -->
+          <StackPanel x:Name="MacSystemPermissionsGroup" Spacing="10" IsVisible="False">
+            <Border Height="1" Background="{DynamicResource Hub.BorderSubtle}" Margin="0,12,0,2" />
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{DynamicResource MacSystemPermissionsTitle}" FontSize="13" FontWeight="SemiBold"
+                         VerticalAlignment="Center" />
+              <Button Grid.Column="1" x:Name="MacPermissionsRecheckButton" Classes="compact quiet" Margin="0"
+                      Content="{DynamicResource MacComputerRecheck}" />
+            </Grid>
+            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource MacSystemPermissionsHint}" />
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="{DynamicResource MacPermissionScreenRecording}" VerticalAlignment="Center" />
+                <TextBlock x:Name="MacScreenPermissionState" VerticalAlignment="Center" FontSize="12" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <Button x:Name="MacScreenSettingsButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionOpenSettings}" />
+                <Button x:Name="MacScreenResetButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionReset}" />
+              </StackPanel>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="{DynamicResource MacPermissionAccessibility}" VerticalAlignment="Center" />
+                <TextBlock x:Name="MacAccessibilityPermissionState" VerticalAlignment="Center" FontSize="12" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <Button x:Name="MacAccessibilitySettingsButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionOpenSettings}" />
+                <Button x:Name="MacAccessibilityResetButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionReset}" />
+              </StackPanel>
+            </Grid>
+
+            <TextBlock x:Name="MacPermissionsStatusLine" Classes="muted" TextWrapping="Wrap" IsVisible="False" />
+          </StackPanel>
         </StackPanel>
 
         <!-- ─────────────── Engine download source ───────────────
