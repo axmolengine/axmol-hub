@@ -237,7 +237,10 @@ public sealed class StateStore(string root, string? indexRoot = null)
 
     /// <summary>The engine core directory name (v3 = <c>axmol</c>, v2 = <c>core</c>); returns <c>null</c> when neither layout has the version header.</summary>
     public static string? FindEngineCoreDirectory(string enginePath)
-        => EngineCoreDirectories.FirstOrDefault(name => File.Exists(System.IO.Path.Combine(enginePath, name, "axmolver.h.in")));
+        => FindEngineCoreDirectory(enginePath, File.Exists);
+
+    internal static string? FindEngineCoreDirectory(string enginePath, Func<string, bool> exists)
+        => EngineCoreDirectories.FirstOrDefault(name => exists(System.IO.Path.Combine(enginePath, name, "axmolver.h.in")));
 
     /// <summary>
     /// Marker files that indicate an incomplete engine directory. Import validation and acceptance
@@ -261,12 +264,17 @@ public sealed class StateStore(string root, string? indexRoot = null)
         if (missing.Count > 0) throw new InvalidDataException($"Incomplete Axmol engine: missing {missing[0]}");
         var core = FindEngineCoreDirectory(path)!;
         var header = File.ReadAllText(System.IO.Path.Combine(path, core, "axmolver.h.in"));
+        return new(VersionFromHeader(header), path, channel);
+    }
+
+    internal static string VersionFromHeader(string header)
+    {
         var parts = new[] { "MAJOR", "MINOR", "PATCH" }.Select(part =>
         {
             var match = Regex.Match(header, $@"#define\s+AX_VERSION_{part}\s+(\d+)");
             return match.Success ? match.Groups[1].Value : throw new InvalidDataException("Invalid engine version header.");
         });
-        return new(string.Join(".", parts), path, channel);
+        return string.Join(".", parts);
     }
     public static string MetadataPath(string project) => System.IO.Path.Combine(project, ".axmol-hub.json");
     public static void LockProject(ProjectEntry project) => WriteJson(MetadataPath(project.Path), new
@@ -274,19 +282,23 @@ public sealed class StateStore(string root, string? indexRoot = null)
         engine = "axmol", version = project.Version, channel = project.Channel, platform = project.Platform, configuration = project.Configuration, projectType = project.ProjectType,
         advancedBuildEnabled = project.AdvancedBuildEnabled, additionalBuildParameters = project.AdditionalBuildParameters
     });
-    public static ProjectEntry ReadProject(string path)
+    public static ProjectEntry ReadProject(string path) => ReadProject(path, File.Exists, File.ReadAllText);
+
+    // The assistant supplies sandboxed file access; lock parsing and validation stay identical to the builder's.
+    internal static ProjectEntry ReadProject(string path, Func<string, bool> exists, Func<string, string> readText)
     {
         path = System.IO.Path.GetFullPath(path);
-        if (!File.Exists(System.IO.Path.Combine(path, "CMakeLists.txt"))) throw new InvalidDataException("Project must contain CMakeLists.txt.");
+        if (!exists(System.IO.Path.Combine(path, "CMakeLists.txt"))) throw new InvalidDataException("Project must contain CMakeLists.txt.");
         var project = new ProjectEntry { Name = System.IO.Path.GetFileName(path), Path = path };
         var profile = System.IO.Path.Combine(path, ".axproj");
-        var profileText = File.Exists(profile) ? File.ReadAllText(profile) : "";
+        var profileExists = exists(profile);
+        var profileText = profileExists ? readText(profile) : "";
         var sourceType = Regex.Match(profileText, @"(?m)^project_type\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
         project.ProjectType = sourceType.Length > 0 ? sourceType : "cpp";
         var metadata = MetadataPath(path);
-        if (File.Exists(metadata))
+        if (exists(metadata))
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(metadata));
+            using var doc = JsonDocument.Parse(readText(metadata));
             if (doc.RootElement.GetProperty("engine").GetString() != "axmol") throw new InvalidDataException("Unsupported project engine.");
             project.Version = doc.RootElement.GetProperty("version").GetString() ?? "";
             project.Channel = doc.RootElement.GetProperty("channel").GetString() ?? "";
@@ -303,7 +315,7 @@ public sealed class StateStore(string root, string? indexRoot = null)
         }
         else
         {
-            if (!File.Exists(profile)) throw new InvalidDataException("Axmol project requires .axproj or .axmol-hub.json.");
+            if (!profileExists) throw new InvalidDataException("Axmol project requires .axproj or .axmol-hub.json.");
             project.Version = Regex.Match(profileText, @"(?m)^engine_version\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
         }
         // The version must resolve exactly to x.y.z — but when the engine creates a project from a

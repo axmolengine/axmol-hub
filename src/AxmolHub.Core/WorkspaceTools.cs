@@ -81,6 +81,8 @@ public sealed record WorkspaceToolScope(
     // has to say exactly that.
     Func<WorkspaceFileGrant, Task<string>>? ApplyGrantedFile = null)
 {
+    // Installation identities for version matching. These paths confer no filesystem access.
+    internal IReadOnlyList<EngineEntry> Engines { get; init; } = [];
     internal ComputerUseBridge? ComputerUse { get; init; }
     internal PortalComputerBridge? PortalComputer { get; init; }
     internal Func<bool>? PortalComputerApproved { get; init; }
@@ -194,6 +196,18 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     public const int MaxListDepth = 4;
     public const int MaxListedEntries = 300;
     public const int MaxFoundFiles = 500;
+
+    [Description("Read a built-in workflow for an Axmol Sprite shader or Lua input task, with the current game's engine source if identifiable. "
+                 + "Use at the start of these tasks; verify examples with fs_find, fs_grep and fs_read. Does not grant access.")]
+    public string ReadAxmolSkill([Description("Exact skill ID: axmol-sprite-shader or axmol-lua-input (not a path).")] string id)
+    {
+        if (id is not ("axmol-sprite-shader" or "axmol-lua-input"))
+            return "Unknown Axmol skill. Use axmol-sprite-shader or axmol-lua-input.";
+        using var resource = typeof(WorkspaceTools).Assembly.GetManifestResourceStream(id);
+        if (resource is null) return $"Built-in skill {id} is missing from this Hub build.";
+        using var reader = new StreamReader(resource);
+        return AxmolSkillEngine.Describe(context) + "\n\nBuilt-in workflow (not a source citation):\n" + TextEol.ToLf(reader.ReadToEnd());
+    }
 
     [Description("Read a text file from the session workspace, or from a directory the user granted this session, "
                  + "or one single file the user granted with fs_request_access. "
@@ -1727,7 +1741,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     /// the same order, shallowest first — a question about a project is usually about its own files, not about
     /// whatever it pulled in. Build and vendored directories are not entered and a link is not followed: an engine
     /// tree is full of both, and walking them would spend the limit on other people's code.</summary>
-    private static IEnumerable<string> WalkFiles(string root, int limit)
+    private IEnumerable<string> WalkFiles(string root, int limit)
     {
         var pending = new Queue<string>();
         pending.Enqueue(root);
@@ -1749,12 +1763,16 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         }
     }
 
-    private static List<string> DirectoriesOf(string folder)
+    private List<string> DirectoriesOf(string folder)
     {
         try
         {
+            // A readable parent can contain a protected engine installation. Do not recurse into it on the
+            // strength of the parent's grant; direct reads and searches must see the same boundary.
             return Directory.EnumerateDirectories(folder)
-                .Where(child => !IsLink(child))
+                .Where(child => !IsLink(child)
+                    && (WorkspacePaths.ResolveDirectory(context.Sandbox, child, context.Guards).IsAllowed
+                        || context.Sandbox.Grants.Any(granted => WorkspacePaths.IsUnder(child, granted))))
                 .OrderBy(child => child, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
@@ -1764,12 +1782,12 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         }
     }
 
-    private static List<string> FilesOf(string folder)
+    private List<string> FilesOf(string folder)
     {
         try
         {
             return Directory.EnumerateFiles(folder)
-                .Where(child => !IsLink(child))
+                .Where(child => !IsLink(child) && WorkspacePaths.ResolveRead(context.Sandbox, child, context.Guards).IsAllowed)
                 .OrderBy(child => child, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }

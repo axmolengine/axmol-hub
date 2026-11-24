@@ -265,6 +265,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
 
             functionClient.FunctionInvoker = async (context, token) =>
             {
+                token.ThrowIfCancellationRequested();
                 var call = context.CallContent;
                 if (!verdicts.ContainsKey(call.CallId))
                 {
@@ -325,6 +326,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                             // match to a function is left to the invoking client, which is the one that knows what
                             // to do with a name it was never given.
                             if (FunctionNamed(tools, content.Name) is not { } function) continue;
+                            token.ThrowIfCancellationRequested();
                             started[content.CallId] = function
                                 .InvokeAsync(new AIFunctionArguments(content.Arguments), token).AsTask();
                         }
@@ -373,11 +375,14 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                 try
                 {
                     using var invocation = ToolInvocation.Enter(info.CallId);
+                    // Synchronous file tools need this check too: revocation cancels the frozen request scope.
+                    token.ThrowIfCancellationRequested();
                     // Whatever is already running for this call is its answer; a call the batch did not vouch for
                     // runs now, on the function the invoking client resolved for it.
                     var raw = started.Remove(info.CallId, out var begun)
                         ? await begun.ConfigureAwait(false)
                         : await context.Function.InvokeAsync(context.Arguments, token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
                     // Capped once, here, so the transcript records exactly what the model was shown. Two
                     // renderings of one result is how a replayed conversation diverges from the run that
                     // produced it — and an uncapped result can push the whole window out on its own.

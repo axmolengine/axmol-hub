@@ -40,6 +40,8 @@ public static class ToolNames
 
     public const string EngineList = "engine_list";
 
+    public const string AxmolSkillRead = "axmol_skill_read";
+
     public const string ToolchainStatus = "toolchain_status";
 
     public const string ListSessions = "list_sessions";

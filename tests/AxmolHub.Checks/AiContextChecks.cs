@@ -1184,6 +1184,26 @@ internal static class AiContextChecks
         }
         Console.WriteLine("PASS: reported usage replaces reservations; empty failures release them, while completed/partial responses without usage retain estimates.");
 
+        // Revocation may arrive while a batch is gated; synchronous reads must not use the frozen sandbox after it.
+        using (var revoked = new CancellationTokenSource())
+        {
+            var reads = 0;
+            var read = AIFunctionFactory.Create((Func<string>)(() => { reads++; return "source"; }),
+                new AIFunctionFactoryOptions { Name = "fs_read" });
+            try
+            {
+                await foreach (var _ in new ChatPipeline(new MultiCallChatClient("fs_read")).SendAsync(probeProvider,
+                    [ChatTurn.User("read")], tools: [read], gate: (_, _, _) =>
+                    {
+                        revoked.Cancel();
+                        return Task.FromResult(ChatPipeline.ToolGateOutcome.Allow);
+                    }, cancellationToken: revoked.Token)) { }
+                throw new Exception("A cancelled read completed.");
+            }
+            catch (OperationCanceledException) when (revoked.IsCancellationRequested) { }
+            if (reads != 0) throw new Exception("A synchronous read ran after its request was revoked.");
+        }
+
         // ── A loop that repeats itself instead of working is stopped ──
         // With no round cap, this and the error counter are what stand between a long task and an unbounded paid
         // loop. The verdict is read from the transcript the loop itself accumulated, so the probe here is the pure

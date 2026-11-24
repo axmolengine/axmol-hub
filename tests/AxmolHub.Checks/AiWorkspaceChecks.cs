@@ -39,6 +39,23 @@ internal static class AiWorkspaceChecks
             || WorkspacePaths.VerifyCommandRoot(installed, Guards(installed)) != WorkspacePathVerdict.ProtectedRoot)
             throw new Exception("A parent, subdirectory, grant or Hub install incorrectly inherited the local workspace exception.");
         Console.WriteLine("PASS: only a local engine selected as the primary workspace is writable, including after reload.");
+
+        // Revoking the external engine must close both the skill lookup and a search from its readable parent.
+        File.WriteAllText(Path.Combine(workspace, "CMakeLists.txt"), "# game\n");
+        StateStore.LockProject(new ProjectEntry { Path = workspace, Version = engines[0].Version, Channel = engines[0].Channel });
+        File.WriteAllText(Path.Combine(local, "core", "axmolver.h.in"), "#define AX_VERSION_MAJOR 3\n#define AX_VERSION_MINOR 0\n#define AX_VERSION_PATCH 0\n");
+        File.WriteAllText(Path.Combine(local, "CMakeLists.txt"), "# PRIVATE_SENTINEL\n");
+        var scope = new WorkspaceToolScope(workspace, Guards(workspace), hubData, "skills", [], null) { Engines = engines };
+        const string skill = "axmol-sprite-shader";
+        var revoked = new WorkspaceTools(scope);
+        if (!new WorkspaceTools(scope with { Sandbox = other }).ReadAxmolSkill(skill).StartsWith("Matched registered")
+            || !revoked.ReadAxmolSkill(skill).StartsWith("Not authorized")
+            || revoked.SearchText("Local source", "axmol.h").Contains(":1: // Local source"))
+            throw new Exception("The engine query and parent search did not respect the session's current grant.");
+        var partial = new WorkspaceTools(scope with { Sandbox = new(workspace, [], [Path.Combine(local, "core")]) });
+        if (!partial.SearchText("Local source", "axmol.h").Contains(":1: // Local source")
+            || partial.SearchText("PRIVATE_SENTINEL", "CMakeLists.txt").Contains(":1: # PRIVATE_SENTINEL"))
+            throw new Exception("A narrow engine grant must be searchable without opening its siblings.");
     }
 
     internal static async Task RunAsync(string root, string[] args)

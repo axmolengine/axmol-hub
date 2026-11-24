@@ -347,7 +347,8 @@ internal sealed partial class ChatExecutionCoordinator
     {
         var session = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
         var root = session?.WorkspaceRoot;
-        var guards = GuardsForWorkspace(root);
+        var engines = EnginesProvider?.Invoke().ToArray() ?? [];
+        var guards = WorkspacePaths.GuardsForWorkspace(_dataRoot, engines, AuthRoot, root);
         var snapshot = HubSnapshotProvider?.Invoke();
         var screenBridge = ScreenCaptureBridgeProvider is { } screenProvider
             ? screenProvider()
@@ -452,6 +453,7 @@ internal sealed partial class ChatExecutionCoordinator
                 // hand edit (or an engine installed later) put in the writable half is demoted to the read-only
                 // one rather than dropped, and every other stale entry is left out of both.
                 Sandbox = SandboxOf(session, root, guards),
+                Engines = engines,
                 HoldBatchLease = (callId, lease) => HoldBatchLease(conversationId, callId, lease),
             },
             // Null on a session file written before the setting existed reads as allowed, which is the only

@@ -413,6 +413,9 @@ public static class WorkspacePaths
     {
         var resolved = Resolve(sandbox, relative, guards);
         if (!resolved.IsAllowed) return resolved;
+        // A link at the leaf could still expose a header in an engine whose directory grant was revoked.
+        if (new FileInfo(resolved.Full).LinkTarget is not null)
+            return WorkspacePath.Refuse(WorkspacePathVerdict.ReparsePoint, resolved.Display);
         if (!File.Exists(resolved.Full)) return WorkspacePath.Refuse(WorkspacePathVerdict.NotAFile, resolved.Display);
         return resolved;
     }
@@ -657,7 +660,8 @@ public static class WorkspacePaths
     /// in one place and false in another.</summary>
     private static bool RefusedAsProtected(WorkspaceSandbox sandbox, string full, WorkspaceGuards guards)
         => ProtectedLocationOf(full, guards) is { } location
-           && !sandbox.Grants.Any(granted => CoversProtected(granted, location.Anchor));
+           && !sandbox.Grants.Any(granted => CoversProtected(granted, location.Anchor)
+               && IsInside(full, granted, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
 
     /// <summary>Whether this path sits inside a directory granted for reading only. Asked of the path rather than
     /// of the root it resolved in, because a relative path can land there too when the workspace contains the

@@ -350,8 +350,7 @@ internal sealed partial class ChatSessionCoordinator
         });
         if (!revoked) return false;
 
-        Execution.Audit(conversationId, $"Revoked file: {path}");
-        Execution.Changed?.Invoke();
+        OnAccessRevoked(conversationId, $"Revoked file: {path}");
         return true;
     }
 
@@ -376,9 +375,16 @@ internal sealed partial class ChatSessionCoordinator
         });
         if (!revoked) return false;
 
-        Execution.Audit(conversationId, $"Revoked directory: {path}");
-        Execution.Changed?.Invoke();
+        OnAccessRevoked(conversationId, $"Revoked directory: {path}");
         return true;
+    }
+
+    private void OnAccessRevoked(string conversationId, string audit)
+    {
+        // Tool bodies in a running model loop hold its original sandbox. The next query must take a fresh one.
+        if (Execution.RunFor(conversationId) is { IsStreaming: true } run) run.RequestStop();
+        Execution.Audit(conversationId, audit);
+        Execution.Changed?.Invoke();
     }
 
     internal async Task<(GrantVerdict? Verdict, string Detail)> GrantDirectoryAsync(string conversationId,
