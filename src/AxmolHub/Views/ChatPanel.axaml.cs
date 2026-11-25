@@ -25,6 +25,8 @@ public partial class ChatPanel : UserControl
     private const int EagerMarkdownLimit = int.MaxValue;
     private readonly Button ForkNotice = new() { Classes = { "fork-notice" }, IsVisible = false,
         MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 0) };
+    private readonly Button SpawnedParentNotice = new() { Classes = { "fork-notice" }, IsVisible = false,
+        MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 0) };
     private readonly StackPanel NoticeHost = new();
     private bool _updatingReasoningControls;
 
@@ -341,6 +343,7 @@ public partial class ChatPanel : UserControl
                 RenderMessages();
                 RefreshTurnChangesPill();
             }
+            RefreshSubagentsHost();
         };
         _chat.RunCompleted += (conversationId, outcome) =>
         {
@@ -350,6 +353,7 @@ public partial class ChatPanel : UserControl
                 RenderMessages();
                 RefreshTurnChangesPill();
             }
+            RefreshSubagentsHost();
             // Filed for whichever session ended, ahead of the guard below: a run that finished while the person
             // was reading another conversation still owes them the reason when they come back.
             AppendRunNotice(conversationId, outcome);
@@ -405,6 +409,10 @@ public partial class ChatPanel : UserControl
         ForkNotice.Click += (_, _) =>
         {
             if (ForkNotice.Tag is string sourceId) _chat.OpenConversation(sourceId);
+        };
+        SpawnedParentNotice.Click += (_, _) =>
+        {
+            if (SpawnedParentNotice.Tag is string parentId) _chat.OpenConversation(parentId);
         };
         ModeIndicatorButton.Click += (_, _) =>
         {
@@ -608,6 +616,7 @@ public partial class ChatPanel : UserControl
         RefreshModelPicker();
         RefreshComposerChoices();
         UpdateForkNotice();
+        UpdateSpawnedParentNotice();
         var renderStarted = measurement?.ElapsedMs ?? 0;
         var previousMeasurement = SessionOpenMeasurement.Rendering;
         SessionOpenMeasurement.Rendering = measurement;
@@ -623,6 +632,7 @@ public partial class ChatPanel : UserControl
         // place both can be brought in step with whatever just changed.
         RefreshDecisionHost();
         RefreshPlanTasksHost();
+        RefreshSubagentsHost();
         RefreshSteerConfirm();
         RefreshTurnChangesPill();
         // The right-hand column is the third surface that reads the transcript rather than the run registry. It
@@ -720,6 +730,33 @@ public partial class ChatPanel : UserControl
         ForkNotice.Tag = source.Id;
         ForkNotice.Content = string.Format(
             System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("ForkedFrom"), source.Title);
+    }
+
+    private void UpdateSpawnedParentNotice()
+    {
+        var parentId = _chat.ActiveConversation?.SpawnedBy;
+        if (string.IsNullOrWhiteSpace(parentId))
+        {
+            SpawnedParentNotice.IsVisible = false;
+            SpawnedParentNotice.Tag = null;
+            return;
+        }
+        var parent = _chat.Conversations.FirstOrDefault(summary => summary.Id == parentId)
+            ?? _chat.ArchivedConversations.FirstOrDefault(summary => summary.Id == parentId);
+        SpawnedParentNotice.IsVisible = true;
+        if (parent is not null)
+        {
+            SpawnedParentNotice.Tag = parent.Id;
+            SpawnedParentNotice.IsEnabled = true;
+            SpawnedParentNotice.Content = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SpawnedFromParent"), parent.Title);
+        }
+        else
+        {
+            SpawnedParentNotice.Tag = null;
+            SpawnedParentNotice.IsEnabled = false;
+            SpawnedParentNotice.Content = HubStrings.Get("SpawnedFromParentGone");
+        }
     }
 
     private void RefreshModelPicker()

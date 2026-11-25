@@ -1446,7 +1446,7 @@
          as the transcript: the column's right edge is where the transcript's is meant to be, so the inset goes on
          the whole stack rather than on one card in it (see the transcript scroller's note for why the gutter
          exists at all). -->
-    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0,10,0">
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0,10,0">
       <!-- Keep the changes pill centered over the composer; the scroll control moves to the side when both show.
            Reserve the scrollable transcript's band height so the button does not resize the reading area. -->
       <Grid x:Name="ComposerBand" Grid.Row="0" ColumnDefinitions="*,Auto,*" MaxWidth="820"
@@ -1481,7 +1481,11 @@
            in light it becomes a white card on the #F4F5F7 page. The shell check pins the separation. -->
       <Border x:Name="ComputerControlHost" Classes="composer-capsule" Grid.Row="5"
               IsVisible="False" MaxWidth="820" />
-      <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="6"
+      <Border x:Name="SubagentsHost" Grid.Row="6" IsVisible="False" MaxWidth="820"
+              ClipToBounds="True" HorizontalAlignment="Stretch" Margin="0,0,0,6"
+              Background="{DynamicResource Hub.SurfaceAlt}"
+              BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" CornerRadius="8" />
+      <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="7"
               Background="{DynamicResource Hub.Surface}" CornerRadius="14"
               HorizontalAlignment="Stretch" MaxWidth="820" ClipToBounds="True"
               Margin="0,6,0,0" Padding="14,12,12,10">
@@ -1566,7 +1570,7 @@
 
       <!-- The workspace stays at left; the spring keeps the three statuses together at right.
            Speed and context keep their width; the spend label trims first on narrow windows. -->
-      <Grid x:Name="ComposerStatusRow" Grid.Row="7" ColumnDefinitions="Auto,*,Auto,*,Auto" MaxWidth="820" HorizontalAlignment="Stretch"
+      <Grid x:Name="ComposerStatusRow" Grid.Row="8" ColumnDefinitions="Auto,*,Auto,*,Auto" MaxWidth="820" HorizontalAlignment="Stretch"
             Margin="0,3,0,4" MinHeight="30" ColumnSpacing="8">
         <Button x:Name="WorkspaceChip" Grid.Column="0" Classes="workspace-chip" MaxWidth="160">
           <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">

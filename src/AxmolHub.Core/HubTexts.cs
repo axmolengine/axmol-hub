@@ -565,17 +565,19 @@ public static class HubTexts
             "全局设置，适用于所有会话。开启后，助手遇到无法自行判断、需要你决定的选择时可以暂停并询问；关闭后则不提供询问功能。",
             "A global setting for every session. When on, the assistant may pause and ask you to settle a choice it cannot determine; when off, the question tool is unavailable."),
         ["AllowSpawnSessionsHint"] = (
-            "允许派生不代表自动拆分或并行执行计划任务；普通编辑、构建和测试仍由当前会话完成。"
-            + "只有大量阅读会挤占当前上下文、且只需带回简短结论时，助手才应主动派生，默认只读；"
-            + "只有你明确要求委派实现、并行处理或派生执行时，才使用可编辑的子会话。"
-            + "每一条都是要花钱的模型调用，并发槽也只有三个，所以默认关闭；一次回答最多派生一个，子会话自己不许再派生。",
-            "Allowing spawning does not request automatic splitting or parallel execution of plan tasks; "
-            + "ordinary edits, builds and tests stay in the current session. Proactive spawning is only for "
-            + "substantial reading that would crowd the current context when only a short conclusion is needed "
-            + "back, and defaults to read-only. An editing helper is only for your explicit request to delegate "
-            + "implementation, work in parallel, or execute in a spawned session. Each child is a paid model "
-            + "call, and there are three answer slots in total, so this ships off. One answer spawns at most "
-            + "one helper, and a helper cannot spawn further."),
+            "开启后，派生子会话不再逐次弹审批卡片；子会话继承当前会话的权限模式与工作区，其内部写入和命令仍受同一审批策略约束。"
+            + "子会话不占用左侧会话列表，可在父会话输入框上方的子会话面板中查看状态、切换详情或停止。"
+            + "每一条都是独立的模型调用，所以默认关闭；子会话自己不许再派生。",
+            "Once enabled, spawning helper sessions no longer asks for approval each time; helpers inherit "
+            + "the parent's approval mode and workspace, so edits and commands inside them follow the same "
+            + "policy. Helpers stay out of the left sidebar and appear in the collapsible Subagents panel "
+            + "above the parent's composer. Each helper is a separate model call, so this ships off, and "
+            + "helpers may not spawn further."),
+        ["MaxSpawnSessionsTitle"] = ("单轮最多派生子会话", "Max spawned helpers per turn"),
+        ["MaxSpawnSessionsHint"] = (
+            "范围 1–10，默认 3。超过当前并发槽位的子会话会自动排队，待空闲时依次启动。",
+            "Range 1–10, default 3. Helpers beyond active answer slots queue automatically and start as slots free."),
+        ["MaxSpawnSessionsValueFormat"] = ("{0} 个", "{0}"),
         // The outbound switch differs from the one above in its default: fetching a page the user named is a basic action of this kind
         // of assistant, so shipping it closed makes the feature nonexistent for anyone who never finds the setting. The copy therefore
         // has to say that "on" is the default, and which class of action a switch-off refuses.
@@ -1471,11 +1473,11 @@ public static class HubTexts
         // git verbs the same way and for the same reason: a person who read only "commands run on their own" would
         // be surprised by a card for a commit, and one who read only "git asks" would be surprised by a push that
         // went through, so both halves are spelled out rather than left to the button below.
-        ["ToolApprovalAutoHint"] = ("工作目录里的写入和命令直接执行，构建也算；git 命令里 add 和 commit 这两条留在仓库里的写也直接执行，其余动词照旧要问（push、reset、clean 这些会离开这台机器或丢掉没提交的东西）；删除已构建的东西、抓屏、派生子会话、换工作目录仍要问",
+        ["ToolApprovalAutoHint"] = ("工作目录里的写入和命令直接执行，构建也算；git 命令里 add 和 commit 这两条留在仓库里的写也直接执行，其余动词照旧要问（push、reset、clean 这些会离开这台机器或丢掉没提交的东西）；删除已构建的东西、抓屏、换工作目录仍要问",
             "Writes and commands inside the workspace run on their own, builds included; among git commands the two "
             + "that stay in the repository, add and commit, run on their own too, while the rest still ask — push, "
             + "reset and clean leave this machine or throw away work nothing can hand back; clearing what was built, "
-            + "the screen, a child session and a new working directory still ask"),
+            + "the screen and a new working directory still ask"),
         ["ToolApprovalFull"] = ("完全访问", "Full access"),
         ["ToolApprovalFullHint"] = ("除了删除已构建的东西，什么都不再问，包括抓屏和这个版本没登记过的工具",
             "Nothing asks any more except clearing what was built, including the screen and any tool this build "
@@ -1585,6 +1587,22 @@ public static class HubTexts
         ["BranchFromHere"] = ("从此处创建分支任务", "Branch a new task from here"),
         // Shown above a forked transcript; the line itself is the link back to the source session.
         ["ForkedFrom"] = ("分支自 {0}", "Forked from {0}"),
+        ["SpawnedFromParent"] = ("子会话 · 返回父会话：{0}", "Subagent · Back to parent: {0}"),
+        ["SpawnedFromParentGone"] = ("子会话（父会话已删除）", "Subagent (parent session deleted)"),
+        ["SubagentsSummaryRunningFormat"] = ("子会话 · {0} 运行中 · 共 {1} 个", "Subagents · {0} running · {1} total"),
+        ["SubagentsSummaryQueuedFormat"] = ("子会话 · {0} 等待中 · 共 {1} 个", "Subagents · {0} queued · {1} total"),
+        ["SubagentsSummaryApprovalFormat"] = ("子会话 · {0} 待审批 · 共 {1} 个", "Subagents · {0} awaiting approval · {1} total"),
+        ["SubagentsSummaryDoneFormat"] = ("子会话 · {0} 个已完成", "Subagents · {0} completed"),
+        ["SubagentsSummaryMixedFormat"] = ("子会话 · {0} 个", "Subagents · {0}"),
+        ["SubagentStateRunning"] = ("运行中", "Running"),
+        ["SubagentStateQueued"] = ("等待中", "Queued"),
+        ["SubagentStateApproval"] = ("待审批", "Awaiting approval"),
+        ["SubagentStateCompleted"] = ("已完成", "Completed"),
+        ["SubagentStateFailed"] = ("失败", "Failed"),
+        ["SubagentStateStopped"] = ("已停止", "Stopped"),
+        ["SubagentStateInterrupted"] = ("已中断", "Interrupted"),
+        ["SubagentStopTip"] = ("停止此子会话", "Stop this helper"),
+        ["SubagentOpenTip"] = ("查看子会话详情", "Inspect helper transcript"),
         ["MessageTimeJustNow"] = ("刚刚", "now"),
         ["MessageTimeMinutesAgo"] = ("{0} 分钟前", "{0}m ago"),
         ["MessageTimeHoursAgo"] = ("{0} 小时前", "{0}h ago"),

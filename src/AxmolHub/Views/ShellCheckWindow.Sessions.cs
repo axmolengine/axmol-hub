@@ -1163,7 +1163,7 @@ internal sealed class ShellSessionsChecks
                 "总开关关着时 spawn_session 一条会话都不创建，并把去哪儿开告诉模型（结果 " + offResults + " 条）");
 
             var resultsBefore = parent.Messages.Count(turn => turn.Role == ChatRoles.Tool);
-            chat.PreferencesProvider = () => new HubPreferences { AllowSpawnedSessions = true };
+            chat.PreferencesProvider = () => new HubPreferences { AllowSpawnedSessions = true, MaxSpawnedSessionsPerRun = 1 };
             await panel.SendForCheckAsync("那就派生一个专门读大文件的会话");
             children = chat.Conversations.Where(summary => summary.SpawnedBy == parent.Id)
                 .Select(summary => summary.Id).ToList();
@@ -1171,8 +1171,8 @@ internal sealed class ShellSessionsChecks
                 .Skip(resultsBefore).Select(turn => turn.Text).ToList();
             Check(children.Count == 1
                   && newResults.Count(text => text.Contains("Spawned session", StringComparison.Ordinal)) == 1
-                  && newResults.Any(text => text.Contains("one allowed child", StringComparison.Ordinal)),
-                "开着开关时一次回答只创建一个子会话，第二次派生被每条回答一个的上限挡住（实际 "
+                  && newResults.Any(text => text.Contains("reached its spawned helper limit", StringComparison.Ordinal)),
+                "开着开关且上限为 1 时一次回答只创建一个子会话，第二次派生被上限挡住（实际 "
                 + children.Count + " 条，结果 " + newResults.Count + " 条：「"
                 + string.Join(" / ", newResults) + "」）");
             if (children.Count == 1)
@@ -1182,15 +1182,22 @@ internal sealed class ShellSessionsChecks
                 await WaitForRunAsync(chat, children[0]);
                 await WaitForRunAsync(chat, parent.Id);
                 var child = chat.OpenConversation(children[0]);
+                panel.Reload();
+                Dispatcher.UIThread.RunJobs();
+                var childHasBackBanner = panel.IsSpawnedParentNoticeVisibleForCheck();
                 var returned = chat.OpenConversation(parent.Id);
+                panel.Reload();
+                Dispatcher.UIThread.RunJobs();
                 Check(child is not null
                       && child.SpawnedBy == parent.Id
                       && child.SpawnedState == SpawnedSessionStates.Completed
                       && child.SpawnResultDelivered
+                      && !child.Title.StartsWith("You were spawned", StringComparison.Ordinal)
+                      && child.Messages.All(turn => turn.PlanApprovalState != PlanApprovalStates.Pending)
                       && child.Messages.FirstOrDefault(turn => turn.Role == ChatRoles.User) is { } briefing
                       && briefing.Text.Contains(parent.Id, StringComparison.Ordinal)
                       && briefing.InjectedFrom == parent.Id,
-                    "子会话的第一条消息带上任务与父会话 id，回答才知道该往回收（实际 " + child?.Messages.Count + " 条）");
+                    "子会话带任务派生标题、不进计划审批、首条消息含父会话 id（实际 " + child?.Messages.Count + " 条，标题：「" + child?.Title + "」）");
                 var delivered = returned?.Messages.LastOrDefault(turn => turn.InjectedFrom == child?.Id);
                 Check(delivered is not null
                       && delivered.Role == ChatRoles.User
@@ -1200,9 +1207,10 @@ internal sealed class ShellSessionsChecks
                           && turn.Text.Contains("已收到子会话结论", StringComparison.Ordinal)) == true,
                     "子会话结束后 Hub 自动把结论写回父会话并唤醒父会话继续处理（" + delivered?.Text + "）");
                 sidebar.RefreshConversationListForCheck();
-                Check(sidebar.SpawnedChildNestedForCheck(parent.Id, children[0])
-                      && sidebar.HasSpawnedCompletionMarkForCheck(children[0]),
-                    "侧栏把已完成子会话显示在父会话下方并显示完成标记");
+                Check(!sidebar.HasRowForCheck(children[0])
+                      && panel.IsSubagentsHostVisibleForCheck()
+                      && childHasBackBanner,
+                    "子会话不出现在左侧栏，而在父会话输入框上方 Subagents 面板中展示，点进子会话顶部可返回父会话");
             }
             chat.OpenConversation(parent.Id);
         }

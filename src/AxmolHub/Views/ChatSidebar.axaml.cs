@@ -165,8 +165,9 @@ public partial class ChatSidebar : UserControl
         _runsSignature = RunSignature();
         var query = (SearchBox.Text ?? "").Trim();
         var activeId = _chat.ActiveConversation?.Id;
-        var live = Matching(_chat.Conversations, query);
-        var archived = Matching(_chat.ArchivedConversations, query);
+        // Spawned child sessions stay out of the left sidebar and are surfaced in the parent's Subagents panel.
+        var live = Matching(_chat.Conversations.Where(summary => summary.SpawnedBy is null), query);
+        var archived = Matching(_chat.ArchivedConversations.Where(summary => summary.SpawnedBy is null), query);
 
         // Stand down every thinking glyph before its row is torn away. A detached control keeps IsVisible == true,
         // so the glyph's own clock guard would never see the row leave and would tick forever on a control nothing
@@ -224,16 +225,10 @@ public partial class ChatSidebar : UserControl
                 return;
             }
 
-            var children = bucket.Key == SessionGroupKey.Archived ? archived : live;
-            var visibleIds = children.Select(summary => summary.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var summary in bucket.Sessions)
             {
-                if (summary.SpawnedBy is { } parentId && visibleIds.Contains(parentId)) continue;
                 ConversationList.Children.Add(BuildSessionRow(summary, openId,
                     bucket.Key == SessionGroupKey.Archived, bucket.Depth));
-                foreach (var child in children.Where(candidate => candidate.SpawnedBy == summary.Id))
-                    ConversationList.Children.Add(BuildSessionRow(child, openId,
-                        bucket.Key == SessionGroupKey.Archived, bucket.Depth + 1));
             }
         }
 

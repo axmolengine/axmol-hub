@@ -435,6 +435,7 @@ public partial class ChatPanel
             TranscriptItemKey Key(int source, string kind) => new(_projection!.KeyAt(source), kind);
             var names = TranscriptProjection.CallNames(conversation);
             if (ForkNotice.IsVisible) items.Add(new() { Key = "fork", Session = conversation.Id, Special = ForkNotice });
+            if (SpawnedParentNotice.IsVisible) items.Add(new() { Key = "spawned-parent", Session = conversation.Id, Special = SpawnedParentNotice });
             foreach (var entry in _virtualSnapshot!.Entries)
             {
                 if (entry is TranscriptMessage message)

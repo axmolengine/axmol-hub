@@ -2015,4 +2015,7 @@ public partial class ChatPanel : UserControl
     }
 
     internal double BubbleActionBarOpacity(int visibleIndex) => MessageRows.ElementAtOrDefault(visibleIndex)?.GetLogicalDescendants().OfType<StackPanel>().FirstOrDefault(panel => panel.Classes.Contains("message-actions"))?.Opacity ?? -1;
+
+    internal bool IsSubagentsHostVisibleForCheck() => SubagentsHost.IsVisible;
+    internal bool IsSpawnedParentNoticeVisibleForCheck() => SpawnedParentNotice.IsVisible;
 }

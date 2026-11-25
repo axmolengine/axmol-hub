@@ -85,8 +85,8 @@ public static class CrossSessionRules
     public const int MaxWakesPerRun = 2;
 
     /// <summary>How many wakes may wait for a slot. Wakes, not messages: the queue holds one entry per session,
-    /// so eight covers a fleet of sessions without letting a backlog outlive the request that caused it.</summary>
-    public const int MaxQueuedWakes = 8;
+    /// so sixteen covers up to ten spawned helpers plus parent wakes without letting a backlog outlive the request.</summary>
+    public const int MaxQueuedWakes = 16;
 
     public static CrossSessionDecision Decide(CrossSessionFacts facts)
     {
@@ -174,7 +174,8 @@ public readonly record struct CrossSessionRunState(
     int SpawnsUsed = 0,
     int ActiveSpawnedSessions = 0,
     bool SourceIsSpawned = false,
-    bool SpawningAllowed = false);
+    bool SpawningAllowed = false,
+    int MaxSpawnsPerRun = SpawnRules.DefaultMaxSpawnsPerRun);
 
 /// <summary>What the app gives the cross-session tools: the live run state, and the ability to write into another
 /// session. Kept as two operations rather than one because the rules have to be applied <b>between</b> them —

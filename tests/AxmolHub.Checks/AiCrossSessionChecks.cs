@@ -327,25 +327,28 @@ internal static class AiCrossSessionChecks
         // other half of that is a model call nobody clicked — so the switch ships off, the depth stops at one, one
         // answer gets one child, and the whole Hub gets two live children.
         var free = new SpawnFacts(Allowed: true, SourceIsSpawned: false, SpawnsUsedThisRun: 0, ActiveSpawnedSessions: 0, FleetHasRoom: true, QueueHasRoom: true);
-        AssertSpawn(SpawnVerdict.Started, SpawnRules.Decide(free), "开着设置、有空位的父会话能派生一个子会话");
+        AssertSpawn(SpawnVerdict.Started, SpawnRules.Decide(free), "开着设置、有空位的父会话能派生子会话");
         AssertSpawn(SpawnVerdict.RefusedDisabled, SpawnRules.Decide(free with { Allowed = false }), "总开关关着时先拒，不占任何 slot");
         AssertSpawn(SpawnVerdict.RefusedDepth, SpawnRules.Decide(free with { SourceIsSpawned = true }), "子会话不得再派生（深度 1，树在这里停住）");
-        AssertSpawn(SpawnVerdict.RefusedPerTurn, SpawnRules.Decide(free with { SpawnsUsedThisRun = SpawnRules.MaxSpawnsPerRun }), "一次回答最多派生一个");
-        AssertSpawn(SpawnVerdict.RefusedCap, SpawnRules.Decide(free with { ActiveSpawnedSessions = SpawnRules.MaxActiveSpawnedSessions }), "全局活跃子会话到上限即拒");
+        AssertSpawn(SpawnVerdict.RefusedPerTurn, SpawnRules.Decide(free with { SpawnsUsedThisRun = SpawnRules.DefaultMaxSpawnsPerRun }), "达到单轮派生上限即拒");
+        AssertSpawn(SpawnVerdict.RefusedCap, SpawnRules.Decide(free with { ActiveSpawnedSessions = SpawnRules.DefaultMaxSpawnsPerRun }), "活跃或排队子会话达到配置上限即拒");
+        AssertSpawn(SpawnVerdict.Started, SpawnRules.Decide(free with { SpawnsUsedThisRun = 4, ActiveSpawnedSessions = 4, MaxSpawnsPerRun = 5 }), "调高配置上限至 5 时允许派生第 5 个子会话");
+        AssertSpawn(SpawnVerdict.RefusedPerTurn, SpawnRules.Decide(free with { SpawnsUsedThisRun = 5, MaxSpawnsPerRun = 5 }), "配置上限为 5 时第 6 个被拒");
         AssertSpawn(SpawnVerdict.Queued, SpawnRules.Decide(free with { FleetHasRoom = false }), "fleet 满而队列有空位时排队，不是拒绝");
         AssertSpawn(SpawnVerdict.RefusedFleetFull, SpawnRules.Decide(free with { FleetHasRoom = false, QueueHasRoom = false }), "队列也满时拒，且不创建会话");
         // The order is the guard: a child that cannot spawn must be refused for being a child even when the switch is
         // off and the fleet is idle, or the depth rule would only be reachable by luck.
         AssertSpawn(SpawnVerdict.RefusedDisabled, SpawnRules.Decide(free with { Allowed = false, SourceIsSpawned = true }), "开关排在深度前，两条都不许时说的是用户能改的那条");
-        if (SpawnRules.MaxActiveSpawnedSessions >= 3)
-            throw new Exception("The spawn cap must stay below the run registry's three slots, or a child starves its parent.");
+        if (SpawnRules.DefaultMaxSpawnsPerRun != 3 || SpawnRules.MinSpawnLimit != 1 || SpawnRules.MaxSpawnLimit != 10
+            || SpawnRules.ClampLimit(0) != 1 || SpawnRules.ClampLimit(99) != 10)
+            throw new Exception("Spawn limit defaults or clamping bounds drifted from 1..10 (default 3).");
         var spawnWords = new (SpawnVerdict, string[])[]
         {
             (SpawnVerdict.Started, ["answering in its own context", "Do not wait", "send its conclusion back"]),
-            (SpawnVerdict.Queued, ["every answer slot is busy", "do not spawn a second one"]),
+            (SpawnVerdict.Queued, ["every answer slot is busy", "do not spawn the same task again"]),
             (SpawnVerdict.RefusedDisabled, ["turned off", "do not retry"]),
             (SpawnVerdict.RefusedDepth, ["helpers do not spawn further helpers", "send_to_session"]),
-            (SpawnVerdict.RefusedPerTurn, ["one allowed child", "Say in your reply"]),
+            (SpawnVerdict.RefusedPerTurn, ["reached its spawned helper limit", "Say in your reply"]),
             (SpawnVerdict.RefusedCap, ["most Hub allows at once", "do not retry"]),
             (SpawnVerdict.RefusedFleetFull, ["no answer slot is free", "do not retry"]),
         };

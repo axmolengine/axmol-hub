@@ -104,10 +104,12 @@ internal static class ChatTools
         // the frame leaves the machine in the next request. That is the SystemCommand tier's job: it asks in
         // every mode but full. Spelled out rather than left to the fallback arm, because "unknown tool" and "this
         // tool was thought about" must not read the same in this table.
-        // "spawn_session" is spelled out for the same reason: a new session spends money on nobody's click.
         ToolNames.CaptureScreen => ToolRisk.SystemCommand,
         ToolNames.ComputerUse => ToolRisk.SystemCommand,
-        ToolNames.SpawnSession => ToolRisk.SystemCommand,
+        // Spawning is governed by the Settings switch (AllowSpawnedSessions) and SpawnRules limits; once enabled,
+        // spawning a helper needs no per-call approval card (aligned with Codex). The child inherits the parent's
+        // approval mode and workspace sandbox, so edits and commands inside the child remain gated by the same policy.
+        ToolNames.SpawnSession => ToolRisk.AssistantNote,
         // The one tier no mode ever asks for, which is exactly why the reading of the scope has to fail closed:
         // a scope this cannot name is not a workspace note, it is a write whose destination is unknown, and an
         // unknown destination asks a person. Comparing against Workspace rather than Global is what keeps that

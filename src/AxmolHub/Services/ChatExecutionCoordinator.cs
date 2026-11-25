@@ -288,8 +288,12 @@ internal sealed partial class ChatExecutionCoordinator
     private string EffectiveSystemPrompt(Conversation? conversation) => BuildContextPrompt(conversation).SystemPrompt;
     private ContextPrompt BuildContextPrompt(Conversation? conversation)
     {
-        var mode = ChatModePrompt.For(NormalizeMode(conversation?.Mode ?? ChatModes.Agent),
-            Sessions.ActiveAskUserEnabled);
+        var isSpawned = conversation?.SpawnedBy is not null;
+        var normalizedMode = NormalizeMode(conversation?.Mode ?? ChatModes.Agent);
+        var askUserEnabled = Sessions.ActiveAskUserEnabled && !isSpawned;
+        var mode = isSpawned && normalizedMode == ChatModes.Plan
+            ? ChatModePrompt.ForSpawnedReadOnly()
+            : ChatModePrompt.For(normalizedMode, askUserEnabled);
         if (conversation?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
                 && turn.PlanApprovalState == PlanApprovalStates.Approved)?.Plan?.Tasks is { Count: > 0 })
             mode += " An approved plan task list is visible above the composer. Use update_plan_task to mark the current step in_progress before starting it, and completed only after its work and checks succeed; leave future steps pending. Do not mark every task complete at once.";
@@ -464,7 +468,8 @@ internal sealed partial class ChatExecutionCoordinator
             // Null on a session file written before the setting existed reads as allowed, which is the only
             // honest reading of "nobody ever turned it off". Read here rather than at the call site because the
             // tool list is assembled once per request and a parked question can be answered long after.
-            Sessions.ActiveAskUserEnabled,
+            // Spawned helpers run autonomously and never pause for interactive ask_user prompts.
+            Sessions.ActiveAskUserEnabled && session?.SpawnedBy is null,
             session?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
                 && turn.PlanApprovalState == PlanApprovalStates.Approved)?.Plan?.Tasks is { Count: > 0 },
             webProvider?.WebToolsBackend == WebToolBackends.DeepSeekApi,
@@ -1430,9 +1435,23 @@ internal sealed partial class ChatExecutionCoordinator
         RevokeComputerControl(conversationId);
         var goal = Sessions.Registry.Peek(conversationId)?.Goal is { Length: > 0 };
         if (goal) PauseGoal(conversationId);
-        if (RunFor(conversationId) is not { IsStreaming: true } run) return goal;
-        run.RequestStop();
-        return true;
+        if (RunFor(conversationId) is { IsStreaming: true } run)
+        {
+            run.RequestStop();
+            return true;
+        }
+        if (_wakeQueue.Remove(conversationId))
+        {
+            Sessions.Registry.TryUpdate(conversationId, opened =>
+            {
+                if (opened.SpawnedBy is not null)
+                    opened.SpawnedState = SpawnedSessionStates.Stopped;
+            });
+            Changed?.Invoke();
+            RunsChanged?.Invoke(conversationId);
+            return true;
+        }
+        return goal;
     }
 
     private readonly List<string> _wakeQueue = [];
@@ -1449,9 +1468,12 @@ internal sealed partial class ChatExecutionCoordinator
             RunFor(sourceId)?.SpawnsUsed ?? 0,
             LiveSpawnedSessions(),
             Sessions.Registry.Peek(sourceId)?.SpawnedBy is not null,
-            PreferencesProvider?.Invoke().AllowSpawnedSessions == true));
+            PreferencesProvider?.Invoke().AllowSpawnedSessions == true,
+            SpawnRules.ClampLimit(PreferencesProvider?.Invoke().MaxSpawnedSessionsPerRun ?? SpawnRules.DefaultMaxSpawnsPerRun)));
     private int LiveSpawnedSessions()
-        => _runs.Keys.Count(id => (Sessions.Registry.Peek(id) ?? Sessions.Registry.Load(id))?.SpawnedBy is not null);
+        => _runs.Keys.Concat(_wakeQueue)
+            .Distinct(StringComparer.Ordinal)
+            .Count(id => (Sessions.Registry.Peek(id) ?? Sessions.Registry.Load(id))?.SpawnedBy is not null);
     private async Task<string?> SpawnChildSessionAsync(SpawnRequest request)
     {
         string? childId = null;
@@ -1484,6 +1506,8 @@ internal sealed partial class ChatExecutionCoordinator
                 ? SpawnedSessionStates.Running
                 : SpawnedSessionStates.Queued;
             child.Append(ChatTurn.User(ChildBriefing(request), injectedFrom: parent.Id));
+            // Derive a readable title from the actual task instead of the ChildBriefing boilerplate.
+            child.Title = SpawnTitleOf(request.Task);
             Sessions.Registry.Adopt(child);
 
             if (parent.Goal is { Length: > 0 })
@@ -4061,6 +4085,8 @@ internal sealed partial class ChatExecutionCoordinator
         string? filing = null;
         Sessions.Registry.TryUpdate(conversationId, conversation =>
         {
+            // Spawned helpers never enter user plan approval: their final answer returns directly to the parent.
+            if (conversation.SpawnedBy is not null) return;
             if (NormalizeMode(conversation.Mode) != ChatModes.Plan) return;
             for (var index = conversation.Messages.Count - 1; index >= 0; index--)
             {
@@ -4261,6 +4287,17 @@ internal sealed partial class ChatExecutionCoordinator
            + "read this conversation, so anything it needs has to be sent back.\n\nTask:\n" + request.Task
            + "\n\nWhen you are done, put the concise conclusion in your final answer. Hub returns that answer to "
            + "the parent automatically. Keep it to what was asked: the parent is paying for both of you.";
+
+    private static string SpawnTitleOf(string task)
+    {
+        if (string.IsNullOrWhiteSpace(task)) return "";
+        var firstLine = task.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.Length > 0);
+        if (string.IsNullOrWhiteSpace(firstLine)) return "";
+        var collapsed = System.Text.RegularExpressions.Regex.Replace(firstLine, @"\s+", " ");
+        return collapsed.Length <= 60 ? collapsed : collapsed[..59].TrimEnd() + "…";
+    }
     private static IReadOnlyList<string> ProjectPaths(ChatToolScope scope)
         => scope.Snapshot?.Projects.Select(project => project.Path).ToArray() ?? [];
 

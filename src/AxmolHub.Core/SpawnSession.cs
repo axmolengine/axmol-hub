@@ -31,7 +31,8 @@ public readonly record struct SpawnFacts(
     int SpawnsUsedThisRun,
     int ActiveSpawnedSessions,
     bool FleetHasRoom,
-    bool QueueHasRoom);
+    bool QueueHasRoom,
+    int MaxSpawnsPerRun = SpawnRules.DefaultMaxSpawnsPerRun);
 
 public enum SpawnVerdict
 {
@@ -47,7 +48,7 @@ public enum SpawnVerdict
     /// <summary>Nothing was created: this session is itself a child.</summary>
     RefusedDepth,
 
-    /// <summary>Nothing was created: this answer already started one.</summary>
+    /// <summary>Nothing was created: this answer already reached its spawned helper limit.</summary>
     RefusedPerTurn,
 
     /// <summary>Nothing was created: the live children already hold the cap.</summary>
@@ -77,20 +78,23 @@ public sealed record SpawnRequest(
 /// <summary>
 /// Whether one answer may start a child session, as one pure table.
 ///
-/// The feature exists for context isolation, not for parallelism: two of this repository's own assertion files
-/// are worth more tokens than a model window holds, so sending one reader out and taking back five lines of
-/// conclusion is cheaper than reading them into the parent. Everything else — the depth limit, the one-per-answer
-/// limit, the cap, the switch that ships off — is there because each child is a model call someone is paying for.
+/// The feature exists for context isolation and bounded helper delegation: a parent may spawn up to the user's
+/// configured limit (1 to 10, default 3) of depth-one helpers. Helpers beyond the active fleet slots queue and
+/// start automatically as slots free.
 /// </summary>
 public static class SpawnRules
 {
-    /// <summary>One child per answer. Stricter than <see cref="CrossSessionRules.MaxWakesPerRun"/> on purpose:
-    /// waking a peer reuses a session that exists, while spawning creates a new file and a new bill.</summary>
-    public const int MaxSpawnsPerRun = 1;
+    public const int MinSpawnLimit = 1;
+    public const int MaxSpawnLimit = 10;
+    public const int DefaultMaxSpawnsPerRun = 3;
 
-    /// <summary>Live children across the whole Hub. The run registry holds three slots and the parent needs one of
-    /// its own, so a fourth child would not be concurrency — it would be a queue nobody asked for.</summary>
-    public const int MaxActiveSpawnedSessions = 2;
+    /// <summary>Default maximum helpers per answer. Configurable via <see cref="HubPreferences.MaxSpawnedSessionsPerRun"/>.</summary>
+    public const int MaxSpawnsPerRun = DefaultMaxSpawnsPerRun;
+
+    /// <summary>Upper bound on live/queued helpers across Hub, aligned with <see cref="MaxSpawnLimit"/>.</summary>
+    public const int MaxActiveSpawnedSessions = MaxSpawnLimit;
+
+    public static int ClampLimit(int value) => Math.Clamp(value, MinSpawnLimit, MaxSpawnLimit);
 
     public static SpawnDecision Decide(SpawnFacts facts)
     {
@@ -100,9 +104,11 @@ public static class SpawnRules
 
         // Then depth, before any slot is spent: a child that spawns is how one careful question becomes a tree.
         if (facts.SourceIsSpawned) return new SpawnDecision(SpawnVerdict.RefusedDepth, facts.ActiveSpawnedSessions);
-        if (facts.SpawnsUsedThisRun >= MaxSpawnsPerRun)
+
+        var limit = ClampLimit(facts.MaxSpawnsPerRun);
+        if (facts.SpawnsUsedThisRun >= limit)
             return new SpawnDecision(SpawnVerdict.RefusedPerTurn, facts.ActiveSpawnedSessions);
-        if (facts.ActiveSpawnedSessions >= MaxActiveSpawnedSessions)
+        if (facts.ActiveSpawnedSessions >= limit)
             return new SpawnDecision(SpawnVerdict.RefusedCap, facts.ActiveSpawnedSessions);
 
         return facts.FleetHasRoom || facts.QueueHasRoom
@@ -123,7 +129,7 @@ public static class SpawnRules
                 + "your session id when it is done. Carry on with what you can do meanwhile.",
             SpawnVerdict.Queued =>
                 $"Spawned session {childId} in {mode} mode; every answer slot is busy, so it starts as one frees. "
-                + "Do not wait for it in this turn and do not spawn a second one.",
+                + "Do not wait for it in this turn and do not spawn the same task again.",
             SpawnVerdict.RefusedDisabled =>
                 "Refused: this Hub has spawning turned off (设置 → 允许助手派生子会话). Do the work yourself in this "
                 + "session, or tell the user where the switch is; do not retry the call.",
@@ -131,10 +137,10 @@ public static class SpawnRules
                 "Refused: this session is itself a spawned helper, and helpers do not spawn further helpers — the "
                 + "tree stops here. Report your conclusion back with send_to_session instead.",
             SpawnVerdict.RefusedPerTurn =>
-                $"Refused: this answer already started its one allowed child ({decision.ActiveSpawnedSessions} live). "
+                $"Refused: this answer already reached its spawned helper limit ({decision.ActiveSpawnedSessions} live). "
                 + "Say in your reply what you are waiting for instead of spawning more.",
             SpawnVerdict.RefusedCap =>
-                $"Refused: {decision.ActiveSpawnedSessions} spawned sessions are already running, which is the most "
+                $"Refused: {decision.ActiveSpawnedSessions} spawned sessions are already active or queued, which is the most "
                 + "Hub allows at once. Do the part you can yourself; do not retry until one finishes.",
             _ => "Refused: no answer slot is free and the wake queue is full. Continue this turn yourself and do "
                  + "not retry the spawn.",

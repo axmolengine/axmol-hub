@@ -237,6 +237,15 @@
                where to turn it on instead of letting the model retry. -->
           <CheckBox x:Name="SpawnCheck" Content="{DynamicResource AllowSpawnSessions}" Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowSpawnSessionsHint}" />
+          <StackPanel x:Name="SpawnLimitPanel" Spacing="4" Margin="24,4,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="{DynamicResource MaxSpawnSessionsTitle}" VerticalAlignment="Center" />
+              <TextBlock x:Name="SpawnLimitValue" Grid.Column="1" Classes="muted" VerticalAlignment="Center" />
+            </Grid>
+            <Slider x:Name="SpawnLimitSlider" Minimum="1" Maximum="10" TickFrequency="1"
+                    IsSnapToTickEnabled="True" SmallChange="1" LargeChange="1" />
+            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource MaxSpawnSessionsHint}" />
+          </StackPanel>
           <CheckBox x:Name="AskQuestionsCheck" Content="{DynamicResource AllowAssistantQuestions}" Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowAssistantQuestionsHint}" />
 

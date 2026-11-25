@@ -472,7 +472,7 @@ internal static class AiToolPolicyChecks
             ("run_command", ToolRisk.WorkspaceCommand, false),
             ("web_fetch", ToolRisk.WorkspaceCommand, false),
             ("capture_screen", ToolRisk.SystemCommand, false),
-            ("spawn_session", ToolRisk.SystemCommand, false),
+            ("spawn_session", ToolRisk.AssistantNote, false),
             ("ask_user", ToolRisk.AskUser, false),
         };
         foreach (var cell in concurrentTable.Where(cell => ToolConcurrency.IsSafe(cell.Name, cell.Risk) != cell.Expected))

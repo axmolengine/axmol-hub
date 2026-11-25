@@ -362,9 +362,9 @@ internal sealed class ShellApprovalsChecks
                   && ChatTools.RiskOf("run_command", null, new WorkspaceToolScope(workspace,
                       new WorkspaceGuards(workspace, []), workspace, "tier-map", [], null, null)) == ToolRisk.SystemCommand
                   && ChatTools.RiskOf("capture_screen", null, sandbox) == ToolRisk.SystemCommand
-                  && ChatTools.RiskOf("spawn_session", null, sandbox) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf("spawn_session", null, sandbox) == ToolRisk.AssistantNote
                   && ChatTools.RiskOf("没登记过的工具", null, sandbox) == ToolRisk.SystemCommand,
-                "只读查询登记为只读，写文件是工作区写，沙箱里的命令自成一档、没有沙箱或落在受保护目录时退回系统命令，抓屏与派生子会话仍在最高档，没听过的工具名按系统命令兜底而不是放行");
+                "只读查询登记为只读，写文件是工作区写，沙箱里的命令自成一档、没有沙箱或落在受保护目录时退回系统命令，派生子会话受设置开关控制且开启后免逐次审批，抓屏与未登记工具仍在最高档");
 
             var cacheFixture = System.IO.Path.Combine(workspace, "build-fs-fixture");
             System.IO.Directory.CreateDirectory(cacheFixture);

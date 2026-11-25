@@ -1373,7 +1373,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         // exist yet, so only the source-side counts and the fleet decide anything.
         var live = await bridge.RunState(context.ConversationId, "").ConfigureAwait(false);
         var decision = SpawnRules.Decide(new SpawnFacts(live.SpawningAllowed, live.SourceIsSpawned,
-            live.SpawnsUsed, live.ActiveSpawnedSessions, live.FleetHasRoom, live.QueueHasRoom));
+            live.SpawnsUsed, live.ActiveSpawnedSessions, live.FleetHasRoom, live.QueueHasRoom, live.MaxSpawnsPerRun));
         if (decision.Verdict is not (SpawnVerdict.Started or SpawnVerdict.Queued))
             return SpawnRules.ResultFor(decision, "", childMode);
 

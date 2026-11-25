@@ -168,6 +168,7 @@ public partial class SettingsPage : UserControl
         CheckForUpdatesButton.Click += async (_, _) => await OnUpdateActionClickedAsync();
         AutoDownloadCheck.IsCheckedChanged += (_, _) => OnAutoDownloadChanged();
         SpawnCheck.IsCheckedChanged += (_, _) => OnSpawnChanged();
+        SpawnLimitSlider.ValueChanged += (_, _) => OnSpawnLimitChanged();
         AskQuestionsCheck.IsCheckedChanged += (_, _) => OnAskQuestionsChanged();
         WebFetchCheck.IsCheckedChanged += (_, _) => OnWebFetchChanged();
         WebSearchCheck.IsCheckedChanged += (_, _) => OnWebSearchChanged();
@@ -343,6 +344,10 @@ public partial class SettingsPage : UserControl
             AutoDownloadCheck.IsChecked = _preferences.AutoDownloadUpdates;
             AutoDownloadCheck.IsEnabled = UpdateService.Instance.IsInstalled;
             SpawnCheck.IsChecked = _preferences.AllowSpawnedSessions;
+            var spawnLimit = SpawnRules.ClampLimit(_preferences.MaxSpawnedSessionsPerRun);
+            SpawnLimitSlider.Value = spawnLimit;
+            SpawnLimitPanel.IsEnabled = _preferences.AllowSpawnedSessions;
+            UpdateSpawnLimitLabel(spawnLimit);
             AskQuestionsCheck.IsChecked = _preferences.AllowAssistantQuestions;
             WebFetchCheck.IsChecked = _preferences.AllowOutboundWebFetch;
             WebSearchCheck.IsChecked = _preferences.AllowHostedWebSearch || _preferences.AllowDeepSeekWebApi;
@@ -1222,11 +1227,30 @@ public partial class SettingsPage : UserControl
     /// provider row: it is a decision about what the assistant may do on this machine, not about which model to use.</summary>
     private void OnSpawnChanged()
     {
-        if (!_ready) return;
         var value = SpawnCheck.IsChecked == true;
+        SpawnLimitPanel.IsEnabled = value;
+        if (!_ready) return;
         if (value == _preferences.AllowSpawnedSessions) return;
         _preferences.AllowSpawnedSessions = value;
         _preferencesStore.Save(_preferences);
+    }
+
+    private void OnSpawnLimitChanged()
+    {
+        var value = SpawnRules.ClampLimit((int)Math.Round(SpawnLimitSlider.Value));
+        UpdateSpawnLimitLabel(value);
+        if (!_ready) return;
+        if (value == _preferences.MaxSpawnedSessionsPerRun) return;
+        _preferences.MaxSpawnedSessionsPerRun = value;
+        _preferencesStore.Save(_preferences);
+    }
+
+    private void UpdateSpawnLimitLabel(int value)
+    {
+        SpawnLimitValue.Text = string.Format(
+            System.Globalization.CultureInfo.CurrentCulture,
+            HubStrings.Get("MaxSpawnSessionsValueFormat"),
+            value);
     }
 
     private void OnAskQuestionsChanged()

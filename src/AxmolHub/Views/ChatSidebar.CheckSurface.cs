@@ -81,6 +81,7 @@ public partial class ChatSidebar : UserControl
     }
 
     internal bool HasSpawnedCompletionMarkForCheck(string id) => Rows(id).SelectMany(row => (row.Child as Grid)?.Children ?? []).OfType<Path>().Any(path => path.Name == "SpawnedSessionCompletedGlyph");
+    internal bool HasRowForCheck(string id) => Rows(id).Any();
     internal bool GroupCollapsedForCheck(string key) => IsGroupCollapsed(key);
     /// <summary>
     /// Folds or unfolds one group through its own header, the same way a click does. <see cref = "ToggleButton"/>

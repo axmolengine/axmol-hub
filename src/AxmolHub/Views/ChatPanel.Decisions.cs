@@ -46,6 +46,266 @@ public partial class ChatPanel
     private string _planTasksShape = "";
     private TextBlock? _planTasksSummary;
     private readonly List<PlanTaskRow> _planTaskRows = [];
+    private string _subagentsConversationId = "";
+    private bool _subagentsExpanded;
+    private string _subagentsSignature = "";
+
+    private void RefreshSubagentsHost()
+    {
+        var conversation = _chat?.ActiveConversation;
+        if (conversation is null || _chat is null)
+        {
+            SubagentsHost.Child = null;
+            SubagentsHost.IsVisible = false;
+            _subagentsSignature = "";
+            return;
+        }
+
+        if (_subagentsConversationId != conversation.Id)
+        {
+            _subagentsConversationId = conversation.Id;
+            _subagentsExpanded = false;
+            _subagentsSignature = "";
+        }
+
+        var children = _chat.Conversations
+            .Where(summary => string.Equals(summary.SpawnedBy, conversation.Id, StringComparison.Ordinal))
+            .ToList();
+        if (children.Count == 0)
+        {
+            SubagentsHost.Child = null;
+            SubagentsHost.IsVisible = false;
+            _subagentsSignature = "";
+            return;
+        }
+
+        var rows = children.Select(summary => (Summary: summary, State: EffectiveSubagentState(summary)))
+            .OrderBy(item => SubagentSortRank(item.State))
+            .ToList();
+
+        var signature = conversation.Id + "\u001f" + (_subagentsExpanded ? "1" : "0") + "\u001f"
+            + string.Join("\u001e", rows.Select(item => $"{item.Summary.Id}:{item.State}:{item.Summary.Title}"));
+        if (signature == _subagentsSignature && SubagentsHost.IsVisible) return;
+        _subagentsSignature = signature;
+
+        var total = rows.Count;
+        var approvalCount = rows.Count(item => item.State == "approval");
+        var runningCount = rows.Count(item => item.State == SpawnedSessionStates.Running);
+        var queuedCount = rows.Count(item => item.State == SpawnedSessionStates.Queued);
+        var completedCount = rows.Count(item => item.State == SpawnedSessionStates.Completed);
+
+        var summaryText = approvalCount > 0
+            ? string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SubagentsSummaryApprovalFormat"), approvalCount, total)
+            : runningCount > 0
+                ? string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SubagentsSummaryRunningFormat"), runningCount, total)
+                : queuedCount > 0
+                    ? string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SubagentsSummaryQueuedFormat"), queuedCount, total)
+                    : completedCount == total
+                        ? string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SubagentsSummaryDoneFormat"), total)
+                        : string.Format(System.Globalization.CultureInfo.CurrentCulture, HubStrings.Get("SubagentsSummaryMixedFormat"), total);
+
+        var toggle = new Button
+        {
+            Name = "SubagentsToggleButton",
+            Classes = { "plan-task-summary" },
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") },
+        };
+        var summaryRow = (Grid)toggle.Content;
+        var summaryDot = new Avalonia.Controls.Shapes.Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Margin = new Thickness(2, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var dotResource = approvalCount > 0
+            ? "Hub.Warning"
+            : runningCount > 0
+                ? "Hub.Accent"
+                : completedCount == total
+                    ? "Hub.Success"
+                    : "Hub.TextTertiary";
+        summaryDot.Bind(Avalonia.Controls.Shapes.Shape.FillProperty, new DynamicResourceExtension(dotResource));
+        summaryRow.Children.Add(summaryDot);
+
+        var summaryLabel = new TextBlock
+        {
+            Name = "SubagentsSummary",
+            Text = summaryText,
+            FontSize = 12.5,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(summaryLabel, 1);
+        summaryRow.Children.Add(summaryLabel);
+
+        var chevron = new Path
+        {
+            Data = Geometry.Parse(_subagentsExpanded ? "M6 15L12 9L18 15" : "M6 9L12 15L18 9"),
+            Width = 12,
+            Height = 12,
+            Stretch = Stretch.Uniform,
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.8,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 2, 0),
+        };
+        chevron.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        Grid.SetColumn(chevron, 2);
+        summaryRow.Children.Add(chevron);
+
+        toggle.Click += (_, _) =>
+        {
+            _subagentsExpanded = !_subagentsExpanded;
+            _subagentsSignature = "";
+            RefreshSubagentsHost();
+        };
+
+        var root = new StackPanel();
+        root.Children.Add(toggle);
+
+        if (_subagentsExpanded)
+        {
+            var divider = new Border { Height = 1 };
+            divider.Bind(Border.BackgroundProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
+            root.Children.Add(divider);
+
+            var list = new StackPanel { Spacing = 2, Margin = new Thickness(6, 4, 6, 6) };
+            foreach (var (child, state) in rows)
+            {
+                var rowGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"),
+                    Margin = new Thickness(2, 1),
+                };
+
+                var stateDot = new Avalonia.Controls.Shapes.Ellipse
+                {
+                    Width = 6,
+                    Height = 6,
+                    Margin = new Thickness(4, 0, 8, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                stateDot.Bind(Avalonia.Controls.Shapes.Shape.FillProperty,
+                    new DynamicResourceExtension(SubagentStateBrushKey(state)));
+                rowGrid.Children.Add(stateDot);
+
+                var openBtn = new Button
+                {
+                    Classes = { "plan-task-summary" },
+                    Padding = new Thickness(4, 3),
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Content = new TextBlock
+                    {
+                        Text = string.IsNullOrWhiteSpace(child.Title) ? HubStrings.Get("NewConversation") : child.Title,
+                        FontSize = 12,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    },
+                };
+                ToolTip.SetTip(openBtn, HubStrings.Get("SubagentOpenTip"));
+                var childId = child.Id;
+                openBtn.Click += (_, _) => _chat.OpenConversation(childId);
+                Grid.SetColumn(openBtn, 1);
+                rowGrid.Children.Add(openBtn);
+
+                var stateLabel = new TextBlock
+                {
+                    Text = SubagentStateLabel(state),
+                    FontSize = 11.5,
+                    Margin = new Thickness(8, 0, 4, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                stateLabel.Bind(TextBlock.ForegroundProperty,
+                    new DynamicResourceExtension(state is "approval" or SpawnedSessionStates.Failed
+                        ? SubagentStateBrushKey(state)
+                        : "Hub.TextSecondary"));
+                Grid.SetColumn(stateLabel, 2);
+                rowGrid.Children.Add(stateLabel);
+
+                if (state is SpawnedSessionStates.Running or SpawnedSessionStates.Queued)
+                {
+                    var stopBtn = new Button
+                    {
+                        Classes = { "plan-task-summary" },
+                        Padding = new Thickness(6, 2),
+                        Margin = new Thickness(4, 0, 0, 0),
+                        Content = new TextBlock { Text = "×", FontSize = 13, VerticalAlignment = VerticalAlignment.Center },
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    ToolTip.SetTip(stopBtn, HubStrings.Get("SubagentStopTip"));
+                    stopBtn.Click += (_, _) => _chat.RequestStop(childId);
+                    Grid.SetColumn(stopBtn, 3);
+                    rowGrid.Children.Add(stopBtn);
+                }
+
+                list.Children.Add(rowGrid);
+            }
+
+            root.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 220,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = list,
+            });
+        }
+
+        SubagentsHost.Child = root;
+        SubagentsHost.IsVisible = true;
+    }
+
+    private string EffectiveSubagentState(ConversationSummary summary)
+    {
+        if (summary.PendingApprovals > 0) return "approval";
+        if (_chat is not null && _chat.IsRunning(summary.Id)) return SpawnedSessionStates.Running;
+        if (_chat is not null && _chat.IsWakeQueued(summary.Id)) return SpawnedSessionStates.Queued;
+        return summary.SpawnedState switch
+        {
+            SpawnedSessionStates.Completed => SpawnedSessionStates.Completed,
+            SpawnedSessionStates.Failed => SpawnedSessionStates.Failed,
+            SpawnedSessionStates.Stopped => SpawnedSessionStates.Stopped,
+            SpawnedSessionStates.Interrupted => SpawnedSessionStates.Interrupted,
+            SpawnedSessionStates.Queued => SpawnedSessionStates.Queued,
+            _ => SpawnedSessionStates.Interrupted,
+        };
+    }
+
+    private static int SubagentSortRank(string state) => state switch
+    {
+        "approval" => 0,
+        SpawnedSessionStates.Running => 1,
+        SpawnedSessionStates.Queued => 2,
+        SpawnedSessionStates.Completed => 3,
+        SpawnedSessionStates.Failed => 4,
+        SpawnedSessionStates.Stopped => 5,
+        _ => 6,
+    };
+
+    private static string SubagentStateLabel(string state) => state switch
+    {
+        "approval" => HubStrings.Get("SubagentStateApproval"),
+        SpawnedSessionStates.Running => HubStrings.Get("SubagentStateRunning"),
+        SpawnedSessionStates.Queued => HubStrings.Get("SubagentStateQueued"),
+        SpawnedSessionStates.Completed => HubStrings.Get("SubagentStateCompleted"),
+        SpawnedSessionStates.Failed => HubStrings.Get("SubagentStateFailed"),
+        SpawnedSessionStates.Stopped => HubStrings.Get("SubagentStateStopped"),
+        _ => HubStrings.Get("SubagentStateInterrupted"),
+    };
+
+    private static string SubagentStateBrushKey(string state) => state switch
+    {
+        "approval" => "Hub.Warning",
+        SpawnedSessionStates.Running => "Hub.Accent",
+        SpawnedSessionStates.Completed => "Hub.Success",
+        SpawnedSessionStates.Failed => "Hub.Danger",
+        _ => "Hub.TextTertiary",
+    };
 
     private void RefreshPlanTasksHost()
     {

@@ -1019,6 +1019,11 @@ public sealed partial class ChatWorkspace : IDisposable
         /// card to answer, so an unanswered question becomes a turn that ends — the same interruption the person
         /// just turned off, arriving in the worse shape of a reply they have to write back to.</para></summary>
         public static string For(string mode, bool askUserEnabled = true) => Base(mode) + (askUserEnabled || mode == ChatModes.Ask ? "" : DecideYourself);
+        /// <summary>Read-only helper prompt for a spawned child session. Unlike interactive Plan mode, it asks for a
+        /// concise direct conclusion rather than an approval-gated implementation plan checklist.</summary>
+        public static string ForSpawnedReadOnly()
+            => "You are a spawned read-only helper session with read-only tools: Hub's project, engine and toolchain lists, workspace_map, fs_read, fs_grep, fs_find and fs_list inside the session workspace and any directory the parent already granted, memory_read, and the other sessions of this Hub (list_sessions, read_session). Do not edit files or run commands. Do not format your answer as an approval-gated plan or include a ## Implementation tasks checklist; investigate the assigned task and return a concise, direct conclusion in your final answer, which Hub delivers back to the parent session automatically."
+               + DecideYourself;
         /// <summary>What to do with a decision nobody is going to hand you.</summary>
         private const string DecideYourself = " Questions are switched off in this session, so nobody will answer one: where something is genuinely " + "undetermined, decide it yourself, prefer the option that is easiest to undo, and name the " + "assumption you made so it can be corrected in one line.";
         private static string Base(string mode) => mode switch

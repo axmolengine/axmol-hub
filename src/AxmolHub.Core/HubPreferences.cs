@@ -172,6 +172,9 @@ public sealed class HubPreferences
     /// </summary>
     public bool AllowSpawnedSessions { get; set; }
 
+    /// <summary>Maximum spawned helper sessions per turn and live/queued cap (1 to 10, default 3).</summary>
+    public int MaxSpawnedSessionsPerRun { get; set; } = SpawnRules.DefaultMaxSpawnsPerRun;
+
     /// <summary>Whether the assistant may ask the user to resolve a choice, shared across all conversations.</summary>
     public bool AllowAssistantQuestions { get; set; } = true;
 
@@ -290,6 +293,7 @@ public sealed class PreferencesStore(string path)
         preferences.ProviderMaxRetries = Math.Clamp(preferences.ProviderMaxRetries, 0, ProviderRetryDefaults.MaxRetriesLimit);
         preferences.GoalNoProgressLimit = Math.Clamp(preferences.GoalNoProgressLimit, 2, 20);
         preferences.GoalCooldownLimit = Math.Clamp(preferences.GoalCooldownLimit, 0, 5);
+        preferences.MaxSpawnedSessionsPerRun = SpawnRules.ClampLimit(preferences.MaxSpawnedSessionsPerRun);
         if (removedRetiredTools || upgraded) Save(preferences);
         return preferences;
     }
