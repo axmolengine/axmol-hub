@@ -271,9 +271,10 @@ internal static partial class MarkdownMessageRenderer
             viewer.LayoutUpdated -= layoutUpdated;
             foreach (var scroll in viewer.GetVisualDescendants().OfType<ScrollViewer>())
             {
-                // Only the document hands scrolling to the inspector host. A fenced code editor and a
-                // wide table still own their horizontal scrolling inside that document.
+                // Only the document hands scrolling to the inspector host. Fenced code editors, indented
+                // code blocks, and wide tables still own their horizontal scrolling inside that document.
                 if (scroll.GetVisualAncestors().OfType<TextEditor>().Any()
+                    || scroll.Classes.Contains("CodeBlock")
                     || scroll.Classes.Contains("markdown-table-scroll")) continue;
                 scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
                 scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
@@ -305,13 +306,51 @@ internal static partial class MarkdownMessageRenderer
             InstallCodeBlockToolbar(editor);
         }
 
+        var foundPlainCodeBlock = InstallPlainCodeBlockLayout(viewer);
         var foundTable = InstallTableScrollViewers(viewer);
 
         // Link colors are a style now (HubMarkdownStyles), not a per-element bind. The scan stays so a
         // document made only of links still unsubscribes from LayoutUpdated after this pass.
         var foundLink = viewer.GetLogicalDescendants().OfType<CHyperlink>().Any();
 
-        return foundEditor || foundTable || foundLink;
+        return foundEditor || foundPlainCodeBlock || foundTable || foundLink;
+    }
+
+    private static bool InstallPlainCodeBlockLayout(MarkdownScrollViewer viewer)
+    {
+        var foundBlock = false;
+        foreach (var scroller in viewer.GetVisualDescendants().OfType<ScrollViewer>().ToArray())
+        {
+            if (!scroller.Classes.Contains("CodeBlock")) continue;
+            if (scroller.Classes.Contains("hub-plain-code-block-layout"))
+            {
+                foundBlock = true;
+                continue;
+            }
+            if (scroller.Content is not TextBlock textBlock) continue;
+
+            // Indented code blocks bypass SyntaxHighlight's TextEditor and render as ScrollViewer.CodeBlock
+            // wrapping a TextBlock.CodeBlock. Keep vertical scrolling on the outer document and reserve the
+            // horizontal scrollbar's height below the glyphs using the same metric calculation as fenced blocks.
+            scroller.Classes.Add("hub-plain-code-block-layout");
+            scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            scroller.Margin = new Avalonia.Thickness(8, 6, 8, 6);
+            textBlock.Padding = new Avalonia.Thickness(0, 0, 0, HubMetrics.ScrollBarThickness);
+            void ReservePlainCodeHeight() => ApplyReservedScrollBarHeight(scroller, textBlock.TextLayout.Height);
+            scroller.LayoutUpdated += (_, _) => ReservePlainCodeHeight();
+            ReservePlainCodeHeight();
+            foundBlock = true;
+        }
+
+        return foundBlock;
+    }
+
+    private static void ApplyReservedScrollBarHeight(Control host, double contentHeight)
+    {
+        if (contentHeight <= 0) return;
+        var scale = TopLevel.GetTopLevel(host)?.RenderScaling ?? 1;
+        var height = Math.Ceiling((contentHeight + HubMetrics.ScrollBarThickness + 1) * scale) / scale;
+        if (Math.Abs(host.MinHeight - height) > 0.1) host.MinHeight = height;
     }
 
     private static bool InstallTableScrollViewers(MarkdownScrollViewer viewer)
@@ -360,9 +399,7 @@ internal static partial class MarkdownMessageRenderer
         void ReserveCodeHeight()
         {
             var lineHeight = editor.TextArea.TextView.DefaultLineHeight;
-            var scale = TopLevel.GetTopLevel(editor)?.RenderScaling ?? 1;
-            var height = Math.Ceiling((editor.Document.LineCount * lineHeight + HubMetrics.ScrollBarThickness + 1) * scale) / scale;
-            if (lineHeight > 0 && Math.Abs(editor.MinHeight - height) > 0.1) editor.MinHeight = height;
+            if (lineHeight > 0) ApplyReservedScrollBarHeight(editor, editor.Document.LineCount * lineHeight);
         }
         editor.LayoutUpdated += (_, _) => ReserveCodeHeight();
 
