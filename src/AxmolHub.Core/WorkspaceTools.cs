@@ -197,17 +197,32 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
     public const int MaxListedEntries = 300;
     public const int MaxFoundFiles = 500;
 
-    [Description("Read a built-in workflow for an Axmol Sprite shader or Lua input task, with the current game's engine source if identifiable. "
-                 + "Use at the start of these tasks; verify examples with fs_find, fs_grep and fs_read. Does not grant access.")]
-    public string ReadAxmolSkill([Description("Exact skill ID: axmol-sprite-shader or axmol-lua-input (not a path).")] string id)
+    [Description("Read a built-in Axmol v2/v3 workflow skill with the current workspace's engine version and core directory if identifiable. "
+                 + "Pass an exact skill ID (axmol-v3-migration, axmol-sprite-shader, axmol-lua-input, axmol-build-cmake) or 'list'. Does not grant access.")]
+    public string ReadAxmolSkill([Description("Exact skill ID (axmol-v3-migration, axmol-sprite-shader, axmol-lua-input, axmol-build-cmake) or 'list' (not a path).")] string id)
     {
-        if (id is not ("axmol-sprite-shader" or "axmol-lua-input"))
-            return "Unknown Axmol skill. Use axmol-sprite-shader or axmol-lua-input.";
-        using var resource = typeof(WorkspaceTools).Assembly.GetManifestResourceStream(id);
-        if (resource is null) return $"Built-in skill {id} is missing from this Hub build.";
-        using var reader = new StreamReader(resource);
-        return AxmolSkillEngine.Describe(context) + "\n\nBuilt-in workflow (not a source citation):\n" + TextEol.ToLf(reader.ReadToEnd());
+        var trimmed = (id ?? "").Trim();
+        if (string.Equals(trimmed, "list", StringComparison.OrdinalIgnoreCase))
+            return AxmolSkillEngine.Describe(context) + "\n\n" + AxmolSkillCatalog.FormatList();
+        if (!AxmolSkillCatalog.TryRead(trimmed, out var body))
+            return "Unknown Axmol skill.\n" + AxmolSkillCatalog.FormatList();
+        return AxmolSkillEngine.Describe(context) + "\n\nBuilt-in workflow (not a source citation):\n" + body;
     }
+
+    [Description("Query the locally indexed C++ headers and Lua bindings of the current project's authorized Axmol engine (v2 LTS or v3). "
+                 + "Returns ranked symbols with signatures, version, revision, and relative file:line. Prefer this BEFORE broad fs_grep/fs_find sweeps; "
+                 + "then verify critical details with fs_read on the returned lines. Does not grant access.")]
+    public string QueryAxmolApi(
+        [Description("Symbol, qualified name, or owner/member lookup (e.g. 'Sprite::setProgramState', 'ProgramManager', 'PointerEventListener', 'EventListenerTouchOneByOne', 'onPointerDown').")]
+        string query,
+        [Description("Language filter: all, cpp, or lua. Defaults to all.")]
+        string language = "all",
+        [Description("Symbol kind filter: all, type, method, field, or enum. Defaults to all.")]
+        string kind = "all",
+        [Description("Maximum number of matches to return (1..50, default 20).")]
+        int limit = AxmolApiIndexQuery.DefaultLimit,
+        CancellationToken cancellationToken = default)
+        => AxmolApiIndexStore.Query(context, query, language, kind, limit, cancellationToken);
 
     [Description("Read a text file from the session workspace, or from a directory the user granted this session, "
                  + "or one single file the user granted with fs_request_access. "

@@ -42,6 +42,8 @@ public static class ToolNames
 
     public const string AxmolSkillRead = "axmol_skill_read";
 
+    public const string AxmolApiQuery = "axmol_api_query";
+
     public const string ToolchainStatus = "toolchain_status";
 
     public const string ListSessions = "list_sessions";

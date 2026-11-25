@@ -297,6 +297,7 @@ internal sealed partial class ChatExecutionCoordinator
         if (conversation?.Messages.LastOrDefault(turn => turn.Role == ChatRoles.Assistant
                 && turn.PlanApprovalState == PlanApprovalStates.Approved)?.Plan?.Tasks is { Count: > 0 })
             mode += " An approved plan task list is visible above the composer. Use update_plan_task to mark the current step in_progress before starting it, and completed only after its work and checks succeed; leave future steps pending. Do not mark every task complete at once.";
+        var axmol = AxmolWorkspaceSection(conversation, normalizedMode);
         var charter = ProjectCharterSection(conversation?.WorkspaceRoot);
         var summary = "";
         if (conversation?.ContextSummary is { Length: > 0 } stored)
@@ -330,8 +331,23 @@ internal sealed partial class ChatExecutionCoordinator
                 + $"\nReported tokens: {conversation.GoalReportedTokens}; estimated tokens without usage: {conversation.GoalEstimatedTokens}."
                 + (conversation.GoalWaitingFor.Count > 0 ? "\nPending dependencies: " + string.Join(", ", conversation.GoalWaitingFor)
                     + ". Their results arrive as notifications; do not poll or spend requests waiting." : "");
-        return new ContextPrompt(mode + goal + charter + summary + memory + commit, mode + goal + commit,
+        return new ContextPrompt(mode + axmol + goal + charter + summary + memory + commit, mode + axmol + goal + commit,
             charter, summary, memory);
+    }
+
+    private string AxmolWorkspaceSection(Conversation? conversation, string normalizedMode)
+    {
+        // Ask mode never inspects local workspace/engine files; generic non-Axmol folders return empty string.
+        if (normalizedMode == ChatModes.Ask || conversation?.WorkspaceRoot is not { Length: > 0 } root)
+            return "";
+        var engines = EnginesProvider?.Invoke().ToArray() ?? [];
+        var guards = WorkspacePaths.GuardsForWorkspace(_dataRoot, engines, AuthRoot, root);
+        var scope = new WorkspaceToolScope(root, guards, _dataRoot, conversation.Id, [], null)
+        {
+            Sandbox = SandboxOf(conversation, root, guards),
+            Engines = engines,
+        };
+        return AxmolProjectDigest.Build(scope);
     }
 
     private string MemoryIndexSection(string? workspaceRoot)

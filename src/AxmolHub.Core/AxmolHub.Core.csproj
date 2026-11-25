@@ -11,7 +11,9 @@
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Skills/axmol-v3-migration/SKILL.md" LogicalName="axmol-v3-migration" />
     <EmbeddedResource Include="Skills/axmol-sprite-shader/SKILL.md" LogicalName="axmol-sprite-shader" />
     <EmbeddedResource Include="Skills/axmol-lua-input/SKILL.md" LogicalName="axmol-lua-input" />
+    <EmbeddedResource Include="Skills/axmol-build-cmake/SKILL.md" LogicalName="axmol-build-cmake" />
   </ItemGroup>
 </Project>

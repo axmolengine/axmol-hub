@@ -48,14 +48,66 @@ internal static class AiWorkspaceChecks
         var scope = new WorkspaceToolScope(workspace, Guards(workspace), hubData, "skills", [], null) { Engines = engines };
         const string skill = "axmol-sprite-shader";
         var revoked = new WorkspaceTools(scope);
-        if (!new WorkspaceTools(scope with { Sandbox = other }).ReadAxmolSkill(skill).StartsWith("Matched registered")
+        var granted = new WorkspaceTools(scope with { Sandbox = other });
+        if (!granted.ReadAxmolSkill(skill).StartsWith("Matched registered")
+            || !granted.ReadAxmolSkill("axmol-v3-migration").Contains("PointerEventListener")
+            || !granted.ReadAxmolSkill("axmol-build-cmake").Contains("-forceConfig")
+            || !granted.ReadAxmolSkill("list").Contains("axmol-v3-migration")
             || !revoked.ReadAxmolSkill(skill).StartsWith("Not authorized")
+            || !revoked.QueryAxmolApi("Sprite").StartsWith("Not authorized")
             || revoked.SearchText("Local source", "axmol.h").Contains(":1: // Local source"))
-            throw new Exception("The engine query and parent search did not respect the session's current grant.");
+            throw new Exception("The engine query, API index and parent search did not respect the session's current grant.");
+        var nonAxmol = Path.Combine(Path.GetDirectoryName(workspace)!, "plain-folder");
+        Directory.CreateDirectory(nonAxmol);
+        if (AxmolProjectDigest.Build(scope with { WorkspaceRoot = nonAxmol, Sandbox = WorkspaceSandbox.For(nonAxmol) }).Length != 0
+            || !AxmolProjectDigest.Build(scope with { Sandbox = other }).Contains("Axmol 3.0.0")
+            || !AxmolProjectDigest.Build(scope).Contains("Not authorized"))
+            throw new Exception("AxmolProjectDigest did not match Axmol scope, stay silent on generic folders, or reflect revocation.");
+
+        // Synthetic C++ + Lua v3/v2 indexing, cache invalidation on local edit, and narrow-grant isolation.
+        var spriteHeader = Path.Combine(local, "core", "2d", "Sprite.h");
+        Directory.CreateDirectory(Path.GetDirectoryName(spriteHeader)!);
+        File.WriteAllText(spriteHeader, "NS_AX_BEGIN\nclass AX_DLL Sprite : public Node {\npublic:\n    virtual bool setProgramState(rhi::ProgramState* ps);\n};\nNS_AX_END\n");
+        var extSecretHeader = Path.Combine(local, "extensions", "SecretExt.h");
+        Directory.CreateDirectory(Path.GetDirectoryName(extSecretHeader)!);
+        File.WriteAllText(extSecretHeader, "NS_AX_BEGIN\nclass SecretExt {\npublic:\n    void hiddenApi();\n};\nNS_AX_END\n");
+        var v3Manifest = Path.Combine(local, "extensions", "scripting", "lua-bindings", "generated", "manifests", "axlua_base.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(v3Manifest)!);
+        File.WriteAllText(v3Manifest, "{\n  \"classes\": [\n    {\n      \"luaName\": \"ax.PointerEventListener\",\n      \"luaClassName\": \"PointerEventListener\",\n      \"qualifiedName\": \"ax::PointerEventListener\",\n      \"fields\": [\n        { \"luaName\": \"onPointerDown\", \"fieldType\": \"std::function<bool (ax::PointerEvent *)>\" }\n      ]\n    }\n  ]\n}\n");
+        var v2Manual = Path.Combine(local, "extensions", "scripting", "lua-bindings", "manual", "base", "axlua_base_manual.cpp");
+        Directory.CreateDirectory(Path.GetDirectoryName(v2Manual)!);
+        File.WriteAllText(v2Manual, "static void extendTouch(lua_State* tolua_S) {\n    lua_pushstring(tolua_S, \"ax.EventListenerTouchOneByOne\");\n    tolua_function(tolua_S, \"registerScriptHandler\", toaxlua_reg);\n}\n");
+
+        var firstQuery = granted.QueryAxmolApi("Sprite::setProgramState", "cpp");
+        var cachedQuery = granted.QueryAxmolApi("Sprite::setProgramState", "cpp");
+        var luaV3Query = granted.QueryAxmolApi("PointerEventListener", "lua");
+        var luaV2Query = granted.QueryAxmolApi("EventListenerTouchOneByOne", "lua");
+        if (!firstQuery.Contains("freshly indexed") || !firstQuery.Contains("core/2d/Sprite.h:4")
+            || !cachedQuery.Contains("cached")
+            || !luaV3Query.Contains("ax.PointerEventListener.onPointerDown")
+            || !luaV2Query.Contains("ax.EventListenerTouchOneByOne.registerScriptHandler"))
+            throw new Exception("Local Axmol API index did not return expected C++/Lua hits or reuse its cache.");
+
+        // Editing a header on disk must invalidate the cached index immediately.
+        File.WriteAllText(spriteHeader, "NS_AX_BEGIN\nclass AX_DLL Sprite : public Node {\npublic:\n    virtual bool setProgramState(rhi::ProgramState* ps);\n    void blurFreshMethod();\n};\nNS_AX_END\n");
+        var refreshedQuery = granted.QueryAxmolApi("blurFreshMethod", "cpp");
+        if (!refreshedQuery.Contains("freshly indexed") || !refreshedQuery.Contains("core/2d/Sprite.h:5"))
+            throw new Exception("Editing a local engine header did not invalidate the cached Axmol API index.");
+
         var partial = new WorkspaceTools(scope with { Sandbox = new(workspace, [], [Path.Combine(local, "core")]) });
         if (!partial.SearchText("Local source", "axmol.h").Contains(":1: // Local source")
             || partial.SearchText("PRIVATE_SENTINEL", "CMakeLists.txt").Contains(":1: # PRIVATE_SENTINEL"))
             throw new Exception("A narrow engine grant must be searchable without opening its siblings.");
+        // Engine-root checkout with narrow grant must not index unauthorized sibling extensions.
+        var narrowCheckout = new WorkspaceTools(scope with
+        {
+            WorkspaceRoot = local,
+            Sandbox = new(local, [], [Path.Combine(local, "core")]),
+            Guards = new(hubData, [Path.Combine(local, "extensions")]),
+        });
+        if (narrowCheckout.QueryAxmolApi("hiddenApi", "cpp").Contains("SecretExt.h"))
+            throw new Exception("Axmol API indexer leaked symbols from a guarded sibling directory.");
+        Console.WriteLine("PASS: Axmol engine digest, skill catalog, and versioned local API index enforce grants and invalidate on edit.");
     }
 
     internal static async Task RunAsync(string root, string[] args)

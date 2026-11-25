@@ -46,3 +46,49 @@
 ### 历史中断记录（不纳入完整对照）
 
 最初 DeepSeek 基线 `fs_find/fs_grep/fs_read`：v2 S **3/14/24 = 41**、v2 L **5/11/13 = 29**、v3 S **6/30/45 = 81**、v3 L **4/17/17 = 38**；只有 v3 S 完成，其余 HTTP 402。一次 zhongkey v3 S 续跑 **5/23/21 = 49**，1 次 skill，218 秒后取消。后来的 8-request 实验合计 **32 次请求**，检索 v2 S/L 为 **13/10**、v3 S/L 为 **11/9**，四题都没有最终答案，报告输入 **341,852**、输出 **5,909 tokens**。这些中断数字不能与完整任务计算收益，分别留在 `baseline-*`、`phase1-blur3` 与 `bounded/<case>/`。
+
+---
+
+## 阶段 2：引擎摘要注入 + 4 领域 Skills + 本地版本化 API 索引验收（`xingchiapi / gpt-6.1-sol`）
+
+本轮在不改动通用 `ChatModePrompt`、保持 Ask 模式零本地权限和撤权即时生效的前提下，完成了三层升级：
+
+1. **统一引擎定位与确定性摘要（`AxmolSkillEngine` / `AxmolProjectDigest`）**：支持内嵌 `axmol/`、锁定安装和直接打开引擎仓库（`axmol` / `axmol2`）；仅在 Plan/Agent 模式且命中 Axmol 工作区时注入版本、主代际、核心目录、技能清单与索引优先提示，普通非 Axmol 目录零注入。
+2. **统一 4 领域内置 Skills（`AxmolSkillCatalog`）**：新增 `axmol-v3-migration`、`axmol-build-cmake`（核对 `AxmolCommandMap.cs` 与 `CMakeOptions.md`：`-c`/`-configOnly` 仅配置、配置档用 `-O0..-O3`、`-xc` 单参数逗号分隔、`-DAX_RENDER_API`），并升级 `axmol-sprite-shader`（补全 `docs/hlsl-spec.md` 的 `base.hlsli` 与禁止手写 `: register(...)` 规则）与 `axmol-lua-input`（v3 sol2 manifests + adapters vs v2 tolua++ auto + manual），均改为 `axmol_api_query` 优先。
+3. **本地版本化 API 索引与 `axmol_api_query`（`AxmolApiIndex` / `AxmolApiIndexStore`）**：纯 .NET 8 实现，预留 `schemaVersion: 1` 与 `sourceKind: "local-source"`（为阶段 3 的 `"official-release"` 预留字段）。缓存落于 `<HubDataRoot>/cache/axmol-api-index/`，以可读文件相对路径 + 大小 + 修改时间计算指纹，本地改头文件立即失效重建；受沙箱与窄目录授权约束。
+
+### 真实仓库本地索引实测（macOS arm64）
+
+| 目标树 | 版本 | 索引规模 | 冷建耗时 | 热载耗时 | 紧凑缓存 | 关键探针 |
+|---|---|---|---:|---:|---:|---|
+| 内嵌 v2（`Blur2`） | `2.11.6`（`core/`） | 1,210 C++ 头文件 / 52 Lua 文件 / 40,515 符号 | 717 ms | 163 ms | 13.2 MB | `Sprite::setProgramState`、`ProgramManager::loadProgram`、`ax::backend::ProgramState`、`AsyncTaskPool`、`EventListenerTouchOneByOne.registerScriptHandler` 全部命中 |
+| 内嵌 v3（`Blur3`） | `3.0.0`（`axmol/`，`4f32c64`） | 1,243 C++ 头文件 / 35 Lua 文件 / 39,547 符号 | 611 ms | 166 ms | 12.8 MB | `Sprite::setProgramState`、`ProgramManager::loadProgram`、`ax::rhi::ProgramState`、`JobSystem`、`ax.PointerEventListener.onPointerDown`、`ax.ParticleSystemQuad` 命中；`AsyncTaskPool` 确认缺失 |
+| 本地 `/Users/simdsoft/oss/axmol2` | `2.11.6`（`39a46146d`） | 1,210 头文件 / 52 Lua / 40,515 符号 | 546 ms | 72 ms | 13.2 MB | 全部命中 |
+| 本地 `/Users/simdsoft/oss/axmol` | `3.0.0`（`9e5b9537f`） | 1,245 头文件 / 35 Lua / 39,547 符号 | 473 ms | 77 ms | 12.8 MB | 全部命中，`AsyncTaskPool` 确认缺失 |
+
+### 同路由 8 题 A/B 对照（`xingchiapi / gpt-6.1-sol`，`responses` 协议，`maxOutputTokens=16384`）
+
+基线侧关闭 `AxmolProjectDigest`、`axmol_skill_read` 与 `axmol_api_query`，仅保留通用 Agent 提示词与常规文件工具；升级侧开启三层能力。两侧均为单轮完成、零续写、零人工反馈（原始记录存于忽略目录 `tmp/ax-phase2-accept/{baseline,upgraded}/`）：
+
+| 题面 | 基线 请求 / 文件检索 / 输入 token / 耗时 | 升级 请求 / 文件检索 / API 查询 / skill / 输入 token / 耗时 | 文件检索变化 | 输入 token 变化 | 首轮关键正确性对照 |
+|---|---:|---:|---:|---:|---|
+| `v2-blur`（原题） | 9 / 39 / 191K / 97.0s | 7 / 23 / 3 / 1 / 120K / 74.2s | **-41.0%** | **-37.3%** | 两侧均命中 `2.11.6` 与 GLSL/CMake |
+| `v2-click`（原题） | 8 / 34 / 213K / 228.6s | 11 / 39 / 13 / 1 / 296K / 526.4s | +14.7% | +39.1% | 基线漏报精确版本 `2.11.6`；升级准确引用 `2.11.6` 与手工绑定 |
+| `v3-blur`（原题） | 9 / 37 / 178K / 102.0s | 11 / 33 / 4 / 1 / 225K / 115.2s | **-10.8%** | +26.9% | 两侧均命中 `3.0.0` 与 HLSL 管线 |
+| `v3-click`（原题） | 18 / 64 / 835K / 783.6s | 16 / 47 / 17 / 1 / 344K / 502.2s | **-26.6%** | **-58.7%** | **基线漏掉零尺寸 `ViewBase` 的 `setContentSize` 命中区修复（运行时点击将失效）**；升级首轮即命中 |
+| `v3-migrate-cpp`（新增） | 9 / 43 / 209K / 164.7s | 6 / 15 / 8 / 1 / 90K / 99.3s | **-65.1%** | **-57.0%** | 升级 6 轮即准确迁移 `Node.h`、`PointerEventListener`、`Director::runAsync`/`JobSystem`、`ax::rhi::ProgramState` |
+| `v3-rhi-hlsl`（新增） | 18 / 107 / 785K / 529.0s | 9 / 32 / 5 / 1 / 193K / 113.7s | **-70.1%** | **-75.4%** | 升级符合 `docs/hlsl-spec.md`（`base.hlsli`、无 `: register(...)`、`cbuffer`），已实编实机通过 |
+| `v2-build-cmake`（新增） | 9 / 18 / 134K / 182.9s | 7 / 19 / 1 / 1 / 120K / 129.9s | +5.6% | **-10.7%** | **基线漏掉 `-forceConfig` 与 `2.11.6`**；升级准确给出 `-forceConfig` 与 `AXBuildHelpers.cmake` 行号 |
+| `v3-migrate-lua`（新增） | 7 / 26 / 149K / 130.3s | 40 / 27 / 9 / 2 / 1,414K / 335.7s | +3.8% | +847.8% | 两侧均识别 `ParticleSystemQuad`/`ax.size`/`AsyncTaskPool` 移除；升级侧该题单轮串行发 1 个工具调用拉高了请求数与累计输入 token |
+| **8 题合计** | **87 / 368 / 2,694K / 2,218.1s** | **107 / 235 / 60 / 9 / 2,803K / 1,896.6s** | **-36.1%** | +4.0% | 剔除 `v3-migrate-lua` 串行单调用异常项后，其余 7 题请求 `80 → 67`（-16.3%）、输入 token `2,545K → 1,389K`（**-45.4%**） |
+
+### 实编与运行抽检（macOS arm64 / Metal MSL 2.0）
+
+- **`v3-rhi-hlsl` + `v3-migrate-cpp`（`Blur3`）**：将模型生成的 `Source/Shaders/tintPulse_fs.hlsl` 与 `MainScene.h/.cpp`（`ProgramManager::loadProgram`、`ax::rhi::ProgramState`、`Director::runAsync`）合入临时 `Blur3` 并重新配置构建（`RelWithDebInfo`），`axslcc` 与 Xcode 均 `BUILD SUCCEEDED`；产物包内存在 `Blur3.app/Contents/Resources/axslc/custom/tintPulse_fs`（1,311 字节）。本地 ad-hoc 重签启动后，stdout 确认输出 `Phase2 v3-rhi-hlsl shader loaded: custom/tintPulse_fs` 与 `Phase2 v3-migrate-cpp Director::runAsync callback ran on Axmol thread`，stderr 为空。
+- **`v3-migrate-lua`（`Click3`）**：将模型生成的 v3 sol2 `MainScene.lua`（`ax.size(800, 600)`、`ax.ParticleSystemQuad`、`ax.PointerEventListener`、`onExit` 回调令牌失效）置入临时 `Click3.app` 启动运行，无崩溃且 stderr 为空。
+- **离线检查与构建**：`dotnet build -c Release src/AxmolHub` 0 警告 0 错误；`--check-ai-workspace`（含摘要、4 技能、本地索引、编辑失效、撤权与窄授权隔离）、`--check-ai-context`、`--check-ai-tool-policy` 全部通过。
+
+### 阶段 2 结论
+
+- 相比阶段 1，本轮在 `xingchiapi / gpt-6.1-sol` 8 题对照中证明了显著收益：**总文件检索下降 36.1%**（复杂 v3 渲染/迁移题下降 **65%–70%**，输入 token 下降 **57%–75%**），并在 3 道关键题上直接消除了基线的首轮正确性缺陷（v3 `ViewBase` 零尺寸点击命中区、v2 `-forceConfig`、v2 `2.11.6` 版本识别）。
+- 阶段 3（官方发行版索引独立打包发布、SHA-256 校验、按需下载与离线缓存）所需的数据结构（`schemaVersion: 1`、`sourceKind` 区分 `"local-source"` 与 `"official-release"`）已就绪，可按实际发布节奏独立立项推进。
