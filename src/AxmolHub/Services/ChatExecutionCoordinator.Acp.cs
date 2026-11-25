@@ -11,6 +11,7 @@ internal sealed partial class ChatExecutionCoordinator
 {
     private sealed record AcpPendingPermission(
         IReadOnlyList<AcpPermissionOption> Options,
+        ToolRisk Risk,
         TaskCompletionSource<AcpPermissionOutcome> Completion);
 
     private readonly AcpHostPool _acpHostPool = new();
@@ -54,6 +55,8 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 ApprovalState = approved ? ChatApprovalStates.Approved : ChatApprovalStates.Denied,
             };
+            if (approved && alwaysAllow && ToolApprovalPolicy.IsGrantable(pending.Risk))
+                ToolTrust.Add(opened.AutoApprovedTools, toolName);
         });
 
         AuditApproval(conversationId, toolName, approved ? (alwaysAllow ? "always-allowed (acp)" : "approved (acp)") : "refused (acp)");
@@ -183,21 +186,32 @@ internal sealed partial class ChatExecutionCoordinator
             },
             OnPermissionRequested = async (permReq, ct) =>
             {
-                var mode = await ReadOnUiAsync(() => ApprovalModeFor(run.ConversationId)).ConfigureAwait(false);
-                if (AcpParsers.CanAutoApprove(permReq, mode, request.Scope.Workspace.Sandbox, request.Scope.Workspace.Guards))
+                var toolName = MapAcpToolName(permReq.ToolCall.Kind, permReq.ToolCall.Title);
+                var risk = AcpParsers.ClassifyPermissionRisk(
+                    permReq, request.Scope.Workspace.Sandbox, request.Scope.Workspace.Guards, TrustedCommands);
+                var (mode, sessionGrant) = await ReadOnUiAsync(() =>
+                {
+                    var conv = Sessions.Registry.Peek(run.ConversationId);
+                    var grantedInSession = conv is not null && ToolTrust.Contains(conv.AutoApprovedTools, toolName);
+                    return (ApprovalModeFor(run.ConversationId), grantedInSession);
+                }).ConfigureAwait(false);
+
+                var granted = ToolApprovalPolicy.IsGrantable(risk)
+                              && (sessionGrant || ToolTrust.Contains(TrustedTools, toolName));
+                if (granted || !ToolApprovalPolicy.RequiresApproval(mode, risk))
                 {
                     Audit(run.ConversationId,
-                        $"Tool gate: allowed-by-mode (acp) {permReq.ToolCall.Title} · {mode} · {permReq.ToolCall.Kind}");
+                        $"Tool gate: {(granted ? "allowed-by-grant" : "allowed-by-mode")} (acp) "
+                        + $"{permReq.ToolCall.Title} · {mode} · {risk}");
                     return AcpParsers.SelectOption(permReq.Options, approved: true, alwaysAllow: false);
                 }
 
                 var callId = permReq.ToolCall.ToolCallId;
-                var toolName = MapAcpToolName(permReq.ToolCall.Kind, permReq.ToolCall.Title);
                 var preview = FormatAcpPermissionPreview(permReq);
                 var argsJson = BuildAcpToolArgsJson(permReq.ToolCall.Title, permReq.ToolCall.RawInputJson);
 
                 var tcs = new TaskCompletionSource<AcpPermissionOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _acpPermissions[(run.ConversationId, callId)] = new AcpPendingPermission(permReq.Options, tcs);
+                _acpPermissions[(run.ConversationId, callId)] = new AcpPendingPermission(permReq.Options, risk, tcs);
 
                 // Hold a tool bracket while waiting on the user so the inactivity deadline does not fire.
                 run.BeginTool("acp-perm-" + callId, toolName);
@@ -343,6 +357,16 @@ internal sealed partial class ChatExecutionCoordinator
 
     private static string FormatAcpPermissionPreview(AcpPermissionRequest req)
     {
+        if (string.Equals(req.ToolCall.Kind, "execute", StringComparison.OrdinalIgnoreCase))
+        {
+            var (_, commandText, summary, bypassSandbox) = AcpParsers.ExtractCommandInput(req.ToolCall);
+            var cmd = commandText.Length > 600 ? commandText[..600] + "…" : commandText;
+            var header = bypassSandbox
+                ? (string.IsNullOrWhiteSpace(summary) ? "[BypassSandbox]" : $"{summary} [BypassSandbox]")
+                : summary;
+            return string.IsNullOrWhiteSpace(header) ? cmd : $"{header}\n{cmd}";
+        }
+
         var sb = new StringBuilder();
         sb.Append(req.ToolCall.Title);
         if (req.ToolCall.Locations.Count > 0)

@@ -50,20 +50,60 @@ internal static class AcpChecks
             "sess-1",
             new AcpPermissionToolCall("c2", "Edit outside", "edit", null, [Path.Combine(acpRoot, "outside.txt")]),
             editInWorkspace.Options);
-        var shellCommand = new AcpPermissionRequest(
+        var safeWorkspaceCommand = new AcpPermissionRequest(
             "sess-1",
-            new AcpPermissionToolCall("c3", "Run rm -rf", "execute", null, []),
+            new AcpPermissionToolCall(
+                "c3",
+                "grep -rn foo src/",
+                "execute",
+                """{"CommandLine":"grep -rn foo src/","WaitMsBeforeAsync":5000}""",
+                []),
+            editInWorkspace.Options);
+        var gitPushCommand = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall(
+                "c4",
+                "git push",
+                "execute",
+                """{"CommandLine":"git push origin master"}""",
+                []),
+            editInWorkspace.Options);
+        var bypassSandboxCommand = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall(
+                "c5",
+                "dotnet build",
+                "execute",
+                """{"CommandLine":"dotnet build","BypassSandbox":true}""",
+                []),
+            editInWorkspace.Options);
+        var cacheBreakCommand = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall(
+                "c6",
+                "rm -rf build",
+                "execute",
+                """{"CommandLine":"rm -rf build"}""",
+                []),
             editInWorkspace.Options);
 
         if (AcpParsers.CanAutoApprove(editInWorkspace, ToolApprovalModes.Ask, sandbox, guards))
-            throw new Exception("Ask mode must never auto-approve ACP permissions.");
+            throw new Exception("Ask mode must never auto-approve ACP edits.");
         if (!AcpParsers.CanAutoApprove(editInWorkspace, ToolApprovalModes.Auto, sandbox, guards))
             throw new Exception("Auto mode should auto-approve low-risk workspace edit.");
         if (AcpParsers.CanAutoApprove(editOutsideWorkspace, ToolApprovalModes.Auto, sandbox, guards))
             throw new Exception("Auto mode must refuse edits escaping the workspace sandbox.");
-        if (AcpParsers.CanAutoApprove(shellCommand, ToolApprovalModes.Full, sandbox, guards))
-            throw new Exception("Shell execution permissions must still surface approval even under Full mode.");
-        Console.WriteLine("PASS: ACP permission policy enforces Ask/AutoApprove and workspace sandbox.");
+        if (AcpParsers.CanAutoApprove(safeWorkspaceCommand, ToolApprovalModes.Ask, sandbox, guards))
+            throw new Exception("Ask mode must still prompt on execute commands.");
+        if (!AcpParsers.CanAutoApprove(safeWorkspaceCommand, ToolApprovalModes.Auto, sandbox, guards))
+            throw new Exception("Auto mode should auto-approve safe workspace execute commands (grep/ls/dotnet).");
+        if (AcpParsers.CanAutoApprove(gitPushCommand, ToolApprovalModes.Auto, sandbox, guards))
+            throw new Exception("Auto mode must still prompt on git push.");
+        if (AcpParsers.CanAutoApprove(bypassSandboxCommand, ToolApprovalModes.Auto, sandbox, guards))
+            throw new Exception("Auto mode must still prompt when BypassSandbox is true.");
+        if (AcpParsers.CanAutoApprove(cacheBreakCommand, ToolApprovalModes.Full, sandbox, guards))
+            throw new Exception("Cache-breaking commands (rm -rf build) must still prompt even under Full mode.");
+        Console.WriteLine("PASS: ACP permission policy matches Hub's risk ladder across Ask/Auto/Full.");
 
         // 3. Full end-to-end ACP subprocess check via self-hosted --acp-mock-worker:
         //    initialize -> session/new -> session/prompt -> thought/text/tool_call ->

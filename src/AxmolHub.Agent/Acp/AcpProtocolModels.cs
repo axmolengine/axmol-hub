@@ -383,36 +383,131 @@ public static class AcpParsers
     }
 
     /// <summary>
-    /// Determines whether an ACP permission request is low-risk enough to auto-reply <c>allow_once</c>
-    /// under Hub's <see cref="ToolApprovalModes.Auto"/> or <see cref="ToolApprovalModes.Full"/> mode.
-    /// Shell execution, deletes, network fetches, and paths outside the workspace always require user confirmation.
+    /// Extracts Hub-compatible <c>{"command":"...","cwd":"..."}</c> JSON and sandbox-bypass intent from an ACP
+    /// <c>execute</c> permission request (supporting both <c>command</c>/<c>cmd</c> and <c>CommandLine</c> schemas).
+    /// </summary>
+    public static (string NormalizedArgsJson, string CommandText, string? Summary, bool BypassSandbox)
+        ExtractCommandInput(AcpPermissionToolCall toolCall)
+    {
+        string? command = null;
+        string cwd = "";
+        string? summary = null;
+        var bypassSandbox = false;
+
+        if (!string.IsNullOrWhiteSpace(toolCall.RawInputJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(toolCall.RawInputJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in doc.RootElement.EnumerateObject())
+                    {
+                        if (prop.Value.ValueKind == JsonValueKind.String)
+                        {
+                            if (command is null && prop.Name is "command" or "CommandLine" or "commandLine" or "cmd")
+                                command = prop.Value.GetString();
+                            else if (cwd.Length == 0 && prop.Name is "cwd" or "Cwd" or "workingDirectory" or "WorkingDirectory")
+                                cwd = prop.Value.GetString() ?? "";
+                            else if (summary is null && prop.Name is "toolSummary" or "summary" or "description")
+                                summary = prop.Value.GetString();
+                        }
+                        else if (prop.Value.ValueKind == JsonValueKind.True
+                                 && prop.Name is "BypassSandbox" or "bypassSandbox" or "unsafe")
+                        {
+                            bypassSandbox = true;
+                        }
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall back to Title below.
+            }
+        }
+
+        command ??= toolCall.Title;
+        var normalized = JsonSerializer.Serialize(new { command, cwd });
+        return (normalized, command, summary, bypassSandbox);
+    }
+
+    /// <summary>
+    /// Grades an ACP permission request on Hub's shared <see cref="ToolRisk"/> ladder so ACP tools obey
+    /// the exact same approval boundaries as Hub's native tools.
+    /// </summary>
+    public static ToolRisk ClassifyPermissionRisk(
+        AcpPermissionRequest request,
+        WorkspaceSandbox? sandbox,
+        WorkspaceGuards? guards,
+        IReadOnlyList<string>? trustedCommands = null)
+    {
+        var kind = request.ToolCall.Kind.Trim().ToLowerInvariant();
+        switch (kind)
+        {
+            case "read":
+            case "search":
+            case "think":
+                if (sandbox is not null && guards is not null && request.ToolCall.Locations.Count > 0)
+                {
+                    foreach (var loc in request.ToolCall.Locations)
+                        if (!WorkspacePaths.ResolveRead(sandbox, loc, guards).IsAllowed)
+                            return ToolRisk.SystemCommand;
+                }
+                return ToolRisk.ReadOnly;
+
+            case "edit":
+                if (sandbox is null || guards is null) return ToolRisk.SystemCommand;
+                foreach (var loc in request.ToolCall.Locations)
+                    if (!WorkspacePaths.ResolveWrite(sandbox, loc, guards).IsAllowed)
+                        return ToolRisk.SystemCommand;
+                return ToolRisk.WorkspaceWrite;
+
+            case "execute":
+            {
+                if (sandbox is null || guards is null) return ToolRisk.SystemCommand;
+                var (normalizedArgs, commandText, _, bypassSandbox) = ExtractCommandInput(request.ToolCall);
+                if (string.IsNullOrWhiteSpace(commandText)) return ToolRisk.SystemCommand;
+
+                // Read cwd back out of the normalized payload and verify it stays inside the sandbox.
+                var cwd = "";
+                try
+                {
+                    using var doc = JsonDocument.Parse(normalizedArgs);
+                    cwd = TryString(doc.RootElement, "cwd") ?? "";
+                }
+                catch (JsonException) { return ToolRisk.SystemCommand; }
+
+                if (WorkspacePaths.VerifyCommandRoot(sandbox, cwd, guards) != WorkspacePathVerdict.Allowed)
+                    return ToolRisk.SystemCommand;
+                if (BuildCommandGrades.CommandOf(normalizedArgs) == BuildGrade.CacheBreak)
+                    return ToolRisk.CacheBreak;
+                if (bypassSandbox)
+                    return ToolRisk.SystemCommand;
+                if (GitCommandGrades.LocalWritesOnly(normalizedArgs))
+                    return ToolRisk.RepositoryWrite;
+                return GitCommandGrades.AllWritesAllowed(normalizedArgs, CommandTrust.VerbsOf(trustedCommands))
+                    ? ToolRisk.WorkspaceCommand
+                    : ToolRisk.SystemCommand;
+            }
+
+            default:
+                return ToolRisk.SystemCommand;
+        }
+    }
+
+    /// <summary>
+    /// Determines whether an ACP permission request can auto-reply <c>allow_once</c> under Hub's
+    /// <paramref name="approvalMode"/> using the shared <see cref="ToolApprovalPolicy"/> ladder.
     /// </summary>
     public static bool CanAutoApprove(
         AcpPermissionRequest request,
         string approvalMode,
         WorkspaceSandbox? sandbox,
-        WorkspaceGuards? guards)
+        WorkspaceGuards? guards,
+        IReadOnlyList<string>? trustedCommands = null)
     {
-        if (approvalMode is not (ToolApprovalModes.Auto or ToolApprovalModes.Full))
-            return false;
-
-        var kind = request.ToolCall.Kind.Trim().ToLowerInvariant();
-        if (kind is not ("read" or "search" or "edit" or "think"))
-            return false;
-
-        // If locations are reported, verify every path stays inside the allowed workspace sandbox.
-        if (sandbox is not null && guards is not null && request.ToolCall.Locations.Count > 0)
-        {
-            foreach (var loc in request.ToolCall.Locations)
-            {
-                var resolved = kind == "edit"
-                    ? WorkspacePaths.ResolveWrite(sandbox, loc, guards)
-                    : WorkspacePaths.ResolveRead(sandbox, loc, guards);
-                if (!resolved.IsAllowed) return false;
-            }
-        }
-
-        return true;
+        var risk = ClassifyPermissionRisk(request, sandbox, guards, trustedCommands);
+        return !ToolApprovalPolicy.RequiresApproval(approvalMode, risk);
     }
 
     private static string? ExtractContentText(JsonElement update)
