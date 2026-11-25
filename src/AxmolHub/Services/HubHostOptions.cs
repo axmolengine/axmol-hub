@@ -88,6 +88,22 @@ internal sealed record HubHostOptions(
     /// <c>Program.Main</c> before Avalonia starts rather than as a field on this record, because unlike every
     /// other verification mode it opens no window — which is what lets the Linux CI job run it with no display.
     /// </summary>
+    public const string BuildApiIndexFlag = "--build-api-index";
+
+    public static bool IsBuildApiIndex(string[] args)
+        => args.Any(a => string.Equals(a, BuildApiIndexFlag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Positional arguments after <c>--build-api-index</c>: engineDir, outputDir, [revision], [releaseTag].</summary>
+    public static string[] BuildApiIndexArguments(string[] args)
+    {
+        var index = Array.FindIndex(args, a => string.Equals(a, BuildApiIndexFlag, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return [];
+        var list = new List<string>();
+        for (var i = index + 1; i < args.Length && !args[i].StartsWith("--", StringComparison.Ordinal); i++)
+            list.Add(args[i]);
+        return [.. list];
+    }
+
     public const string CheckSecretsFlag = "--check-secrets";
 
     public static bool IsSecretsSelfTest(string[] args)

@@ -107,7 +107,72 @@ internal static class AiWorkspaceChecks
         });
         if (narrowCheckout.QueryAxmolApi("hiddenApi", "cpp").Contains("SecretExt.h"))
             throw new Exception("Axmol API indexer leaked symbols from a guarded sibling directory.");
-        Console.WriteLine("PASS: Axmol engine digest, skill catalog, and versioned local API index enforce grants and invalidate on edit.");
+
+        // Phase 3: official index packaging, SHA-256 verification, offline cache, and local-source precedence.
+        var officialDist = Path.Combine(Path.GetDirectoryName(workspace)!, "official-index-dist");
+        var officialBuilt = AxmolApiIndexPackage.BuildOfficial(local, officialDist, "abc123456789");
+        var manifestJsonBytes = File.ReadAllBytes(officialBuilt.ManifestPath);
+        var archiveBytes = File.ReadAllBytes(officialBuilt.ArchivePath);
+        if (!AxmolApiIndexPackage.IsValidEntry(officialBuilt.Entry, out _)
+            || AxmolApiIndexPackage.IsValidEntry(officialBuilt.Entry with { Url = "http://insecure.example/x.json.gz" }, out _)
+            || AxmolApiIndexPackage.IsValidEntry(officialBuilt.Entry with { FileName = "../escape.json.gz" }, out _))
+            throw new Exception("Official API index manifest entry validation did not enforce HTTPS and safe file names.");
+
+        // Tampered archive bytes must fail SHA-256 verification cleanly.
+        var tamperedBytes = (byte[])archiveBytes.Clone();
+        tamperedBytes[^1] ^= 0xFF;
+        var tamperedClient = new HttpClient(new StubIndexHandler(manifestJsonBytes, tamperedBytes));
+        var tamperedRes = AxmolOfficialApiIndexStore.TryLoadAsync(
+            tamperedClient, Path.Combine(hubData, "tampered"), officialBuilt.Entry.Version).GetAwaiter().GetResult();
+        if (tamperedRes.Status != AxmolOfficialIndexStatus.IntegrityFailed || tamperedRes.Document is not null)
+            throw new Exception("Tampered official API index archive was not rejected by SHA-256 verification.");
+
+        // On-demand download -> offline cache reuse with transport disabled -> strict local-source precedence.
+        var officialCacheData = Path.Combine(hubData, "official-ok");
+        var stubHandler = new StubIndexHandler(manifestJsonBytes, archiveBytes);
+        using var okClient = new HttpClient(stubHandler);
+        var downloaded = AxmolOfficialApiIndexStore.TryLoadAsync(okClient, officialCacheData, officialBuilt.Entry.Version).GetAwaiter().GetResult();
+        var cachedOffline = AxmolOfficialApiIndexStore.TryLoadAsync(null, officialCacheData, officialBuilt.Entry.Version).GetAwaiter().GetResult();
+        if (downloaded.Status != AxmolOfficialIndexStatus.LoadedDownloaded
+            || cachedOffline.Status != AxmolOfficialIndexStatus.LoadedCached
+            || stubHandler.Requests != 2)
+            throw new Exception("Official API index did not download once and subsequently serve from offline cache.");
+
+        // Missing local engine with known project lock falls back to clearly labeled official-release reference;
+        // authorized local engine still wins with Source: local-source.
+        var missingEngineScope = scope with
+        {
+            Engines = [],
+            FetchOfficialApiIndex = (v, ct) => AxmolOfficialApiIndexStore.TryLoadAsync(null, officialCacheData, v, cancellationToken: ct),
+        };
+        var fallbackAnswer = new WorkspaceTools(missingEngineScope).QueryAxmolApi("Sprite::setProgramState", "cpp");
+        var localWinsAnswer = new WorkspaceTools(scope with
+        {
+            Sandbox = other,
+            FetchOfficialApiIndex = (v, ct) => AxmolOfficialApiIndexStore.TryLoadAsync(null, officialCacheData, v, cancellationToken: ct),
+        }).QueryAxmolApi("Sprite::setProgramState", "cpp");
+        if (!fallbackAnswer.Contains("Source: official-release")
+            || !fallbackAnswer.Contains("NOT verified against user's local engine source")
+            || !fallbackAnswer.Contains("core/2d/Sprite.h:4")
+            || !localWinsAnswer.Contains("Source: local-source"))
+            throw new Exception("Official API index fallback labeling or local-source precedence failed.");
+
+        // Revoked local engine must still refuse implicit queries rather than silently substituting official data.
+        var revokedWithOfficial = new WorkspaceTools(scope with
+        {
+            FetchOfficialApiIndex = (v, ct) => AxmolOfficialApiIndexStore.TryLoadAsync(null, officialCacheData, v, cancellationToken: ct),
+        }).QueryAxmolApi("Sprite::setProgramState", "cpp");
+        if (!revokedWithOfficial.StartsWith("Not authorized"))
+            throw new Exception("Revoked external engine silently fell back to official API index without explicit version request.");
+
+        // Mirror rewriting preserves path for AtomGit and bare origin custom mirrors, while skipping {version} zip templates.
+        var assetUrl = officialBuilt.Entry.Url;
+        if (!AxmolOfficialApiIndexStore.RewriteIndexUrl(assetUrl, DownloadSources.AtomGitId, null).StartsWith("https://atomgit.com/")
+            || !AxmolOfficialApiIndexStore.RewriteIndexUrl(assetUrl, DownloadSources.CustomId, "https://mirror.example").StartsWith("https://mirror.example/")
+            || AxmolOfficialApiIndexStore.RewriteIndexUrl(assetUrl, DownloadSources.CustomId, "https://mirror.example/axmol-{version}.zip") != assetUrl)
+            throw new Exception("Official API index mirror rewriting mishandled AtomGit or custom mirror rules.");
+
+        Console.WriteLine("PASS: Axmol engine digest, skill catalog, local API index, and Phase 3 official index cache enforce grants, SHA-256, and provenance.");
     }
 
     internal static async Task RunAsync(string root, string[] args)
@@ -579,5 +644,22 @@ internal static class AiWorkspaceChecks
 
         Directory.Delete(guardRoot, recursive: true);
         return;
+    }
+
+    private sealed class StubIndexHandler(byte[] manifestBytes, byte[] archiveBytes) : HttpMessageHandler
+    {
+        public int Requests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests++;
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            var payload = path.EndsWith("manifest.json", StringComparison.Ordinal) ? manifestBytes : archiveBytes;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+                Content = new ByteArrayContent(payload),
+            });
+        }
     }
 }

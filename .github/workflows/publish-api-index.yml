@@ -1,0 +1,68 @@
+name: Publish Axmol API Index
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_ref:
+        description: 'Axmol engine tag, branch, or commit SHA in axmolengine/axmol (e.g. v2.11.6, v3.0.0)'
+        required: true
+        type: string
+      release_tag:
+        description: 'Rolling data release tag in axmolengine/axmol-hub'
+        required: false
+        default: 'api-index-v1'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout axmol-hub
+        uses: actions/checkout@v4
+        with:
+          path: hub
+
+      - name: Shallow checkout axmolengine/axmol
+        uses: actions/checkout@v4
+        with:
+          repository: axmolengine/axmol
+          ref: ${{ inputs.engine_ref }}
+          fetch-depth: 1
+          submodules: false
+          path: engine
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download existing manifest if present
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          gh release download "${{ inputs.release_tag }}" --repo "${{ github.repository }}" -p "manifest.json" -D out || true
+
+      - name: Build official versioned API index archive
+        run: |
+          REV=$(git -C engine rev-parse --short=12 HEAD)
+          dotnet run -c Release --project hub/src/AxmolHub -- --build-api-index "$PWD/engine" "$PWD/out" "$REV" "${{ inputs.release_tag }}"
+          ls -lh out/
+
+      - name: Publish to rolling data release (never latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Axmol Official API Index ($TAG)" \
+              --notes "Versioned official C++/Lua API index packages for Axmol Hub. Data release only; not a desktop app update." \
+              --latest=false \
+              --prerelease
+          fi
+          gh release upload "$TAG" out/*.json.gz out/manifest.json --repo "${{ github.repository }}" --clobber

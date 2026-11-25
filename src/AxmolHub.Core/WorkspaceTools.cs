@@ -83,6 +83,9 @@ public sealed record WorkspaceToolScope(
 {
     // Installation identities for version matching. These paths confer no filesystem access.
     internal IReadOnlyList<EngineEntry> Engines { get; init; } = [];
+    /// <summary>Optional on-demand loader for SHA-256 verified official release API indexes (used only as a
+    /// clearly labeled reference fallback when local engine source is absent or an explicit version is requested).</summary>
+    internal Func<string, CancellationToken, Task<AxmolOfficialIndexResult>>? FetchOfficialApiIndex { get; init; }
     internal ComputerUseBridge? ComputerUse { get; init; }
     internal PortalComputerBridge? PortalComputer { get; init; }
     internal Func<bool>? PortalComputerApproved { get; init; }
@@ -209,10 +212,10 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         return AxmolSkillEngine.Describe(context) + "\n\nBuilt-in workflow (not a source citation):\n" + body;
     }
 
-    [Description("Query the locally indexed C++ headers and Lua bindings of the current project's authorized Axmol engine (v2 LTS or v3). "
-                 + "Returns ranked symbols with signatures, version, revision, and relative file:line. Prefer this BEFORE broad fs_grep/fs_find sweeps; "
-                 + "then verify critical details with fs_read on the returned lines. Does not grant access.")]
-    public string QueryAxmolApi(
+    [Description("Query the versioned C++ headers and Lua bindings of the current project's authorized Axmol engine (v2 LTS or v3), "
+                 + "or fall back to a SHA-256 verified official release reference index when local engine source is unavailable or an exact version is specified. "
+                 + "Prefer this BEFORE broad fs_grep/fs_find sweeps; verify critical local details with fs_read on the returned lines. Does not grant access.")]
+    public Task<string> QueryAxmolApiAsync(
         [Description("Symbol, qualified name, or owner/member lookup (e.g. 'Sprite::setProgramState', 'ProgramManager', 'PointerEventListener', 'EventListenerTouchOneByOne', 'onPointerDown').")]
         string query,
         [Description("Language filter: all, cpp, or lua. Defaults to all.")]
@@ -221,8 +224,19 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         string kind = "all",
         [Description("Maximum number of matches to return (1..50, default 20).")]
         int limit = AxmolApiIndexQuery.DefaultLimit,
+        [Description("Optional exact Axmol version (e.g. '2.11.6' or '3.0.0') to query a published official release reference index when local engine source is absent.")]
+        string? version = null,
         CancellationToken cancellationToken = default)
-        => AxmolApiIndexStore.Query(context, query, language, kind, limit, cancellationToken);
+        => AxmolApiIndexStore.QueryAsync(context, query, language, kind, limit, version, cancellationToken);
+
+    internal string QueryAxmolApi(
+        string query,
+        string language = "all",
+        string kind = "all",
+        int limit = AxmolApiIndexQuery.DefaultLimit,
+        string? version = null,
+        CancellationToken cancellationToken = default)
+        => AxmolApiIndexStore.Query(context, query, language, kind, limit, version, cancellationToken);
 
     [Description("Read a text file from the session workspace, or from a directory the user granted this session, "
                  + "or one single file the user granted with fs_request_access. "

@@ -34,7 +34,8 @@ public static class ToolPreviews
             ToolNames.MemoryRead => $"memory_read · {Text(arguments, "scope")} · {Text(arguments, "name")}",
             ToolNames.AxmolSkillRead => $"axmol_skill_read · {Text(arguments, "id")}",
             ToolNames.AxmolApiQuery => $"axmol_api_query · {Text(arguments, "query")}"
-                                       + (Text(arguments, "language") is { Length: > 0 } lang && lang != "all" ? $" · {lang}" : ""),
+                                       + (Text(arguments, "language") is { Length: > 0 } lang && lang != "all" ? $" · {lang}" : "")
+                                       + (Text(arguments, "version") is { Length: > 0 } ver ? $" · {ver}" : ""),
             // Not a preview of an action: there is nothing this call would do, so the line carries the question
             // itself. The card reads the stored arguments directly rather than this string — a question's text is
             // immutable model output and needs no freezing, unlike a diff of a file that can change under it.

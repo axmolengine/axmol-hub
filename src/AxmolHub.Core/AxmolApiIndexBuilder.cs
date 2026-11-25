@@ -21,16 +21,64 @@ public static partial class AxmolApiIndexStore
         string language = "all",
         string kind = "all",
         int limit = AxmolApiIndexQuery.DefaultLimit,
+        string? version = null,
+        CancellationToken cancellationToken = default)
+        => QueryAsync(scope, query, language, kind, limit, version, cancellationToken).GetAwaiter().GetResult();
+
+    public static async Task<string> QueryAsync(
+        WorkspaceToolScope scope,
+        string query,
+        string language = "all",
+        string kind = "all",
+        int limit = AxmolApiIndexQuery.DefaultLimit,
+        string? version = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var explicitVersion = string.IsNullOrWhiteSpace(version) ? null : version.Trim();
         var resolution = AxmolSkillEngine.Resolve(scope);
-        if (!resolution.IsMatched || resolution.EngineRoot is null || resolution.CoreDirectory is null)
+
+        // Authorized local engine source always wins when no distinct explicit version was requested.
+        if (resolution.IsMatched && resolution.EngineRoot is not null && resolution.CoreDirectory is not null
+            && (explicitVersion is null || string.Equals(explicitVersion, resolution.Version, StringComparison.Ordinal)))
+        {
+            var (index, cacheHit) = LoadOrBuild(scope, resolution, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return AxmolApiIndexQuery.Execute(index, resolution, cacheHit, query, language, kind, limit);
+        }
+
+        // Preserve explicit authorization refusals and lock mismatches when no explicit official version was requested.
+        if (explicitVersion is null && resolution.Status is AxmolEngineStatus.NotAuthorized or AxmolEngineStatus.Mismatch)
             return resolution.Message;
 
-        var (index, cacheHit) = LoadOrBuild(scope, resolution, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        return AxmolApiIndexQuery.Execute(index, resolution, cacheHit, query, language, kind, limit);
+        var fallbackVersion = explicitVersion ?? (resolution.Status == AxmolEngineStatus.Missing ? resolution.Version : null);
+        if (fallbackVersion is not null && scope.FetchOfficialApiIndex is { } fetchOfficial)
+        {
+            var official = await fetchOfficial(fallbackVersion, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (official.Document is { } officialDoc)
+            {
+                var synthetic = new AxmolEngineResolution(
+                    AxmolEngineStatus.Missing,
+                    official.Detail,
+                    EngineRoot: null,
+                    CoreDirectory: officialDoc.CoreDirectory,
+                    Version: officialDoc.EngineVersion,
+                    Revision: officialDoc.EngineRevision);
+                var result = AxmolApiIndexQuery.Execute(
+                    officialDoc, synthetic, official.Status == AxmolOfficialIndexStatus.LoadedCached, query, language, kind, limit);
+                if (resolution.Status == AxmolEngineStatus.NotAuthorized)
+                    return "Local engine note: local engine source is not authorized in this session; returning the requested official release reference instead.\n" + result;
+                return result;
+            }
+            return explicitVersion is not null
+                ? official.Detail
+                : $"{resolution.Message}\nOfficial release index fallback: {official.Detail}";
+        }
+
+        if (explicitVersion is not null)
+            return $"Official release index lookup for Axmol {explicitVersion} is unavailable in this environment.";
+        return resolution.Message;
     }
 
     public static (AxmolApiIndexDocument Document, bool CacheHit) LoadOrBuild(

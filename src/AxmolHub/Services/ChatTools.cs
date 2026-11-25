@@ -335,7 +335,7 @@ internal static class ChatTools
             // model sees is the tool's own, and AIFunctionFactory would have taken the method name otherwise.
             AIFunctionFactory.Create(tools.MapWorkspace, Options(ToolNames.WorkspaceMap)),
             AIFunctionFactory.Create(tools.ReadAxmolSkill, Options(ToolNames.AxmolSkillRead)),
-            AIFunctionFactory.Create(tools.QueryAxmolApi, Options(ToolNames.AxmolApiQuery)),
+            AIFunctionFactory.Create(tools.QueryAxmolApiAsync, Options(ToolNames.AxmolApiQuery)),
             AIFunctionFactory.Create(tools.MemoryRead, Options(ToolNames.MemoryRead)),
             AIFunctionFactory.Create(tools.ListSessions, Options(ToolNames.ListSessions)),
             AIFunctionFactory.Create(tools.ReadSession, Options(ToolNames.ReadSession)),

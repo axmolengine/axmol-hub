@@ -121,21 +121,26 @@ public static class AxmolSkillEngine
             {
                 if (!hasLock || project is null || string.IsNullOrWhiteSpace(project.Channel))
                     return new(AxmolEngineStatus.Missing,
-                        $"Missing channel lock: .axproj identifies {project?.Version ?? "unknown"} but not an installation. Confirm the build source.");
+                        $"Missing channel lock: .axproj identifies {project?.Version ?? "unknown"} but not an installation. Confirm the build source.",
+                        Version: project?.Version, MajorVersion: project is not null ? ParseMajor(project.Version) : 0);
                 var matches = scope.Engines.Where(e => e.Version == project.Version && e.Channel == project.Channel)
                     .DistinctBy(e => WorkspacePaths.CanonicalRoot(e.Path)).Take(2).ToArray();
                 if (matches.Length == 0)
                     return new(AxmolEngineStatus.Missing,
-                        $"Missing: no registered engine matches {project.Version} ({project.Channel}).");
+                        $"Missing: no registered engine matches {project.Version} ({project.Channel}).",
+                        Version: project.Version, MajorVersion: ParseMajor(project.Version));
                 if (matches.Length > 1)
                     return new(AxmolEngineStatus.Ambiguous,
                         $"Ambiguous: multiple installations match {project.Version} ({project.Channel}). "
-                        + "Identify the actual build source before citing any of them.");
+                        + "Identify the actual build source before citing any of them.",
+                        Version: project.Version, MajorVersion: ParseMajor(project.Version));
                 source = DirectoryAt(matches[0].Path);
                 if (!source.IsAllowed)
                     return source.Verdict == WorkspacePathVerdict.NotADirectory
-                        ? new(AxmolEngineStatus.Missing, "Missing: registered engine directory is absent.")
-                        : new(AxmolEngineStatus.NotAuthorized, DeniedMessage);
+                        ? new(AxmolEngineStatus.Missing, "Missing: registered engine directory is absent.",
+                            Version: project.Version, MajorVersion: ParseMajor(project.Version))
+                        : new(AxmolEngineStatus.NotAuthorized, DeniedMessage,
+                            Version: project.Version, MajorVersion: ParseMajor(project.Version));
             }
 
             var core = StateStore.FindEngineCoreDirectory(source.Full, Exists);

@@ -49,7 +49,7 @@ internal static class PublicReleaseSourceSelfCheck
             {
                 var url = request.RequestUri!.AbsoluteUri;
                 requests.Add(url);
-                if (url.EndsWith("releases.atom")) return Reply(Atom("v0.12.3", "v0.12.2", "v0.12.1"));
+                if (url.EndsWith("releases.atom")) return Reply(Atom("api-index-v1", "v0.12.3", "v0.12.2", "v0.12.1"));
                 if (url.EndsWith($"v0.12.3/releases.{rid}.json")) return Reply(Feed(rid, "0.12.3", "Full", "Delta"));
                 if (url.EndsWith($"v0.12.2/releases.{rid}.json")) return Reply(Feed(rid, "0.12.2"));
                 if (url.EndsWith($"v0.12.1/releases.{rid}.json")) return Reply("", HttpStatusCode.NotFound);

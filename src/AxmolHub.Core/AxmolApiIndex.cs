@@ -148,9 +148,19 @@ public static class AxmolApiIndexQuery
 
         var sb = new StringBuilder();
         var rev = index.EngineRevision is { Length: > 0 } r ? $" (rev {r})" : "";
-        var cacheNote = cacheHit ? "cached" : "freshly indexed";
-        sb.AppendLine($"Source: {index.SourceKind} ({cacheNote}, verified against authorized tree)");
-        sb.AppendLine($"Engine: Axmol {index.EngineVersion}{rev}; core: {index.CoreDirectory}/; root: {resolution.EngineRoot}");
+        var isOfficial = string.Equals(index.SourceKind, "official-release", StringComparison.Ordinal);
+        if (isOfficial)
+        {
+            var delivery = cacheHit ? "offline cache" : "downloaded on demand";
+            sb.AppendLine($"Source: official-release ({delivery}, SHA-256 verified — published reference for Axmol {index.EngineVersion}{rev}, NOT verified against user's local engine source)");
+            sb.AppendLine($"Engine: Axmol {index.EngineVersion}{rev}; core: {index.CoreDirectory}/; local checkout: not verified.");
+        }
+        else
+        {
+            var cacheNote = cacheHit ? "cached" : "freshly indexed";
+            sb.AppendLine($"Source: {index.SourceKind} ({cacheNote}, verified against authorized tree)");
+            sb.AppendLine($"Engine: Axmol {index.EngineVersion}{rev}; core: {index.CoreDirectory}/; root: {resolution.EngineRoot}");
+        }
         sb.AppendLine($"Indexed: {index.IndexedCppFiles} C++ header(s), {index.IndexedLuaFiles} Lua binding file(s), {index.Symbols.Count} symbols.");
         if (index.SkippedUnauthorizedFiles > 0)
             sb.AppendLine($"Scope note: {index.SkippedUnauthorizedFiles} file(s) outside the current sandbox grant were skipped.");
@@ -158,7 +168,9 @@ public static class AxmolApiIndexQuery
         if (output.Count == 0)
         {
             sb.AppendLine($"No indexed {langFilter}/{kindFilter} symbols matched \"{trimmed}\" in Axmol {index.EngineVersion}.");
-            sb.Append("Verify whether the API was renamed or removed in this version, or check with a targeted fs_grep in the matched tree.");
+            sb.Append(isOfficial
+                ? "Verify whether the API was renamed or removed in this release, or grant local engine source access to confirm against local files."
+                : "Verify whether the API was renamed or removed in this version, or check with a targeted fs_grep in the matched tree.");
             return sb.ToString();
         }
 
@@ -170,7 +182,9 @@ public static class AxmolApiIndexQuery
             var origin = hit.Language == "lua" ? $" ({hit.BindingSource})" : "";
             sb.AppendLine($"- [{hit.Language} {hit.Kind}{origin}]{dep} {hit.QualifiedName}{bases} — {hit.Signature} — {hit.RelativePath}:{hit.Line}");
         }
-        sb.Append("Cite exact relative path and line number; verify critical implementation details with fs_read at the reported line.");
+        sb.Append(isOfficial
+            ? "Note: these paths and line numbers come from the official release reference index, not from the user's local checkout. State this clearly and verify local files if modified."
+            : "Cite exact relative path and line number; verify critical implementation details with fs_read at the reported line.");
         return sb.ToString();
     }
 

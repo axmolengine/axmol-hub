@@ -69,13 +69,18 @@ internal sealed class PublicReleaseSource(bool includePrereleases, HttpClient? c
             using var response = await _client.GetAsync(url);
             response.EnsureSuccessStatusCode();
             if (!includePrereleases)
-                return [TagFromLink(response.RequestMessage?.RequestUri?.AbsoluteUri)];
+            {
+                var latest = TagFromLink(response.RequestMessage?.RequestUri?.AbsoluteUri);
+                return IsAppReleaseTag(latest) ? [latest]
+                    : throw new InvalidDataException("Latest release tag is not an app release: " + latest);
+            }
 
             var document = XDocument.Parse(await response.Content.ReadAsStringAsync());
             XNamespace atom = "http://www.w3.org/2005/Atom";
             var tags = document.Root?.Elements(atom + "entry")
                 .Select(entry => TagFromLink(entry.Elements(atom + "link")
                     .FirstOrDefault(link => (string?)link.Attribute("rel") == "alternate")?.Attribute("href")?.Value))
+                .Where(IsAppReleaseTag)
                 .Distinct(StringComparer.Ordinal).Take(10).ToArray() ?? [];
             if (tags.Length == 0) throw new InvalidDataException("The release feed has no release links.");
             return tags;
@@ -85,6 +90,9 @@ internal sealed class PublicReleaseSource(bool includePrereleases, HttpClient? c
             throw new IOException("Update discovery failed: " + url, ex);
         }
     }
+
+    internal static bool IsAppReleaseTag(string tag)
+        => !tag.StartsWith("api-index-", StringComparison.OrdinalIgnoreCase);
 
     private static string TagFromLink(string? link)
     {

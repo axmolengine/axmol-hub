@@ -335,6 +335,8 @@ internal sealed partial class ChatExecutionCoordinator
             charter, summary, memory);
     }
 
+    private static readonly System.Net.Http.HttpClient OfficialIndexHttpClient = new() { Timeout = TimeSpan.FromSeconds(45) };
+
     private string AxmolWorkspaceSection(Conversation? conversation, string normalizedMode)
     {
         // Ask mode never inspects local workspace/engine files; generic non-Axmol folders return empty string.
@@ -479,6 +481,17 @@ internal sealed partial class ChatExecutionCoordinator
                 // one rather than dropped, and every other stale entry is left out of both.
                 Sandbox = SandboxOf(session, root, guards),
                 Engines = engines,
+                FetchOfficialApiIndex = (version, ct) =>
+                {
+                    var prefs = PreferencesProvider?.Invoke();
+                    return AxmolOfficialApiIndexStore.TryLoadAsync(
+                        OfficialIndexHttpClient,
+                        _dataRoot,
+                        version,
+                        downloadSourceId: prefs?.DownloadSource ?? DownloadSources.GitHubId,
+                        customDownloadUrl: prefs?.CustomDownloadSource,
+                        cancellationToken: ct);
+                },
                 HoldBatchLease = (callId, lease) => HoldBatchLease(conversationId, callId, lease),
             },
             // Null on a session file written before the setting existed reads as allowed, which is the only

@@ -50,6 +50,12 @@ internal static class Program
         // Same rule as the Velopack hook above: decide and leave before any UI exists. --check-secrets opens no
         // window on purpose, so a CI runner with no display server can still assert that its platform stores a
         // provider key — the one claim neither the Windows-only Checks project nor --verify-shell can reach.
+        if (HubHostOptions.IsBuildApiIndex(args))
+        {
+            Environment.ExitCode = RunBuildApiIndex(HubHostOptions.BuildApiIndexArguments(args));
+            return;
+        }
+
         if (HubHostOptions.IsSecretsSelfTest(args))
         {
             Environment.ExitCode = SecretStoreSelfCheck.Run(HubHostOptions.SecretsScratchArgument(args));
@@ -104,6 +110,32 @@ internal static class Program
         finally
         {
             App.Activations?.Dispose();
+        }
+    }
+
+    private static int RunBuildApiIndex(string[] arguments)
+    {
+        if (arguments.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: AxmolHub --build-api-index <engineDir> <outputDir> [revision] [releaseTag]");
+            return 1;
+        }
+        try
+        {
+            var revision = arguments.Length >= 3 && !string.IsNullOrWhiteSpace(arguments[2]) ? arguments[2] : null;
+            var releaseTag = arguments.Length >= 4 && !string.IsNullOrWhiteSpace(arguments[3])
+                ? arguments[3]
+                : AxmolHub.Core.AxmolApiIndexPackage.DefaultReleaseTag;
+            var result = AxmolHub.Core.AxmolApiIndexPackage.BuildOfficial(arguments[0], arguments[1], revision, releaseTag);
+            Console.WriteLine($"Built official API index for Axmol {result.Entry.Version} ({result.Entry.CoreDirectory}/, rev={result.Entry.Revision ?? "none"}): {result.SymbolCount} symbols, {result.Entry.Size} bytes, sha256={result.Entry.Sha256}");
+            Console.WriteLine($"Archive: {result.ArchivePath}");
+            Console.WriteLine($"Manifest: {result.ManifestPath}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Build API index failed: {ex.Message}");
+            return 1;
         }
     }
 
