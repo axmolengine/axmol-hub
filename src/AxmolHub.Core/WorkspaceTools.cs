@@ -1098,8 +1098,8 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!StillAuthorized()) return false;
-            // A host can bind an ordinary capability or a confirmed edit to an assessed semantic target.
-            // Actions without such a verifier keep strict visual verification as their fallback.
+            // Verify the assessed control when available. Confirmed unclassified actions bind to the window,
+            // not its pixels: animations, caret blinking and changing counters do not redirect input.
             if (decision.Verification is { } verification)
             {
                 verificationRefusal = verification.Verify();
@@ -1107,10 +1107,10 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             }
             try
             {
-                var current = host.Grab(target);
-                var matches = current is not null && !current.Stats.IsBlank() && observations.MatchesContent(current)
-                    && StillAuthorized();
-                if (!matches) verificationRefusal = "[target-verification] Strict visual fallback no longer matches the captured frame; this action has no semantic control verifier. Generic delivery requires an explicit temporary interaction grant; do not repeat this approval automatically.";
+                var current = context.ApprovedComputerTarget?.Invoke()?.Find(host.Windows()).Window;
+                var matches = current is not null && current.Left == target.Left && current.Top == target.Top
+                    && current.Width == target.Width && current.Height == target.Height && StillAuthorized();
+                if (!matches) verificationRefusal = "[target-verification] The selected window moved, resized, closed or changed owner. Observe again before input.";
                 return matches;
             }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { return false; }

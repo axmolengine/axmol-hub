@@ -299,9 +299,6 @@ internal static class AiImagesChecks
         { Owner = new ComputerProcessIdentity(new ComputerApplication(Path.GetFullPath("fixture-app")), 1) };
         var observedFrame = new CapturedFrame(png, 200, 100, new FrameStats(200, 100, 2, 100));
         var frameId = observation.Record(observedWindow, observedFrame);
-        if (!observation.MatchesContent(observedFrame)
-            || observation.MatchesContent(observedFrame with { ContentFingerprint = "changed" }))
-            throw new Exception("Changed image content was admitted as the original observation.");
         var drag = new ComputerActionRequest("drag", 150, 80) { EndX = 20, EndY = 10 };
         var mappedDrag = observation.Map(frameId, observedWindow, drag);
         if (mappedDrag is not { X: 75, Y: 40, EndX: 10, EndY: 5 }
@@ -332,16 +329,22 @@ internal static class AiImagesChecks
         var inputObservation = new ComputerUseObservation();
         var inputTarget = ComputerUseTarget.FromWindow(observedWindow)!;
         var changingPixels = observedFrame;
+        var liveWindow = observedWindow;
+        var verifyControl = true;
+        var moveWindowBeforeDelivery = false;
         var targetDeliveries = 0;
         var ordinaryTools = new WorkspaceTools(WorkspaceToolScope.Empty with
         {
-            Screen = new ScreenCaptureBridge(() => [observedWindow], _ => changingPixels)
+            Screen = new ScreenCaptureBridge(() => [liveWindow], _ => changingPixels)
                 { Backend = new CaptureBackend("fixture", "offline target fixture") },
             ApprovedComputerTarget = () => inputTarget,
             ComputerObservation = () => inputObservation,
-            ComputerInputDecision = () => new(ComputerRisk.Allow, "Verified fixture text control") { Verification = controlVerification },
+            ComputerInputDecision = () => new(ComputerRisk.Allow, "Host-approved fixture input")
+                { Verification = verifyControl ? controlVerification : null },
+            ComputerSensitiveInputApproved = () => !verifyControl,
             ComputerUse = new ComputerUseBridge((_, request) =>
             {
+                if (moveWindowBeforeDelivery) liveWindow = liveWindow with { Left = 10 };
                 if (request.VerifyObservation?.Invoke() != true) return "Refused: target changed.";
                 targetDeliveries++;
                 return null;
@@ -354,6 +357,14 @@ internal static class AiImagesChecks
         targetFrame = inputObservation.Record(observedWindow, changingPixels);
         ordinaryTools.ComputerUse("Fixture", "move", x: 1, y: 1, frame_id: targetFrame);
         if (targetDeliveries != 1) throw new Exception("Ordinary input required identical pixels or admitted a changed control.");
+        // One-action approval without a semantic verifier tolerates redraws, but not live window movement.
+        verifyControl = false;
+        targetFrame = inputObservation.Record(observedWindow, observedFrame);
+        ordinaryTools.ComputerUse("Fixture", "click", x: 1, y: 1, frame_id: targetFrame);
+        moveWindowBeforeDelivery = true;
+        targetFrame = inputObservation.Record(observedWindow, observedFrame);
+        ordinaryTools.ComputerUse("Fixture", "click", x: 1, y: 1, frame_id: targetFrame);
+        if (targetDeliveries != 2) throw new Exception("Confirmed input was blocked by redraws or admitted a moved window.");
         using var cancelledInput = new CancellationTokenSource();
         cancelledInput.Cancel();
         var neverOperated = false;

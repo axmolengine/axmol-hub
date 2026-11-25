@@ -17,8 +17,8 @@ fallback to unscoped capture or non-portal global input is permitted.
    Existing persisted application grants remain screenshot-only and never upgrade to input.
    On Windows and Linux X11 the same card has an unchecked **continuous interaction** option. Only an explicit user
    choice grants temporary Interact in addition to Browse; the model cannot request/upgrade it through
-   tool arguments. It allows unclassified ordinary window-scoped input without per-action approval or
-   identical whole-window pixels. The card warns about edits, buttons, clipboard changes and incomplete
+   tool arguments. It allows unclassified ordinary window-scoped input without per-action approval.
+   The card warns about edits, buttons, clipboard changes and incomplete
    sensitive-action detection. Recognized sensitive/actionable targets still require exact one-action
    confirmation; no permanent, cross-app or whole-desktop permission is created.
 3. A successful screenshot returns `frame_id`, image dimensions and the full-image input
@@ -39,15 +39,13 @@ fallback to unscoped capture or non-portal global input is permitted.
 5. Hub refuses expired (two-minute), spent, moved/resized or owner-changed observations.
    Restarting Hub does not restore live observations. Another conversation's input invalidates
    older observations. Application permission does not make another window's frame valid:
-   observe each newly selected window before input. macOS classified browsing actions and Windows
-   UI Automation-supported text/scroll actions verify the assessed control instead of requiring
-   identical whole-window pixels. Windows confirmed text edits and shortcuts keep their one-action
-   approval but may also use that semantic verifier. Pointer movement on Windows/macOS only needs
-   live permission, window identity/geometry, focus, bounds and occlusion checks. Actions without
-   a scoped semantic verifier retain strict frame verification under browsing or sensitive-action
-   confirmation. Explicit Windows/X11 interaction permits a generic host verifier for unclassified ordinary
-   input instead: frame identity/age/geometry, live grant, native focus, hit ownership and takeover guards
-   remain enforced. Results explicitly say semantic target/application outcome were not verified.
+   observe each newly selected window before input. Input authorization does **not** compare whole-window
+   pixels: animations, counters and caret blinking need not stop. When available, a scoped semantic verifier
+   still checks the assessed control, metadata, geometry, text and selection. Otherwise the already-approved
+   action is rechecked against the live window's identity and bounds before delivery. Host focus, hit ownership,
+   takeover and permission-version checks remain enforced. Removing pixel equality does not classify an unknown
+   action as safe or waive its confirmation. Explicit Windows/X11 interaction permits ordinary unclassified
+   input under the same window guards; results still distinguish delivery from verified application success.
 6. Input delivery is not application success. After delivery Hub captures a fresh image and
    the model must inspect it before deciding what happened. Failed or interrupted input can
    be partial: observe before retrying and do not replay text blindly.
@@ -106,9 +104,10 @@ for that call only. Before input it rechecks control identity, owning window, ge
 text actions also require the same text digest and selection range. A blinking caret or animation
 elsewhere is not a veto. Actual text, selection, target or geometry changes still refuse. Text is
 read only from non-secure classified controls, bounded to 64K characters, hashed in memory and
-never recorded in logs. An unavailable verifier falls back to explicit confirmation plus strict
-visual validation; there is no percentage-of-pixels threshold that could hide a changed submit button.
-These checks bind the host assessment to delivery, not every pixel to the earlier screenshot.
+never recorded in logs. An unavailable verifier requires explicit confirmation and live window
+verification, not whole-frame pixel equality. This cannot detect every changed button or business
+consequence in an unclassified surface; inspect the target before approving and the returned frame
+before deciding success.
 
 `Command+A/C/V` delivery is supported. Only verified Copy is covered by browsing consent;
 Select All and Paste require separate confirmation. The former TextEdit-specific automatic edits
@@ -138,8 +137,8 @@ are separate OS permissions; granting them does not replay an interrupted action
   actions reuse the session's bounded capabilities. Under browsing consent, supported text edits
   and shortcuts still need one-action confirmation with semantic verification. Explicit interaction
   consent permits ordinary edits and generic input without repeated confirmation. Recognized secure,
-  actionable/modal targets retain confirmation and strict verification; unknown targets do so under
-  browsing consent. Unrelated carets/animations remain a limitation of strict visual fallback.
+  actionable/modal targets retain separate confirmation; unknown targets do so under browsing consent.
+  Semantic-verifier changes still refuse, but unrelated redraws are not an input veto.
 - **macOS:** Screen Recording and Accessibility permissions. Missing permission stops the
   current call; permission approval never queues an automatic replay. Before input, Hub can hand focus
   from its own approval UI (or another window of the authorized executable) to the exact selected PID/window.
@@ -169,17 +168,18 @@ are separate OS permissions; granting them does not replay an interrupted action
 The Wayland contract differs from the native backends: the user selects the window, so Hub **cannot
 verify** its title, process or executable identity. By default approval covers one call, even in Full
 Access. The initial card now offers an unchecked temporary continuous-interaction option. An explicit
-choice reuses permission for the same requested stream in this conversation without per-action cards,
-and accepts changed content while still validating frame identity, age, dimensions and mapping revision.
+choice reuses permission for the same requested stream in this conversation without per-action cards.
+Both modes accept changed pixels while validating frame identity, age, dimensions and mapping revision.
 It never creates an executable grant, persistent token or restored restart permission. Portal cannot
 classify sensitive controls; the option explicitly discloses edits, clipboard changes and unverified
 focus. The assistant must still follow the user's task scope and inspect every returned frame.
 
-Each input consumes one `frame_id` and captures a fresh image. Continuous mode can return a new frame
-when no visible change occurred, with an explicit unverified-outcome warning; it never replays input.
+Each input consumes one `frame_id` and captures a fresh image. Both modes can return a new frame
+when no visible change occurred, with an explicit unverified-outcome warning; neither replays input.
 If Hub is active, input waits at most 15 seconds for the user to switch away, then verifies again.
 Already-inactive Hub needs no handoff delay. Other-app focus and takeover remain unverified. Standard
-mode retains strict whole-frame comparison and its three-second screenshot baseline delay.
+mode still requires one-action confirmation, but no longer compares whole-frame content or delays
+its screenshot baseline by three seconds just to preserve focus-decoration pixels.
 
 The sharing strip exposes Pause/Resume, Stop and Revoke. Pause closes the stream, cancels in-flight
 work and invalidates permits; resume requires a new selection and observation. Stop, revoke,
@@ -470,6 +470,16 @@ monitors where available. Do not replay an interrupted input. `--drive` control 
 substitutes for these native Computer Use tests.
 
 ## Current macOS delivery status
+
+### Whole-frame input gate removed
+
+A confirmed click in the Axmol acceptance game was refused before delivery because the captured
+window pixels no longer hashed identically. The game refreshes FPS counters without user input;
+whole-frame equality cannot reliably distinguish that redraw from a changed input target.
+Native backends now use live window identity/geometry for the confirmed unclassified fallback,
+while classified control verification, permission, frame lifetime, focus and hit ownership remain.
+Wayland also checks stream dimensions and mapping revision without pixel equality. The earlier
+strict-visual refusals below are historical, not the current input contract.
 
 ### Capability-scoped browsing update (bounded native acceptance completed)
 
@@ -774,7 +784,8 @@ package-content/startup verification, not a portal-input test of the AppImage it
 
 ### Approval focus handoff and input observation
 
-Portal capture waits three seconds after selection/approval before taking the baseline. Each input
+The following describes the earlier installed build, before whole-frame equality was removed.
+Portal capture waited three seconds after selection/approval before taking the baseline. Each input
 also has a fixed three-second handoff after its individual approval. The card tells the user to
 Alt+Tab back to the intended app without changing the caret, selection or content. Hub never steals
 focus or excludes title-bar/focus-decoration pixels from verification. The entire captured image,

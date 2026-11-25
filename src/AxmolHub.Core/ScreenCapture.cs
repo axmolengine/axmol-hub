@@ -20,6 +20,7 @@ public sealed record CapturableWindow(nint Handle, string Title, int ProcessId, 
 /// </summary>
 public sealed record CapturedFrame(byte[] Png, int Width, int Height, FrameStats Stats)
 {
+    /// <summary>Used only for bounded post-input rendering observations, never for input authorization.</summary>
     public string? ContentFingerprint { get; init; }
 }
 

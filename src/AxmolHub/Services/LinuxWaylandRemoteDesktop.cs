@@ -100,8 +100,8 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                 var current = await GrabAsync(ct);
                 if (_mappingRevision != previousMapping || _logicalWidth != previousLogicalWidth || _logicalHeight != previousLogicalHeight
                     || _previous is null || current.Width != _previous.Width || current.Height != _previous.Height
-                    || !r.ContinuousInteraction && current.ContentFingerprint != _previous.ContentFingerprint || current.Stats.IsBlank())
-                    return new(null, "Refused: shared-window content or dimensions changed. Observe again before input.");
+                    || current.Stats.IsBlank())
+                    return new(null, "Refused: shared-window dimensions or coordinate mapping changed, or capture was blank. Observe again before input.");
                 if (r.StillApproved?.Invoke() != true)
                     return new(null, "Refused: portal confirmation was revoked before input.");
                 var pointerAction = r.Action is "move" or "click" or "double_click" or "drag" or "scroll";
@@ -162,21 +162,8 @@ internal sealed class LinuxWaylandRemoteDesktop : IDisposable
                 };
                 selectedProcess.EnableRaisingEvents = true;
             }
-            // Match the input handoff for observations too: the baseline should show the same activation
-            // appearance. Screenshots of Hub itself remain allowed, but input into active Hub is refused.
-            if (beforeInput is null && !r.ContinuousInteraction) await Task.Delay(TimeSpan.FromSeconds(3), ct);
             var frame = beforeInput is null ? await GrabAsync(ct) : await ObserveAfterInputAsync(beforeInput, ct);
             if (frame.Stats.IsBlank()) { Close(); return new(null, "Refused: portal returned a blank frame. The sharing session was closed."); }
-            if (beforeInput is not null && SameContent(beforeInput, frame) && !r.ContinuousInteraction)
-            {
-                // No visible change is not evidence of failed delivery. Never replay input or authorize a
-                // follow-up from a potentially lagging render; an explicit screenshot must observe again.
-                _previous = null;
-                _frameId = null;
-                return new(frame, $"Input delivered ({r.Action}); no visible change observed in three delayed captures. "
-                    + "Application outcome is unverified; rendering may still be delayed. No input frame_id issued. "
-                    + "Request a new screenshot before further input; do not replay this action.");
-            }
             _previous = frame;
             _frameId = Guid.NewGuid().ToString("N");
             _recorded = Environment.TickCount64;

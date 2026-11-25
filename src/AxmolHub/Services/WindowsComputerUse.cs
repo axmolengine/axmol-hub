@@ -5,7 +5,7 @@ using Rect = AxmolHub.WindowsAutomation.Rect;
 
 namespace AxmolHub;
 
-/// <summary>Window-scoped Windows input. Unknown actions retain one-shot approval and strict frame verification.</summary>
+/// <summary>Window-scoped Windows input. Unknown actions retain one-shot approval and live window verification.</summary>
 [SupportedOSPlatform("windows")]
 internal static partial class WindowsComputerUse
 {
@@ -71,7 +71,7 @@ internal static partial class WindowsComputerUse
         var target = ComputerUseTarget.FromWindow(window)!;
         // Approval deactivates the app, so verify before handing focus back and changing its chrome.
         if (request.VerifyObservation?.Invoke() != true)
-            return "Refused: the application image changed or cannot be verified. Capture again before input.";
+            return "Refused: the input target or window changed or cannot be verified. Capture again before input.";
         if (Activate(window, target, request) is { } refusal) return refusal;
 
         bool Authorized()
