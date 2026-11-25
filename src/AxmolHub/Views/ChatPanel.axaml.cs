@@ -3245,6 +3245,7 @@ public partial class ChatPanel : UserControl
             MinWidth = 0, MinHeight = 0,
             Padding = new Thickness(0),
             Margin = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -3274,15 +3275,18 @@ public partial class ChatPanel : UserControl
             return;
         }
         var speaker = target.Role == ChatRoles.User ? HubStrings.Get("ReplyUser") : HubStrings.Get("ReplyAssistant");
-        var preview = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var preview = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
         preview.Children.Add(new TextBlock
         {
             Text = $"{speaker}: {target.Text}",
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+            MaxLines = 1,
             VerticalAlignment = VerticalAlignment.Center,
-            MaxWidth = 680,
         });
-        preview.Children.Add(IconActionButton("CancelReply", "Hub.Icon.Close", ClearReplyTarget));
+        var cancel = IconActionButton("CancelReply", "Hub.Icon.Close", ClearReplyTarget);
+        Grid.SetColumn(cancel, 1);
+        preview.Children.Add(cancel);
         ReplyPreview.Child = preview;
         ReplyPreview.IsVisible = true;
     }
@@ -4851,6 +4855,8 @@ public partial class ChatPanel : UserControl
             StrokeThickness = thickness,
             StrokeLineCap = PenLineCap.Round,
             StrokeJoin = PenLineJoin.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
         };
         if (geometryKey != "Hub.Icon.Edit")
         {

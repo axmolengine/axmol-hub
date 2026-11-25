@@ -141,22 +141,9 @@ public partial class ChatPanel
         Grid.SetColumn(summaryLabel, 1);
         summaryRow.Children.Add(summaryLabel);
 
-        var chevron = new Path
-        {
-            Data = Geometry.Parse(_subagentsExpanded ? "M6 15L12 9L18 15" : "M6 9L12 15L18 9"),
-            Width = 12,
-            Height = 12,
-            Stretch = Stretch.Uniform,
-            Fill = Brushes.Transparent,
-            StrokeThickness = 1.8,
-            StrokeLineCap = PenLineCap.Round,
-            StrokeJoin = PenLineJoin.Round,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 2, 0),
-        };
-        chevron.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-        Grid.SetColumn(chevron, 2);
-        summaryRow.Children.Add(chevron);
+        var chevronViewport = BuildSummaryChevron(_subagentsExpanded, "SubagentsChevron");
+        Grid.SetColumn(chevronViewport, 2);
+        summaryRow.Children.Add(chevronViewport);
 
         toggle.Click += (_, _) =>
         {
@@ -174,13 +161,13 @@ public partial class ChatPanel
             divider.Bind(Border.BackgroundProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
             root.Children.Add(divider);
 
-            var list = new StackPanel { Spacing = 2, Margin = new Thickness(6, 4, 6, 6) };
+            var list = new StackPanel { Spacing = 2, Margin = new Thickness(8, 4, 12, 6) };
             foreach (var (child, state) in rows)
             {
                 var rowGrid = new Grid
                 {
                     ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"),
-                    Margin = new Thickness(2, 1),
+                    Margin = new Thickness(0, 1),
                 };
 
                 var stateDot = new Avalonia.Controls.Shapes.Ellipse
@@ -230,13 +217,38 @@ public partial class ChatPanel
 
                 if (state is SpawnedSessionStates.Running or SpawnedSessionStates.Queued)
                 {
+                    var stopPath = new Path
+                    {
+                        Data = ThemeGeometry("Hub.Icon.Close"),
+                        Stretch = Stretch.None,
+                        StrokeThickness = 1.8,
+                        StrokeLineCap = PenLineCap.Round,
+                        StrokeJoin = PenLineJoin.Round,
+                        IsHitTestVisible = false,
+                    };
+                    stopPath.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+                    var stopIcon = new Viewbox
+                    {
+                        Width = 14,
+                        Height = 14,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        IsHitTestVisible = false,
+                        Child = new Canvas { Width = 24, Height = 24, Children = { stopPath } },
+                    };
                     var stopBtn = new Button
                     {
                         Classes = { "plan-task-summary" },
-                        Padding = new Thickness(6, 2),
+                        Width = 24,
+                        Height = 24,
+                        MinWidth = 0,
+                        MinHeight = 0,
+                        Padding = new Thickness(0),
                         Margin = new Thickness(4, 0, 0, 0),
-                        Content = new TextBlock { Text = "×", FontSize = 13, VerticalAlignment = VerticalAlignment.Center },
+                        HorizontalContentAlignment = HorizontalAlignment.Center,
+                        VerticalContentAlignment = VerticalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
+                        Content = stopIcon,
                     };
                     ToolTip.SetTip(stopBtn, HubStrings.Get("SubagentStopTip"));
                     stopBtn.Click += (_, _) => _chat.RequestStop(childId);
@@ -395,28 +407,7 @@ public partial class ChatPanel
         };
         Grid.SetColumn(summary, 1);
         summaryRow.Children.Add(summary);
-        var chevron = new Path
-        {
-            Name = "PlanTasksChevron",
-            Width = 24,
-            Height = 24,
-            Stretch = Stretch.None,
-            Data = ThemeGeometry("Hub.Icon.Caret"),
-            Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round,
-            StrokeJoin = PenLineJoin.Round,
-            RenderTransform = new RotateTransform(_planTasksExpanded ? 180 : 0),
-            RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        chevron.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-        var chevronViewport = new Viewbox
-        {
-            Classes = { "plan-task-summary-chevron" },
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new Canvas { Width = 24, Height = 24, Children = { chevron } },
-        };
+        var chevronViewport = BuildSummaryChevron(_planTasksExpanded, "PlanTasksChevron");
         Grid.SetColumn(chevronViewport, 2);
         summaryRow.Children.Add(chevronViewport);
         toggle.Click += (_, _) =>
@@ -427,7 +418,7 @@ public partial class ChatPanel
             RefreshPlanTasksHost();
         };
 
-        var list = new StackPanel { Spacing = 5, Margin = new Thickness(10, 8) };
+        var list = new StackPanel { Spacing = 5, Margin = new Thickness(12, 8) };
         _planTaskRows.Clear();
         foreach (var task in tasks)
         {
@@ -477,6 +468,33 @@ public partial class ChatPanel
         PlanTasksHost.IsVisible = true;
         _planTasksSummary = summary;
         _planTasksShape = shape;
+    }
+
+    /// <summary>Shared collapsible-strip chevron centered in a 24x24 viewport so every strip aligns identically.</summary>
+    private static Viewbox BuildSummaryChevron(bool expanded, string? name = null)
+    {
+        var chevron = new Path
+        {
+            Name = name,
+            Width = 24,
+            Height = 24,
+            Stretch = Stretch.None,
+            Data = ThemeGeometry("Hub.Icon.Caret"),
+            Fill = Brushes.Transparent,
+            StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round,
+            StrokeJoin = PenLineJoin.Round,
+            RenderTransform = new RotateTransform(expanded ? 180 : 0),
+            RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        chevron.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        return new Viewbox
+        {
+            Classes = { "plan-task-summary-chevron" },
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new Canvas { Width = 24, Height = 24, Children = { chevron } },
+        };
     }
 
     /// <summary>Drops the paint handles together with the tree they point into.</summary>
@@ -1908,8 +1926,13 @@ public partial class ChatPanel
         if (reasonKey is not null) ToolTip.SetTip(status, HubStrings.Get(reasonKey));
         Grid.SetColumn(status, 1);
         row.Children.Add(status);
-        var text = new TextBlock { Classes = { "goal-capsule-text" }, Text = goal.Text };
-        ToolTip.SetTip(text, goal.Text);
+        var text = new TextBlock
+        {
+            Classes = { "goal-capsule-text" },
+            Text = SingleLineGoalText(goal.Text),
+            MaxLines = 1,
+        };
+        ToolTip.SetTip(text, TipContent(goal.Text));
         Grid.SetColumn(text, 2);
         row.Children.Add(text);
         var run = chat.RunFor(conversation.Id);
@@ -1941,6 +1964,16 @@ public partial class ChatPanel
         row.Children.Add(actions);
         GoalCapsuleHost.Child = row;
         GoalCapsuleHost.IsVisible = true;
+    }
+
+    /// <summary>Collapses line breaks so the goal capsule stays strictly single-line while the tooltip keeps the full text.</summary>
+    private static string SingleLineGoalText(string text)
+    {
+        if (text.IndexOfAny(['\r', '\n']) < 0) return text;
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Join(" ", lines);
     }
 
     private TextBlock? _goalCountdown;

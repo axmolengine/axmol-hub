@@ -26,7 +26,7 @@ public partial class ChatPanel
                 VerticalAlignment = VerticalAlignment.Center,
             });
             ToolTip.SetTip(row, HubStrings.Get("PortalInteractionHint"));
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
             buttons.Children.Add(CapsuleActionButton(portal.Paused ? "Hub.Icon.Play" : "Hub.Icon.Pause",
                 portal.Paused ? "ComputerControlResume" : "ComputerControlPause", () => _chat.PauseComputerControl(id, !portal.Paused)));
             buttons.Children.Add(CapsuleActionButton("Hub.Icon.Stop", "ComputerControlStop", () => _chat.RequestStop(id)));
