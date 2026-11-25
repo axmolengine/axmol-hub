@@ -41,7 +41,14 @@ public sealed class EngineToolchain(ProcessRunner runner)
     /// <summary>The lookup order, corresponding to how <c>find_prog</c> is called.</summary>
     private enum Lookup { SystemFirst, EngineFirst, EngineOnly }
 
-    private sealed record ToolSpec(string Name, string Key, string Command, string[] Probe, Lookup Lookup, string[] EngineDirectories);
+    private sealed record ToolSpec(
+        string Name,
+        string Key,
+        string Command,
+        string[] Probe,
+        Lookup Lookup,
+        string[] EngineDirectories,
+        string? OnDemandCommand = null);
 
     private static readonly ToolSpec[] CommonTools =
     [
@@ -70,13 +77,14 @@ public sealed class EngineToolchain(ProcessRunner runner)
         {
             case "windows":
             case "uwp":
-                // nuget uses -mode BOTH (engine tree first); llvm checks the system clang first.
+                // nuget uses -mode BOTH (engine tree first); llvm checks the system clang first and
+                // is installed on demand when building with `axmol -p win32 -cc clang`, not by setup.ps1.
                 // "help" is not a stray command: nuget has no --version, and its "help" first line
                 // ("NuGet Version: …") is the version source — the same probe the engine runs
                 // (`find_prog -name 'nuget' -params 'help'` in 1k/1kiss.ps1). ProbeVersionAsync reads
                 // only that first line.
                 rows.Add(await ResolveAsync(new ToolSpec("NuGet", "nuget", "nuget", ["help"], Lookup.EngineFirst, ["nuget"]), profile, root, cancellation));
-                rows.Add(await ResolveAsync(new ToolSpec("LLVM (clang-format/genbindings)", "llvm", "clang", ["--version"], Lookup.SystemFirst, ["LLVM/bin"]), profile, root, cancellation));
+                rows.Add(await ResolveAsync(new ToolSpec("LLVM (clang)", "llvm", "clang", ["--version"], Lookup.SystemFirst, ["LLVM/bin"], "axmol -p win32 -cc clang"), profile, root, cancellation));
                 rows.Add(await VisualStudioAsync(profile, cancellation));
                 break;
             case "android":
@@ -142,12 +150,18 @@ public sealed class EngineToolchain(ProcessRunner runner)
         if (unsatisfiedPath is not null)
         {
             var found = unsatisfiedVersion ?? "an unreadable version";
+            var install = spec.OnDemandCommand is { } command
+                ? $"not installed by setup.ps1; the engine installs {requirement.Preferred} into tools/external on demand when building with {command}."
+                : $"the engine installs {requirement.Preferred} into tools/external.";
             return new(spec.Name, ComponentStatus.UpdateAvailable,
-                $"Expected {requirement.Describe()}; found {found} ({Origin(unsatisfiedPath, engineDirectories)}) — the engine installs {requirement.Preferred} into tools/external.",
+                $"Expected {requirement.Describe()}; found {found} ({Origin(unsatisfiedPath, engineDirectories)}) — {install}",
                 unsatisfiedPath);
         }
 
-        return new(spec.Name, ComponentStatus.Missing, $"Expected {requirement.Describe()}; not found — the engine installs it via setup.ps1.");
+        var missing = spec.OnDemandCommand is { } onDemand
+            ? $"not installed by setup.ps1; installed on demand when building with {onDemand}."
+            : "the engine installs it via setup.ps1.";
+        return new(spec.Name, ComponentStatus.Missing, $"Expected {requirement.Describe()}; not found — {missing}");
     }
 
     private static string Origin(string path, string[] engineDirectories) =>
