@@ -1680,7 +1680,12 @@ public partial class SettingsPage : UserControl
         // The model section is present in both states; only the edit form is gated on the draft.
         content.Children.Add(BuildModelSection(provider));
 
-        if (!provider.CanAuthenticate)
+        if (provider.IsAcp && BuildAcpIssueRow(provider) is { } acpIssue)
+        {
+            content.Children.Add(acpIssue);
+        }
+
+        if (!provider.CanAuthenticate && !provider.IsAcp)
         {
             content.Children.Add(new TextBlock
             {
@@ -1784,9 +1789,20 @@ public partial class SettingsPage : UserControl
             }
         }
 
-        // Custom providers own their identity fields; a built-in is pinned by the manifest and has no
-        // configuration left to edit on this page.
-        if (provider.IsCustom)
+        if (provider.IsAcp)
+        {
+            var acpMissing = EffectiveAcpState(provider) == AcpProbeStates.MissingCli;
+            if (!acpMissing)
+            {
+                var signIn = BuildHeaderAction(HubStrings.Get("Authenticate"));
+                signIn.Tag = SectionTags.AuthButton;
+                signIn.Click += async (_, _) => await SignInAcpAsync(provider, signIn);
+                actions.Children.Add(signIn);
+            }
+        }
+
+        // Custom providers own their identity fields; ACP presets expose an optional CLI executable path override.
+        if (provider.IsCustom || provider.IsAcp)
         {
             var edit = new Button
             {
@@ -1918,8 +1934,24 @@ public partial class SettingsPage : UserControl
         Grid.SetRow(fields.Children[^1], 0);
 
         var baseUrl = new TextBox { Text = provider.BaseUrl, IsReadOnly = isBuiltIn };
-        if (isBuiltIn) baseUrl.Classes.Add("muted");
-        fields.Children.Add(BuildField(HubStrings.Get("ProviderBaseUrl"), baseUrl));
+        TextBox? acpCommand = null;
+        if (provider.IsAcp)
+        {
+            acpCommand = new TextBox
+            {
+                Text = provider.AcpCommandOverride ?? "",
+                PlaceholderText = provider.Acp?.Command ?? "",
+            };
+            fields.Children.Add(BuildField(
+                HubStrings.Get("ProviderAcpCommand"),
+                acpCommand,
+                HubStrings.Get("ProviderAcpCommandHint")));
+        }
+        else
+        {
+            if (isBuiltIn) baseUrl.Classes.Add("muted");
+            fields.Children.Add(BuildField(HubStrings.Get("ProviderBaseUrl"), baseUrl));
+        }
         Grid.SetColumn(fields.Children[^1], 1);
         Grid.SetRow(fields.Children[^1], 0);
 
@@ -1934,7 +1966,7 @@ public partial class SettingsPage : UserControl
         var cancel = new Button { Content = HubStrings.Get("Cancel"), Classes = { "compact", "quiet" }, Margin = new Thickness(0) };
         cancel.Click += (_, _) => CloseDraft();
         var save = new Button { Content = HubStrings.Get("Save"), Classes = { "compact", "primary" }, Margin = new Thickness(0), IsDefault = true };
-        save.Click += (_, _) => CommitEditDraft(provider, name, baseUrl);
+        save.Click += (_, _) => CommitEditDraft(provider, name, baseUrl, acpCommand);
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
         stack.Children.Add(buttons);
@@ -1969,6 +2001,37 @@ public partial class SettingsPage : UserControl
     /// <summary>The linked-state mark in words + glyph, the three states the dot compresses into colour.</summary>
     private Control BuildLinkedStatusMark(ModelProvider provider)
     {
+        if (provider.IsAcp)
+        {
+            var acpState = EffectiveAcpState(provider);
+            var ready = acpState is AcpProbeStates.Ready or "detected";
+            var acpStatus = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 5,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            acpStatus.Children.Add(ready ? BuildCheckIcon() : BuildUnlinkedIcon());
+            var acpLabel = new TextBlock
+            {
+                Text = HubStrings.Get(acpState switch
+                {
+                    AcpProbeStates.MissingCli => "AcpStatusMissingCli",
+                    AcpProbeStates.AuthRequired => "AcpStatusNotSignedIn",
+                    AcpProbeStates.Ready => "AcpStatusReady",
+                    "detected" => "AcpStatusDetected",
+                    _ => "ProviderNotConnected",
+                }),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            acpLabel.Bind(TextBlock.ForegroundProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
+                    ready ? "Hub.Success" : "Hub.TextTertiary"));
+            acpStatus.Children.Add(acpLabel);
+            return acpStatus;
+        }
+
         var linked = IsLinked(provider);
         var keyless = !provider.CanAuthenticate;
         var authenticated = !provider.NeedsOpenAiRelogin && (keyless || linked);
@@ -2249,12 +2312,13 @@ public partial class SettingsPage : UserControl
     /// Applies the built-in edit draft without touching its stored credential. Custom endpoints use
     /// <see cref="CommitCustomProviderDraft"/> for their additional fields.
     /// </summary>
-    private void CommitEditDraft(ModelProvider provider, TextBox name, TextBox baseUrl)
+    private void CommitEditDraft(ModelProvider provider, TextBox name, TextBox baseUrl, TextBox? acpCommand = null)
     {
         if (_chat is null) return;
 
         // Keep the existing default-model name; this page no longer edits it.
-        if (!_chat.UpdateProvider(provider.Id, name.Text ?? "", baseUrl.Text ?? "", provider.Model, "", out var problem))
+        if (!_chat.UpdateProvider(provider.Id, name.Text ?? "", baseUrl.Text ?? "", provider.Model, "", out var problem,
+                acpCommandOverride: acpCommand is not null ? (acpCommand.Text ?? "") : null))
         {
             SetProviderStatus(true, HubStrings.Get(problem ?? "ProviderSaveFailed"));
             return;
@@ -3286,6 +3350,10 @@ public partial class SettingsPage : UserControl
         {
             await AuthenticateProviderAsync(provider);
         }
+        else if (provider is { IsAcp: true })
+        {
+            await RefreshModelsAsync(provider);
+        }
     }
 
     /// <summary>The free-form path, shared by the picker's custom row. Instead of a modal dialog it inserts an
@@ -3461,6 +3529,137 @@ public partial class SettingsPage : UserControl
         // No browser: report rather than throw, and hand over the link itself, which is what the sign-in
         // fallback does too. On a headless box the URL is still actionable — copy it and open it elsewhere.
         SetProviderStatus(true, HubStrings.Get("AuthNoBrowserLink") + url);
+    }
+
+    /// <summary>
+    /// Fast, non-spawning state check for ACP providers: honors the latest probe state when present,
+    /// otherwise performs a lightweight executable lookup so a missing CLI surfaces install actions immediately.
+    /// </summary>
+    private static string EffectiveAcpState(ModelProvider provider)
+    {
+        if (provider.AcpStatus is { } observed) return observed.State;
+        return AxmolHub.Agent.Acp.AcpProcessHost.ResolveExecutable(provider.EffectiveAcpCommand) is not null
+            ? "detected"
+            : AcpProbeStates.MissingCli;
+    }
+
+    private async Task SignInAcpAsync(ModelProvider provider, Button? trigger = null)
+    {
+        if (_chat is null) return;
+        if (trigger is not null) trigger.IsEnabled = false;
+        SetProviderStatus(false, HubStrings.Get("AcpSignInStarting"));
+        try
+        {
+            var (ok, error) = await _chat.AuthenticateAcpAsync(provider.Id);
+            if (!ok)
+            {
+                SetProviderStatus(true, HubStrings.Get("AcpSignInFailed") + (error ?? "Unknown error"));
+                return;
+            }
+            SetProviderStatus(false, HubStrings.Get("AcpSignInSuccess"));
+            await RefreshModelsAsync(provider);
+        }
+        finally
+        {
+            if (trigger is not null) trigger.IsEnabled = true;
+            RebuildProviderGroups();
+        }
+    }
+
+    /// <summary>
+    /// On-demand inline recovery actions shown only when an ACP provider is missing its CLI binary or
+    /// needs sign-in. Renders nothing when the CLI is installed and ready.
+    /// </summary>
+    private Control? BuildAcpIssueRow(ModelProvider provider)
+    {
+        var state = EffectiveAcpState(provider);
+        if (state is not (AcpProbeStates.MissingCli or AcpProbeStates.AuthRequired))
+            return null;
+
+        var message = provider.AcpStatus?.Message;
+        if (string.IsNullOrWhiteSpace(message) && state == AcpProbeStates.MissingCli)
+        {
+            message = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("AcpMissingCliInlineHint"),
+                provider.EffectiveAcpCommand);
+        }
+
+        var panel = new StackPanel { Spacing = 6 };
+        if (message is { Length: > 0 })
+        {
+            var note = new TextBlock
+            {
+                Text = message,
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            note.Bind(TextBlock.ForegroundProperty,
+                new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("Hub.DangerText"));
+            panel.Children.Add(note);
+        }
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+
+        if (state == AcpProbeStates.MissingCli)
+        {
+            if (provider.Acp?.EffectiveInstallCommand is { Length: > 0 } installCmd)
+            {
+                var copy = new Button
+                {
+                    Content = HubStrings.Get("AcpCopyInstallCommand"),
+                    Classes = { "compact", "quiet" },
+                    Margin = new Thickness(0),
+                };
+                copy.Click += async (_, _) =>
+                {
+                    if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+                    {
+                        var item = new Avalonia.Input.DataTransferItem();
+                        item.Set(Avalonia.Input.DataFormat.Text, installCmd);
+                        var data = new Avalonia.Input.DataTransfer();
+                        data.Add(item);
+                        await clipboard.SetDataAsync(data);
+                    }
+                    SetProviderStatus(false, HubStrings.Get("AcpInstallCommandCopied") + installCmd);
+                };
+                actions.Children.Add(copy);
+            }
+
+            if (provider.Acp?.SetupUrl is { Length: > 0 } setupUrl)
+            {
+                var docs = new Button
+                {
+                    Content = HubStrings.Get("AcpOpenInstallDocs"),
+                    Classes = { "compact", "quiet" },
+                    Margin = new Thickness(0),
+                };
+                docs.Click += (_, _) =>
+                {
+                    if (!UrlLauncher.TryOpen(setupUrl))
+                        SetProviderStatus(true, HubStrings.Get("AuthNoBrowserLink") + setupUrl);
+                };
+                actions.Children.Add(docs);
+            }
+        }
+        else if (state == AcpProbeStates.AuthRequired)
+        {
+            var signIn = new Button
+            {
+                Content = HubStrings.Get("Authenticate"),
+                Classes = { "compact", "primary" },
+                Margin = new Thickness(0),
+            };
+            signIn.Click += async (_, _) => await SignInAcpAsync(provider, signIn);
+            actions.Children.Add(signIn);
+        }
+
+        if (actions.Children.Count > 0) panel.Children.Add(actions);
+        return panel;
     }
 
     /// <summary>Number of built-in presets the "add provider" dialog would offer for this workspace — the

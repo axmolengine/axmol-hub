@@ -89,7 +89,9 @@ internal sealed partial class ChatExecutionCoordinator
             return "ChatContextCompressPendingApproval";
         if (!ContextCompaction.CanSummarize(conversation.Messages, SummaryMessageCount(conversation)))
             return "ChatContextCompressUnavailable";
-        return Providers.ModelFor(conversationId) is null ? "NoAvailableChatModels" : null;
+        var choice = Providers.ModelFor(conversationId);
+        if (choice is null) return "NoAvailableChatModels";
+        return choice.Provider.IsAcp ? "ChatContextCompressAcpUnsupported" : null;
     }
 
     internal bool IsCompressingContext(string conversationId) => _compressingConversations.Contains(conversationId);
@@ -2096,6 +2098,8 @@ internal sealed partial class ChatExecutionCoordinator
         bool alwaysAllowVerb = false, bool computerInteraction = false)
     {
         refusalKey = null;
+        if (TryResolveAcpApproval(conversationId, callId, approved, alwaysAllow))
+            return true;
         var conversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
         var index = conversation?.IndexOfToolCall(callId) ?? -1;
         if (conversation is null || index < 0
@@ -3629,6 +3633,9 @@ internal sealed partial class ChatExecutionCoordinator
 
     private IAsyncEnumerable<string> StreamAsync(ChatRequest request, ConversationRun run)
     {
+        if (request.Provider.IsAcp && ClientOverride is null)
+            return StreamAcpAsync(request, run, run.Token);
+
         // One table per segment. It is rebuilt from the message list before every HTTP request the loop makes,
         // so it never has to outlive this call — and a second segment gets a fresh one because the persisted
         // turns are the source of truth by then.
@@ -4182,12 +4189,14 @@ internal sealed partial class ChatExecutionCoordinator
         foreach (var id in _goalWakes.Keys.ToArray()) CancelGoalWake(id);
         foreach (var id in _computerControls.Keys.Concat(_portalControls.Keys).Distinct().ToArray()) RevokeComputerControl(id);
         _portalDesktop.Dispose();
+        DisposeAcp();
         foreach (var run in _runs.Values) run.RequestStop();
     }
 
 
     internal void StopRunFor(string id)
     {
+        CancelAcpPermissionsFor(id);
         RevokeComputerControl(id);
         CancelGoalWake(id);
         // Stop it first. A run writing into a deleted session has nowhere to land — the registry already refuses

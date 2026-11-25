@@ -75,6 +75,32 @@ public sealed class ModelProvider
     /// <summary>OAuth configuration for a provider that offers browser sign-in; <c>null</c> otherwise.</summary>
     public AiProviderOAuth? OAuth { get; set; }
 
+    /// <summary>External ACP CLI configuration, refreshed from the manifest on load; <c>null</c> for HTTP providers.</summary>
+    [JsonIgnore]
+    public AiProviderAcp? Acp { get; set; }
+
+    /// <summary>Optional user-specified executable path overriding <see cref="AiProviderAcp.Command"/>.</summary>
+    public string? AcpCommandOverride { get; set; }
+
+    /// <summary>Whether this provider runs as a hosted ACP CLI subprocess.</summary>
+    [JsonIgnore]
+    public bool IsAcp => string.Equals(Protocol, ModelProtocols.Acp, StringComparison.OrdinalIgnoreCase)
+                         && Acp is { IsUsable: true };
+
+    /// <summary>Effective executable name or path for launching this ACP agent.</summary>
+    [JsonIgnore]
+    public string EffectiveAcpCommand => !string.IsNullOrWhiteSpace(AcpCommandOverride)
+        ? AcpCommandOverride.Trim()
+        : Acp?.Command.Trim() ?? "";
+
+    /// <summary>Supplied by the host app so <c>AcpModelsSource</c> can probe the local ACP CLI without Core depending on Agent.</summary>
+    [JsonIgnore]
+    public Func<ModelProvider, CancellationToken, Task<ModelCapabilityBatch>>? AcpCatalogProbe { get; set; }
+
+    /// <summary>Latest observed probe outcome for this ACP provider (transient, never persisted).</summary>
+    [JsonIgnore]
+    public AcpProbeStatus? AcpStatus { get; set; }
+
     /// <summary>
     /// The declared key probe for this provider, or <c>null</c> when it declares none.
     ///

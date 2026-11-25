@@ -505,6 +505,8 @@ public sealed partial class ChatWorkspace : IDisposable
     /// </summary>
     public Task<ModelFetchResult> RefreshModelsAsync(string providerId, CancellationToken cancellationToken = default) => _providers.RefreshModelsAsync(providerId, cancellationToken);
 
+    public Task<(bool Ok, string? Error)> AuthenticateAcpAsync(string providerId, CancellationToken cancellationToken = default) => _providers.AuthenticateAcpAsync(providerId, cancellationToken);
+
     /// <summary>
     /// The model names last fetched for a provider, from the cache. Empty when it has never been fetched, so
     /// the caller can say "not fetched yet" rather than "fetched and found nothing".
@@ -551,8 +553,9 @@ public sealed partial class ChatWorkspace : IDisposable
         string? apiKey,
         out string? problem,
         string? protocol = null,
-        IReadOnlyDictionary<string, string>? customHeaders = null)
-        => _providers.UpdateProvider(providerId, name, baseUrl, model, apiKey, out problem, protocol, customHeaders);
+        IReadOnlyDictionary<string, string>? customHeaders = null,
+        string? acpCommandOverride = null)
+        => _providers.UpdateProvider(providerId, name, baseUrl, model, apiKey, out problem, protocol, customHeaders, acpCommandOverride);
     /// <summary>
     /// Removes a provider <b>and everything that hangs off it</b>: the record, its accounts and their secrets.
     ///

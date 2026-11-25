@@ -18,6 +18,7 @@ public static class ModelCapabilitySources
         new AnthropicModelsSource(),
         new GeminiModelsSource(),
         new OllamaModelsSource(),
+        new AcpModelsSource(),
     ];
 
     /// <summary>The source for one provider: whatever its manifest entry names in <c>capabilitySource</c>, or the

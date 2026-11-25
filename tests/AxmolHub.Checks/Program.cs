@@ -18,6 +18,16 @@ internal static class Program
             await OpenAiChecks.MetadataWorkerAsync(root, args);
             return;
         }
+        if (args.Contains("--acp-mock-worker"))
+        {
+            await AcpChecks.MockWorkerAsync();
+            return;
+        }
+        if (args.Contains("--check-acp"))
+        {
+            await AcpChecks.RunAsync(root);
+            return;
+        }
         if (args.Contains("--check-openai-oauth"))
         {
             await OpenAiChecks.RunAsync(root, args.Contains("--native-keychain"), args.Contains("--loopback"));

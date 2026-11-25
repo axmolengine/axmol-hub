@@ -73,10 +73,69 @@
       "descriptionZh": "Google 的 Gemini Developer API。粘贴在 Google AI Studio 获取的 Gemini API Key，然后选择模型。",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
       "apiKeyUrl": "https://aistudio.google.com/apikey",
+      "defaultEnabledModels": ["gemini-4-neon", "gemini-4-carbon"],
+      "maxContextTokens": 1048576,
+      "reasoningModels": {
+        "gemini-4-neon": {
+          "efforts": ["low", "medium", "high", "xhigh"],
+          "defaultEffort": "high"
+        },
+        "gemini-4-hydrogen": {
+          "efforts": ["low", "medium", "high", "xhigh"],
+          "defaultEffort": "high"
+        },
+        "gemini-4-carbon": {
+          "efforts": ["low", "medium", "high"],
+          "defaultEffort": "medium"
+        },
+        "gemini-4-argon": {
+          "efforts": ["low", "medium", "high"],
+          "defaultEffort": "medium"
+        }
+      },
       "protocol": "chat",
       "capabilitySource": "gemini-models",
       "authMethods": ["apiKey"],
       "keyValidation": { "type": "geminiModels" }
+    },
+    {
+      "id": "antigravity-cli-acp",
+      "name": "Antigravity CLI (ACP)",
+      "description": "Google's official Antigravity CLI (agy) over the open Agent Client Protocol (ACP). Uses your local agy installation and its own Google sign-in (including Google AI Pro / Ultra) without Hub handling Google credentials.",
+      "descriptionZh": "通过官方开放的 Agent Client Protocol (ACP) 接入本机 Antigravity CLI（agy）。复用你本机 agy 的 Google 登录与订阅额度（含 Google AI Pro / Ultra），Hub 不接触或保存任何 Google 凭据。",
+      "baseUrl": "",
+      "defaultEnabledModels": ["gemini-4-neon", "gemini-4-carbon"],
+      "maxContextTokens": 1048576,
+      "reasoningModels": {
+        "gemini-4-neon": {
+          "efforts": ["low", "medium", "high", "xhigh"],
+          "defaultEffort": "high"
+        },
+        "gemini-4-hydrogen": {
+          "efforts": ["low", "medium", "high", "xhigh"],
+          "defaultEffort": "high"
+        },
+        "gemini-4-carbon": {
+          "efforts": ["low", "medium", "high"],
+          "defaultEffort": "medium"
+        },
+        "gemini-4-argon": {
+          "efforts": ["low", "medium", "high"],
+          "defaultEffort": "medium"
+        }
+      },
+      "protocol": "acp",
+      "capabilitySource": "acp-agent",
+      "authMethods": ["none"],
+      "acp": {
+        "command": "agy",
+        "args": ["acp"],
+        "loginArgs": ["acp", "--login"],
+        "setupUrl": "https://antigravity.google/docs",
+        "installCommand": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+        "installCommandMac": "brew install --cask antigravity-cli",
+        "installCommandWin": "irm https://antigravity.google/cli/install.ps1 | iex"
+      }
     },
     {
       "id": "deepseek",

@@ -157,8 +157,12 @@ public static class ModelProtocols
     /// credential scheme — <c>x-api-key</c> plus a version header, not a bearer token.</summary>
     public const string Messages = "messages";
 
+    /// <summary>Agent Client Protocol (ACP) over stdio JSON-RPC 2.0. Hosted as a local CLI subprocess rather than an
+    /// HTTP SDK wire.</summary>
+    public const string Acp = "acp";
+
     /// <summary>
-    /// Whether a declared string is one of the three wire names, compared exactly.
+    /// Whether a declared string is one of the known wire names, compared exactly.
     ///
     /// <para>Exactness is the point. Real catalogs publish <c>"openai"</c> and <c>"anthropic"</c> as endpoint
     /// <i>families</i> (OrcaRouter's <c>supported_endpoint_types</c> does, and Copilot's rows carry them too),
@@ -167,7 +171,7 @@ public static class ModelProtocols
     /// was declared", which is the case that keeps every provider shipping today on chat.</para>
     /// </summary>
     public static bool IsKnown(string? protocol)
-        => protocol is Chat or Responses or Messages;
+        => protocol is Chat or Responses or Messages or Acp;
 }
 
 /// <summary>One provider's answer to "which models do you serve, and what can each of them do?".</summary>

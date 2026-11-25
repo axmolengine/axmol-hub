@@ -23,6 +23,8 @@ public sealed partial class AuthDialog : Window
     private TextBlock? _status;
     private Button? _login;
     private Button? _connect;
+    private Button? _apiKeyToggle;
+    private StackPanel? _keySection;
     private bool _checkingKey;
     private bool _isClosed;
 
@@ -89,19 +91,42 @@ public sealed partial class AuthDialog : Window
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 MinHeight = 36,
-                IsDefault = !hasKey,
+                IsDefault = true,
                 Classes = { "compact", "primary" },
                 Margin = new Thickness(0),
             };
             _login.Click += (_, _) => ChooseLogin();
             _content.Children.Add(_login);
+
+            var loginHint = Body(HubStrings.Get("AuthMethodLoginHint"));
+            loginHint.HorizontalAlignment = HorizontalAlignment.Center;
+            _content.Children.Add(loginHint);
         }
 
-        if (hasLogin && hasKey) _content.Children.Add(Separator());
+        if (hasLogin && hasKey)
+        {
+            _content.Children.Add(Rule());
+            _apiKeyToggle = new Button
+            {
+                Content = HubStrings.Get("AuthUseApiKeyExpand"),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Classes = { "compact", "quiet" },
+                Margin = new Thickness(0),
+            };
+            _apiKeyToggle.Click += (_, _) => ToggleApiKeySection();
+            _content.Children.Add(_apiKeyToggle);
+        }
 
         if (hasKey)
         {
-            _content.Children.Add(Body(_provider.KeyValidation is { IsKnown: true }
+            _keySection = new StackPanel
+            {
+                Spacing = 10,
+                ClipToBounds = true,
+                IsVisible = !hasLogin,
+            };
+
+            _keySection.Children.Add(Body(_provider.KeyValidation is { IsKnown: true }
                 ? string.Format(
                     System.Globalization.CultureInfo.InvariantCulture,
                     HubStrings.Get("AuthKeyStepHint"),
@@ -124,7 +149,7 @@ public sealed partial class AuthDialog : Window
             {
                 Content = HubStrings.Get("AuthDo"),
                 Tag = ProviderAuthMethods.ApiKey,
-                IsDefault = true,
+                IsDefault = !hasLogin,
                 IsEnabled = false,
                 Height = 32,
                 MinHeight = 32,
@@ -141,7 +166,7 @@ public sealed partial class AuthDialog : Window
             keyRow.Children.Add(_keyBox);
             Grid.SetColumn(_connect, 1);
             keyRow.Children.Add(_connect);
-            _content.Children.Add(keyRow);
+            _keySection.Children.Add(keyRow);
 
             if (_provider.ApiKeyUrl is { } url)
             {
@@ -157,7 +182,7 @@ public sealed partial class AuthDialog : Window
                     if (!UrlLauncher.TryOpen(url))
                         SetStatus(HubStrings.Get("AuthNoBrowserLink") + url, error: true);
                 };
-                _content.Children.Add(getKey);
+                _keySection.Children.Add(getKey);
             }
 
             _status = new TextBlock
@@ -167,29 +192,22 @@ public sealed partial class AuthDialog : Window
                 TextWrapping = TextWrapping.Wrap,
                 IsVisible = false,
             };
-            _content.Children.Add(_status);
+            _keySection.Children.Add(_status);
+            _content.Children.Add(_keySection);
         }
     }
 
-    private static Grid Separator()
+    private void ToggleApiKeySection()
     {
-        var separator = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
-            ColumnSpacing = 10,
-            Margin = new Thickness(0, 4),
-        };
-        var left = Rule();
-        var right = Rule();
-        var label = Body(HubStrings.Get("AuthApiKeySeparator"));
-        label.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(left, 0);
-        Grid.SetColumn(label, 1);
-        Grid.SetColumn(right, 2);
-        separator.Children.Add(left);
-        separator.Children.Add(label);
-        separator.Children.Add(right);
-        return separator;
+        if (_keySection is null) return;
+        var expanded = !_keySection.IsVisible;
+        _keySection.IsVisible = expanded;
+        if (_apiKeyToggle is not null)
+            _apiKeyToggle.Content = HubStrings.Get(expanded ? "AuthUseApiKeyCollapse" : "AuthUseApiKeyExpand");
+        if (_login is not null) _login.IsDefault = !expanded;
+        if (_connect is not null) _connect.IsDefault = expanded;
+        if (expanded) _keyBox?.Focus();
+        else _login?.Focus();
     }
 
     private static Border Rule()
@@ -259,8 +277,8 @@ public sealed partial class AuthDialog : Window
 
     private void OnOpened(object? sender, EventArgs e)
     {
-        if (_keyBox is not null) _keyBox.Focus();
-        else _login?.Focus();
+        if (_login is not null) _login.Focus();
+        else _keyBox?.Focus();
     }
 }
 

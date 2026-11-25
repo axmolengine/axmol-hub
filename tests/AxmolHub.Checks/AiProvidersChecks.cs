@@ -66,8 +66,15 @@ internal static class AiProvidersChecks
             // blames the user's key. The list is read from the endpoint (ModelCatalog) after authenticating.
             if (entry.GetType().GetProperty("DefaultModel")is not null)
                 throw new Exception($"Preset '{entry.Id}' still exposes a DefaultModel property; the model list must come from the endpoint.");
-            if (!AiProviderEntry.IsUsableBaseUrl(entry.BaseUrl))
+            if (entry.IsAcp)
+            {
+                if (entry.Acp is not { IsUsable: true })
+                    throw new Exception($"ACP preset '{entry.Id}' must declare a usable acp.command.");
+            }
+            else if (!AiProviderEntry.IsUsableBaseUrl(entry.BaseUrl))
+            {
                 throw new Exception($"Preset '{entry.Id}' has a base URL the client cannot use: {entry.BaseUrl}");
+            }
         }
 
         Console.WriteLine($"PASS: the catalog carries {catalog.Count} complete presets, each with a description and no baked-in model.");

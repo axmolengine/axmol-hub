@@ -748,6 +748,12 @@ public sealed class Conversation
     /// of its own — see <see cref="SessionGroupKey.Workspace"/>.</summary>
     public string? WorkspaceRoot { get; set; }
 
+    /// <summary>External ACP session id returned by <c>session/new</c>, used to resume via <c>session/load</c>.</summary>
+    public string? AcpSessionId { get; set; }
+
+    /// <summary>Provider id that owns <see cref="AcpSessionId"/>, preventing cross-provider session reuse.</summary>
+    public string? AcpProviderId { get; set; }
+
     /// <summary>Directories this session was granted, beyond <see cref="WorkspaceRoot"/>, after a person approved a
     /// <c>request_directory</c> card. Kept apart from the workspace on purpose: a grant adds a place to read and
     /// write, it never moves the session — the sidebar still groups by the workspace, the repository pane still

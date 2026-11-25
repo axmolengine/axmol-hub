@@ -86,6 +86,7 @@ public static class ChatClientFactory
     {
         Core.ModelProtocols.Responses => "/v1/responses",
         Core.ModelProtocols.Messages => "/v1/messages",
+        Core.ModelProtocols.Acp => "acp (stdio)",
         _ => "/v1/chat/completions",
     };
 
@@ -130,6 +131,8 @@ public static class ChatClientFactory
         TimeSpan? maxInlineRetryWait = null,
         TimeSpan? networkTimeout = null)
     {
+        if (provider.IsAcp || ProtocolFor(provider, modelOverride ?? provider.Model) == Core.ModelProtocols.Acp)
+            throw new InvalidOperationException($"Provider '{provider.Name}' uses ACP stdio hosting and cannot create an HTTP chat client.");
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
             throw new InvalidOperationException($"Provider '{provider.Name}' has no base URL.");
         var model = string.IsNullOrWhiteSpace(modelOverride) ? provider.Model : modelOverride;

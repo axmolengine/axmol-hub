@@ -208,6 +208,70 @@ public sealed class AiProviderKeyValidation
         && !Path.Contains("://", StringComparison.Ordinal);
 }
 
+/// <summary>
+/// Declarative launch configuration for an external Agent Client Protocol (ACP) CLI subprocess.
+/// Carries only the executable name, arguments, and optional setup hints — never any user credentials.
+/// </summary>
+public sealed class AiProviderAcp
+{
+    /// <summary>Executable name on PATH or absolute path (for example <c>gemini</c>).</summary>
+    public string Command { get; set; } = "";
+
+    /// <summary>Command-line arguments that start the CLI in ACP stdio mode (for example <c>["acp"]</c>).</summary>
+    public List<string> Args { get; set; } = [];
+
+    /// <summary>Optional CLI arguments that launch interactive browser sign-in when ACP <c>authenticate</c> is unavailable (for example <c>["acp", "--login"]</c>).</summary>
+    public List<string> LoginArgs { get; set; } = [];
+
+    /// <summary>Optional HTTPS documentation/install page shown when the CLI is missing or needs sign-in.</summary>
+    public string? SetupUrl { get; set; }
+
+    /// <summary>Optional copyable install command (Linux / cross-platform default).</summary>
+    public string? InstallCommand { get; set; }
+
+    /// <summary>Optional macOS-preferred install command (for example Homebrew cask).</summary>
+    public string? InstallCommandMac { get; set; }
+
+    /// <summary>Optional Windows-preferred install command (for example PowerShell installer).</summary>
+    public string? InstallCommandWin { get; set; }
+
+    /// <summary>Best install command for the current OS, or null if none is declared.</summary>
+    [JsonIgnore]
+    public string? EffectiveInstallCommand
+        => OperatingSystem.IsMacOS() && !string.IsNullOrWhiteSpace(InstallCommandMac)
+            ? InstallCommandMac.Trim()
+            : OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(InstallCommandWin)
+                ? InstallCommandWin.Trim()
+                : !string.IsNullOrWhiteSpace(InstallCommand) ? InstallCommand.Trim() : null;
+
+    /// <summary>Whether this declaration names an executable to launch.</summary>
+    [JsonIgnore]
+    public bool IsUsable => !string.IsNullOrWhiteSpace(Command);
+
+    public AiProviderAcp Clone() => new()
+    {
+        Command = Command,
+        Args = [.. Args],
+        LoginArgs = [.. LoginArgs],
+        SetupUrl = SetupUrl,
+        InstallCommand = InstallCommand,
+        InstallCommandMac = InstallCommandMac,
+        InstallCommandWin = InstallCommandWin,
+    };
+}
+
+/// <summary>Observed runtime probe states for an ACP CLI provider (transient, never persisted).</summary>
+public static class AcpProbeStates
+{
+    public const string Ready = "ready";
+    public const string MissingCli = "missingCli";
+    public const string AuthRequired = "authRequired";
+    public const string Error = "error";
+}
+
+/// <summary>Latest observed probe outcome for an ACP CLI provider.</summary>
+public sealed record AcpProbeStatus(string State, string? Message = null);
+
 /// <summary>Model-specific reasoning metadata and request-body fields declared by a built-in provider manifest.</summary>
 public sealed class AiModelReasoning
 {
@@ -385,6 +449,13 @@ public sealed class AiProviderEntry
 
     /// <summary>Present only for a provider that offers OAuth.</summary>
     public AiProviderOAuth? OAuth { get; set; }
+
+    /// <summary>Present only for an external ACP CLI agent preset.</summary>
+    public AiProviderAcp? Acp { get; set; }
+
+    /// <summary>Whether this preset runs as a local ACP CLI subprocess rather than an HTTP API endpoint.</summary>
+    [JsonIgnore]
+    public bool IsAcp => string.Equals(Protocol, AxmolHub.Core.ModelProtocols.Acp, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// How (and whether) a pasted key can be checked before it is stored.
@@ -599,6 +670,7 @@ public static class AiProviderManifest
                 KeyValidation = entry.KeyValidation is { IsKnown: true } validation
                     ? new AiProviderKeyValidation { Type = validation.Type, Path = validation.Path }
                     : null,
+                Acp = entry.Acp is { IsUsable: true } acp ? acp.Clone() : null,
             };
     }
 

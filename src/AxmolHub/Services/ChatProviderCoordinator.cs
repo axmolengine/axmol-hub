@@ -2,6 +2,7 @@ using System.Text.Json;
 using static AxmolHub.ChatSessionCoordinator;
 using static AxmolHub.ChatExecutionCoordinator;
 using AxmolHub.Agent;
+using AxmolHub.Agent.Acp;
 using AxmolHub.Core;
 using static AxmolHub.ChatWorkspace;
 
@@ -183,6 +184,7 @@ internal sealed partial class ChatProviderCoordinator
                 provider.DefaultEnabledModels = [.. builtIn.DefaultEnabledModels];
                 provider.AuthMethods = [.. builtIn.AuthMethods];
                 provider.OAuth = builtIn.OAuth;
+                provider.Acp = builtIn.Acp;
                 // Same reasoning as the two lines above: the probe is a manifest fact, refreshed every load.
                 provider.KeyValidation = builtIn.KeyValidation;
                 provider.CapabilitySource = builtIn.CapabilitySource;
@@ -217,6 +219,7 @@ internal sealed partial class ChatProviderCoordinator
                 builtIn?.ReasoningModels,
                 modelCache?.ReasoningModels);
             provider.ModelCapabilities = ReportedCapabilities(modelCache?.Capabilities);
+            provider.AcpCatalogProbe = provider.IsAcp ? AcpProcessHost.ProbeAsync : null;
         }
 
         // First run (nothing saved yet): adopt the single default preset so the conversation page has a
@@ -636,6 +639,7 @@ internal sealed partial class ChatProviderCoordinator
         if (_providerList.Any(provider => provider.Id == presetId)) return null;
         if (AiProviderManifest.CreateBuiltIn(presetId) is not { } provider) return null;
 
+        provider.AcpCatalogProbe = provider.IsAcp ? AcpProcessHost.ProbeAsync : null;
         _providerList.Add(provider);
         SaveProviders();
         return provider;
@@ -952,6 +956,18 @@ internal sealed partial class ChatProviderCoordinator
 
     internal IReadOnlyList<string> CachedModels(string providerId)
         => _modelLists.Load().FirstOrDefault(entry => entry.Id == ModelCacheId(providerId))?.Models ?? [];
+
+    internal async Task<(bool Ok, string? Error)> AuthenticateAcpAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null || !provider.IsAcp)
+            return (false, "No ACP provider matches this id.");
+        var result = await AcpProcessHost.AuthenticateAsync(provider, cancellationToken);
+        Execution.Changed?.Invoke();
+        return result;
+    }
     internal HttpClient? ModelListHttp
     {
         get => _modelListHttp;
@@ -1048,7 +1064,8 @@ internal sealed partial class ChatProviderCoordinator
         string? apiKey,
         out string? problem,
         string? protocol = null,
-        IReadOnlyDictionary<string, string>? customHeaders = null)
+        IReadOnlyDictionary<string, string>? customHeaders = null,
+        string? acpCommandOverride = null)
     {
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider is null)
@@ -1064,6 +1081,9 @@ internal sealed partial class ChatProviderCoordinator
             return false;
         }
 
+        var normalizedAcpCommand = acpCommandOverride is null
+            ? provider.AcpCommandOverride
+            : string.IsNullOrWhiteSpace(acpCommandOverride) ? null : acpCommandOverride.Trim();
         var edited = new ModelProvider
         {
             Id = provider.Id,
@@ -1071,6 +1091,8 @@ internal sealed partial class ChatProviderCoordinator
             IsCustom = provider.IsCustom,
             BaseUrl = provider.IsCustom ? baseUrl.Trim() : provider.BaseUrl,
             Protocol = provider.IsCustom ? protocol ?? provider.Protocol : provider.Protocol,
+            Acp = provider.Acp,
+            AcpCommandOverride = provider.IsAcp ? normalizedAcpCommand : provider.AcpCommandOverride,
             CustomHeaders = provider.IsCustom && customHeaders is not null
                 ? customHeaders.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
                 : provider.CustomHeaders,
@@ -1090,6 +1112,9 @@ internal sealed partial class ChatProviderCoordinator
         provider.Name = edited.Name;
         provider.BaseUrl = edited.BaseUrl;
         provider.Protocol = edited.Protocol;
+        if (provider.AcpCommandOverride != edited.AcpCommandOverride)
+            provider.AcpStatus = null;
+        provider.AcpCommandOverride = edited.AcpCommandOverride;
         provider.CustomHeaders = edited.CustomHeaders;
 
         // Endpoint-only edits must not touch the model list or its activation flags. Legacy callers can
@@ -1377,6 +1402,8 @@ internal sealed partial class ChatProviderCoordinator
     internal static string? Validate(ModelProvider provider)
     {
         if (provider.Name.Trim().Length == 0) return "ProviderNameRequired";
+        if (provider.IsAcp)
+            return string.IsNullOrWhiteSpace(provider.EffectiveAcpCommand) ? "ProviderAcpCommandRequired" : null;
         if (!IsHttpUrl(provider.BaseUrl)) return "ProviderBaseUrlInvalid";
         return null;
     }
