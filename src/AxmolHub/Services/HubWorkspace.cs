@@ -1845,7 +1845,7 @@ public sealed partial class HubWorkspace : IDisposable
         }
         else
         {
-            var (fileName, arguments) = CodeEditors.LaunchPlan(binding.Path, EditorTargets.Default(project));
+            var (fileName, arguments) = CodeEditors.LaunchPlan(binding.Path, EditorTargets.ForEditor(project, binding));
             _runner.Launch(fileName, arguments);
         }
         RecordProjectActivity(project);

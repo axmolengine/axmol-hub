@@ -905,6 +905,23 @@ internal sealed class ShellLayoutChecks
         File.WriteAllText(globalPath, "");
         File.WriteAllText(projectPath, "");
         var editorProject = new ProjectEntry { Name = "SampleProject", Path = Path.Combine(scratchRoot, "SampleProject"), Platform = "windows-x64" };
+        var solutionBuild = Path.Combine(scratchRoot, "visual-studio-solution", "build");
+        Directory.CreateDirectory(solutionBuild);
+        var solutionProject = new ProjectEntry { Name = "SampleProject", Path = Path.Combine(scratchRoot, "visual-studio-solution", "source"), Platform = "windows-x64" };
+        var solutionSlnx = Path.Combine(solutionBuild, "SampleProject.slnx");
+        var solutionSln = Path.Combine(solutionBuild, "SampleProject.sln");
+        File.WriteAllText(Path.Combine(solutionBuild, "CMakeCache.txt"),
+            $"CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026\nCMAKE_HOME_DIRECTORY:INTERNAL={solutionProject.Path}\nCMAKE_PROJECT_NAME:STATIC=SampleProject\n");
+        File.WriteAllText(solutionSlnx, "");
+        File.WriteAllText(solutionSln, "");
+        var solutionFromSlnx = EditorTargets.ConfiguredVisualStudioSolution(solutionProject, solutionBuild);
+        File.Delete(solutionSlnx);
+        var solutionFromSln = EditorTargets.ConfiguredVisualStudioSolution(solutionProject, solutionBuild);
+        File.WriteAllText(Path.Combine(solutionBuild, "CMakeCache.txt"),
+            $"CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026\nCMAKE_HOME_DIRECTORY:INTERNAL={scratchRoot}\nCMAKE_PROJECT_NAME:STATIC=SampleProject\n");
+        var solutionFromOtherProject = EditorTargets.ConfiguredVisualStudioSolution(solutionProject, solutionBuild);
+        Check(solutionFromSlnx == solutionSlnx && solutionFromSln == solutionSln && solutionFromOtherProject is null,
+            "Visual Studio chooses a matching CMake .slnx first, falls back to .sln, and ignores a cache for another source tree");
         var editorState = new HubState { CodeEditor = new CodeEditor(CodeEditors.CustomId, globalPath) };
         var editorDetected = new[] { new EditorBinding(new EditorPreset("vscode", "VS Code"), detectedPath) };
         var byDefault = CodeEditors.Resolve(editorProject, editorDetected, editorState);

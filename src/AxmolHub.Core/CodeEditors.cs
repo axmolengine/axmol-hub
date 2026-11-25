@@ -402,4 +402,78 @@ public static class EditorTargets
         var gradle = Path.Combine(project.Path, "proj.android");
         return Directory.Exists(gradle) ? gradle : project.Path;
     }
+
+    /// <summary>Uses a configured CMake solution only for Visual Studio on Windows; all other editors keep their normal target.</summary>
+    public static string ForEditor(ProjectEntry project, EditorBinding binding)
+    {
+        var target = Default(project);
+        if (!OperatingSystem.IsWindows() || binding.Preset.Id != "visualstudio"
+            || BuildTargets.Get(project.Platform).Family is not ("windows" or "uwp"))
+            return target;
+
+        var buildDirectory = Path.Combine(project.Path, BuildCleanup.NativeDirectory(BuildTargets.Get(project.Platform)));
+        return ConfiguredVisualStudioSolution(project, buildDirectory) ?? target;
+    }
+
+    /// <summary>Returns a generated solution only when the CMake cache belongs to this project and uses Visual Studio.</summary>
+    public static string? ConfiguredVisualStudioSolution(ProjectEntry project, string buildDirectory)
+    {
+        try
+        {
+            var cache = Path.Combine(buildDirectory, "CMakeCache.txt");
+            if (!File.Exists(cache)) return null;
+
+            var values = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var line in File.ReadLines(cache))
+            {
+                if (line.StartsWith('#') || line.StartsWith("//", StringComparison.Ordinal)) continue;
+                var colon = line.IndexOf(':');
+                var equals = line.IndexOf('=');
+                if (colon > 0 && equals > colon) values[line[..colon]] = line[(equals + 1)..];
+            }
+
+            if (!values.TryGetValue("CMAKE_HOME_DIRECTORY", out var home)
+                || !values.TryGetValue("CMAKE_GENERATOR", out var generator)
+                || !generator.StartsWith("Visual Studio ", StringComparison.OrdinalIgnoreCase)
+                || !SameDirectory(home, project.Path))
+                return null;
+
+            var solutions = Directory.EnumerateFiles(buildDirectory, "*", SearchOption.TopDirectoryOnly)
+                .Where(path => Path.GetExtension(path).Equals(".slnx", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetExtension(path).Equals(".sln", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            var projectNames = new[] { values.GetValueOrDefault("CMAKE_PROJECT_NAME"), project.Name }
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+            foreach (var extension in new[] { ".slnx", ".sln" })
+            {
+                var candidates = solutions.Where(path => Path.GetExtension(path).Equals(extension, StringComparison.OrdinalIgnoreCase)).ToArray();
+                var named = candidates.Where(path => projectNames.Contains(Path.GetFileNameWithoutExtension(path), StringComparer.OrdinalIgnoreCase)).ToArray();
+                if (named.Length == 1) return named[0];
+                if (named.Length > 1) continue;
+                if (candidates.Length == 1) return candidates[0];
+            }
+        }
+        catch (Exception)
+        {
+            // Opening an editor must remain available when a cache or generated build directory is incomplete.
+        }
+
+        return null;
+    }
+
+    private static bool SameDirectory(string left, string right)
+    {
+        try
+        {
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var normalizedLeft = Path.TrimEndingDirectorySeparator(Path.GetFullPath(left));
+            var normalizedRight = Path.TrimEndingDirectorySeparator(Path.GetFullPath(right));
+            return string.Equals(normalizedLeft, normalizedRight, comparison);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 }
