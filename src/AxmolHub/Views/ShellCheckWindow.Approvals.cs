@@ -2256,21 +2256,19 @@ internal sealed class ShellApprovalsChecks
                 "删除会话时释放它占住的运行位，而不是留一个永远等不到决定的记录");
 
             // ── Two tool calls in one response, one of them waiting on approval ──
-            // The gateway ignores the request's "one call at a time" and returns two; when one needs approval the
-            // loop runs the other regardless. The parked call then gets pushed off-centre by later turns and its
-            // answer is appended after approval — the provider rejects the whole transcript for exactly this, and
-            // every later resubmission of this session hits the same 400. This cell runs that real shape.
+            // The response is recorded as a whole before gating. Once its write parks, the read behind it
+            // also stays unexecuted; approval must resume both without ever sending an unanswered call.
             chat.SetApprovalMode(batchSession.Id, ToolApprovalModes.Ask);
             chat.OpenConversation(batchSession.Id);
             chat.TryEnqueueSend(batchSession.Id, "改一下再读一遍", null, out _);
             var batchCallId = await WaitForPendingCallAsync(batchSession);
-            await WaitUntilAsync(() => batchSession.Messages.Any(turn => turn.Role == ChatRoles.Tool));
+            await WaitForIdleAsync(chat);
             var parkedBatch = chat.StoredCopyForCheck(batchSession.Id);
             var batchMispaired = parkedBatch?.FirstMispairedToolCallId();
             Check(batchCallId is not null && parkedBatch is not null
                   && batchMispaired == batchCallId && parkedBatch.HasUnansweredToolCall()
-                  && parkedBatch.Messages.Any(turn => turn.Role == ChatRoles.Tool),
-                "挂起的那条调用后面摆着别人的结果，正是整段被拒收的形状（判给 " + (batchMispaired ?? "none") + "）");
+                  && !parkedBatch.Messages.Any(turn => turn.Role == ChatRoles.Tool),
+                "批量响应完整挂起，兄弟读取不提前执行，也不携带未配对调用续答（判给 " + (batchMispaired ?? "none") + "）");
 
             var batchAnswers = batchClient.Answers;
             chat.TryResolveApproval(batchSession.Id, batchCallId ?? "", approved: true,

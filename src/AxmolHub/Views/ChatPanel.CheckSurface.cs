@@ -1202,7 +1202,8 @@ public partial class ChatPanel : UserControl
         && GoalCapsuleHost.GetLogicalDescendants().OfType<TextBlock>().Any(block => block.Classes.Contains("goal-capsule-text") && block.Text == "完成目标并依据证据核验")
         && Grid.GetRow(GoalCapsuleHost) == Grid.GetRow(SteerConfirmHost) + 1
         && Grid.GetRow(ComputerControlHost) == Grid.GetRow(GoalCapsuleHost) + 1
-        && Grid.GetRow(ComposerFrame) == Grid.GetRow(ComputerControlHost) + 1;
+        && Grid.GetRow(SubagentsHost) == Grid.GetRow(ComputerControlHost) + 1
+        && Grid.GetRow(ComposerFrame) == Grid.GetRow(SubagentsHost) + 1;
     internal bool GoalMessageMetaForCheck => MessageRows.Where(row => row.Classes.Contains("user-row"))
         .Any(row => row.GetLogicalDescendants().OfType<TextBlock>().Any(block => block.Classes.Contains("goal-sent-marker")
             && block.Text == HubStrings.Get("ChatGoalSentAsGoal"))

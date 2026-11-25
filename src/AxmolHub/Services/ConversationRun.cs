@@ -832,6 +832,9 @@ internal sealed class ConversationRun : IDisposable
 
     internal bool TryTakeBurnCommit() => Interlocked.Exchange(ref _burnCommitted, 1) == 0;
 
+    /// <summary>The current stream must unwind before a decision replaces its cancelled token sources.</summary>
+    internal Task StreamCompletion { get; set; } = Task.CompletedTask;
+
     internal void RequestStop() => _stop.Cancel();
 
     /// <summary>Ends the in-flight request without ending the run. This is the only cancellation a parked

@@ -2362,6 +2362,7 @@ internal sealed partial class ChatExecutionCoordinator
     private async Task PumpAnsweredQuestionAsync(
         ConversationRun run, string callId, string answer, bool skipped)
     {
+        await run.StreamCompletion.ConfigureAwait(false);
         var name = await ReadOnUiAsync(() =>
         {
             var conversation = Sessions.Registry.Peek(run.ConversationId);
@@ -2428,6 +2429,9 @@ internal sealed partial class ChatExecutionCoordinator
 
     private async Task PumpApprovedBatchAsync(ConversationRun run, string batchId)
     {
+        // A visible card is not proof the cancelled stream has unwound. Rearming before it exits lets
+        // that old stream report failure against the new run and revoke the just-approved app permission.
+        await run.StreamCompletion.ConfigureAwait(false);
         var owed = await ReadOnUiAsync(() =>
         {
             var conversation = Sessions.Registry.Peek(run.ConversationId);
@@ -2939,7 +2943,10 @@ internal sealed partial class ChatExecutionCoordinator
                 if (prepareSegment && !run.ContextYieldSuppressed)
                     compacted |= await CompactTiersAsync(run, "Auto compaction", forced: false).ConfigureAwait(false);
                 prepareSegment = false;
-                (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false);
+                var streamCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                run.StreamCompletion = streamCompletion.Task;
+                try { (result, noticeKey, noticeDanger, detail) = await StreamSegmentAsync(run).ConfigureAwait(false); }
+                finally { streamCompletion.TrySetResult(true); }
                 if (result == RunResult.Parked) return;
                 // The old stream finished its tool batch. Rebuild from durable turns without treating a
                 // selection change as a compaction request, an ending, or a new user instruction.
