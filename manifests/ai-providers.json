@@ -83,14 +83,6 @@
         "gemini-4-hydrogen": {
           "efforts": ["low", "medium", "high", "xhigh"],
           "defaultEffort": "high"
-        },
-        "gemini-4-carbon": {
-          "efforts": ["low", "medium", "high"],
-          "defaultEffort": "medium"
-        },
-        "gemini-4-argon": {
-          "efforts": ["low", "medium", "high"],
-          "defaultEffort": "medium"
         }
       },
       "protocol": "chat",
@@ -114,14 +106,6 @@
         "gemini-4-hydrogen": {
           "efforts": ["low", "medium", "high", "xhigh"],
           "defaultEffort": "high"
-        },
-        "gemini-4-carbon": {
-          "efforts": ["low", "medium", "high"],
-          "defaultEffort": "medium"
-        },
-        "gemini-4-argon": {
-          "efforts": ["low", "medium", "high"],
-          "defaultEffort": "medium"
         }
       },
       "protocol": "acp",
