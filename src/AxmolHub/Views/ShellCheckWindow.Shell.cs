@@ -734,11 +734,8 @@ internal sealed class ShellLayoutChecks
             "空数据根下达 0 行且空态文案可见");
         emptyShell.Close();
 
-        // The default engine is shell state, so switching it has to reach the shell's own chrome and not only the
-        // pages: the rail's bottom-left line is derived from DefaultEnginePath, and a shell that wrote it only
-        // inside InitializeChrome kept saying the previous version until the next restart, data-root switch or
-        // language change. The press goes through the real button, because "the event chain is wired" is the half
-        // that calling the workspace directly would not prove.
+        // Switching the default engine goes through the real per-row button, because "the event chain is wired"
+        // is the half that calling the workspace directly would not prove.
         var railEngine = shell.Workspace.State.Engines
             .FirstOrDefault(engine => engine.Path == shell.Workspace.State.DefaultEnginePath);
         var otherEngine = railEngine is null
@@ -770,10 +767,11 @@ internal sealed class ShellLayoutChecks
             return;
         }
 
-        await WaitUntilAsync(() => shell.RailEngineLineForCheck == "AXMOL " + otherEngine.Version);
+        await WaitUntilAsync(() => shell.Workspace.State.DefaultEnginePath == otherEngine.Path
+            && installs.RowsForCheck.Any(row => row.Engine.Path == otherEngine.Path && row.IsDefault));
         Check(shell.Workspace.State.DefaultEnginePath == otherEngine.Path
-              && shell.RailEngineLineForCheck == "AXMOL " + otherEngine.Version,
-            "引擎页「设为默认」后侧栏左下角当场换成新版本（实际「" + shell.RailEngineLineForCheck + "」）");
+              && installs.RowsForCheck.Any(row => row.Engine.Path == otherEngine.Path && row.IsDefault && !row.CanSetDefault),
+            "引擎页「设为默认」后 DefaultEnginePath 与列表默认标记当场切到新版本（" + otherEngine.Version + "）");
 
         // A change that is still running refuses the next one, so the gate has to be empty before the second press.
         await WaitUntilAsync(() => !shell.Workspace.IsBusy);
@@ -781,11 +779,12 @@ internal sealed class ShellLayoutChecks
         // Put the fixture back: the settings group reads the default engine, and every group after this one assumes
         // the fixture's own selection rather than this check's.
         var restoredDefault = PressSetDefault(railEngine);
-        await WaitUntilAsync(() => shell.RailEngineLineForCheck == "AXMOL " + railEngine.Version);
+        await WaitUntilAsync(() => shell.Workspace.State.DefaultEnginePath == railEngine.Path
+            && installs.RowsForCheck.Any(row => row.Engine.Path == railEngine.Path && row.IsDefault));
         Check(restoredDefault
               && shell.Workspace.State.DefaultEnginePath == railEngine.Path
-              && shell.RailEngineLineForCheck == "AXMOL " + railEngine.Version,
-            "默认引擎与侧栏左下角都还给了 fixture（" + railEngine.Version + "）");
+              && installs.RowsForCheck.Any(row => row.Engine.Path == railEngine.Path && row.IsDefault && !row.CanSetDefault),
+            "默认引擎与列表默认标记都还给了 fixture（" + railEngine.Version + "）");
 
         await Task.CompletedTask;
     }

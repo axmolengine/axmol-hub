@@ -121,11 +121,11 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
 
-    <!-- The bottom popup-menu entry: the brand/host text block is one quiet button. -->
+    <!-- The bottom popup-menu entry: the host text block is one quiet button. -->
     <Style Selector="Button.host">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="2,4" />
+      <Setter Property="Padding" Value="6,7" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
@@ -902,7 +902,7 @@
               ClipToBounds="True">
         <DockPanel>
 
-          <!-- Bottom: the brand/host text block opens the settings/appearance popup menu; the gear beside it
+          <!-- Bottom: the host text block opens the settings/appearance popup menu; the gear beside it
                is unchanged — an independent shortcut straight to the settings page. Between them sits the
                update's own button, and it is the update's **only** home: it appears while there is an update
                to act on and carries the red dot the gear used to carry. The dot says the same thing the
@@ -912,17 +912,16 @@
           <StackPanel DockPanel.Dock="Bottom">
             <Border BorderBrush="{DynamicResource Hub.Border}"
                     BorderThickness="0,1,0,0"
-                    Padding="6,12,0,0">
+                    Padding="2,12,0,0">
               <Grid ColumnDefinitions="*,Auto,Auto">
                 <Button x:Name="BottomMenuButton" Grid.Column="0" Classes="host"
                         VerticalAlignment="Center">
-                  <StackPanel>
-                    <!-- The host block yields to the fixed icon slots when the sidebar is narrow. -->
-                    <TextBlock x:Name="BrandLine" Text="AXMOL" Foreground="{DynamicResource Hub.TextSecondary}"
-                               FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                    <TextBlock x:Name="HostLine" Foreground="{DynamicResource Hub.TextTertiary}"
-                               FontSize="11" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
-                  </StackPanel>
+                  <!-- The host block yields to the fixed icon slots when the sidebar is narrow. -->
+                  <TextBlock x:Name="HostLine"
+                             Foreground="{DynamicResource Hub.TextSecondary}"
+                             FontSize="11.5" FontWeight="SemiBold"
+                             TextTrimming="CharacterEllipsis"
+                             VerticalAlignment="Center" />
                 </Button>
 
                 <!-- The update button's host. Hidden (not merely dimmed) while there is nothing to act on,

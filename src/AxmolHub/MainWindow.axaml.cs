@@ -2201,12 +2201,6 @@ public partial class MainWindow : Window
 
         _workspace.StatusChanged += ApplyWorkspaceStatus;
 
-        // The rail's bottom-left line names the default engine, and every gated change ends in a Refresh that
-        // raises this. Without the subscription the line kept the version it was built with until the next
-        // construction, data-root switch or language change — "set default engine" moved the state and the
-        // engines page, and left the shell's own chrome saying the previous version.
-        _workspace.Changed += SyncRailEngineLine;
-
         // Nothing here disables a surface while work runs, and nothing here announces it either: the strip's
         // cancel reads the queue itself (UpdateTaskSlot), which is the single place that knows whether there
         // is a change to stop. The gate answers a refused press with a sentence instead of grey.
@@ -3146,35 +3140,13 @@ public partial class MainWindow : Window
         ToolTip.SetTip(InspectorExpandToggle, HubStrings.Get("InspectorExpand"));
         SyncInspectorDrawerChrome();
 
-        // The bottom text block's visible text names the machine, not the menu; the tooltip is where
+        // The bottom text block's visible text names the host machine, not the menu; the tooltip is where
         // "this opens settings and appearance" is spelled out. Same place for the same reason.
         ToolTip.SetTip(BottomMenuButton, HubStrings.Get("BottomMenuTip"));
 
-        // The WPF version hard-codes "AXMOL 2.11 LTS" in the bottom-left. The Avalonia version
-        // computes it from the **default engine** at runtime — see <see cref="SyncRailEngineLine"/>.
-        SyncRailEngineLine();
-
-        // The WPF version hard-codes "Windows x64". The Avalonia version runs on three platforms and
-        // computes it from the real host.
+        // The Avalonia shell runs on three platforms and reports the real host OS and architecture.
         var os = OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";
         HostLine.Text = os + " " + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
-    }
-
-    /// <summary>
-    /// The rail's bottom line names the default engine and its version, so it is derived state rather than
-    /// chrome: it is rewritten by the repaint that follows any state change (<see cref="WireWorkspace"/>
-    /// subscribes it to <see cref="HubWorkspace.Changed"/>) instead of only by <see cref="InitializeChrome"/>,
-    /// which runs at construction, at a data-root switch and at a language change and nowhere else.
-    ///
-    /// The WPF version hard-codes "AXMOL 2.11 LTS" here. Reading the version off the default engine is what
-    /// keeps that line from becoming wrong the day v3 ships — exactly the A1 (single-engine version binding)
-    /// class of bug.
-    /// </summary>
-    private void SyncRailEngineLine()
-    {
-        var state = _workspace.State;
-        var engine = state.Engines.FirstOrDefault(candidate => candidate.Path == state.DefaultEnginePath);
-        BrandLine.Text = engine is null ? "AXMOL" : "AXMOL " + engine.Version;
     }
 
     /// <summary>

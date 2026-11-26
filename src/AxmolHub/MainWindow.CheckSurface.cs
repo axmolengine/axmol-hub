@@ -451,10 +451,6 @@ public partial class MainWindow
     internal bool PreviewBadgeUsesThemeTokensForCheck => ThemeProbe.IsToken(PreviewBadge.Background, "Hub.PreviewBadgeBackground") && ThemeProbe.IsToken(PreviewBadge.BorderBrush, "Hub.PreviewBadgeBorder") && PreviewBadge.GetVisualDescendants().OfType<TextBlock>().Any(text => ThemeProbe.IsToken(text.Foreground, "Hub.PreviewBadgeForeground"));
 
     internal void SetPreviewBadgeVisibleForCheck(bool visible) => PreviewBadge.IsVisible = visible;
-    /// <summary>The rail's bottom-left line (the default engine's version), for the shell self-check. It lives
-    /// beside the brand hooks because it is the same footer the ⋯ menu sits in, and it is read by name so the
-    /// check can prove the line follows <c>DefaultEnginePath</c> without reaching for the field.</summary>
-    internal string RailEngineLineForCheck => BrandLine.Text ?? "";
     /// <summary>The OS attention channel, for the shell self-check: the pending notification target has to be
     /// armed on the same object the production notification path arms it on, or the check proves nothing.</summary>
     internal SystemAttentionService AttentionForCheck => _attention;
