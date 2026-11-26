@@ -43,6 +43,14 @@ public static class AxmolSkillEngine
 
     public static string Describe(WorkspaceToolScope scope) => Resolve(scope).Message;
 
+    /// <summary>Returns the matched Axmol engine root for a workspace, or null when the workspace is not bound to one.</summary>
+    public static string? ResolveEngineRoot(WorkspaceToolScope? scope)
+    {
+        if (scope is null || string.IsNullOrEmpty(scope.WorkspaceRoot)) return null;
+        var resolution = Resolve(scope);
+        return resolution.IsMatched && !string.IsNullOrWhiteSpace(resolution.EngineRoot) ? resolution.EngineRoot : null;
+    }
+
     public static AxmolEngineResolution Resolve(WorkspaceToolScope scope)
     {
         if (string.IsNullOrEmpty(scope.WorkspaceRoot))

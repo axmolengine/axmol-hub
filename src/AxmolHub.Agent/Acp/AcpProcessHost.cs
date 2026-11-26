@@ -63,7 +63,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
             return ProbeCandidate(trimmed);
 
         var searchDirs = new List<string>();
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var pathEnv = HostEnvironment.PathValue;
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
             searchDirs.Add(dir.Trim());
 
@@ -132,13 +132,22 @@ public sealed class AcpProcessHost : IAsyncDisposable
         return File.Exists(basePath) ? Path.GetFullPath(basePath) : null;
     }
 
+    private static void ApplyChildEnvironment(ProcessStartInfo startInfo, string resolvedExecutable, string? engineRoot)
+    {
+        HostEnvironment.ApplyTo(startInfo.Environment);
+        HostEnvironment.AppendPathDirectory(startInfo.Environment, Path.GetDirectoryName(resolvedExecutable));
+        HostEnvironment.ApplyWorkspaceEngine(startInfo.Environment, engineRoot);
+    }
+
     public static async Task<AcpProcessHost> StartAsync(
         string command,
         IReadOnlyList<string> args,
         string workingDirectory,
         bool enableFsCapabilities,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? engineRoot = null)
     {
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var resolved = ResolveExecutable(command);
         if (resolved is null)
             throw new FileNotFoundException(
@@ -161,6 +170,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
             StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true,
         };
+        ApplyChildEnvironment(startInfo, resolved, engineRoot);
 
         if (OperatingSystem.IsWindows()
             && (resolved.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
@@ -252,6 +262,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
         if (!provider.IsAcp || provider.Acp is not { IsUsable: true } acp)
             return ModelCapabilityBatch.Unreachable("This provider is not configured as an ACP CLI agent.");
 
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var command = provider.EffectiveAcpCommand;
         if (ResolveExecutable(command) is null)
         {
@@ -363,6 +374,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
         if (!provider.IsAcp || provider.Acp is not { IsUsable: true } acp)
             return (false, "This provider is not configured as an ACP CLI agent.");
 
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var command = provider.EffectiveAcpCommand;
         if (ResolveExecutable(command) is null)
         {
@@ -421,6 +433,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
         IReadOnlyList<string> loginArgs,
         CancellationToken cancellationToken)
     {
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var resolved = ResolveExecutable(command);
         if (resolved is null) return (false, $"ACP CLI '{command}' was not found.");
 
@@ -434,6 +447,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
             StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true,
         };
+        ApplyChildEnvironment(startInfo, resolved, engineRoot: null);
 
         if (OperatingSystem.IsWindows()
             && (resolved.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)

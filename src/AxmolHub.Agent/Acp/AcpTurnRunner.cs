@@ -39,7 +39,8 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         if (pool is null)
             throw new InvalidOperationException("No ACP host pool is configured.");
 
-        await using var lease = await pool.AcquireAsync(provider, workingDirectory, cancellationToken)
+        var engineRoot = AxmolSkillEngine.ResolveEngineRoot(workspace);
+        await using var lease = await pool.AcquireAsync(provider, workingDirectory, cancellationToken, engineRoot)
             .ConfigureAwait(false);
 
         var session = await EnsureSessionAsync(

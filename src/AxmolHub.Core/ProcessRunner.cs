@@ -261,9 +261,9 @@ public sealed class ProcessRunner(Action<string> log)
         IReadOnlyDictionary<string, string>? overrides = null, bool firstLineOnly = false,
         Action<string>? onLine = null, RawStdoutCapture? rawStdout = null)
     {
-        // Only an inherited environment gets the host login PATH. Explicit overrides (including PATH)
-        // and complete isolated environments remain authoritative.
-        if (environment is null && OperatingSystem.IsMacOS() && overrides?.ContainsKey("PATH") != true)
+        // Only an inherited environment gets the recovered Unix shell PATH and non-secret variables.
+        // Explicit overrides and complete isolated environments remain authoritative.
+        if (environment is null && !OperatingSystem.IsWindows())
             await HostEnvironment.EnsureAsync(cancellation).ConfigureAwait(false);
         var start = new ProcessStartInfo(executable)
         {
@@ -278,7 +278,7 @@ public sealed class ProcessRunner(Action<string> log)
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        if (environment is null && OperatingSystem.IsMacOS()) start.Environment["PATH"] = HostEnvironment.PathValue;
+        if (environment is null && !OperatingSystem.IsWindows()) HostEnvironment.ApplyTo(start.Environment);
         if (environment != null)
         {
             // A passed environment is the complete environment; implicitly inheriting dev-machine paths like DXSDK_DIR is forbidden.
@@ -294,9 +294,9 @@ public sealed class ProcessRunner(Action<string> log)
             foreach (var entry in overrides) start.Environment[entry.Key] = entry.Value;
         }
         // On Unix Process.Start resolves bare names using the parent's PATH, not StartInfo.Environment.
-        // Resolve explicitly on macOS so command discovery and the child use the same PATH, and an isolated
+        // Resolve explicitly on macOS and Linux so command discovery and the child use the same PATH, and an isolated
         // environment cannot accidentally execute a tool from Hub's inherited PATH.
-        if (OperatingSystem.IsMacOS() && !executable.Contains(Path.DirectorySeparatorChar))
+        if (!OperatingSystem.IsWindows() && !executable.Contains(Path.DirectorySeparatorChar))
         {
             start.Environment.TryGetValue("PATH", out var childPath);
             start.FileName = CommandShells.Resolve(executable, childPath)

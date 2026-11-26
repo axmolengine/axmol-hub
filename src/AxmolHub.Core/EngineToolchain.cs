@@ -292,7 +292,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
         if (ReadAndroidSdkFromEnvFile(engine) is { } declared) return declared;
         foreach (var name in new[] { "ANDROID_HOME", "ANDROID_SDK_ROOT" })
         {
-            var value = Environment.GetEnvironmentVariable(name);
+            var value = HostEnvironment.GetVariable(name);
             if (!string.IsNullOrWhiteSpace(value)) return value;
         }
 

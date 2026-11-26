@@ -133,6 +133,46 @@ internal static class HostShellChecks
             Check(!package.Usable && package.Problems.Count > 0, "A 403 from api.github.com (no User-Agent, or rate-limited) goes to Problems instead of throwing");
         }
 
+        // HostEnvironment: dynamic NUL-framed shell output parsing drops startup chatter, subshell internals, and
+        // secret-shaped variables while keeping arbitrary user toolchain variables; expands Unix tilde entries and
+        // fills workspace engine fallbacks safely.
+        var framed = "welcome banner\n\0AxmolHub.HostEnv\0"
+            + "PATH=/opt/axmol/tools/cmdline:~/.dotnet/tools\0"
+            + "AX_ROOT=/opt/axmol\0"
+            + "VCPKG_ROOT=/opt/vcpkg\0"
+            + "SHLVL=2\0"
+            + "PWD=/tmp\0"
+            + "OPENAI_API_KEY=sk-secret-must-drop\0"
+            + "GITHUB_TOKEN=ghp-secret-must-drop\0"
+            + "AxmolHub.HostEnv.End\0";
+        var parsedEnv = HostEnvironment.ParseShellOutput(framed);
+        Check(parsedEnv is not null
+              && parsedEnv.Path == "/opt/axmol/tools/cmdline:~/.dotnet/tools"
+              && parsedEnv.Variables.TryGetValue("AX_ROOT", out var parsedAxRoot) && parsedAxRoot == "/opt/axmol"
+              && parsedEnv.Variables.TryGetValue("VCPKG_ROOT", out var parsedVcpkg) && parsedVcpkg == "/opt/vcpkg"
+              && !parsedEnv.Variables.ContainsKey("SHLVL")
+              && !parsedEnv.Variables.ContainsKey("PWD")
+              && !parsedEnv.Variables.ContainsKey("OPENAI_API_KEY")
+              && !parsedEnv.Variables.ContainsKey("GITHUB_TOKEN"),
+            "HostEnvironment.ParseShellOutput dynamically keeps user toolchain variables while dropping shell internals and secrets");
+        Check(HostEnvironment.ParseShellOutput("chatter without marker") is null
+              && HostEnvironment.ParseShellOutput("\0AxmolHub.HostEnv\0PATH=/usr/bin\0") is null,
+            "HostEnvironment.ParseShellOutput rejects incomplete or markerless shell output");
+        var mergedUnix = HostEnvironment.MergePathSegments(
+            ["/opt/axmol/tools/cmdline:~/.dotnet/tools", "/usr/bin:/opt/axmol/tools/cmdline"],
+            ["/usr/local/share/dotnet", "/Users/dev/.dotnet/tools"],
+            ignoreCase: false, home: "/Users/dev", separatorOverride: ':');
+        Check(mergedUnix == "/opt/axmol/tools/cmdline:/Users/dev/.dotnet/tools:/usr/bin:/usr/local/share/dotnet",
+            "HostEnvironment.MergePathSegments expands ~/ entries, preserves priority order, and deduplicates");
+
+        var fakeEngine = Path.Combine(root, "fake-engine");
+        var fakeCmdline = Path.Combine(fakeEngine, "tools", "cmdline");
+        Directory.CreateDirectory(fakeCmdline);
+        var childEnv = new Dictionary<string, string?>(StringComparer.Ordinal) { ["PATH"] = "/usr/bin" };
+        HostEnvironment.ApplyWorkspaceEngine(childEnv, fakeEngine);
+        Check(childEnv["PATH"]!.Contains(fakeCmdline, StringComparison.Ordinal) && childEnv["AX_ROOT"] == fakeEngine,
+            "HostEnvironment.ApplyWorkspaceEngine appends tools/cmdline and fills unset AX_ROOT");
+
         Console.WriteLine($"{count} checks passed. Every host-shell verdict is provable offline; a real install is read-only previewed by --pwsh-release-report.");
         return;
     }

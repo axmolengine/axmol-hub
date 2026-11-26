@@ -41,6 +41,7 @@ public sealed class PlatformBuildService(ProcessRunner runner)
         {
             environment[entry.Key.ToString()!] = entry.Value?.ToString() ?? "";
         }
+        HostEnvironment.ApplyMissingVariablesTo(environment);
 
         // Two levels up from the tool root is the engine tree (<engine>/tools/external).
         var engineRoot = Path.GetFullPath(Path.Combine(toolRoot, "..", ".."));

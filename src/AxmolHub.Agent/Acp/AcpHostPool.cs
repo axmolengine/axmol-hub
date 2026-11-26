@@ -11,7 +11,7 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
 {
     private static readonly TimeSpan IdleLifetime = TimeSpan.FromMinutes(10);
 
-    private readonly record struct HostKey(string ProviderId, string Command, string WorkspaceRoot);
+    private readonly record struct HostKey(string ProviderId, string Command, string WorkspaceRoot, string EngineRoot);
 
     internal sealed class HostSlot
     {
@@ -29,7 +29,8 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
     public async Task<AcpLease> AcquireAsync(
         ModelProvider provider,
         string workingDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? engineRoot = null)
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, this);
         if (!provider.IsAcp || provider.Acp is not { IsUsable: true } acp)
@@ -39,7 +40,8 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
 
         var command = provider.EffectiveAcpCommand;
         var normalizedCwd = NormalizeCwd(workingDirectory);
-        var key = new HostKey(provider.Id, command, normalizedCwd);
+        var normalizedEngine = string.IsNullOrWhiteSpace(engineRoot) ? "" : NormalizeCwd(engineRoot);
+        var key = new HostKey(provider.Id, command, normalizedCwd, normalizedEngine);
         var slot = _slots.GetOrAdd(key, _ => new HostSlot());
 
         await slot.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -54,7 +56,8 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
                     acp.Args,
                     normalizedCwd,
                     enableFsCapabilities: true,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    string.IsNullOrEmpty(normalizedEngine) ? null : normalizedEngine).ConfigureAwait(false);
             }
 
             slot.Host.LastUsedAt = DateTimeOffset.UtcNow;

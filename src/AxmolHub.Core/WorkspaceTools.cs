@@ -456,6 +456,8 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
             AdoptOnIdle = context.AskAboutStalledProcess is not null,
         };
 
+        var engineOverrides = HostEnvironment.WorkspaceEngineOverrides(AxmolSkillEngine.ResolveEngineRoot(context));
+
         ProcessResult result;
         try
         {
@@ -463,6 +465,7 @@ public sealed partial class WorkspaceTools(WorkspaceToolScope context)
                 shell.Executable, shell.ArgumentsFor(command), cwd,
                 timeout: TimeSpan.FromSeconds(seconds),
                 sensitiveValues: context.SensitiveValues,
+                overrides: engineOverrides,
                 // The same redacted lines the log gets, handed out as they land: the card in the transcript is the
                 // only surface a long build has while it prints, and reading them back off the finished result
                 // would be the one thing that arrives after the wait it was supposed to fill.

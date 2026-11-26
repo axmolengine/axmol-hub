@@ -2011,8 +2011,8 @@ public sealed partial class HubWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Completes asynchronous host discovery: macOS login PATH, then the PowerShell version.
-    /// Filesystem probes use the resulting cached PATH without spawning a shell on the UI thread.
+    /// Completes asynchronous host discovery: Unix user shell environment, then the PowerShell version.
+    /// Filesystem probes use the resulting cached snapshot without spawning a shell on the UI thread.
     ///
     /// Never awaited and hard-bounded, for the same reasons as <see cref="RefreshEngineIndexAsync"/>: the window
     /// must come up without waiting on a child process, and a pwsh that hangs must not hang the shell with it.
@@ -2023,13 +2023,15 @@ public sealed partial class HubWorkspace : IDisposable
     private async void CompleteHostShellVersionAsync()
     {
         var initial = HostShell;
-        if (!OperatingSystem.IsMacOS() && initial.State != HostShellState.Unknown) return;
+        if (OperatingSystem.IsWindows() && initial.State != HostShellState.Unknown) return;
 
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await Task.Run(() => HostEnvironment.EnsureAsync(deadline.Token), deadline.Token);
-            var refined = await HostPowerShell.ProbeVersionAsync(_runner, HostPowerShell.Probe(), deadline.Token);
+            var probed = HostPowerShell.Probe();
+            if (probed == initial && initial.State != HostShellState.Unknown) return;
+            var refined = await HostPowerShell.ProbeVersionAsync(_runner, probed, deadline.Token);
             Dispatcher.UIThread.Post(() =>
             {
                 if (HostShell != initial) return;
@@ -2056,7 +2058,7 @@ public sealed partial class HubWorkspace : IDisposable
     {
         await ExecuteAsync("Check PowerShell 7", async token =>
         {
-            await HostEnvironment.EnsureAsync(token);
+            await HostEnvironment.RefreshAsync(token);
             var probed = HostPowerShell.Probe();
             Log.Write(probed.Describe());
             HostShell = await HostPowerShell.ProbeVersionAsync(_runner, probed, token);
@@ -2111,6 +2113,7 @@ public sealed partial class HubWorkspace : IDisposable
         Log.Write($"Installing the host PowerShell; planned road: {HostShellPlan}.");
         var result = await _hostShellInstaller.InstallAsync(progress, token);
         Log.Write($"{result.Method}: {result.Detail}");
+        await HostEnvironment.RefreshAsync(token);
         HostShell = await HostPowerShell.ProbeVersionAsync(_runner, HostPowerShell.Probe(), token);
         HostShellChanged?.Invoke();
         Log.Write(HostShell.Describe());
