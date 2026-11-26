@@ -429,17 +429,17 @@ internal sealed class ShellContextChecks
             // A gateway that omits usage must retain a nonzero estimate within the available input window.
             // Tool declarations are part of that estimate, so their growth must not trip an arbitrary token cap.
             Check(quiet?.LastInputTokens == 0 && quiet.LastUsageAt is null
-                  && quietUsage.EffectiveWindow == ContextBudget.FallbackTokens
+                  && quietUsage.Window == ContextBudget.FallbackTokens
                   && quietUsage.Source == CapabilitySource.Fallback
                   && !quietUsage.IsMeasured
                   && quietUsage.Used < quietUsage.Room && quietUsage.Used > 0,
                 "从不报用量的网关不会被读成 0，这条会话仍然按估算计量（实测 " + quietUsage.Used
-                + "/" + quietUsage.Room + "，窗口 " + quietUsage.EffectiveWindow + "）");
+                + "/" + quietUsage.Room + "，窗口 " + quietUsage.Window + "）");
             // The rows are the whole point of the meter: a category that never made it into the total is a
             // conversation being reported as smaller than the request that carries it, which is exactly the hole
             // the tool schemas sat in until they had a row of their own.
             Check(quietUsage.Categories.Sum(category => category.Tokens) == quietUsage.Used
-                  && quietUsage.Used + quietUsage.Free + quietUsage.OutputReserve == quietUsage.EffectiveWindow,
+                  && quietUsage.Used + quietUsage.Free + quietUsage.OutputReserve == quietUsage.Window,
                 "分类相加就是圆环的读数，窗口也分完给回复预留、空闲和已经用掉的三块（"
                 + string.Join("、", quietUsage.Categories.Select(category => category.Kind)) + "）");
             // The spend block on a gateway that never reported one: absent. A 0 here would tell the reader this
@@ -466,11 +466,10 @@ internal sealed class ShellContextChecks
 
             // Phase 2: the same app path with a report on the end of the stream.
             // The reading is stated against the window rather than as a literal: this fixture has to stay the
-            // hard case — a report twice the size of the room the 4× correction leaves — for whatever fallback
-            // the release happens to ship.
+            // hard case — a report twice the size of the conversation room — for whatever fallback the release
+            // happens to ship.
             var (assumedTokens, assumedReserve, _) = chat.ContextWindowFor(provider.Id, model);
-            var overfullReading = 2 * (assumedTokens * ContextReport.UncalibratedPermille
-                                       / ContextReport.MaximumDriftPermille - assumedReserve);
+            var overfullReading = 2 * (assumedTokens - assumedReserve);
             // <b>Two</b> reports on one stream. A single report cannot tell the two readings apart — the window
             // takes the largest input and the spend takes their sum, and with one number in the fixture both
             // rules would pass on whichever field the code happened to reach for. The second is half the first,
@@ -492,7 +491,7 @@ internal sealed class ShellContextChecks
             var report = chat.StoredCopyForCheck(measured.Id);
             var usage = chat.TranscriptUsageForCheck(measured.Id);
             var used = usage.Used;
-            var budget = usage.EffectiveWindow;
+            var budget = usage.Window;
 #pragma warning disable SCME0001
             var wire = (sent.Count > 0
                 ? sent[0].LastOptions?.RawRepresentationFactory?.Invoke(sent[0]) as OpenAI.Chat.ChatCompletionOptions
@@ -503,17 +502,15 @@ internal sealed class ShellContextChecks
                 "发出去的请求确实向网关要了用量报告，没有这个字段就没有最后那个 chunk（补丁 "
                 + wire[..Math.Min(160, wire.Length)] + "）");
             Check(report?.LastInputTokens == overfullReading && report.LastReasoningTokens == 400
-                  && report.LastUsageModelId == model && used >= overfullReading,
+                  && report.LastUsageModelId == model && report.LastEstimatedInputTokens > 0 && used >= overfullReading,
                 "模型报的输入成了读数的下限，估算只补它之后新写的那几轮（实测 " + used + "）");
-            Check(report?.ContextEstimateDriftPermille == ContextReport.MaximumDriftPermille
-                  && budget == ContextBudget.FallbackTokens * ContextReport.UncalibratedPermille
-                      / ContextReport.MaximumDriftPermille,
-                "一次读数最多把尺度挪 4×：窗口从 " + ContextBudget.FallbackTokens + " 收到 " + budget
-                + "，再多就不算了");
+            Check(budget == ContextBudget.FallbackTokens,
+                "一次大输入实测不会把模型的上下文窗口按倍率缩窄：窗口保持 " + ContextBudget.FallbackTokens
+                + "（实际 " + budget + "）");
 
             // The same numbers as the person sees them. This fixture is deliberately the hard case: the model
-            // reported a request bigger than the window the correction left, which is the one condition a clamped
-            // ring used to render as "full, like usual" — and it is the condition a reader has to be able to act on.
+            // reported a request bigger than the room, which is the one condition a clamped ring used to render
+            // as "full, like usual" — and it is the condition a reader has to be able to act on.
             panel.OpenContextPopoverForCheck();
             Dispatcher.UIThread.RunJobs();
             var ring = panel.ContextReadingForCheck;
@@ -530,17 +527,15 @@ internal sealed class ShellContextChecks
             Check(ring.Free == 0 && ring.Used > ring.Room && shownPercent > 100
                   && shownPercent == (int)Math.Round(100d * ring.Used / ring.Room)
                   && panel.ContextArcForCheck == 1d,
-                "环不自我封顶：模型报的数比修正后的房间还大时，面板就报出 100% 以上、空闲为 0，而画的弧仍然只到整圈"
+                "环不自我封顶：模型报的数比可用空间还大时，面板就报出 100% 以上、空闲为 0，而画的弧仍然只到整圈"
                 + "（实际 " + shownPercent + "%，房间 " + ring.Room + "）");
             Check(panel.ContextPopoverNoteForCheck.Contains(HubStrings.Get("ChatContextOverfull"),
-                      StringComparison.Ordinal)
-                  && panel.ContextPopoverNoteForCheck.Contains(
-                      HubStrings.Get("ChatContextDriftNote").Split('{')[0], StringComparison.Ordinal),
-                "装不下与窗口被收窄都写成了话，而不是留一个满格的圆环让人猜");
+                      StringComparison.Ordinal),
+                "装不下写成了话，而不是留一个满格的圆环让人猜");
             Check(panel.ContextPopoverSourceForCheck.Contains(
                       HubStrings.Get(ContextBudget.SourceLabelKey(ring.Source)), StringComparison.Ordinal)
                   && panel.ContextPopoverSourceForCheck.Contains(
-                      ring.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+                      ring.Window.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
                       StringComparison.Ordinal),
                 "分母说清是谁给的（这条是兜底值）以及现在是多少");
             var rows = panel.ContextCategoryRowsForCheck;

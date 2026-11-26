@@ -4,9 +4,9 @@ namespace AxmolHub.Core;
 /// What the model reported having spent, kept beside what Hub estimated it would spend.
 ///
 /// <para>The estimate alone is a guess with a decimal point on it; the reported number is the only measurement
-/// in the system. Keeping the two together is what makes the guess improve: <see cref="DriftPermille"/> is the
-/// ratio between them, and every later request in the session is measured against it instead of against the
-/// flat character rule.</para>
+/// in the system. Keeping the paired estimate alongside <see cref="InputTokens"/> lets compaction account for
+/// any positive unestimated gap (fixed server instructions or a denser tokenizer) additively without shrinking
+/// the model's declared context window.</para>
 ///
 /// <para><b>Input takes the largest, output takes the sum</b>, and the asymmetry is the point. One user turn in
 /// agent mode is up to seventeen HTTP requests — the tool loop re-sends the growing transcript each time — and
@@ -25,14 +25,6 @@ namespace AxmolHub.Core;
 /// </summary>
 public sealed class ContextReport
 {
-    /// <summary>A ratio of 1000 means the estimate and the measurement agreed, so nothing is calibrated.</summary>
-    public const int UncalibratedPermille = 1_000;
-
-    /// <summary>How far a single reading is allowed to move the estimate. A gateway that bills the tool schema
-    /// and a gateway that bills only the visible text differ by more than 4×, and letting one such reading set
-    /// the scale would make the meter read the shape of one vendor rather than the size of this transcript.</summary>
-    public const int MaximumDriftPermille = 4_000;
-
     /// <summary>The largest <b>input</b> any request of this send reported — the one that held the whole window.</summary>
     public int InputTokens { get; private set; }
 
@@ -84,18 +76,5 @@ public sealed class ContextReport
         InputTokens = inputTokens;
         CachedInputTokens = cachedInputTokens;
         EstimatedInputTokens = estimatedInputTokens;
-    }
-
-    /// <summary>Per mille: 1000 × what the model said ÷ what the estimate said. A number above 1000 means the
-    /// estimator is reading the transcript too small, which is the direction that overflows, so the floor is
-    /// 1000 — an estimate that turns out to be generous is left alone rather than rewarded.</summary>
-    public int DriftPermille
-    {
-        get
-        {
-            if (InputTokens <= 0 || EstimatedInputTokens <= 0) return UncalibratedPermille;
-            return (int)Math.Clamp(1_000L * InputTokens / EstimatedInputTokens,
-                UncalibratedPermille, MaximumDriftPermille);
-        }
     }
 }

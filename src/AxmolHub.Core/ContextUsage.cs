@@ -147,18 +147,14 @@ public sealed class ContextLedger
 /// </summary>
 public sealed record ContextUsage
 {
-    /// <summary>The whole window as the model's side described it, answer included.</summary>
-    public required int RawWindow { get; init; }
-
-    /// <summary><see cref="RawWindow"/> as this session's own last measurement says it is. Equal to it until a
-    /// report disagrees about the estimate's scale.</summary>
-    public required int EffectiveWindow { get; init; }
+    /// <summary>The whole context window of the model, answer included.</summary>
+    public required int Window { get; init; }
 
     /// <summary>The share of the window a single reply is allowed to take. Not the conversation's to spend, which
     /// is why it is its own row rather than part of <see cref="Used"/>.</summary>
     public required int OutputReserve { get; init; }
 
-    /// <summary>What the conversation may use: <see cref="EffectiveWindow"/> minus the reserve. The percentage
+    /// <summary>What the conversation may use: <see cref="Window"/> minus the reserve. The percentage
     /// and <see cref="Free"/> are measured against this — a ring that rounded the other way would have the screen
     /// and the request disagree.
     ///
@@ -173,8 +169,8 @@ public sealed record ContextUsage
     public required int Used { get; init; }
 
     /// <summary>What the estimate alone says, and the number <see cref="Categories"/> adds up to. Kept beside
-    /// <see cref="Used"/> because when they differ, the difference is the information: it is how far off the
-    /// character rule was, and the reason the window itself got corrected.</summary>
+    /// <see cref="Used"/> because when they differ, the difference is the information: it shows how far the
+    /// character rule differed from what the endpoint actually billed.</summary>
     public required int Estimated { get; init; }
 
     /// <summary>All retained request context before sliding-window trimming. Compaction uses this rather than
@@ -195,10 +191,6 @@ public sealed record ContextUsage
 
     /// <summary>Who said the window was this big.</summary>
     public required CapabilitySource Source { get; init; }
-
-    /// <summary>Per mille of the estimate the model's reading turned out to be: 1 000 is "no reading yet, or the
-    /// estimate was right", 4 000 is "the estimate was a quarter of the truth and the correction stops here".</summary>
-    public required int DriftPermille { get; init; }
 
     /// <summary>The reading split into its headings; the rows sum to <see cref="Estimated"/>.</summary>
     public required IReadOnlyList<ContextCategory> Categories { get; init; }

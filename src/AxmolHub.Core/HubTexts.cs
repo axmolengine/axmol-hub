@@ -811,10 +811,6 @@ public static class HubTexts
         ["ChatContextCacheHitTitle"] = ("缓存命中率", "Cache hit rate"),
         ["ChatContextCacheHitDetailFormat"] = ("总输入 {0} · 命中 {1}", "{0} input · {1} cached"),
         ["ChatContextBurnRequestsFormat"] = ("{0} 次请求", "{0} requests"),
-        // Both numbers, because the two are not the same claim: the provider published one, this session's own
-        // response proved the other. A reader who sees only the smaller figure would look for a setting nobody set.
-        ["ChatContextDriftNote"] = ("这条会话的实测把窗口从 {0} 收窄到 {1}。",
-            "This session's own reading corrected the window from {0} to {1}."),
         ["ChatContextDroppedFormat"] = ("最早 {0} 轮没有发出去，只发了最近的部分", "{0} oldest turns were not sent — only the newest part goes out"),
         ["ChatContextOverfull"] = ("已经超出这个会话可用的窗口：先压缩，或去掉一个附件。",
             "Past the room this session has: compress it, or drop an attachment."),

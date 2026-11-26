@@ -724,12 +724,27 @@ internal static class AiSessionsChecks
 
         if (handed is null || !handed.IsMeasured || handed.InputTokens != 1_200 || handed.OutputTokens != 30 || handed.ReasoningTokens != 12 || handed.CachedInputTokens != 2 || handed.EstimatedInputTokens <= 0)
             throw new Exception($"A reported usage chunk did not reach the caller ({handed?.InputTokens ?? -1} in, " + $"{handed?.OutputTokens ?? -1} out).");
-        if (handed.DriftPermille <= ContextReport.UncalibratedPermille)
-            throw new Exception("The reading was paired with nothing, so the estimate could not be corrected by it.");
         // Both readings out of the same two chunks, in one assertion: the window is the larger input, the spend is
         // their sum. Whichever of the two a surface reaches for, this is the line that says they are not the same claim.
         if (handed.SummedInputTokens != 2_100 || handed.SummedCachedInputTokens != 3)
             throw new Exception($"The stream's two reports did not add up to what they cost " + $"({handed.SummedInputTokens} in, {handed.SummedCachedInputTokens} cached).");
+        // Tool declarations travel on every tool-loop request, so the paired estimate reported through
+        // ToolLoopContextGuard must include their schema tokens rather than pricing only the messages.
+        ContextReport? handedWithTools = null;
+        var schemaTool = AIFunctionFactory.Create((Func<string>)(() => "ok"), new AIFunctionFactoryOptions
+        {
+            Name = "schema_probe",
+            Description = new string('d', 600),
+        });
+        IReadOnlyList<AITool> schemaTools = [schemaTool];
+        var expectedSchemaTokens = ChatPipeline.ToolSchemaTokens(schemaTools);
+        var measuredWithTools = new FakeChatClient(["ok"], usage: [(1_200, 10, 0, 0)]);
+        await foreach (var _ in new ChatPipeline(measuredWithTools).SendAsync(openAiProvider, [ChatTurn.User("hello there")], tools: schemaTools, modelName: "gpt-plain", onUsage: report => handedWithTools = report))
+        {
+        }
+
+        if (handedWithTools is null || handedWithTools.EstimatedInputTokens != handed.EstimatedInputTokens + expectedSchemaTokens)
+            throw new Exception($"Tool-loop usage estimate dropped tool schemas (got {handedWithTools?.EstimatedInputTokens ?? -1}, expected {handed.EstimatedInputTokens + expectedSchemaTokens}).");
         Console.WriteLine("PASS: the token report on the stream is handed to the caller, largest input and summed output.");
         // The negative control: a gateway that never sends the chunk. Silent is not zero — the session keeps
         // estimating, and a meter that read 0 would say an overflowing conversation was empty.

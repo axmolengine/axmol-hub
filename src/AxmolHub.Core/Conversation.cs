@@ -611,11 +611,11 @@ public sealed class Conversation
     public string? LastUsageModelId { get; set; }
     public string? LastUsageProviderId { get; set; }
 
-    /// <summary>Per mille between what the model reported and what the estimator guessed for the same request,
-    /// capped at <see cref="ContextReport.MaximumDriftPermille"/>. Zero means no reading yet, which is the same
-    /// as 1000 — the property is a plain int so a session file written before it existed loads uncalibrated
-    /// rather than needing a default the old file cannot carry.</summary>
-    public int ContextEstimateDriftPermille { get; set; }
+    /// <summary>Hub's own estimate (messages + tool schemas) of the same request that produced
+    /// <see cref="LastInputTokens"/>. Paired with it so compaction can add any positive unestimated gap
+    /// (gateway-injected instructions or denser tokenization) without scaling the model's context window.
+    /// Zero means no paired estimate was recorded yet.</summary>
+    public int LastEstimatedInputTokens { get; set; }
 
     /// <summary>
     /// Everything this session has burned, in the endpoints' own reported tokens, added up across every answer.

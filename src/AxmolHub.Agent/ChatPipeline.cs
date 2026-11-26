@@ -223,7 +223,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // compaction is decided: the loop is the only place that can give control back while the next round
             // still has a complete transcript to compact, and measuring it against "does it still fit" let one
             // measured run send 4 520 397 input tokens in eighteen minutes without ever yielding.
-            guard = new ToolLoopContextGuard(effectiveClient, budget, budget)
+            guard = new ToolLoopContextGuard(effectiveClient, budget, budget, schemaTokens)
             {
                 PendingInterjection = pendingInterjection,
                 ToolFrame = callId => toolImages?.Invoke(callId) is { Count: > 0 } frames

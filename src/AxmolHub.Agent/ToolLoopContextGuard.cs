@@ -14,7 +14,8 @@ namespace AxmolHub.Agent;
 /// would trade a slow request for a failed one. A result that says "elided, call the tool again if you need it"
 /// is truthful and cheap.
 /// </summary>
-public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetTokens, int yieldBudgetTokens = 0)
+public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetTokens, int yieldBudgetTokens = 0,
+    int schemaTokens = 0)
     : DelegatingChatClient(innerClient)
 {
     /// <summary>The budget the handoff decision measures against.
@@ -64,7 +65,7 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     {
         cancellationToken.ThrowIfCancellationRequested();
         var list = await WithInterjectionAsync(messages).ConfigureAwait(false);
-        LastEstimatedInputTokens = EstimateTokens(list);
+        LastEstimatedInputTokens = EstimateTokens(list) + Math.Max(0, schemaTokens);
         return await base.GetResponseAsync(list, options, cancellationToken).ConfigureAwait(false);
     }
 
@@ -72,7 +73,7 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
     {
         cancellationToken.ThrowIfCancellationRequested();
         var list = await WithInterjectionAsync(messages).ConfigureAwait(false);
-        LastEstimatedInputTokens = EstimateTokens(list);
+        LastEstimatedInputTokens = EstimateTokens(list) + Math.Max(0, schemaTokens);
         await foreach (var update in base.GetStreamingResponseAsync(list, options, cancellationToken)
                            .ConfigureAwait(false))
             yield return update;
@@ -151,10 +152,9 @@ public sealed class ToolLoopContextGuard(IChatClient innerClient, int budgetToke
         => list.Count > 0 && list[^1].Contents.Any(content => content is FunctionResultContent);
 
     /// <summary>
-    /// What the list that went out last cost, in Hub's own currency. It exists so a reported token count has
-    /// something to be compared <i>against</i>: the drift between this number and the model's answer is the only
-    /// way the estimate ever gets better, and pairing a measurement with the size of some other request would
-    /// calibrate the wrong thing. What makes "last" mean "this one" is that the loop sends one request at a time —
+    /// What the request that went out last cost in Hub's own currency — messages plus the declared tool schemas.
+    /// It exists so a reported token count can be paired with the estimate of the exact request that produced it.
+    /// What makes "last" mean "this one" is that the loop sends one request at a time —
     /// <c>AllowConcurrentInvocation = false</c> on the invoking client, and the batch starter runs <i>tools</i>
     /// side by side without ever putting a second list in flight.
     /// </summary>

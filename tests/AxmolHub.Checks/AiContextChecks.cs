@@ -292,8 +292,8 @@ internal static class AiContextChecks
         // taking the largest output would under-bill the reply. The rule is therefore asymmetric on purpose, and the
         // pairing with Hub's own estimate of that same request is what makes the estimate get better.
         var reading = new ContextReport();
-        if (reading.IsMeasured || reading.DriftPermille != ContextReport.UncalibratedPermille)
-            throw new Exception("An empty report read as a measurement, or calibrated itself out of nothing.");
+        if (reading.IsMeasured || reading.EstimatedInputTokens != 0)
+            throw new Exception("An empty report read as a measurement, or carried an estimate out of nothing.");
         reading.Merge(inputTokens: 900, outputTokens: 10, reasoningTokens: 4, cachedInputTokens: 1, estimatedInputTokens: 890);
         reading.Merge(inputTokens: 1_200, outputTokens: 20, reasoningTokens: 8, cachedInputTokens: 2, estimatedInputTokens: 1_000);
         reading.Merge(inputTokens: 600, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0, estimatedInputTokens: 4_000);
@@ -307,30 +307,7 @@ internal static class AiContextChecks
             throw new Exception($"The same three requests did not sum to what they cost " + $"({reading.SummedInputTokens} in, {reading.SummedCachedInputTokens} cached).");
         if (reading.EstimatedInputTokens != 1_000)
             throw new Exception("The estimate kept with the largest input is not the one the reading must be compared to.");
-        // A single reading cannot move the scale more than 4×, and an estimate that turns out to have been generous
-        // is not rewarded with more room than the model published — only the direction that overflows is corrected.
-        if (reading.DriftPermille != 1_200)
-            throw new Exception($"The drift over its own estimate read {reading.DriftPermille} instead of 1200 per mille.");
-        var underReading = new ContextReport();
-        underReading.Merge(40, 1, 0, 0, 10_000);
-        if (underReading.DriftPermille != ContextReport.UncalibratedPermille)
-            throw new Exception("An estimate that over-read the transcript was rewarded with a bigger window.");
-        var runaway = new ContextReport();
-        runaway.Merge(10_000_000, 1, 0, 0, 100);
-        if (runaway.DriftPermille != ContextReport.MaximumDriftPermille)
-            throw new Exception($"A single absurd reading moved the scale past its cap ({runaway.DriftPermille}).");
-        var calibrated = new ContextWindow(128_000, 8_000, CapabilitySource.EndpointReported);
-        if (calibrated.WithDrift(ContextReport.UncalibratedPermille) != calibrated || calibrated.WithDrift(0) != calibrated || calibrated.WithDrift(999) != calibrated)
-            throw new Exception("A reading at or below the neutral ratio changed the window it was supposed to explain.");
-        var halved = calibrated.WithDrift(2_000);
-        if (halved.Tokens != 64_000 || halved.ConversationRoom != 56_000 || halved.Source != calibrated.Source)
-            throw new Exception($"The measurement did not become the denominator ({halved.Tokens} tokens, " + $"{halved.Source}).");
-        if (calibrated.WithDrift(ContextReport.MaximumDriftPermille).ConversationRoom < ContextWindow.MinimumConversationTokens + calibrated.OutputReserve)
-            throw new Exception("The calibration can shrink a window under the floor it documents.");
-        var fourTimes = calibrated.WithDrift(ContextReport.MaximumDriftPermille);
-        if (fourTimes.Tokens != 32_000)
-            throw new Exception($"A 4× calibration left {fourTimes.Tokens} instead of a quarter of the window.");
-        Console.WriteLine("PASS: the model's own token report is the measurement, merged as a window and used as the denominator.");
+        Console.WriteLine("PASS: the model's own token report is the measurement, merged as largest input and summed spend.");
         // ── Compaction has two tiers, and the cheap one runs first ──
         // The rule used to be "half the raw window, then ask the model to summarize". Half of a hosted window is a
         // lot of transcript, and the one tier that costs nothing was never tried. The thresholds are therefore stated

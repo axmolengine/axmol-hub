@@ -2354,20 +2354,19 @@ internal sealed class ShellAssistantChecks
             "清空空会话移除从未使用的新会话");
 
         var compressionSession = StartAgentSession(shell.Chat, checkProvider.Id);
-        // The button is now held to a floor of half the room a compaction is measured on, so a prefix worth
-        // summarizing is no longer enough to enable it — the fixture has to be above that floor, which is at most
-        // half of the 100 000-token ceiling. Ten turns of 26 000 characters put it above the floor while the turns
-        // that survive compaction still land below it, which is what the button's second reading asserts.
+        // The button is held to a floor of half the conversation room (240 000 for the 256 000 fallback, so the
+        // floor is 120 000). Ten turns of 38 000 characters put the transcript above that floor while the four
+        // turns that survive compaction land well below it, which is what the button's second reading asserts.
         for (var i = 0; i < 10; i++)
-            shell.Chat.SeedTurnForCheck(compressionSession.Id, $"较早的上下文 {i}: " + new string('x', 26_000));
+            shell.Chat.SeedTurnForCheck(compressionSession.Id, $"较早的上下文 {i}: " + new string('x', 38_000));
         // A real session normally already has a measured request. Without that anchor this fixture only
         // exercised the estimator, so it missed the stale pre-compaction reading that kept the ring full. The
         // anchor has to sit above what survives a compaction, or "the reading went down" measures the anchor.
-        compressionSession.LastInputTokens = 60_000;
+        compressionSession.LastInputTokens = 130_000;
         compressionSession.LastCachedInputTokens = 30_000;
         compressionSession.LastUsageAt = DateTimeOffset.Now;
         compressionSession.LastUsageModelId = checkModel;
-        compressionSession.ContextEstimateDriftPermille = 1_500;
+        compressionSession.LastEstimatedInputTokens = 110_000;
         ScriptedChatClient? summaryRequest = null;
         shell.Chat.ClientOverride = (_, _) => summaryRequest = new ScriptedChatClient(["保留的历史摘要"]);
         panel.SetInputForCheck("");
@@ -2416,9 +2415,9 @@ internal sealed class ShellAssistantChecks
               && compressedCopy.ContextSummaryThroughMessageCount == 6
               && compressedCopy.Messages.Count == 10
               && compressedCopy.LastUsageAt is null
-              && compressedCopy.LastInputTokens == 60_000 && compressedCopy.LastCachedInputTokens == 30_000
-              && compressedCopy.ContextEstimateDriftPermille == 1_500,
-            "摘要与压缩边界落盘，旧测量锚点失效，但原始对话、历史用量与校准仍保留");
+              && compressedCopy.LastInputTokens == 130_000 && compressedCopy.LastCachedInputTokens == 30_000
+              && compressedCopy.LastEstimatedInputTokens == 110_000,
+            "摘要与压缩边界落盘，旧测量锚点失效，但原始对话、历史用量与配对估算仍保留");
 
         // A summarizing request runs over a transcript saturated with tool calls, and it carries the session's
         // declarations for their schema while running nothing itself: that history with no declarations at all

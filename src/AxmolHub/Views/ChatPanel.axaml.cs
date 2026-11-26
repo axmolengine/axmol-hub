@@ -1245,11 +1245,10 @@ public partial class ChatPanel : UserControl
         ContextPopoverSource.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
             HubStrings.Get("ChatContextSourceFormat"),
             HubStrings.Get(ContextBudget.SourceLabelKey(usage.Source)),
-            usage.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture));
+            usage.Window.ToString("N0", System.Globalization.CultureInfo.CurrentCulture));
 
         // What the reading cannot say by itself: that its floor came from a response rather than a guess, that
-        // turns this session still holds never went out, that the window was corrected down from what the
-        // provider published, and that the conversation is past the room it has.
+        // turns this session still holds never went out, and that the conversation is past the room it has.
         var notes = new List<string>();
         if (usage.IsMeasured)
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
@@ -1263,12 +1262,6 @@ public partial class ChatPanel : UserControl
                 usage.TriggerTokens.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
                 Math.Round(100.0 * usage.TriggerTokens / usage.Room)
                     .ToString("0", System.Globalization.CultureInfo.CurrentCulture)));
-        if (usage.DriftPermille > ContextReport.UncalibratedPermille
-            && usage.EffectiveWindow != usage.RawWindow)
-            notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                HubStrings.Get("ChatContextDriftNote"),
-                usage.RawWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
-                usage.EffectiveWindow.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)));
         if (usage.DroppedTurns > 0)
             notes.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 HubStrings.Get("ChatContextDroppedFormat"), usage.DroppedTurns));
