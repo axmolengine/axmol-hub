@@ -9,16 +9,10 @@ public sealed partial class HubLog
     public string FilePath { get; }
     internal enum Level { Info, Warning, Error }
 
-    internal event Action<string, Level, Location?>? Written;
+    internal event Action<string, Level>? Written;
     private HubLog? _redirect;
 
-    // A live reader can index an entry by identity even when two failures print exactly the same text.
-    internal sealed class Location
-    {
-        internal string? FilePath { get; set; }
-    }
-
-    private readonly List<(string Message, Level Severity, Location? Location)> _pending = [];
+    private readonly List<(string Message, Level Severity)> _pending = [];
     private int _pauses;
 
     /// <summary>Keep the active file stable without blocking UI writers across a background copy.
@@ -44,7 +38,7 @@ public sealed partial class HubLog
             lock (owner.gate)
             {
                 if (--owner._pauses != 0) return;
-                foreach (var (message, level, location) in owner._pending) owner.Write(message, level, location);
+                foreach (var (message, level) in owner._pending) owner.Write(message, level);
                 owner._pending.Clear();
             }
         }
@@ -55,16 +49,9 @@ public sealed partial class HubLog
         Directory.CreateDirectory(folder);
         FilePath = Path.Combine(folder, $"hub-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
     }
-    public void Write(string message) => Write(message, null, null);
+    public void Write(string message) => Write(message, null);
 
-    internal void Write(string message, Level level) => Write(message, level, null);
-
-    internal Location WriteLocated(string message, Level level)
-    {
-        var location = new Location();
-        Write(message, level, location);
-        return location;
-    }
+    internal void Write(string message, Level level) => Write(message, (Level?)level);
 
     // Strip only complete SGR sequences; other escapes and ordinary bracketed text are not styling.
     [GeneratedRegex(@"\x1B\[[0-9;:]*m")]
@@ -85,7 +72,7 @@ public sealed partial class HubLog
             : match.Success ? Level.Warning : Level.Info;
     }
 
-    private void Write(string message, Level? explicitLevel, Location? location)
+    private void Write(string message, Level? explicitLevel)
     {
         if (message.Contains('\x1b')) message = SgrSequence().Replace(message, "");
         var level = explicitLevel ?? ClassifyDiagnostic(message);
@@ -94,11 +81,10 @@ public sealed partial class HubLog
         var line = $"{DateTimeOffset.Now:O} {TextEol.ToLf(message)}";
         lock (gate)
         {
-            if (_pauses > 0) { _pending.Add((message, level, location)); return; }
-            if (_redirect is { } replacement) { replacement.Write(message, level, location); return; }
+            if (_pauses > 0) { _pending.Add((message, level)); return; }
+            if (_redirect is { } replacement) { replacement.Write(message, level); return; }
             File.AppendAllText(FilePath, line + "\n");
-            if (location is not null) location.FilePath = FilePath;
         }
-        Written?.Invoke(line, level, location);
+        Written?.Invoke(line, level);
     }
 }

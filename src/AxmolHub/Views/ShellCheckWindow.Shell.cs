@@ -1408,26 +1408,16 @@ internal sealed class ShellLayoutChecks
                 getFailureLog: () => shell.CurrentLog)
             ?? throw new InvalidOperationException("fixture: the retry transfer was refused");
         var firstCompletion = firstAttempt.Completion;
-        var logWord = HubStrings.Get("TaskLogAction");
-        var failureActions = retryWord + "+" + dismissWord + "+" + logWord;
+        var failureActions = retryWord + "+" + dismissWord;
         TaskQueue.Instance.FinishTaskForCheck(retryIdentity, TaskQueue.Phase.Failed, "fixture: 503");
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
         shell.OpenTaskPopupForCheck();
         shell.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
-        var hasFailureActions = shell.TaskRowCountForCheck == 1 && shell.TaskRowActionsForCheck == failureActions;
-        var beforeLogClick = shell.ActivityLogTextForCheck;
-        var clickedLog = shell.ClickTaskRowActionForCheck(retryIdentity, logWord);
-        shell.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        var logBox = shell.FindControl<AvaloniaEdit.TextEditor>("ActivityLog");
-        var header = logBox?.Text?.IndexOf("Task failed: " + firstAttempt.Title, StringComparison.Ordinal) ?? -1;
-        Check(hasFailureActions && clickedLog && !shell.TaskPopupOpenForCheck && logBox?.IsEffectivelyVisible == true
-              && header >= 0 && logBox.CaretOffset == logBox.Text!.LastIndexOf('\n', header) + 1
-              && shell.ActivityLogTextForCheck == beforeLogClick,
-            "更新失败的任务行可重试、忽略，或跳到对应日志且不重复写入");
-        shell.OpenTaskPopupForCheck();
+        Check(shell.TaskRowCountForCheck == 1 && shell.TaskRowActionsForCheck == failureActions
+              && shell.ActivityLogTextForCheck.Contains("Task failed: " + firstAttempt.Title, StringComparison.Ordinal),
+            "更新失败的任务行可重试或忽略，并已写入日志（实际 " + shell.TaskRowActionsForCheck + "）");
 
         // The trap the retry could walk into: a completion source is single-shot, so reusing it hands an
         // awaiting caller an already-settled task and 「还在下载」 reads as 「装完了」.
@@ -1639,9 +1629,6 @@ internal sealed class ShellLayoutChecks
                   .Contains(HubTexts.Get("BuildPackaging", HubStrings.Language), StringComparison.Ordinal),
             "别人的日志推动不了这一行（行上仍是 " + shell.TaskRowTitleForCheck(ownIdentity) + "）");
 
-        // A change offers the action into the shared log drawer.
-        Check(shell.TaskRowActionsForCheck.Contains(HubTexts.Get("TaskLogAction", HubStrings.Language), StringComparison.Ordinal),
-            "变更的那一行给看日志（实际 " + shell.TaskRowActionsForCheck + "）");
         shell.CloseTaskPopupForCheck();
 
         // --- 5.1e Two gates over one list, and the one cancel with two entrances ---

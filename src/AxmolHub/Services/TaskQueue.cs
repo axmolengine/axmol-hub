@@ -183,7 +183,6 @@ internal sealed partial class TaskQueue
         public string? Error { get; private set; }
 
         internal Func<HubLog>? GetFailureLog { get; init; }
-        public HubLog.Location? FailureLogLocation { get; private set; }
 
         /// <summary>The readable invocation and directory reported by this task's actual call site.</summary>
         public string? Command { get; private set; }
@@ -433,7 +432,7 @@ internal sealed partial class TaskQueue
 
             try
             {
-                FailureLogLocation = GetFailureLog().WriteLocated($"Task failed: {Title}\n{details}", HubLog.Level.Error);
+                GetFailureLog().Write($"Task failed: {Title}\n{details}", HubLog.Level.Error);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -453,7 +452,6 @@ internal sealed partial class TaskQueue
             State = Phase.Queued;
             Error = null;
             Fault = null;
-            FailureLogLocation = null;
             Report = Progress.Unknown;
             EstimatedTotal = null;
             EstimatedRate = null;

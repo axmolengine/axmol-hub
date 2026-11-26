@@ -641,7 +641,7 @@ public partial class MainWindow
         public string TitleForCheck => _caption.Text + _failure.Text;
         /// <summary>The row's buttons, in the order they appear. A check presses these rather than calling
         /// the queue method behind them, so broken wiring stays detectable.</summary>
-        public IReadOnlyList<Button> ActionButtons => [_cancel, _retry, _dismiss, _log];
+        public IReadOnlyList<Button> ActionButtons => [_cancel, _retry, _dismiss];
         /// <summary>The words on the row's visible buttons. This is the affordance read directly, not a phase
         /// inferred from a percentage.</summary>
         public string ActionsForCheck => string.Join("+", ActionButtons.Where(button => button.IsVisible).Select(button => button.Content as string ?? "?"));

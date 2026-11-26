@@ -649,9 +649,6 @@ public static class HubTexts
         ["TaskSlotTip"] = ("查看正在跑的任务", "Show what is running"),
         ["TaskWorkingDirectory"] = ("工作目录：{0}", "Working directory: {0}"),
         ["TaskOtherWork"] = ("其他任务：{0} 个运行中，{1} 个等待中", "Other tasks: {0} running, {1} queued"),
-        // On a change's row: the stage is here, the detail is in the log drawer, and this is the only press
-        // that leaves the popover to go read it.
-        ["TaskLogAction"] = ("查看日志", "View logs"),
         // The slot's action mode: the bytes have landed and only a process swap is missing. The armed form
         // is the second tap of a restart pressed while something is still working — the word on the button
         // is the warning, same shape as a steer waiting for its second tap.

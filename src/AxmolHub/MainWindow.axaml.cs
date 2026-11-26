@@ -1343,8 +1343,7 @@ public partial class MainWindow : Window
                     item,
                     () => TaskQueue.Instance.Cancel(item.Identity),
                     () => TaskQueue.Instance.Retry(item),
-                    () => TaskQueue.Instance.Dismiss(item),
-                    () => ShowTaskLog(item));
+                    () => TaskQueue.Instance.Dismiss(item));
                 TaskRows.Children.Add(row.Control);
                 _taskRowViews.Add(row);
             }
@@ -1356,12 +1355,6 @@ public partial class MainWindow : Window
         {
             view.Update();
         }
-    }
-
-    private void ShowTaskLog(TaskQueue.Item item)
-    {
-        TaskPopup.IsOpen = false;
-        ShowLog(true, item.FailureLogLocation);
     }
 
     private readonly List<TaskRowView> _taskRowViews = [];
@@ -1383,7 +1376,6 @@ public partial class MainWindow : Window
         private readonly Button _cancel = StripButton();
         private readonly Button _retry = StripButton();
         private readonly Button _dismiss = StripButton();
-        private readonly Button _log = StripButton();
         private readonly StackPanel _actions = new()
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -1391,7 +1383,7 @@ public partial class MainWindow : Window
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
-        public TaskRowView(TaskQueue.Item item, Action cancel, Action retry, Action dismiss, Action showLog)
+        public TaskRowView(TaskQueue.Item item, Action cancel, Action retry, Action dismiss)
         {
             _item = item;
             _title.Inlines = new InlineCollection { _caption, _failure };
@@ -1399,11 +1391,9 @@ public partial class MainWindow : Window
             _cancel.Click += (_, _) => cancel();
             _retry.Click += (_, _) => retry();
             _dismiss.Click += (_, _) => dismiss();
-            _log.Click += (_, _) => showLog();
             _actions.Children.Add(_cancel);
             _actions.Children.Add(_retry);
             _actions.Children.Add(_dismiss);
-            _actions.Children.Add(_log);
             Control = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("*,Auto"),
@@ -1443,8 +1433,6 @@ public partial class MainWindow : Window
             _cancel.Content = HubStrings.Get("Cancel");
             _retry.Content = HubStrings.Get("TaskRetry");
             _dismiss.Content = HubStrings.Get("TaskDismiss");
-            _log.Content = HubStrings.Get("TaskLogAction");
-            _log.IsVisible = _item.FailureLogLocation is not null || _item.Kind == TaskQueue.TaskKind.Mutating;
             // A finished row keeps no cancel: there is nothing left to stop, and a button that answers to
             // nothing is the thing this shell already refused to do in the version picker.
             _cancel.IsVisible = _item.CanCancel;
@@ -2101,7 +2089,6 @@ public partial class MainWindow : Window
     /// it from the UI thread.</summary>
     private readonly object _logGate = new();
     private readonly StringBuilder _logText = new();
-    private readonly Queue<(HubLog.Location Location, long Offset)> _logLocations = new();
     private readonly Queue<LogDiagnostic> _logDiagnostics = new();
     private LogDiagnostic[] _paintedLogDiagnostics = [];
     private readonly record struct LogDiagnostic(long Start, long End, HubLog.Level Level);
@@ -2190,7 +2177,7 @@ public partial class MainWindow : Window
     {
         // The output pump only updates the bounded tail. DrainActivityLog applies batches to the editor
         // on the UI thread, and only while the drawer is open.
-        _workspace.Log.Written += (line, level, location) =>
+        _workspace.Log.Written += (line, level) =>
         {
             // Git's machine-readable output uses NUL record separators. Render them as line breaks
             // in the drawer without changing the captured process output or the on-disk log.
@@ -2198,7 +2185,6 @@ public partial class MainWindow : Window
             lock (_logGate)
             {
                 var offset = _logHead + _logText.Length;
-                if (location is not null) _logLocations.Enqueue((location, offset));
                 if (level != HubLog.Level.Info) _logDiagnostics.Enqueue(new(offset, offset + line.Length + 1, level));
                 _logText.Append(line).Append('\n');
                 if (_logText.Length > 120000)
@@ -2206,8 +2192,6 @@ public partial class MainWindow : Window
                     var removed = _logText.Length - 80000;
                     _logText.Remove(0, removed);
                     _logHead += removed;
-                    while (_logLocations.TryPeek(out var entry) && entry.Offset < _logHead)
-                        _logLocations.Dequeue();
                     while (_logDiagnostics.TryPeek(out var diagnostic) && diagnostic.End <= _logHead)
                         _logDiagnostics.Dequeue();
                 }
@@ -3001,7 +2985,7 @@ public partial class MainWindow : Window
     /// <summary>Shows/hides the log body and flips the strip chevron. The drain belongs to the body: while nobody
     /// is looking at the drawer a flood costs the UI thread nothing at all, and the retained tail is painted the
     /// moment it opens.</summary>
-    internal void ShowLog(bool show, HubLog.Location? location = null)
+    internal void ShowLog(bool show)
     {
         LogBody.IsVisible = show;
         LogResizeGrip.IsVisible = show;
@@ -3013,13 +2997,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!DrainActivityLog(location) && location?.FilePath is { } path)
-            OpenPath(path);
+        DrainActivityLog();
         _logDrain.Start();
     }
 
-    /// <summary>Paints pending output in one write. Returns whether a requested location is still in the live tail.</summary>
-    private bool DrainActivityLog(HubLog.Location? location = null)
+    /// <summary>Paints pending output in one write.</summary>
+    private void DrainActivityLog()
     {
         var area = ActivityLog.TextArea;
         var document = area.Document;
@@ -3029,20 +3012,10 @@ public partial class MainWindow : Window
         string appended;
         LogDiagnostic[] diagnostics;
         long head;
-        int? targetIndex = null;
         lock (_logGate)
         {
-            if (location is not null)
-            {
-                foreach (var entry in _logLocations)
-                {
-                    if (!ReferenceEquals(entry.Location, location)) continue;
-                    targetIndex = (int)(entry.Offset - _logHead);
-                    break;
-                }
-            }
             head = _logHead;
-            if (head + _logText.Length == paintedEnd && targetIndex is null) return false;
+            if (head + _logText.Length == paintedEnd) return;
             // When the drawer has been shut long enough, the entire last painted range may be gone.
             var start = (int)Math.Max(0, paintedEnd - head);
             appended = _logText.ToString(start, _logText.Length - start);
@@ -3051,7 +3024,7 @@ public partial class MainWindow : Window
 
         var removed = (int)Math.Clamp(head - _paintedLogHead, 0, oldLength);
         var offset = _logScroll?.Offset ?? default;
-        if (removed > 0 && !_logFollowing && targetIndex is null)
+        if (removed > 0 && !_logFollowing)
             offset = new Vector(offset.X, removed == oldLength ? 0 : Math.Max(0, offset.Y
                 - view.GetVisualTopByDocumentLine(document.GetLineByOffset(removed).LineNumber)));
 
@@ -3070,12 +3043,6 @@ public partial class MainWindow : Window
             }
             ActivityLogWritesForCheck++;
         }
-        if (targetIndex is { } startIndex)
-        {
-            _logFollowing = false;
-            ActivityLog.CaretOffset = startIndex;
-            area.ClearSelection();
-        }
 
         // Following moves the viewport, not the caret, so copying remains possible.
         Dispatcher.UIThread.Post(() =>
@@ -3083,16 +3050,12 @@ public partial class MainWindow : Window
             if (refreshVersion != _logRefreshVersion) return;
             if (_logScroll is { } scroll)
             {
-                if (targetIndex is { } index)
-                    scroll.Offset = new Vector(0, view.GetVisualTopByDocumentLine(document.GetLineByOffset(index).LineNumber));
-                else
-                    scroll.Offset = new Vector(offset.X, _logFollowing
-                        ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
+                scroll.Offset = new Vector(offset.X, _logFollowing
+                    ? Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height) : offset.Y);
                 scroll.UpdateLayout();
             }
             _logRefreshing = false;
         }, DispatcherPriority.Loaded);
-        return targetIndex is not null;
     }
 
     /// <summary>Drops the retained tail and the painted box together. Only a data-root switch does this: the old
@@ -3102,7 +3065,6 @@ public partial class MainWindow : Window
         lock (_logGate)
         {
             _logText.Clear();
-            _logLocations.Clear();
             _logDiagnostics.Clear();
             _logHead = 0;
         }
