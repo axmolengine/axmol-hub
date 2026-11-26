@@ -4,15 +4,14 @@ using AxmolHub.Core;
 namespace AxmolHub;
 
 /// <summary>
-/// One row of the toolchains table. The WPF version stuffed an anonymous type into ItemsSource; Avalonia's
-/// <c>DataGridTextColumn</c> uses compiled binding, requiring <c>x:DataType</c> on the column,
-/// so a named type is needed here.
-///
-/// Status is an **already-localized string**, not an enum: the WPF version relied on
-/// <c>LocalizedValueConverter</c> to convert at render time, but the converted value won't change by itself on a language switch,
-/// so it's recomputed on every Reload — which is also why the whole table is rebuilt on refresh.
+/// One row of the toolchains table. Status is an already-localized string recomputed on every Reload so a
+/// language switch updates all rows cleanly; Summary and Executable are kept separate so the cell template
+/// can wrap diagnostics and style the path on its own secondary line.
 /// </summary>
-public sealed record ToolRow(string Name, string Status, string Details);
+public sealed record ToolRow(string Name, string Status, string Summary, string? Executable)
+{
+    public bool HasExecutable => !string.IsNullOrWhiteSpace(Executable);
+}
 
 /// <summary>
 /// The toolchains page.
@@ -244,12 +243,7 @@ public partial class ToolchainsPage : UserControl
             HubStrings.Get(component.Status.ToString()),
             component.Executable is null
                 ? component.Details
-                : component.Details.Split('\n')[0].Trim() + "\n" + component.Executable)).ToArray();
-
-        var headers = HubWorkspace.GridHeaders("tools");
-        for (var index = 0; index < headers.Length && index < ToolsGrid.Columns.Count; index++)
-        {
-            ToolsGrid.Columns[index].Header = HubStrings.Get(headers[index]);
-        }
+                : component.Details.Split('\n')[0].Trim(),
+            component.Executable)).ToArray();
     }
 }

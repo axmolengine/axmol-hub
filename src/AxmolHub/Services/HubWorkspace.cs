@@ -678,15 +678,6 @@ public sealed partial class HubWorkspace : IDisposable
             : target.Family == "uwp" ? "UwpPending"
             : "PlatformToolsNote");
 
-    /// <summary>Equivalent of the WPF <c>SetHeaders</c>: header copy follows the language, so it is reset on every refresh.</summary>
-    public static string[] GridHeaders(string grid) => grid switch
-    {
-        "projects" => ["Name", "Version", "Scripting", "BuildStatus", "LastActivity"],
-        "engines" => ["Version", "Channel", "Path"],
-        "tools" => ["Component", "Status", "Details"],
-        _ => [],
-    };
-
     // ───────────────────────── Engines ─────────────────────────
 
     public async Task<EngineEntry?> ImportEngineAsync(string? path)

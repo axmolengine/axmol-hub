@@ -70,7 +70,7 @@ internal static class BuildProfilesChecks
         {
             "CMake",
             "Ninja",
-            "Axmol shader compiler"
+            "axslcc"
         }
 
         )
@@ -80,7 +80,7 @@ internal static class BuildProfilesChecks
         // axslcc is -mode BOTH in the engine (engine tree first), and this tree's axslcc version happens to satisfy the
         // requirement; so it must resolve inside the engine tree — this is what proves the "lookup order" was not
         // written on a hunch.
-        var axslcc = probeRows.Single(row => row.Name == "Axmol shader compiler");
+        var axslcc = probeRows.Single(row => row.Name == "axslcc");
         Check(axslcc.Status != ComponentStatus.Installed || axslcc.Executable!.StartsWith(probeToolRoot, StringComparison.OrdinalIgnoreCase), "Engine-first tools resolve inside the engine tree (axslcc uses -mode BOTH)");
         // NDK code name → the first two revision parts: r27d → 27.3 (major takes all the digits, minor = letter - 'a').
         // This is the bit arithmetic in the engine's setup_android_sdk that is easiest to copy wrong, so pin it alone.

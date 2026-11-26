@@ -8,9 +8,9 @@
     Toolchains page. Title row → engine version bar → component details (toolchain table).
     Platform/architecture buildability is expressed by BuildTargets; there is no longer a separate "module" concept.
 
-    Two cards sit below the scroll, in the fixed area: the host's PowerShell and the engine setup button. They are
-    neighbours because they are one causal chain — setup.ps1 is the action that needs pwsh — and they are outside
-    the ScrollViewer because a prerequisite you cannot see is a prerequisite you will trip over.
+    Two cards sit below the details area, in the fixed rows: the host's PowerShell and the engine setup button. They are
+    neighbours because they are one causal chain — setup.ps1 is the action that needs pwsh — and keeping them in fixed
+    rows ensures a prerequisite you need is never scrolled out of view.
   -->
 
   <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
@@ -30,30 +30,71 @@
       </DockPanel>
     </Border>
 
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-      <StackPanel>
-        <Expander x:Name="DetailsExpander" Header="{DynamicResource ComponentDetails}">
-          <StackPanel>
-            <DockPanel>
-              <TextBlock Text="{DynamicResource Platform}" Margin="0,0,16,0" />
-              <ComboBox x:Name="ToolTargetPicker" Width="280" HorizontalAlignment="Left" />
-            </DockPanel>
-            <TextBlock x:Name="ToolTargetHint" Foreground="{DynamicResource Hub.TextSecondary}"
-                       TextWrapping="Wrap" Margin="0,10,0,12" />
-            <DataGrid x:Name="ToolsGrid" Height="300" RowHeight="64">
-              <DataGrid.Columns>
-                <DataGridTextColumn Binding="{Binding Name}" Width="200" x:DataType="local:ToolRow" />
-                <DataGridTextColumn Binding="{Binding Status}" Width="110" x:DataType="local:ToolRow" />
-                <DataGridTextColumn Binding="{Binding Details}" Width="*" x:DataType="local:ToolRow" />
-              </DataGrid.Columns>
-            </DataGrid>
-            <WrapPanel Margin="0,12,0,0">
-              <Button x:Name="VerifyButton" Content="{DynamicResource Verify}" Classes="compact quiet" />
-            </WrapPanel>
-          </StackPanel>
-        </Expander>
-      </StackPanel>
-    </ScrollViewer>
+    <Expander x:Name="DetailsExpander" Grid.Row="2" Header="{DynamicResource ComponentDetails}"
+              VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+      <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <DockPanel Grid.Row="0">
+          <TextBlock Text="{DynamicResource Platform}" Margin="0,0,16,0" />
+          <ComboBox x:Name="ToolTargetPicker" Width="280" HorizontalAlignment="Left" />
+        </DockPanel>
+        <TextBlock Grid.Row="1" x:Name="ToolTargetHint" Foreground="{DynamicResource Hub.TextSecondary}"
+                   TextWrapping="Wrap" Margin="0,10,0,12" />
+        <Border Grid.Row="2" BorderBrush="{DynamicResource Hub.Border}"
+                BorderThickness="1" CornerRadius="7" ClipToBounds="True">
+          <DataGrid x:Name="ToolsGrid" Classes="library-grid"
+                    CanUserSortColumns="False" CanUserResizeColumns="True" IsReadOnly="True"
+                    ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Resources>
+              <!-- Diagnostic rows follow the toolchain probe order; omit the unused sort-icon reserve. -->
+              <x:Double x:Key="DataGridSortIconMinWidth">0</x:Double>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="Auto" MinWidth="220" MaxWidth="360">
+                <DataGridTemplateColumn.Header>
+                  <TextBlock Text="{DynamicResource Component}" TextWrapping="NoWrap" />
+                </DataGridTemplateColumn.Header>
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="local:ToolRow">
+                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding Name}" />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="Auto" MinWidth="100">
+                <DataGridTemplateColumn.Header>
+                  <TextBlock Text="{DynamicResource Status}" TextWrapping="NoWrap" />
+                </DataGridTemplateColumn.Header>
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="local:ToolRow">
+                    <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
+                               TextWrapping="NoWrap" />
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="*" MinWidth="280">
+                <DataGridTemplateColumn.Header>
+                  <TextBlock Text="{DynamicResource Details}" TextWrapping="NoWrap" />
+                </DataGridTemplateColumn.Header>
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="local:ToolRow">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding Executable}" IsVisible="{Binding HasExecutable}"
+                                 Foreground="{DynamicResource Hub.TextSecondary}" FontSize="12"
+                                 TextWrapping="Wrap" ToolTip.Tip="{Binding Executable}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </Border>
+        <WrapPanel Grid.Row="3" Margin="0,12,0,0">
+          <Button x:Name="VerifyButton" Content="{DynamicResource Verify}" Classes="compact quiet" />
+        </WrapPanel>
+      </Grid>
+    </Expander>
 
     <!-- The host shell card. One line of status plus one action button whose label changes with the state
          (install → re-check after a terminal hand-off → hidden once the probe agrees pwsh is ready), so the page

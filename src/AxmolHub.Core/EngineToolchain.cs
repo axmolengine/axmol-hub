@@ -54,7 +54,7 @@ public sealed class EngineToolchain(ProcessRunner runner)
     [
         new("CMake", "cmake", "cmake", ["--version"], Lookup.SystemFirst, ["cmake/bin"]),
         new("Ninja", "ninja", "ninja", ["--version"], Lookup.SystemFirst, ["ninja"]),
-        new("Axmol shader compiler", "axslcc", "axslcc", ["--version"], Lookup.EngineFirst, ["axslcc/bin"]),
+        new("axslcc", "axslcc", "axslcc", ["--version"], Lookup.EngineFirst, ["axslcc/bin"]),
     ];
 
     public async Task<List<ToolchainComponent>> InspectAsync(EngineEntry engine, string targetId, CancellationToken cancellation = default)
