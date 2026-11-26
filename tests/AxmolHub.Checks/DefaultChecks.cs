@@ -118,7 +118,10 @@ internal static class DefaultChecks
             DefaultEnginePath = engine.Path
         };
         stateStore.Save(state);
-        Check(stateStore.Load().Projects.Single().Version == engine.Version, "State persistence");
+        stateStore.SaveProject(StateStore.ReadProject(project.Path));
+        var savedProject = stateStore.Load().Projects.Single();
+        Check(savedProject.Version == engine.Version && project.LastOpened is not null && savedProject.LastOpened == project.LastOpened,
+            "State persistence keeps creation activity after saving project settings");
         var preferencesStore = new PreferencesStore(Path.Combine(root, "preferences.json"));
         File.WriteAllText(Path.Combine(root, "preferences.json"), "{}");
         Check(preferencesStore.Load().UpdateChannel == UpdateChannels.Stable, "A pre-existing preferences file without an update-channel key keeps the Stable default");

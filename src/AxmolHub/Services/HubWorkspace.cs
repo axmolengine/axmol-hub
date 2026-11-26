@@ -1049,6 +1049,7 @@ public sealed partial class HubWorkspace : IDisposable
 
             var registered = State.Projects.FirstOrDefault(entry => PathEquals(entry.Path, project.Path));
             if (registered is null) State.Projects.Add(project);
+            else registered.LastOpened = project.LastOpened;
             SelectedProject = registered ?? project;
             created = SelectedProject;
         }, retryable: false);

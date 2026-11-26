@@ -95,6 +95,8 @@ public sealed class ProjectService(ProcessRunner runner, EngineCommandLine comma
             project.Platform = BuildTargets.DefaultForHost(engine.Version).Id;
             StateStore.LockProject(project);
         }
+        // Creation and repair both count as project activity.
+        project.LastOpened = DateTimeOffset.Now;
         return project;
     }
 

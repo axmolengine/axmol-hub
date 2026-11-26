@@ -212,7 +212,14 @@ public sealed class StateStore(string root, string? indexRoot = null)
     }
     public void SaveProject(ProjectEntry project) => Update(latest =>
     {
-        latest.Projects.RemoveAll(p => p.Path.Equals(project.Path, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        bool Matches(ProjectEntry entry) => entry.Path.Equals(project.Path, comparison);
+
+        // Entries read from project metadata do not carry the activity history stored in the Hub index.
+        if (latest.Projects.Find(Matches)?.LastOpened is { } previous
+            && (project.LastOpened is null || project.LastOpened < previous))
+            project.LastOpened = previous;
+        latest.Projects.RemoveAll(Matches);
         latest.Projects.Add(project);
     });
     public static void WriteJson<T>(string path, T data)
