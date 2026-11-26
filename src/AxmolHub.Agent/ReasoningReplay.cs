@@ -1,5 +1,6 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -51,10 +52,20 @@ public sealed class ReasoningHarvestClient(IChatClient innerClient, ReasoningTab
 /// </summary>
 public sealed class ReasoningTable
 {
+    /// <summary>Key on <see cref="FunctionCallContent.AdditionalProperties"/> carrying a provider's opaque
+    /// thought signature (for example Gemini's <c>extra_content.google.thought_signature</c>) from persisted
+    /// history into <see cref="Observe"/>.</summary>
+    public const string ThoughtSignatureKey = "hub:thought-signature";
+
     /// <summary>A snapshot, swapped whole rather than edited in place: the tool loop is sequential today, but a
     /// harvest that rebuilt live dictionaries while an in-flight request was still reading them would be a race
     /// waiting for the day the loop runs calls concurrently.</summary>
     private volatile Snapshot _snapshot = Snapshot.Empty;
+
+    /// <summary>Tool call thought signatures observed either from persisted history or live SSE chunks.
+    /// Kept across <see cref="Observe"/> calls and read non-destructively so both in-loop rounds and transport
+    /// retries replay the same signature.</summary>
+    private readonly ConcurrentDictionary<string, string> _thoughtSignatures = new(StringComparer.Ordinal);
 
     private sealed record Snapshot(
         IReadOnlyDictionary<string, Queue<string>> ByCallId,
@@ -70,7 +81,22 @@ public sealed class ReasoningTable
     /// <summary>Whether anything was observed since the last <see cref="Observe"/>. A request whose conversation
     /// never produced reasoning is passed through untouched, so a gateway that rejects unknown fields — or one
     /// that is not in thinking mode at all — never sees one.</summary>
-    public bool IsEmpty => _snapshot.IsEmpty;
+    public bool IsEmpty => _snapshot.IsEmpty && _thoughtSignatures.IsEmpty;
+
+    /// <summary>Records a tool call's opaque thought signature observed on the wire so subsequent tool-loop
+    /// requests and transcript persistence can preserve it verbatim.</summary>
+    public void RecordThoughtSignature(string callId, string signature)
+    {
+        if (!string.IsNullOrEmpty(callId) && !string.IsNullOrEmpty(signature))
+            _thoughtSignatures[callId] = signature;
+    }
+
+    /// <summary>The recorded thought signature for <paramref name="callId"/>, or <c>null</c> when none was
+    /// observed.</summary>
+    public string? GetThoughtSignature(string? callId)
+        => !string.IsNullOrEmpty(callId) && _thoughtSignatures.TryGetValue(callId, out var signature)
+            ? signature
+            : null;
 
     /// <summary>Rebuilds the lookup from the message list that is about to be sent. Called once per HTTP request,
     /// not once per turn: the loop's second request has one more assistant message than its first, and the
@@ -83,6 +109,14 @@ public sealed class ReasoningTable
         foreach (var message in messages)
         {
             if (!message.Role.Equals(ChatRole.Assistant)) continue;
+            foreach (var call in message.Contents.OfType<FunctionCallContent>())
+            {
+                if (!string.IsNullOrEmpty(call.CallId)
+                    && call.AdditionalProperties?.TryGetValue(ThoughtSignatureKey, out var raw) == true
+                    && raw is string signature && signature.Length > 0)
+                    _thoughtSignatures[call.CallId] = signature;
+            }
+
             var reasoning = string.Concat(message.Contents.OfType<TextReasoningContent>()
                 .Select(part => part.Text ?? ""));
             if (reasoning.Length == 0) continue;
@@ -141,7 +175,10 @@ public sealed class ReasoningTable
 /// message arriving without the field makes such an endpoint refuse the whole request, and a conversation that
 /// changed models midway is how that happens — its earlier turns were produced by a model whose thinking Hub
 /// never recorded — so the placeholder goes on those messages instead of leaving them bare.</param>
-public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssistantMessage) : PipelinePolicy
+public sealed class ReasoningReplayPolicy(
+    ReasoningTable table,
+    bool everyAssistantMessage,
+    bool requireThoughtSignature = false) : PipelinePolicy
 {
     private const string FieldName = "reasoning_content";
 
@@ -150,6 +187,11 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
     /// counts as drift, and reusing another turn's thinking would claim something the model never said. Short by
     /// design — it rides every later request that carries that turn.</summary>
     public const string MissingReasoning = "[no thinking was recorded for this reply]";
+
+    /// <summary>Google's documented sentinel for replaying a historical tool call to Gemini when no real
+    /// thought signature was recorded (for example sessions written before signature persistence, or turns
+    /// produced by another provider before switching to Gemini).</summary>
+    public const string MissingThoughtSignature = "skip_thought_signature_validator";
 
     public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
     {
@@ -165,10 +207,11 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
 
     /// <summary>Rewrites the request content in place. Leaves the message alone when there is nothing to replay,
     /// so a conversation that never thought costs one boolean check rather than a JSON round trip — unless the
-    /// endpoint requires the field, where there is always something to write.</summary>
+    /// endpoint requires reasoning or thought signatures, where assistant turns must be checked.</summary>
     private void Rewrite(PipelineMessage message)
     {
-        if ((table.IsEmpty && !everyAssistantMessage) || message.Request.Content is not { } content) return;
+        if ((table.IsEmpty && !everyAssistantMessage && !requireThoughtSignature)
+            || message.Request.Content is not { } content) return;
 
         try
         {
@@ -180,7 +223,7 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
             // A body this large is not a chat completion this build should be re-encoding, and "assistant"
             // appearing somewhere is the cheapest possible filter in front of the parse.
             if (json.Length == 0 || json.Length > 32 * 1024 * 1024 || !json.Contains("\"assistant\"")) return;
-            if (!TryInject(json, table, everyAssistantMessage, out var rewritten)) return;
+            if (!TryInject(json, table, everyAssistantMessage, requireThoughtSignature, out var rewritten)) return;
             message.Request.Content = BinaryContent.Create(BinaryData.FromString(rewritten));
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ObjectDisposedException
@@ -208,9 +251,19 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
     /// send.</para>
     /// </summary>
     public static bool TryInject(string json, ReasoningTable table, bool everyAssistantMessage, out string rewritten)
+        => TryInject(json, table, everyAssistantMessage, requireThoughtSignature: false, out rewritten);
+
+    /// <summary>
+    /// Overload that also replays Gemini OpenAI-compatible tool-call thought signatures
+    /// (<c>tool_calls[].extra_content.google.thought_signature</c>) when <paramref name="requireThoughtSignature"/>
+    /// is set, falling back to <see cref="MissingThoughtSignature"/> on the first call of an assistant turn when no
+    /// recorded signature exists.
+    /// </summary>
+    public static bool TryInject(string json, ReasoningTable table, bool everyAssistantMessage,
+        bool requireThoughtSignature, out string rewritten)
     {
         rewritten = json;
-        if (table.IsEmpty && !everyAssistantMessage) return false;
+        if (table.IsEmpty && !everyAssistantMessage && !requireThoughtSignature) return false;
         if (JsonNode.Parse(json) is not JsonObject root
             || root["messages"] is not JsonArray messages) return false;
 
@@ -219,21 +272,26 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
         {
             if (node is not JsonObject message) continue;
             if (message["role"]?.GetValue<string>() != "assistant") continue;
-            if (message.ContainsKey(FieldName)) continue;
 
-            var callId = FirstToolCallId(message);
-            var text = message["content"]?.GetValueKind() == JsonValueKind.String
-                ? message["content"]?.GetValue<string>()
-                : null;
-            var reasoning = table.TakeFor(callId, text);
-            if (reasoning is not { Length: > 0 })
+            if (!message.ContainsKey(FieldName))
             {
-                if (!everyAssistantMessage) continue;
-                reasoning = MissingReasoning;
+                var callId = FirstToolCallId(message);
+                var text = message["content"]?.GetValueKind() == JsonValueKind.String
+                    ? message["content"]?.GetValue<string>()
+                    : null;
+                var reasoning = table.TakeFor(callId, text);
+                if (reasoning is not { Length: > 0 } && everyAssistantMessage)
+                    reasoning = MissingReasoning;
+
+                if (reasoning is { Length: > 0 })
+                {
+                    message[FieldName] = reasoning;
+                    changed = true;
+                }
             }
 
-            message[FieldName] = reasoning;
-            changed = true;
+            if (requireThoughtSignature && InjectThoughtSignatures(message, table))
+                changed = true;
         }
 
         if (!changed) return false;
@@ -245,6 +303,58 @@ public sealed class ReasoningReplayPolicy(ReasoningTable table, bool everyAssist
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         });
         return true;
+    }
+
+    private static bool InjectThoughtSignatures(JsonObject message, ReasoningTable table)
+    {
+        if (message["tool_calls"] is not JsonArray calls || calls.Count == 0) return false;
+
+        var changed = false;
+        var anySignature = false;
+        JsonObject? firstCall = null;
+
+        foreach (var item in calls)
+        {
+            if (item is not JsonObject call) continue;
+            firstCall ??= call;
+            if (HasThoughtSignature(call))
+            {
+                anySignature = true;
+                continue;
+            }
+
+            var callId = call["id"] is JsonValue idValue && idValue.TryGetValue<string>(out var id) ? id : null;
+            if (table.GetThoughtSignature(callId) is { Length: > 0 } signature)
+            {
+                SetThoughtSignature(call, signature);
+                anySignature = true;
+                changed = true;
+            }
+        }
+
+        if (!anySignature && firstCall is not null)
+        {
+            SetThoughtSignature(firstCall, MissingThoughtSignature);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool HasThoughtSignature(JsonObject call)
+        => call["extra_content"] is JsonObject extra
+           && extra["google"] is JsonObject google
+           && google["thought_signature"] is JsonValue value
+           && value.TryGetValue<string>(out var signature)
+           && signature.Length > 0;
+
+    private static void SetThoughtSignature(JsonObject call, string signature)
+    {
+        if (call["extra_content"] is not JsonObject extra)
+            call["extra_content"] = extra = new JsonObject();
+        if (extra["google"] is not JsonObject google)
+            extra["google"] = google = new JsonObject();
+        google["thought_signature"] = signature;
     }
 
     private static string? FirstToolCallId(JsonObject message)

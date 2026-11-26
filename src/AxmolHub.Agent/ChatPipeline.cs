@@ -66,7 +66,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // card for a batch and run what is left of it when the person answers. Stable, and recomputable from the
         // transcript, because the head of a response never moves.
         string? BatchId = null, List<ClaudeThinkingBlock>? ClaudeThinking = null,
-        List<JsonElement>? ClaudeContent = null);
+        List<JsonElement>? ClaudeContent = null, string? ThoughtSignature = null);
 
     /// <summary>The answer to "may this call run now".</summary>
     public enum ToolGateOutcome
@@ -283,7 +283,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     batch.Clear();
                     batch.AddRange(asked
                         .Select(content => InfoOf(content, said, asked[0].CallId,
-                            claudeThinking.Count > 0 ? [.. claudeThinking] : null, claudeContent)));
+                            claudeThinking.Count > 0 ? [.. claudeThinking] : null, claudeContent,
+                            reasoning?.GetThoughtSignature(content.CallId))));
                     claudeThinking.Clear();
                     claudeContent = null;
                     // Recorded first, every call of the response, and only then judged. The order is not tidiness:
@@ -831,9 +832,10 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     /// <summary>One call of a response, as the callbacks and the gate see it. The arguments are serialized here
     /// once so the transcript, the card and the tool all read the same text.</summary>
     private static ToolCallInfo InfoOf(FunctionCallContent content, string? reasoning, string batchId,
-        List<ClaudeThinkingBlock>? claudeThinking, List<JsonElement>? claudeContent)
+        List<ClaudeThinkingBlock>? claudeThinking, List<JsonElement>? claudeContent, string? thoughtSignature)
         => new(content.Name, content.CallId,
-            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId, claudeThinking, claudeContent);
+            JsonSerializer.Serialize(content.Arguments, ArgumentJson), reasoning, batchId, claudeThinking,
+            claudeContent, thoughtSignature);
 
     /// <summary>The declared function carrying this name, or null. The batch starter needs a sibling's function
     /// before the invoking client has been asked for it, and the request's own tool list is the only place a name
@@ -964,7 +966,13 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             // OpenAI replay harvests this content; Messages serializes its signed blocks through the SDK.
             AddThinkingContent(turn, contents);
             if (turn.Text.Length > 0) contents.Add(new TextContent(turn.Text));
-            contents.Add(new FunctionCallContent(callId, name, arguments));
+            var call = new FunctionCallContent(callId, name, arguments);
+            if (turn.ThoughtSignature is { Length: > 0 } thoughtSignature)
+                call.AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    [ReasoningTable.ThoughtSignatureKey] = thoughtSignature,
+                };
+            contents.Add(call);
             return new ChatMessage(ChatRole.Assistant, contents)
             {
                 AdditionalProperties = ClaudeMessageProperties(turn),

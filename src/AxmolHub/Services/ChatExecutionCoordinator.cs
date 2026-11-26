@@ -3749,7 +3749,7 @@ internal sealed partial class ChatExecutionCoordinator
                 var thoughtFor = run.ReasoningElapsed;
                 var call = ChatTurn.FunctionCall(info.CallId, info.Name, info.ArgumentsJson,
                     said.Length > 0 ? said : null, info.Reasoning, info.BatchId, thoughtFor,
-                    info.ClaudeThinking, info.ClaudeContent);
+                    info.ClaudeThinking, info.ClaudeContent, info.ThoughtSignature);
                 await ApplyOnUiAsync(() =>
                 {
                     run.BeginSegment();

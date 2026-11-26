@@ -241,15 +241,20 @@ public static class ChatClientFactory
         if (transport is not null)
             chatOptions.Transport = new HttpClientPipelineTransport(new System.Net.Http.HttpClient(transport)
                 { Timeout = Timeout.InfiniteTimeSpan });
-        if (reasoning is not null)
+        var requireThoughtSignature = Core.SpeedTierPolicy.IsGoogleGemini(provider)
+            || Core.SpeedTierPolicy.IsGoogleGeminiModel(model);
+        var effectiveReasoning = reasoning ?? (requireThoughtSignature ? new ReasoningTable() : null);
+        if (effectiveReasoning is not null)
             // BeforeTransport: the last thing the pipeline does, so the connector has already built the body and
             // the transport has not yet sent it — the one moment the serialized messages exist and can still be
             // edited. (There is no per-apply position in this version of the client model.) The second argument is
             // what this endpoint demands of the history: a model whose own declaration puts the request in
             // thinking mode refuses the whole thing when an assistant message arrives without its
-            // reasoning_content, and a conversation that changed models midway is exactly that shape.
+            // reasoning_content, and a conversation that changed models midway is exactly that shape. The third
+            // argument replays Gemini's tool-call thought_signature (or Google's bypass sentinel for legacy turns).
             chatOptions.AddPolicy(
-                new ReasoningReplayPolicy(reasoning, Core.ModelCatalog.IsThinkingMode(provider, model)),
+                new ReasoningReplayPolicy(effectiveReasoning, Core.ModelCatalog.IsThinkingMode(provider, model),
+                    requireThoughtSignature),
                 PipelinePosition.BeforeTransport);
         // Added after the reasoning rewrite, though nothing depends on that: the header policy reads roles and
         // image parts, which the rewrite does not touch.
@@ -259,7 +264,7 @@ public static class ChatClientFactory
         // and the whole point of the recording is to show the body after that rewrite rather than before it.
         chatOptions.AddPolicy(new ModelSelectionPolicy(), PipelinePosition.BeforeTransport);
         // Response policies unwind in reverse: record raw bytes, then normalize Chat stream compatibility fields.
-        chatOptions.AddPolicy(new ChatStreamCompatibilityPolicy(), PipelinePosition.BeforeTransport);
+        chatOptions.AddPolicy(new ChatStreamCompatibilityPolicy(effectiveReasoning), PipelinePosition.BeforeTransport);
         chatOptions.AddPolicy(new RetryMetadataPolicy(), PipelinePosition.BeforeTransport);
         chatOptions.AddPolicy(new WireLogPolicy(), PipelinePosition.BeforeTransport);
         return new OpenAIClient(credential, chatOptions).GetChatClient(model).AsIChatClient();

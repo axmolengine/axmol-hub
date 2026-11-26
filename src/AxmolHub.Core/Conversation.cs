@@ -253,6 +253,11 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     [global::System.Text.Json.Serialization.JsonIgnore(Condition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public List<System.Text.Json.JsonElement>? ClaudeContent { get; init; }
 
+    /// <summary>Opaque thought signature attached to a tool call on OpenAI-compatible Gemini endpoints
+    /// (<c>extra_content.google.thought_signature</c>). Must be replayed verbatim on subsequent turns.</summary>
+    [global::System.Text.Json.Serialization.JsonIgnore(Condition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ThoughtSignature { get; init; }
+
     /// <summary>How long the thinking behind <see cref="Reasoning"/> took, measured on the run's own clock — the
     /// one that does not charge a wait for an approval card to the model's reasoning — and frozen where the
     /// thinking stopped rather than where the turn was filed.
@@ -453,7 +458,8 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
     public static ChatTurn FunctionCall(string callId, string name, string arguments, string? text = null,
         string? reasoning = null, string? batchId = null, TimeSpan? reasoningElapsed = null,
         List<ClaudeThinkingBlock>? claudeThinking = null,
-        List<System.Text.Json.JsonElement>? claudeContent = null) =>
+        List<System.Text.Json.JsonElement>? claudeContent = null,
+        string? thoughtSignature = null) =>
         new(ChatRoles.Assistant, text ?? "", DateTimeOffset.Now)
         {
             ToolCallId = callId,
@@ -462,6 +468,7 @@ public sealed record ChatTurn(string Role, string Text, DateTimeOffset At)
             Reasoning = reasoning,
             ClaudeThinking = claudeThinking,
             ClaudeContent = claudeContent,
+            ThoughtSignature = thoughtSignature,
             ReasoningElapsed = reasoningElapsed,
             ApprovalBatchId = batchId,
         };
