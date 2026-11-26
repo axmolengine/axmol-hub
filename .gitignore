@@ -45,3 +45,5 @@ local/
 # (src/AxmolHub/packages.lock.json) — see Directory.Build.props.
 src/AxmolHub.Agent/packages.lock.json
 tests/AxmolHub.Checks/packages.lock.json
+
+.local
