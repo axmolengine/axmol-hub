@@ -18,6 +18,9 @@
     <Style Selector="DataGridRow:focus-within Button.project-row-action">
       <Setter Property="IsVisible" Value="True" />
     </Style>
+    <Style Selector="DataGridRow Button.project-row-action.building">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
     <Style Selector="MenuItem.danger">
       <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     </Style>
@@ -138,9 +141,11 @@
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="local:ProjectListItem">
                     <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
-                      <Button Content="{DynamicResource Build}" Tag="{Binding Project}" Click="OnBuildProject"
-                              Classes="project-row-action quiet" Padding="7,5"
-                              AutomationProperties.Name="{DynamicResource Build}" />
+                      <Button Content="{Binding BuildCaption}" Tag="{Binding Project}" Click="OnBuildProject"
+                              IsEnabled="{Binding CanBuildAction}"
+                              Classes="project-row-action quiet" Classes.building="{Binding IsBuilding}"
+                              Padding="7,5"
+                              AutomationProperties.Name="{Binding BuildCaption}" />
                       <Button Tag="{Binding Project}" Click="OnRunProject" IsEnabled="{Binding CanRun}"
                               Classes="project-row-action quiet" Padding="7,5"
                               AutomationProperties.Name="{Binding RunCaption}">

@@ -13,14 +13,28 @@ public sealed record ProjectListItem(ProjectEntry Project, bool IsPreviewRunning
 {
     public event PropertyChangedEventHandler? PropertyChanged;
     private string? _runStateKey;
+    private bool _isBuilding;
+    private bool _isBuildCancelling;
     public bool IsRunBusy => _runStateKey is not null;
     public bool CanRun => !IsRunBusy;
+    public bool IsBuilding => _isBuilding;
+    public bool CanBuildAction => !_isBuildCancelling;
+    public string BuildCaption => HubStrings.Get(_isBuilding ? "Cancel" : "Build");
 
     public void SetRunState(string? key)
     {
         if (_runStateKey == key) return;
         _runStateKey = key;
         foreach (var property in new[] { nameof(RunCaption), nameof(IsRunBusy), nameof(CanRun) })
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+    }
+
+    public void SetBuildState(bool isBuilding, bool isCancelling)
+    {
+        if (_isBuilding == isBuilding && _isBuildCancelling == isCancelling) return;
+        _isBuilding = isBuilding;
+        _isBuildCancelling = isCancelling;
+        foreach (var property in new[] { nameof(IsBuilding), nameof(CanBuildAction), nameof(BuildCaption) })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
     }
 
@@ -76,6 +90,7 @@ public partial class ProjectsPage : UserControl
         InitializeComponent();
         _workspace.Changed += Reload;
         _workspace.AndroidRunStateChanged += UpdateRunStates;
+        _workspace.BuildStateChanged += UpdateBuildStates;
         SearchBox.TextChanged += (_, _) =>
         {
             ClearSearchButton.IsVisible = !string.IsNullOrEmpty(SearchBox.Text);
@@ -158,7 +173,14 @@ public partial class ProjectsPage : UserControl
 
     private async void OnBuildProject(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: ProjectEntry project }) await _workspace.BuildAsync(configureOnly: false, requested: project);
+        if (sender is not Button { Tag: ProjectEntry project }) return;
+        if (_workspace.IsProjectBuilding(project))
+        {
+            _workspace.Cancel();
+            return;
+        }
+
+        await _workspace.BuildAsync(configureOnly: false, requested: project);
     }
 
     private async void OnRunProject(object? sender, RoutedEventArgs e)
@@ -382,6 +404,7 @@ public partial class ProjectsPage : UserControl
         _ready = false;
         ProjectsGrid.ItemsSource = items;
         UpdateRunStates();
+        UpdateBuildStates();
         ProjectsGrid.SelectedItem = items.FirstOrDefault(item => _workspace.SelectedProject is not null
             && item.Project.Path.Equals(_workspace.SelectedProject.Path, StringComparison.OrdinalIgnoreCase));
         _ready = true;
@@ -399,6 +422,13 @@ public partial class ProjectsPage : UserControl
         if (ProjectsGrid.ItemsSource is not IEnumerable<ProjectListItem> items) return;
         foreach (var item in items)
             item.SetRunState(item.Project.Path == _workspace.AndroidRunProjectPath ? _workspace.AndroidRunStateKey : null);
+    }
+
+    private void UpdateBuildStates()
+    {
+        if (ProjectsGrid.ItemsSource is not IEnumerable<ProjectListItem> items) return;
+        foreach (var item in items)
+            item.SetBuildState(_workspace.IsProjectBuilding(item.Project), _workspace.IsProjectBuildCancelling(item.Project));
     }
 
     private void UpdateSortCaption() => SortButton.Content = HubStrings.Get(_sortMode switch

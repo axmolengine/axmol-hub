@@ -115,7 +115,7 @@ public partial class MainWindow
         .Where(text => text.Length > 0));
     /// <summary>The strip's cancel, as the user can press it. An unlisted second-scale change has no row to
     /// cancel from, so this button is the only answer it gets — and it had better be enabled.</summary>
-    internal bool CanCancelForCheck => CancelButton.IsEnabled;
+    internal bool CanCancelForCheck => CancelButton.IsVisible && CancelButton.IsEnabled;
 
     /// <summary>Presses the strip's cancel through the button, so a check proves the wiring and not the
     /// workspace method the button happens to call.</summary>

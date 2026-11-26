@@ -149,7 +149,10 @@ internal sealed partial class TaskQueue
         /// <summary>Root relocation must not overlap any other task, including transfers.</summary>
         public bool Exclusive { get; init; }
         public bool CancellationSealed { get; private set; }
-        public bool CanCancel => IsActive && !CancellationSealed;
+        public bool IsCancelling { get; private set; }
+        public bool CanCancel => IsActive && !CancellationSealed && !IsCancelling;
+
+        internal void MarkCancelling() => IsCancelling = true;
 
         /// <summary>The durable commit cannot be interrupted after the final cancellation check.</summary>
         public void SealCancellation()
@@ -461,6 +464,7 @@ internal sealed partial class TaskQueue
             StepTotal = null;
             StartedAt = null;
             CancellationSealed = false;
+            IsCancelling = false;
             _completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
@@ -646,9 +650,11 @@ internal sealed partial class TaskQueue
             return;
         }
 
-        if (item.CancellationSealed) return;
+        if (item.CancellationSealed || item.IsCancelling) return;
         if (item.CancelAction is { } cancel)
         {
+            item.MarkCancelling();
+            Changed?.Invoke();
             cancel();
             return;
         }

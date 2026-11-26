@@ -882,7 +882,9 @@ public partial class MainWindow : Window
         // question is 「is there a change to stop」, and that is the queue's answer. Read from one place, it
         // cannot be wired to a moment when the honest answer was still no — which is exactly how this button
         // ended up disabled for every operation when the busy flag was raised before the task existed.
-        CancelButton.IsEnabled = _workspace.CanCancel;
+        var canCancel = _workspace.CanCancel;
+        CancelButton.IsEnabled = canCancel;
+        CancelButton.IsVisible = canCancel;
 
         var items = TaskQueue.Instance.Items;
         var slot = TaskSlotStateFor(items);

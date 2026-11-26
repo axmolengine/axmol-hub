@@ -1152,7 +1152,7 @@
         </Button>
         <Button x:Name="CancelButton" Content="{DynamicResource Cancel}"
                 Grid.Column="6" Classes="strip"
-                IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
+                IsVisible="False" IsEnabled="False" Margin="6,0,0,0" VerticalAlignment="Center" />
         <!-- The log drawer's chevron. It is drawn at 1:1 in a box the size of its own ink rather than scaled
              into a square slot: a stretched Path pins the scaled ink to its slot's top-left, which is what left
              this triangle high and left of its hover plate. The geometry starts at 0,0 and fills 11x6 exactly,

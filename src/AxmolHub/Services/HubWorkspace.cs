@@ -81,6 +81,35 @@ public sealed partial class HubWorkspace : IDisposable
     public string? AndroidRunStateKey { get; private set; }
     public event Action? AndroidRunStateChanged;
 
+    private TaskQueue.Item? _activeBuildTask;
+    private bool _buildingCancelling;
+    public string? BuildingProjectPath { get; private set; }
+    public event Action? BuildStateChanged;
+
+    public bool IsProjectBuilding(ProjectEntry project)
+        => PathEquals(BuildingProjectPath, project.Path);
+
+    public bool IsProjectBuildCancelling(ProjectEntry project)
+        => PathEquals(BuildingProjectPath, project.Path) && _activeBuildTask is { IsCancelling: true };
+
+    private void SetBuildingProject(string? projectPath, TaskQueue.Item? task)
+    {
+        _activeBuildTask = task;
+        BuildingProjectPath = projectPath;
+        _buildingCancelling = task is { IsCancelling: true };
+        if (Dispatcher.UIThread.CheckAccess()) BuildStateChanged?.Invoke();
+        else Dispatcher.UIThread.Post(() => BuildStateChanged?.Invoke());
+    }
+
+    private void OnTaskQueueChanged()
+    {
+        var cancelling = _activeBuildTask is { IsCancelling: true };
+        if (cancelling == _buildingCancelling) return;
+        _buildingCancelling = cancelling;
+        if (Dispatcher.UIThread.CheckAccess()) BuildStateChanged?.Invoke();
+        else Dispatcher.UIThread.Post(() => BuildStateChanged?.Invoke());
+    }
+
     private void SetAndroidRunState(string? projectPath, string? stateKey)
     {
         AndroidRunProjectPath = projectPath;
@@ -153,6 +182,7 @@ public sealed partial class HubWorkspace : IDisposable
         ProjectDirectory = preferences.ProjectDirectory ?? Path.Combine(Store.Root, "projects");
         _targetReady = true;
         ToolTarget = BuildTargets.All[0];
+        _tasks.Changed += OnTaskQueueChanged;
     }
 
     /// <summary>
@@ -1382,41 +1412,49 @@ public sealed partial class HubWorkspace : IDisposable
             async (task, token) =>
         {
             var project = selected;
-            if (!CheckProjectDirectory(project)) return;
-            token.ThrowIfCancellationRequested();
-            BuildTargets.Select(project, target.Id, configuration, chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
-            var engine = RequiredEngine(project);
-            if (chosen.UsePrebuilt is bool usePrebuilt)
-                ApplyPrebuiltPreference(project, engine, usePrebuilt);
-
-            if (project.Platform == "windows-x64")
-            {
-                UpdateTools(await DetectAsync(token));
-            }
-
-            project.BuildStatus = configureOnly ? "Configuring" : "Building";
-            Store.Save(State);
-
+            SetBuildingProject(project.Path, task);
             try
             {
-                _androidPasswords.TryGetValue(project.Path, out var passwords);
-                await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task),
-                    OwnCommand(task, () => RecordProjectActivity(project)), chosen.Cleanup);
-                project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
-            }
-            catch (OperationCanceledException)
-            {
-                project.BuildStatus = "Cancelled";
-                throw;
-            }
-            catch
-            {
-                project.BuildStatus = "Failed";
-                throw;
+                if (!CheckProjectDirectory(project)) return;
+                token.ThrowIfCancellationRequested();
+                BuildTargets.Select(project, target.Id, configuration, chosen.AdvancedBuildEnabled, chosen.AdditionalBuildParameters);
+                var engine = RequiredEngine(project);
+                if (chosen.UsePrebuilt is bool usePrebuilt)
+                    ApplyPrebuiltPreference(project, engine, usePrebuilt);
+
+                if (project.Platform == "windows-x64")
+                {
+                    UpdateTools(await DetectAsync(token));
+                }
+
+                project.BuildStatus = configureOnly ? "Configuring" : "Building";
+                Store.Save(State);
+
+                try
+                {
+                    _androidPasswords.TryGetValue(project.Path, out var passwords);
+                    await _projects.BuildAsync(project, engine, configureOnly, token, passwords, OwnLines(task),
+                        OwnCommand(task, () => RecordProjectActivity(project)), chosen.Cleanup);
+                    project.BuildStatus = configureOnly ? "Configured" : "Succeeded";
+                }
+                catch (OperationCanceledException)
+                {
+                    project.BuildStatus = "Cancelled";
+                    throw;
+                }
+                catch
+                {
+                    project.BuildStatus = "Failed";
+                    throw;
+                }
+                finally
+                {
+                    Store.Save(State);
+                }
             }
             finally
             {
-                Store.Save(State);
+                if (ReferenceEquals(_activeBuildTask, task)) SetBuildingProject(null, null);
             }
 
         }, retryable: chosen.Cleanup is null);
@@ -2121,6 +2159,7 @@ public sealed partial class HubWorkspace : IDisposable
 
     public void Dispose()
     {
+        _tasks.Changed -= OnTaskQueueChanged;
         // A preview server outlives the page that started it, so shutdown has to take it with the rest of the
         // things this class leaves no orphans in.
         if (_webPreview is { } preview)
