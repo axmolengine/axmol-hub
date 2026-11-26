@@ -1380,6 +1380,7 @@ public partial class MainWindow : Window
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 3,
+            Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
@@ -1399,7 +1400,12 @@ public partial class MainWindow : Window
                 ColumnDefinitions = new ColumnDefinitions("*,Auto"),
                 Children =
                 {
-                    new StackPanel { Spacing = 4, Children = { _title, _bar, _measure } },
+                    new StackPanel
+                    {
+                        Spacing = 4,
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                        Children = { _title, _bar, _measure },
+                    },
                     _actions,
                 },
             };
@@ -1441,11 +1447,13 @@ public partial class MainWindow : Window
             // settles work the same way failure does, and both settle states offer the same two ways out.
             _retry.IsVisible = _item.Retryable && _item.State is (TaskQueue.Phase.Failed or TaskQueue.Phase.Cancelled);
             _dismiss.IsVisible = _item.State is TaskQueue.Phase.Failed or TaskQueue.Phase.Cancelled;
+            _actions.IsVisible = _cancel.IsVisible || _retry.IsVisible || _dismiss.IsVisible;
         }
 
         private static Button StripButton() => new()
         {
             Classes = { "strip" },
+            Margin = new Thickness(0),
             Padding = new Thickness(5, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
