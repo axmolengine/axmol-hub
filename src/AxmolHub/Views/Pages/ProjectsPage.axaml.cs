@@ -97,11 +97,8 @@ public partial class ProjectsPage : UserControl
         ProjectsGrid.SelectionChanged += (_, _) =>
         {
             if (!_ready) return;
-            if (ProjectsGrid.SelectedItem is ProjectListItem item && !ReferenceEquals(item.Project, _workspace.SelectedProject))
-            {
+            if (ProjectsGrid.SelectedItem is ProjectListItem item)
                 _workspace.SelectedProject = item.Project;
-                _workspace.Refresh();
-            }
         };
         ProjectsGrid.AddHandler(InputElement.DoubleTappedEvent, OnProjectDoubleTapped, RoutingStrategies.Bubble);
         ProjectsGrid.AddHandler(InputElement.KeyDownEvent, OnProjectsKeyDown, RoutingStrategies.Tunnel);

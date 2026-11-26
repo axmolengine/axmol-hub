@@ -315,9 +315,6 @@ public sealed partial class HubWorkspace : IDisposable
     private readonly Dictionary<long, string> _taskStatuses = [];
     private readonly object _taskStatusGate = new();
 
-    /// <summary>The second line of the "recent build platform" card at the top of the projects page.</summary>
-    public string BuildHostHint { get; private set; } = "";
-
     /// <summary>The caption below the platform selection on the toolchains page. The WPF version calls it <c>ToolTargetHint</c>.</summary>
     public string ToolTargetHint { get; private set; } = "";
 
@@ -646,25 +643,8 @@ public sealed partial class HubWorkspace : IDisposable
         Changed?.Invoke();
     }
 
-    /// <summary>The selected project's most recent build target.</summary>
-    public BuildTarget? ProjectTarget =>
-        SelectedProject is { } project ? BuildTargets.Get(project.Platform) : null;
-
     private void UpdateTargetHint()
     {
-        if (ProjectTarget is { } target)
-        {
-            var project = SelectedProject;
-            BuildHostHint = (project?.Configuration ?? "Debug") + " · "
-                + (target.Family == "uwp" ? HubStrings.Get("UwpPending")
-                   : target.CanBuildOn(BuildTargets.Host) ? HubStrings.Get("LocalHost")
-                   : HubStrings.Get("RequiresHost") + " " + string.Join(" / ", target.Hosts));
-        }
-        else
-        {
-            BuildHostHint = "";
-        }
-
         if (ToolTarget is { } toolsTarget)
         {
             ToolTargetHint = DescribeToolTarget(toolsTarget);
