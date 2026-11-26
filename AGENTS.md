@@ -3,6 +3,8 @@
 ## General Rule
 
 - When implementing features, take pride in streamlining and removing legacy redundant code; regard bloated duplicate implementations as bad practice.
+- Never create cache, scratch, or tool-home directories in the repo (e.g., `.local/`, `src/**/.nuget/`); put any temp files or overridden `HOME`/`DOTNET_CLI_HOME`/`NUGET_PACKAGES` paths under `/tmp` or ignored `tmp/`.
+- If the AI tool can only run commands in a sandbox, do not run .NET restore, build, run, test, or publish commands, including scripts that invoke them. A sandbox can leave NuGet paths in generated build files or reused MSBuild processes that break the user's normal build. Give the user the exact command to run in their regular terminal and say that build verification is pending. This takes precedence over the build and verification instructions below.
 
 ## Product charter
 
