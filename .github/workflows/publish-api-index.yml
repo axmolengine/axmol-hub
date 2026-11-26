@@ -18,15 +18,15 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout axmol-hub
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: hub
 
       - name: Shallow checkout axmolengine/axmol
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: axmolengine/axmol
           ref: ${{ inputs.engine_ref }}
@@ -34,10 +34,10 @@ jobs:
           submodules: false
           path: engine
 
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Download existing manifest if present
         env:
@@ -49,7 +49,8 @@ jobs:
       - name: Build official versioned API index archive
         run: |
           REV=$(git -C engine rev-parse --short=12 HEAD)
-          dotnet run -c Release --project hub/src/AxmolHub -- --build-api-index "$PWD/engine" "$PWD/out" "$REV" "${{ inputs.release_tag }}"
+          dotnet build hub/src/AxmolHub/AxmolHub.csproj -c Release -p:BuildLinuxPortalHelper=false
+          dotnet hub/src/AxmolHub/bin/Release/net8.0/AxmolHub.dll --build-api-index "$PWD/engine" "$PWD/out" "$REV" "${{ inputs.release_tag }}"
           ls -lh out/
 
       - name: Publish to rolling data release (never latest)
