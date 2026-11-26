@@ -17,8 +17,10 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public AcpProcessHost? Host { get; set; }
-        public string? ActiveSessionId { get; set; }
-        public string? ThoughtLevelConfigId { get; set; }
+        public AcpSessionInfo? ActiveSession { get; set; }
+        public AcpSessionMode? KnownMode { get; set; }
+        public string? KnownThoughtLevelConfigId { get; set; }
+        public HashSet<string> PlanningSessionIds { get; } = new(StringComparer.Ordinal);
     }
 
     private readonly ConcurrentDictionary<HostKey, HostSlot> _slots = new();
@@ -45,12 +47,7 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
         {
             if (slot.Host is null || !slot.Host.IsAlive)
             {
-                if (slot.Host is { } dead)
-                {
-                    slot.Host = null;
-                    slot.ActiveSessionId = null;
-                    await dead.DisposeAsync().ConfigureAwait(false);
-                }
+                await ResetSlotAsync(slot).ConfigureAwait(false);
 
                 slot.Host = await AcpProcessHost.StartAsync(
                     command,
@@ -80,11 +77,7 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
             try
             {
                 if (slot.Host is { } host && (!host.IsAlive || host.LastUsedAt < cutoff))
-                {
-                    slot.Host = null;
-                    slot.ActiveSessionId = null;
-                    await host.DisposeAsync().ConfigureAwait(false);
-                }
+                    await ResetSlotAsync(slot).ConfigureAwait(false);
             }
             finally
             {
@@ -109,12 +102,7 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
             try { await slot.Gate.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { }
             try
             {
-                if (slot.Host is { } host)
-                {
-                    slot.Host = null;
-                    slot.ActiveSessionId = null;
-                    await host.DisposeAsync().ConfigureAwait(false);
-                }
+                await ResetSlotAsync(slot).ConfigureAwait(false);
             }
             catch { }
             finally
@@ -123,6 +111,17 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
             }
         }
         _slots.Clear();
+    }
+
+    private static async Task ResetSlotAsync(HostSlot slot)
+    {
+        if (slot.Host is not { } host) return;
+        slot.Host = null;
+        slot.ActiveSession = null;
+        slot.KnownMode = null;
+        slot.KnownThoughtLevelConfigId = null;
+        slot.PlanningSessionIds.Clear();
+        await host.DisposeAsync().ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -141,16 +140,41 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
 
         public AcpProcessHost Host => _slot.Host!;
 
-        public string? ActiveSessionId
+        public AcpSessionInfo? ActiveSession => _slot.ActiveSession;
+
+        internal AcpSessionInfo HydrateSession(AcpSessionInfo info, bool fromLoad)
         {
-            get => _slot.ActiveSessionId;
-            set => _slot.ActiveSessionId = value;
+            if (info.Mode is { } parsedMode)
+            {
+                if (parsedMode.AgentId is null && _slot.KnownMode is { AgentId: { Length: > 0 } knownAgent } known
+                    && known.ConfigId == parsedMode.ConfigId && known.PlanId == parsedMode.PlanId)
+                {
+                    parsedMode = new AcpSessionMode(parsedMode.ConfigId, parsedMode.PlanId, knownAgent, parsedMode.RestoreAfterPlan);
+                    info = info with { Mode = parsedMode };
+                }
+                if (parsedMode.AgentId is not null || _slot.KnownMode is null)
+                    _slot.KnownMode = parsedMode.Clone(restoreAfterPlan: false);
+            }
+            else if (fromLoad && _slot.KnownMode is { } knownMode)
+            {
+                info = info with { Mode = knownMode.Clone(_slot.PlanningSessionIds.Contains(info.SessionId)) };
+            }
+
+            if (info.ThoughtLevelConfigId is not null)
+                _slot.KnownThoughtLevelConfigId = info.ThoughtLevelConfigId;
+            else if (fromLoad && _slot.KnownThoughtLevelConfigId is { } knownEffort)
+                info = info with { ThoughtLevelConfigId = knownEffort };
+
+            _slot.ActiveSession = info;
+            SyncPlanningState(info);
+            return info;
         }
 
-        public string? ThoughtLevelConfigId
+        internal void SyncPlanningState(AcpSessionInfo info)
         {
-            get => _slot.ThoughtLevelConfigId;
-            set => _slot.ThoughtLevelConfigId = value;
+            if (info.Mode is not { } mode) return;
+            if (mode.RestoreAfterPlan) _slot.PlanningSessionIds.Add(info.SessionId);
+            else _slot.PlanningSessionIds.Remove(info.SessionId);
         }
 
         /// <summary>Marks the host for disposal when released (for example after a forced cancel or protocol desync).</summary>
@@ -167,11 +191,7 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
                     host.Connection.OnRequest = null;
                     host.LastUsedAt = DateTimeOffset.UtcNow;
                     if (_recycle || !host.IsAlive)
-                    {
-                        _slot.Host = null;
-                        _slot.ActiveSessionId = null;
-                        await host.DisposeAsync().ConfigureAwait(false);
-                    }
+                        await ResetSlotAsync(_slot).ConfigureAwait(false);
                 }
             }
             finally

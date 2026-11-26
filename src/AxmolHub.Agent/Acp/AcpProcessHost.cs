@@ -287,7 +287,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
                     mcpServers = Array.Empty<object>(),
                 }, probeTimeout.Token).ConfigureAwait(false);
 
-                probedSession = AcpParsers.ParseSessionNewResult(sessionJson);
+                probedSession = AcpParsers.ParseSessionResult(sessionJson);
                 foreach (var modelId in probedSession.AvailableModels)
                     if (seen.Add(modelId)) models.Add(modelId);
             }

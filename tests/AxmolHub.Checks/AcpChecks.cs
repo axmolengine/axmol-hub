@@ -106,6 +106,7 @@ internal static class AcpChecks
         Console.WriteLine("PASS: ACP permission policy matches Hub's risk ladder across Ask/Auto/Full.");
 
         // 3. Full end-to-end ACP subprocess check via self-hosted --acp-mock-worker:
+        //    Plan refuses execution and writes; the same session returns to Agent for the approved edit.
         //    initialize -> session/new -> session/prompt -> thought/text/tool_call ->
         //    fs/write_text_file (CRLF->LF + ChangeStore/UndoStore) -> fs/read_text_file ->
         //    outside-path refusal -> session/request_permission -> session/cancel + teardown.
@@ -161,15 +162,32 @@ internal static class AcpChecks
             },
         };
 
+        await foreach (var text in runner.RunPooledTurnAsync(testProvider, workspaceDir, null, "default",
+                           "propose the edit", [], scope, callbacks, AcpTurnMode.Plan))
+            chunks.Append(text);
+        if (boundSession is null || PlanTaskParser.Parse(chunks.ToString()).Count != 1 || permissionPrompted
+            || observedWrites.Count != 0 || File.Exists(Path.Combine(workspaceDir, "hello.txt")))
+            throw new Exception("The ACP plan turn must return a reviewable checklist without granting or applying edits.");
+        var planSession = boundSession;
+        chunks.Clear();
+
+        await foreach (var text in runner.RunPooledTurnAsync(testProvider, workspaceDir, null, "default",
+                           "ask question", [], scope, callbacks, AcpTurnMode.Ask))
+            chunks.Append(text);
+        if (permissionPrompted || chunks.ToString() != "Answered from conversation.")
+            throw new Exception("The ACP ask turn must block workspace reads and permissions.");
+        chunks.Clear();
+
         await foreach (var text in runner.RunPooledTurnAsync(
                            testProvider,
                            workspaceDir,
-                           existingSessionId: null,
+                           existingSessionId: planSession,
                            requestedModel: "gemini-4-neon",
                            promptText: "update hello",
                            images: [],
                            workspace: scope,
                            callbacks: callbacks,
+                           turnMode: AcpTurnMode.Agent,
                            requestedEffort: ChatReasoningEfforts.XHigh))
         {
             chunks.Append(text);
@@ -199,7 +217,7 @@ internal static class AcpChecks
             throw new Exception("Expected first workspace write to succeed and second escape write to fail.");
         if (ChatChangeStore.IdFromResult(observedWrites[0].Result) is null)
             throw new Exception($"Expected Change ID in write result for Changes/Undo tracking: {observedWrites[0].Result}");
-        Console.WriteLine("PASS: ACP subprocess handshake, streaming, approval, and fs proxy (LF + ChangeStore + sandbox refusal).");
+        Console.WriteLine("PASS: ACP Plan-to-Agent transition, streaming, approval, and fs proxy (LF + ChangeStore + sandbox refusal).");
 
         // 4. Mid-turn cancellation sends session/cancel cleanly without hanging.
         using var cancelCts = new CancellationTokenSource();
@@ -215,6 +233,7 @@ internal static class AcpChecks
                                images: [],
                                workspace: scope,
                                callbacks: new AcpTurnCallbacks(),
+                               turnMode: AcpTurnMode.Agent,
                                cancellationToken: cancelCts.Token))
             {
                 if (part.Contains("started", StringComparison.Ordinal))
@@ -254,6 +273,8 @@ internal static class AcpChecks
         await using var conn = new AcpJsonRpcConnection(Console.In, Console.Out);
         var cancelRequested = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? observedEffort = null;
+        var nextSession = 0;
+        var sessionModes = new Dictionary<string, string>(StringComparer.Ordinal);
 
         conn.OnNotification = (method, _) =>
         {
@@ -281,11 +302,19 @@ internal static class AcpChecks
                     return new { };
 
                 case AcpProtocol.MethodSessionNew:
+                {
+                    var newSid = $"mock-sess-{++nextSession}";
+                    sessionModes[newSid] = "normal";
                     return new
                     {
-                        sessionId = "mock-sess-1",
+                        sessionId = newSid,
                         configOptions = new object[]
                         {
+                            new
+                            {
+                                id = "workflow", category = "mode", type = "select", currentValue = "normal",
+                                options = new[] { new { value = "normal", name = "Normal" }, new { value = "review", name = "Plan" } },
+                            },
                             new
                             {
                                 configId = "model",
@@ -315,11 +344,17 @@ internal static class AcpChecks
                             },
                         },
                     };
+                }
 
                 case AcpProtocol.MethodSessionSetConfigOption:
+                {
+                    var sid = AcpParsers.TryString(@params, "sessionId") ?? "mock-sess-1";
+                    if (AcpParsers.TryString(@params, "configId") == "workflow")
+                        sessionModes[sid] = AcpParsers.TryString(@params, "value") ?? "normal";
                     if (AcpParsers.TryString(@params, "configId") == "effort")
                         observedEffort = AcpParsers.TryString(@params, "value");
                     return new { };
+                }
 
                 case AcpProtocol.MethodSessionLoad:
                     return new { };
@@ -350,8 +385,75 @@ internal static class AcpChecks
                         return new { stopReason = "cancelled" };
                     }
 
-                    if (observedEffort != ChatReasoningEfforts.XHigh)
+                    var isPlan = promptText.Contains("propose the edit", StringComparison.Ordinal);
+                    var isAsk = promptText.Contains("ask question", StringComparison.Ordinal);
+                    var nativeMode = sessionModes.GetValueOrDefault(sid, "normal");
+                    if (nativeMode != (isPlan ? "review" : "normal")
+                        || isPlan && !promptText.Contains("## Implementation tasks", StringComparison.Ordinal))
+                        throw new AcpRpcException(-32000, "Hub did not forward the expected turn mode before the prompt.");
+                    if (observedEffort != ChatReasoningEfforts.XHigh && !isPlan && !isAsk)
                         throw new AcpRpcException(-32000, $"Expected xhigh effort to be forwarded, got '{observedEffort}'.");
+
+                    if (isAsk)
+                    {
+                        var askPerm = await conn.SendRequestAsync(AcpProtocol.MethodSessionRequestPermission, new
+                        {
+                            sessionId = sid,
+                            toolCall = new { toolCallId = "call-ask", title = "Read hello.txt", kind = "read" },
+                            options = new[] { new { optionId = "opt-reject-always", name = "Reject always", kind = "reject_always" } },
+                        }, ct).ConfigureAwait(false);
+                        if (AcpParsers.TryString(askPerm.GetProperty("outcome"), "outcome") != "cancelled")
+                            throw new AcpRpcException(-32000, "Ask mode must cancel rather than pick reject_always.");
+                        try
+                        {
+                            await conn.SendRequestAsync(AcpProtocol.MethodFsReadTextFile, new { path = "hello.txt" }, ct);
+                            throw new InvalidOperationException("Ask mode allowed fs/read_text_file.");
+                        }
+                        catch (AcpRpcException ex) when (ex.Code == -32000) { }
+                        await conn.SendNotificationAsync(AcpProtocol.MethodSessionUpdate, new
+                        {
+                            sessionId = sid,
+                            update = new { sessionUpdate = "agent_message_chunk", content = new { type = "text", text = "Answered from conversation." } },
+                        }, ct);
+                        return new { stopReason = "end_turn" };
+                    }
+
+                    // Ask client for permission before executing.
+                    var permRes = await conn.SendRequestAsync(AcpProtocol.MethodSessionRequestPermission, new
+                    {
+                        sessionId = sid,
+                        toolCall = new { toolCallId = "call-1", title = "Write hello.txt", kind = "execute" },
+                        options = new[]
+                        {
+                            new { optionId = "opt-allow", name = "Allow once", kind = "allow_once" },
+                            new { optionId = "opt-deny", name = "Deny", kind = "reject_once" },
+                        },
+                    }, ct).ConfigureAwait(false);
+
+                    if (isPlan)
+                    {
+                        if (AcpParsers.TryString(permRes.GetProperty("outcome"), "optionId") != "opt-deny")
+                            throw new AcpRpcException(-32000, "Plan mode granted command execution.");
+                        try
+                        {
+                            await conn.SendRequestAsync(AcpProtocol.MethodFsWriteTextFile,
+                                new { sessionId = sid, path = "hello.txt", content = "premature edit" }, ct);
+                            throw new InvalidOperationException("Plan mode accepted a direct write.");
+                        }
+                        catch (AcpRpcException ex) when (ex.Code == -32000) { }
+                        await conn.SendNotificationAsync(AcpProtocol.MethodSessionUpdate, new
+                        {
+                            sessionId = sid,
+                            update = new { sessionUpdate = "agent_message_chunk", content = new { type = "text", text = "## Implementation tasks\n- [ ] Update hello.txt" } },
+                        }, ct);
+                        return new { stopReason = "end_turn" };
+                    }
+
+                    if (!AcpParsers.TryObject(permRes, "outcome", out var outcome)
+                        || AcpParsers.TryString(outcome, "optionId") != "opt-allow")
+                    {
+                        throw new AcpRpcException(-32000, "Permission was not granted.");
+                    }
 
                     await conn.SendNotificationAsync(AcpProtocol.MethodSessionUpdate, new
                     {
@@ -375,24 +477,6 @@ internal static class AcpChecks
                             status = "in_progress",
                         },
                     }, ct).ConfigureAwait(false);
-
-                    // Ask client for permission before executing.
-                    var permRes = await conn.SendRequestAsync(AcpProtocol.MethodSessionRequestPermission, new
-                    {
-                        sessionId = sid,
-                        toolCall = new { toolCallId = "call-1", title = "Write hello.txt", kind = "execute" },
-                        options = new[]
-                        {
-                            new { optionId = "opt-allow", name = "Allow once", kind = "allow_once" },
-                            new { optionId = "opt-deny", name = "Deny", kind = "reject_once" },
-                        },
-                    }, ct).ConfigureAwait(false);
-
-                    if (!AcpParsers.TryObject(permRes, "outcome", out var outcome)
-                        || AcpParsers.TryString(outcome, "optionId") != "opt-allow")
-                    {
-                        throw new AcpRpcException(-32000, "Permission was not granted.");
-                    }
 
                     // Write a file with CRLF via client fs/write_text_file and read it back via fs/read_text_file.
                     await conn.SendRequestAsync(AcpProtocol.MethodFsWriteTextFile, new

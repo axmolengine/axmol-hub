@@ -73,21 +73,19 @@ internal sealed partial class ChatExecutionCoordinator
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(run.Token, cancellationToken);
 
-        var sessionSnapshot = await ReadOnUiAsync(() =>
+        var existingSessionId = await ReadOnUiAsync(() =>
         {
             var conv = Sessions.Registry.Peek(run.ConversationId);
-            var existingSid = conv is not null
-                              && string.Equals(conv.AcpProviderId, request.Provider.Id, StringComparison.Ordinal)
+            return conv is not null && string.Equals(conv.AcpProviderId, request.Provider.Id, StringComparison.Ordinal)
                 ? conv.AcpSessionId
                 : null;
-            return (ExistingSessionId: existingSid, ApprovalMode: ApprovalModeFor(run.ConversationId));
         }).ConfigureAwait(false);
 
         var cwd = request.Scope.Workspace.WorkspaceRoot is { Length: > 0 } root && Directory.Exists(root)
             ? root
             : Environment.CurrentDirectory;
 
-        var (promptText, promptImages) = BuildAcpPrompt(request, hasExistingSession: !string.IsNullOrWhiteSpace(sessionSnapshot.ExistingSessionId));
+        var (promptText, promptImages) = BuildAcpPrompt(request, hasExistingSession: !string.IsNullOrWhiteSpace(existingSessionId));
         var runner = new AcpTurnRunner(_acpHostPool);
         var recordedCalls = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         var completedCalls = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
@@ -271,12 +269,13 @@ internal sealed partial class ChatExecutionCoordinator
         await foreach (var chunk in runner.RunPooledTurnAsync(
                            request.Provider,
                            cwd,
-                           sessionSnapshot.ExistingSessionId,
+                           existingSessionId,
                            request.ModelName,
                            promptText,
                            promptImages,
                            request.Scope.Workspace,
                            callbacks,
+                           turnMode: request.AcpMode,
                            requestedEffort: request.Reasoning,
                            cancellationToken: linked.Token).ConfigureAwait(false))
         {

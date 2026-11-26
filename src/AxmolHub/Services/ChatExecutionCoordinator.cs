@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using Avalonia.Threading;
 using AxmolHub.Agent;
+using AxmolHub.Agent.Acp;
 using AxmolHub.Core;
 using Microsoft.Extensions.AI;
 using static AxmolHub.ChatWorkspace;
@@ -3601,7 +3602,14 @@ internal sealed partial class ChatExecutionCoordinator
 
         var resolvedSpeedTier = SpeedTierPolicy.ResolveForModel(
             choice.Provider, modelName, conversation.SpeedTier ?? PreferencesProvider?.Invoke()?.DefaultSpeedTier);
-        return new ChatRequest(choice.Provider, modelName, reasoning, tools, scope,
+        var acpMode = mode switch
+        {
+            ChatModes.Ask => AcpTurnMode.Ask,
+            ChatModes.Plan when conversation.SpawnedBy is not null => AcpTurnMode.ReadOnlyHelper,
+            ChatModes.Plan => AcpTurnMode.Plan,
+            _ => AcpTurnMode.Agent,
+        };
+        return new ChatRequest(choice.Provider, modelName, reasoning, tools, scope, acpMode,
             systemPrompt,
             history,
             image => Sessions.Registry.Store.ReadImage(conversationId, image.File) is { } bytes
@@ -4552,7 +4560,7 @@ internal sealed partial class ChatExecutionCoordinator
     // whatever the session says *now* rather than from the request on the wire; the two cannot differ today,
     // since only a person moves the root and no round outlives them, and carrying the value is what keeps the
     // tier and the execution reading one directory if that ever stops being true.
-    ChatToolScope Scope, string SystemPrompt, IReadOnlyList<ChatTurn> History, Func<ChatImage, BinaryData?>? Images, // Declarations that ride for their schema only, executed by nothing — Ask over tool history, where a
+    ChatToolScope Scope, AcpTurnMode AcpMode, string SystemPrompt, IReadOnlyList<ChatTurn> History, Func<ChatImage, BinaryData?>? Images, // Declarations that ride for their schema only, executed by nothing — Ask over tool history, where a
     // tool-less request is the shape a model answers in native call markup. Null is the common case.
     IReadOnlyList<AITool>? DeclaredTools = null,
     string? SpeedTier = null);

@@ -29,6 +29,8 @@ public static class ChatModes
     public const string Ask = "ask";
     public const string Plan = "plan";
     public const string Agent = "agent";
+
+    public const string PlanReplyInstructions = "Investigate, then return a concise, actionable plan. Include a clearly marked ## Implementation tasks section with a short markdown task checklist (- [ ] item) containing concrete, independently trackable steps. Keep explanation outside that section.";
 }
 
 /// <summary>Lifecycle values for a thread-scoped goal.</summary>

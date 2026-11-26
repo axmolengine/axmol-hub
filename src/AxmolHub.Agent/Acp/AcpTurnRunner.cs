@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Threading.Channels;
 using AxmolHub.Core;
 
@@ -33,6 +32,7 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         IReadOnlyList<(byte[] Bytes, string MediaType)> images,
         WorkspaceToolScope? workspace,
         AcpTurnCallbacks callbacks,
+        AcpTurnMode turnMode,
         string? requestedEffort = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -42,64 +42,61 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         await using var lease = await pool.AcquireAsync(provider, workingDirectory, cancellationToken)
             .ConfigureAwait(false);
 
-        var (sessionId, discoveredThoughtConfigId) = await EnsureSessionAsync(
-            lease.Host.Connection,
-            lease.Host.InitializeResult.AgentCapabilities,
+        var session = await EnsureSessionAsync(
+            lease,
             workingDirectory,
             existingSessionId,
-            lease.ActiveSessionId,
             callbacks.OnSessionBound,
             cancellationToken).ConfigureAwait(false);
 
-        lease.ActiveSessionId = sessionId;
-        if (!string.IsNullOrWhiteSpace(discoveredThoughtConfigId))
-            lease.ThoughtLevelConfigId = discoveredThoughtConfigId;
-
-        await foreach (var chunk in RunOnConnectionAsync(
-                           lease.Host.Connection,
-                           lease.Host.InitializeResult.AgentCapabilities,
-                           sessionId,
-                           requestedModel,
-                           promptText,
-                           images,
-                           workspace,
-                           callbacks,
-                           onRecycleNeeded: () => lease.MarkForRecycle(),
-                           requestedEffort: requestedEffort,
-                           thoughtLevelConfigId: lease.ThoughtLevelConfigId,
-                           cancellationToken: cancellationToken).ConfigureAwait(false))
+        try
         {
-            yield return chunk;
+            await foreach (var chunk in RunOnConnectionAsync(
+                               lease.Host.Connection,
+                               lease.Host.InitializeResult.AgentCapabilities,
+                               session,
+                               turnMode,
+                               requestedModel,
+                               promptText,
+                               images,
+                               workspace,
+                               callbacks,
+                               onRecycleNeeded: () => lease.MarkForRecycle(),
+                               requestedEffort: requestedEffort,
+                               cancellationToken: cancellationToken).ConfigureAwait(false))
+            {
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            lease.SyncPlanningState(session);
         }
     }
 
-    public static async Task<(string SessionId, string? ThoughtLevelConfigId)> EnsureSessionAsync(
-        AcpJsonRpcConnection connection,
-        AcpAgentCapabilities capabilities,
+    private static async Task<AcpSessionInfo> EnsureSessionAsync(
+        AcpHostPool.AcpLease lease,
         string workingDirectory,
         string? persistedSessionId,
-        string? liveSessionId,
         Action<string>? onSessionBound,
         CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(persistedSessionId)
-            && string.Equals(persistedSessionId, liveSessionId, StringComparison.Ordinal))
-        {
-            return (persistedSessionId, null);
-        }
+        if (lease.ActiveSession is { } live && persistedSessionId == live.SessionId)
+            return live;
 
-        if (!string.IsNullOrWhiteSpace(persistedSessionId) && capabilities.LoadSession)
+        var connection = lease.Host.Connection;
+        if (!string.IsNullOrWhiteSpace(persistedSessionId) && lease.Host.InitializeResult.AgentCapabilities.LoadSession)
         {
             try
             {
-                await connection.SendRequestAsync(AcpProtocol.MethodSessionLoad, new
+                var loaded = await connection.SendRequestAsync(AcpProtocol.MethodSessionLoad, new
                 {
                     sessionId = persistedSessionId,
                     cwd = workingDirectory,
                     mcpServers = Array.Empty<object>(),
                 }, cancellationToken).ConfigureAwait(false);
                 onSessionBound?.Invoke(persistedSessionId);
-                return (persistedSessionId, null);
+                return lease.HydrateSession(AcpParsers.ParseSessionResult(loaded, persistedSessionId), fromLoad: true);
             }
             catch (AcpRpcException)
             {
@@ -112,9 +109,9 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
             cwd = workingDirectory,
             mcpServers = Array.Empty<object>(),
         }, cancellationToken).ConfigureAwait(false);
-        var info = AcpParsers.ParseSessionNewResult(created);
+        var info = lease.HydrateSession(AcpParsers.ParseSessionResult(created), fromLoad: false);
         onSessionBound?.Invoke(info.SessionId);
-        return (info.SessionId, info.ThoughtLevelConfigId);
+        return info;
     }
 
     /// <summary>
@@ -124,7 +121,8 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
     public static async IAsyncEnumerable<string> RunOnConnectionAsync(
         AcpJsonRpcConnection connection,
         AcpAgentCapabilities capabilities,
-        string sessionId,
+        AcpSessionInfo session,
+        AcpTurnMode turnMode,
         string? requestedModel,
         string promptText,
         IReadOnlyList<(byte[] Bytes, string MediaType)> images,
@@ -132,9 +130,10 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         AcpTurnCallbacks callbacks,
         Action? onRecycleNeeded = null,
         string? requestedEffort = null,
-        string? thoughtLevelConfigId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var sessionId = session.SessionId;
+        var thoughtLevelConfigId = session.ThoughtLevelConfigId;
         if (!string.IsNullOrWhiteSpace(requestedModel)
             && !string.Equals(requestedModel, AcpModelsSource.DefaultModelName, StringComparison.OrdinalIgnoreCase))
         {
@@ -196,6 +195,29 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
             }
         }
 
+        if (session.Mode is { } selector)
+        {
+            var planning = turnMode.IsPlanning();
+            var value = planning ? selector.PlanId : selector.RestoreAfterPlan ? selector.AgentId : null;
+            if (value is not null)
+            {
+                try
+                {
+                    if (selector.ConfigId is { } configId)
+                        await connection.SendRequestAsync(AcpProtocol.MethodSessionSetConfigOption,
+                            new { sessionId, configId, value }, cancellationToken).ConfigureAwait(false);
+                    else
+                        await connection.SendRequestAsync(AcpProtocol.MethodSessionSetMode,
+                            new { sessionId, modeId = value }, cancellationToken).ConfigureAwait(false);
+                    selector.RestoreAfterPlan = planning;
+                }
+                catch (AcpRpcException ex) when (ex.Code is -32601 or -32602)
+                {
+                    // Agent rejected runtime mode switching; prompt instructions and client gates still enforce turnMode.
+                }
+            }
+        }
+
         var channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -252,6 +274,15 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
                 case AcpProtocol.MethodSessionRequestPermission:
                 {
                     var req = AcpParsers.ParsePermissionRequest(@params);
+                    if (!turnMode.AllowsPermission(req.ToolCall.Kind))
+                    {
+                        var rejectOnce = req.Options.FirstOrDefault(o =>
+                            string.Equals(o.Kind, "reject_once", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(o.Kind, "reject", StringComparison.OrdinalIgnoreCase));
+                        return (rejectOnce is not null
+                            ? AcpPermissionOutcome.Selected(rejectOnce.OptionId)
+                            : AcpPermissionOutcome.Cancel()).ToWireResult();
+                    }
                     var outcome = callbacks.OnPermissionRequested is { } ask
                         ? await ask(req, cancellationToken).ConfigureAwait(false)
                         : AcpPermissionOutcome.Cancel();
@@ -259,11 +290,15 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
                 }
 
                 case AcpProtocol.MethodFsReadTextFile:
+                    if (turnMode == AcpTurnMode.Ask)
+                        throw new AcpRpcException(-32000, "Workspace reads are disabled in Hub Ask mode.");
                     if (fsBridge is null)
                         throw new AcpRpcException(-32601, "No workspace is open for fs/read_text_file.");
                     return fsBridge.HandleReadTextFile(@params);
 
                 case AcpProtocol.MethodFsWriteTextFile:
+                    if (turnMode != AcpTurnMode.Agent)
+                        throw new AcpRpcException(-32000, "File writes require Hub Agent mode.");
                     if (fsBridge is null)
                         throw new AcpRpcException(-32601, "No workspace is open for fs/write_text_file.");
                     return fsBridge.HandleWriteTextFile(@params);
@@ -275,7 +310,7 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
 
         var promptBlocks = new List<object>
         {
-            new { type = "text", text = promptText },
+            new { type = "text", text = turnMode.Instructions() + "\n\n" + promptText },
         };
         if (capabilities.PromptImages && images.Count > 0)
         {

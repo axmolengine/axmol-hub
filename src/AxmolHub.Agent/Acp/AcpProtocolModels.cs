@@ -67,7 +67,19 @@ public sealed record AcpSessionInfo(
     string? CurrentModelId,
     string? ThoughtLevelConfigId = null,
     IReadOnlyList<string>? AvailableEfforts = null,
-    string? CurrentEffort = null);
+    string? CurrentEffort = null,
+    AcpSessionMode? Mode = null);
+
+/// <summary>IDs advertised by this session, not guesses about a CLI's mode names.</summary>
+public sealed class AcpSessionMode(string? configId, string planId, string? agentId, bool restoreAfterPlan = false)
+{
+    public string? ConfigId { get; } = configId;
+    public string PlanId { get; } = planId;
+    public string? AgentId { get; } = agentId;
+    internal bool RestoreAfterPlan { get; set; } = restoreAfterPlan;
+
+    internal AcpSessionMode Clone(bool restoreAfterPlan) => new(ConfigId, PlanId, AgentId, restoreAfterPlan);
+}
 
 public sealed record AcpPermissionOption(
     string OptionId,
@@ -179,9 +191,9 @@ public static class AcpParsers
             authMethods);
     }
 
-    public static AcpSessionInfo ParseSessionNewResult(JsonElement root)
+    public static AcpSessionInfo ParseSessionResult(JsonElement root, string? loadedSessionId = null)
     {
-        var sessionId = TryString(root, "sessionId")
+        var sessionId = loadedSessionId ?? TryString(root, "sessionId")
             ?? throw new InvalidOperationException("ACP session/new response did not include a sessionId.");
 
         var models = new List<string>();
@@ -203,6 +215,7 @@ public static class AcpParsers
             }
         }
 
+        AcpSessionMode? mode = null;
         string? thoughtLevelConfigId = null;
         var efforts = new List<string>();
         var seenEfforts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -224,12 +237,15 @@ public static class AcpParsers
                     {
                         foreach (var choice in choices.EnumerateArray())
                         {
-                            var id = choice.ValueKind == JsonValueKind.String
-                                ? choice.GetString()
-                                : TryString(choice, "value") ?? TryString(choice, "id");
+                            var id = TryOptionId(choice);
                             if (!string.IsNullOrWhiteSpace(id) && seen.Add(id)) models.Add(id);
                         }
                     }
+                }
+                else if (string.Equals(category, "mode", StringComparison.OrdinalIgnoreCase)
+                         && configId is { Length: > 0 } && TryArray(opt, "options", out var modeChoices))
+                {
+                    mode ??= FindPlanningMode(configId, TryString(opt, "currentValue"), modeChoices);
                 }
                 else if (string.Equals(category, "thought_level", StringComparison.OrdinalIgnoreCase)
                          || configId is "effort" or "thought_level" or "thinking_level" or "reasoning_effort")
@@ -242,10 +258,7 @@ public static class AcpParsers
                     {
                         foreach (var choice in effortChoices.EnumerateArray())
                         {
-                            var raw = choice.ValueKind == JsonValueKind.String
-                                ? choice.GetString()
-                                : TryString(choice, "value") ?? TryString(choice, "id");
-                            if (raw is { Length: > 0 } level
+                            if (TryOptionId(choice) is { Length: > 0 } level
                                 && ChatReasoningEfforts.IsTier(level.ToLowerInvariant())
                                 && seenEfforts.Add(level.ToLowerInvariant()))
                                 efforts.Add(level.ToLowerInvariant());
@@ -258,7 +271,49 @@ public static class AcpParsers
         if (!string.IsNullOrWhiteSpace(currentModel) && seen.Add(currentModel))
             models.Insert(0, currentModel);
 
-        return new AcpSessionInfo(sessionId, models, currentModel, thoughtLevelConfigId, efforts, currentEffort);
+        if (mode is null && TryObject(root, "modes", out var legacy) && TryArray(legacy, "availableModes", out var availableModes))
+            mode = FindPlanningMode(null, TryString(legacy, "currentModeId"), availableModes);
+
+        return new AcpSessionInfo(sessionId, models, currentModel, thoughtLevelConfigId, efforts, currentEffort, mode);
+    }
+
+    private static string? TryOptionId(JsonElement choice, string primaryKey = "value")
+    {
+        if (choice.ValueKind == JsonValueKind.String) return choice.GetString();
+        var secondaryKey = primaryKey == "value" ? "id" : "value";
+        return TryString(choice, primaryKey) ?? TryString(choice, secondaryKey);
+    }
+
+    private static AcpSessionMode? FindPlanningMode(string? configId, string? current, JsonElement choices)
+    {
+        static bool IsPlanToken(string? value)
+            => value is "plan" or "planning" or "plan_mode" or "plan-mode" or "plan mode";
+        static bool IsAgentToken(string? value)
+            => value is "agent" or "default" or "normal" or "standard" or "code" or "build" or "fast";
+
+        string? plan = null, agent = null;
+        void Inspect(JsonElement choice)
+        {
+            if (TryArray(choice, "options", out var group))
+            {
+                foreach (var entry in group.EnumerateArray()) Inspect(entry);
+                return;
+            }
+            var id = TryOptionId(choice, configId is null ? "id" : "value");
+            if (string.IsNullOrWhiteSpace(id)) return;
+            var name = TryString(choice, "name")?.Trim().ToLowerInvariant();
+            var key = id.Trim().ToLowerInvariant();
+            if (IsPlanToken(key) || IsPlanToken(name)) plan ??= id;
+            else if (IsAgentToken(key) || IsAgentToken(name)) agent ??= id;
+        }
+        foreach (var choice in choices.EnumerateArray()) Inspect(choice);
+        if (plan is null) return null;
+        // Keep the CLI's original permission policy when returning from Plan; never pick a bypass mode.
+        return new AcpSessionMode(
+            configId,
+            plan,
+            current is { Length: > 0 } && current != plan ? current : agent,
+            restoreAfterPlan: current == plan);
     }
 
     public static AcpSessionUpdateEvent? ParseSessionUpdate(JsonElement @params)
