@@ -19,6 +19,7 @@ internal static class AiWebSearchChecks
         };
         var chatOn = WebSearchHosted.Decide(declared, ModelProtocols.Chat, true);
         var responsesOn = WebSearchHosted.Decide(declared, ModelProtocols.Responses, true);
+        var geminiOn = WebSearchHosted.Decide(declared, ModelProtocols.Gemini, true);
         var switched = WebSearchHosted.Decide(declared, ModelProtocols.Chat, false);
         var ask = WebSearchHosted.Decide(declared, ModelProtocols.Chat, true);
         var plan = WebSearchHosted.Decide(declared, ModelProtocols.Chat, true);
@@ -45,7 +46,7 @@ internal static class AiWebSearchChecks
         var oauthOff = WebSearchHosted.DecideForProvider(openAiOAuth, ModelProtocols.Responses, false);
         var oauthWrongWire = WebSearchHosted.DecideForProvider(openAiOAuth, ModelProtocols.Chat, true);
         var apiKeySearch = WebSearchHosted.DecideForProvider(openAiApiKey, ModelProtocols.Responses, true);
-        if (chatOn.Verdict != WebSearchHostedVerdict.On || chatOn.WireField != WebSearchHosted.ChatWireField || responsesOn.Verdict != WebSearchHostedVerdict.On || responsesOn.WireField != WebSearchHosted.ResponsesWireField || switched.Verdict != WebSearchHostedVerdict.SwitchedOff || ask.Verdict != WebSearchHostedVerdict.On || plan.Verdict != WebSearchHostedVerdict.On || silent.Verdict != WebSearchHostedVerdict.NotDeclared || oauthSearch.Verdict != WebSearchHostedVerdict.On || oauthSearch.WireField != WebSearchHosted.ResponsesWireField || oauthOff.Verdict != WebSearchHostedVerdict.SwitchedOff || oauthWrongWire.Verdict != WebSearchHostedVerdict.NotDeclared || apiKeySearch.Verdict != WebSearchHostedVerdict.NotDeclared)
+        if (chatOn.Verdict != WebSearchHostedVerdict.On || chatOn.WireField != WebSearchHosted.ChatWireField || responsesOn.Verdict != WebSearchHostedVerdict.On || responsesOn.WireField != WebSearchHosted.ResponsesWireField || geminiOn.Verdict != WebSearchHostedVerdict.On || geminiOn.WireField != WebSearchHosted.GoogleSearchWireField || switched.Verdict != WebSearchHostedVerdict.SwitchedOff || ask.Verdict != WebSearchHostedVerdict.On || plan.Verdict != WebSearchHostedVerdict.On || silent.Verdict != WebSearchHostedVerdict.NotDeclared || oauthSearch.Verdict != WebSearchHostedVerdict.On || oauthSearch.WireField != WebSearchHosted.ResponsesWireField || oauthOff.Verdict != WebSearchHostedVerdict.SwitchedOff || oauthWrongWire.Verdict != WebSearchHostedVerdict.NotDeclared || apiKeySearch.Verdict != WebSearchHostedVerdict.NotDeclared)
             throw new Exception("The hosted-search decision table answered one of its three questions wrong.");
         Console.WriteLine("PASS: hosted search requires opt-in; OpenAI OAuth gets Responses search while API keys and other routes stay explicit.");
         // Each refusal has to say what would change it, because the ordinary failure of this feature is silence: the
@@ -58,28 +59,44 @@ internal static class AiWebSearchChecks
         if (ProviderServerTools.DeclaresWebSearch(["Web_Search"]) || ProviderServerTools.DeclaresWebSearch(null) || !ProviderServerTools.DeclaresWebSearch([ProviderServerTools.WebSearch]))
             throw new Exception("The server-tool kind matched by something other than an ordinal string.");
         Console.WriteLine("PASS: the server-tool kind matches by ordinal, since it goes on the wire verbatim.");
-        // The default, stated as data rather than as intent: nothing in the shipped catalog offers this. The field and
-        // the decision table exist so that flipping it is a manifest line, but a flip is a bet about a gateway that
-        // only a real request can settle — so the assertion is what keeps it off until one has been made.
+        // Only presets whose native search grounding has been wired (currently google-gemini) may declare
+        // serverTools in the shipped catalog; every other preset stays explicit opt-in.
+        var sawGeminiHostedSearch = false;
         foreach (var preset in AiProviderManifest.Load())
         {
-            if (preset.ServerTools.Count > 0)
+            if (preset.Id == "google-gemini")
+            {
+                if (!preset.ServerTools.SequenceEqual([ProviderServerTools.WebSearch]))
+                    throw new Exception($"The google-gemini preset must declare only web_search, saw ({string.Join(", ", preset.ServerTools)}).");
+                sawGeminiHostedSearch = true;
+            }
+            else if (preset.ServerTools.Count > 0)
+            {
                 throw new Exception($"The preset '{preset.Id}' declares serverTools ({string.Join(", ", preset.ServerTools)}) " + "while no gateway has been measured honouring them.");
+            }
         }
+        if (!sawGeminiHostedSearch)
+            throw new Exception("The google-gemini preset was missing from the shipped catalog.");
 
-        Console.WriteLine("PASS: no shipped preset declares a server-side tool, so nothing is offered by default.");
+        Console.WriteLine("PASS: only google-gemini declares hosted web_search by default; all other shipped presets declare none.");
         static ModelProvider WireLine(string protocol, bool declares) => new()
         {
             IsCustom = true,
             Name = "Wire fixture",
-            BaseUrl = string.Equals(protocol, ModelProtocols.Responses, StringComparison.Ordinal) ? "http://127.0.0.1:9/responses" : "http://127.0.0.1:9/v1",
+            BaseUrl = protocol switch
+            {
+                ModelProtocols.Responses => "http://127.0.0.1:9/responses",
+                ModelProtocols.Gemini => "http://127.0.0.1:9/v1beta",
+                _ => "http://127.0.0.1:9/v1",
+            },
+            Protocol = protocol == ModelProtocols.Gemini ? ModelProtocols.Gemini : null,
             Model = "m",
             ServerTools = declares ? [ProviderServerTools.WebSearch] : [],
             ModelCapabilities = new Dictionary<string, ModelCapabilities>(StringComparer.Ordinal)
             {
                 ["m"] = new ModelCapabilities
                 {
-                    EndpointTypes = string.Equals(protocol, ModelProtocols.Responses, StringComparison.Ordinal) ? [ModelProtocols.Responses] : [ModelProtocols.Chat],
+                    EndpointTypes = [protocol],
                 },
             },
         };
@@ -138,6 +155,13 @@ internal static class AiWebSearchChecks
         if (!responsesBody.Contains(PredictedNeedle(responsesOn.WireField), StringComparison.Ordinal) || !responsesBody.Contains("\"name\":\"web_fetch\"", StringComparison.Ordinal))
             throw new Exception($"The responses bridge did not add the tool entry the table predicts " + $"(predicted {responsesOn.WireField}, looking for {PredictedNeedle(responsesOn.WireField)}). " + $"Body: {responsesBody}");
         Console.WriteLine("PASS: on the responses line it lands as a tools[] entry beside the function definitions.");
+        var geminiBody = await BodyFor(WireLine(ModelProtocols.Gemini, true), WithDeclaration(true), question);
+        if (!geminiBody.Contains("\"googleSearch\":{", StringComparison.Ordinal)
+            || !geminiBody.Contains("\"functionDeclarations\"", StringComparison.Ordinal)
+            || !geminiBody.Contains("\"name\":\"web_fetch\"", StringComparison.Ordinal)
+            || !geminiBody.Contains("\"includeServerSideToolInvocations\":true", StringComparison.Ordinal))
+            throw new Exception($"The Gemini native bridge did not combine googleSearch, functionDeclarations, and includeServerSideToolInvocations. Body: {geminiBody}");
+        Console.WriteLine("PASS: on the Gemini native line it lands in tools[].googleSearch beside functionDeclarations with includeServerSideToolInvocations.");
         var quietBody = await BodyFor(WireLine(ModelProtocols.Chat, false), new ChatOptions { Tools = [AIFunctionFactory.Create(() => Task.FromResult("page"), new AIFunctionFactoryOptions { Name = "web_fetch", Description = "read one page" })], }, question);
         if (quietBody.Contains("web_search", StringComparison.OrdinalIgnoreCase))
             throw new Exception($"An undeclared provider still sent a search field: {quietBody}");

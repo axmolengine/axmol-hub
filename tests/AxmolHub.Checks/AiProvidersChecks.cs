@@ -11,6 +11,8 @@ internal static class AiProvidersChecks
     {
         await ClaudeMessagesChecks.RunAsync();
         await CheckAnthropicCatalogAsync();
+        await GoogleGeminiNativeChecks.RunAsync();
+        await CheckGeminiCatalogAsync();
         await RequestRetryChecks.RunAsync();
         await ChatStreamCompatibilityChecks.RunAsync(root);
         void AssertRejects(Action action, string name)
@@ -982,6 +984,50 @@ internal static class AiProvidersChecks
                && !AnthropicModelsSource.Parse(Encoding.UTF8.GetBytes("""{"data":[],"has_more":true}""")).Reachable
                && AnthropicModelsSource.Parse(Encoding.UTF8.GetBytes("""{"data":[],"has_more":false}""")).Reachable,
             "incomplete or malformed Anthropic catalogs fail instead of publishing a partial list, while an empty catalog is valid");
+    }
+
+    // Verify official Google Gemini preset defaults and custom Gemini relay catalog path preservation.
+    private static async Task CheckGeminiCatalogAsync()
+    {
+        var provider = AiProviderManifest.CreateBuiltIn("google-gemini")
+            ?? throw new Exception("Google Gemini preset is missing.");
+        Assert(provider.Protocol == ModelProtocols.Gemini
+               && provider.BaseUrl == "https://generativelanguage.googleapis.com/v1beta"
+               && ProviderServerTools.DeclaresWebSearch(provider.ServerTools)
+               && ModelCapabilitySources.For(provider) is GeminiModelsSource
+               && provider.Models.Count == 0,
+            "the official Google Gemini preset uses native gemini protocol, v1beta endpoint, hosted web_search, and GeminiModelsSource");
+
+        var relay = new ModelProvider
+        {
+            Id = "custom-gemini-catalog",
+            Name = "Gemini Relay",
+            IsCustom = true,
+            BaseUrl = "https://relay.test/gemini/v1beta",
+            Protocol = ModelProtocols.Gemini,
+            CustomHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["X-Relay"] = "1" },
+        };
+        Assert(ModelCapabilitySources.For(relay) is GeminiModelsSource,
+            "custom Gemini native providers default to GeminiModelsSource");
+        using var handler = new BrowserKeyHandler((request, _) =>
+        {
+            if (request.Method != HttpMethod.Get
+                || request.RequestUri!.AbsolutePath != "/gemini/v1beta/models"
+                || !request.Headers.TryGetValues("X-Relay", out var relayHeaders) || relayHeaders.Single() != "1")
+                throw new Exception("Custom Gemini relay catalog lost its path prefix or custom headers: " + request.RequestUri);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"models":[{"name":"models/gemini-4-neon","supportedGenerationMethods":["generateContent"],"inputTokenLimit":1048576,"outputTokenLimit":65536,"thinking":true}]}""",
+                    Encoding.UTF8, "application/json"),
+            });
+        });
+        using var http = new HttpClient(handler);
+        var result = await ModelList.FetchAsync(http, relay);
+        Assert(result.Reachable && result.Models.SequenceEqual(["gemini-4-neon"])
+               && result.Capabilities.TryGetValue("gemini-4-neon", out var caps)
+               && caps is { ContextTokens: 1048576, MaxOutputTokens: 65536 },
+            "custom keyless Gemini relay catalog preserves base path prefix and parses Gemini models");
     }
 
     // Exercise the new provider dialect through the same listener used by OrcaRouter, without real accounts.

@@ -131,14 +131,16 @@ public sealed class ModelCapabilities
             if (EndpointTypes.Contains(ModelProtocols.Chat, StringComparer.OrdinalIgnoreCase)) return ModelProtocols.Chat;
             if (EndpointTypes.Contains(ModelProtocols.Responses, StringComparer.OrdinalIgnoreCase)) return ModelProtocols.Responses;
             if (EndpointTypes.Contains(ModelProtocols.Messages, StringComparer.OrdinalIgnoreCase)) return ModelProtocols.Messages;
+            if (EndpointTypes.Contains(ModelProtocols.Gemini, StringComparer.OrdinalIgnoreCase)) return ModelProtocols.Gemini;
             return ModelProtocols.Chat;
         }
     }
 }
 
 /// <summary>
-/// The three request wires Hub speaks through SDK connectors: OpenAI chat/completions and Responses,
-/// and Anthropic Messages. Their bodies and authentication differ; the provider's declaration chooses them.
+/// The request wires Hub speaks through SDK connectors: OpenAI chat/completions and Responses,
+/// Anthropic Messages, and Google Gemini native generateContent (plus local ACP stdio hosting).
+/// Their bodies and authentication differ; the provider's declaration chooses them.
 ///
 /// <para>The choice belongs next to the <b>model</b> because GitHub Copilot serves its gpt-5 class models on
 /// <c>/responses</c> while keeping others on <c>/chat/completions</c>, and a model can appear on both. What
@@ -157,6 +159,10 @@ public static class ModelProtocols
     /// credential scheme — <c>x-api-key</c> plus a version header, not a bearer token.</summary>
     public const string Messages = "messages";
 
+    /// <summary>Google Gemini native <c>generateContent</c> / <c>streamGenerateContent</c> API using
+    /// <c>x-goog-api-key</c> and Google's official <c>Google.GenAI</c> SDK.</summary>
+    public const string Gemini = "gemini";
+
     /// <summary>Agent Client Protocol (ACP) over stdio JSON-RPC 2.0. Hosted as a local CLI subprocess rather than an
     /// HTTP SDK wire.</summary>
     public const string Acp = "acp";
@@ -171,7 +177,7 @@ public static class ModelProtocols
     /// was declared", which is the case that keeps every provider shipping today on chat.</para>
     /// </summary>
     public static bool IsKnown(string? protocol)
-        => protocol is Chat or Responses or Messages or Acp;
+        => protocol is Chat or Responses or Messages or Gemini or Acp;
 }
 
 /// <summary>One provider's answer to "which models do you serve, and what can each of them do?".</summary>

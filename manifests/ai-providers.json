@@ -71,7 +71,7 @@
       "name": "Google Gemini",
       "description": "Google's Gemini Developer API. Paste a Gemini API key from Google AI Studio and choose a model.",
       "descriptionZh": "Google 的 Gemini Developer API。粘贴在 Google AI Studio 获取的 Gemini API Key，然后选择模型。",
-      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "apiKeyUrl": "https://aistudio.google.com/apikey",
       "defaultEnabledModels": ["gemini-4-neon", "gemini-4-carbon"],
       "maxContextTokens": 1048576,
@@ -85,7 +85,8 @@
           "defaultEffort": "high"
         }
       },
-      "protocol": "chat",
+      "protocol": "gemini",
+      "serverTools": ["web_search"],
       "capabilitySource": "gemini-models",
       "authMethods": ["apiKey"],
       "keyValidation": { "type": "geminiModels" }

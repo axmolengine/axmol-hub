@@ -31,6 +31,10 @@ public static class ModelCapabilitySources
             foreach (var source in All)
                 if (string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase))
                     return source;
+        if (string.Equals(provider?.Protocol, ModelProtocols.Gemini, StringComparison.OrdinalIgnoreCase))
+            foreach (var source in All)
+                if (source is GeminiModelsSource)
+                    return source;
         return All[0];
     }
 }

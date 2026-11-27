@@ -192,28 +192,18 @@ public sealed class ModelProvider
 
     /// <summary>
     /// The tools this provider's own service can run when a request offers them
-    /// (<see cref="ProviderServerTools"/>). <b>Persisted</b>, and seeded from the manifest only when the saved
-    /// entry says nothing — the one manifest-shaped field a person may want to overrule.
-    ///
-    /// <para><see cref="ExtraHeaders"/> and <see cref="RequestSemantics"/> above are <c>[JsonIgnore]</c> because
-    /// they are facts about the service, and a stale copy in a user file would contradict a manifest correction.
-    /// This is not that kind of fact: whether a gateway honours a hosted search, ignores the field, or answers 400
-    /// to it is a property of <i>the deployment this person is standing on</i>, which nobody but them can test. So
-    /// the file may say it. Nullable rather than an empty list by default because the two cases must stay apart
-    /// after a reload — "written empty: do not offer it" versus "never written: take what the preset says".</para>
+    /// (<see cref="ProviderServerTools"/>). <b>Persisted</b> for custom providers; refreshed from the manifest
+    /// on load for built-in presets so official capabilities stay in sync across upgrades.
     /// </summary>
     public List<string>? ServerTools { get; set; }
 
     /// <summary>
     /// Which request wire this provider's endpoint answers on (<see cref="ModelProtocols"/>), or <c>null</c> when
-    /// nobody declared one. <b>Persisted</b>, and seeded from the manifest only when the saved entry says
-    /// nothing — the same shape as <see cref="ServerTools"/> above, for the same reason: this is a claim about
-    /// the deployment a person is standing on, which is theirs to make and Hub's to honour.
+    /// nobody declared one. <b>Persisted</b> for custom providers; refreshed from the manifest on load for
+    /// built-in presets so official protocol upgrades reach existing installs automatically.
     ///
     /// <para>It outranks the model catalog on purpose. A catalog can say which endpoints a model appears on; only
-    /// a person can say how their mirror of it authenticates. And a hand-edited <c>"chat"</c> on an endpoint that
-    /// is really Anthropic's is a claim that fails loudly on the first message rather than silently re-routing
-    /// someone's credential to a body it was never meant for.</para>
+    /// a person or preset can say how the endpoint authenticates and frames requests.</para>
     /// </summary>
     public string? Protocol { get; set; }
 

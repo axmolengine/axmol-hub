@@ -82,6 +82,9 @@ public static class WebSearchHosted
     /// <summary>The array on the responses body, named by the tool entry it gains.</summary>
     public const string ResponsesWireField = "tools[].type=web_search";
 
+    /// <summary>The tool entry on the native Gemini generateContent body.</summary>
+    public const string GoogleSearchWireField = "tools[].googleSearch";
+
     /// <summary>
     /// OpenAI's signed-in Codex route is fixed to Responses and supports its native hosted search. Keep this
     /// implicit capability scoped to that credential: API keys and compatible gateways still need an explicit
@@ -100,9 +103,13 @@ public static class WebSearchHosted
     /// same way <see cref="ModelCapabilities.Protocol"/> and the client factory do — silence is chat, because every
     /// provider but Copilot publishes nothing about endpoints.</summary>
     public static string WireFieldFor(string? protocol)
-        => string.Equals(protocol, ModelProtocols.Responses, StringComparison.OrdinalIgnoreCase)
-            ? ResponsesWireField
-            : ChatWireField;
+    {
+        if (string.Equals(protocol, ModelProtocols.Responses, StringComparison.OrdinalIgnoreCase))
+            return ResponsesWireField;
+        if (string.Equals(protocol, ModelProtocols.Gemini, StringComparison.OrdinalIgnoreCase))
+            return GoogleSearchWireField;
+        return ChatWireField;
+    }
 
     /// <summary>
     /// The whole table. Read the arguments in the order they bite: a provider that never declared it is not
@@ -122,11 +129,14 @@ public static class WebSearchHosted
                 "hosted search is disabled in this Hub's settings");
 
         var field = WireFieldFor(protocol);
+        var wireName = string.Equals(protocol, ModelProtocols.Responses, StringComparison.OrdinalIgnoreCase)
+            ? ModelProtocols.Responses
+            : string.Equals(protocol, ModelProtocols.Gemini, StringComparison.OrdinalIgnoreCase)
+                ? ModelProtocols.Gemini
+                : ModelProtocols.Chat;
         return new WebSearchHostedDecision(WebSearchHostedVerdict.On, field,
             $"declared by the provider and sent on the {field} field of a "
-            + (string.Equals(protocol, ModelProtocols.Responses, StringComparison.OrdinalIgnoreCase)
-                ? ModelProtocols.Responses
-                : ModelProtocols.Chat)
+            + wireName
             + " request; the endpoint decides when to search and no card can stop it mid-reply");
     }
 

@@ -78,8 +78,8 @@ internal sealed class RetryMetadataPolicy : PipelinePolicy
             static string? String(JsonElement item, string key) => item.TryGetProperty(key, out var field)
                 && field.ValueKind == JsonValueKind.String ? field.GetString() : null;
             scope.StreamFailure = new ProviderResponseException(String(error, "message") ?? "The endpoint failed the response.",
-                String(error, "code") ?? String(error, "type"), ProviderFailure.ReadRetryAfter(envelope)
-                    ?? scope.StreamFailure?.RetryDelay ?? scope.TransportDelay);
+                String(error, "code") ?? String(error, "type") ?? String(error, "status"),
+                ProviderFailure.ReadRetryAfter(envelope) ?? scope.StreamFailure?.RetryDelay ?? scope.TransportDelay);
         }
 
         public override int Read(byte[] buffer, int offset, int count)

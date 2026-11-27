@@ -229,14 +229,52 @@ public sealed class WireLogPolicy : PipelinePolicy
                 }
             }
 
-            var tools = root.TryGetProperty("tools", out var declared) && declared.ValueKind == JsonValueKind.Array
-                ? declared.GetArrayLength()
-                : 0;
-            var maxTokens = root.TryGetProperty("max_tokens", out var cap) ? cap.ToString() : "-";
+            else if (root.TryGetProperty("contents", out var contents) && contents.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in contents.EnumerateArray())
+                {
+                    if (!entry.TryGetProperty("role", out var role) || role.GetString() != "model") continue;
+                    assistant++;
+                    var has = false;
+                    if (entry.TryGetProperty("parts", out var parts) && parts.ValueKind == JsonValueKind.Array)
+                        foreach (var part in parts.EnumerateArray())
+                        {
+                            if (part.TryGetProperty("thought", out var isThought) && isThought.ValueKind == JsonValueKind.True)
+                                has = true;
+                            if (part.TryGetProperty("functionCall", out _))
+                                withToolCalls++;
+                        }
+                    withReasoning += has ? 1 : 0;
+                    lastAssistantHasReasoning = has;
+                }
+            }
+
+            var tools = 0;
+            if (root.TryGetProperty("tools", out var declared) && declared.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in declared.EnumerateArray())
+                {
+                    if (entry.ValueKind == JsonValueKind.Object
+                        && entry.TryGetProperty("functionDeclarations", out var decls)
+                        && decls.ValueKind == JsonValueKind.Array)
+                        tools += decls.GetArrayLength();
+                    else
+                        tools++;
+                }
+            }
+            var hasGenConfig = root.TryGetProperty("generationConfig", out var genConfig)
+                               && genConfig.ValueKind == JsonValueKind.Object;
+            var maxTokens = root.TryGetProperty("max_tokens", out var cap) ? cap.ToString()
+                : hasGenConfig && genConfig.TryGetProperty("maxOutputTokens", out cap) ? cap.ToString() : "-";
             var effort = root.TryGetProperty("reasoning_effort", out var tier) ? tier.GetString()
                 : root.TryGetProperty("output_config", out var output) && output.TryGetProperty("effort", out tier)
+                    ? tier.GetString()
+                : hasGenConfig && genConfig.TryGetProperty("thinkingConfig", out var gemThink)
+                  && gemThink.ValueKind == JsonValueKind.Object
+                  && gemThink.TryGetProperty("thinkingLevel", out tier)
                     ? tier.GetString() : "-";
-            var thinking = root.TryGetProperty("thinking", out var think) ? think.GetRawText() : "-";
+            var thinking = root.TryGetProperty("thinking", out var think) ? think.GetRawText()
+                : hasGenConfig && genConfig.TryGetProperty("thinkingConfig", out think) ? think.GetRawText() : "-";
             WireLog.TryAppendIndex(
                 $"{pair:D4} {Path.GetFileName(url ?? "")} model={Prop(root, "model")} effort={effort} "
                 + $"thinking={thinking} max_tokens={maxTokens} tools={tools} "

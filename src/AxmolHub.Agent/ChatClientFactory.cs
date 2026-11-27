@@ -86,6 +86,7 @@ public static class ChatClientFactory
     {
         Core.ModelProtocols.Responses => "/v1/responses",
         Core.ModelProtocols.Messages => "/v1/messages",
+        Core.ModelProtocols.Gemini => "/v1beta/models/{model}:streamGenerateContent",
         Core.ModelProtocols.Acp => "acp (stdio)",
         _ => "/v1/chat/completions",
     };
@@ -156,12 +157,48 @@ public static class ChatClientFactory
                 Timeout = networkTimeout ?? DefaultNetworkTimeout,
                 // Hub's request retry owns the allowance; a second invisible SDK retry loop would double it.
                 MaxRetries = 0,
-                Handlers = [new AnthropicRequestHandler(provider.Headers, provider.RequestSemantics,
-                    interactionId, maxRetries, onRetryWait, maxInlineRetryWait)],
+                Handlers = [new ProviderHttpRequestHandler(provider.Headers, provider.RequestSemantics,
+                    interactionId, maxRetries, onRetryWait, maxInlineRetryWait,
+                    protectedCredentialHeader: "x-api-key", retryEmptyTypeBadRequest: true)],
                 HttpClient = new System.Net.Http.HttpClient(transport ?? new System.Net.Http.HttpClientHandler(),
                     disposeHandler: transport is null) { Timeout = Timeout.InfiniteTimeSpan },
             };
             return new AnthropicChatClient(anthropic.AsIChatClient(model));
+        }
+
+        if (ProtocolFor(provider, model) == Core.ModelProtocols.Gemini)
+        {
+            var (baseRoot, apiVersion) = Core.GeminiModelsSource.ParseEndpoint(provider.BaseUrl);
+            var effectiveTimeout = networkTimeout ?? DefaultNetworkTimeout;
+            int? timeoutMs = effectiveTimeout > TimeSpan.Zero && effectiveTimeout != Timeout.InfiniteTimeSpan
+                ? (int)Math.Min(int.MaxValue, effectiveTimeout.TotalMilliseconds)
+                : null;
+            var handler = new ProviderHttpRequestHandler(
+                provider.Headers, provider.RequestSemantics, interactionId, maxRetries,
+                onRetryWait, maxInlineRetryWait, protectedCredentialHeader: "x-goog-api-key",
+                retryEmptyTypeBadRequest: false, disposeInnerHandler: transport is null)
+            {
+                InnerHandler = transport ?? new System.Net.Http.HttpClientHandler(),
+            };
+            var google = new Google.GenAI.Client(
+                enterprise: false,
+                apiKey: provider.ApiKey ?? "not-needed",
+                httpOptions: new Google.GenAI.Types.HttpOptions
+                {
+                    BaseUrl = baseRoot,
+                    ApiVersion = apiVersion,
+                    Timeout = timeoutMs,
+                    // Hub's request retry owns the allowance; disable the SDK's 5-attempt retry loop.
+                    RetryOptions = new Google.GenAI.Types.HttpRetryOptions { Attempts = 1 },
+                },
+                clientOptions: new Google.GenAI.Types.ClientOptions
+                {
+                    HttpClientFactory = () => new System.Net.Http.HttpClient(handler, disposeHandler: true)
+                    {
+                        Timeout = Timeout.InfiniteTimeSpan,
+                    },
+                });
+            return new GoogleGenAiChatClient(google, google.AsIChatClient(model), reasoning);
         }
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.

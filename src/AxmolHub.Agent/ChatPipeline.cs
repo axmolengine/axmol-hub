@@ -284,7 +284,9 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
                     batch.AddRange(asked
                         .Select(content => InfoOf(content, said, asked[0].CallId,
                             claudeThinking.Count > 0 ? [.. claudeThinking] : null, claudeContent,
-                            reasoning?.GetThoughtSignature(content.CallId))));
+                            reasoning?.GetThoughtSignature(content.CallId)
+                                ?? (content.AdditionalProperties?.TryGetValue(ReasoningTable.ThoughtSignatureKey, out var sigObj) == true
+                                    ? sigObj as string : null))));
                     claudeThinking.Clear();
                     claudeContent = null;
                     // Recorded first, every call of the response, and only then judged. The order is not tidiness:
@@ -720,6 +722,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
     public static bool DeclinedSpeedTier(string? message)
         => message is { Length: > 0 }
            && (message.Contains("service_tier", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("serviceTier", StringComparison.OrdinalIgnoreCase)
                || message.Contains("speed_tier", StringComparison.OrdinalIgnoreCase)
                || message.Contains("ultrafast", StringComparison.OrdinalIgnoreCase)
                || message.Contains("fast mode", StringComparison.OrdinalIgnoreCase)
@@ -1062,6 +1065,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         var options = new ChatOptions();
         var protocol = ChatClientFactory.ProtocolFor(provider, modelName);
         var messagesWire = protocol == ModelProtocols.Messages;
+        var geminiWire = protocol == ModelProtocols.Gemini;
         var any = false;
         var modelReasoning = ModelCatalog.ReasoningFor(provider, modelName);
         // The switch that turns reasoning on is asked for on its own: a model whose catalog declared its tiers
@@ -1125,7 +1129,8 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
         }
 
-        var wireSpeed = SpeedTierPolicy.WireParameter(provider, modelName, speedTier);
+        var effectiveModel = modelName ?? provider.Model;
+        var wireSpeed = SpeedTierPolicy.WireParameter(provider, effectiveModel, speedTier);
         if (wireSpeed is { } speedParam)
         {
             requestOptions ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
@@ -1157,6 +1162,30 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
             }
         }
 
+        if (geminiWire)
+        {
+            var resolvedSpeed = SpeedTierPolicy.ResolveForModel(provider, effectiveModel, speedTier);
+            Google.GenAI.Types.ServiceTier? nativeServiceTier = resolvedSpeed switch
+            {
+                ChatSpeedTiers.Flex => Google.GenAI.Types.ServiceTier.Flex,
+                ChatSpeedTiers.Fast => Google.GenAI.Types.ServiceTier.Priority,
+                _ => (Google.GenAI.Types.ServiceTier?)null,
+            };
+            var thinkingConfig = BuildGeminiThinkingConfig(effectiveModel, effectiveReasoningEffort);
+            // Clear M.E.AI Reasoning so GoogleGenAIChatClient does not overwrite ThinkingConfig with its
+            // fallback mapping (which folds ExtraHigh into High and omits IncludeThoughts).
+            options.Reasoning = null;
+            if (thinkingConfig is not null || nativeServiceTier is not null)
+            {
+                options.RawRepresentationFactory = _ => new Google.GenAI.Types.GenerateContentConfig
+                {
+                    ThinkingConfig = thinkingConfig,
+                    ServiceTier = nativeServiceTier,
+                };
+                any = true;
+            }
+        }
+
         // One factory, one patch, both fields written into it. The pinned OpenAI SDK has no public
         // <c>StreamOptions</c> property on <c>ChatCompletionOptions</c> — measured, not assumed: reflection over
         // the assembly's public instance properties finds <c>Patch</c> and nothing stream-shaped, while its own
@@ -1164,7 +1193,7 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         // goes through the same JSON patch as the reasoning fields that were never modelled either, and the two
         // have to share one assignment: a second factory would silently throw the reasoning patch away.
         var askForStreamUsage = provider.WantsStreamUsage;
-        if (!messagesWire && (requestOptions is { Count: > 0 } || askForStreamUsage))
+        if (!messagesWire && !geminiWire && (requestOptions is { Count: > 0 } || askForStreamUsage))
         {
             // The same declared fields, handed to whichever wire ends up building the body. The patch below is the
             // only way to reach an OpenAI chat body's top level from a connector-built client — which is why it
@@ -1245,6 +1274,46 @@ public sealed class ChatPipeline(IChatClient client, ReasoningTable? reasoning =
         }
 
         return any ? options : null;
+    }
+
+    private static Google.GenAI.Types.ThinkingConfig? BuildGeminiThinkingConfig(string? modelName, string? effort)
+    {
+        if (string.IsNullOrWhiteSpace(effort)
+            || string.Equals(effort, ChatReasoningEfforts.Default, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var leaf = modelName is { Length: > 0 } name
+            ? name[(name.LastIndexOf('/') + 1)..].Trim()
+            : "";
+        if (leaf.StartsWith("gemini-2.5-", StringComparison.OrdinalIgnoreCase))
+        {
+            var budget = effort.Trim().ToLowerInvariant() switch
+            {
+                ChatReasoningEfforts.Low => 1024,
+                ChatReasoningEfforts.Medium => 8192,
+                _ => 24576,
+            };
+            return new Google.GenAI.Types.ThinkingConfig
+            {
+                IncludeThoughts = true,
+                ThinkingBudget = budget,
+            };
+        }
+
+        var level = effort.Trim().ToLowerInvariant() switch
+        {
+            ChatReasoningEfforts.Low => Google.GenAI.Types.ThinkingLevel.Low,
+            ChatReasoningEfforts.Medium => Google.GenAI.Types.ThinkingLevel.Medium,
+            ChatReasoningEfforts.High => Google.GenAI.Types.ThinkingLevel.High,
+            ChatReasoningEfforts.XHigh or ChatReasoningEfforts.Max or ChatReasoningEfforts.Ultra
+                => Google.GenAI.Types.ThinkingLevel.Xhigh,
+            _ => Google.GenAI.Types.ThinkingLevel.High,
+        };
+        return new Google.GenAI.Types.ThinkingConfig
+        {
+            IncludeThoughts = true,
+            ThinkingLevel = level,
+        };
     }
 
     /// <summary>

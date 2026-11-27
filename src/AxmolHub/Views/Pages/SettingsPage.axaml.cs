@@ -2107,6 +2107,7 @@ public partial class SettingsPage : UserControl
                 ModelProtocols.Chat => 0,
                 ModelProtocols.Responses => 1,
                 ModelProtocols.Messages => 2,
+                ModelProtocols.Gemini => 3,
                 _ => -1,
             },
             ItemsSource = new[]
@@ -2114,6 +2115,7 @@ public partial class SettingsPage : UserControl
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireChat"), Tag = ModelProtocols.Chat },
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireResponses"), Tag = ModelProtocols.Responses },
                 new ComboBoxItem { Content = HubStrings.Get("ProviderWireMessages"), Tag = ModelProtocols.Messages },
+                new ComboBoxItem { Content = HubStrings.Get("ProviderWireGemini"), Tag = ModelProtocols.Gemini },
             },
         };
         var apiKey = new TextBox

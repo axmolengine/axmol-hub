@@ -35,6 +35,9 @@ public static class ProviderFailure
             var status = current switch
             {
                 Anthropic.Exceptions.AnthropicApiException result => (int?)result.StatusCode,
+                // Google.GenAI.ApiException subclasses HttpRequestException without setting the base StatusCode;
+                // match it first so 4xx/401/403 errors are never misclassified as status-less network failures.
+                Google.GenAI.ApiException api when api.StatusCode > 0 => api.StatusCode,
                 System.ClientModel.ClientResultException result => (int?)result.Status,
                 System.Net.Http.HttpRequestException request => (int?)request.StatusCode,
                 _ => null,
@@ -47,7 +50,20 @@ public static class ProviderFailure
     public static bool AuthenticationFailed(Exception exception)
         => StatusOf(exception) is 401 or 403
            || exception is ProviderResponseException { ErrorCode: "invalid_api_key" or "authentication_error"
-               or "permission_denied" or "unauthorized" or "forbidden" };
+               or "permission_denied" or "unauthorized" or "forbidden" or "UNAUTHENTICATED" or "PERMISSION_DENIED" }
+           || IsGoogleApiKeyRejected(exception);
+
+    private static bool IsGoogleApiKeyRejected(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is Google.GenAI.ApiException { StatusCode: 400 } api
+                && (api.Message.Contains("API_KEY_INVALID", StringComparison.Ordinal)
+                    || api.Message.Contains("API_KEY_EXPIRED", StringComparison.Ordinal)))
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>A provider refusal that may be retried within the goal's bounded allowance.
     /// Stream errors retain their origin and code even when the transport status was 200; arbitrary local
@@ -90,7 +106,8 @@ public static class ProviderFailure
             // permanent refusal. Unknown local exceptions are never treated as provider errors.
             return stream.ErrorCode is not ("invalid_request_error" or "invalid_api_key" or "authentication_error"
                 or "permission_denied" or "unauthorized" or "forbidden" or "model_not_found" or "not_found"
-                or "content_filter" or "context_length_exceeded");
+                or "content_filter" or "context_length_exceeded"
+                or "INVALID_ARGUMENT" or "NOT_FOUND" or "FAILED_PRECONDITION" or "UNAUTHENTICATED" or "PERMISSION_DENIED");
         return exception is System.Net.Http.HttpRequestException or IOException or TimeoutException
             or Anthropic.Exceptions.AnthropicIOException;
     }

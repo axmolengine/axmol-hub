@@ -171,7 +171,10 @@ internal sealed partial class ChatProviderCoordinator
             if (builtIn is not null)
             {
                 provider.Name = provider.Name.Length == 0 ? builtIn.Name : provider.Name;
-                provider.BaseUrl = provider.BaseUrl.Length == 0 ? builtIn.BaseUrl : provider.BaseUrl;
+                // Built-in presets are pinned to the manifest so official endpoint, wire protocol, and
+                // native server-tool upgrades reach existing installs without one-off migration code.
+                // Users needing a different URL, protocol, or relay add a custom provider instead.
+                provider.BaseUrl = builtIn.BaseUrl;
                 provider.Model = provider.Model.Length == 0 ? builtIn.Model : provider.Model;
                 provider.Affiliate = builtIn.Affiliate;
                 provider.ReferralUrl ??= builtIn.ReferralUrl;
@@ -192,21 +195,8 @@ internal sealed partial class ChatProviderCoordinator
                 provider.RequestSemantics = builtIn.RequestSemantics;
                 provider.WebToolsBackend = provider.WebToolsBackend.Length == 0
                     ? builtIn.WebToolsBackend : provider.WebToolsBackend;
-                // ??= on purpose, unlike the three lines above: a hosted tool is a claim about the deployment this
-                // person is standing on, and they are the only one who can test it. The manifest is the seed.
-                // The `?? []` is for the compiler, not for a real case — `CreateBuiltIn` always hands over a list —
-                // but the copy is what keeps a provider from sharing the manifest's own list.
-                provider.ServerTools ??= [.. builtIn.ServerTools ?? []];
-                // ??= for the same reason as ServerTools: the wire is a claim about the deployment this person is
-                // standing on, so a saved declaration survives the manifest and a manifest-only change still
-                // reaches an install that never said anything. An unknown value never gets here — the manifest
-                // filters it through ModelProtocols.IsKnown when it projects the entry.
-                provider.Protocol ??= builtIn.Protocol;
-                // = and not ??=, the other way round from ServerTools above: this is what the shipped preset says
-                // about the models it lists, not a claim about this person's deployment, so a correction in the
-                // manifest has to reach an install that already stored a provider row. Nothing personal lives here
-                // for it to overwrite — a person overrules a preset through provider.Protocol, or by naming one
-                // model's wire in the manifest's modelProtocols table.
+                provider.ServerTools = [.. builtIn.ServerTools ?? []];
+                provider.Protocol = builtIn.Protocol;
                 provider.DeclaredProtocols = builtIn.DeclaredProtocols;
                 // ??= and not = : a persisted number is now a deliberate human setting — except where nothing was
                 // ever stored, which is what made an install run every model against 8192 while its own gateway

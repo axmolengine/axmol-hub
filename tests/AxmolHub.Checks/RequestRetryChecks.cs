@@ -84,9 +84,9 @@ internal static class RequestRetryChecks
         IReadOnlyList<ChatTurn> summaryHistory = [ChatTurn.User("summarize this history"),
             ChatTurn.FunctionCall("prior", "probe", "{}", reasoning: "original reasoning"),
             ChatTurn.FunctionResult("prior", "read"), ChatTurn.Assistant("prior answer"), ChatTurn.User("continue")];
-        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on all three wires. A summary
+        // Actual SDK HTTP attempts and SSE error envelopes must share one counter, on all four wires. A summary
         // retains its historical reasoning through recovery and forbids new calls without dropping schemas.
-        foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses, ModelProtocols.Messages })
+        foreach (var protocol in new[] { ModelProtocols.Chat, ModelProtocols.Responses, ModelProtocols.Messages, ModelProtocols.Gemini })
         {
             provider.Protocol = protocol;
             provider.Model = "deepseek-flash";
@@ -113,10 +113,21 @@ internal static class RequestRetryChecks
                     ? !hasCacheKey || cacheKey.GetString() != sessionId
                     : hasCacheKey)
                     throw new Exception("The session cache key was lost across Responses retries or leaked to another wire.");
-                var toolChoice = root.GetProperty("tool_choice");
-                if ((protocol == ModelProtocols.Messages ? toolChoice.GetProperty("type").GetString() : toolChoice.GetString()) != "none"
-                    || root.GetProperty("tools").GetArrayLength() != 1)
-                    throw new Exception("A summary could select new tools or lost its historical tool schemas.");
+                if (protocol == ModelProtocols.Gemini)
+                {
+                    var mode = root.GetProperty("toolConfig").GetProperty("functionCallingConfig")
+                        .GetProperty("mode").GetString();
+                    var declCount = root.GetProperty("tools")[0].GetProperty("functionDeclarations").GetArrayLength();
+                    if (mode != "NONE" || declCount != 1)
+                        throw new Exception("A Gemini summary could select new tools or lost its historical tool schemas.");
+                }
+                else
+                {
+                    var toolChoice = root.GetProperty("tool_choice");
+                    if ((protocol == ModelProtocols.Messages ? toolChoice.GetProperty("type").GetString() : toolChoice.GetString()) != "none"
+                        || root.GetProperty("tools").GetArrayLength() != 1)
+                        throw new Exception("A summary could select new tools or lost its historical tool schemas.");
+                }
                 if (protocol == ModelProtocols.Chat)
                 {
                     var messages = root.GetProperty("messages").EnumerateArray().ToList();
@@ -128,7 +139,7 @@ internal static class RequestRetryChecks
                 }
             }
             if (wire.Attempts != 3 || !waits.SequenceEqual(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7) }))
-                throw new Exception($"HTTP/SSE budget or Retry-After drifted: {wire.Attempts}, {string.Join(',', waits)}.");
+                throw new Exception($"HTTP/SSE budget or Retry-After drifted ({protocol}): {wire.Attempts}, {string.Join(',', waits)}.");
         }
         // A rebuilt reasoning-only segment must not buy a fresh HTTP/SSE allowance. The same client resets
         // that allowance only for the next model request after a successful tool-call response.

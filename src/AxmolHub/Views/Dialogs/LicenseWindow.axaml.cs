@@ -39,6 +39,7 @@ public partial class LicenseWindow : Window
         var content = new StringBuilder();
         AppendFile(content, licensesDirectory, "PackageLicenses.txt", null);
         AppendFile(content, licensesDirectory, "Anthropic.txt", "Anthropic — Apache-2.0 license text");
+        AppendFile(content, licensesDirectory, "Google.GenAI.txt", "Google.GenAI and Google.Apis.* — Apache-2.0 license text");
         AppendFile(content, licensesDirectory, "ANGLE.txt", "ANGLE — BSD-3-Clause license text");
         AppendFile(content, licensesDirectory, "Velopack.txt", "Velopack — MIT license text");
         AppendFile(content, licensesDirectory, "PipeWire.txt", "PipeWire / SPA headers — MIT license text");

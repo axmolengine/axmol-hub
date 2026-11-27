@@ -4,10 +4,20 @@ using AxmolHub.Core;
 
 namespace AxmolHub.Agent;
 
-/// <summary>The Messages transport boundary: shared provider headers, selection validation, bounded HTTP
-/// retries and byte recording. The SDK's own retry loop is disabled so each request spends one allowance.</summary>
-internal sealed class AnthropicRequestHandler(IReadOnlyDictionary<string, string> headers, string? semantics,
-    string? interactionId, int maxRetries, Action<int, TimeSpan>? onWait, TimeSpan? maxInlineWait) : DelegatingHandler
+/// <summary>Shared HTTP transport boundary for SDKs that send through <see cref="HttpClient"/> rather than
+/// <c>System.ClientModel</c> pipelines (Anthropic Messages and Google Gemini native): provider headers,
+/// selection validation, bounded HTTP retries, SSE error observation, and byte recording. Each SDK's own retry
+/// loop is disabled so every logical request spends one shared allowance.</summary>
+internal sealed class ProviderHttpRequestHandler(
+    IReadOnlyDictionary<string, string> headers,
+    string? semantics,
+    string? interactionId,
+    int maxRetries,
+    Action<int, TimeSpan>? onWait,
+    TimeSpan? maxInlineWait,
+    string protectedCredentialHeader,
+    bool retryEmptyTypeBadRequest = false,
+    bool disposeInnerHandler = true) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
     {
@@ -31,7 +41,7 @@ internal sealed class AnthropicRequestHandler(IReadOnlyDictionary<string, string
             foreach (var (name, value) in ProviderRequestPolicy.Headers(headers, semantics, interactionId,
                 body is null ? null : Encoding.UTF8.GetString(body)))
             {
-                if (name.Equals("x-api-key", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.Equals(protectedCredentialHeader, StringComparison.OrdinalIgnoreCase)) continue;
                 attempt.Headers.Remove(name);
                 attempt.Headers.TryAddWithoutValidation(name, value);
             }
@@ -60,10 +70,9 @@ internal sealed class AnthropicRequestHandler(IReadOnlyDictionary<string, string
             {
                 var error = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
                 if (pair >= 0) WireLog.TryWrite($"{pair:D4}.response.log", error);
-                // A relay that refuses with no error type is having an upstream moment, not reading the body:
-                // the identical request was captured returning 200, 400 and 200 again. Two retries, then it stays
-                // a failure, so a genuinely wrong parameter cannot turn into a paid loop.
-                var transient = (int)response.StatusCode == 400
+                // Some Messages relays answer 400 with no error type during an upstream hiccup. Two retries, then
+                // it stays a failure so a genuinely wrong parameter cannot turn into a paid loop.
+                var transient = retryEmptyTypeBadRequest && (int)response.StatusCode == 400
                     && scope.Retries < 2 && ProviderFailure.TransientRefusalWithoutType(error);
                 if (scope.CanRetry && (transient || ProviderFailure.RetryableStatus((int)response.StatusCode))
                     && !ProviderFailure.QuotaExhausted(error))
@@ -88,5 +97,11 @@ internal sealed class AnthropicRequestHandler(IReadOnlyDictionary<string, string
             }
             return response;
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        // Keep caller-owned test transports alive when the HTTP client is disposed.
+        if (disposeInnerHandler) base.Dispose(disposing);
     }
 }

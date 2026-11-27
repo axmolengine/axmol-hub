@@ -30,6 +30,10 @@ RELEASE PACKAGE INVENTORY
 • ColorDocument.Avalonia 12.0.2 — MIT
 • ColorTextBlock.Avalonia 12.0.2 — MIT
 • ExCSS 4.3.1 — MIT
+• Google.Apis 1.69.0 — Apache-2.0 (see Google.GenAI.txt)
+• Google.Apis.Auth 1.69.0 — Apache-2.0 (see Google.GenAI.txt)
+• Google.Apis.Core 1.69.0 — Apache-2.0 (see Google.GenAI.txt)
+• Google.GenAI 2.2.0 — Apache-2.0 (see Google.GenAI.txt)
 • HarfBuzzSharp 8.3.1.3 — MIT
 • HarfBuzzSharp.NativeAssets.Linux 8.3.1.3 — MIT
 • HarfBuzzSharp.NativeAssets.macOS 8.3.1.3 — MIT
@@ -54,6 +58,8 @@ RELEASE PACKAGE INVENTORY
 • Microsoft.Extensions.Options 10.0.9 — MIT
 • Microsoft.Extensions.Primitives 10.0.12 — MIT
 • Microsoft.IO.RecyclableMemoryStream 3.0.1 — MIT
+• MimeTypes 2.5.2 — Apache-2.0 (see Google.GenAI.txt)
+• Newtonsoft.Json 13.0.3 — MIT
 • OpenAI 2.14.0 — MIT
 • ShimSkiaSharp 5.2.3 — MIT
 • SkiaSharp 3.119.4 — MIT (the package license; third-party notices are listed separately below)
@@ -65,8 +71,10 @@ RELEASE PACKAGE INVENTORY
 • Svg.Model 5.2.3 — MIT
 • Svg.SceneGraph 5.2.3 — MIT
 • System.ClientModel 1.15.0 — MIT
+• System.CodeDom 7.0.0 — MIT
 • System.Diagnostics.DiagnosticSource 10.0.12 — MIT
 • System.IO.Pipelines 10.0.12 — MIT
+• System.Management 7.0.2 — MIT
 • System.Memory.Data 10.0.9 — MIT
 • System.Net.ServerSentEvents 10.0.11 — MIT
 • System.Numerics.Tensors 10.0.12 — MIT

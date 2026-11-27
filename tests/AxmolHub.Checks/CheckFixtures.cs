@@ -381,11 +381,18 @@ sealed class WireRecorder(bool streaming = false) : System.Net.Http.HttpMessageH
         HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
     {
         if (request.Content is not null) Body = await request.Content.ReadAsStringAsync(cancellationToken);
-        var responses = request.RequestUri?.AbsolutePath.Contains("responses", StringComparison.Ordinal) == true;
-        var json = responses
+        var path = request.RequestUri?.AbsolutePath ?? "";
+        var gemini = path.Contains(":generateContent", StringComparison.Ordinal)
+                     || path.Contains(":streamGenerateContent", StringComparison.Ordinal);
+        var responses = path.Contains("responses", StringComparison.Ordinal);
+        var json = gemini
+            ? "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}"
+            : responses
             ? "{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":0,\"status\":\"completed\",\"model\":\"m\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}"
             : "{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}";
-        var body = !streaming ? json : responses
+        var body = !streaming ? json : gemini
+            ? $"data: {json}\n\n"
+            : responses
             ? $"event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{json}}}\n\n"
             : "data: [DONE]\n\n";
         return new HttpResponseMessage(HttpStatusCode.OK)

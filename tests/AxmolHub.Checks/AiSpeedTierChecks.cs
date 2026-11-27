@@ -138,19 +138,33 @@ internal static class AiSpeedTierChecks
         var openAiUltraBody = await CaptureOpenAiChatBodyAsync(openAi, ChatSpeedTiers.Ultrafast).ConfigureAwait(false);
         AssertStringProperty(openAiUltraBody, "service_tier", "ultrafast", "OpenAI Ultrafast");
 
-        // 2. Google Gemini Chat wire: Default omits service_tier; Flex/Fast map; Ultrafast degrades to Default.
+        // 2. Google Gemini native wire: Default omits serviceTier; Flex/Fast map to flex/priority; Ultrafast degrades.
         var gemini = AiProviderManifest.CreateBuiltIn("google-gemini")!;
         gemini.Model = "gemini-2.5-pro";
         gemini.Credential = new ProviderCredential { Id = "offline", ProviderId = gemini.Id, Secret = "fixture-key" };
 
-        AssertNoProperty(await CaptureOpenAiChatBodyAsync(gemini, ChatSpeedTiers.Default).ConfigureAwait(false),
-            "service_tier", "Gemini Default");
-        AssertStringProperty(await CaptureOpenAiChatBodyAsync(gemini, ChatSpeedTiers.Flex).ConfigureAwait(false),
-            "service_tier", "flex", "Gemini Flex");
-        AssertStringProperty(await CaptureOpenAiChatBodyAsync(gemini, ChatSpeedTiers.Fast).ConfigureAwait(false),
-            "service_tier", "priority", "Gemini Fast");
-        AssertNoProperty(await CaptureOpenAiChatBodyAsync(gemini, ChatSpeedTiers.Ultrafast).ConfigureAwait(false),
-            "service_tier", "Gemini Ultrafast degraded");
+        AssertNoProperty(await CaptureGeminiNativeBodyAsync(gemini, ChatSpeedTiers.Default).ConfigureAwait(false),
+            "serviceTier", "Gemini native Default");
+        AssertStringProperty(await CaptureGeminiNativeBodyAsync(gemini, ChatSpeedTiers.Flex).ConfigureAwait(false),
+            "serviceTier", "flex", "Gemini native Flex");
+        AssertStringProperty(await CaptureGeminiNativeBodyAsync(gemini, ChatSpeedTiers.Fast).ConfigureAwait(false),
+            "serviceTier", "priority", "Gemini native Fast");
+        AssertNoProperty(await CaptureGeminiNativeBodyAsync(gemini, ChatSpeedTiers.Ultrafast).ConfigureAwait(false),
+            "serviceTier", "Gemini native Ultrafast degraded");
+
+        // 2b. Legacy OpenAI-compatible Gemini endpoint still uses snake_case service_tier on the Chat wire.
+        var geminiCompat = new ModelProvider
+        {
+            Id = "google-gemini-compat",
+            Name = "Gemini Compat",
+            IsCustom = true,
+            BaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/",
+            Protocol = ModelProtocols.Chat,
+            Model = "gemini-2.5-pro",
+            Credential = new ProviderCredential { Id = "offline", ProviderId = "google-gemini-compat", Secret = "fixture-key" },
+        };
+        AssertStringProperty(await CaptureOpenAiChatBodyAsync(geminiCompat, ChatSpeedTiers.Fast).ConfigureAwait(false),
+            "service_tier", "priority", "Gemini OpenAI-compat Fast");
 
         // 3. Anthropic Messages wire: Default omits service_tier; Fast sends service_tier=priority; Ultrafast omits.
         var anthropic = AiProviderManifest.CreateBuiltIn("anthropic")!;
@@ -190,6 +204,18 @@ internal static class AiSpeedTierChecks
         var pipeline = new ChatPipeline(client);
         await foreach (var _ in pipeline.SendAsync(provider, [ChatTurn.User("ping")], speedTier: speedTier)) { }
         if (spy.Requests.Count != 1) throw new Exception($"Expected 1 Anthropic wire request, saw {spy.Requests.Count}.");
+        return spy.Requests[0];
+    }
+
+    private static async Task<string> CaptureGeminiNativeBodyAsync(ModelProvider provider, string speedTier)
+    {
+        const string sse =
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n";
+        using var spy = new WireSpy(sse);
+        using var client = ChatClientFactory.Create(provider, provider.Model, null, transport: spy, maxRetries: 0);
+        var pipeline = new ChatPipeline(client);
+        await foreach (var _ in pipeline.SendAsync(provider, [ChatTurn.User("ping")], speedTier: speedTier)) { }
+        if (spy.Requests.Count != 1) throw new Exception($"Expected 1 Gemini native wire request, saw {spy.Requests.Count}.");
         return spy.Requests[0];
     }
 

@@ -201,6 +201,7 @@ public static class SpeedTierPolicy
 
     public static bool IsGoogleGemini(ModelProvider provider)
         => string.Equals(provider.Id, "google-gemini", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(provider.Protocol, ModelProtocols.Gemini, StringComparison.OrdinalIgnoreCase)
            || HostMatches(provider.BaseUrl, "generativelanguage.googleapis.com");
 
     public static bool IsOpenAiModel(string? modelName)

@@ -3,25 +3,50 @@ using System.Text.Json;
 
 namespace AxmolHub.Core;
 
-/// <summary>Gemini uses its native catalog even when chat goes through the OpenAI-compatible endpoint.</summary>
+/// <summary>Reads the native Gemini model catalog (<c>/{apiVersion}/models</c>) for both the official
+/// Gemini Developer API and custom Gemini-native relays.</summary>
 public sealed class GeminiModelsSource : IModelCapabilitySource
 {
     public const string IdValue = "gemini-models";
+    public const string DefaultApiVersion = "v1beta";
     private const string ModelPrefix = "models/";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
 
     public string Id => IdValue;
 
-    public static HttpRequestMessage CreateRequest(ModelProvider provider, string apiKey, string? pageToken = null)
+    /// <summary>Splits a Gemini base URL into its root (without trailing slash or version suffix) and API version
+    /// (<c>v1beta</c> by default). Preserves custom relay path prefixes and tolerates a legacy <c>/openai</c> suffix.</summary>
+    public static (string BaseRoot, string ApiVersion) ParseEndpoint(string baseUrl)
+    {
+        var trimmed = baseUrl.Trim().TrimEnd('/');
+        if (trimmed.EndsWith("/openai", StringComparison.OrdinalIgnoreCase))
+            trimmed = trimmed[..^"/openai".Length].TrimEnd('/');
+        foreach (var version in new[] { "v1beta", "v1alpha", "v1" })
+        {
+            var suffix = "/" + version;
+            if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return (trimmed[..^suffix.Length].TrimEnd('/'), version);
+        }
+        return (trimmed, DefaultApiVersion);
+    }
+
+    public static HttpRequestMessage CreateRequest(ModelProvider provider, string? apiKey, string? pageToken = null)
     {
         var query = $"?pageSize={ModelList.MaxModels}";
         if (pageToken is not null) query += "&pageToken=" + Uri.EscapeDataString(pageToken);
         var baseUri = new Uri(provider.BaseUrl, UriKind.Absolute);
-        if (baseUri.Scheme != Uri.UriSchemeHttps || baseUri.UserInfo.Length != 0)
-            throw new InvalidOperationException("The Gemini catalog requires an HTTPS endpoint without user information.");
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, "/v1beta/models" + query));
-        // Put the credential in a header, not in a URL that can be recorded in diagnostics or access logs.
-        request.Headers.Add("x-goog-api-key", apiKey);
+        var isLoopbackHttp = baseUri.Scheme == Uri.UriSchemeHttp && baseUri.Host is "localhost" or "127.0.0.1" or "[::1]";
+        if ((baseUri.Scheme != Uri.UriSchemeHttps && !isLoopbackHttp) || baseUri.UserInfo.Length != 0)
+            throw new InvalidOperationException("The Gemini catalog requires an HTTPS endpoint (or loopback HTTP) without user information.");
+        var (baseRoot, apiVersion) = ParseEndpoint(provider.BaseUrl);
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"{baseRoot}/{apiVersion}/models{query}", UriKind.Absolute));
+        ProviderStaticHeaders.ApplyTo(request, provider.Headers);
+        if (apiKey is { Length: > 0 })
+        {
+            // Put the credential in a header, not in a URL that can be recorded in diagnostics or access logs.
+            request.Headers.Remove("x-goog-api-key");
+            request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+        }
         return request;
     }
 
@@ -53,8 +78,9 @@ public sealed class GeminiModelsSource : IModelCapabilitySource
     public async Task<ModelCapabilityBatch> FetchAsync(
         HttpClient client, ModelProvider provider, CancellationToken cancellationToken)
     {
-        if (provider.ApiKey is not { Length: > 0 } apiKey)
+        if (provider.RequiresCredential && provider.ApiKey is not { Length: > 0 })
             return ModelCapabilityBatch.Unreachable("A Gemini API key is required.");
+        var apiKey = provider.ApiKey;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(RequestTimeout);
