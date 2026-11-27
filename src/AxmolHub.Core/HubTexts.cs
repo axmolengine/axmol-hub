@@ -1168,6 +1168,12 @@ public static class HubTexts
             "Applies to this one command verb only, remembered in Settings → Tool permission, and revocable there. "
             + "Only counts where the line spells that verb itself: a write hidden inside a shell, or a line writing "
             + "more than one verb, still asks."),
+        ["ApprovalAllowDirectoryRead"] = ("本会话允许读取 {0}", "Allow reading {0} this session"),
+        ["ApprovalAllowDirectoryReadTip"] = ("只对当前会话开放此目录的只读访问，随时可在工作区目录菜单中撤销：{0}",
+            "Grants read-only access to this folder for the current session; revoke any time from the workspace menu: {0}"),
+        ["ApprovalAllowDirectoryWrite"] = ("本会话允许读写 {0}", "Allow editing {0} this session"),
+        ["ApprovalAllowDirectoryWriteTip"] = ("只对当前会话开放此目录的读写访问，随时可在工作区目录菜单中撤销：{0}",
+            "Grants read and write access to this folder for the current session; revoke any time from the workspace menu: {0}"),
         // ── A command that went quiet while it is still running ──
         // The question Hub asks instead of killing the process on its own. Three answers because the three real
         // outcomes are different acts: wait, walk away, or stop it and try again. The tips are where the promises are

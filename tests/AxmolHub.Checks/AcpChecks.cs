@@ -103,7 +103,58 @@ internal static class AcpChecks
             throw new Exception("Auto mode must still prompt when BypassSandbox is true.");
         if (AcpParsers.CanAutoApprove(cacheBreakCommand, ToolApprovalModes.Full, sandbox, guards))
             throw new Exception("Cache-breaking commands (rm -rf build) must still prompt even under Full mode.");
-        Console.WriteLine("PASS: ACP permission policy matches Hub's risk ladder across Ask/Auto/Full.");
+
+        // External directory grant candidates for out-of-workspace ACP read/edit calls and read-only root persistence.
+        var externalDir = Path.Combine(acpRoot, "external-assets");
+        Directory.CreateDirectory(externalDir);
+        var extImgA = Path.Combine(externalDir, "a.png");
+        var extImgB = Path.Combine(externalDir, "b.png");
+        File.WriteAllText(extImgA, "a");
+        File.WriteAllText(extImgB, "b");
+        var readOutsideA = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall("c7", "Read a.png", "read", null, [extImgA]),
+            editInWorkspace.Options);
+        var readOutsideB = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall("c8", "Read b.png", "read", null, [extImgB]),
+            editInWorkspace.Options);
+        var editOutsideDir = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall("c9", "Edit a.png", "edit", null, [extImgA]),
+            editInWorkspace.Options);
+        var editProtected = new AcpPermissionRequest(
+            "sess-1",
+            new AcpPermissionToolCall("c10", "Edit data", "edit", null, [Path.Combine(dataRoot, "secret.txt")]),
+            editInWorkspace.Options);
+
+        var readCandidate = AcpParsers.TryDirectoryGrantCandidate(readOutsideA, sandbox, guards);
+        if (readCandidate is null || !readCandidate.ReadOnly
+            || !string.Equals(WorkspacePaths.CanonicalRoot(readCandidate.DirectoryPath), WorkspacePaths.CanonicalRoot(externalDir), StringComparison.Ordinal))
+            throw new Exception("Out-of-workspace ACP read should propose a read-only grant for its parent directory.");
+
+        var (roWrite, roRead) = WorkspacePaths.SplitRoots([], [readCandidate.DirectoryPath], guards);
+        if (roWrite.Count != 0 || roRead.Count != 1)
+            throw new Exception($"SplitRoots must preserve explicit ReadOnlyRoots without promoting them to writable (write={roWrite.Count}, read={roRead.Count}).");
+        var sandboxWithReadOnly = new WorkspaceSandbox(workspaceDir, roWrite, roRead);
+        if (AcpParsers.ClassifyPermissionRisk(readOutsideB, sandboxWithReadOnly, guards) != ToolRisk.ReadOnly)
+            throw new Exception("Sibling read inside an explicitly granted ReadOnlyRoot must resolve as ToolRisk.ReadOnly.");
+        if (AcpParsers.ClassifyPermissionRisk(editOutsideDir, sandboxWithReadOnly, guards) != ToolRisk.SystemCommand)
+            throw new Exception("Edit inside a ReadOnlyRoot must remain ToolRisk.SystemCommand.");
+
+        var editUpgradeCandidate = AcpParsers.TryDirectoryGrantCandidate(editOutsideDir, sandboxWithReadOnly, guards);
+        if (editUpgradeCandidate is null || editUpgradeCandidate.ReadOnly)
+            throw new Exception("Out-of-workspace ACP edit should propose a writable directory grant (including upgrading a non-protected ReadOnlyRoot).");
+        var (rwWrite, rwRead) = WorkspacePaths.SplitRoots([editUpgradeCandidate.DirectoryPath], roRead, guards);
+        if (rwWrite.Count != 1 || rwRead.Count != 0)
+            throw new Exception($"Upgrading a ReadOnlyRoot to GrantedRoots must move it without duplication (write={rwWrite.Count}, read={rwRead.Count}).");
+        var sandboxWithWritable = new WorkspaceSandbox(workspaceDir, rwWrite, rwRead);
+        if (AcpParsers.ClassifyPermissionRisk(editOutsideDir, sandboxWithWritable, guards) != ToolRisk.WorkspaceWrite)
+            throw new Exception("Edit inside a newly granted writable root must drop to ToolRisk.WorkspaceWrite.");
+        if (AcpParsers.TryDirectoryGrantCandidate(editProtected, sandbox, guards) is not null)
+            throw new Exception("Protected directories must never offer a writable ACP directory grant.");
+
+        Console.WriteLine("PASS: ACP permission policy matches Hub's risk ladder across Ask/Auto/Full and external directory grants.");
 
         // 3. Full end-to-end ACP subprocess check via self-hosted --acp-mock-worker:
         //    Plan refuses execution and writes; the same session returns to Agent for the approved edit.

@@ -315,7 +315,7 @@ public static class WorkspacePaths
         var read = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        void Take(IEnumerable<string>? roots)
+        void Take(IEnumerable<string>? roots, bool forceReadOnly)
         {
             foreach (var root in roots ?? [])
             {
@@ -336,7 +336,7 @@ public static class WorkspacePaths
                 // Folded to compare and never to store: `D:\dev\ws` and `d:/DEV/ws` are one directory, and a list
                 // that showed them twice would offer the same revoke button twice.
                 if (CanonicalRoot(full) is not { } key || !seen.Add(key)) continue;
-                if (guards is not null && IsProtected(full, guards))
+                if (forceReadOnly || (guards is not null && IsProtected(full, guards)))
                 {
                     if (read.Count < MaxGrantedRoots) read.Add(full);
                     continue;
@@ -346,8 +346,8 @@ public static class WorkspacePaths
             }
         }
 
-        Take(granted);
-        Take(readOnly);
+        Take(granted, forceReadOnly: false);
+        Take(readOnly, forceReadOnly: true);
         return (write, read);
     }
 

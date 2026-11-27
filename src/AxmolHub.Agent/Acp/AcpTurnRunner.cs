@@ -34,6 +34,7 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         AcpTurnCallbacks callbacks,
         AcpTurnMode turnMode,
         string? requestedEffort = null,
+        Func<WorkspaceToolScope?>? workspaceProvider = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (pool is null)
@@ -79,6 +80,7 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
                                callbacks,
                                onRecycleNeeded: () => lease.MarkForRecycle(),
                                requestedEffort: requestedEffort,
+                               workspaceProvider: workspaceProvider,
                                cancellationToken: cancellationToken).ConfigureAwait(false))
             {
                 yield return chunk;
@@ -146,6 +148,7 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         AcpTurnCallbacks callbacks,
         Action? onRecycleNeeded = null,
         string? requestedEffort = null,
+        Func<WorkspaceToolScope?>? workspaceProvider = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var sessionId = session.SessionId;
@@ -240,9 +243,11 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
             SingleWriter = false,
         });
         var startedTools = new HashSet<string>(StringComparer.Ordinal);
-        var fsBridge = workspace is not null
-            ? new AcpWorkspaceFileBridge(workspace, callbacks.OnFileWritten)
-            : null;
+        var fsBridge = workspaceProvider is not null
+            ? new AcpWorkspaceFileBridge(workspaceProvider, callbacks.OnFileWritten)
+            : workspace is not null
+                ? new AcpWorkspaceFileBridge(workspace, callbacks.OnFileWritten)
+                : null;
 
         connection.OnNotification = async (method, @params) =>
         {

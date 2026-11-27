@@ -1034,7 +1034,7 @@ public partial class ChatPanel
         var card = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto") };
 
         var risks = group
-            .Select(member => _chat.RiskFor(conversationId, member.ToolName ?? "", member.ToolArguments))
+            .Select(member => _chat.RiskFor(conversationId, member.ToolName ?? "", member.ToolArguments, member.ToolCallId))
             .ToList();
         // The header carries the worst tier in the group, because that is what the answer agrees to: a card for two
         // writes and a screen capture has to read like a screen capture. Each row keeps its own evidence below.
@@ -1044,7 +1044,7 @@ public partial class ChatPanel
             : risks.Contains(ToolRisk.SystemCommand) ? ToolRisk.SystemCommand
             : risks.Contains(ToolRisk.SensitiveEdit) ? ToolRisk.SensitiveEdit
             : risks.Contains(ToolRisk.WorkspaceWrite) ? ToolRisk.WorkspaceWrite
-            : _chat.RiskFor(conversationId, turn.ToolName ?? "", turn.ToolArguments);
+            : _chat.RiskFor(conversationId, turn.ToolName ?? "", turn.ToolArguments, callId);
         var title = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         var glyph = new Path
         {
@@ -1176,7 +1176,7 @@ public partial class ChatPanel
         // compound line writing two verbs, not on a write that only exists inside a shell, not on a subcommand this
         // build cannot name, and not on a card that is asking for a different reason (no sandbox root, a cache break).
         var verbKey = group.Count == 1 && risk == ToolRisk.SystemCommand
-            ? _chat.CommandVerbForGrant(conversationId, turn.ToolName ?? "", turn.ToolArguments)
+            ? _chat.CommandVerbForGrant(conversationId, turn.ToolName ?? "", turn.ToolArguments, callId)
             : null;
         if (verbKey is not null)
         {
@@ -1191,6 +1191,28 @@ public partial class ChatPanel
             verb.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false,
                 alwaysAllowVerb: true);
             secondary.Children.Add(verb);
+        }
+        var dirGrant = group.Count == 1 && risk == ToolRisk.SystemCommand
+            ? _chat.DirectoryGrantForApproval(conversationId, callId)
+            : null;
+        if (dirGrant is not null)
+        {
+            var dirLabel = FolderNameOf(dirGrant.DirectoryPath);
+            if (string.IsNullOrWhiteSpace(dirLabel)) dirLabel = dirGrant.DirectoryPath;
+            var dirButton = new Button
+            {
+                Classes = { "approval-action", "approval-secondary" },
+                Content = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    HubStrings.Get(dirGrant.ReadOnly ? "ApprovalAllowDirectoryRead" : "ApprovalAllowDirectoryWrite"),
+                    dirLabel),
+                Tag = "ApprovalAllowDirectory",
+            };
+            ToolTip.SetTip(dirButton, string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get(dirGrant.ReadOnly ? "ApprovalAllowDirectoryReadTip" : "ApprovalAllowDirectoryWriteTip"),
+                dirGrant.DirectoryPath));
+            dirButton.Click += (_, _) => ResolveApproval(conversationId, callId, approved: true, alwaysAllow: false,
+                allowDirectory: true);
+            secondary.Children.Add(dirButton);
         }
         footer.Children.Add(secondary);
 

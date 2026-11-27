@@ -183,11 +183,11 @@
     </Style>
     <Style Selector="Button.approval-action">
       <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="10,4" />
-      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
+      <Setter Property="Padding" Value="12,4" />
+      <Setter Property="MinHeight" Value="28" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
@@ -319,18 +319,68 @@
     <Style Selector="Path.approval-risk.system-command">
       <Setter Property="Stroke" Value="{DynamicResource Hub.DangerText}" />
     </Style>
-    <!-- The quiet left slot: consequences stated, not shouted. -->
+    <!-- The quiet left slot: pill buttons with visible surface and border so secondary actions clearly read as
+         interactive controls rather than plain text. -->
     <Style Selector="Button.approval-secondary">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="8,4" />
-      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="12,4" />
+      <Setter Property="MinHeight" Value="28" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="Button.approval-secondary:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <!-- Approval detail expand/collapse toggle: wears the same pill chrome without Fluent's checked accent slab. -->
+    <Style Selector="ToggleButton.approval-secondary">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="12,3" />
+      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusAdorner" Value="{x:Null}" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Frame"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Foreground="{TemplateBinding Foreground}"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="ToggleButton.approval-secondary:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="ToggleButton.approval-secondary:checked">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="ToggleButton.approval-secondary:checked:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderHover}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <!-- The one accent-filled button in the composer. Filling both this and the refuse button would erase
@@ -340,7 +390,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
-      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="14,4" />
       <Setter Property="FontSize" Value="12" />
@@ -381,7 +431,7 @@
       <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Pill}" />
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="14,4" />
       <Setter Property="FontSize" Value="12" />

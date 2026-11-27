@@ -4642,10 +4642,10 @@ public partial class ChatPanel : UserControl
     /// would otherwise sit there having done nothing, which reads as a broken button. <paramref name="alwaysAllowVerb"/>
     /// is the third answer, the one that grants a single git verb instead of the whole tool.</summary>
     private void ResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow,
-        bool alwaysAllowVerb = false, bool computerInteraction = false)
+        bool alwaysAllowVerb = false, bool computerInteraction = false, bool allowDirectory = false)
     {
         if (_chat.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out var refusalKey,
-                alwaysAllowVerb, computerInteraction)) return;
+                alwaysAllowVerb, computerInteraction, allowDirectory)) return;
         AppendNotice(HubStrings.Get(refusalKey ?? "ChatApprovalGone"), danger: true);
     }
 

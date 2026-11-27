@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Avalonia.Threading;
 using AxmolHub.Agent.Acp;
 using AxmolHub.Core;
 
@@ -10,12 +11,48 @@ namespace AxmolHub;
 internal sealed partial class ChatExecutionCoordinator
 {
     private sealed record AcpPendingPermission(
-        IReadOnlyList<AcpPermissionOption> Options,
+        AcpPermissionRequest Request,
+        string ToolName,
         ToolRisk Risk,
+        string? NormalizedCommandArgsJson,
+        AcpDirectoryGrantCandidate? DirectoryGrant,
         TaskCompletionSource<AcpPermissionOutcome> Completion);
 
     private readonly AcpHostPool _acpHostPool = new();
     private readonly ConcurrentDictionary<(string ConversationId, string CallId), AcpPendingPermission> _acpPermissions = new();
+
+    private bool TryGetAcpPendingRisk(string conversationId, string callId, out ToolRisk risk)
+    {
+        if (_acpPermissions.TryGetValue((conversationId, callId), out var pending))
+        {
+            risk = pending.Risk;
+            return true;
+        }
+        risk = default;
+        return false;
+    }
+
+    private bool TryGetAcpCommandVerbForGrant(string conversationId, string callId, out string? verbKey)
+    {
+        if (_acpPermissions.TryGetValue((conversationId, callId), out var pending))
+        {
+            verbKey = pending.NormalizedCommandArgsJson is not null
+                ? ChatTools.TrustCandidateVerb(
+                    ToolNames.RunCommand,
+                    pending.NormalizedCommandArgsJson,
+                    ScopeFor(conversationId).Workspace,
+                    TrustedCommands)
+                : null;
+            return true;
+        }
+        verbKey = null;
+        return false;
+    }
+
+    internal AcpDirectoryGrantCandidate? DirectoryGrantForApproval(string conversationId, string? callId)
+        => callId is { Length: > 0 } && _acpPermissions.TryGetValue((conversationId, callId), out var pending)
+            ? pending.DirectoryGrant
+            : null;
 
     private void DisposeAcp()
     {
@@ -40,29 +77,97 @@ internal sealed partial class ChatExecutionCoordinator
 
     /// <summary>
     /// Resolves an in-flight ACP <c>session/request_permission</c> waiter directly from Hub's standard
-    /// approval card without tearing down the live subprocess stream.
+    /// approval card without tearing down the live subprocess stream. Always replies <c>allow_once</c>
+    /// to the subprocess so Hub remains the sole revocable authority for tool, verb, and directory grants.
     /// </summary>
-    private bool TryResolveAcpApproval(string conversationId, string callId, bool approved, bool alwaysAllow)
+    private bool TryResolveAcpApproval(
+        string conversationId,
+        string callId,
+        bool approved,
+        bool alwaysAllow,
+        bool alwaysAllowVerb = false,
+        bool allowDirectory = false)
     {
         if (!_acpPermissions.TryRemove((conversationId, callId), out var pending))
             return false;
 
-        string toolName = "acp_tool";
+        var toolName = pending.ToolName;
+        var grantTool = approved && alwaysAllow && ToolApprovalPolicy.IsGrantable(pending.Risk);
+        var workspace = ScopeFor(conversationId).Workspace;
+        var verbKey = approved && alwaysAllowVerb && pending.NormalizedCommandArgsJson is not null
+            ? ChatTools.TrustCandidateVerb(
+                ToolNames.RunCommand,
+                pending.NormalizedCommandArgsJson,
+                workspace,
+                TrustedCommands)
+            : null;
+        var grantedDir = approved && allowDirectory && pending.DirectoryGrant is not null
+            ? AcpParsers.TryDirectoryGrantCandidate(pending.Request, workspace.Sandbox, workspace.Guards)
+            : null;
+        var directoryLanded = false;
+
         Sessions.Registry.TryUpdate(conversationId, opened =>
         {
             var at = opened.IndexOfToolCall(callId);
-            if (at < 0) return;
-            toolName = opened.Messages[at].ToolName ?? toolName;
-            opened.Messages[at] = opened.Messages[at] with
+            if (at >= 0)
             {
-                ApprovalState = approved ? ChatApprovalStates.Approved : ChatApprovalStates.Denied,
-            };
-            if (approved && alwaysAllow && ToolApprovalPolicy.IsGrantable(pending.Risk))
+                toolName = opened.Messages[at].ToolName ?? toolName;
+                opened.Messages[at] = opened.Messages[at] with
+                {
+                    ApprovalState = approved ? ChatApprovalStates.Approved : ChatApprovalStates.Denied,
+                };
+            }
+            opened.MarkEngaged();
+
+            if (grantTool)
                 ToolTrust.Add(opened.AutoApprovedTools, toolName);
+
+            if (grantedDir is not null)
+            {
+                var guards = Guards;
+                var readOnly = grantedDir.ReadOnly || WorkspacePaths.IsProtected(grantedDir.DirectoryPath, guards);
+                var (write, read) = WorkspacePaths.SplitRoots(
+                    readOnly ? opened.GrantedRoots : [.. opened.GrantedRoots, grantedDir.DirectoryPath],
+                    readOnly ? [.. opened.ReadOnlyRoots, grantedDir.DirectoryPath] : opened.ReadOnlyRoots,
+                    guards);
+                opened.GrantedRoots = write;
+                opened.ReadOnlyRoots = read;
+                var key = WorkspacePaths.CanonicalRoot(grantedDir.DirectoryPath);
+                directoryLanded = key is not null
+                    && (readOnly ? read : write).Any(root =>
+                        string.Equals(WorkspacePaths.CanonicalRoot(root), key, StringComparison.Ordinal));
+            }
         });
 
-        AuditApproval(conversationId, toolName, approved ? (alwaysAllow ? "always-allowed (acp)" : "approved (acp)") : "refused (acp)");
-        var outcome = AcpParsers.SelectOption(pending.Options, approved, alwaysAllow);
+        // Write app-wide trust grants outside the session registry lock.
+        if (grantTool) TrustTool(toolName);
+        if (verbKey is not null) TrustCommand(verbKey);
+
+        if (!approved)
+        {
+            AuditApproval(conversationId, toolName, "refused (acp)");
+        }
+        else if (grantedDir is not null && directoryLanded)
+        {
+            Audit(conversationId,
+                $"Granted directory (acp): {grantedDir.DirectoryPath}{(grantedDir.ReadOnly ? " (read-only)" : "")}");
+            AuditApproval(conversationId, toolName, "approved (acp)");
+        }
+        else if (verbKey is not null)
+        {
+            AuditApproval(conversationId, verbKey, "always-allowed (acp)");
+        }
+        else if (grantTool)
+        {
+            AuditApproval(conversationId, toolName, "always-allowed (acp)");
+        }
+        else
+        {
+            AuditApproval(conversationId, toolName, "approved (acp)");
+        }
+
+        // Always send allow_once so revoking grants in Hub immediately takes effect on the pooled subprocess.
+        var outcome = AcpParsers.SelectOption(pending.Request.Options, approved, alwaysAllow: false);
         pending.Completion.TrySetResult(outcome);
         Changed?.Invoke();
         return true;
@@ -187,17 +292,23 @@ internal sealed partial class ChatExecutionCoordinator
             OnPermissionRequested = async (permReq, ct) =>
             {
                 var toolName = MapAcpToolName(permReq.ToolCall.Kind, permReq.ToolCall.Title);
-                var risk = AcpParsers.ClassifyPermissionRisk(
-                    permReq, request.Scope.Workspace.Sandbox, request.Scope.Workspace.Guards, TrustedCommands);
-                var (mode, sessionGrant) = await ReadOnUiAsync(() =>
+                var normalizedCommandArgs = string.Equals(permReq.ToolCall.Kind, "execute", StringComparison.OrdinalIgnoreCase)
+                    ? AcpParsers.ExtractCommandInput(permReq.ToolCall).NormalizedArgsJson
+                    : null;
+                var (mode, sessionGrant, liveWorkspace) = await ReadOnUiAsync(() =>
                 {
                     var conv = Sessions.Registry.Peek(run.ConversationId);
                     var grantedInSession = conv is not null && ToolTrust.Contains(conv.AutoApprovedTools, toolName);
-                    return (ApprovalModeFor(run.ConversationId), grantedInSession);
+                    return (ApprovalModeFor(run.ConversationId), grantedInSession, ScopeFor(run.ConversationId).Workspace);
                 }).ConfigureAwait(false);
 
-                var granted = ToolApprovalPolicy.IsGrantable(risk)
-                              && (sessionGrant || ToolTrust.Contains(TrustedTools, toolName));
+                var risk = AcpParsers.ClassifyPermissionRisk(
+                    permReq, liveWorkspace.Sandbox, liveWorkspace.Guards, TrustedCommands);
+                var verbGrant = normalizedCommandArgs is not null
+                    && risk is not (ToolRisk.CacheBreak or ToolRisk.SystemCommand)
+                    && ChatTools.GrantedCommandVerb(ToolNames.RunCommand, normalizedCommandArgs, TrustedCommands);
+                var granted = verbGrant || (ToolApprovalPolicy.IsGrantable(risk)
+                              && (sessionGrant || ToolTrust.Contains(TrustedTools, toolName)));
                 if (granted || !ToolApprovalPolicy.RequiresApproval(mode, risk))
                 {
                     Audit(run.ConversationId,
@@ -209,9 +320,13 @@ internal sealed partial class ChatExecutionCoordinator
                 var callId = permReq.ToolCall.ToolCallId;
                 var preview = FormatAcpPermissionPreview(permReq);
                 var argsJson = BuildAcpToolArgsJson(permReq.ToolCall.Title, permReq.ToolCall.RawInputJson);
+                var directoryGrant = risk == ToolRisk.SystemCommand
+                    ? AcpParsers.TryDirectoryGrantCandidate(permReq, liveWorkspace.Sandbox, liveWorkspace.Guards)
+                    : null;
 
                 var tcs = new TaskCompletionSource<AcpPermissionOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _acpPermissions[(run.ConversationId, callId)] = new AcpPendingPermission(permReq.Options, risk, tcs);
+                _acpPermissions[(run.ConversationId, callId)] = new AcpPendingPermission(
+                    permReq, toolName, risk, normalizedCommandArgs, directoryGrant, tcs);
 
                 // Hold a tool bracket while waiting on the user so the inactivity deadline does not fire.
                 run.BeginTool("acp-perm-" + callId, toolName);
@@ -268,6 +383,11 @@ internal sealed partial class ChatExecutionCoordinator
             },
         };
 
+        WorkspaceToolScope LiveWorkspace()
+            => Dispatcher.UIThread.CheckAccess()
+                ? ScopeFor(run.ConversationId).Workspace
+                : Dispatcher.UIThread.InvokeAsync(() => ScopeFor(run.ConversationId).Workspace).GetAwaiter().GetResult();
+
         await foreach (var chunk in runner.RunPooledTurnAsync(
                            request.Provider,
                            cwd,
@@ -279,6 +399,7 @@ internal sealed partial class ChatExecutionCoordinator
                            callbacks,
                            turnMode: request.AcpMode,
                            requestedEffort: request.Reasoning,
+                           workspaceProvider: LiveWorkspace,
                            cancellationToken: linked.Token).ConfigureAwait(false))
         {
             yield return chunk;

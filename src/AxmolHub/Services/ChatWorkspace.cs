@@ -883,13 +883,15 @@ public sealed partial class ChatWorkspace : IDisposable
     /// for asking that the gate did not use. What it can change is the glyph and nothing else: the decision is the
     /// <see cref = "ChatTurn.ApprovalState"/> on the turn, which this never touches.
     /// </summary>
-    public ToolRisk RiskFor(string conversationId, string name, string? argumentsJson) => _execution.RiskFor(conversationId, name, argumentsJson);
+    public ToolRisk RiskFor(string conversationId, string name, string? argumentsJson, string? callId = null) => _execution.RiskFor(conversationId, name, argumentsJson, callId);
     /// <summary>
     /// The single git verb this call's card may offer to stop asking about, or null. The card and the gate ask this
     /// one question — <see cref = "ChatTools.TrustCandidateVerb"/> — so a button can never be drawn for a grant the gate
     /// would then ignore, and the settings list can never gain an entry nothing honours.
     /// </summary>
-    public string? CommandVerbForGrant(string conversationId, string name, string? argumentsJson) => _execution.CommandVerbForGrant(conversationId, name, argumentsJson);
+    public string? CommandVerbForGrant(string conversationId, string name, string? argumentsJson, string? callId = null) => _execution.CommandVerbForGrant(conversationId, name, argumentsJson, callId);
+    /// <summary>The external directory an ACP read/edit approval card may grant for this session, or null.</summary>
+    public AxmolHub.Agent.Acp.AcpDirectoryGrantCandidate? DirectoryGrantForApproval(string conversationId, string? callId) => _execution.DirectoryGrantForApproval(conversationId, callId);
     // ── the repository the session works in ──
     /// <summary>One repository read, with the workspace root it was taken for. The root is carried beside the
     /// snapshot because a pane showing some other directory's facts is worse than one showing nothing, and the
@@ -941,7 +943,7 @@ public sealed partial class ChatWorkspace : IDisposable
     /// result and continues the reply. Refusing writes a result saying so and stops: "the user said no" should
     /// not be answered by more talking, and <see cref = "Regenerate"/> is how a wrap-up gets asked for.
     /// </summary>
-    public bool TryResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey, bool alwaysAllowVerb = false, bool computerInteraction = false) => _execution.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out refusalKey, alwaysAllowVerb, computerInteraction);
+    public bool TryResolveApproval(string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey, bool alwaysAllowVerb = false, bool computerInteraction = false, bool allowDirectory = false) => _execution.TryResolveApproval(conversationId, callId, approved, alwaysAllow, out refusalKey, alwaysAllowVerb, computerInteraction, allowDirectory);
     /// <summary>
     /// Answers a question the assistant asked. The sibling of <see cref = "TryResolveApproval"/> rather than a
     /// fourth argument on it, because the two differ in the one thing that decides everything downstream: an

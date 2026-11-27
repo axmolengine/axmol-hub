@@ -17,12 +17,32 @@ public sealed record AcpFileWriteObservation(
 /// <see cref="ChatChangeStore"/>, and <see cref="ChatUndoStore"/> — guaranteeing LF line endings,
 /// protected-location enforcement, and full Changes / Diff / Undo tracking with zero duplicate I/O code.
 /// </summary>
-public sealed class AcpWorkspaceFileBridge(
-    WorkspaceToolScope workspace,
-    Action<AcpFileWriteObservation>? onFileWritten = null)
+public sealed class AcpWorkspaceFileBridge
 {
+    private readonly Func<WorkspaceToolScope?> _workspaceProvider;
+    private readonly Action<AcpFileWriteObservation>? _onFileWritten;
+
+    public AcpWorkspaceFileBridge(
+        WorkspaceToolScope workspace,
+        Action<AcpFileWriteObservation>? onFileWritten = null)
+        : this(() => workspace, onFileWritten)
+    {
+    }
+
+    public AcpWorkspaceFileBridge(
+        Func<WorkspaceToolScope?> workspaceProvider,
+        Action<AcpFileWriteObservation>? onFileWritten = null)
+    {
+        _workspaceProvider = workspaceProvider;
+        _onFileWritten = onFileWritten;
+    }
+
+    private WorkspaceToolScope RequireWorkspace()
+        => _workspaceProvider() ?? throw new AcpRpcException(-32601, "No workspace is open for ACP filesystem access.");
+
     public object HandleReadTextFile(JsonElement @params)
     {
+        var workspace = RequireWorkspace();
         var path = AcpParsers.TryString(@params, "path");
         if (string.IsNullOrWhiteSpace(path))
             throw new AcpRpcException(-32602, "fs/read_text_file requires a non-empty 'path'.");
@@ -59,6 +79,7 @@ public sealed class AcpWorkspaceFileBridge(
 
     public object HandleWriteTextFile(JsonElement @params)
     {
+        var workspace = RequireWorkspace();
         var path = AcpParsers.TryString(@params, "path");
         if (string.IsNullOrWhiteSpace(path))
             throw new AcpRpcException(-32602, "fs/write_text_file requires a non-empty 'path'.");
@@ -79,7 +100,7 @@ public sealed class AcpWorkspaceFileBridge(
         var result = tools.FsWrite(path, content, overwrite: true);
         var failed = IsWriteRefusal(result);
 
-        onFileWritten?.Invoke(new AcpFileWriteObservation(path, result, capturedLines, failed));
+        _onFileWritten?.Invoke(new AcpFileWriteObservation(path, result, capturedLines, failed));
 
         if (failed)
             throw new AcpRpcException(-32000, result);

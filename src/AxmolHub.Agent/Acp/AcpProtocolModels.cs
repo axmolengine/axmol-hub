@@ -100,6 +100,9 @@ public sealed record AcpPermissionRequest(
     AcpPermissionToolCall ToolCall,
     IReadOnlyList<AcpPermissionOption> Options);
 
+/// <summary>A single external directory whose grant resolves an out-of-workspace ACP read/edit permission.</summary>
+public sealed record AcpDirectoryGrantCandidate(string DirectoryPath, bool ReadOnly);
+
 public sealed record AcpPermissionOutcome(string? SelectedOptionId, bool Cancelled)
 {
     public static AcpPermissionOutcome Selected(string optionId) => new(optionId, false);
@@ -514,8 +517,12 @@ public static class AcpParsers
                 if (sandbox is not null && guards is not null && request.ToolCall.Locations.Count > 0)
                 {
                     foreach (var loc in request.ToolCall.Locations)
-                        if (!WorkspacePaths.ResolveRead(sandbox, loc, guards).IsAllowed)
-                            return ToolRisk.SystemCommand;
+                    {
+                        var allowed = Directory.Exists(loc)
+                            ? WorkspacePaths.ResolveDirectory(sandbox, loc, guards).IsAllowed
+                            : WorkspacePaths.ResolveRead(sandbox, loc, guards).IsAllowed;
+                        if (!allowed) return ToolRisk.SystemCommand;
+                    }
                 }
                 return ToolRisk.ReadOnly;
 
@@ -572,6 +579,101 @@ public static class AcpParsers
     {
         var risk = ClassifyPermissionRisk(request, sandbox, guards, trustedCommands);
         return !ToolApprovalPolicy.RequiresApproval(approvalMode, risk);
+    }
+
+    /// <summary>
+    /// Resolves a single external directory whose session grant moves an out-of-workspace ACP <c>read</c>,
+    /// <c>search</c>, or <c>edit</c> request out of <see cref="ToolRisk.SystemCommand"/>. Returns null whenever
+    /// locations span multiple directories, the grant cap is reached, or the simulated grant would still be
+    /// refused (e.g., symlinked files, protected edit targets, or excluded directories).
+    /// </summary>
+    public static AcpDirectoryGrantCandidate? TryDirectoryGrantCandidate(
+        AcpPermissionRequest request,
+        WorkspaceSandbox? sandbox,
+        WorkspaceGuards? guards)
+    {
+        if (sandbox is null || guards is null || request.ToolCall.Locations.Count == 0)
+            return null;
+
+        var kind = request.ToolCall.Kind.Trim().ToLowerInvariant();
+        bool readOnly;
+        if (kind is "read" or "search")
+            readOnly = true;
+        else if (kind == "edit")
+            readOnly = false;
+        else
+            return null;
+
+        if (ClassifyPermissionRisk(request, sandbox, guards) != ToolRisk.SystemCommand)
+            return null;
+
+        string? commonDir = null;
+        string? commonKey = null;
+        foreach (var loc in request.ToolCall.Locations)
+        {
+            var allowed = readOnly
+                ? (Directory.Exists(loc)
+                    ? WorkspacePaths.ResolveDirectory(sandbox, loc, guards).IsAllowed
+                    : WorkspacePaths.ResolveRead(sandbox, loc, guards).IsAllowed)
+                : WorkspacePaths.ResolveWrite(sandbox, loc, guards).IsAllowed;
+            if (allowed) continue;
+
+            if (string.IsNullOrWhiteSpace(loc) || !Path.IsPathRooted(loc)) return null;
+            string full;
+            try
+            {
+                full = Path.GetFullPath(loc.Trim());
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or System.Security.SecurityException)
+            {
+                return null;
+            }
+
+            var dir = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return null;
+            if (WorkspacePaths.CanonicalRoot(dir) is not { } key) return null;
+
+            if (commonKey is null)
+            {
+                commonKey = key;
+                commonDir = dir;
+            }
+            else if (!string.Equals(commonKey, key, StringComparison.Ordinal))
+            {
+                return null;
+            }
+        }
+
+        if (commonDir is null) return null;
+
+        var (verdict, normalizedDir, _) = WorkspacePaths.ClassifyGrant(sandbox, guards, commonDir);
+        if (readOnly)
+        {
+            if (verdict is not (GrantVerdict.Granted or GrantVerdict.GrantedReadOnly))
+                return null;
+        }
+        else
+        {
+            // An edit inside a previously read-only non-protected directory can upgrade that grant to read/write.
+            var upgradableReadOnly = verdict is GrantVerdict.AlreadyGranted or GrantVerdict.InsideGrant
+                && !WorkspacePaths.IsProtected(normalizedDir, guards);
+            if (verdict != GrantVerdict.Granted && !upgradableReadOnly)
+                return null;
+        }
+
+        var (nextWrite, nextRead) = WorkspacePaths.SplitRoots(
+            readOnly ? sandbox.Granted : [.. sandbox.Granted, normalizedDir],
+            readOnly ? [.. sandbox.ReadOnlyRoots, normalizedDir] : sandbox.ReadOnlyRoots,
+            guards);
+        var landed = (readOnly ? nextRead : nextWrite)
+            .Any(root => string.Equals(WorkspacePaths.CanonicalRoot(root), commonKey, StringComparison.Ordinal));
+        if (!landed) return null;
+
+        var simulated = new WorkspaceSandbox(sandbox.Primary, nextWrite, nextRead) { Files = sandbox.Files };
+        if (ClassifyPermissionRisk(request, simulated, guards) == ToolRisk.SystemCommand)
+            return null;
+
+        return new AcpDirectoryGrantCandidate(normalizedDir, readOnly);
     }
 
     private static string? ExtractContentText(JsonElement update)

@@ -271,10 +271,10 @@ internal sealed partial class ChatSessionCoordinator
     /// <see cref="WorkspacePaths.ClassifyGrant"/>, so a protected location is read-only whichever door it came
     /// through — and <see cref="WorkspacePaths.SplitRoots"/> demotes it if a caller ever says otherwise.
     /// </summary>
-    internal async Task<string> ApplyGrantedRootAsync(string conversationId, string path)
+    internal async Task<string> ApplyGrantedRootAsync(string conversationId, string path, bool forceReadOnly = false)
     {
         var guards = Execution.Guards;
-        var readOnly = WorkspacePaths.IsProtected(path, guards);
+        var readOnly = forceReadOnly || WorkspacePaths.IsProtected(path, guards);
         var added = false;
         await Execution.ApplyOnUiAsync(() =>
         {

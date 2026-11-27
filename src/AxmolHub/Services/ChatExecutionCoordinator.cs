@@ -1870,14 +1870,18 @@ internal sealed partial class ChatExecutionCoordinator
         return true;
     }
 
-    internal ToolRisk RiskFor(string conversationId, string name, string? argumentsJson)
+    internal ToolRisk RiskFor(string conversationId, string name, string? argumentsJson, string? callId = null)
     {
+        if (callId is { Length: > 0 } && TryGetAcpPendingRisk(conversationId, callId, out var acpRisk))
+            return acpRisk;
         var scope = ScopeFor(conversationId);
         return ChatTools.RiskOf(name, argumentsJson, scope.Workspace, TrustedCommands);
     }
 
-    internal string? CommandVerbForGrant(string conversationId, string name, string? argumentsJson)
+    internal string? CommandVerbForGrant(string conversationId, string name, string? argumentsJson, string? callId = null)
     {
+        if (callId is { Length: > 0 } && TryGetAcpCommandVerbForGrant(conversationId, callId, out var acpVerb))
+            return acpVerb;
         var scope = ScopeFor(conversationId);
         return ChatTools.TrustCandidateVerb(name, argumentsJson, scope.Workspace, TrustedCommands);
     }
@@ -2104,10 +2108,10 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal bool TryResolveApproval(
         string conversationId, string callId, bool approved, bool alwaysAllow, out string? refusalKey,
-        bool alwaysAllowVerb = false, bool computerInteraction = false)
+        bool alwaysAllowVerb = false, bool computerInteraction = false, bool allowDirectory = false)
     {
         refusalKey = null;
-        if (TryResolveAcpApproval(conversationId, callId, approved, alwaysAllow))
+        if (TryResolveAcpApproval(conversationId, callId, approved, alwaysAllow, alwaysAllowVerb, allowDirectory))
             return true;
         var conversation = Sessions.Registry.Peek(conversationId) ?? Sessions.Registry.Load(conversationId);
         var index = conversation?.IndexOfToolCall(callId) ?? -1;
