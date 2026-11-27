@@ -69,8 +69,9 @@ internal static class GoogleGeminiNativeChecks
             Reasoning = "unsigned display reasoning",
             ClaudeThinking = [new ClaudeThinkingBlock("foreign claude thought", "not-base64!!!", Redacted: false)],
         });
-        // Append an unsigned legacy tool round to confirm the bypass sentinel lands only on unsigned turns.
-        turns.Add(ChatTurn.FunctionCall("legacy_call", "inspect", "{}"));
+        // Append an unsigned legacy tool round with non-empty JSON arguments to confirm structured Args
+        // serialize cleanly through JsonConfig and the bypass sentinel lands only on unsigned turns.
+        turns.Add(ChatTurn.FunctionCall("legacy_call", "inspect", "{\"path\":\"src/App.cs\",\"line\":42}"));
         turns.Add(ChatTurn.FunctionResult("legacy_call", "legacy-ok"));
         turns.Add(ChatTurn.Assistant("legacy done"));
 
@@ -164,6 +165,10 @@ internal static class GoogleGeminiNativeChecks
                 throw new Exception("Legacy tool turn vanished from replay.");
             var legacyPart = legacyTurn.GetProperty("parts").EnumerateArray()
                 .First(p => p.TryGetProperty("functionCall", out _));
+            var legacyArgs = legacyPart.GetProperty("functionCall").GetProperty("args");
+            if (legacyArgs.GetProperty("path").GetString() != "src/App.cs"
+                || legacyArgs.GetProperty("line").GetInt32() != 42)
+                throw new Exception("Persisted structured tool arguments drifted on Gemini replay.");
             var expectedSkip = Convert.ToBase64String(Encoding.UTF8.GetBytes(ReasoningReplayPolicy.MissingThoughtSignature));
             var legacySig = legacyPart.TryGetProperty("thoughtSignature", out var ls) ? ls.GetString() : null;
             if (legacySig != expectedSkip)
@@ -194,7 +199,9 @@ internal static class GoogleGeminiNativeChecks
 
         using var client = ChatClientFactory.Create(relay, relay.Model, null, transport: spy, maxRetries: 0);
         var pipeline = new ChatPipeline(client);
-        await foreach (var _ in pipeline.SendAsync(relay, [ChatTurn.User("hi")], reasoningEffort: "high")) { }
+        var function = AIFunctionFactory.Create(() => "ok", "inspect");
+        await foreach (var _ in pipeline.SendAsync(relay, [ChatTurn.User("hi")],
+            tools: [function, new HostedWebSearchTool()], reasoningEffort: "high")) { }
 
         if (spy.Requests.Count != 1)
             throw new Exception($"Expected 1 relay request, saw {spy.Requests.Count}.");
@@ -202,6 +209,10 @@ internal static class GoogleGeminiNativeChecks
         var tc = doc.RootElement.GetProperty("generationConfig").GetProperty("thinkingConfig");
         if (tc.GetProperty("thinkingBudget").GetInt32() != 24576 || !tc.GetProperty("includeThoughts").GetBoolean())
             throw new Exception("Gemini 2.5 high reasoning did not map to thinkingBudget=24576 + includeThoughts=true.");
+        var relayTools = doc.RootElement.GetProperty("tools").GetRawText();
+        if (relayTools.Contains("googleSearch", StringComparison.Ordinal)
+            || !relayTools.Contains("functionDeclarations", StringComparison.Ordinal))
+            throw new Exception("Gemini 2.5 must drop hosted googleSearch when combined with functionDeclarations: " + relayTools);
     }
 
     private static void CheckErrorClassification()

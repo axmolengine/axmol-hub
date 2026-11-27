@@ -275,8 +275,12 @@ public sealed class WireLogPolicy : PipelinePolicy
                     ? tier.GetString() : "-";
             var thinking = root.TryGetProperty("thinking", out var think) ? think.GetRawText()
                 : hasGenConfig && genConfig.TryGetProperty("thinkingConfig", out think) ? think.GetRawText() : "-";
+            var leaf = Path.GetFileName(url ?? "");
+            var model = Prop(root, "model");
+            if (model == "-" && leaf.IndexOf(':', StringComparison.Ordinal) is > 0 and var colon)
+                model = leaf[..colon];
             WireLog.TryAppendIndex(
-                $"{pair:D4} {Path.GetFileName(url ?? "")} model={Prop(root, "model")} effort={effort} "
+                $"{pair:D4} {leaf} model={model} effort={effort} "
                 + $"thinking={thinking} max_tokens={maxTokens} tools={tools} "
                 + $"assistant={assistant} reasoning={withReasoning} empty={emptyReasoning} "
                 + $"tool_calls={withToolCalls} last_assistant_reasoning={lastAssistantHasReasoning}");

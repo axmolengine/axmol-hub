@@ -13,6 +13,9 @@
 
   <PropertyGroup>
     <RollForward>Major</RollForward>
+    <!-- API-key-only Gemini usage does not need Google OAuth ADC reflection rooting when
+         PublishTrimmed or PublishAot is enabled on executable projects importing Google.GenAI.targets. -->
+    <GoogleGenAIRootAuthAssemblies>false</GoogleGenAIRootAuthAssemblies>
   </PropertyGroup>
 
 </Project>

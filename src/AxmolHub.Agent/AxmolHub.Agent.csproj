@@ -17,10 +17,6 @@
          git status. If one reappears here, delete it. The policy and its reasoning are in the repo-root
          Directory.Build.props. -->
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
-    <!-- API-key-only Gemini usage does not need reflection-based Google OAuth ADC rooting when
-         PublishTrimmed or PublishAot is enabled in the future. Non-trimmed publishes still carry the
-         transitive NuGet assemblies (tracked in src/AxmolHub/packages.lock.json and licenses/). -->
-    <GoogleGenAIRootAuthAssemblies>false</GoogleGenAIRootAuthAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AxmolHub.Checks" />

@@ -198,7 +198,7 @@ public static class ChatClientFactory
                         Timeout = Timeout.InfiniteTimeSpan,
                     },
                 });
-            return new GoogleGenAiChatClient(google, google.AsIChatClient(model), reasoning);
+            return new GoogleGenAiChatClient(google, google.AsIChatClient(model), model, reasoning);
         }
 
         // A local endpoint (Ollama / custom) needs no key; pass a placeholder credential so the header is harmless.

@@ -36,8 +36,11 @@ public sealed class GeminiModelsSource : IModelCapabilitySource
         if (pageToken is not null) query += "&pageToken=" + Uri.EscapeDataString(pageToken);
         var baseUri = new Uri(provider.BaseUrl, UriKind.Absolute);
         var isLoopbackHttp = baseUri.Scheme == Uri.UriSchemeHttp && baseUri.Host is "localhost" or "127.0.0.1" or "[::1]";
-        if ((baseUri.Scheme != Uri.UriSchemeHttps && !isLoopbackHttp) || baseUri.UserInfo.Length != 0)
-            throw new InvalidOperationException("The Gemini catalog requires an HTTPS endpoint (or loopback HTTP) without user information.");
+        var allowedScheme = baseUri.Scheme == Uri.UriSchemeHttps
+                            || isLoopbackHttp
+                            || (provider.IsCustom && baseUri.Scheme == Uri.UriSchemeHttp);
+        if (!allowedScheme || baseUri.UserInfo.Length != 0)
+            throw new InvalidOperationException("The Gemini catalog requires an HTTPS endpoint (or HTTP on loopback / custom endpoints) without user information.");
         var (baseRoot, apiVersion) = ParseEndpoint(provider.BaseUrl);
         var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"{baseRoot}/{apiVersion}/models{query}", UriKind.Absolute));
         ProviderStaticHeaders.ApplyTo(request, provider.Headers);

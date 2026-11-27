@@ -769,8 +769,8 @@ internal static class AiProvidersChecks
         // "anthropic" as endpoint *families* (OrcaRouter's supported_endpoint_types does, and the Copilot capture
         // carries the same two words); a family label is not a wire. Resolving "anthropic" to the messages body would
         // aim a bearer-issued credential at an endpoint that reads x-api-key, on a machine where nobody asked for that.
-        Assert(new[] { ModelProtocols.Chat, ModelProtocols.Responses, ModelProtocols.Messages }.All(ModelProtocols.IsKnown), "the three wire names are all known");
-        Assert(!new string? [] { "openai", "anthropic", "Messages", "chat ", "", null }.Any(ModelProtocols.IsKnown), "a family label, a wrong case, padding and silence all read as nothing declared");
+        Assert(new[] { ModelProtocols.Chat, ModelProtocols.Responses, ModelProtocols.Messages, ModelProtocols.Gemini, ModelProtocols.Acp }.All(ModelProtocols.IsKnown), "all known wire names match exactly");
+        Assert(!new string? [] { "openai", "anthropic", "google", "Messages", "Gemini", "chat ", "", null }.Any(ModelProtocols.IsKnown), "a family label, a wrong case, padding and silence all read as nothing declared");
         var wireMarked = new ModelProvider
         {
             Id = "custom-wire-marked",

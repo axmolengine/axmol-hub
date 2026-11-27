@@ -12,6 +12,7 @@ namespace AxmolHub.Agent;
 internal sealed class GoogleGenAiChatClient(
     Google.GenAI.Client client,
     IChatClient inner,
+    string model,
     ReasoningTable? reasoning = null) : DelegatingChatClient(inner)
 {
     private static readonly byte[] SkipThoughtSignatureBytes =
@@ -48,7 +49,7 @@ internal sealed class GoogleGenAiChatClient(
         if (RequestRetryScope.Current.Value?.StreamFailure is { } trailingFailure) throw trailingFailure;
     }
 
-    private static ChatOptions? PrepareOptions(ChatOptions? options)
+    private ChatOptions? PrepareOptions(ChatOptions? options)
     {
         if (options?.Tools is not { Count: > 0 } tools) return options;
         var hasBuiltIn = false;
@@ -62,10 +63,20 @@ internal sealed class GoogleGenAiChatClient(
         }
         if (!hasBuiltIn || !hasFunction) return options;
 
-        // Gemini requires toolConfig.includeServerSideToolInvocations=true when combining built-in tools
-        // (such as googleSearch) with functionDeclarations, and rejects FunctionCallingConfigMode.Auto in
-        // that mode. Clear ToolMode on the clone so upstream GoogleGenAIChatClient does not overwrite ToolConfig.
         var clone = options.Clone();
+        // Combining built-in tools (such as googleSearch) with functionDeclarations is only supported on
+        // Gemini 3+ models; Gemini 1.x / 2.x reject the mixed tools array with HTTP 400.
+        if (IsLegacyPreGemini3Model(options.ModelId ?? model))
+        {
+            clone.Tools = clone.Tools!
+                .Where(t => t is not (HostedWebSearchTool or HostedCodeInterpreterTool or HostedFileSearchTool))
+                .ToList();
+            return clone;
+        }
+
+        // Gemini 3+ requires toolConfig.includeServerSideToolInvocations=true when combining built-in tools
+        // with functionDeclarations, and rejects FunctionCallingConfigMode.Auto in that mode. Clear ToolMode
+        // on the clone so upstream GoogleGenAIChatClient does not overwrite ToolConfig.
         var originalFactory = clone.RawRepresentationFactory;
         var originalToolMode = clone.ToolMode;
         clone.ToolMode = null;
@@ -96,6 +107,14 @@ internal sealed class GoogleGenAiChatClient(
             return config;
         };
         return clone;
+    }
+
+    private static bool IsLegacyPreGemini3Model(string? modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return false;
+        var leaf = modelName[(modelName.LastIndexOf('/') + 1)..].Trim();
+        return leaf.StartsWith("gemini-1.", StringComparison.OrdinalIgnoreCase)
+               || leaf.StartsWith("gemini-2.", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override void Dispose(bool disposing)
@@ -231,19 +250,25 @@ internal sealed class GoogleGenAiChatClient(
                 }
             }
 
-            for (var i = 0; i < calls.Count; i++)
+            var callIndex = 0;
+            for (var contentIndex = 0; contentIndex < message.Contents.Count; contentIndex++)
             {
-                var call = calls[i];
-                var sigBytes = signatures[i] ?? (!anyRealSignature && i == 0 ? SkipThoughtSignatureBytes : null);
-                call.RawRepresentation = new Part
+                if (message.Contents[contentIndex] is not FunctionCallContent call) continue;
+                var sigBytes = signatures[callIndex] ?? (!anyRealSignature && callIndex == 0 ? SkipThoughtSignatureBytes : null);
+                callIndex++;
+                message.Contents[contentIndex] = new FunctionCallContent(call.CallId, call.Name, call.Arguments)
                 {
-                    FunctionCall = new FunctionCall
+                    AdditionalProperties = call.AdditionalProperties,
+                    RawRepresentation = new Part
                     {
-                        Id = call.CallId,
-                        Name = call.Name,
-                        Args = ToArgs(call.Arguments),
+                        FunctionCall = new FunctionCall
+                        {
+                            Id = call.CallId,
+                            Name = call.Name,
+                            Args = ToArgs(call.Arguments),
+                        },
+                        ThoughtSignature = sigBytes,
                     },
-                    ThoughtSignature = sigBytes,
                 };
             }
         }
