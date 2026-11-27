@@ -74,6 +74,7 @@ internal static partial class MarkdownMessageRenderer
         if (measurement is not null) measurement.SyntaxMs += measurement.ElapsedMs - syntaxStarted;
         var plugins = new MdAvPlugins();
         plugins.Plugins.Add(syntax);
+        plugins.Plugins.Add(CommonMarkAtxHeadings.Instance);
         viewer.Plugins = plugins;
         EventHandler? layoutUpdated = null;
         layoutUpdated = (_, _) =>
