@@ -43,12 +43,27 @@ public sealed class AcpTurnRunner(AcpHostPool? pool = null)
         await using var lease = await pool.AcquireAsync(provider, workingDirectory, cancellationToken, engineRoot)
             .ConfigureAwait(false);
 
-        var session = await EnsureSessionAsync(
-            lease,
-            workingDirectory,
-            existingSessionId,
-            callbacks.OnSessionBound,
-            cancellationToken).ConfigureAwait(false);
+        AcpSessionInfo session;
+        try
+        {
+            session = await EnsureSessionAsync(
+                lease,
+                workingDirectory,
+                existingSessionId,
+                callbacks.OnSessionBound,
+                cancellationToken).ConfigureAwait(false);
+            provider.AcpStatus = new AcpProbeStatus(
+                AcpProbeStates.Ready,
+                SupportsLogout: lease.Host.InitializeResult.AgentCapabilities.SupportsLogout);
+        }
+        catch (AcpRpcException ex) when (AcpProcessHost.LooksLikeAuthRequired(ex.Message))
+        {
+            provider.AcpStatus = new AcpProbeStatus(
+                AcpProbeStates.AuthRequired,
+                ex.Message,
+                lease.Host.InitializeResult.AgentCapabilities.SupportsLogout);
+            throw;
+        }
 
         try
         {

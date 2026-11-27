@@ -264,12 +264,21 @@ public sealed class AcpProcessHost : IAsyncDisposable
 
         await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var command = provider.EffectiveAcpCommand;
+        void RecordStatus(AcpProbeStatus status)
+        {
+            if (!cancellationToken.IsCancellationRequested
+                && string.Equals(provider.EffectiveAcpCommand, command, StringComparison.Ordinal))
+            {
+                provider.AcpStatus = status;
+            }
+        }
+
         if (ResolveExecutable(command) is null)
         {
             var hint = acp.SetupUrl is { Length: > 0 } url
                 ? $"ACP CLI '{command}' was not found. Install it ({url}) or set its executable path in provider settings."
                 : $"ACP CLI '{command}' was not found on PATH. Install it or set its executable path in provider settings.";
-            provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.MissingCli, hint);
+            RecordStatus(new AcpProbeStatus(AcpProbeStates.MissingCli, hint));
             return ModelCapabilityBatch.Unreachable(hint);
         }
 
@@ -282,6 +291,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
                 enableFsCapabilities: false,
                 cancellationToken).ConfigureAwait(false);
 
+            var supportsLogout = host.InitializeResult.AgentCapabilities.SupportsLogout;
             var models = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             AcpSessionInfo? probedSession = null;
@@ -305,7 +315,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
             catch (AcpRpcException ex) when (LooksLikeAuthRequired(ex.Message))
             {
                 var authHint = $"'{command}' is not signed in yet. Use browser sign-in below or run '{command}' in a terminal.";
-                provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.AuthRequired, authHint);
+                RecordStatus(new AcpProbeStatus(AcpProbeStates.AuthRequired, authHint, supportsLogout));
                 return ModelCapabilityBatch.Unreachable(authHint);
             }
             catch (AcpRpcException)
@@ -344,7 +354,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
                 },
                 StringComparer.OrdinalIgnoreCase);
 
-            provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.Ready);
+            RecordStatus(new AcpProbeStatus(AcpProbeStates.Ready, SupportsLogout: supportsLogout));
             return new ModelCapabilityBatch(
                 models,
                 reasoning,
@@ -358,7 +368,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
         catch (Exception ex)
         {
             var err = $"ACP CLI '{command}' failed to start: {ex.Message}";
-            provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.Error, err);
+            RecordStatus(new AcpProbeStatus(AcpProbeStates.Error, err));
             return ModelCapabilityBatch.Unreachable(err);
         }
     }
@@ -403,7 +413,9 @@ public sealed class AcpProcessHost : IAsyncDisposable
                     methodId,
                 }, deadline.Token).ConfigureAwait(false);
 
-                provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.Ready);
+                provider.AcpStatus = new AcpProbeStatus(
+                    AcpProbeStates.Ready,
+                    SupportsLogout: host.InitializeResult.AgentCapabilities.SupportsLogout);
                 return (true, null);
             }
             catch (AcpRpcException ex) when (ex.Code is -32601 or -32602 && acp.LoginArgs.Count > 0)
@@ -482,7 +494,9 @@ public sealed class AcpProcessHost : IAsyncDisposable
 
             if (process.ExitCode == 0)
             {
-                provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.Ready);
+                provider.AcpStatus = new AcpProbeStatus(
+                    AcpProbeStates.Ready,
+                    SupportsLogout: provider.AcpStatus?.SupportsLogout ?? false);
                 return (true, null);
             }
 
@@ -503,6 +517,58 @@ public sealed class AcpProcessHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Invokes the ACP <c>logout</c> RPC on the local CLI subprocess to sign out the CLI's cached
+    /// session. Fails cleanly when the agent does not advertise <c>agentCapabilities.auth.logout</c>.
+    /// </summary>
+    public static async Task<(bool Ok, string? Error)> LogoutAsync(
+        ModelProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        if (!provider.IsAcp || provider.Acp is not { IsUsable: true } acp)
+            return (false, "This provider is not configured as an ACP CLI agent.");
+
+        await HostEnvironment.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        var command = provider.EffectiveAcpCommand;
+        if (ResolveExecutable(command) is null)
+        {
+            var hint = $"ACP CLI '{command}' was not found.";
+            provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.MissingCli, hint);
+            return (false, hint);
+        }
+
+        try
+        {
+            await using var host = await StartAsync(
+                command,
+                acp.Args,
+                Environment.CurrentDirectory,
+                enableFsCapabilities: false,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!host.InitializeResult.AgentCapabilities.SupportsLogout)
+                return (false, $"ACP CLI '{command}' does not support logout.");
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(15));
+
+            await host.Connection.SendRequestAsync(AcpProtocol.MethodLogout, new { }, deadline.Token)
+                .ConfigureAwait(false);
+
+            var authHint = $"'{command}' is not signed in yet. Use browser sign-in below or run '{command}' in a terminal.";
+            provider.AcpStatus = new AcpProbeStatus(AcpProbeStates.AuthRequired, authHint, SupportsLogout: true);
+            return (true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return (false, "Sign-out was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     internal static string SelectAuthMethodId(IReadOnlyList<AcpAuthMethod> methods)
     {
         if (methods.Count == 0) return "oauth-personal";
@@ -515,7 +581,7 @@ public sealed class AcpProcessHost : IAsyncDisposable
         return oauth?.Id ?? methods[0].Id;
     }
 
-    private static bool LooksLikeAuthRequired(string message)
+    internal static bool LooksLikeAuthRequired(string message)
         => message.Contains("auth", StringComparison.OrdinalIgnoreCase)
            || message.Contains("login", StringComparison.OrdinalIgnoreCase)
            || message.Contains("sign in", StringComparison.OrdinalIgnoreCase)

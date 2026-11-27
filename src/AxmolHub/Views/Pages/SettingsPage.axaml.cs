@@ -100,6 +100,10 @@ public partial class SettingsPage : UserControl
     /// <summary>Catalog entry tooltips stay suppressed across provider-card rebuilds while the picker is open.</summary>
     private bool _modelCatalogOpen;
 
+    private const string AcpCheckingState = "checking";
+    private readonly Dictionary<string, CancellationToken> _probingAcpProviders = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _acpProbeCts;
+
     /// <summary>For the XAML loader and design-time preview (missing it raises AVLN3001).</summary>
     public SettingsPage()
     {
@@ -188,11 +192,13 @@ public partial class SettingsPage : UserControl
         {
             HookUpdateService();
             HookMacSystemPermissions();
+            StartAcpProbes();
         };
         DetachedFromVisualTree += (_, _) =>
         {
             UnhookUpdateService();
             UnhookMacSystemPermissions();
+            CancelAcpProbes();
         };
 
         // DataRootNote's copy goes through XAML's {DynamicResource}; **don't** assign it imperatively here:
@@ -268,6 +274,10 @@ public partial class SettingsPage : UserControl
         if (key == "permission")
         {
             RefreshMacSystemPermissions();
+        }
+        else if (key == "providers")
+        {
+            StartAcpProbes();
         }
 
         // Every group shares the one detail scroll, so an offset left over from the bottom of a long provider
@@ -1791,11 +1801,22 @@ public partial class SettingsPage : UserControl
 
         if (provider.IsAcp)
         {
-            var acpMissing = EffectiveAcpState(provider) == AcpProbeStates.MissingCli;
-            if (!acpMissing)
+            var acpState = EffectiveAcpState(provider);
+            if (acpState == AcpProbeStates.Ready)
+            {
+                if (provider.AcpStatus?.SupportsLogout == true)
+                {
+                    var disconnect = BuildHeaderAction(HubStrings.Get("DisconnectProvider"));
+                    disconnect.Tag = SectionTags.AuthButton;
+                    disconnect.Click += async (_, _) => await DisconnectAcpAsync(provider, disconnect);
+                    actions.Children.Add(disconnect);
+                }
+            }
+            else if (acpState != AcpProbeStates.MissingCli)
             {
                 var signIn = BuildHeaderAction(HubStrings.Get("Authenticate"));
                 signIn.Tag = SectionTags.AuthButton;
+                signIn.IsEnabled = acpState != AcpCheckingState;
                 signIn.Click += async (_, _) => await SignInAcpAsync(provider, signIn);
                 actions.Children.Add(signIn);
             }
@@ -2004,21 +2025,21 @@ public partial class SettingsPage : UserControl
         if (provider.IsAcp)
         {
             var acpState = EffectiveAcpState(provider);
-            var ready = acpState is AcpProbeStates.Ready or "detected";
+            var acpReady = acpState == AcpProbeStates.Ready;
             var acpStatus = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 5,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            acpStatus.Children.Add(ready ? BuildCheckIcon() : BuildUnlinkedIcon());
+            acpStatus.Children.Add(acpReady ? BuildCheckIcon() : BuildUnlinkedIcon());
             var acpLabel = new TextBlock
             {
                 Text = HubStrings.Get(acpState switch
                 {
                     AcpProbeStates.MissingCli => "AcpStatusMissingCli",
-                    AcpProbeStates.AuthRequired => "AcpStatusNotSignedIn",
-                    AcpProbeStates.Ready => "AcpStatusReady",
+                    AcpProbeStates.Ready => "ProviderConnected",
+                    AcpCheckingState => "AcpStatusChecking",
                     "detected" => "AcpStatusDetected",
                     _ => "ProviderNotConnected",
                 }),
@@ -2027,7 +2048,7 @@ public partial class SettingsPage : UserControl
             };
             acpLabel.Bind(TextBlock.ForegroundProperty,
                 new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
-                    ready ? "Hub.Success" : "Hub.TextTertiary"));
+                    acpReady ? "Hub.Success" : "Hub.TextTertiary"));
             acpStatus.Children.Add(acpLabel);
             return acpStatus;
         }
@@ -2327,6 +2348,7 @@ public partial class SettingsPage : UserControl
         }
         SetProviderStatus(false, HubStrings.Get("ProviderEditSaved"));
         CloseDraft();
+        if (provider.IsAcp) StartAcpProbes(onlyUnprobed: true);
     }
 
     private void SetProviderEnabled(string providerId, bool enabled)
@@ -2478,7 +2500,9 @@ public partial class SettingsPage : UserControl
             var empty = new StackPanel { Spacing = 8, Tag = SectionTags.ModelsEmpty };
             empty.Children.Add(new TextBlock
             {
-                Text = IsLinked(provider) || !provider.RequiresCredential
+                Text = (provider.IsAcp
+                        ? EffectiveAcpState(provider) == AcpProbeStates.Ready
+                        : IsLinked(provider) || !provider.RequiresCredential)
                     ? HubStrings.Get("NoEnabledModels")
                     : HubStrings.Get("ModelsAuthHint"),
                 Classes = { "muted" },
@@ -2725,7 +2749,9 @@ public partial class SettingsPage : UserControl
     /// wants to try anyway should not have to fight a UI-layer guard.</para>
     /// </summary>
     private bool CanListModels(ModelProvider provider)
-        => !provider.RequiresCredential || IsLinked(provider);
+        => provider.IsAcp
+            ? EffectiveAcpState(provider) != AcpProbeStates.MissingCli
+            : !provider.RequiresCredential || IsLinked(provider);
 
     /// <summary>
     /// The window this model is treated as having, stated once as a number. Where that number came from lives in
@@ -3535,19 +3561,93 @@ public partial class SettingsPage : UserControl
 
     /// <summary>
     /// Fast, non-spawning state check for ACP providers: honors the latest probe state when present,
-    /// otherwise performs a lightweight executable lookup so a missing CLI surfaces install actions immediately.
+    /// reports <see cref="AcpCheckingState"/> while a background probe is in flight, and otherwise performs
+    /// a lightweight executable lookup so a missing CLI surfaces install actions immediately.
     /// </summary>
-    private static string EffectiveAcpState(ModelProvider provider)
+    private string EffectiveAcpState(ModelProvider provider)
     {
         if (provider.AcpStatus is { } observed) return observed.State;
+        if (_probingAcpProviders.ContainsKey(provider.Id)) return AcpCheckingState;
         return AxmolHub.Agent.Acp.AcpProcessHost.ResolveExecutable(provider.EffectiveAcpCommand) is not null
             ? "detected"
             : AcpProbeStates.MissingCli;
     }
 
+    /// <summary>
+    /// Probes configured ACP providers in the background when the Providers pane is shown so auth state
+    /// reflects the local CLI's real sign-in status without blocking UI layout.
+    /// </summary>
+    private void StartAcpProbes(bool onlyUnprobed = false)
+    {
+        if (_chat is null || !this.IsAttachedToVisualTree() || _selectedCategory != "providers") return;
+
+        var candidates = new List<ModelProvider>();
+        var needsInitialRepaint = false;
+        foreach (var provider in _chat.Providers)
+        {
+            if (!provider.IsAcp || _probingAcpProviders.ContainsKey(provider.Id)) continue;
+            if (AxmolHub.Agent.Acp.AcpProcessHost.ResolveExecutable(provider.EffectiveAcpCommand) is null) continue;
+
+            // Recover automatically if the user installed the CLI while Hub was already running.
+            if (provider.AcpStatus?.State == AcpProbeStates.MissingCli)
+                provider.AcpStatus = null;
+
+            if (onlyUnprobed && provider.AcpStatus is not null) continue;
+            if (provider.AcpStatus is null) needsInitialRepaint = true;
+            candidates.Add(provider);
+        }
+
+        if (candidates.Count == 0) return;
+
+        _acpProbeCts ??= new CancellationTokenSource();
+        var token = _acpProbeCts.Token;
+
+        foreach (var provider in candidates)
+        {
+            _probingAcpProviders[provider.Id] = token;
+            _ = ProbeAcpInBackgroundAsync(provider.Id, token);
+        }
+
+        if (needsInitialRepaint && !DraftOpen)
+            RebuildProviderGroups();
+    }
+
+    private void CancelAcpProbes()
+    {
+        if (_acpProbeCts is null) return;
+        try { _acpProbeCts.Cancel(); } catch { }
+        _acpProbeCts.Dispose();
+        _acpProbeCts = null;
+        _probingAcpProviders.Clear();
+    }
+
+    private async Task ProbeAcpInBackgroundAsync(string providerId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _chat.ProbeAcpAsync(providerId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Settings closed or superseded by an explicit sign-in / sign-out.
+        }
+        catch
+        {
+            // ProbeAsync records AcpStatus on failure; keep background probing quiet.
+        }
+        finally
+        {
+            if (_probingAcpProviders.TryGetValue(providerId, out var active) && active == cancellationToken)
+                _probingAcpProviders.Remove(providerId);
+            if (!cancellationToken.IsCancellationRequested && this.IsAttachedToVisualTree() && !DraftOpen)
+                RebuildProviderGroups();
+        }
+    }
+
     private async Task SignInAcpAsync(ModelProvider provider, Button? trigger = null)
     {
         if (_chat is null) return;
+        CancelAcpProbes();
         if (trigger is not null) trigger.IsEnabled = false;
         SetProviderStatus(false, HubStrings.Get("AcpSignInStarting"));
         try
@@ -3568,14 +3668,52 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private async Task DisconnectAcpAsync(ModelProvider provider, Button? trigger = null)
+    {
+        if (_chat is null) return;
+
+        if (Owner() is { } owner)
+        {
+            var confirmBody = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                HubStrings.Get("AcpDisconnectConfirm"),
+                provider.EffectiveAcpCommand);
+            var confirmed = await HubDialog.ShowAsync(
+                owner,
+                HubStrings.Get("DisconnectProvider"),
+                provider.Name + "\n\n" + confirmBody,
+                HubDialogButtons.OkCancel);
+            if (confirmed != HubDialogResult.Ok) return;
+        }
+
+        CancelAcpProbes();
+        if (trigger is not null) trigger.IsEnabled = false;
+        SetProviderStatus(false, HubStrings.Get("AcpSignOutStarting"));
+        try
+        {
+            var (ok, error) = await _chat.LogoutAcpAsync(provider.Id);
+            if (!ok)
+            {
+                SetProviderStatus(true, HubStrings.Get("AcpSignOutFailed") + (error ?? "Unknown error"));
+                return;
+            }
+            SetProviderStatus(false, HubStrings.Get("ProviderDisconnected"));
+        }
+        finally
+        {
+            if (trigger is not null) trigger.IsEnabled = true;
+            RebuildProviderGroups();
+        }
+    }
+
     /// <summary>
     /// On-demand inline recovery actions shown only when an ACP provider is missing its CLI binary or
-    /// needs sign-in. Renders nothing when the CLI is installed and ready.
+    /// failed to start. Auth status and sign-in live in the header, matching every other provider.
     /// </summary>
     private Control? BuildAcpIssueRow(ModelProvider provider)
     {
         var state = EffectiveAcpState(provider);
-        if (state is not (AcpProbeStates.MissingCli or AcpProbeStates.AuthRequired))
+        if (state is not (AcpProbeStates.MissingCli or AcpProbeStates.Error))
             return null;
 
         var message = provider.AcpStatus?.Message;
@@ -3648,20 +3786,9 @@ public partial class SettingsPage : UserControl
                 actions.Children.Add(docs);
             }
         }
-        else if (state == AcpProbeStates.AuthRequired)
-        {
-            var signIn = new Button
-            {
-                Content = HubStrings.Get("Authenticate"),
-                Classes = { "compact", "primary" },
-                Margin = new Thickness(0),
-            };
-            signIn.Click += async (_, _) => await SignInAcpAsync(provider, signIn);
-            actions.Children.Add(signIn);
-        }
 
         if (actions.Children.Count > 0) panel.Children.Add(actions);
-        return panel;
+        return panel.Children.Count > 0 ? panel : null;
     }
 
     /// <summary>Number of built-in presets the "add provider" dialog would offer for this workspace — the

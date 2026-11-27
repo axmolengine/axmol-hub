@@ -27,6 +27,8 @@ internal sealed partial class ChatExecutionCoordinator
         _acpHostPool.Dispose();
     }
 
+    internal Task EvictAcpProviderAsync(string providerId) => _acpHostPool.EvictProviderAsync(providerId);
+
     private void CancelAcpPermissionsFor(string conversationId)
     {
         foreach (var key in _acpPermissions.Keys.Where(k => k.ConversationId == conversationId).ToArray())

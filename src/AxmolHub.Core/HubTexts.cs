@@ -1916,9 +1916,11 @@ public static class HubTexts
         ["AcpSignInStarting"] = ("正在通过 CLI 打开浏览器登录…", "Opening browser sign-in via CLI…"),
         ["AcpSignInSuccess"] = ("CLI 登录完成，正在刷新模型列表…", "CLI sign-in succeeded; refreshing models…"),
         ["AcpSignInFailed"] = ("CLI 登录失败：", "CLI sign-in failed: "),
+        ["AcpSignOutStarting"] = ("正在通过 CLI 断开鉴权…", "Signing out via CLI…"),
+        ["AcpSignOutFailed"] = ("CLI 断开鉴权失败：", "CLI sign-out failed: "),
+        ["AcpDisconnectConfirm"] = ("将退出本机 {0} CLI 当前登录的账号（终端中的 {0} 也会一并退出登录）。提供商配置会保留，可随时重新鉴权。", "Signs out the active account in the local '{0}' CLI (this also signs out '{0}' in your terminal). The provider stays configured and you can sign in again at any time."),
         ["AcpStatusMissingCli"] = ("未安装 CLI", "CLI not installed"),
-        ["AcpStatusNotSignedIn"] = ("未登录", "Not signed in"),
-        ["AcpStatusReady"] = ("已就绪", "Ready"),
+        ["AcpStatusChecking"] = ("检测中…", "Checking…"),
         ["AcpStatusDetected"] = ("已检测到 CLI", "CLI detected"),
         ["AcpMissingCliInlineHint"] = ("未在本机找到 {0} 可执行文件，请先安装或点击铅笔图标指定完整路径。", "Executable '{0}' was not found on this machine. Install it or click Edit to set its full path."),
     };

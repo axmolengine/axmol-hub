@@ -15,6 +15,7 @@ public static class AcpProtocol
 
     public const string MethodInitialize = "initialize";
     public const string MethodAuthenticate = "authenticate";
+    public const string MethodLogout = "logout";
     public const string MethodSessionNew = "session/new";
     public const string MethodSessionLoad = "session/load";
     public const string MethodSessionPrompt = "session/prompt";
@@ -51,7 +52,8 @@ public sealed record AcpClientCapabilities(
 public sealed record AcpAgentCapabilities(
     bool LoadSession,
     bool PromptImages,
-    bool PromptEmbeddedContext);
+    bool PromptEmbeddedContext,
+    bool SupportsLogout = false);
 
 public sealed record AcpAuthMethod(string Id, string Name, string? Description);
 
@@ -159,6 +161,7 @@ public static class AcpParsers
         var loadSession = false;
         var promptImages = false;
         var promptEmbedded = false;
+        var supportsLogout = false;
         if (TryObject(root, "agentCapabilities", out var caps))
         {
             loadSession = TryBool(caps, "loadSession") ?? false;
@@ -166,6 +169,12 @@ public static class AcpParsers
             {
                 promptImages = TryBool(promptCaps, "image") ?? false;
                 promptEmbedded = TryBool(promptCaps, "embeddedContext") ?? false;
+            }
+            if (TryObject(caps, "auth", out var authCaps)
+                && authCaps.TryGetProperty("logout", out var logoutCap)
+                && logoutCap.ValueKind is JsonValueKind.Object or JsonValueKind.True)
+            {
+                supportsLogout = true;
             }
         }
 
@@ -187,7 +196,7 @@ public static class AcpParsers
         return new AcpInitializeResult(
             version,
             info,
-            new AcpAgentCapabilities(loadSession, promptImages, promptEmbedded),
+            new AcpAgentCapabilities(loadSession, promptImages, promptEmbedded, supportsLogout),
             authMethods);
     }
 

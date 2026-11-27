@@ -505,7 +505,11 @@ public sealed partial class ChatWorkspace : IDisposable
     /// </summary>
     public Task<ModelFetchResult> RefreshModelsAsync(string providerId, CancellationToken cancellationToken = default) => _providers.RefreshModelsAsync(providerId, cancellationToken);
 
+    public Task<AcpProbeStatus?> ProbeAcpAsync(string providerId, CancellationToken cancellationToken = default) => _providers.ProbeAcpAsync(providerId, cancellationToken);
+
     public Task<(bool Ok, string? Error)> AuthenticateAcpAsync(string providerId, CancellationToken cancellationToken = default) => _providers.AuthenticateAcpAsync(providerId, cancellationToken);
+
+    public Task<(bool Ok, string? Error)> LogoutAcpAsync(string providerId, CancellationToken cancellationToken = default) => _providers.LogoutAcpAsync(providerId, cancellationToken);
 
     /// <summary>
     /// The model names last fetched for a provider, from the cache. Empty when it has never been fetched, so

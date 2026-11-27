@@ -360,7 +360,9 @@ public sealed class ModelProvider
     /// reachable on a machine where nothing was ever pasted.</para>
     /// </summary>
     [JsonIgnore]
-    public bool IsCallReady => !RequiresCredential || (Credential?.HasSecret == true && !NeedsOpenAiRelogin);
+    public bool IsCallReady => IsAcp
+        ? AcpStatus?.State is not (AcpProbeStates.MissingCli or AcpProbeStates.AuthRequired)
+        : !RequiresCredential || (Credential?.HasSecret == true && !NeedsOpenAiRelogin);
 
     /// <summary>
     /// The provider's default model name, projected from the model that is marked in use rather than stored

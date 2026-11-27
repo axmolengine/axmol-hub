@@ -70,6 +70,27 @@ public sealed class AcpHostPool : IAsyncDisposable, IDisposable
         }
     }
 
+    /// <summary>Disposes any cached ACP subprocesses belonging to <paramref name="providerId"/>.</summary>
+    public async Task EvictProviderAsync(string providerId)
+    {
+        if (_disposed != 0) return;
+        foreach (var pair in _slots)
+        {
+            if (!string.Equals(pair.Key.ProviderId, providerId, StringComparison.Ordinal)) continue;
+            var slot = pair.Value;
+            try { await slot.Gate.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch { continue; }
+            try
+            {
+                await ResetSlotAsync(slot).ConfigureAwait(false);
+            }
+            finally
+            {
+                slot.Gate.Release();
+            }
+        }
+    }
+
     private async Task EvictIdleAsync()
     {
         var cutoff = DateTimeOffset.UtcNow - IdleLifetime;

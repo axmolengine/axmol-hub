@@ -947,6 +947,26 @@ internal sealed partial class ChatProviderCoordinator
     internal IReadOnlyList<string> CachedModels(string providerId)
         => _modelLists.Load().FirstOrDefault(entry => entry.Id == ModelCacheId(providerId))?.Models ?? [];
 
+    internal async Task<AcpProbeStatus?> ProbeAcpAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null || !provider.IsAcp) return null;
+
+        var commandBefore = provider.EffectiveAcpCommand;
+        await AcpProcessHost.ProbeAsync(provider, cancellationToken);
+        if (cancellationToken.IsCancellationRequested
+            || !_providerList.Contains(provider)
+            || !string.Equals(provider.EffectiveAcpCommand, commandBefore, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        Execution.Changed?.Invoke();
+        return provider.AcpStatus;
+    }
+
     internal async Task<(bool Ok, string? Error)> AuthenticateAcpAsync(
         string providerId,
         CancellationToken cancellationToken = default)
@@ -954,7 +974,21 @@ internal sealed partial class ChatProviderCoordinator
         var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
         if (provider is null || !provider.IsAcp)
             return (false, "No ACP provider matches this id.");
+        await Execution.EvictAcpProviderAsync(providerId);
         var result = await AcpProcessHost.AuthenticateAsync(provider, cancellationToken);
+        Execution.Changed?.Invoke();
+        return result;
+    }
+
+    internal async Task<(bool Ok, string? Error)> LogoutAcpAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var provider = _providerList.FirstOrDefault(candidate => candidate.Id == providerId);
+        if (provider is null || !provider.IsAcp)
+            return (false, "No ACP provider matches this id.");
+        await Execution.EvictAcpProviderAsync(providerId);
+        var result = await AcpProcessHost.LogoutAsync(provider, cancellationToken);
         Execution.Changed?.Invoke();
         return result;
     }

@@ -270,7 +270,7 @@ public static class AcpProbeStates
 }
 
 /// <summary>Latest observed probe outcome for an ACP CLI provider.</summary>
-public sealed record AcpProbeStatus(string State, string? Message = null);
+public sealed record AcpProbeStatus(string State, string? Message = null, bool SupportsLogout = false);
 
 /// <summary>Model-specific reasoning metadata and request-body fields declared by a built-in provider manifest.</summary>
 public sealed class AiModelReasoning

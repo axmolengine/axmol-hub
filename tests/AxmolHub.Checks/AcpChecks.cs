@@ -248,18 +248,24 @@ internal static class AcpChecks
             throw new Exception("Expected mid-turn cancellation to throw OperationCanceledException.");
         Console.WriteLine("PASS: ACP mid-turn cancellation and host pool teardown.");
 
-        // 5. Probe (configId: "model" + category: "thought_level" discovery) and standard ACP authenticate RPC.
+        // 5. Probe (configId: "model" + category: "thought_level" + auth.logout discovery),
+        //    ACP logout RPC, and standard ACP authenticate RPC.
         var probed = await AcpProcessHost.ProbeAsync(testProvider);
         if (!probed.Reachable || !probed.Models.Contains("gemini-4-neon", StringComparer.OrdinalIgnoreCase)
             || !probed.Reasoning.TryGetValue("gemini-4-neon", out var probedReasoning)
             || !probedReasoning.Efforts.Contains(ChatReasoningEfforts.XHigh)
-            || testProvider.AcpStatus?.State != AcpProbeStates.Ready)
-            throw new Exception($"Expected ACP probe to discover model & xhigh thought_level options and mark Ready, got problem='{probed.Problem}' models=[{string.Join(",", probed.Models)}].");
+            || testProvider.AcpStatus is not { State: AcpProbeStates.Ready, SupportsLogout: true }
+            || !testProvider.IsCallReady)
+            throw new Exception($"Expected ACP probe to discover model, xhigh thought_level, and logout capability and mark Ready, got problem='{probed.Problem}' models=[{string.Join(",", probed.Models)}].");
+
+        var (logoutOk, logoutErr) = await AcpProcessHost.LogoutAsync(testProvider);
+        if (!logoutOk || testProvider.AcpStatus?.State != AcpProbeStates.AuthRequired || testProvider.IsCallReady)
+            throw new Exception($"Expected ACP logout RPC to succeed and mark AuthRequired, got ok={logoutOk} err='{logoutErr}' state='{testProvider.AcpStatus?.State}'.");
 
         var (authOk, authErr) = await AcpProcessHost.AuthenticateAsync(testProvider);
-        if (!authOk)
-            throw new Exception($"Expected ACP authenticate RPC to succeed, got: {authErr}");
-        Console.WriteLine("PASS: ACP probe (model + thought_level xhigh) and standard authenticate RPC.");
+        if (!authOk || testProvider.AcpStatus is not { State: AcpProbeStates.Ready, SupportsLogout: true } || !testProvider.IsCallReady)
+            throw new Exception($"Expected ACP authenticate RPC to succeed and restore Ready, got: {authErr}");
+        Console.WriteLine("PASS: ACP probe (model + thought_level xhigh + auth.logout), logout RPC, and authenticate RPC.");
     }
 
     /// <summary>
@@ -292,13 +298,21 @@ internal static class AcpChecks
                     {
                         protocolVersion = 1,
                         agentInfo = new { name = "mock-acp-worker", version = "1.0.0" },
-                        agentCapabilities = new { loadSession = true, promptCapabilities = new { image = false } },
+                        agentCapabilities = new
+                        {
+                            loadSession = true,
+                            promptCapabilities = new { image = false },
+                            auth = new { logout = new { } },
+                        },
                         authMethods = new[] { new { id = "oauth-personal", name = "Sign in with Google" } },
                     };
 
                 case AcpProtocol.MethodAuthenticate:
                     if (AcpParsers.TryString(@params, "methodId") != "oauth-personal")
                         throw new AcpRpcException(-32602, "Unexpected auth methodId.");
+                    return new { };
+
+                case AcpProtocol.MethodLogout:
                     return new { };
 
                 case AcpProtocol.MethodSessionNew:
