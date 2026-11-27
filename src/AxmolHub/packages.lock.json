@@ -671,7 +671,7 @@
         "type": "Project",
         "dependencies": {
           "Anthropic": "[13.8.0, )",
-          "AxmolHub.Core": "[0.35.1, )",
+          "AxmolHub.Core": "[1.0.0, )",
           "Google.GenAI": "[2.2.0, )",
           "Microsoft.Extensions.AI": "[11.0.0, )",
           "Microsoft.Extensions.AI.OpenAI": "[11.0.0, )",

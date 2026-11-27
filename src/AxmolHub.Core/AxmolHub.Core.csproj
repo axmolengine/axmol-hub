@@ -3,6 +3,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Core is not shipped as a NuGet package. Keep its restore identity stable across product releases. -->
+    <PackageVersion>1.0.0</PackageVersion>
     <!-- This project has no PackageReference at all, so packages.lock.json would contain only empty
          framework/RID nodes that pin nothing; its content flips depending on whether the last restore
          passed -r, and this project is also transitively polluted by the App's RID publish
