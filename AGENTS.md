@@ -184,6 +184,9 @@ Do not add `Co-authored-by` trailers to commit messages.
 - **No long-winded commit bodies.** The commit message body must not be a long essay — keep it short.
 - **English only, title and body.** Commit messages are pure English; the entire history is. Chinese
   belongs in the docs and in the display text a test asserts on — never in a commit message.
+- **Never fabricate a commit identity.** Do not invent an author/committer or fall back to an
+  auto-generated system username/hostname identity; use the repository's real git identity (or ask
+  the user if it is unavailable in a sandboxed environment).
 
 ## Comment language
 
