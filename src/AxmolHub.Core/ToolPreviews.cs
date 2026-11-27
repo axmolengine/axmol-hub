@@ -30,6 +30,7 @@ public static class ToolPreviews
             ToolNames.WebFetch => FetchPreview(arguments, scope),
             ToolNames.BrowserOpen => BrowserOpenPreview(arguments, scope),
             ToolNames.BrowserRead => BrowserReadPreview(arguments),
+            ToolNames.BrowserScreenshot => BrowserScreenshotPreview(arguments, scope),
             ToolNames.BrowserAct => BrowserActPreview(arguments, scope),
             ToolNames.SendToSession => SendPreview(arguments),
             ToolNames.SpawnSession => SpawnPreview(arguments, scope),
@@ -411,6 +412,18 @@ public static class ToolPreviews
         if (Flag(arguments, "list_tabs")) return "browser_read · list open tabs";
         var tab = Text(arguments, "tab_id");
         return $"browser_read · {(tab.Length > 0 ? tab : "active tab")}";
+    }
+
+    private static string BrowserScreenshotPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var tabId = Text(arguments, "tab_id");
+        var current = scope.Browser?.PeekTabUrl(scope.WorkspaceRoot, tabId.Length > 0 ? tabId : null);
+        if (current is not null)
+        {
+            var where = current.IsFile ? Path.GetFileName(current.LocalPath) : $"{current.Host}{current.AbsolutePath}";
+            return $"browser_screenshot · {SecretRedaction.Redact(where, scope.SensitiveValues)}";
+        }
+        return $"browser_screenshot · {(tabId.Length > 0 ? tabId : "active tab")}";
     }
 
     private static string BrowserActPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)

@@ -548,21 +548,20 @@ internal sealed partial class ChatExecutionCoordinator
     }
 
     private readonly ConcurrentDictionary<string, ComputerUseObservation> _computerObservations = new();
-    private readonly ConcurrentDictionary<string, ConcurrentQueue<ChatImage>> _frames = new();
+    private readonly ConcurrentDictionary<(string Conversation, string CallId), ConcurrentQueue<ChatImage>> _frames = new();
     private void RecordFrames(string conversationId, IReadOnlyList<ChatImage> frames)
     {
-        var queue = _frames.GetOrAdd(conversationId, _ => new ConcurrentQueue<ChatImage>());
+        var key = (conversationId, ToolInvocation.CallId ?? "");
+        var queue = _frames.GetOrAdd(key, _ => new ConcurrentQueue<ChatImage>());
         foreach (var frame in frames) queue.Enqueue(frame);
     }
 
-    private IReadOnlyList<ChatImage> TakeFrames(string conversationId)
+    private IReadOnlyList<ChatImage> TakeFrames(string conversationId, string? callId = null)
     {
-        if (_frames.TryGetValue(conversationId, out var queue) && !queue.IsEmpty)
-        {
-            var frames = queue.ToArray();
-            while (queue.TryDequeue(out _)) { }
-            return frames;
-        }
+        if (!string.IsNullOrEmpty(callId) && _frames.TryRemove((conversationId, callId), out var scoped) && !scoped.IsEmpty)
+            return scoped.ToArray();
+        if (_frames.TryRemove((conversationId, ""), out var unscoped) && !unscoped.IsEmpty)
+            return unscoped.ToArray();
         return [];
     }
 
@@ -2572,7 +2571,7 @@ internal sealed partial class ChatExecutionCoordinator
         // Taken here, ahead of the UI hop, for the same reason the frames are: the queue is the tool's own thread
         // handing something to this thread, and a drain inside the update would be a drain that can be retried.
         var lines = TakeWriteTally(run.ConversationId, call.Name, result);
-        var turn = ChatTurn.FunctionResult(call.CallId, result, failed, TakeFrames(run.ConversationId),
+        var turn = ChatTurn.FunctionResult(call.CallId, result, failed, TakeFrames(run.ConversationId, call.CallId),
             CommandFacts(run.ConversationId, call.Name, elapsed));
         run.RecordToolCompletion();
         try
@@ -3787,7 +3786,7 @@ internal sealed partial class ChatExecutionCoordinator
                 if (info.Name is "web_search" or "web_fetch")
                     if (request.Scope.DeepSeekWebCalls?.TryGetValue(info.Name == "web_search" ? "search" : "fetch", out var calls) == true)
                         calls.TryDequeue(out webApiCall);
-                var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId),
+                var turn = ChatTurn.FunctionResult(info.CallId, result, failed, TakeFrames(run.ConversationId, info.CallId),
                     CommandFacts(run.ConversationId, info.Name, elapsed), webApiCall);
                 if (turn.Images.Count > 0) liveFrames[info.CallId] = turn.Images;
                 run.RecordToolCompletion();
@@ -3938,7 +3937,8 @@ internal sealed partial class ChatExecutionCoordinator
         // whatever is still queued here was captured and then cancelled — and a frame from a finished run riding
         // the next run's first result would put a picture in front of the model that nothing in the transcript
         // asked for.
-        _frames.TryRemove(run.ConversationId, out _);
+        foreach (var key in _frames.Keys.Where(key => key.Conversation == run.ConversationId))
+            _frames.TryRemove(key, out _);
         if (result != RunResult.Completed) _computerObservations.TryRemove(run.ConversationId, out _);
         foreach (var key in _computerPermits.Keys.Where(key => key.Conversation == run.ConversationId))
             ReleaseComputerPermit(key);

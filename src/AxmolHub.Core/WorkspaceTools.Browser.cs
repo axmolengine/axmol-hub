@@ -162,6 +162,67 @@ public sealed partial class WorkspaceTools
         return SecretRedaction.Redact(TextEol.ToLf(sb.ToString()), context.SensitiveValues);
     }
 
+    [Description("Capture a visual PNG screenshot of an embedded workspace browser tab and attach it to this "
+                 + "conversation turn so you can inspect visual rendering, layout, CSS, or WebGL/canvas output. "
+                 + "Prefer this over desktop capture_screen for pages inside Hub's embedded browser.")]
+    public async Task<string> BrowserScreenshotAsync(
+        [Description("Optional tab_id from browser_open or browser_read. Omit to capture the active workspace browser tab.")] string? tab_id = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (context.Browser?.Capture is not { } capture)
+            return "Refused: embedded browser screenshot capture is not available in this host. Use browser_read instead; do not retry browser_screenshot.";
+
+        BrowserScreenshotResult result;
+        try
+        {
+            result = await capture(
+                context.WorkspaceRoot,
+                new BrowserScreenshotRequest(string.IsNullOrWhiteSpace(tab_id) ? null : tab_id.Trim(),
+                    WorkspaceBrowserPolicy.DefaultActionTimeout),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return SecretRedaction.Redact($"Tool failed: could not capture embedded browser screenshot: {ex.Message}", context.SensitiveValues);
+        }
+
+        if (!result.Ok || result.Frame is not { } frame)
+            return SecretRedaction.Redact($"Refused: {result.Error ?? "embedded browser screenshot returned no frame."}", context.SensitiveValues);
+
+        if (frame.Stats.IsBlank())
+        {
+            return $"Refused: the embedded browser screenshot came back blank ({frame.Width}×{frame.Height}, "
+                   + $"{frame.Stats.DistinctColors} distinct colour(s), variance "
+                   + $"{frame.Stats.LuminanceVariance.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}). "
+                   + "Nothing was stored and no image is attached. The page may still be rendering, hidden, or empty; "
+                   + "verify the page loaded with browser_read before trying again.";
+        }
+
+        var verdict = ChatImageFormat.Admit(frame.Png, 0);
+        if (verdict != ChatImageVerdict.Accepted)
+            return ChatImageFormat.ResultFor(verdict, frame.Png.LongLength);
+
+        if (context.Sessions is not { } store)
+            return "Refused: this session has no attachment storage to save the browser screenshot. Use browser_read instead; do not retry browser_screenshot.";
+
+        var image = store.SaveImage(context.ConversationId, frame.Png);
+        context.RecordFrames?.Invoke([image]);
+
+        var sb = new StringBuilder();
+        sb.Append("Captured embedded browser tab");
+        if (!string.IsNullOrWhiteSpace(result.TabId)) sb.Append(' ').Append(result.TabId);
+        if (!string.IsNullOrWhiteSpace(result.Url)) sb.Append(" · url: ").Append(result.Url);
+        if (!string.IsNullOrWhiteSpace(result.Title)) sb.Append(" · title: ").Append(result.Title);
+        sb.Append($" — {frame.Width}×{frame.Height}, {image.Bytes} bytes, stored as {image.File}. ")
+          .Append("The picture is attached to this result as an image: inspect what is actually rendered on it.")
+          .Append(Lf).Append(WorkspaceBrowserPolicy.UntrustedPageHeader);
+        return SecretRedaction.Redact(TextEol.ToLf(sb.ToString()), context.SensitiveValues);
+    }
+
     [Description("Interact with an embedded workspace browser tab: click, type, scroll, back, forward, reload, "
                  + "wait (for ms or a selector), or eval (synchronous JavaScript expression/body). "
                  + "Prefer element_ref from browser_read over guessing selectors.")]

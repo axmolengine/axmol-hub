@@ -895,6 +895,29 @@ internal sealed class WorkspaceView : Grid, IDisposable
             return await browser.ExecuteActionAsync(request, cancellationToken);
         });
 
+    internal Task<BrowserScreenshotResult> CaptureBrowserForAssistantAsync(
+        string? workspaceRoot,
+        BrowserScreenshotRequest request,
+        Action ensureAttached,
+        CancellationToken cancellationToken)
+        => RunOnUiAsync(async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+            _states.TryGetValue(key, out var state);
+            var browser = ResolveBrowserForState(state, request.TabId, out var error);
+            if (browser is null)
+                return new BrowserScreenshotResult(false, null, null, null, null, error);
+            if (ReferenceEquals(state, _state) && !browser.NativeVisibleForCheck)
+            {
+                ensureAttached();
+                SelectBrowser(state!, browser);
+                // Give the newly revealed native WebView surface a brief frame to composite before snapshotting.
+                await Task.Delay(80, cancellationToken);
+            }
+            return await browser.CaptureScreenshotAsync(request.Timeout, cancellationToken);
+        });
+
     private static Task<T> RunOnUiAsync<T>(Func<Task<T>> action)
         => Dispatcher.UIThread.CheckAccess()
             ? action()

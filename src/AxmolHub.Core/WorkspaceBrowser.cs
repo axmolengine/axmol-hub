@@ -65,6 +65,18 @@ public sealed record BrowserActResult(
     string? Output,
     string? Error);
 
+/// <summary>Request sent to capture a visual screenshot of an embedded browser tab.</summary>
+public sealed record BrowserScreenshotRequest(string? TabId, TimeSpan Timeout);
+
+/// <summary>Outcome of capturing a visual screenshot of an embedded browser tab.</summary>
+public sealed record BrowserScreenshotResult(
+    bool Ok,
+    string? TabId,
+    string? Url,
+    string? Title,
+    CapturedFrame? Frame,
+    string? Error);
+
 /// <summary>
 /// The host's side of the workspace embedded browser: whether outbound public sites are allowed,
 /// a synchronous lock-free URL peek for risk grading, and async tab operations routed to the UI layer.
@@ -75,7 +87,8 @@ public sealed record BrowserBridge(
     Func<string?, CancellationToken, Task<IReadOnlyList<BrowserTabSummary>>> ListTabs,
     Func<string?, BrowserOpenRequest, CancellationToken, Task<BrowserOpenResult>> Open,
     Func<string?, BrowserReadRequest, CancellationToken, Task<BrowserReadResult>> Read,
-    Func<string?, BrowserActRequest, CancellationToken, Task<BrowserActResult>> Act);
+    Func<string?, BrowserActRequest, CancellationToken, Task<BrowserActResult>> Act,
+    Func<string?, BrowserScreenshotRequest, CancellationToken, Task<BrowserScreenshotResult>>? Capture = null);
 
 /// <summary>Classification of a target requested for <see cref="ToolNames.BrowserOpen"/>.</summary>
 public enum BrowserTargetKind

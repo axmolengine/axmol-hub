@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Avalonia;
 using Avalonia.Controls;
 using AxmolHub.Core;
 
@@ -188,6 +189,40 @@ internal sealed partial class WorkspaceBrowserView
             return new BrowserReadResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, Loading, null, null, false, null, null,
                 $"Could not inspect page DOM: {ex.Message}");
         }
+    }
+
+    internal async Task<BrowserScreenshotResult> CaptureScreenshotAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (_disposed)
+            return new BrowserScreenshotResult(false, TabId, null, null, null, "The browser tab was closed.");
+        if (_web is null)
+            return new BrowserScreenshotResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
+                "This browser tab has no loaded page yet. Call browser_open first.");
+
+        await WaitReadyAsync(timeout, cancellationToken);
+        if (_disposed || _web is not { } web)
+            return new BrowserScreenshotResult(false, TabId, null, null, null, "The browser tab was closed.");
+        if (_message.IsVisible)
+            return new BrowserScreenshotResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
+                HubStrings.Get(_lastErrorKey ?? "WorkspaceBrowserLoadFailed"));
+
+        var windowBounds = TryGetWindowBounds(web);
+        var (frame, error) = await WebViewSnapshot.CaptureAsync(web.TryGetPlatformHandle(), windowBounds, timeout, cancellationToken, Log);
+        if (frame is null)
+            return new BrowserScreenshotResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
+                error ?? "Could not capture the embedded browser screenshot.");
+
+        return new BrowserScreenshotResult(true, TabId, _currentUri?.AbsoluteUri, _pageTitle, frame, null);
+    }
+
+    private static WebViewWindowBounds? TryGetWindowBounds(NativeWebView web)
+    {
+        if (TopLevel.GetTopLevel(web) is not Window window) return null;
+        if (web.Bounds.Width <= 0 || web.Bounds.Height <= 0) return null;
+        if (window.ClientSize.Width <= 0 || window.ClientSize.Height <= 0) return null;
+        if (web.TranslatePoint(new Point(0, 0), window) is not { } origin) return null;
+        return new WebViewWindowBounds(origin.X, origin.Y, web.Bounds.Width, web.Bounds.Height,
+            window.ClientSize.Width, window.ClientSize.Height);
     }
 
     internal async Task<BrowserActResult> ExecuteActionAsync(BrowserActRequest request, CancellationToken cancellationToken)

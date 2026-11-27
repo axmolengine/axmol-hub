@@ -40,6 +40,8 @@ public static class ToolNames
 
     public const string BrowserRead = "browser_read";
 
+    public const string BrowserScreenshot = "browser_screenshot";
+
     public const string BrowserAct = "browser_act";
 
     public const string ProjectList = "project_list";

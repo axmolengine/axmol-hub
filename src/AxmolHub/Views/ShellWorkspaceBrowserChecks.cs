@@ -101,11 +101,15 @@ internal sealed partial class ShellDecisionsChecks
             var typed = await bridge.Act(root, new BrowserActRequest(browser.TabId, "type", 1, null, "assistant typed", false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
             var evaluated = await bridge.Act(root, new BrowserActRequest(browser.TabId, "eval", null, null, null, false, 0, 0, 1000, "console.warn('probe'); return document.querySelector('input').value;", TimeSpan.FromSeconds(10)), CancellationToken.None);
             var afterConsole = await bridge.Read(root, new BrowserReadRequest(browser.TabId, false, false, true, true, 1000), CancellationToken.None);
+            var shot = await bridge.Capture!(root, new BrowserScreenshotRequest(browser.TabId, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var screenshot = shot.Ok && shot.Frame is { Width: > 0, Height: > 0 } capturedFrame
+                && !capturedFrame.Stats.IsBlank() && ChatImageFormat.Identify(capturedFrame.Png) == ChatImageFormat.Png;
             var assistant = opened.Ok && opened.Title == "First page"
                 && snapshot.Ok && snapshot.Elements?.Contains("fixture", StringComparison.Ordinal) == true
                 && typed.Ok && evaluated.Ok && evaluated.Output == "assistant typed"
                 && afterConsole.Ok && afterConsole.ConsoleOutput?.Contains("[WARN] probe", StringComparison.Ordinal) == true
-                && bridge.PeekTabUrl(root, browser.TabId) == url;
+                && bridge.PeekTabUrl(root, browser.TabId) == url
+                && screenshot;
             view.CloseToolForCheck(browser.TabId);
             Dispatcher.UIThread.RunJobs();
             var released = browser.DisposedForCheck && browser.WebViewForCheck is null && ReferenceEquals(second, view.BrowserForCheck)

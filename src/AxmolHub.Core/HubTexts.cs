@@ -1398,6 +1398,7 @@ public static class HubTexts
         ["ActivityRowFetch"] = ("抓取 {0}", "Fetch {0}"),
         ["ActivityRowBrowserOpen"] = ("浏览器打开 {0}", "Open in browser: {0}"),
         ["ActivityRowBrowserRead"] = ("读取浏览器页面", "Inspect browser page"),
+        ["ActivityRowBrowserScreenshot"] = ("截取浏览器画面", "Capture browser view"),
         ["ActivityRowBrowserAct"] = ("浏览器操作：{0}", "Browser action: {0}"),
         ["ActivityRowGeneric"] = ("调用 {0}", "Call {0}"),
         // A search the endpoint ran for itself, drawn as one live status line. It has no card and no result turn,

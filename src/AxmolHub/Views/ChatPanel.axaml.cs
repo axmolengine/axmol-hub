@@ -4403,6 +4403,7 @@ public partial class ChatPanel : UserControl
             ToolNames.BrowserOpen => string.Format(culture, HubStrings.Get("ActivityRowBrowserOpen"),
                 WorkspaceBrowserPolicy.Shown(ArgField(args, "url") ?? "")),
             ToolNames.BrowserRead => HubStrings.Get("ActivityRowBrowserRead"),
+            ToolNames.BrowserScreenshot => HubStrings.Get("ActivityRowBrowserScreenshot"),
             ToolNames.BrowserAct => string.Format(culture, HubStrings.Get("ActivityRowBrowserAct"),
                 ArgField(args, "action") ?? ""),
             _ => string.Format(culture, HubStrings.Get("ActivityRowGeneric"), name),

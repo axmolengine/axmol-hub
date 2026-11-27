@@ -1845,6 +1845,10 @@ internal static class AiToolsChecks
         File.WriteAllText(htmlPreview, "<!doctype html><title>Preview</title><h1>Hello</h1>");
         var browserOutbound = false;
         Uri? currentBrowserUrl = null;
+        var blankScreenshot = true;
+        var recordedBrowserFrames = new List<ChatImage>();
+        var browserSessions = new ConversationStore(dataRoot);
+        byte[] samplePng = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
         var browserBridge = new BrowserBridge(
             OutboundAllowed: () => browserOutbound,
             PeekTabUrl: (_, _) => currentBrowserUrl,
@@ -1859,8 +1863,12 @@ internal static class AiToolsChecks
             Read: (_, _, _) => Task.FromResult(new BrowserReadResult(true, "browser:1", currentBrowserUrl?.AbsoluteUri, "Preview", false,
                 "1024x768", "Visible SUPERSECRET text", false, "[1] <button> \"Run\"", "[ERROR] oops SUPERSECRET", null)),
             Act: (_, req, _) => Task.FromResult(new BrowserActResult(true, "browser:1", currentBrowserUrl?.AbsoluteUri, "Preview",
-                $"action={req.Action} secret=SUPERSECRET", null)));
-        var browserScope = scope with { Browser = browserBridge };
+                $"action={req.Action} secret=SUPERSECRET", null)),
+            Capture: (_, _, _) => Task.FromResult(new BrowserScreenshotResult(true, "browser:1",
+                "http://127.0.0.1:8080/app?token=SUPERSECRET", "Preview",
+                new CapturedFrame(samplePng, 320, 240, blankScreenshot ? new FrameStats(320, 240, 1, 0) : new FrameStats(320, 240, 12, 42.5)),
+                null)));
+        var browserScope = scope with { Browser = browserBridge, Sessions = browserSessions, RecordFrames = frames => recordedBrowserFrames.AddRange(frames) };
         var browserTools = new WorkspaceTools(browserScope);
         // Loopback and workspace HTML files work even with outbound web access off; public URLs, private IPs,
         // non-HTML files and paths outside the sandbox are refused.
@@ -1893,7 +1901,16 @@ internal static class AiToolsChecks
         var browserCard = ToolPreviews.PreviewFor(ToolNames.BrowserOpen, """{"url":"https://example.com/app?key=SUPERSECRET"}""", browserScope);
         if (browserCard.Contains("SUPERSECRET", StringComparison.Ordinal) || !browserCard.Contains("[REDACTED]", StringComparison.Ordinal))
             throw new Exception($"browser_open preview leaked a secret:{Environment.NewLine}{browserCard}");
-        Console.WriteLine("PASS: embedded browser tools enforce sandbox/host boundaries, frame untrusted page text, and redact secrets.");
+        var shotBlank = await browserTools.BrowserScreenshotAsync();
+        blankScreenshot = false;
+        var shotGood = await browserTools.BrowserScreenshotAsync();
+        if (!shotBlank.Contains("blank", StringComparison.OrdinalIgnoreCase)
+            || !shotGood.Contains("Captured embedded browser tab", StringComparison.Ordinal)
+            || !shotGood.Contains(WorkspaceBrowserPolicy.UntrustedPageHeader, StringComparison.Ordinal)
+            || shotGood.Contains("SUPERSECRET", StringComparison.Ordinal)
+            || recordedBrowserFrames.Count != 1)
+            throw new Exception($"browser_screenshot blank guard, redaction, or frame recording failed:{Environment.NewLine}{shotBlank}{Environment.NewLine}{shotGood}");
+        Console.WriteLine("PASS: embedded browser tools enforce sandbox/host boundaries, frame untrusted page text, attach non-blank screenshots, and redact secrets.");
         log.Write("self-check finished");
         Directory.Delete(toolRoot, recursive: true);
         return;

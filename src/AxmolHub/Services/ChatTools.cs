@@ -80,7 +80,7 @@ internal static class ChatTools
         ToolNames.ProjectList or ToolNames.EngineList or ToolNames.ToolchainStatus or ToolNames.AxmolSkillRead or ToolNames.AxmolApiQuery or ToolNames.FsRead or ToolNames.MemoryRead
             or ToolNames.ListSessions or ToolNames.ReadSession
             or ToolNames.FsGrep or ToolNames.FsList or ToolNames.FsFind or ToolNames.WorkspaceMap
-            or ToolNames.BrowserRead
+            or ToolNames.BrowserRead or ToolNames.BrowserScreenshot
             => ToolRisk.ReadOnly,
         ToolNames.FsWrite or ToolNames.FsReplace => ToolPreviews.TextEditRisk(name, argumentsJson, scope),
         ToolNames.SendToSession => ToolRisk.WorkspaceWrite,
@@ -360,6 +360,7 @@ internal static class ChatTools
             AIFunctionFactory.Create(tools.ListSessions, Options(ToolNames.ListSessions)),
             AIFunctionFactory.Create(tools.ReadSession, Options(ToolNames.ReadSession)),
             AIFunctionFactory.Create(tools.BrowserReadAsync, Options(ToolNames.BrowserRead)),
+            AIFunctionFactory.Create(tools.BrowserScreenshotAsync, Options(ToolNames.BrowserScreenshot)),
         ];
     }
 

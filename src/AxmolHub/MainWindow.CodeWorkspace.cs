@@ -114,5 +114,9 @@ public partial class MainWindow
         Act: (workspaceRoot, request, ct) => _workspaceView is { } view
             ? view.ActBrowserForAssistantAsync(workspaceRoot, request, ct)
             : Task.FromResult(new BrowserActResult(false, null, null, null, null,
+                "No embedded browser tab is open in this workspace. Call browser_open first.")),
+        Capture: (workspaceRoot, request, ct) => _workspaceView is { } view
+            ? view.CaptureBrowserForAssistantAsync(workspaceRoot, request, ShowWorkspace, ct)
+            : Task.FromResult(new BrowserScreenshotResult(false, null, null, null, null,
                 "No embedded browser tab is open in this workspace. Call browser_open first.")));
 }
