@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -89,11 +88,7 @@ internal sealed class HubDialogChrome
             HorizontalAlignment = HorizontalAlignment.Stretch,
             TextAlignment = TextAlignment.Left,
         };
-        title.Bind(TextBlock.TextProperty, new Binding(nameof(Window.Title))
-        {
-            Source = window,
-            Mode = BindingMode.OneWay,
-        });
+        title.Bind(TextBlock.TextProperty, window.GetObservable(Window.TitleProperty));
 
         _closeButton = new Button
         {

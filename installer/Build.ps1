@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Runtime,
     [string]$Version,
     [string]$Channel,
@@ -69,8 +69,22 @@ if (-not $Channel) {
 # Pinned packager version, installed inside the workspace: does not touch PATH, and does not reuse any vpk that may already be on the system.
 $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk.exe'
 if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk' }
+$taskVpkExpected = [regex]::Escape("Velopack CLI $($taskPack.version)")
+if (-not (Test-Path -LiteralPath $taskVpk) -or ((& $taskVpk --help 2>&1 | Out-String) -notmatch $taskVpkExpected)) {
+    Write-Host "Preparing pinned Velopack CLI $($taskPack.version)..."
+    Push-Location -LiteralPath $taskRoot
+    try {
+        dotnet run --project (Join-Path $taskRoot 'tests/AxmolHub.Checks') -c Release -- (Join-Path $taskRoot 'cache/packaging-tools') --prepare-packaging
+        if ($LASTEXITCODE -ne 0) { throw "Failed to prepare the pinned Velopack CLI $($taskPack.version)." }
+    }
+    finally {
+        Pop-Location
+    }
+    $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk.exe'
+    if (-not (Test-Path -LiteralPath $taskVpk)) { $taskVpk = Join-Path $taskRoot 'cache/packaging-tools/vpk/vpk' }
+}
 if (-not (Test-Path -LiteralPath $taskVpk)) { throw "Prepare the pinned Velopack CLI $($taskPack.version) first: dotnet run --project tests/AxmolHub.Checks -- cache/packaging-tools --prepare-packaging" }
-if ((& $taskVpk --help 2>&1 | Out-String) -notmatch [regex]::Escape("Velopack CLI $($taskPack.version)")) { throw "The workspace Velopack CLI is not the pinned $($taskPack.version)." }
+if ((& $taskVpk --help 2>&1 | Out-String) -notmatch $taskVpkExpected) { throw "The workspace Velopack CLI is not the pinned $($taskPack.version)." }
 
 # All three platforms run `vpk pack` on their native runner: Windows yields Setup.exe, macOS yields .pkg,
 # Linux yields .AppImage. Velopack's osx/linux packaging runners depend on platform tools (pkgbuild/codesign,

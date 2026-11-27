@@ -60,6 +60,16 @@
     <!-- Owns releases from P6 on: the icon travels with the project (it used to live in the WPF project,
          and that cross-project reference was exactly the kind of coupling P1 removed). -->
     <ApplicationIcon>Assets/hub-icon.ico</ApplicationIcon>
+    <!-- Conservative partial trimming for self-contained publishes: only assemblies marked IsTrimmable=true
+         (the .NET BCL and trim-annotated packages) are trimmed, while reflection-heavy dependencies
+         (Anthropic, DataGrid, AvaloniaEdit, Markdown.Avalonia) and Hub's own assemblies stay intact.
+         Keep JSON reflection, built-in COM (Windows Start Menu shortcut AUMID stamping), and
+         NullabilityInfoContext (AI tool parameter schema generation) explicitly enabled. -->
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == '' and '$(SelfContained)' == 'true'">true</PublishTrimmed>
+    <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <NullabilityInfoContextSupport>true</NullabilityInfoContextSupport>
   </PropertyGroup>
   <ItemGroup>
     <!-- Every NuGet dependency in the repo lives here: the Avalonia group + Velopack (moved from the WPF
