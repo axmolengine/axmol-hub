@@ -452,6 +452,7 @@ internal sealed partial class ChatExecutionCoordinator
             {
                 // DuckDuckGo needs no configuration; read the global switch again on each tool call.
                 LocalSearchAllowed = () => IsWebSearchEnabled(),
+                Browser = BrowserBridgeProvider?.Invoke(),
                 ComputerUse = inputBridge,
                 // A model request can outlive a grant/revoke. Do not freeze an observation object that the
                 // permission lifecycle has removed from the live registry.
@@ -1638,6 +1639,7 @@ internal sealed partial class ChatExecutionCoordinator
 
     internal Action<HubPreferences>? PreferencesPersist { get; set; }
     internal Func<ScreenCaptureBridge?>? ScreenCaptureBridgeProvider { get; set; }
+    internal Func<BrowserBridge?>? BrowserBridgeProvider { get; set; }
     internal Func<ComputerUseBridge?>? ComputerUseBridgeProvider { get; set; }
     internal Func<string, PortalComputerBridge?>? PortalComputerBridgeProvider { get; set; }
     internal IReadOnlyList<string> TrustedTools => PreferencesProvider?.Invoke()?.TrustedTools ?? [];

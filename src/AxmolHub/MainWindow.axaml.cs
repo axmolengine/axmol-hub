@@ -507,6 +507,7 @@ public partial class MainWindow : Window
         _chat.LogProvider = () => _workspace.Log;
         _chat.BeginGitStatus = _workspace.BeginGitStatus;
         _chat.EnginesProvider = () => _workspace.State.Engines;
+        _chat.BrowserBridgeProvider = CreateWorkspaceBrowserBridge;
         // Read through the field on every call, not captured: switching the data root replaces _workspace, and a
         // seam that kept the old one would have the assistant hold the gate of a workspace nobody is looking at.
     }

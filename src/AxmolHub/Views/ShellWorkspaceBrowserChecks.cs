@@ -95,6 +95,17 @@ internal sealed partial class ShellDecisionsChecks
                 && !browser.CanNavigateForCheck(new Uri("file://remote-server/share/page.html"));
             browser.NavigateForCheck(url);
             await WaitUntilAsync(() => browser.PageTitle == "First page" && !browser.LoadingForCheck, maxTicks: 4000);
+            var bridge = shell.CreateWorkspaceBrowserBridge();
+            var opened = await bridge.Open(root, new BrowserOpenRequest(url, browser.TabId, false, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var snapshot = await bridge.Read(root, new BrowserReadRequest(browser.TabId, true, true, true, false, 2000), CancellationToken.None);
+            var typed = await bridge.Act(root, new BrowserActRequest(browser.TabId, "type", 1, null, "assistant typed", false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var evaluated = await bridge.Act(root, new BrowserActRequest(browser.TabId, "eval", null, null, null, false, 0, 0, 1000, "console.warn('probe'); return document.querySelector('input').value;", TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var afterConsole = await bridge.Read(root, new BrowserReadRequest(browser.TabId, false, false, true, true, 1000), CancellationToken.None);
+            var assistant = opened.Ok && opened.Title == "First page"
+                && snapshot.Ok && snapshot.Elements?.Contains("fixture", StringComparison.Ordinal) == true
+                && typed.Ok && evaluated.Ok && evaluated.Output == "assistant typed"
+                && afterConsole.Ok && afterConsole.ConsoleOutput?.Contains("[WARN] probe", StringComparison.Ordinal) == true
+                && bridge.PeekTabUrl(root, browser.TabId) == url;
             view.CloseToolForCheck(browser.TabId);
             Dispatcher.UIThread.RunJobs();
             var released = browser.DisposedForCheck && browser.WebViewForCheck is null && ReferenceEquals(second, view.BrowserForCheck)
@@ -108,8 +119,8 @@ internal sealed partial class ShellDecisionsChecks
             await WaitUntilAsync(() => quick.WebViewForCheck is null, maxTicks: 4000);
             released &= quick.DisposedForCheck && quick.WebViewForCheck is null;
             shell.SelectWorkspaceDocument(Path.Combine(root, "src/main.cpp"));
-            Console.WriteLine($"workspace browser: empty={empty}, multiple={multiple}, hidden={hidden}, retained={retained}, covered={covered}, drawer={drawer}, isolated={isolated}, local={local}, restricted={restricted}, released={released}");
-            return empty && multiple && hidden && retained && covered && drawer && isolated && local && restricted && released;
+            Console.WriteLine($"workspace browser: empty={empty}, multiple={multiple}, hidden={hidden}, retained={retained}, covered={covered}, drawer={drawer}, isolated={isolated}, local={local}, restricted={restricted}, assistant={assistant}, released={released}");
+            return empty && multiple && hidden && retained && covered && drawer && isolated && local && restricted && assistant && released;
         }
         finally
         {

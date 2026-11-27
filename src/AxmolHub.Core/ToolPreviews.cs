@@ -28,6 +28,9 @@ public static class ToolPreviews
             ToolNames.FsRequestAccess => AccessPreview(arguments, scope, projectPaths),
             ToolNames.CaptureScreen => CapturePreview(arguments, scope),
             ToolNames.WebFetch => FetchPreview(arguments, scope),
+            ToolNames.BrowserOpen => BrowserOpenPreview(arguments, scope),
+            ToolNames.BrowserRead => BrowserReadPreview(arguments),
+            ToolNames.BrowserAct => BrowserActPreview(arguments, scope),
             ToolNames.SendToSession => SendPreview(arguments),
             ToolNames.SpawnSession => SpawnPreview(arguments, scope),
             ToolNames.MemoryWrite => MemoryPreview(arguments),
@@ -380,6 +383,63 @@ public static class ToolPreviews
         return $"web_fetch · {where}\n"
                + $"scheme: https · max_characters: {Number(arguments, "max_characters")} · "
                + $"reads at most {WebFetch.MaxMebibytes} MiB, {WebFetch.Timeout.TotalSeconds:0}s";
+    }
+
+    private static string BrowserOpenPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var url = Text(arguments, "url");
+        var asked = SecretRedaction.Redact(url.Length > 0 ? url : "(no url given)", scope.SensitiveValues);
+        var decision = WorkspaceBrowserPolicy.ResolveOpenTarget(scope, url);
+        if (!decision.Allowed) return $"browser_open · {asked}\n{SecretRedaction.Redact(WorkspaceBrowserPolicy.RefusalFor(decision, url), scope.SensitiveValues)}";
+        var target = decision.Target!;
+        var where = target.IsFile
+            ? decision.Detail ?? target.LocalPath
+            : SecretRedaction.Redact($"{target.Host}{(target.IsDefaultPort ? "" : ":" + target.Port)}{target.PathAndQuery}", scope.SensitiveValues);
+        var kind = decision.Kind switch
+        {
+            BrowserTargetKind.LocalFile => "local workspace HTML",
+            BrowserTargetKind.Loopback => "local dev server",
+            _ => "public website · ephemeral isolated browser profile",
+        };
+        var tab = Flag(arguments, "new_tab") ? "new tab"
+            : Text(arguments, "tab_id") is { Length: > 0 } id ? $"tab {id}" : "active or new tab";
+        return $"browser_open · {where}\n{kind} · {tab}";
+    }
+
+    private static string BrowserReadPreview(IReadOnlyDictionary<string, JsonElement> arguments)
+    {
+        if (Flag(arguments, "list_tabs")) return "browser_read · list open tabs";
+        var tab = Text(arguments, "tab_id");
+        return $"browser_read · {(tab.Length > 0 ? tab : "active tab")}";
+    }
+
+    private static string BrowserActPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
+    {
+        var action = Text(arguments, "action");
+        var tabId = Text(arguments, "tab_id");
+        var current = scope.Browser?.PeekTabUrl(scope.WorkspaceRoot, tabId.Length > 0 ? tabId : null);
+        var targetLine = current is null
+            ? (tabId.Length > 0 ? $"tab {tabId}" : "active browser tab")
+            : SecretRedaction.Redact(current.IsFile ? Path.GetFileName(current.LocalPath) : $"{current.Host}{current.AbsolutePath}", scope.SensitiveValues);
+        var detail = new List<string>();
+        var elementRef = Integer(arguments, "element_ref");
+        if (elementRef > 0) detail.Add($"ref #{elementRef}");
+        var selector = Text(arguments, "selector");
+        if (selector.Length > 0) detail.Add($"selector {selector}");
+        var text = Text(arguments, "text");
+        if (text.Length > 0)
+        {
+            var head = text.Length <= 120 ? text : text[..120] + "…";
+            detail.Add($"text \"{SecretRedaction.Redact(head, scope.SensitiveValues)}\"");
+        }
+        var script = Text(arguments, "script");
+        if (script.Length > 0)
+        {
+            var head = script.Length <= 240 ? script : script[..240] + "…";
+            detail.Add($"script:\n{SecretRedaction.Redact(head, scope.SensitiveValues)}");
+        }
+        var summary = $"browser_act · {(action.Length > 0 ? action : "(no action)")} · {targetLine}";
+        return detail.Count > 0 ? summary + "\n" + string.Join(" · ", detail) : summary;
     }
 
     /// <summary>What a new session is going to be pointed at, and which sandbox it inherits. A person approving

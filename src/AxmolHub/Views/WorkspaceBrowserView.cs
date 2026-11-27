@@ -12,7 +12,7 @@ using AxmolHub.Core;
 namespace AxmolHub;
 
 /// <summary>A lazy, native-engine browser. No page messages are wired to Hub tools or credentials.</summary>
-internal sealed class WorkspaceBrowserView : Grid, IDisposable
+internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
 {
     private readonly TextBox _address = new() { Name = "WorkspaceBrowserAddress", MinWidth = 40,
         Height = 24, MinHeight = 24, Margin = default, Padding = new Thickness(8, 0), FontSize = 12,
@@ -34,9 +34,12 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     private bool _active;
     private bool _initializing;
     private TaskCompletionSource _initialized = new();
+    private TaskCompletionSource<(bool Success, Uri? Request)>? _navigationWaiter;
     internal event Action? Released;
     internal Task Ready => _initializing ? _initialized.Task : Task.CompletedTask;
     private Uri? _requested;
+    private volatile Uri? _currentUri;
+    private string? _lastErrorKey;
     private readonly HashSet<string> _localDirectories = new(StringComparer.Ordinal);
     private string? _pageTitle;
     private int _navigationVersion;
@@ -46,6 +49,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
     internal string TabId { get; } = "browser:" + Guid.NewGuid().ToString("N");
     internal event Action<WorkspaceBrowserView>? StateChanged;
     internal bool Loading => !_disposed && (_loading || _initializing);
+    internal Uri? CurrentUri => _currentUri;
     internal string? PageTitle => _pageTitle;
     internal string? TabTitle => _pageTitle ?? (_requested?.IsFile == true
         ? Path.GetFileName(_requested.LocalPath) : _requested?.Host);
@@ -123,6 +127,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             _localDirectories.Add(folder);
         }
         _requested = uri;
+        _currentUri = uri;
         _address.Text = uri.AbsoluteUri;
         _loading = true;
         ResetMetadata();
@@ -152,6 +157,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
             Log("navigation request failed");
             _loading = false;
             ShowMessage("WorkspaceBrowserLoadFailed");
+            CompleteNavigationWaiter(false, uri);
             SyncNavigation();
         }
     }
@@ -218,9 +224,10 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 if (args.Request?.AbsoluteUri == "about:blank") return;
                 if (!CanNavigate(args.Request)) { args.Cancel = true; return; }
                 _requested = args.Request;
+                _currentUri = args.Request;
                 _address.Text = args.Request!.AbsoluteUri;
                 _loading = true;
-                ResetMetadata();
+                ResetMetadata(keepWaiter: true);
                 // GTK's policy callback waits for this handler. Reading native history here waits for
                 // GTK in turn, so refresh the toolbar only after the synchronous decision returns.
                 Dispatcher.UIThread.Post(() => { if (!_disposed) SyncNavigation(); });
@@ -230,11 +237,17 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 if (_disposed) return;
                 Log("navigation completed: success=" + args.IsSuccess);
                 _loading = false;
-                if (CanNavigate(args.Request)) _address.Text = args.Request!.AbsoluteUri;
+                if (CanNavigate(args.Request))
+                {
+                    _requested = args.Request;
+                    _currentUri = args.Request;
+                    _address.Text = args.Request!.AbsoluteUri;
+                }
                 if (!args.IsSuccess) ShowMessage("WorkspaceBrowserLoadFailed");
-                else { _message.IsVisible = false; web.IsVisible = _active; }
+                else { _lastErrorKey = null; _message.IsVisible = false; web.IsVisible = _active; }
                 SyncNavigation();
-                if (args.IsSuccess) _ = RefreshMetadataAsync();
+                CompleteNavigationWaiter(args.IsSuccess, args.Request);
+                if (args.IsSuccess) _ = OnNavigationSucceededAsync();
             };
             web.NewWindowRequested += (_, args) =>
             {
@@ -257,6 +270,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
                 _surface.Children.Remove(web);
                 _web = null;
                 ShowMessage(MissingRuntimeKey());
+                CompleteNavigationWaiter(false, null);
                 SyncNavigation();
                 if (_disposed) Release();
             });
@@ -331,12 +345,10 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         PageMetadata? metadata;
         try
         {
-            var result = await web.InvokeScript("""
+            var result = await InvokeScriptStringAsync(web, """
                 JSON.stringify({ Title: document.title,
                     Icons: Array.from(document.querySelectorAll('link[rel~="icon" i]')).slice(0, 4).map(link => link.href) })
                 """);
-            // WebView2 JSON-encodes script results; WebKit returns strings directly.
-            if (OperatingSystem.IsWindows() && result is not null) result = JsonSerializer.Deserialize<string>(result);
             metadata = result is not null ? JsonSerializer.Deserialize<PageMetadata>(result) : null;
         }
         catch (Exception)
@@ -368,9 +380,10 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         SetFavicon(image);
     }
 
-    private void ResetMetadata()
+    private void ResetMetadata(bool keepWaiter = false)
     {
         _navigationVersion++;
+        if (!keepWaiter) CompleteNavigationWaiter(false, null);
         _pageTitle = null;
         _faviconCandidates = null;
         CancelFavicon();
@@ -399,6 +412,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
 
     private void ShowMessage(string key)
     {
+        _lastErrorKey = key;
         _message.Bind(TextBlock.TextProperty, new DynamicResourceExtension(key));
         _message.IsVisible = true;
         if (_web is not null) _web.IsVisible = false;
@@ -418,6 +432,7 @@ internal sealed class WorkspaceBrowserView : Grid, IDisposable
         if (_disposed) return;
         _disposed = true;
         _navigationVersion++;
+        CompleteNavigationWaiter(false, null);
         StateChanged = null;
         CancelFavicon();
         SetFavicon(null);

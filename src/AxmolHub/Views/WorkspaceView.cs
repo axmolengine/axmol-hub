@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -34,6 +35,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         internal Func<WorkspaceToolScope> ScopeFor { get; set; } = null!;
     }
     private readonly Dictionary<string, State> _states = new(WorkspaceFileTree.WorkspacePathComparer);
+    private readonly ConcurrentDictionary<string, IReadOnlyList<(string TabId, Uri? Url, bool Active)>> _browserSnapshots = new(WorkspaceFileTree.WorkspacePathComparer);
     private readonly InspectorPanel _inspector;
     private readonly Window _owner;
     private readonly Action<string> _log;
@@ -183,20 +185,36 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _treeHost.Content = null;
         _key = key;
         if (!_states.TryGetValue(key, out var state))
-        {
-            State? created = null;
-            var tree = new WorkspaceFileTree(root, () => created!.ScopeFor());
-            created = new State(root, tree) { ScopeFor = scopeFor };
-            tree.CloseRequested += HideFiles;
-            tree.FileRequested += path => FileRequested?.Invoke(path);
-            tree.OpenFolderRequested += () => OpenFolderRequested?.Invoke();
-            TrackMenu(tree.ActionsMenu);
-            _states[key] = state = created;
-        }
+            state = CreateState(key, root, scopeFor);
         state.ScopeFor = scopeFor;
         _state = state;
         _treeHost.Content = state.Tree;
         Render();
+    }
+
+    private State CreateState(string key, string? root, Func<WorkspaceToolScope> scopeFor)
+    {
+        State? created = null;
+        var tree = new WorkspaceFileTree(root, () => created!.ScopeFor());
+        created = new State(root, tree) { ScopeFor = scopeFor };
+        tree.CloseRequested += HideFiles;
+        tree.FileRequested += path => FileRequested?.Invoke(path);
+        tree.OpenFolderRequested += () => OpenFolderRequested?.Invoke();
+        TrackMenu(tree.ActionsMenu);
+        _states[key] = created;
+        return created;
+    }
+
+    private WorkspaceBrowserView AddBrowser(State state)
+    {
+        var browser = new WorkspaceBrowserView(_log);
+        state.Browsers.Add(browser);
+        browser.StateChanged += b => { PublishBrowserSnapshot(state); SyncBrowserTab(b); };
+        browser.Released += () => _body.Children.Remove(browser);
+        // Keep every workspace browser attached: removing a hidden native control destroys its history.
+        _body.Children.Insert(1, browser);
+        PublishBrowserSnapshot(state);
+        return browser;
     }
 
     internal void OpenTool(string tab)
@@ -204,12 +222,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         if (_state is null) return;
         if (tab == "browser")
         {
-            var browser = new WorkspaceBrowserView(_log);
-            _state.Browsers.Add(browser);
-            browser.StateChanged += SyncBrowserTab;
-            browser.Released += () => _body.Children.Remove(browser);
-            // Keep every workspace browser attached: removing a hidden native control destroys its history.
-            _body.Children.Insert(1, browser);
+            var browser = AddBrowser(_state);
             SelectBrowser(_state, browser);
             return;
         }
@@ -225,6 +238,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     {
         if (!ReferenceEquals(state, _state) || !state.Browsers.Contains(browser)) return;
         state.Selected = browser.TabId;
+        PublishBrowserSnapshot(state);
         Render();
         OpenRequested?.Invoke();
     }
@@ -592,11 +606,11 @@ internal sealed class WorkspaceView : Grid, IDisposable
                     if (state.Browsers.Find(browser => browser.TabId == target.Id) is { } browser)
                     {
                         var index = state.Browsers.IndexOf(browser);
-                        browser.StateChanged -= SyncBrowserTab;
                         browser.Dispose();
                         state.Browsers.Remove(browser);
                         if (state.Selected == target.Id && state.Browsers.Count > 0)
                             state.Selected = state.Browsers[Math.Min(index, state.Browsers.Count - 1)].TabId;
+                        PublishBrowserSnapshot(state);
                     }
                     state.Tools.Remove(target.Id);
                     if (state.Selected == target.Id) ChooseRemaining(state);
@@ -748,12 +762,143 @@ internal sealed class WorkspaceView : Grid, IDisposable
         foreach (var state in _states.Values)
         {
             foreach (var document in state.Documents) UnsubscribeDocument(document);
-            foreach (var browser in state.Browsers) { browser.StateChanged -= SyncBrowserTab; browser.Dispose(); }
+            foreach (var browser in state.Browsers) browser.Dispose();
             state.Tree.Dispose();
         }
+        _browserSnapshots.Clear();
         _tabRows.Children.Clear();
         _tabs.Clear();
     }
+
+    private void PublishBrowserSnapshot(State state)
+    {
+        var key = WorkspacePaths.CanonicalRoot(state.Root) ?? "";
+        _browserSnapshots[key] = state.Browsers
+            .Select(browser => (browser.TabId, browser.CurrentUri, state.Selected == browser.TabId))
+            .ToArray();
+    }
+
+    internal Uri? PeekBrowserUrl(string? workspaceRoot, string? tabId)
+    {
+        var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+        if (!_browserSnapshots.TryGetValue(key, out var list) || list.Count == 0) return null;
+        if (!string.IsNullOrWhiteSpace(tabId))
+            return list.FirstOrDefault(item => string.Equals(item.TabId, tabId, StringComparison.Ordinal)).Url;
+        var active = list.FirstOrDefault(item => item.Active);
+        return active.TabId is not null ? active.Url : list[^1].Url;
+    }
+
+    private WorkspaceBrowserView? ResolveBrowserForState(State? state, string? tabId, out string? error)
+    {
+        error = null;
+        if (state is null || state.Browsers.Count == 0)
+        {
+            error = "No embedded browser tab is open in this workspace. Call browser_open first.";
+            return null;
+        }
+        if (!string.IsNullOrWhiteSpace(tabId))
+        {
+            var found = state.Browsers.Find(browser => string.Equals(browser.TabId, tabId, StringComparison.Ordinal));
+            if (found is null) error = $"Browser tab '{tabId}' was not found in this workspace.";
+            return found;
+        }
+        return state.Browsers.Find(browser => browser.TabId == state.Selected) ?? state.Browsers[^1];
+    }
+
+    internal Task<IReadOnlyList<BrowserTabSummary>> ListBrowsersAsync(string? workspaceRoot, CancellationToken cancellationToken)
+        => RunOnUiAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+            if (!_states.TryGetValue(key, out var state) || state.Browsers.Count == 0)
+                return Task.FromResult<IReadOnlyList<BrowserTabSummary>>([]);
+            IReadOnlyList<BrowserTabSummary> tabs = state.Browsers
+                .Select(browser => new BrowserTabSummary(browser.TabId, browser.CurrentUri?.AbsoluteUri,
+                    browser.PageTitle ?? browser.TabTitle, state.Selected == browser.TabId, browser.Loading))
+                .ToArray();
+            return Task.FromResult(tabs);
+        });
+
+    internal Task<BrowserOpenResult> OpenBrowserForAssistantAsync(
+        string? workspaceRoot,
+        BrowserOpenRequest request,
+        Func<WorkspaceToolScope> scopeFor,
+        Action ensureAttached,
+        CancellationToken cancellationToken)
+        => RunOnUiAsync(async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+            if (!_states.TryGetValue(key, out var state))
+                state = CreateState(key, workspaceRoot, scopeFor);
+            else
+                state.ScopeFor = scopeFor;
+
+            WorkspaceBrowserView browser;
+            if (!string.IsNullOrWhiteSpace(request.TabId))
+            {
+                var found = state.Browsers.Find(item => string.Equals(item.TabId, request.TabId, StringComparison.Ordinal));
+                if (found is null)
+                    return new BrowserOpenResult(false, null, null, null, $"Browser tab '{request.TabId}' was not found in this workspace.");
+                browser = found;
+            }
+            else if (!request.NewTab && state.Browsers.Count > 0)
+            {
+                browser = state.Browsers.Find(item => item.TabId == state.Selected) ?? state.Browsers[^1];
+            }
+            else
+            {
+                browser = AddBrowser(state);
+            }
+
+            if (ReferenceEquals(state, _state))
+            {
+                ensureAttached();
+                SelectBrowser(state, browser);
+            }
+            else
+            {
+                state.Selected = browser.TabId;
+                PublishBrowserSnapshot(state);
+            }
+
+            return await browser.NavigateAndWaitAsync(request.Target, request.Timeout, cancellationToken);
+        });
+
+    internal Task<BrowserReadResult> ReadBrowserForAssistantAsync(
+        string? workspaceRoot,
+        BrowserReadRequest request,
+        CancellationToken cancellationToken)
+        => RunOnUiAsync(async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+            _states.TryGetValue(key, out var state);
+            var browser = ResolveBrowserForState(state, request.TabId, out var error);
+            if (browser is null)
+                return new BrowserReadResult(false, null, null, null, false, null, null, false, null, null, error);
+            return await browser.ReadPageAsync(request, cancellationToken);
+        });
+
+    internal Task<BrowserActResult> ActBrowserForAssistantAsync(
+        string? workspaceRoot,
+        BrowserActRequest request,
+        CancellationToken cancellationToken)
+        => RunOnUiAsync(async () =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = WorkspacePaths.CanonicalRoot(workspaceRoot) ?? "";
+            _states.TryGetValue(key, out var state);
+            var browser = ResolveBrowserForState(state, request.TabId, out var error);
+            if (browser is null)
+                return new BrowserActResult(false, null, null, null, null, error);
+            return await browser.ExecuteActionAsync(request, cancellationToken);
+        });
+
+    private static Task<T> RunOnUiAsync<T>(Func<Task<T>> action)
+        => Dispatcher.UIThread.CheckAccess()
+            ? action()
+            : Dispatcher.UIThread.InvokeAsync(action);
     internal bool DocumentSelectedForCheck => _state?.Documents.Any(document => document.Path == _state.Selected) == true;
     internal Control? SelectedContentForCheck => _content.Content as Control;
     internal string SelectedTitleForCheck => _state?.Documents.Find(document => document.Path == _state.Selected)?.Title ?? "";

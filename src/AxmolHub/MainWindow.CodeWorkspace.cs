@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using AxmolHub.Core;
 
 namespace AxmolHub;
@@ -81,4 +82,37 @@ public partial class MainWindow
     internal void CloseWorkspaceDocument(bool discard = false) => _workspaceView?.CloseSelected(discard);
     internal bool SaveWorkspaceBuffers() => _workspaceView?.SaveAll() != false;
     internal void DiscardWorkspaceBuffers() => _workspaceView?.DiscardAll();
+
+    internal BrowserBridge CreateWorkspaceBrowserBridge() => new(
+        OutboundAllowed: () => _preferences.AllowOutboundWebFetch,
+        PeekTabUrl: (workspaceRoot, tabId) => _workspaceView?.PeekBrowserUrl(workspaceRoot, tabId),
+        ListTabs: (workspaceRoot, ct) => _workspaceView is { } view
+            ? view.ListBrowsersAsync(workspaceRoot, ct)
+            : Task.FromResult<IReadOnlyList<BrowserTabSummary>>([]),
+        Open: (workspaceRoot, request, ct) =>
+        {
+            Task<BrowserOpenResult> Run()
+            {
+                BuildWorkspaceContent();
+                if (_workspaceView is not { } view)
+                    return Task.FromResult(new BrowserOpenResult(false, null, null, null,
+                        "The workspace browser view is unavailable."));
+                var conversationId = _chat.ActiveConversation?.Id ?? "";
+                return view.OpenBrowserForAssistantAsync(
+                    workspaceRoot,
+                    request,
+                    () => _chat.EditorScopeFor(conversationId, workspaceRoot),
+                    ShowWorkspace,
+                    ct);
+            }
+            return Dispatcher.UIThread.CheckAccess() ? Run() : Dispatcher.UIThread.InvokeAsync(Run);
+        },
+        Read: (workspaceRoot, request, ct) => _workspaceView is { } view
+            ? view.ReadBrowserForAssistantAsync(workspaceRoot, request, ct)
+            : Task.FromResult(new BrowserReadResult(false, null, null, null, false, null, null, false, null, null,
+                "No embedded browser tab is open in this workspace. Call browser_open first.")),
+        Act: (workspaceRoot, request, ct) => _workspaceView is { } view
+            ? view.ActBrowserForAssistantAsync(workspaceRoot, request, ct)
+            : Task.FromResult(new BrowserActResult(false, null, null, null, null,
+                "No embedded browser tab is open in this workspace. Call browser_open first.")));
 }

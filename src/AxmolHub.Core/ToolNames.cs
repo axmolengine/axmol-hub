@@ -36,6 +36,12 @@ public static class ToolNames
 
     public const string WebSearch = "web_search";
 
+    public const string BrowserOpen = "browser_open";
+
+    public const string BrowserRead = "browser_read";
+
+    public const string BrowserAct = "browser_act";
+
     public const string ProjectList = "project_list";
 
     public const string EngineList = "engine_list";

@@ -1840,6 +1840,60 @@ internal static class AiToolsChecks
         if (searchOff.AllowOutboundWebFetch || searchOff.AllowHostedWebSearch)
             throw new Exception("The hosted-search switch did not round-trip independently of page fetch.");
         Console.WriteLine("PASS: page fetching and web search both default on, and the two permissions round-trip independently.");
+        // ── embedded workspace browser tools: sandbox, loopback vs public gate, and secret redaction ──
+        var htmlPreview = Path.Combine(workspace, "preview.html");
+        File.WriteAllText(htmlPreview, "<!doctype html><title>Preview</title><h1>Hello</h1>");
+        var browserOutbound = false;
+        Uri? currentBrowserUrl = null;
+        var browserBridge = new BrowserBridge(
+            OutboundAllowed: () => browserOutbound,
+            PeekTabUrl: (_, _) => currentBrowserUrl,
+            ListTabs: (_, _) => Task.FromResult<IReadOnlyList<BrowserTabSummary>>(
+                currentBrowserUrl is null ? [] : [new("browser:1", currentBrowserUrl.AbsoluteUri, "Preview", true, false)]),
+            Open: (_, req, _) =>
+            {
+                currentBrowserUrl = req.Target;
+                return Task.FromResult(new BrowserOpenResult(true, "browser:1", req.Target.AbsoluteUri, "Preview", null,
+                    ConsoleOutput: "[LOG] token=SUPERSECRET"));
+            },
+            Read: (_, _, _) => Task.FromResult(new BrowserReadResult(true, "browser:1", currentBrowserUrl?.AbsoluteUri, "Preview", false,
+                "1024x768", "Visible SUPERSECRET text", false, "[1] <button> \"Run\"", "[ERROR] oops SUPERSECRET", null)),
+            Act: (_, req, _) => Task.FromResult(new BrowserActResult(true, "browser:1", currentBrowserUrl?.AbsoluteUri, "Preview",
+                $"action={req.Action} secret=SUPERSECRET", null)));
+        var browserScope = scope with { Browser = browserBridge };
+        var browserTools = new WorkspaceTools(browserScope);
+        // Loopback and workspace HTML files work even with outbound web access off; public URLs, private IPs,
+        // non-HTML files and paths outside the sandbox are refused.
+        if (WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "http://127.0.0.1:8080/game.html").Kind != BrowserTargetKind.Loopback
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "preview.html").Kind != BrowserTargetKind.LocalFile
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "https://example.com").Kind != BrowserTargetKind.RefusedOutboundDisabled
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "http://169.254.169.254/latest/meta-data").Kind != BrowserTargetKind.RefusedPrivateHost
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "http://192.168.1.5/admin").Kind != BrowserTargetKind.RefusedPrivateHost
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "javascript:alert(1)").Kind != BrowserTargetKind.RefusedScheme
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "src/main.cpp").Kind != BrowserTargetKind.RefusedLocalPath
+            || WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "../outside.html").Kind != BrowserTargetKind.RefusedLocalPath)
+            throw new Exception("Embedded browser target policy failed a sandbox, loopback, private-host, or outbound-switch boundary.");
+        browserOutbound = true;
+        if (WorkspaceBrowserPolicy.ResolveOpenTarget(browserScope, "https://example.com/docs").Kind != BrowserTargetKind.PublicWeb)
+            throw new Exception("Embedded browser refused a public URL after outbound web access was enabled.");
+        var openedLocal = await browserTools.BrowserOpenAsync("preview.html");
+        if (!GoalProgress.StateChanged(ToolNames.BrowserOpen, openedLocal)
+            || openedLocal.Contains("SUPERSECRET", StringComparison.Ordinal) || !openedLocal.Contains("[REDACTED]", StringComparison.Ordinal))
+            throw new Exception($"browser_open did not mark progress or redact secrets:{Environment.NewLine}{openedLocal}");
+        var readLocal = await browserTools.BrowserReadAsync();
+        if (!readLocal.Contains(WorkspaceBrowserPolicy.UntrustedPageHeader, StringComparison.Ordinal)
+            || readLocal.Contains("SUPERSECRET", StringComparison.Ordinal) || !readLocal.Contains("[REDACTED]", StringComparison.Ordinal))
+            throw new Exception($"browser_read did not frame untrusted page data or redact secrets:{Environment.NewLine}{readLocal}");
+        var badAct = await browserTools.BrowserActAsync("click");
+        var goodAct = await browserTools.BrowserActAsync("eval", script: "document.title");
+        if (!badAct.StartsWith("Refused:", StringComparison.Ordinal)
+            || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodAct)
+            || goodAct.Contains("SUPERSECRET", StringComparison.Ordinal))
+            throw new Exception($"browser_act validation, progress or redaction failed:{Environment.NewLine}{badAct}{Environment.NewLine}{goodAct}");
+        var browserCard = ToolPreviews.PreviewFor(ToolNames.BrowserOpen, """{"url":"https://example.com/app?key=SUPERSECRET"}""", browserScope);
+        if (browserCard.Contains("SUPERSECRET", StringComparison.Ordinal) || !browserCard.Contains("[REDACTED]", StringComparison.Ordinal))
+            throw new Exception($"browser_open preview leaked a secret:{Environment.NewLine}{browserCard}");
+        Console.WriteLine("PASS: embedded browser tools enforce sandbox/host boundaries, frame untrusted page text, and redact secrets.");
         log.Write("self-check finished");
         Directory.Delete(toolRoot, recursive: true);
         return;

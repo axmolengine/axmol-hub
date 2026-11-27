@@ -4400,6 +4400,11 @@ public partial class ChatPanel : UserControl
             // Host and path only: the query is where a token hides, and this line is stored in the transcript.
             ToolNames.WebFetch => string.Format(culture, HubStrings.Get("ActivityRowFetch"),
                 WebFetch.Shown(ArgField(args, "url") ?? "")),
+            ToolNames.BrowserOpen => string.Format(culture, HubStrings.Get("ActivityRowBrowserOpen"),
+                WorkspaceBrowserPolicy.Shown(ArgField(args, "url") ?? "")),
+            ToolNames.BrowserRead => HubStrings.Get("ActivityRowBrowserRead"),
+            ToolNames.BrowserAct => string.Format(culture, HubStrings.Get("ActivityRowBrowserAct"),
+                ArgField(args, "action") ?? ""),
             _ => string.Format(culture, HubStrings.Get("ActivityRowGeneric"), name),
         };
     }

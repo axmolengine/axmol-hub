@@ -80,6 +80,7 @@ internal static class ChatTools
         ToolNames.ProjectList or ToolNames.EngineList or ToolNames.ToolchainStatus or ToolNames.AxmolSkillRead or ToolNames.AxmolApiQuery or ToolNames.FsRead or ToolNames.MemoryRead
             or ToolNames.ListSessions or ToolNames.ReadSession
             or ToolNames.FsGrep or ToolNames.FsList or ToolNames.FsFind or ToolNames.WorkspaceMap
+            or ToolNames.BrowserRead
             => ToolRisk.ReadOnly,
         ToolNames.FsWrite or ToolNames.FsReplace => ToolPreviews.TextEditRisk(name, argumentsJson, scope),
         ToolNames.SendToSession => ToolRisk.WorkspaceWrite,
@@ -92,6 +93,8 @@ internal static class ChatTools
         // provider API calls; the outbound switch is still checked by every body.
         ToolNames.WebSearch or ToolNames.WebFetch when scope.DeepSeekWeb is not null => ToolRisk.ReadOnly,
         ToolNames.WebSearch or ToolNames.WebFetch => ToolRisk.WorkspaceCommand,
+        ToolNames.BrowserOpen => ToolRisk.WorkspaceCommand,
+        ToolNames.BrowserAct => BrowserActRisk(argumentsJson, scope),
         // Asking for a directory is asking for a place nobody has agreed to yet, so it sits on the tier that always
         // asks. It stays there whatever the path is: the card *is* the mechanism, and a
         // call that fell through silently under 自动审批 would be a grant the person never saw. 「总是允许」 is not
@@ -184,6 +187,23 @@ internal static class ChatTools
         var path = ArgumentOf(argumentsJson, name == ToolNames.FsMove ? "source" : "path");
         if (path is null) return ToolRisk.SystemCommand;
         return WorkspaceTools.ManagementMayBreakCache(scope, path) ? ToolRisk.CacheBreak : ToolRisk.WorkspaceWrite;
+    }
+
+    /// <summary>
+    /// Navigation and observation actions stay on the sandbox tier. Mutating interactions (<c>click</c>, <c>type</c>,
+    /// <c>eval</c>) stay on the sandbox tier for local workspace HTML and loopback dev servers, but escalate to
+    /// <see cref="ToolRisk.SystemCommand"/> on public websites or unknown targets so untrusted page content cannot
+    /// drive silent external actions under automatic approval.
+    /// </summary>
+    private static ToolRisk BrowserActRisk(string? argumentsJson, WorkspaceToolScope scope)
+    {
+        var action = ArgumentOf(argumentsJson, "action");
+        if (action is null) return ToolRisk.SystemCommand;
+        if (!WorkspaceBrowserPolicy.IsMutatingAction(action)) return ToolRisk.WorkspaceCommand;
+        var tabId = ArgumentOf(argumentsJson, "tab_id");
+        if (tabId is null) return ToolRisk.SystemCommand;
+        var current = scope.Browser?.PeekTabUrl(scope.WorkspaceRoot, tabId.Length > 0 ? tabId : null);
+        return WorkspaceBrowserPolicy.IsLocalTarget(current) ? ToolRisk.WorkspaceCommand : ToolRisk.SystemCommand;
     }
 
     /// <summary>
@@ -339,6 +359,7 @@ internal static class ChatTools
             AIFunctionFactory.Create(tools.MemoryRead, Options(ToolNames.MemoryRead)),
             AIFunctionFactory.Create(tools.ListSessions, Options(ToolNames.ListSessions)),
             AIFunctionFactory.Create(tools.ReadSession, Options(ToolNames.ReadSession)),
+            AIFunctionFactory.Create(tools.BrowserReadAsync, Options(ToolNames.BrowserRead)),
         ];
     }
 
@@ -356,6 +377,8 @@ internal static class ChatTools
             AIFunctionFactory.Create(tools.FsDelete, Options(ToolNames.FsDelete)),
             AIFunctionFactory.Create(tools.FsMove, Options(ToolNames.FsMove)),
             AIFunctionFactory.Create(tools.RunCommand, Options(ToolNames.RunCommand)),
+            AIFunctionFactory.Create(tools.BrowserOpenAsync, Options(ToolNames.BrowserOpen)),
+            AIFunctionFactory.Create(tools.BrowserActAsync, Options(ToolNames.BrowserAct)),
             // The name is the pair's, not this call's: web_fetch reads a page from here, and the phase-two search
             // arrives as web_search — which is not ours to name anyway, since a hosted tool is advertised by the
             // provider's own kind string. Two nouns in front of "fetch" and "search" so the model sees one capability

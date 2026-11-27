@@ -55,6 +55,8 @@ public static class GoalProgress
                 result.StartsWith("Granted", StringComparison.Ordinal),
             ToolNames.MemoryWrite => result.StartsWith("Saved ", StringComparison.Ordinal),
             ToolNames.ComputerUse => result.StartsWith("Input delivered (", StringComparison.Ordinal),
+            ToolNames.BrowserOpen => result.StartsWith("Opened ", StringComparison.Ordinal),
+            ToolNames.BrowserAct => result.StartsWith("Browser ", StringComparison.Ordinal),
             _ => false,
         };
     }

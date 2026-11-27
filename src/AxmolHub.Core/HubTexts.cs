@@ -1396,6 +1396,9 @@ public static class HubTexts
         ["ActivityRowMove"] = ("移动 {0} → {1}", "Move {0} → {1}"),
         ["ActivityRowRunCommand"] = ("执行命令", "Run command"),
         ["ActivityRowFetch"] = ("抓取 {0}", "Fetch {0}"),
+        ["ActivityRowBrowserOpen"] = ("浏览器打开 {0}", "Open in browser: {0}"),
+        ["ActivityRowBrowserRead"] = ("读取浏览器页面", "Inspect browser page"),
+        ["ActivityRowBrowserAct"] = ("浏览器操作：{0}", "Browser action: {0}"),
         ["ActivityRowGeneric"] = ("调用 {0}", "Call {0}"),
         // A search the endpoint ran for itself, drawn as one live status line. It has no card and no result turn,
         // so this is the only place the person learns the answer came from outside — and "searching" is a state of

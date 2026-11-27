@@ -98,6 +98,8 @@ public sealed record WorkspaceToolScope(
     /// <summary>Read the global search switch per call. Null means no local search host; <see cref="Web"/>
     /// supplies the HTTPS transport independently of the page-fetch switch.</summary>
     public Func<bool>? LocalSearchAllowed { get; init; }
+    /// <summary>Embedded workspace browser host bridge. Null in headless checks without a UI host.</summary>
+    public BrowserBridge? Browser { get; init; }
     /// <summary>Returns this call's frozen target only while its application grant remains in force.</summary>
     public Func<ComputerUseTarget?>? ApprovedComputerTarget { get; init; }
     /// <summary>Fingerprint of the file shown on a parked fs_write approval card; null on an automatic call.</summary>
