@@ -366,8 +366,10 @@
          appears on hover is a dead end in a surface whose whole job is being looked at, which is the same
          exemption the approval card has and for the same reason. -->
     <Style Selector="Button.picture-nav">
+      <Setter Property="MinHeight" Value="0" />
       <Setter Property="Width" Value="36" />
       <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
       <Setter Property="CornerRadius" Value="18" />
       <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
@@ -1264,13 +1266,13 @@
     <Image x:Name="PictureViewerImage" Stretch="Uniform" Margin="72,44,72,44" />
     <Button x:Name="PicturePrevButton" Classes="picture-nav" HorizontalAlignment="Left"
             VerticalAlignment="Center" Margin="18,0,0,0" ToolTip.Tip="{DynamicResource PictureViewerPrevious}">
-      <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
+      <Path Width="10" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
             Fill="{DynamicResource Hub.TextSecondary}" RenderTransform="rotate(180deg)"
             RenderTransformOrigin="50%,50%" />
     </Button>
     <Button x:Name="PictureNextButton" Classes="picture-nav" HorizontalAlignment="Right"
             VerticalAlignment="Center" Margin="0,0,18,0" ToolTip.Tip="{DynamicResource PictureViewerNext}">
-      <Path Width="14" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
+      <Path Width="10" Height="14" Stretch="Uniform" Data="{StaticResource Hub.Icon.ChevronRight}"
             Fill="{DynamicResource Hub.TextSecondary}" />
     </Button>
     <Grid VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,14"
