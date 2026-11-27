@@ -8,7 +8,42 @@ Axmol Hub 是一款支持 Windows、Linux 和 macOS 的桌面应用。你可以�
 
 [![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359)
 
-![Axmol Hub 主界面](docs/images/hub.png)
+![项目列表](docs/images/proj-list.png)
+
+![AI 助手计划模式](docs/images/ai-plan.png)
+
+<details>
+<summary>更多截图</summary>
+
+### 提问
+
+![AI 助手提问模式](docs/images/ai-ask.png)
+
+### Git 操作
+
+![AI 辅助 Git 操作](docs/images/ai-git-ops.png)
+
+### 创建项目
+
+![新建项目设置](docs/images/proj-new.png)
+
+### 引擎管理
+
+![Axmol 引擎管理](docs/images/engine-management.png)
+
+### 工具链验证
+
+![开发工具链验证](docs/images/toolchain-verify.png)
+
+### Android 发布
+
+![Android 发布构建](docs/images/android-release.png)
+
+### 内置代码编辑器
+
+![用于手动编辑文件的内置代码编辑器](docs/images/code-editor.png)
+
+</details>
 
 ## 核心功能
 

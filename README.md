@@ -8,7 +8,42 @@ Axmol Hub is a desktop app for general-purpose AI-assisted programming and Axmol
 
 [![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_e3b6a1445aa97ab3c359)
 
-![Axmol Hub main window](docs/images/hub.png)
+![Project list](docs/images/proj-list.png)
+
+![AI assistant in Plan mode](docs/images/ai-plan.png)
+
+<details>
+<summary>More screenshots</summary>
+
+### Ask
+
+![AI assistant in Ask mode](docs/images/ai-ask.png)
+
+### Git operations
+
+![AI-assisted Git operations](docs/images/ai-git-ops.png)
+
+### Create a project
+
+![New project setup](docs/images/proj-new.png)
+
+### Engine management
+
+![Axmol engine management](docs/images/engine-management.png)
+
+### Toolchain verification
+
+![Development toolchain verification](docs/images/toolchain-verify.png)
+
+### Android release
+
+![Android release build](docs/images/android-release.png)
+
+### Built-in code editor
+
+![Built-in code editor for manually editing files](docs/images/code-editor.png)
+
+</details>
 
 ## Features
 
