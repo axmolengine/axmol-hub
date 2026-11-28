@@ -3,7 +3,7 @@ using System.Text;
 
 namespace AxmolHub.Core;
 
-/// <summary>Business data may move; authentication always uses the platform user directory.</summary>
+/// <summary>Hub data may move; authentication always uses the platform user directory.</summary>
 public sealed record HubStorageLayout(string DataRoot, string AuthRoot, string KeychainService)
 {
     public const string SharedKeychainService = "dev.axmol.hub";
@@ -19,7 +19,7 @@ public sealed record HubStorageLayout(string DataRoot, string AuthRoot, string K
 
     public static string LegacyDataRoot => Path.Combine(UserDirectory, "data");
 
-    /// <summary>Only the default business data location depends on whether this is an existing install.</summary>
+    /// <summary>Only the default data location depends on whether this is an existing install.</summary>
     public static bool UseHomeDataForNewInstall(bool settingsExist, bool legacyDataExists)
         => !settingsExist && !legacyDataExists;
 
@@ -32,7 +32,7 @@ public sealed record HubStorageLayout(string DataRoot, string AuthRoot, string K
         var dataPrefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
         if (Path.TrimEndingDirectorySeparator(auth).Equals(Path.TrimEndingDirectorySeparator(root), comparison)
             || auth.StartsWith(dataPrefix, comparison))
-            throw new IOException("The business data directory must not contain the authentication directory.");
+            throw new IOException("The data directory must not contain the authentication directory.");
         return new(root, auth, SharedKeychainService)
         {
             LegacySource = root,

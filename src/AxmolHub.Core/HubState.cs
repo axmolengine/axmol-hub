@@ -73,7 +73,7 @@ public sealed class HubState
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? CodeExecutable { get; set; }
 
-    /// <summary>Retarget registered installations copied with business data; external paths remain untouched.</summary>
+    /// <summary>Retarget registered installations copied with Hub data; external paths remain untouched.</summary>
     public void RelocatePaths(string source, string destination)
     {
         string Map(string value) => DataRootTransfer.RebasePath(value, source, destination)!;

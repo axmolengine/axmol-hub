@@ -7,7 +7,7 @@ namespace AxmolHub.Core;
 /// Extracted from <c>DpapiSecretStore</c> so every file-backed tier shares one layout — the Windows DPAPI blob,
 /// and the AES-GCM blob use the same directory and naming, which lets <see cref="SecretBlobFormat.Classify"/>
 /// tell them apart. Writers use the platform user directory; the original data root is only a migration source.
-/// Backing up business data alone no longer includes newly stored credentials.
+/// Backing up Hub data alone no longer includes newly stored credentials.
 /// </summary>
 public sealed class SecretBlobFiles(string dataRoot)
 {

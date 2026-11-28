@@ -1,6 +1,6 @@
 namespace AxmolHub.Core;
 
-/// <summary>Adopts provider configuration once into the fixed user profile, independent of business data.</summary>
+/// <summary>Adopts provider configuration once into the fixed user profile, independent of Hub data.</summary>
 public static class ProviderSettingsMigration
 {
     public static void Import(HubStorageLayout layout)

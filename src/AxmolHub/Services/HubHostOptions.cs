@@ -52,7 +52,7 @@ internal sealed record HubHostOptions(
 
     /// <summary>
     /// Settings and authentication stay in the platform user directory, never next to the executable.
-    /// New business data lives in ~/.axmolhub; existing installs retain their business data location.
+    /// New installs store Hub data in ~/.axmolhub; existing installs retain their data location.
     /// </summary>
     public static string UserDirectory => HubStorageLayout.UserDirectory;
 

@@ -116,7 +116,7 @@ public partial class App : Application
         var preferencesStore = new PreferencesStore(Options.PreferencesPath);
         var settingsExist = File.Exists(Options.PreferencesPath);
         var preferences = preferencesStore.Load();
-        // Choose the default business data location once. Authentication always uses the fixed user directory.
+        // Choose the default data location once. Authentication always uses the fixed user directory.
         // Explicit test/development profiles stay isolated; drive runs must not alter the real settings.
         if (!settingsExist && !Options.IsAutomation && !Options.IsDrive
             && Options.PreferencesPath == HubHostOptions.DefaultPreferencesPath)

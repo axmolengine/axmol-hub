@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 
 namespace AxmolHub.Core;
 
-/// <summary>Copies business data without overwriting a destination or moving authentication. Originals stay intact.</summary>
+/// <summary>Copies Hub data without overwriting a destination or moving authentication. Originals stay intact.</summary>
 public sealed class DataRootTransfer : IDisposable
 {
     private readonly List<string> _createdFiles = [];
@@ -12,7 +12,7 @@ public sealed class DataRootTransfer : IDisposable
     private static bool Excluded(string relative)
     {
         var parts = relative.Split('/');
-        // Only profile-owned files are excluded. Logs and other content move with business data.
+        // Only profile-owned files are excluded. Logs and other content move with Hub data.
         if (relative == "hub-settings.json" || relative.StartsWith("hub-settings.json.", StringComparison.Ordinal)
             || relative == "hub-state.json" || relative.StartsWith("hub-state.json.", StringComparison.Ordinal)) return true;
         if (parts.Length < 2 || parts[0] != "ai") return false;

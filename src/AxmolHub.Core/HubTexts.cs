@@ -322,7 +322,7 @@ public static class HubTexts
         ["TaskSwitchData"] = ("切换数据目录", "Switch data directory"),
         ["SwitchDataRootPrompt"] = ("将数据目录改为 {0}，请选择处理方式：", "Change the data directory to {0}. Choose how to proceed:"),
         ["MigrateDataChoice"] = ("迁移现有数据（默认）", "Migrate existing data (default)"),
-        ["MigrateDataDetail"] = ("复制当前业务数据后切换，保留会话和原目录。目标内容冲突时不覆盖。", "Copy current business data, then switch. Sessions and the original directory are kept; conflicting files are not overwritten."),
+        ["MigrateDataDetail"] = ("复制当前数据后切换，保留会话和原目录。目标内容冲突时不覆盖。", "Copy current data, then switch. Sessions and the original directory are kept; conflicting files are not overwritten."),
         ["SwitchDataOnlyChoice"] = ("仅切换目录，不迁移", "Switch directory only, without migration"),
         ["SwitchDataOnlyDetail"] = ("直接加载目标目录，不复制或合并当前数据。目标为空时，会话列表也为空；登记路径不改写。", "Load the destination without copying or merging current data. An empty destination has no sessions; registered paths stay unchanged."),
         ["DataRootFixedSettings"] = ("两种方式均保留全局凭据、提供商配置及引擎和项目登记，不删除任何原数据。", "Both options preserve global credentials, provider settings, and engine/project registrations. Neither deletes original data."),

@@ -381,7 +381,7 @@ internal sealed class ShellLayoutChecks
         Check(!logAfterSwitch.Contains(previousLogMarker, StringComparison.Ordinal),
             "切换后上一个根的唯一日志记录不再摆在界面上（旧根记录「" + previousLogLine + "」）");
 
-        // Relocation preserves business state, rather than opening an empty independent dataset.
+        // Relocation preserves Hub state, rather than opening an empty independent dataset.
         var installs = (InstallsPage)shell.NavigateTo("Installs");
         installs.UpdateLayout();
         Dispatcher.UIThread.RunJobs();

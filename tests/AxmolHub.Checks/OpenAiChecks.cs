@@ -99,7 +99,7 @@ internal static class OpenAiChecks
             && store.Service == HubStorageLayout.Legacy(Path.Combine(scratch, ".")).KeychainService,
             "legacy layouts retain the original normalized path hash and storage location");
         var authRoot = Path.Combine(scratch, "user", "AxmolHub");
-        var shared = HubStorageLayout.Resolve(Path.Combine(scratch, "business"), authRoot);
+        var shared = HubStorageLayout.Resolve(Path.Combine(scratch, "data"), authRoot);
         var moved = HubStorageLayout.Resolve(Path.Combine(scratch, "moved"), authRoot + "-moved");
         var sharedStore = new MacKeychainSecretStore(shared.KeychainService, api);
         sharedStore.Write("shared", "shared-secret");
@@ -113,7 +113,7 @@ internal static class OpenAiChecks
             && !HubStorageLayout.UseHomeDataForNewInstall(true, false)
             && !HubStorageLayout.UseHomeDataForNewInstall(false, true)
             && !new PreferencesStore(oldSettingsPath).Load().UseHomeDataDirectory,
-            "only a fresh install changes its default business data location");
+            "only a fresh install changes its default data location");
         var sharedMetadata = new CredentialStore(shared.AuthRoot, sharedStore);
         sharedMetadata.Save([new ProviderCredential { Id = "shared", ProviderId = "openai", Label = "shared" }], false);
         var sharedGuards = new WorkspaceGuards(shared.DataRoot, [], shared.AuthRoot);
@@ -121,7 +121,7 @@ internal static class OpenAiChecks
         Check(File.Exists(sharedPath) && !Directory.Exists(shared.DataRoot)
             && sharedMetadata.Load().Single().Secret == "shared-secret"
             && !WorkspacePaths.ResolveWrite(WorkspaceSandbox.For(scratch), sharedPath, sharedGuards).IsAllowed,
-            "shared credential metadata stays outside business data and remains protected from workspace writes");
+            "shared credential metadata stays outside Hub data and remains protected from workspace writes");
         // Relocation and shared provider settings must preserve the two things a root switch used to hide.
         new ProviderStore(shared.DataRoot).Save([new ModelProvider { Id = "relocation-provider", Name = "Kept provider" }]);
         new ModelListStore(shared.DataRoot).Save("relocation-provider", ["kept-model"]);
