@@ -109,11 +109,12 @@ internal static class PrebuiltChecks
         var unaffected = Directory.CreateDirectory(Path.Combine(enginePath, "install")).FullName;
         var invoked = 0;
         Task CleanEngine() => engineBuild.BuildAsync(fixtureEngine, windowsTarget, "Debug", cleanup: cleanup, onCommand: (_, _) => invoked++);
-        File.WriteAllText(Cache(buildDirectory), "CMAKE_HOME_DIRECTORY:INTERNAL=" + projectPath + "\n");
-        await Reject<InvalidDataException>(CleanEngine, "A changed cleanup directory is rejected before invoking the engine");
+        var unsafeSource = Path.Combine(buildDirectory, "CMakeLists.txt");
+        File.WriteAllText(unsafeSource, "# unsafe source tree marker\n");
+        await Reject<InvalidDataException>(CleanEngine, "An unsafe cleanup directory is rejected before invoking the engine");
         Check(invoked == 0 && Directory.Exists(buildDirectory) && Inspect(windowsTarget, "Release").Usable,
             "A refused cleanup neither invokes a build nor invalidates untouched libraries");
-        File.WriteAllText(Cache(buildDirectory), cacheContent);
+        File.Delete(unsafeSource);
         if (OperatingSystem.IsWindows())
         {
             var shader = Path.Combine(buildDirectory, "runtime", "axslc", "positionTextureColor_vs");
@@ -124,8 +125,8 @@ internal static class PrebuiltChecks
                 try { await CleanEngine(); }
                 catch (IOException ex) when (ex.Message.Contains(shader, StringComparison.OrdinalIgnoreCase)) { reportedPath = true; }
             }
-            Check(reportedPath && invoked == 0 && File.Exists(Cache(buildDirectory)),
-                "A locked shader reports its path, skips compilation and retains the cache for a retry");
+            Check(reportedPath && invoked == 0 && Directory.Exists(buildDirectory),
+                "A locked shader reports its path and skips compilation so cleanup can be retried");
             // Exercise the read-only path after releasing the handle as the failed attempt may have cleared it.
             File.SetAttributes(shader, FileAttributes.ReadOnly);
         }
@@ -134,9 +135,34 @@ internal static class PrebuiltChecks
             && !Inspect(windowsTarget, "Debug").Usable && !Inspect(windowsTarget, "Release").Usable && Inspect(armTarget, "Release").Usable,
             "Cleaning a shared build directory clears both configurations and preserves other architecture and install output");
         await Reject<PrebuiltUnavailableException>(() => Task.Run(Arguments), "An enabled library that disappeared never silently falls back to sources");
+        await CheckProjectBuildCleanupAsync(project, windowsTarget, projectOutput, directoryName);
         await CheckAndroidCleanupAsync(project, androidTarget, fixtureEngine, service, receipt);
         Console.WriteLine($"{count} prebuilt checks passed.");
         return;
+    }
+
+    private static async Task CheckProjectBuildCleanupAsync(ProjectEntry project, BuildTarget target, string projectOutput, string directoryName)
+    {
+        // A relocated project cache or a build directory without CMakeCache.txt should clean directly without blocking.
+        Directory.CreateDirectory(projectOutput);
+        File.WriteAllText(Path.Combine(projectOutput, "CMakeCache.txt"),
+            $"CMAKE_HOME_DIRECTORY:INTERNAL=d:/moved/Causals\nCMAKE_CACHEFILE_DIR:INTERNAL=d:/moved/Causals/{directoryName}\n");
+        var relocated = BuildCleanup.ForProject(project, target);
+        await relocated.ExecuteAsync(() => BuildCleanup.ForProject(project, target), () => { }, CancellationToken.None, _ => { });
+        Check(!Directory.Exists(projectOutput), "Cleaning a relocated build directory removes it directly");
+
+        Directory.CreateDirectory(projectOutput);
+        File.WriteAllText(Path.Combine(projectOutput, "stale.txt"), "leftover");
+        var signingFile = Path.Combine(projectOutput, "release.keystore");
+        File.WriteAllText(signingFile, "fixture");
+        var cleanup = BuildCleanup.ForProject(project, target);
+        await Reject<InvalidDataException>(
+            () => cleanup.ExecuteAsync(() => BuildCleanup.ForProject(project, target), () => { }, CancellationToken.None, _ => { }),
+            "Signing files inside a build directory remain blocked");
+        File.Delete(signingFile);
+
+        await cleanup.ExecuteAsync(() => BuildCleanup.ForProject(project, target), () => { }, CancellationToken.None, _ => { });
+        Check(!Directory.Exists(projectOutput), "A non-empty build directory without CMakeCache.txt is cleaned directly");
     }
     private static async Task CheckAndroidCleanupAsync(ProjectEntry project, BuildTarget target, EngineEntry engine, ProjectService service, string receipt)
     {

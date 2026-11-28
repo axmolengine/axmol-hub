@@ -19,7 +19,7 @@ public sealed class BuildCleanup
         _directories = directories.Select(directory => Path.Combine(_root, directory)).ToArray();
         _keystore = keystore;
         Directories = Array.AsReadOnly(_directories);
-        foreach (var directory in _directories) ValidateOwnership(directory);
+        foreach (var directory in _directories) ValidateDirectory(directory);
     }
 
     // Axmol 1kiss's resolve_out_dir('build_'). Native builds explicitly pass this same directory
@@ -89,27 +89,17 @@ public sealed class BuildCleanup
                 CheckPath(directory);
                 if (!Directory.Exists(directory)) continue;
                 log("Removing build directory: " + directory);
-                // Keep the ownership proof until the other entries are gone, so a partial cleanup can be retried.
-                DeleteEntry(directory, cancellation, keepCacheUntilLast: current._native is not null);
+                DeleteEntry(directory, cancellation);
             }
         }, cancellation);
 
-    private void ValidateOwnership(string directory)
+    private void ValidateDirectory(string directory)
     {
         CheckPath(directory);
         if (!Directory.Exists(directory)) return;
         if (Directory.Exists(Path.Combine(directory, ".git")) || File.Exists(Path.Combine(directory, ".git"))
             || File.Exists(Path.Combine(directory, "CMakeLists.txt")))
             throw new InvalidDataException("The build directory contains a source tree: " + directory);
-        if (_native is not null && Directory.EnumerateFileSystemEntries(directory).Any())
-        {
-            var cache = Path.Combine(directory, "CMakeCache.txt");
-            CheckPath(cache, allowFile: true);
-            if (!File.Exists(cache) || !File.ReadLines(cache).Any(line =>
-                line.StartsWith("CMAKE_HOME_DIRECTORY:INTERNAL=", StringComparison.Ordinal)
-                && PathComparer.Equals(Normalize(line[(line.IndexOf('=') + 1)..]), _root)))
-                throw new InvalidDataException("Cannot verify ownership of the build directory: " + directory);
-        }
         if (!string.IsNullOrWhiteSpace(_keystore) && Path.IsPathFullyQualified(_keystore)
             && IsWithin(directory, Path.GetFullPath(_keystore)))
             throw new InvalidDataException("A release keystore is inside the build directory: " + directory);
@@ -129,17 +119,15 @@ public sealed class BuildCleanup
         }
     }
 
-    private static void DeleteEntry(string path, CancellationToken cancellation, bool keepCacheUntilLast = false)
+    private static void DeleteEntry(string path, CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
         var attributes = GetAttributes(path);
         if (attributes is null) return;
         if ((attributes.Value & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory)
         {
-            var cache = keepCacheUntilLast ? Path.Combine(path, "CMakeCache.txt") : null;
             foreach (var child in EnumerateChildren(path))
-                if (!PathComparer.Equals(child, cache)) DeleteEntry(child, cancellation);
-            if (cache is not null) DeleteEntry(cache, cancellation);
+                DeleteEntry(child, cancellation);
         }
 
         for (var attempt = 0; ; attempt++)
@@ -196,7 +184,6 @@ public sealed class BuildCleanup
         }
     }
 
-    private static string? Normalize(string path) => Path.IsPathFullyQualified(path) ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) : null;
     private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private static bool IsWithin(string root, string path)
     {
