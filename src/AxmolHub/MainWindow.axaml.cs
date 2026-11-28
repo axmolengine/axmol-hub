@@ -1812,6 +1812,7 @@ public partial class MainWindow : Window
             var selectionCopy = new MenuItem
             {
                 Header = HubStrings.Get("CopyMessage"),
+                Classes = { "has-gesture" },
                 InputGesture = new KeyGesture(Key.C,
                     OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control),
             };

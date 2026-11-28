@@ -93,6 +93,7 @@ internal sealed class CodeEditorView : Grid
         MenuItem Add(string tag, string caption, Action action, KeyGesture? gesture = null)
         {
             var item = new MenuItem { Tag = tag, InputGesture = gesture };
+            if (gesture is not null) item.Classes.Add("has-gesture");
             item.Bind(HeaderedSelectingItemsControl.HeaderProperty, new DynamicResourceExtension(caption));
             item.Click += (_, _) => action();
             menu.Items.Add(item);

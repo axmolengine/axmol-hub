@@ -116,8 +116,13 @@ internal sealed partial class InspectorPanel
             if (!menu.IsOpen || !menu.Items.Contains(branches)) return;
             foreach (var branch in local)
             {
-                var choice = new MenuItem { Header = branch.Name, IsEnabled = !branch.IsCurrent,
-                    ToggleType = MenuItemToggleType.CheckBox, IsChecked = branch.IsCurrent };
+                var choice = new MenuItem
+                {
+                    Header = MenuRow.Build("Hub.Icon.Branch", branch.Name, branch.IsCurrent, iconSize: 12),
+                    Tag = branch.Name,
+                    IsEnabled = !branch.IsCurrent,
+                    IsChecked = branch.IsCurrent,
+                };
                 choice.Click += (_, _) =>
                 {
                     menu.Hide();

@@ -16,20 +16,25 @@ namespace AxmolHub;
 internal static class MenuRow
 {
     internal static Control Build(string? iconKey, string title, bool current, string? badge = null,
-        bool chevron = false)
+        bool chevron = false, double minWidth = 0, double iconSize = 15)
     {
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), MinWidth = 200 };
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            MinWidth = minWidth,
+        };
 
         var hasGlyph = iconKey is { Length: > 0 };
         if (hasGlyph)
         {
             var icon = new Avalonia.Controls.Shapes.Path
             {
-                Width = 15,
-                Height = 15,
+                Width = iconSize,
+                Height = iconSize,
                 Stretch = Stretch.Uniform,
                 Fill = Brushes.Transparent,
-                StrokeThickness = 1.5,
+                StrokeThickness = iconSize <= 12 ? 1.35 : 1.5,
                 StrokeLineCap = PenLineCap.Round,
                 StrokeJoin = PenLineJoin.Round,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -50,7 +55,7 @@ internal static class MenuRow
             FontSize = 13,
             FontWeight = FontWeight.Normal,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(hasGlyph ? 12 : 27, 0, 0, 0),
+            Margin = new Thickness(hasGlyph ? (iconSize <= 12 ? 8 : 10) : 0, 0, 0, 0),
         };
         Grid.SetColumn(text, 1);
         header.Children.Add(text);
@@ -97,6 +102,7 @@ internal static class MenuRow
         }
 
         var tick = Tick(current);
+        tick.HorizontalAlignment = HorizontalAlignment.Right;
         tick.Margin = new Thickness(12, 0, 0, 0);
         Grid.SetColumn(tick, 3);
         header.Children.Add(tick);

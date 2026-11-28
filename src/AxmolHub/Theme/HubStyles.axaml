@@ -490,6 +490,22 @@
     <Setter Property="Margin" Value="0,1" />
     <Setter Property="Padding" Value="11,6" />
   </Style>
+  <Style Selector="MenuItem /template/ ContentPresenter#PART_HeaderPresenter">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+  </Style>
+  <!-- Fluent reserves 24 DIP for PART_InputGestureText even when InputGesture is null, and reserves the chevron
+       column across sibling items. Collapse the unused gesture margin and let leaf items span the trailing columns
+       so right-aligned ticks sit flush with the menu's right edge. -->
+  <Style Selector="MenuItem /template/ TextBlock#PART_InputGestureText">
+    <Setter Property="Margin" Value="0" />
+  </Style>
+  <Style Selector="MenuItem.has-gesture /template/ TextBlock#PART_InputGestureText">
+    <Setter Property="Margin" Value="20,0,0,0" />
+  </Style>
+  <Style Selector="MenuItem:empty:not(.has-gesture) /template/ ContentPresenter#PART_HeaderPresenter">
+    <Setter Property="Grid.ColumnSpan" Value="3" />
+  </Style>
   <Style Selector="MenuFlyoutPresenter Separator, ContextMenu Separator, MenuItem Separator">
     <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
     <Setter Property="Margin" Value="8,4" />
@@ -508,7 +524,7 @@
        matches a glyph-less MenuRow title, which keeps the caption over the words under it. -->
   <Style Selector="MenuItem.menu-caption">
     <Setter Property="MinHeight" Value="0" />
-    <Setter Property="Padding" Value="27,8,12,2" />
+    <Setter Property="Padding" Value="11,8,12,2" />
     <Setter Property="FontSize" Value="11" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />

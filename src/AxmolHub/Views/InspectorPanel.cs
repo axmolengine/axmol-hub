@@ -1450,11 +1450,18 @@ internal sealed partial class InspectorPanel : UserControl
 
     private static Control ScopeMenuHeader(string title, bool current)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), MinWidth = 140 };
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            MinWidth = 120,
+        };
         row.Children.Add(new TextBlock { Text = title, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
         if (current)
         {
             var tick = MenuRow.Tick(true);
+            tick.HorizontalAlignment = HorizontalAlignment.Right;
+            tick.Margin = new Thickness(12, 0, 0, 0);
             Grid.SetColumn(tick, 1);
             row.Children.Add(tick);
         }
@@ -1560,7 +1567,7 @@ internal sealed partial class InspectorPanel : UserControl
     {
         var item = new MenuItem
         {
-            Header = MenuRow.Build(null, name, string.Equals(name, _base, StringComparison.Ordinal)),
+            Header = MenuRow.Build("Hub.Icon.Branch", name, string.Equals(name, _base, StringComparison.Ordinal), iconSize: 12),
             Tag = name,
         };
         item.Click += (_, _) =>

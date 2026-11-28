@@ -90,9 +90,11 @@ internal sealed class ShellGitWorkflowChecks(CheckReport report, Action<bool, st
             var branchMenu = (MenuFlyout)Avalonia.Controls.Primitives.FlyoutBase.GetAttachedFlyout(anchor)!;
             var switcher = branchMenu.Items.OfType<MenuItem>().Single(m => Equals(m.Tag, "GitSwitchBranch"));
             await WaitForConditionAsync(() => switcher.IsEnabled);
-            var main = switcher.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "main"));
+            var main = switcher.Items.OfType<MenuItem>().Single(m => MainWindow.MenuRowShapeForCheck(m).Title == "main");
             if (!main.IsEnabled
-                || !switcher.Items.OfType<MenuItem>().Any(m => Equals(m.Header, "topic") && m.IsChecked && !m.IsEnabled)
+                || MainWindow.MenuRowShapeForCheck(main).Ticked
+                || !switcher.Items.OfType<MenuItem>().Any(m => MainWindow.MenuRowShapeForCheck(m).Title == "topic"
+                    && m.IsChecked && MainWindow.MenuRowShapeForCheck(m).Ticked && !m.IsEnabled)
                 || switcher.Items.Count != 2) throw new Exception("Switch submenu did not list only local branches with the current branch checked.");
             main.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             await (TaskQueue.Instance.ActiveMutating ?? throw new Exception("No branch switch task")).Completion;
