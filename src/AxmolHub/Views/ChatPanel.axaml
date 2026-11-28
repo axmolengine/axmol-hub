@@ -72,11 +72,29 @@
     </Style>
 
     <Style Selector="Button.chat-review-file">
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
       <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Frame"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  Padding="{TemplateBinding Padding}"
+                  ClipToBounds="True">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalContentAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
     </Style>
     <Style Selector="Button.chat-review-file:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.chat-review-file:pointerover TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
 
     <!-- Assistant message: no frame at all, plain text on the background. -->
@@ -816,6 +834,21 @@
     <Style Selector="Border.file-chip.inline-chip">
       <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
+    <!-- Quiet footnote for exit code 0; keep the raised chip only when a command fails. -->
+    <Style Selector="Border.file-chip.exit-chip">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Padding" Value="2,1" />
+    </Style>
+    <Style Selector="Border.file-chip.exit-chip TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Border.file-chip.exit-chip.failed">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="Padding" Value="6,1" />
+    </Style>
+    <Style Selector="Border.file-chip.exit-chip.failed TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+    </Style>
     <!-- One folded tool exchange, and the detail it reveals when clicked. The collapsed row names the action; the
          toggle underneath it lays the whole exchange out (arguments in, payload back) so the concrete operation is
          readable on the page instead of stranded one hover away in a tooltip. A bare transparent template keeps the
@@ -965,8 +998,8 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
     <Style Selector="Button.chip">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="15" />
       <Setter Property="MinHeight" Value="30" />
@@ -976,6 +1009,11 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.chip:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <!-- The permission chip: neutral until the mode is the one that never asks, and then the tier's own
          warning colour without adding a second label anywhere else. -->
@@ -1144,8 +1182,8 @@
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0,0,6,0" />
       <Setter Property="CornerRadius" Value="15" />
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -1269,6 +1307,7 @@
     </Style>
     <Style Selector="Button.composer-plus:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.mode-indicator">
@@ -1276,8 +1315,8 @@
       <Setter Property="Padding" Value="8,3" />
       <Setter Property="Margin" Value="2,0,6,0" />
       <Setter Property="CornerRadius" Value="15" />
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />

@@ -26,7 +26,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="5" />
+    <Setter Property="CornerRadius" Value="7" />
     <Setter Property="Padding" Value="14,0" />
     <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Margin" Value="0,0,8,0" />
@@ -90,7 +90,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="CornerRadius" Value="7" />
     <Setter Property="Padding" Value="10,0" />
     <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Margin" Value="0,6,0,0" />
@@ -261,7 +261,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderStrong}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="CornerRadius" Value="7" />
     <Setter Property="MinHeight" Value="{DynamicResource Hub.Control.Height}" />
     <Setter Property="Padding" Value="10,0" />
     <Setter Property="Margin" Value="0,6,0,0" />
@@ -311,7 +311,7 @@
                       Background="{DynamicResource Hub.PopupSurface}"
                       BorderBrush="{DynamicResource Hub.BorderStrong}"
                       BorderThickness="1"
-                      CornerRadius="4"
+                      CornerRadius="8"
                       Padding="0">
                 <ScrollViewer IsScrollChainingEnabled="False"
                               HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"

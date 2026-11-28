@@ -1008,10 +1008,10 @@
                   <Border x:Name="PreviewBadge" IsVisible="False"
                           Background="{DynamicResource Hub.PreviewBadgeBackground}"
                           BorderBrush="{DynamicResource Hub.PreviewBadgeBorder}"
-                          BorderThickness="1" CornerRadius="4" Padding="5,1"
+                          BorderThickness="1" CornerRadius="999" Padding="6,1.5"
                           VerticalAlignment="Center">
                     <TextBlock Text="Preview" Foreground="{DynamicResource Hub.PreviewBadgeForeground}"
-                               FontSize="9" FontWeight="SemiBold" />
+                               FontSize="9.5" FontWeight="Medium" />
                   </Border>
                   <Path Data="M0 0L4 4L8 0" Width="8" Height="4"
                         Stretch="None" Fill="Transparent" Stroke="{DynamicResource Hub.TextSecondary}"

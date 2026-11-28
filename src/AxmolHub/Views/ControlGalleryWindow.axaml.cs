@@ -143,8 +143,8 @@ public partial class ControlGalleryWindow : Window
         check(ColorOf(BtnQuiet.Background) == Colors.Transparent,
             "Button.quiet 背景 = Transparent（实际 " + Describe(BtnQuiet.Background) + "）");
         var buttonFrame = NamedDescendant<Border>(BtnDefault, "Frame");
-        check(buttonFrame is not null && Math.Abs(buttonFrame.CornerRadius.TopLeft - 5) < 0.001,
-            "Button 模板为 Hub 版本（Border#Frame，圆角 = 5）");
+        check(buttonFrame is not null && Math.Abs(buttonFrame.CornerRadius.TopLeft - 7) < 0.001,
+            "Button 模板为 Hub 版本（Border#Frame，圆角 = 7）");
 
         // ---- The "asks before acting" affordance: an ellipsis that only .more turns on ----
         // Read through the template rather than the label: the whole point of the marker is that it is

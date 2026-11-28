@@ -134,17 +134,21 @@ public partial class ChatPanel
 
         var card = new Border
         {
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(12),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(12, 10, 12, 8),
+            Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(0, 8, 0, 4),
             Tag = "ChatReviewCard",
         };
-        card.Bind(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("Hub.Surface"));
+        // Sit one surface step below the floating composer so the two stacked panels keep clear visual hierarchy.
+        card.Bind(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceAlt"));
         card.Bind(TemplatedControl.BorderBrushProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
 
         var body = new StackPanel { Spacing = 2 };
         body.Children.Add(ReviewHead(conversation, review));
+        var divider = new Border { Height = 1, Margin = new Thickness(0, 7, 0, 4) };
+        divider.Bind(Border.BackgroundProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
+        body.Children.Add(divider);
         foreach (var file in _reviewFilesOpen ? review.Files : review.Files.Take(ReviewFilesListed))
             body.Children.Add(ReviewFileRow(file, selected => OpenTurnReviewFile(conversation, selected)));
         if (review.Files.Count > ReviewFilesListed) body.Children.Add(ReviewToggle(review.Files.Count));
@@ -272,10 +276,11 @@ public partial class ChatPanel
         {
             Content = path,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(4, 5),
+            Padding = new Thickness(6, 4),
+            Margin = new Thickness(0, 0, 8, 0),
             Classes = { "chat-review-file" },
             Tag = "ChatReviewFile:" + file.RelativePath,
         };
@@ -334,21 +339,29 @@ public partial class ChatPanel
 
     private static Button ReviewAction(string textKey, Action click, bool primary = false, string? tag = null)
     {
+        var label = new TextBlock { Text = HubStrings.Get(textKey), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        // Bind foreground directly on TextBlock so the global TextBlock style does not brighten secondary actions.
+        label.Bind(TextBlock.ForegroundProperty,
+            new DynamicResourceExtension(primary ? "Hub.TextPrimary" : "Hub.TextSecondary"));
         var button = new Button
         {
             Tag = tag,
-            Content = new TextBlock { Text = HubStrings.Get(textKey), FontSize = 12 },
-            Padding = new Thickness(10, 4, 10, 4),
-            CornerRadius = new CornerRadius(6),
+            Content = label,
+            MinHeight = 26,
+            Padding = new Thickness(11, 3, 11, 3),
+            Margin = new Thickness(0),
+            CornerRadius = new CornerRadius(7),
             BorderThickness = new Thickness(1),
             VerticalAlignment = VerticalAlignment.Center,
         };
         button.Bind(TemplatedControl.ForegroundProperty,
             new DynamicResourceExtension(primary ? "Hub.TextPrimary" : "Hub.TextSecondary"));
-        button.Bind(TemplatedControl.BackgroundProperty,
-            new DynamicResourceExtension(primary ? "Hub.SurfaceRaised" : "Hub.SurfaceAlt"));
+        if (primary)
+            button.Bind(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceRaised"));
+        else
+            button.Background = Brushes.Transparent;
         button.Bind(TemplatedControl.BorderBrushProperty,
-            new DynamicResourceExtension(primary ? "Hub.BorderStrong" : "Hub.BorderSubtle"));
+            new DynamicResourceExtension(primary ? "Hub.Border" : "Hub.BorderSubtle"));
         button.Click += (_, _) => click();
         return button;
     }

@@ -410,6 +410,8 @@
   <Style Selector="DataGridColumnHeader">
     <Setter Property="Background" Value="{DynamicResource Hub.GridHeader}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
     <Setter Property="FontWeight" Value="Normal" />
     <Setter Property="Padding" Value="14,8" />
     <Setter Property="MinHeight" Value="40" />
@@ -429,6 +431,8 @@
 
   <Style Selector="DataGridRow">
     <Setter Property="MinHeight" Value="56" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
   </Style>
 
   <!-- Hover and selection are both painted on Rectangle#BackgroundRectangle in the row template
