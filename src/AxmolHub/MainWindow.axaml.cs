@@ -1666,14 +1666,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Switches theme: write settings → apply the variant. The **single owner** of that sequence —
-    /// the settings page's picker and the bottom menu's appearance items are two views of it. Same
-    /// order as <see cref="UseLanguage"/> (persist first), for the same reason: a failed write must
-    /// leave the UI untouched rather than showing a theme the settings file doesn't have — it would
-    /// silently revert on the next launch.
+    /// Switches theme: write settings → apply the variant → sync any cached settings picker. The **single
+    /// owner** of that sequence — the settings page's picker and the bottom menu's appearance items are two
+    /// views of it. Same order as <see cref="UseLanguage"/> (persist first), for the same reason: a failed
+    /// write must leave the UI untouched rather than showing a theme the settings file doesn't have — it
+    /// would silently revert on the next launch.
     ///
-    /// Unlike the language path there is **nothing to repaint afterwards**: every token is a
-    /// DynamicResource and re-resolves on its own, including in windows built long before the switch.
+    /// DynamicResource tokens re-resolve on their own across windows, while the cached <see cref="SettingsPage"/>
+    /// dropdown holds imperative selection state and must be synced explicitly.
     /// </summary>
     /// <returns>Null on success; the error message on failure (the caller decides how to show it).</returns>
     internal string? UseTheme(string theme)
@@ -1690,6 +1690,7 @@ public partial class MainWindow : Window
             _preferences.Theme = theme;
             _preferencesStore.Save(_preferences);
             ThemeService.Apply(theme);
+            _settings?.SyncThemeSelection(theme);
             return null;
         }
         catch (Exception ex)
@@ -1697,6 +1698,7 @@ public partial class MainWindow : Window
             // On failure, revert, otherwise the UI would show a theme that disagrees with the settings file.
             _preferences.Theme = previous;
             ThemeService.Apply(previous);
+            _settings?.SyncThemeSelection(previous);
             return ex.Message;
         }
     }

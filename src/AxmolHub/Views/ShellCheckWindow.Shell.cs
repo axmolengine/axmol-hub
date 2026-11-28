@@ -523,7 +523,8 @@ internal sealed class ShellLayoutChecks
         // ends dark and the render captures below keep their expected look.
         var menuTarget = ThemeService.Current == HubTheme.Dark ? HubTheme.Light : HubTheme.Dark;
         themeRows.Single(item => item.Tag as string == menuTarget).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        Check(ThemeService.Current == menuTarget, "点未勾选的主题行真的切过去（当前 " + ThemeService.Current + "）");
+        Check(ThemeService.Current == menuTarget && shell.SettingsPageForCheck?.SelectedTheme == menuTarget,
+            "点未勾选的主题行真的切过去且同步设置页下拉（当前 " + ThemeService.Current + "，设置页 " + shell.SettingsPageForCheck?.SelectedTheme + "）");
         // The menu is rebuilt on every open, so the tick the reader sees next is read from the state rather
         // than from a group anyone has to re-sync — which is the machinery this shape deleted. Reopening is
         // also where a leaf click gets pressed on: `menu.Hide()` now has a submenu popup to take down with it,
@@ -536,7 +537,8 @@ internal sealed class ShellLayoutChecks
         var movedThemeRow = reopened.FirstOrDefault(item => item.Tag as string == menuTarget);
         Check(reopened.Count(item => item.IsChecked) == 1 && movedThemeRow is { IsChecked: true } && RowTicked(movedThemeRow), "重开菜单，勾落在新主题那一行上，画出来的勾也是那一行（当前 " + menuTarget + "）");
         reopened.Single(item => item.Tag as string == HubTheme.Dark).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        Check(ThemeService.Current == HubTheme.Dark, "收尾切回深色（后面的渲染断言都在深色下拍）");
+        Check(ThemeService.Current == HubTheme.Dark && shell.SettingsPageForCheck?.SelectedTheme == HubTheme.Dark,
+            "收尾切回深色且设置页下拉同步回深色（后面的渲染断言都在深色下拍）");
         // The language rows go through UseLanguage, which repaints the whole shell. Round-tripped so the suite
         // keeps running in the language every assertion below is written in. Rows are found by the tag they
         // carry rather than by position, because "the first language row" is the one already in force.

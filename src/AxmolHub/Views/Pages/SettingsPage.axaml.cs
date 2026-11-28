@@ -1005,6 +1005,22 @@ public partial class SettingsPage : UserControl
         ThemePicker.SelectedIndex = 0;
     }
 
+    /// <summary>Updates the theme dropdown without firing <see cref="OnThemeChanged"/>, used when the shell
+    /// switches theme from outside the settings overlay (e.g. the bottom appearance menu).</summary>
+    internal void SyncThemeSelection(string theme)
+    {
+        var wasReady = _ready;
+        _ready = false;
+        try
+        {
+            SelectTheme(theme);
+        }
+        finally
+        {
+            _ready = wasReady;
+        }
+    }
+
     /// <summary>
     /// Switches language: write settings → reload the resource dictionary → existing controls follow with new text.
     ///
