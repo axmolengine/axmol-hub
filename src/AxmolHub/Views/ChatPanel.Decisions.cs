@@ -798,7 +798,8 @@ public partial class ChatPanel
             change => _chat is null
                 ? (null, UndoCopyState.MissingSnapshot)
                 : (_chat.SnapshotForChange(change, change.SelectedRevisionId, out var state), state),
-            conversationId, workspaceRoot, refreshChanges);
+            conversationId, workspaceRoot, refreshChanges,
+            openLocalFile: (path, line, column) => OpenLinkedFile(conversationId, path, line, column));
         // Painting by any route leaves the pane in step with the transcript, so the repaint that follows a
         // click would be a second rebuild of the same thing.
         _inspectorSignature = (conversation is null ? "" : conversation.Id + ":" + conversation.Messages.Count)

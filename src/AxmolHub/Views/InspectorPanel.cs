@@ -557,7 +557,8 @@ internal sealed partial class InspectorPanel : UserControl
         string tab,
         Action<string>? quote = null,
         Func<ChangedFile, (ChatFileSnapshot? Snapshot, UndoCopyState State)>? resolveSnapshot = null,
-        string conversationId = "", string? workspaceRoot = null, bool refreshChanges = true)
+        string conversationId = "", string? workspaceRoot = null, bool refreshChanges = true,
+        Action<string, int?, int?>? openLocalFile = null)
     {
         var contextChanged = !HasContext(conversationId, workspaceRoot);
         if (contextChanged)
@@ -586,7 +587,7 @@ internal sealed partial class InspectorPanel : UserControl
         {
             // Quotes from the plan's own right-click menu go wherever the caller says — the composer, for the one
             // caller there is. The pane has no editor and must not grow one: it is a reading surface.
-            var viewer = MarkdownMessageRenderer.Render(planMarkdown!, quote);
+            var viewer = MarkdownMessageRenderer.Render(planMarkdown!, quote, openLocalFile);
             MarkdownMessageRenderer.HandScrollingToHost(viewer);
             _planHost.Content = viewer;
         }
