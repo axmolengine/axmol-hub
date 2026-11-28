@@ -27,7 +27,7 @@ public static class SmokeCapture
     /// <summary>Renders <paramref name="visual"/>, saves it as PNG, and returns the frame's statistics.
     /// Takes a <see cref="Visual"/> rather than a Window: a flyout presents in its own PopupRoot, which
     /// is a top-level visual but not a Window, and that is exactly what the popup screenshot needs.</summary>
-    public static FrameStats Capture(Visual visual, string path)
+    public static FrameStats Capture(Visual visual, string path, double scale = 1.0)
     {
         var size = visual.Bounds.Size;
         if (size.Width < 1 || size.Height < 1)
@@ -38,11 +38,12 @@ public static class SmokeCapture
             size = new Size(1, 1);
         }
 
+        var effectiveScale = scale > 0 ? scale : 1.0;
         var pixelSize = new PixelSize(
-            Math.Max(1, (int)Math.Ceiling(size.Width)),
-            Math.Max(1, (int)Math.Ceiling(size.Height)));
+            Math.Max(1, (int)Math.Ceiling(size.Width * effectiveScale)),
+            Math.Max(1, (int)Math.Ceiling(size.Height * effectiveScale)));
 
-        using var target = new RenderTargetBitmap(pixelSize, new Vector(96, 96));
+        using var target = new RenderTargetBitmap(pixelSize, new Vector(96 * effectiveScale, 96 * effectiveScale));
         target.Render(visual);
         // Save(string, int?) is obsolete; PNG goes through explicit encoder options (12.1.3 provides PngBitmapEncoderOptions.Default).
         target.Save(path, PngBitmapEncoderOptions.Default);

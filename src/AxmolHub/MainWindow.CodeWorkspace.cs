@@ -67,6 +67,13 @@ public partial class MainWindow
         }
     }
 
+    internal string? OpenWorkspaceFile(string path)
+    {
+        var id = _chat.ActiveConversation?.Id ?? "";
+        var root = _chat.ActiveWorkspaceRoot;
+        return CodeFileWindow.ShowEditor(this, path, () => _chat.EditorScopeFor(id, root), RefreshInspector);
+    }
+
     internal bool SelectWorkspaceDocument(string path)
     {
         BuildWorkspaceContent();

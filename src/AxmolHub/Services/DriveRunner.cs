@@ -86,7 +86,7 @@ internal static class DriveRunner
                     string? error = null;
                     try
                     {
-                        error = await RunStep(window, step, kind, outDir, digests, () => shots++);
+                        error = await RunStep(window, lifetime, step, kind, outDir, digests, () => shots++);
                     }
                     catch (Exception ex)
                     {
@@ -120,8 +120,8 @@ internal static class DriveRunner
         }, Ceiling);
     }
 
-    private static async Task<string?> RunStep(MainWindow window, JsonElement step, string kind, string outDir,
-        HashSet<string> digests, Action shotTaken)
+    private static async Task<string?> RunStep(MainWindow window, IClassicDesktopStyleApplicationLifetime lifetime,
+        JsonElement step, string kind, string outDir, HashSet<string> digests, Action shotTaken)
     {
         switch (kind)
         {
@@ -133,6 +133,112 @@ internal static class DriveRunner
                 window.UseLanguage(Str(step, "value"));
                 await Settle();
                 return null;
+            case "theme":
+                if (window.UseTheme(Str(step, "value")) is { } themeError) return themeError;
+                await Settle();
+                return null;
+            case "nav-view":
+                window.SelectNavigationView(Str(step, "value"));
+                await Settle();
+                return null;
+            case "select-session":
+            {
+                var wanted = Str(step, "contains");
+                var match = window.Chat.Conversations.FirstOrDefault(c =>
+                    c.Title.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+                if (match is null) return "session not found matching: " + wanted;
+                window.Chat.OpenConversation(match.Id);
+                window.NavigateTo("Assistant");
+                await Settle();
+                return null;
+            }
+            case "open-file":
+            {
+                var file = Path.GetFullPath(Str(step, "path"));
+                var err = window.OpenWorkspaceFile(file);
+                await Settle();
+                return err;
+            }
+            case "close-child":
+            {
+                foreach (var child in lifetime.Windows.Where(w => !ReferenceEquals(w, window)).ToArray())
+                    child.Close();
+                await Settle();
+                return null;
+            }
+            case "select-combo":
+            {
+                if (Find(window, Str(step, "name"), null) is not ComboBox combo)
+                    return "ComboBox not found: " + step;
+                var wanted = Str(step, "text");
+                for (var i = 0; i < combo.ItemCount; i++)
+                {
+                    var item = combo.Items[i];
+                    var label = item is ComboBoxItem cbi ? cbi.Content?.ToString() : item?.ToString();
+                    if (label is not null && label.Contains(wanted, StringComparison.OrdinalIgnoreCase))
+                    {
+                        combo.SelectedIndex = i;
+                        await Settle();
+                        return null;
+                    }
+                }
+                return "ComboBox item not found: " + wanted;
+            }
+            case "inspector":
+            {
+                var open = !step.TryGetProperty("open", out var o) || o.GetBoolean();
+                var expanded = step.TryGetProperty("expanded", out var ex) && ex.GetBoolean();
+                var tab = Opt(step, "tab");
+                var currentlyOpen = window.InspectorVisibleForCheck || window.InspectorOverlayVisibleForCheck;
+                if (!open)
+                {
+                    if (window.InspectorExpandedForCheck)
+                    {
+                        window.ClickInspectorExpandToggleForCheck();
+                        await Settle();
+                    }
+                    if (window.InspectorVisibleForCheck)
+                    {
+                        window.ClickInspectorToggleForCheck();
+                        await Settle();
+                    }
+                    return null;
+                }
+                if (!currentlyOpen)
+                {
+                    window.ClickInspectorToggleForCheck();
+                    await Settle();
+                }
+                if (tab is not null)
+                {
+                    window.WorkspaceViewForCheck?.OpenTool(tab);
+                    await Settle();
+                }
+                if (expanded != window.InspectorExpandedForCheck)
+                {
+                    window.ClickInspectorExpandToggleForCheck();
+                    await Settle();
+                }
+                return null;
+            }
+            case "show-files":
+            {
+                window.WorkspaceViewForCheck?.ShowFiles();
+                await Settle();
+                return null;
+            }
+            case "open-android-release":
+            {
+                var name = Opt(step, "project");
+                var project = string.IsNullOrEmpty(name)
+                    ? window.Workspace.State.Projects.FirstOrDefault()
+                    : window.Workspace.State.Projects.FirstOrDefault(p =>
+                        string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (project is null) return "project not found for Android release settings";
+                _ = window.Workspace.EditAndroidReleaseAsync(project);
+                await Settle();
+                return null;
+            }
             case "workspace":
             {
                 var root = Path.GetFullPath(Str(step, "path"));
@@ -289,7 +395,10 @@ internal static class DriveRunner
                 else if (control is Button button)
                 {
                     if (button is ToggleButton toggle) toggle.IsChecked = !toggle.IsChecked;
-                    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (step.TryGetProperty("async", out var asyncClick) && asyncClick.GetBoolean())
+                        Dispatcher.UIThread.Post(() => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+                    else
+                        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 }
                 else return "not clickable: " + control.GetType().Name;
                 await Settle();
@@ -299,8 +408,13 @@ internal static class DriveRunner
             {
                 await Settle();
                 var path = Path.Combine(outDir, Str(step, "file"));
+                var scale = step.TryGetProperty("scale", out var s) ? s.GetDouble() : 1.0;
                 Visual capture = window;
-                if (Opt(step, "menu") is { } menuOwner)
+                if (Opt(step, "window") == "latest")
+                {
+                    capture = lifetime.Windows.LastOrDefault(w => w.IsVisible) ?? window;
+                }
+                else if (Opt(step, "menu") is { } menuOwner)
                 {
                     var anchor = Find(window, menuOwner, null)?.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault();
                     if (anchor?.GetSelfAndVisualAncestors().OfType<TopLevel>().FirstOrDefault() is not { } popup)
@@ -315,7 +429,7 @@ internal static class DriveRunner
                         return "popup not open: " + popupName;
                     capture = root;
                 }
-                var stats = SmokeCapture.Capture(capture, path);
+                var stats = SmokeCapture.Capture(capture, path, scale);
                 digests.Add(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
                 shotTaken();
                 return stats.IsBlank() ? "blank frame: " + path : null;

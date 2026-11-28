@@ -1741,7 +1741,7 @@ public partial class MainWindow : Window
         SyncNavigationView();
     }
 
-    private void SelectNavigationView(string view)
+    internal void SelectNavigationView(string view)
     {
         view = NavigationViews.Normalize(view);
         if (_preferences.NavigationView == view) return;
