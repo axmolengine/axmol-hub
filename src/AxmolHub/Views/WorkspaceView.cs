@@ -109,12 +109,14 @@ internal sealed class WorkspaceView : Grid, IDisposable
         _body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,0,0"), ClipToBounds = true };
         _body.Children.Add(_content);
         _splitter = new GridSplitter { Width = 4, ResizeDirection = GridResizeDirection.Columns,
-            HorizontalAlignment = HorizontalAlignment.Stretch, IsVisible = false };
+            HorizontalAlignment = HorizontalAlignment.Stretch, IsVisible = false,
+            Classes = { "workspace-splitter" } };
         Grid.SetColumn(_splitter, 1);
         _body.Children.Add(_splitter);
         Grid.SetColumn(_treeHost, 2);
         _body.Children.Add(_treeHost);
-        _treeHost.Bind(BackgroundProperty, new DynamicResourceExtension("Hub.Surface"));
+        _treeHost.Bind(BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceAlt"));
+        _treeHost.Bind(TemplatedControl.BorderBrushProperty, new DynamicResourceExtension("Hub.BorderSubtle"));
         Children.Add(_body);
         _body.ColumnDefinitions[2].PropertyChanged += (_, args) =>
         {
@@ -674,6 +676,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
             Grid.SetColumnSpan(_treeHost, _drawer ? 3 : 1);
             _treeHost.HorizontalAlignment = _drawer ? HorizontalAlignment.Right : HorizontalAlignment.Stretch;
             _treeHost.Width = _drawer ? Math.Min(300, Math.Max(0, Bounds.Width)) : double.NaN;
+            // In docked mode _splitter owns the 1px hairline; in drawer mode _treeHost draws it directly.
+            _treeHost.BorderThickness = _drawer ? new Thickness(1, 0, 0, 0) : default;
             _body.ColumnDefinitions[1].Width = new GridLength(visible && !_drawer ? 4 : 0);
             _body.ColumnDefinitions[2].Width = new GridLength(visible && !_drawer ? _state.TreeWidth : 0);
             _content.IsEnabled = !visible || !_drawer;

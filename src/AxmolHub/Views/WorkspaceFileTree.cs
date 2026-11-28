@@ -50,7 +50,7 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         _scopeFor = scopeFor;
         RowDefinitions = new RowDefinitions("Auto,Auto,*");
         ClipToBounds = true;
-        Bind(BackgroundProperty, new DynamicResourceExtension("Hub.Surface"));
+        Bind(BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceAlt"));
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), Margin = new Thickness(8) };
         var name = new TextBlock
         {

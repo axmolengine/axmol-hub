@@ -458,6 +458,25 @@
     <Setter Property="IsVisible" Value="False" />
   </Style>
 
+  <!-- Seamless 1px hairline splitter for the workspace file tree: 4 DIP drag target whose surface matches
+       the file tree beside it, replacing Fluent's solid dark GridSplitter bar. -->
+  <Style Selector="GridSplitter.workspace-splitter">
+    <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+    <Setter Property="BorderThickness" Value="1,0,0,0" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Frame"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}" />
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="GridSplitter.workspace-splitter:pointerover /template/ Border#Frame">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+  </Style>
+
   <!-- Modern floating menu surfaces: soft rounded frame, subtle inset hover plates, quiet dividers. -->
   <Style Selector="MenuFlyoutPresenter, ContextMenu">
     <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
