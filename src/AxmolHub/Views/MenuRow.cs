@@ -109,7 +109,9 @@ internal static class MenuRow
         {
             Name = "MenuRowTick",
             Width = 11,
-            Height = 11,
+            // Match Hub.Icon.MenuTick's 16:11 aspect ratio (~7.6 DIP tall) so Stretch.Uniform leaves no bottom slack
+            // that would push the checkmark above vertical center.
+            Height = 8,
             Stretch = Stretch.Uniform,
             Fill = Brushes.Transparent,
             StrokeThickness = 1.5,

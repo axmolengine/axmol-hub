@@ -19,9 +19,9 @@
     <FontFamily x:Key="Hub.Font.Ui">Segoe UI, Microsoft YaHei UI, PingFang SC, Hiragino Sans GB, Source Han Sans SC, Noto Sans CJK SC, DejaVu Sans, sans-serif</FontFamily>
     <FontFamily x:Key="Hub.Font.Mono">Cascadia Mono, Consolas, SF Mono, Menlo, DejaVu Sans Mono, Noto Sans Mono CJK SC, monospace</FontFamily>
     <Template x:Key="Hub.MenuTickTemplate">
-      <Path Width="11" Height="11" Stretch="Uniform" Data="{StaticResource Hub.Icon.MenuTick}"
+      <Path Width="11" Height="8" Stretch="Uniform" Data="{StaticResource Hub.Icon.MenuTick}"
             Stroke="{DynamicResource Hub.TextSecondary}" StrokeThickness="1.4"
-            StrokeLineCap="Round" StrokeJoin="Round" />
+            StrokeLineCap="Round" StrokeJoin="Round" VerticalAlignment="Center" />
     </Template>
 
   </Styles.Resources>
@@ -488,6 +488,7 @@
   <Style Selector="MenuItem">
     <Setter Property="CornerRadius" Value="6" />
     <Setter Property="Margin" Value="0,1" />
+    <Setter Property="Padding" Value="11,6" />
   </Style>
   <Style Selector="MenuFlyoutPresenter Separator, ContextMenu Separator, MenuItem Separator">
     <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
@@ -511,6 +512,13 @@
     <Setter Property="FontSize" Value="11" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+
+  <!-- A standalone empty-state hint inside a submenu (e.g. no unpushed commits or no branches). -->
+  <Style Selector="MenuItem.menu-hint">
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Padding" Value="14,6" />
     <Setter Property="Background" Value="Transparent" />
   </Style>
 

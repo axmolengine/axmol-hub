@@ -1513,6 +1513,8 @@ internal sealed partial class InspectorPanel : UserControl
                         Header = CommitRow(commit, string.Equals(commit.Id, _commit, StringComparison.Ordinal)),
                         Tag = commit.Id,
                         IsChecked = string.Equals(commit.Id, _commit, StringComparison.Ordinal),
+                        MinHeight = 30,
+                        Padding = new Thickness(12, 6),
                     };
                     var id = commit.Id;
                     item.Click += (_, _) =>
@@ -1576,14 +1578,18 @@ internal sealed partial class InspectorPanel : UserControl
     /// running into the timestamp.</summary>
     private static Control CommitRow(GitCommitInfo commit, bool current)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), MinWidth = 260 };
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            MinWidth = 260,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         var subject = new TextBlock
         {
             Text = commit.Subject,
             FontSize = 13,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 0, 0),
         };
         Grid.SetColumn(subject, 0);
         row.Children.Add(subject);
@@ -1605,21 +1611,28 @@ internal sealed partial class InspectorPanel : UserControl
         return row;
     }
 
-    private static MenuItem Hint(string textKey) => new()
+    private static MenuItem Hint(string textKey)
     {
-        Header = new TextBlock
+        var label = new TextBlock
         {
             Text = HubStrings.Get(textKey),
             FontSize = 12,
             MaxWidth = 260,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(12, 0, 0, 0),
-        },
-        Tag = textKey,
-        Classes = { "menu-caption" },
-        IsHitTestVisible = false,
-        Focusable = false,
-    };
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        label.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+        return new()
+        {
+            Header = label,
+            Tag = textKey,
+            Classes = { "menu-hint" },
+            IsHitTestVisible = false,
+            Focusable = false,
+        };
+    }
 
     /// <summary>Why the tab cannot answer, in one of six sentences. Kept as a table rather than a default arm so
     /// a new outcome has to be given words here before it can show an empty list somewhere.</summary>
