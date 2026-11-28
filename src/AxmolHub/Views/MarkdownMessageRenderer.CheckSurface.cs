@@ -133,7 +133,8 @@ internal static partial class MarkdownMessageRenderer
     internal static bool HasThemedSelection(MarkdownScrollViewer viewer)
     {
         var blocks = viewer.GetVisualDescendants().OfType<CTextBlock>().ToArray();
-        return blocks.Length > 0 && blocks.All(block => MatchesToken(block.SelectionBrush, "Hub.Selection"));
+        return MatchesToken(viewer.SelectionBrush, "Hub.Selection")
+               && blocks.Length > 0 && blocks.All(block => MatchesToken(block.SelectionBrush, "Hub.Selection"));
     }
 
 }

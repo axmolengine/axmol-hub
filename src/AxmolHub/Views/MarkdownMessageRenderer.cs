@@ -57,6 +57,9 @@ internal static partial class MarkdownMessageRenderer
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             Tag = markdown,
         };
+        // MarkdownScrollViewer's selection overlay helper falls back to Brushes.Cyan when SelectionBrush is
+        // unset, which painted cross-block code selections solid cyan instead of the Hub selection tint.
+        viewer.Bind(MarkdownScrollViewer.SelectionBrushProperty, new DynamicResourceExtension("Hub.Selection"));
         // The markdown theme is inserted at index 0 of the viewer's own Styles collection, which is
         // closer to the rendered content than ChatPanel's styles, so it wins there. Appending after it
         // is what lets the Hub tokens override the table colors GithubLike hardcodes for light themes.
@@ -224,18 +227,38 @@ internal static partial class MarkdownMessageRenderer
     internal static string SelectionText(MarkdownScrollViewer viewer)
     {
         MarkdownSelection.Normalize(viewer);
+        var selectedOverlays = MarkdownSelection.SelectedOverlayTargets(viewer);
         var parts = new List<string>();
-        foreach (var block in viewer.GetVisualDescendants().OfType<CTextBlock>())
+        foreach (var visual in viewer.GetVisualDescendants())
         {
-            if (block.Selection is not { } selection) continue;
-            var from = Math.Min(selection.From, selection.To);
-            var to = Math.Max(selection.From, selection.To);
-            var text = block.Text ?? "";
-            if (to <= from || from >= text.Length) continue;
-            parts.Add(text[from..Math.Min(to, text.Length)]);
+            if (visual is CTextBlock block)
+            {
+                if (block.Selection is not { } selection) continue;
+                var from = Math.Min(selection.From, selection.To);
+                var to = Math.Max(selection.From, selection.To);
+                var text = block.Text ?? "";
+                if (to <= from || from >= text.Length) continue;
+                parts.Add(text[from..Math.Min(to, text.Length)]);
+            }
+            else if (visual is Border border && selectedOverlays.Contains(border))
+            {
+                var code = CodeBlockText(border);
+                if (code.Length > 0) parts.Add(code);
+            }
         }
 
         return string.Join("\n", parts);
+    }
+
+    private static string CodeBlockText(Border codeBlock)
+    {
+        if (codeBlock.GetVisualDescendants().OfType<TextEditor>().FirstOrDefault() is { } editor)
+            return editor.Text ?? "";
+        if (codeBlock.GetVisualDescendants().OfType<ScrollViewer>()
+                .FirstOrDefault(scroller => scroller.Classes.Contains("CodeBlock"))
+            is { Content: TextBlock textBlock })
+            return textBlock.Text ?? "";
+        return "";
     }
 
     /// <summary>The same document, laid into a panel a turn already owns — clearing it first, which is what the
@@ -471,14 +494,10 @@ internal static partial class MarkdownMessageRenderer
                     .Any(button => button.Classes.Contains("markdown-code-copy"))) return;
             e.Handled = true;
             // Keeping the press from the document also keeps it from clearing what the document had selected, so
-            // this press has to do that part itself: a band left in the prose above must not survive a click in
-            // code, exactly as it would not survive a click in the prose.
-            var blocks = codeBlock.GetVisualAncestors().OfType<MarkdownScrollViewer>().FirstOrDefault()
-                ?.GetVisualDescendants().OfType<CTextBlock>() ?? Enumerable.Empty<CTextBlock>();
-            foreach (var block in blocks)
-            {
-                if (block.Selection is not null) block.ClearSelection();
-            }
+            // this press has to do that part itself: a band left in the prose above or an overlay over this code
+            // block must not survive a click in code, exactly as it would not survive a click in the prose.
+            if (codeBlock.GetVisualAncestors().OfType<MarkdownScrollViewer>().FirstOrDefault() is { } viewer)
+                MarkdownSelection.ClearSelection(viewer);
         }, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 

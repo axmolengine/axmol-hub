@@ -74,7 +74,7 @@ internal static partial class SelectionMenu
                 if (owner.Active?.TryGetTarget(out var previous) == true && !ReferenceEquals(previous, next))
                 {
                     if (previous is MarkdownScrollViewer markdown)
-                        foreach (var block in markdown.GetVisualDescendants().OfType<CTextBlock>()) block.ClearSelection();
+                        MarkdownSelection.ClearSelection(markdown);
                     else if (previous is SelectableTextBlock text) text.SelectionStart = text.SelectionEnd = 0;
                 }
                 owner.Active = new(next);
