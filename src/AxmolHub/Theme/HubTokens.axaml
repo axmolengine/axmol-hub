@@ -142,6 +142,11 @@
       <SolidColorBrush x:Key="Hub.WindowButtonCloseHover" Color="#C42B1C" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseForeground" Color="#FFFFFF" />
 
+      <BoxShadows x:Key="Hub.Shadow.Card">0 6 20 0 #34000000</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Popover">0 8 24 0 #38000000</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Modal">0 12 32 0 #48000000</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Toast">0 2 10 0 #44000000</BoxShadows>
+
     </ResourceDictionary>
 
     <ResourceDictionary x:Key="Light">
@@ -244,6 +249,12 @@
       <SolidColorBrush x:Key="Hub.WindowButtonPressed" Color="#21182436" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseHover" Color="#C42B1C" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseForeground" Color="#FFFFFF" />
+
+      <!-- Lighter cool-slate shadows in Light theme so floating surfaces stay crisp instead of smudging white pages. -->
+      <BoxShadows x:Key="Hub.Shadow.Card">0 4 14 0 #12182436</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Popover">0 6 18 0 #18182436</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Modal">0 10 28 0 #20182436</BoxShadows>
+      <BoxShadows x:Key="Hub.Shadow.Toast">0 2 10 0 #1A182436</BoxShadows>
 
     </ResourceDictionary>
 
