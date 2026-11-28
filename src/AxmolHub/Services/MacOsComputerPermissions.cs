@@ -107,14 +107,19 @@ internal static class MacOsComputerPermissions
         return MacUserNotifications.Bundled ? MacUserNotifications.BundleIdentifier : null;
     }
 
-    internal static async Task<bool> OpenSystemSettingsAsync(MacOsComputerPermission permission)
+    internal static Task<bool> OpenSystemSettingsAsync(MacOsComputerPermission permission)
+    {
+        var pane = permission == MacOsComputerPermission.ScreenRecording ? "Privacy_ScreenCapture" : "Privacy_Accessibility";
+        return OpenSystemSettingsUrlAsync("x-apple.systempreferences:com.apple.preference.security?" + pane);
+    }
+
+    internal static async Task<bool> OpenSystemSettingsUrlAsync(string url)
     {
         if (!OperatingSystem.IsMacOS()) return false;
-        var pane = permission == MacOsComputerPermission.ScreenRecording ? "Privacy_ScreenCapture" : "Privacy_Accessibility";
         try
         {
             var start = new ProcessStartInfo("/usr/bin/open") { UseShellExecute = false };
-            start.ArgumentList.Add("x-apple.systempreferences:com.apple.preference.security?" + pane);
+            start.ArgumentList.Add(url);
             using var process = Process.Start(start);
             if (process is null) return false;
             await process.WaitForExitAsync();

@@ -726,6 +726,9 @@ public partial class SettingsPage : UserControl
 
     private bool _macPermissionsHooked;
     private bool _macPermissionResetting;
+    private bool _macNotificationRequesting;
+    private int _macNotificationRefreshVersion;
+    private MacNotificationPermissionStatus? _lastMacNotificationStatus;
 
     private void WireMacSystemPermissions()
     {
@@ -740,6 +743,8 @@ public partial class SettingsPage : UserControl
         MacAccessibilitySettingsButton.Click += async (_, _) => await OpenMacPermissionSettingsAsync(MacOsComputerPermission.Accessibility);
         MacScreenResetButton.Click += async (_, _) => await ResetMacPermissionAsync(MacOsComputerPermission.ScreenRecording);
         MacAccessibilityResetButton.Click += async (_, _) => await ResetMacPermissionAsync(MacOsComputerPermission.Accessibility);
+        MacNotificationSettingsButton.Click += async (_, _) => await OpenMacNotificationSettingsAsync();
+        MacNotificationRequestButton.Click += async (_, _) => await RequestMacNotificationPermissionAsync();
     }
 
     private void HookMacSystemPermissions()
@@ -747,6 +752,7 @@ public partial class SettingsPage : UserControl
         if (!OperatingSystem.IsMacOS() || _macPermissionsHooked) return;
         _macPermissionsHooked = true;
         MacOsComputerPermissions.Changed += OnMacPermissionsChanged;
+        MacUserNotifications.AuthorizationChanged += OnMacPermissionsChanged;
         RefreshMacSystemPermissions();
     }
 
@@ -755,16 +761,44 @@ public partial class SettingsPage : UserControl
         if (!_macPermissionsHooked) return;
         _macPermissionsHooked = false;
         MacOsComputerPermissions.Changed -= OnMacPermissionsChanged;
+        MacUserNotifications.AuthorizationChanged -= OnMacPermissionsChanged;
     }
 
     private void OnMacPermissionsChanged() => Dispatcher.UIThread.Post(RefreshMacSystemPermissions);
 
-    private void RefreshMacSystemPermissions()
+    internal void RefreshMacSystemPermissions()
     {
         if (!OperatingSystem.IsMacOS() || MacSystemPermissionsGroup is null) return;
         MacSystemPermissionsGroup.IsVisible = true;
         UpdateMacPermissionState(MacScreenPermissionState, MacOsComputerPermissions.IsGranted(MacOsComputerPermission.ScreenRecording));
         UpdateMacPermissionState(MacAccessibilityPermissionState, MacOsComputerPermissions.IsGranted(MacOsComputerPermission.Accessibility));
+        if (_lastMacNotificationStatus is { } cached)
+            ApplyMacNotificationState(cached);
+        _ = RefreshMacNotificationPermissionAsync();
+    }
+
+    private async Task RefreshMacNotificationPermissionAsync()
+    {
+        var version = ++_macNotificationRefreshVersion;
+        var status = await MacUserNotifications.GetPermissionStatusAsync();
+        if (version != _macNotificationRefreshVersion) return;
+        ApplyMacNotificationState(status);
+    }
+
+    private void ApplyMacNotificationState(MacNotificationPermissionStatus status)
+    {
+        _lastMacNotificationStatus = status;
+        var granted = status == MacNotificationPermissionStatus.Authorized;
+        MacNotificationPermissionState.Text = HubStrings.Get(status switch
+        {
+            MacNotificationPermissionStatus.Authorized => "MacPermissionGranted",
+            MacNotificationPermissionStatus.Unavailable => "MacPermissionUnavailable",
+            _ => "MacPermissionNotGranted",
+        });
+        MacNotificationPermissionState.Bind(TextBlock.ForegroundProperty,
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
+                granted ? "Hub.Success" : "Hub.TextTertiary"));
+        MacNotificationRequestButton.IsEnabled = !granted && !_macNotificationRequesting;
     }
 
     private static void UpdateMacPermissionState(TextBlock label, bool granted)
@@ -779,6 +813,60 @@ public partial class SettingsPage : UserControl
     {
         if (!await MacOsComputerPermissions.OpenSystemSettingsAsync(permission))
             SetMacPermissionsStatus(true, HubStrings.Get("MacComputerSettingsFailed"));
+    }
+
+    private async Task OpenMacNotificationSettingsAsync()
+    {
+        if (!await MacUserNotifications.OpenSystemSettingsAsync())
+            SetMacPermissionsStatus(true, HubStrings.Get("MacPermissionNotificationSettingsFailed"));
+    }
+
+    private async Task RequestMacNotificationPermissionAsync()
+    {
+        if (!OperatingSystem.IsMacOS() || _macNotificationRequesting) return;
+        _macNotificationRequesting = true;
+        MacNotificationRequestButton.IsEnabled = false;
+        try
+        {
+            var current = await MacUserNotifications.GetPermissionStatusAsync();
+            if (current == MacNotificationPermissionStatus.Unavailable)
+            {
+                ApplyMacNotificationState(current);
+                SetMacPermissionsStatus(true, HubStrings.Get("MacPermissionNotificationNotBundled"));
+                return;
+            }
+            if (current == MacNotificationPermissionStatus.Authorized)
+            {
+                ApplyMacNotificationState(current);
+                SetMacPermissionsStatus(false, "");
+                return;
+            }
+            if (current == MacNotificationPermissionStatus.Denied)
+            {
+                // macOS never re-prompts once denied; open System Settings -> Notifications directly.
+                ApplyMacNotificationState(current);
+                var opened = await MacUserNotifications.OpenSystemSettingsAsync();
+                SetMacPermissionsStatus(!opened, HubStrings.Get(opened
+                    ? "MacPermissionNotificationDenied"
+                    : "MacPermissionNotificationSettingsFailed"));
+                return;
+            }
+
+            SetMacPermissionsStatus(false, HubStrings.Get("MacPermissionNotificationRequesting"));
+            var result = await MacUserNotifications.RequestPermissionAsync();
+            ApplyMacNotificationState(result);
+            if (result == MacNotificationPermissionStatus.Authorized)
+                SetMacPermissionsStatus(false, "");
+            else if (result == MacNotificationPermissionStatus.Unavailable)
+                SetMacPermissionsStatus(true, HubStrings.Get("MacPermissionNotificationNotBundled"));
+            else
+                SetMacPermissionsStatus(false, HubStrings.Get("MacPermissionNotificationDenied"));
+        }
+        finally
+        {
+            _macNotificationRequesting = false;
+            RefreshMacSystemPermissions();
+        }
     }
 
     private async Task ResetMacPermissionAsync(MacOsComputerPermission permission)

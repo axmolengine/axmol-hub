@@ -4,6 +4,14 @@ using System.Text;
 
 namespace AxmolHub;
 
+internal enum MacNotificationPermissionStatus
+{
+    Unavailable,
+    NotDetermined,
+    Denied,
+    Authorized,
+}
+
 /// <summary>
 /// The macOS notification channel, delivered through Apple's UserNotifications framework in process.
 ///
@@ -78,6 +86,7 @@ internal static class MacUserNotifications
     private static readonly object Sync = new();
     private static readonly Queue<PendingNotification> Pending = new();
     private static readonly AuthorizationCompletion AuthorizationCallback = OnAuthorizationCompleted;
+    private static readonly SettingsCompletion SettingsCallback = OnSettingsLoaded;
     private static readonly WillPresentHandler WillPresentCallback = OnWillPresent;
     private static readonly DidReceiveHandler DidReceiveCallback = OnDidReceive;
     private static readonly BlockOptionsInvoker ProbeOptionsCallback = RecordProbeOptions;
@@ -87,6 +96,7 @@ internal static class MacUserNotifications
     private static IntPtr _libSystem;
     private static IntPtr _globalBlockIsa;
     private static IntPtr _authorizationBlock;
+    private static IntPtr _settingsBlock;
     private static IntPtr _center;
     private static IntPtr _delegateObject;
     private static IntPtr _defaultActionIdentifier;
@@ -102,6 +112,10 @@ internal static class MacUserNotifications
     private static Action<string>? _activated;
     private static string? _pendingActivation;
     private static nuint _probeOptions;
+    private static List<TaskCompletionSource<MacNotificationPermissionStatus>>? _settingsWaiters;
+    private static List<TaskCompletionSource<MacNotificationPermissionStatus>>? _authorizationWaiters;
+
+    internal static event Action? AuthorizationChanged;
 
     /// <summary>Whether this process runs inside an .app bundle and therefore has a notification identity.</summary>
     internal static bool Bundled
@@ -186,6 +200,14 @@ internal static class MacUserNotifications
             if (_authorizationBlock == IntPtr.Zero)
             {
                 MarkUnsupported("the notification authorization block could not be created.");
+                return;
+            }
+
+            _settingsBlock =
+                CreateGlobalBlock(Marshal.GetFunctionPointerForDelegate(SettingsCallback));
+            if (_settingsBlock == IntPtr.Zero)
+            {
+                MarkUnsupported("the notification settings block could not be created.");
                 return;
             }
 
@@ -288,6 +310,135 @@ internal static class MacUserNotifications
             Report("Could not set the macOS dock badge: " + ex);
         }
     }
+
+    /// <summary>Queries the live authorization status from <c>UNUserNotificationCenter</c> without prompting
+    /// the user. Returns <see cref="MacNotificationPermissionStatus.Unavailable"/> when the process is not
+    /// running inside an .app bundle.</summary>
+    internal static async Task<MacNotificationPermissionStatus> GetPermissionStatusAsync()
+    {
+        var task = QueryPermissionStatusCoreAsync();
+        if (task.IsCompleted) return task.Result;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            return await task.WaitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            var fallback = FallbackPermissionStatus();
+            CompleteSettingsWaiters(fallback);
+            return fallback;
+        }
+    }
+
+    private static Task<MacNotificationPermissionStatus> QueryPermissionStatusCoreAsync()
+    {
+        if (!OperatingSystem.IsMacOS())
+            return Task.FromResult(MacNotificationPermissionStatus.Unavailable);
+        Prepare();
+
+        TaskCompletionSource<MacNotificationPermissionStatus> waiter;
+        bool invoke;
+        lock (Sync)
+        {
+            if (_authorization == Authorization.Unsupported
+                || _center == IntPtr.Zero
+                || _settingsBlock == IntPtr.Zero)
+                return Task.FromResult(MacNotificationPermissionStatus.Unavailable);
+
+            waiter = new TaskCompletionSource<MacNotificationPermissionStatus>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            if (_settingsWaiters is null)
+            {
+                _settingsWaiters = [waiter];
+                invoke = true;
+            }
+            else
+            {
+                _settingsWaiters.Add(waiter);
+                invoke = false;
+            }
+        }
+
+        if (invoke)
+        {
+            try
+            {
+                SendVoid1(_center, Selector("getNotificationSettingsWithCompletionHandler:"), _settingsBlock);
+            }
+            catch (Exception ex)
+            {
+                Report("Could not query macOS notification settings: " + ex);
+                CompleteSettingsWaiters(FallbackPermissionStatus());
+            }
+        }
+
+        return waiter.Task;
+    }
+
+    /// <summary>Requests notification authorization from macOS on demand and returns the resulting status.</summary>
+    internal static Task<MacNotificationPermissionStatus> RequestPermissionAsync()
+    {
+        if (!OperatingSystem.IsMacOS())
+            return Task.FromResult(MacNotificationPermissionStatus.Unavailable);
+        Prepare();
+
+        TaskCompletionSource<MacNotificationPermissionStatus> waiter;
+        bool request;
+        lock (Sync)
+        {
+            if (_authorization == Authorization.Unsupported
+                || _center == IntPtr.Zero
+                || _authorizationBlock == IntPtr.Zero)
+                return Task.FromResult(MacNotificationPermissionStatus.Unavailable);
+
+            waiter = new TaskCompletionSource<MacNotificationPermissionStatus>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _authorizationWaiters ??= [];
+            _authorizationWaiters.Add(waiter);
+
+            if (_authorization == Authorization.Requesting)
+            {
+                request = false;
+            }
+            else
+            {
+                _authorization = Authorization.Requesting;
+                request = true;
+            }
+        }
+
+        if (request) RequestAuthorization();
+        return waiter.Task;
+    }
+
+    /// <summary>Maps <c>UNAuthorizationStatus</c> (<c>UNNotificationSettings.h</c>):
+    /// 0 = NotDetermined, 1 = Denied, 2 = Authorized, 3 = Provisional, 4 = Ephemeral.</summary>
+    internal static MacNotificationPermissionStatus MapAuthorizationStatus(nint raw)
+        => raw switch
+        {
+            0 => MacNotificationPermissionStatus.NotDetermined,
+            1 => MacNotificationPermissionStatus.Denied,
+            2 or 3 or 4 => MacNotificationPermissionStatus.Authorized,
+            _ => MacNotificationPermissionStatus.Denied,
+        };
+
+    internal static string SystemSettingsUrl()
+    {
+        Prepare();
+        if (OperatingSystem.IsMacOSVersionAtLeast(13))
+        {
+            var bundleId = Bundled ? BundleIdentifier : null;
+            return string.IsNullOrWhiteSpace(bundleId)
+                ? "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+                : "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=" + Uri.EscapeDataString(bundleId);
+        }
+
+        return "x-apple.systempreferences:com.apple.preference.notifications";
+    }
+
+    internal static Task<bool> OpenSystemSettingsAsync()
+        => MacOsComputerPermissions.OpenSystemSettingsUrlAsync(SystemSettingsUrl());
 
     /// <summary>What the diagnostic entry point prints, so "nobody clicked Allow" and "the banner was
     /// suppressed" stop looking like the same failure in the log.</summary>
@@ -454,13 +605,21 @@ internal static class MacUserNotifications
         try
         {
             List<PendingNotification>? deliver = null;
+            List<TaskCompletionSource<MacNotificationPermissionStatus>>? waiters;
+            var status = MacNotificationPermissionStatus.Denied;
             var denied = false;
             lock (Sync)
             {
-                if (_authorization == Authorization.Unsupported) return;
-                if (granted != 0)
+                waiters = _authorizationWaiters;
+                _authorizationWaiters = null;
+                if (_authorization == Authorization.Unsupported)
+                {
+                    status = MacNotificationPermissionStatus.Unavailable;
+                }
+                else if (granted != 0)
                 {
                     _authorization = Authorization.Authorized;
+                    status = MacNotificationPermissionStatus.Authorized;
                     if (Pending.Count > 0)
                     {
                         deliver = Pending.ToList();
@@ -470,10 +629,15 @@ internal static class MacUserNotifications
                 else
                 {
                     _authorization = Authorization.Denied;
+                    status = MacNotificationPermissionStatus.Denied;
                     Pending.Clear();
                     denied = true;
                 }
             }
+
+            CompleteWaiters(waiters, status);
+            if (status == MacNotificationPermissionStatus.Unavailable) return;
+            NotifyAuthorizationChanged();
 
             if (error != IntPtr.Zero)
             {
@@ -499,6 +663,85 @@ internal static class MacUserNotifications
         catch (Exception ex)
         {
             Report("The macOS notification authorization callback failed: " + ex);
+        }
+    }
+
+    private static void OnSettingsLoaded(IntPtr block, IntPtr settings)
+    {
+        _ = block;
+        var status = MacNotificationPermissionStatus.Denied;
+        try
+        {
+            status = settings != IntPtr.Zero
+                ? MapAuthorizationStatus(SendNInt0(settings, Selector("authorizationStatus")))
+                : FallbackPermissionStatus();
+        }
+        catch (Exception ex)
+        {
+            Report("The macOS notification settings callback failed: " + ex);
+            status = FallbackPermissionStatus();
+        }
+
+        lock (Sync)
+        {
+            if (_authorization != Authorization.Unsupported && _authorization != Authorization.Requesting)
+            {
+                _authorization = status switch
+                {
+                    MacNotificationPermissionStatus.Authorized => Authorization.Authorized,
+                    MacNotificationPermissionStatus.Denied => Authorization.Denied,
+                    MacNotificationPermissionStatus.NotDetermined => Authorization.Unknown,
+                    _ => _authorization,
+                };
+            }
+        }
+
+        CompleteSettingsWaiters(status);
+    }
+
+    private static MacNotificationPermissionStatus FallbackPermissionStatus()
+    {
+        lock (Sync)
+        {
+            return _authorization switch
+            {
+                Authorization.Authorized => MacNotificationPermissionStatus.Authorized,
+                Authorization.Denied => MacNotificationPermissionStatus.Denied,
+                Authorization.Unsupported => MacNotificationPermissionStatus.Unavailable,
+                _ => MacNotificationPermissionStatus.NotDetermined,
+            };
+        }
+    }
+
+    private static void CompleteSettingsWaiters(MacNotificationPermissionStatus status)
+    {
+        List<TaskCompletionSource<MacNotificationPermissionStatus>>? waiters;
+        lock (Sync)
+        {
+            waiters = _settingsWaiters;
+            _settingsWaiters = null;
+        }
+        CompleteWaiters(waiters, status);
+    }
+
+    private static void CompleteWaiters(
+        List<TaskCompletionSource<MacNotificationPermissionStatus>>? waiters,
+        MacNotificationPermissionStatus status)
+    {
+        if (waiters is null) return;
+        foreach (var waiter in waiters)
+            waiter.TrySetResult(status);
+    }
+
+    private static void NotifyAuthorizationChanged()
+    {
+        try
+        {
+            AuthorizationChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Report("The macOS notification authorization listener failed: " + ex);
         }
     }
 
@@ -658,11 +901,16 @@ internal static class MacUserNotifications
 
     private static void DenyQueued(string reason)
     {
+        List<TaskCompletionSource<MacNotificationPermissionStatus>>? waiters;
         lock (Sync)
         {
             _authorization = Authorization.Denied;
             Pending.Clear();
+            waiters = _authorizationWaiters;
+            _authorizationWaiters = null;
         }
+        CompleteWaiters(waiters, MacNotificationPermissionStatus.Denied);
+        NotifyAuthorizationChanged();
         Report("Could not request macOS notification authorization: " + reason + ".");
     }
 
@@ -839,6 +1087,8 @@ internal static class MacUserNotifications
 
     private static IntPtr Send0(IntPtr receiver, IntPtr selector) => objc_msgSend_0(receiver, selector);
 
+    private static nint SendNInt0(IntPtr receiver, IntPtr selector) => objc_msgSend_nint(receiver, selector);
+
     private static void SendVoid0(IntPtr receiver, IntPtr selector) => objc_msgSend_0v(receiver, selector);
 
     private static IntPtr Send1(IntPtr receiver, IntPtr selector, IntPtr argument)
@@ -902,6 +1152,9 @@ internal static class MacUserNotifications
     private delegate void AuthorizationCompletion(IntPtr block, byte granted, IntPtr error);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void SettingsCompletion(IntPtr block, IntPtr settings);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void WillPresentHandler(IntPtr self, IntPtr selector, IntPtr center, IntPtr notification,
         IntPtr completion);
 
@@ -933,6 +1186,9 @@ internal static class MacUserNotifications
 
     [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
     private static extern IntPtr objc_msgSend_0(IntPtr receiver, IntPtr selector);
+
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern nint objc_msgSend_nint(IntPtr receiver, IntPtr selector);
 
     [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
     private static extern void objc_msgSend_0v(IntPtr receiver, IntPtr selector);

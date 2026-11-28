@@ -260,8 +260,8 @@
           <CheckBox x:Name="WebSearchCheck" Content="{DynamicResource AllowWebSearch}" Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebSearchHint}" />
 
-          <!-- macOS TCC diagnostics and per-service reset. Shown on macOS only so unsigned local builds or
-               stale TCC entries can be checked and cleared without opening a terminal. -->
+          <!-- macOS permission diagnostics and management (TCC + UserNotifications). Shown on macOS only so
+               permissions can be inspected, requested, or reset without opening a terminal. -->
           <StackPanel x:Name="MacSystemPermissionsGroup" Spacing="10" IsVisible="False">
             <Border Height="1" Background="{DynamicResource Hub.BorderSubtle}" Margin="0,12,0,2" />
             <Grid ColumnDefinitions="*,Auto">
@@ -295,6 +295,19 @@
                         Content="{DynamicResource MacPermissionOpenSettings}" />
                 <Button x:Name="MacAccessibilityResetButton" Classes="compact quiet" Margin="0"
                         Content="{DynamicResource MacPermissionReset}" />
+              </StackPanel>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="{DynamicResource MacPermissionNotifications}" VerticalAlignment="Center" />
+                <TextBlock x:Name="MacNotificationPermissionState" VerticalAlignment="Center" FontSize="12" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <Button x:Name="MacNotificationSettingsButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionOpenSettings}" />
+                <Button x:Name="MacNotificationRequestButton" Classes="compact quiet" Margin="0"
+                        Content="{DynamicResource MacPermissionRequest}" />
               </StackPanel>
             </Grid>
 

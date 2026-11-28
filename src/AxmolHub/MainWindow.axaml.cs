@@ -288,6 +288,7 @@ public partial class MainWindow : Window
     private void OnWindowActivated()
     {
         SyncMacComputerPermissions();
+        if (SettingsOverlayHost.IsVisible) _settings?.RefreshMacSystemPermissions();
         if (_foregroundHasLeftWindow) _ = ConsumeActivationTarget();
     }
 

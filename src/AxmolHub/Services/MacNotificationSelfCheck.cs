@@ -42,6 +42,15 @@ internal static class MacNotificationSelfCheck
             report.Skip("this process is not inside an .app bundle; authorization and delivery need "
                         + "a bundle identity, so only the ABI below is asserted");
         }
+        else
+        {
+            var statusTask = MacUserNotifications.GetPermissionStatusAsync();
+            var completed = statusTask.Wait(TimeSpan.FromSeconds(3));
+            var status = completed ? statusTask.Result : MacNotificationPermissionStatus.Unavailable;
+            Check(completed && status != MacNotificationPermissionStatus.Unavailable,
+                "getNotificationSettingsWithCompletionHandler: returned a live authorization status ("
+                + (completed ? status.ToString() : "timed out") + ")");
+        }
 
         Check(MacUserNotifications.TryProbe(out var step, out var failure),
             "the UserNotifications delegate, the global completion block and the presentation options answer on "
