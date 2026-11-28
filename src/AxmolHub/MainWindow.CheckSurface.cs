@@ -259,12 +259,8 @@ public partial class MainWindow
     /// also false if the platform handle was not a Win32 one, so it distinguishes "not this platform" from "the
     /// hook silently declined" — which no screenshot can.</summary>
     internal bool SnapHookInstalledForCheck => TitleBarSnapHook.InstalledForCheck;
-    /// <summary><c>BorderOnly</c>, not the <c>Full</c> default: only <c>Full</c> makes Avalonia draw a title bar
-    /// over the client area (Window.ComputeDecorationParts gates the TitleBar part on it), and that title bar
-    /// wrote the window title straight over this app's own bar. BorderOnly keeps the shadow, the border and the
-    /// resize grips, which this app does not draw itself. Whether the drawn decorations are really gone can only
-    /// be seen in a shown window (the self-check never shows this one), so this pin exists to keep the property
-    /// that selects the behaviour from drifting back to the default.</summary>
+    /// <summary>Linux uses <c>None</c> for its own surface, shadow and grips. Elsewhere <c>BorderOnly</c>
+    /// keeps the platform frame without drawing a second title bar over the app's own.</summary>
     internal WindowDecorations WindowDecorationsForCheck => WindowDecorations;
     internal bool LinuxTransparencyForCheck => TransparencyLevelHint.Contains(WindowTransparencyLevel.Transparent) && Background == Brushes.Transparent;
     internal CornerRadius WindowSurfaceCornerRadiusForCheck => WindowSurface.CornerRadius;
@@ -279,7 +275,10 @@ public partial class MainWindow
     /// <summary>Whether the eight edge grips are sized to the shadow margin — which is what keeps a grip from ever
     /// covering a pixel the shell draws — and whether they are up at all. Read because "this window cannot be
     /// resized by dragging its edge" is a defect that neither a rendered frame nor any other assertion can see.</summary>
-    internal bool WindowResizeGripsSizedForCheck => WindowResizeGrips.Children.Count == 8 && Math.Abs(ResizeWest.Width - WindowShadowMargin) <= 0.5 && Math.Abs(ResizeNorth.Height - WindowShadowMargin) <= 0.5 && Math.Abs(ResizeNorthWest.Width - (WindowShadowMargin * 2)) <= 0.5;
+    internal bool WindowResizeGripsSizedForCheck => WindowResizeGrips.Children.Count == 8
+        && Math.Abs(ResizeWest.Width - LinuxWindowSurface.ShadowMargin) <= 0.5
+        && Math.Abs(ResizeNorth.Height - LinuxWindowSurface.ShadowMargin) <= 0.5
+        && Math.Abs(ResizeNorthWest.Width - (LinuxWindowSurface.ShadowMargin * 2)) <= 0.5;
     internal bool WindowResizeGripsVisibleForCheck => WindowResizeGrips.IsVisible;
     internal double TitleBarHeightForCheck => TitleBar.Bounds.Height;
     internal double TitleBarHintForCheck => ExtendClientAreaTitleBarHeightHint;

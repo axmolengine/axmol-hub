@@ -8,14 +8,13 @@ using Avalonia.Media;
 namespace AxmolHub;
 
 /// <summary>
-/// The header an internal Axmol Hub dialog draws for itself, so a dialog does not arrive wearing somebody
-/// else's window frame while the shell it opened from drew its own (AGENTS.md: "Draw the chrome yourself").
+/// The window chrome for an internal Axmol Hub dialog: its caption everywhere, and its outer surface on Linux.
 ///
 /// It is deliberately **one close plate and nothing else**. Minimise and maximise belong to the main window:
 /// a dialog has no place in the taskbar's window list to be minimised to (`ShowInTaskbar="False"`), and a
 /// maximised confirm box or model picker is a worse screen than the one it covered. So the bar carries the
 /// proportions of a caption — 32px tall, the platform's own 46×32 plate flush to the window's top-right
-/// corner, `WindowDecorations` reduced to `BorderOnly` — and exactly one of its buttons.
+/// corner — and exactly one of its buttons. On Linux the surface replaces the rectangular platform frame.
 ///
 /// The header owns three things a caller would otherwise re-implement slightly differently:
 /// <list type="bullet">
@@ -65,7 +64,7 @@ internal sealed class HubDialogChrome
         _window = window;
         window.ExtendClientAreaToDecorationsHint = true;
         window.ExtendClientAreaTitleBarHeightHint = Height;
-        window.WindowDecorations = WindowDecorations.BorderOnly;
+        if (!OperatingSystem.IsLinux()) window.WindowDecorations = WindowDecorations.BorderOnly;
 
         // The whole bar moves the window, and the plate sits above this layer and takes its own input first.
         // Background is a real brush on purpose: Avalonia hit-tests drawn geometry, so a null background here
@@ -167,7 +166,103 @@ internal sealed class HubDialogChrome
             Grid.SetRow(actions, 2);
             layout.Children.Add(actions);
         }
-        return layout;
+        return WrapSurface(layout);
+    }
+
+    /// <summary>Install the caption in an existing XAML layout and wrap the entire layout on Linux.</summary>
+    internal void InstallXamlChrome(ContentControl host)
+    {
+        host.Content = Header;
+        if (!OperatingSystem.IsLinux() || _window.Content is not Control content) return;
+        // Detach the XAML root before giving it a new logical parent.
+        _window.Content = null;
+        _window.Content = WrapSurface(content);
+    }
+
+    /// <summary>Wrap an entire layout, including the caption, in the same Linux surface as the main window.</summary>
+    internal Control WrapSurface(Control content)
+    {
+        if (!OperatingSystem.IsLinux()) return content;
+
+        var shadowLayer = new Border { IsHitTestVisible = false };
+        var surface = new Border { Name = "DialogSurface", ClipToBounds = true, Child = content };
+        surface.Bind(Border.BackgroundProperty, new DynamicResourceExtension("Hub.Background"));
+        var root = new Grid { Children = { shadowLayer, surface } };
+        Grid? grips = null;
+
+        LinuxWindowSurface.Configure(_window, shadowLayer);
+        // Explicit dimensions describe the visible dialog. Auto dimensions already measure the surface's margin.
+        if (double.IsFinite(_window.MaxWidth)) _window.MaxWidth = WithShadowMargin(_window.MaxWidth);
+        if (double.IsFinite(_window.MaxHeight)) _window.MaxHeight = WithShadowMargin(_window.MaxHeight);
+        _window.MinWidth = WithShadowMargin(_window.MinWidth);
+        _window.MinHeight = WithShadowMargin(_window.MinHeight);
+        if (double.IsFinite(_window.Width)) _window.Width = WithShadowMargin(_window.Width);
+        if (double.IsFinite(_window.Height)) _window.Height = WithShadowMargin(_window.Height);
+
+        void SyncGeometry()
+        {
+            var floating = _window.WindowState is not (WindowState.Maximized or WindowState.FullScreen);
+            LinuxWindowSurface.ApplyGeometry(surface, shadowLayer, floating);
+            var canResize = floating && _window.CanResize;
+            if (canResize && grips is null)
+            {
+                grips = CreateResizeGrips();
+                root.Children.Add(grips);
+            }
+            if (grips is not null) grips.IsVisible = canResize;
+        }
+
+        _window.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == Window.WindowStateProperty || e.Property == Window.CanResizeProperty) SyncGeometry();
+        };
+        SyncGeometry();
+        return root;
+    }
+
+    internal static double WithShadowMargin(double dimension)
+        => OperatingSystem.IsLinux() ? dimension + 2 * LinuxWindowSurface.ShadowMargin : dimension;
+
+    private Grid CreateResizeGrips()
+    {
+        var grips = new Grid();
+        AddEdge(WindowEdge.North, HorizontalAlignment.Stretch, VerticalAlignment.Top, StandardCursorType.SizeNorthSouth);
+        AddEdge(WindowEdge.South, HorizontalAlignment.Stretch, VerticalAlignment.Bottom, StandardCursorType.SizeNorthSouth);
+        AddEdge(WindowEdge.West, HorizontalAlignment.Left, VerticalAlignment.Stretch, StandardCursorType.SizeWestEast);
+        AddEdge(WindowEdge.East, HorizontalAlignment.Right, VerticalAlignment.Stretch, StandardCursorType.SizeWestEast);
+        AddCorner(WindowEdge.NorthWest, HorizontalAlignment.Left, VerticalAlignment.Top, StandardCursorType.TopLeftCorner);
+        AddCorner(WindowEdge.NorthEast, HorizontalAlignment.Right, VerticalAlignment.Top, StandardCursorType.TopRightCorner);
+        AddCorner(WindowEdge.SouthWest, HorizontalAlignment.Left, VerticalAlignment.Bottom, StandardCursorType.BottomLeftCorner);
+        AddCorner(WindowEdge.SouthEast, HorizontalAlignment.Right, VerticalAlignment.Bottom, StandardCursorType.BottomRightCorner);
+        return grips;
+
+        void AddEdge(WindowEdge edge, HorizontalAlignment horizontal, VerticalAlignment vertical, StandardCursorType cursor)
+        {
+            var grip = new Border
+            {
+                HorizontalAlignment = horizontal, VerticalAlignment = vertical,
+                Background = Brushes.Transparent, Cursor = new Cursor(cursor),
+            };
+            LinuxWindowSurface.AttachResizeGrip(_window, grip, edge);
+            grips.Children.Add(grip);
+        }
+
+        void AddCorner(WindowEdge edge, HorizontalAlignment horizontal, VerticalAlignment vertical, StandardCursorType cursor)
+        {
+            // Give the diagonal grip two strips in the shadow gutter. The unpainted inner quadrant must pass
+            // input through to the surface, especially where it overlaps the close button.
+            var grip = new Grid
+            {
+                HorizontalAlignment = horizontal, VerticalAlignment = vertical, Cursor = new Cursor(cursor),
+                Children =
+                {
+                    new Border { VerticalAlignment = vertical, Height = LinuxWindowSurface.ShadowMargin, Background = Brushes.Transparent },
+                    new Border { HorizontalAlignment = horizontal, Width = LinuxWindowSurface.ShadowMargin, Background = Brushes.Transparent },
+                },
+            };
+            LinuxWindowSurface.AttachResizeGrip(_window, grip, edge);
+            grips.Children.Add(grip);
+        }
     }
 
     /// <summary>Pushes the plate out over the window's own frame (see the constructor).

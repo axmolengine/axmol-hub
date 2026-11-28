@@ -244,12 +244,9 @@ public partial class FoundationCheckWindow : Window
         check(dialog.Result == HubDialogResult.Cancel,
             "未点击时默认结果是 Cancel（点标题栏 X 会被读成 default(T)，所以 Cancel 必须是 0）");
 
-        // The body used to be a Border.card standing in for the frame the platform no longer draws. Now the
-        // window asks for that frame itself, so what has to hold is the bar: the client area is extended, the
-        // decorations are BorderOnly, and the header wears the shell's own bar colour.
-        check(dialog.ExtendClientAreaToDecorationsHint
-              && dialog.WindowDecorations == WindowDecorations.BorderOnly,
-            "对话框不再穿平台的标题栏（客户区扩展 + BorderOnly，实际 "
+        var decorations = OperatingSystem.IsLinux() ? WindowDecorations.None : WindowDecorations.BorderOnly;
+        check(dialog.ExtendClientAreaToDecorationsHint && dialog.WindowDecorations == decorations,
+            "对话框不再穿平台的标题栏（客户区扩展 + " + decorations + "，实际 "
             + dialog.ExtendClientAreaToDecorationsHint + "、" + dialog.WindowDecorations + "）");
         var chrome = NamedDescendant<Border>(dialog, "DialogChrome");
         check(chrome is not null && IsToken(chrome.Background, "Hub.TitleBarBackground"),

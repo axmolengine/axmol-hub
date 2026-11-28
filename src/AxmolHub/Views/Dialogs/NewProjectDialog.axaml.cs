@@ -17,7 +17,7 @@ public partial class NewProjectDialog : Window
         _workspace = workspace;
         InitializeComponent();
         Title = HubStrings.Get("NewProject");
-        ChromeHost.Content = new HubDialogChrome(this, "CloseWindow", Close).Header;
+        new HubDialogChrome(this, "CloseWindow", Close).InstallXamlChrome(ChromeHost);
         ProjectNameBox.Text = draftName;
         ProjectLocationBox.Text = string.IsNullOrWhiteSpace(draftLocation) ? workspace.ProjectDirectory : draftLocation;
         ProjectEnginePicker.ItemsSource = workspace.State.Engines
@@ -102,10 +102,10 @@ public partial class NewProjectDialog : Window
         var scale = screen.Scaling <= 0 ? 1 : screen.Scaling;
         var width = Math.Max(320, screen.WorkingArea.Width / scale - 48);
         var height = Math.Max(280, screen.WorkingArea.Height / scale - 48);
-        MinWidth = Math.Min(MinWidth, width);
-        MinHeight = Math.Min(MinHeight, height);
-        Width = Math.Min(760, width);
-        Height = Math.Min(720, height);
+        MinWidth = Math.Min(MinWidth, HubDialogChrome.WithShadowMargin(width));
+        MinHeight = Math.Min(MinHeight, HubDialogChrome.WithShadowMargin(height));
+        Width = HubDialogChrome.WithShadowMargin(Math.Min(760, width));
+        Height = HubDialogChrome.WithShadowMargin(Math.Min(720, height));
     }
 
     private sealed record ProjectEngineChoice(EngineEntry Engine, string Label)

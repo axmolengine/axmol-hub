@@ -65,7 +65,7 @@ public partial class HubDialog : Window
         // same answer Esc gives through the IsCancel button. That is the invariant the enum above is ordered for,
         // so the plate goes through Finish rather than Window.Close — a bare Close would still *read* as Cancel
         // today, and would stop reading as Cancel the moment a caller's default result changed.
-        ChromeHost.Content = new HubDialogChrome(this, "CloseWindow", () => Finish(HubDialogResult.Cancel)).Header;
+        new HubDialogChrome(this, "CloseWindow", () => Finish(HubDialogResult.Cancel)).InstallXamlChrome(ChromeHost);
     }
 
     /// <summary>Replaces MessageBox.Show. Shows with no owner at all when there is none to be modal to — no main

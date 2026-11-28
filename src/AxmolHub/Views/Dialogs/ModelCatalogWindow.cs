@@ -132,7 +132,7 @@ public sealed partial class ModelCatalogWindow : Window
         root.Children.Add(chrome.Header);
         Grid.SetRow(layout, 1);
         root.Children.Add(layout);
-        Content = root;
+        Content = chrome.WrapSurface(root);
 
         _list.Background = Brushes.Transparent;
         // Overlay scrollbars consume the row's right edge. Reserve their own column instead so both

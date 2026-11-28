@@ -25,9 +25,7 @@
          that takes this window; the XAML cannot pass that. -->
     <ContentControl Grid.Row="0" x:Name="ChromeHost" />
 
-    <!-- The body used to sit inside Border.card, which was a card standing in for the frame the platform no
-         longer draws: the window now has its own drawn edge, so the content goes straight on the window's
-         background and the hairline under the bar is the one separator it needs. -->
+    <!-- HubDialogChrome wraps the whole layout on Linux, so the body does not need an extra frame. -->
     <StackPanel Grid.Row="1" Spacing="14" Margin="20,14,20,18">
       <!-- A caller-supplied logo (the About box's). Collapsed rather than left empty for every other use of this
            box: a confirmation or a notice with a blank square above the question would be chrome saying nothing. -->

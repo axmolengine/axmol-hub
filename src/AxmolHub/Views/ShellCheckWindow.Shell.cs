@@ -2077,10 +2077,12 @@ internal sealed class ShellLayoutChecks
 
     internal void CheckOneDialogChrome(Window window, string label)
     {
+        var linux = OperatingSystem.IsLinux();
+        var decorations = linux ? WindowDecorations.None : WindowDecorations.BorderOnly;
         Check(window.ExtendClientAreaToDecorationsHint
-              && window.WindowDecorations == WindowDecorations.BorderOnly
+              && window.WindowDecorations == decorations
               && Math.Abs(window.ExtendClientAreaTitleBarHeightHint - HubDialogChrome.Height) <= 0.5,
-            "「" + label + "」不再穿平台的标题栏：客户区扩展、装饰取 BorderOnly、高度提示跟着头的 32（实际 "
+            "「" + label + "」不再穿平台的标题栏：客户区扩展、装饰取 " + decorations + "、高度提示跟着头的 32（实际 "
             + window.ExtendClientAreaToDecorationsHint + "、" + window.WindowDecorations + "、"
             + Fmt(window.ExtendClientAreaTitleBarHeightHint) + "）");
 
@@ -2095,12 +2097,14 @@ internal sealed class ShellLayoutChecks
             return;
         }
 
-        var client = window.Bounds;
+        var surface = linux ? NamedDescendant<Border>(window, "DialogSurface") : null;
+        var client = surface is not null ? InWindow(window, surface) : new Rect(window.Bounds.Size);
         var headerRect = InWindow(window, header);
-        Check(Math.Abs(headerRect.Y) <= 0.5 && Math.Abs(headerRect.Height - HubDialogChrome.Height) <= 0.5
-              && Math.Abs(headerRect.X) <= 0.5 && Math.Abs(headerRect.Width - client.Width) <= 0.5,
-            "「" + label + "」的头占住客户区最顶端、贴住窗口两缘且高 32（实际 " + Fmt(headerRect.Width) + "×"
-            + Fmt(headerRect.Height) + " @ " + Fmt(headerRect.X) + "," + Fmt(headerRect.Y) + "，窗宽 "
+        Check((!linux || surface is not null)
+              && Math.Abs(headerRect.Y - client.Y) <= 0.5 && Math.Abs(headerRect.Height - HubDialogChrome.Height) <= 0.5
+              && Math.Abs(headerRect.X - client.X) <= 0.5 && Math.Abs(headerRect.Width - client.Width) <= 0.5,
+            "「" + label + "」的头贴住可见表面的顶边和两侧且高 32（实际 " + Fmt(headerRect.Width) + "×"
+            + Fmt(headerRect.Height) + " @ " + Fmt(headerRect.X) + "," + Fmt(headerRect.Y) + "，表面宽 "
             + Fmt(client.Width) + "）");
 
         // One plate, and it is the close one. The 46 is read against the pixels rather than trusted from the
@@ -2111,10 +2115,10 @@ internal sealed class ShellLayoutChecks
             .Where(button => button.Classes.Contains("window-control")).ToList();
         Check(plates.Count == 1 && ReferenceEquals(plates[0], plate) && plate.Classes.Contains("close")
               && Math.Abs(plateRect.Width - 46) <= 0.5 && Math.Abs(plateRect.Height - HubDialogChrome.Height) <= 0.5
-              && Math.Abs(plateRect.Y) <= 0.5 && plateRect.Right >= client.Width - 0.5,
+              && Math.Abs(plateRect.Y - client.Y) <= 0.5 && plateRect.Right >= client.Right - 0.5,
             "「" + label + "」的头上只有一枚 46×32 的关闭盘，落在右上角并铺到窗口右缘，没有最小化与最大化（实际 "
             + plates.Count + " 枚，" + Fmt(plateRect.Width) + "×" + Fmt(plateRect.Height) + "，右缘 "
-            + Fmt(plateRect.Right) + " / 窗宽 " + Fmt(client.Width) + "）");
+            + Fmt(plateRect.Right) + " / 表面右缘 " + Fmt(client.Right) + "）");
 
         // The bar is one press surface: the drag layer has to carry a brush — Avalonia hit-tests drawn geometry,
         // so a null background would measure, paint nothing, and let every press fall through to whatever is

@@ -106,7 +106,7 @@ public sealed partial class ProviderPickerWindow : Window
         root.Children.Add(chrome.Header);
         Grid.SetRow(body, 1);
         root.Children.Add(body);
-        Content = root;
+        Content = chrome.WrapSurface(root);
 
         // A ListBox shows ToString() by default, which would flatten the card to a bare provider name. A
         // code-built DataTemplate lets each row own its own layout (see Row.Render) without a XAML file — the

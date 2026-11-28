@@ -2762,19 +2762,7 @@ public partial class MainWindow : Window
         var maximized = WindowState == WindowState.Maximized || _fillsWorkArea;
         if (OperatingSystem.IsLinux())
         {
-            var radius = maximized
-                ? new CornerRadius(0)
-                : new CornerRadius(WindowCornerRadius, WindowCornerRadius, 0, 0);
-            // Written with the radius because the two are one look: round means "a window floating on the desktop",
-            // square means "this is the screen". A maximized window floats above nothing, so it keeps neither the
-            // rounding nor the room its shadow needed — and that shadow would be drawn off the screen anyway.
-            var margin = maximized ? new Thickness(0) : new Thickness(WindowShadowMargin);
-            WindowSurface.CornerRadius = radius;
-            WindowSurface.Margin = margin;
-            // The shadow's own layer is the same rectangle as the surface — that is what makes the shadow follow the
-            // window's rounding instead of boxing it in — so the two are always written together.
-            WindowShadowLayer.CornerRadius = radius;
-            WindowShadowLayer.Margin = margin;
+            LinuxWindowSurface.ApplyGeometry(WindowSurface, WindowShadowLayer, floating: !maximized);
             // The grips live in that margin, so they follow it: a maximized window has no room for them and nothing
             // to drag, and leaving them up would put eight invisible strips over the shell's own edges.
             WindowResizeGrips.IsVisible = !maximized;
@@ -2783,8 +2771,6 @@ public partial class MainWindow : Window
         if ((maximized ? _restoreGlyph : _maximizeGlyph) is { } glyph) MaximizeGlyph.Data = glyph;
         ToolTip.SetTip(MaximizeButton, HubStrings.Get(maximized ? "RestoreWindow" : "MaximizeWindow"));
     }
-
-    private const double WindowCornerRadius = 12;
 
     /// <summary>The Linux window surface: a transparent window, with the rounded top corners drawn by
     /// <see cref="WindowSurface"/> (see <see cref="SyncWindowStateChrome"/>). Both halves of that are
@@ -2797,33 +2783,9 @@ public partial class MainWindow : Window
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
-        Background = Brushes.Transparent;
+        LinuxWindowSurface.Configure(this, WindowShadowLayer);
 
-        // BorderOnly is the right request on Windows, where the frame it keeps is DWM's: a shadow and a hairline
-        // that both follow the rounded window. On Linux the same request is answered by the X11 backend painting the
-        // frame *itself* — a square 1px frame plus a square gradient shadow, neither of which any theme can shape
-        // (measured: zeroing the frame's thickness through the decoration theme shortens the band by exactly that
-        // thickness, while the shadow's outline stays a rectangle, and Avalonia 12.1.3 marks the whole app-drawn
-        // path AVALONIA_X11_CSD "for evaluation purposes only"). The frame is what hid the window surface's rounded
-        // corners; the square shadow is what then left a rectangular ghost at them. So Linux asks for none of it and
-        // draws the one part a rounded window needs — its shadow — itself, in the margin it keeps for that
-        // (see WindowShadowMargin and SyncWindowStateChrome).
-        WindowDecorations = WindowDecorations.None;
-        WindowShadowLayer.BoxShadow = WindowShadow;
-
-        // The resize edges are the app's here for the same reason: with no frame of the platform's there is nothing
-        // to grab, and dragging an edge would do nothing at all. Each grip is sized to the shadow margin — the
-        // corners to twice it, so a diagonal drag starts at the corner itself instead of a few pixels off it — and
-        // hands its press to the window manager's own resize, which is what leaves MinWidth/MinHeight, the
-        // work-area rules and Escape-to-cancel the platform's business rather than this app's.
-        foreach (var grip in new[] { ResizeNorth, ResizeSouth }) grip.Height = WindowShadowMargin;
-        foreach (var grip in new[] { ResizeWest, ResizeEast }) grip.Width = WindowShadowMargin;
-        foreach (var grip in new[] { ResizeNorthWest, ResizeNorthEast, ResizeSouthWest, ResizeSouthEast })
-        {
-            grip.Width = WindowShadowMargin * 2;
-            grip.Height = WindowShadowMargin * 2;
-        }
+        // With no platform frame, the grips delegate edge and corner resizing to the window manager.
         foreach (var (grip, edge) in new (Border Grip, WindowEdge Edge)[]
                  {
                      (ResizeNorth, WindowEdge.North), (ResizeSouth, WindowEdge.South),
@@ -2832,7 +2794,7 @@ public partial class MainWindow : Window
                      (ResizeSouthWest, WindowEdge.SouthWest), (ResizeSouthEast, WindowEdge.SouthEast),
                  })
         {
-            grip.PointerPressed += (_, e) => BeginResizeFrom(edge, e);
+            LinuxWindowSurface.AttachResizeGrip(this, grip, edge);
         }
         WindowResizeGrips.IsVisible = true;
 
@@ -2841,31 +2803,6 @@ public partial class MainWindow : Window
             + " granted=" + ActualTransparencyLevel
             + " handle=" + (TryGetPlatformHandle()?.ToString() ?? "none")
             + " client=" + ClientSize);
-    }
-
-    /// <summary>The room the window keeps around its surface for the shadow the app draws itself, and that shadow.
-    /// Two reasons it is not the platform's: on X11 that one is a rectangle, which leaves a square ghost at the
-    /// rounded corners (the whole reason the corner rounding was invisible), and Windows has DWM's, which does
-    /// follow the window. The margin belongs to the window rather than to the surface, so the shell's content is
-    /// inset by it — and the window manager's resize edge sits this far outside the visible window, the same
-    /// trade every client-side-decorated toolkit makes.</summary>
-    private const double WindowShadowMargin = 8;
-
-    /// <summary>Soft, slightly low, and a touch spread, the way a floating window reads: a BoxShadow is drawn around
-    /// the border's own geometry, so it follows <see cref="WindowSurface"/>' CornerRadius instead of boxing it in.
-    /// Blur + spread add up to <see cref="WindowShadowMargin"/> exactly, which is what makes the shadow fade to
-    /// nothing right at the window's own edge — any more and the outer part would be cut off there, any less and the
-    /// room kept for it goes unused.</summary>
-    private static readonly BoxShadows WindowShadow = BoxShadows.Parse("0 2 6 2 #66000000");
-
-    /// <summary>Hands a press on one of the edge grips to the platform's own resize. The window manager does the
-    /// resizing rather than this app: it owns the size limits, the work-area rules and the gesture (Escape cancels
-    /// one), and a drag loop written here would be re-implementing all three from the outside.</summary>
-    private void BeginResizeFrom(WindowEdge edge, PointerPressedEventArgs e)
-    {
-        if (!e.Properties.IsLeftButtonPressed) return;
-        e.Handled = true;
-        BeginResizeDrag(edge, e);
     }
 
     /// <summary>Brings the window back onto its own geometry for the routes that ask for a usable window: a

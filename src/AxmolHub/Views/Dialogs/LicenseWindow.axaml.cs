@@ -11,7 +11,7 @@ public partial class LicenseWindow : Window
     public LicenseWindow()
     {
         InitializeComponent();
-        ChromeHost.Content = new HubDialogChrome(this, "CloseWindow", Close).Header;
+        new HubDialogChrome(this, "CloseWindow", Close).InstallXamlChrome(ChromeHost);
         LicenseText.Options.EnableHyperlinks = false;
         LicenseText.Options.EnableEmailHyperlinks = false;
         LicenseText.Options.AcceptsTab = false;

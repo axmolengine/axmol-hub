@@ -1494,7 +1494,7 @@
        edge is the *surface's* edge, one shadow margin in, and a press there would otherwise land on the shell and do
        nothing. Each grip hands its press to Window.BeginResizeDrag, so the window manager still owns the resize —
        its size limits, its work-area rules, Escape cancelling it — and each is the margin's own width (set from
-       WindowShadowMargin in code), so it can only ever cover the room the shadow has and never a pixel the shell
+       LinuxWindowSurface.ShadowMargin in code), so it can only ever cover the room the shadow has and never a pixel the shell
        draws. Hidden where the platform has a frame of its own (Windows) and while the window is maximized. -->
   <Grid x:Name="WindowResizeGrips" IsVisible="False">
     <Border x:Name="ResizeNorth" VerticalAlignment="Top" Background="Transparent" Cursor="SizeNorthSouth" />
