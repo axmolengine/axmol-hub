@@ -114,12 +114,16 @@ internal static class DarkSyntax
     internal static string Transform(string xshdXml, Color well)
     {
         var document = XDocument.Parse(xshdXml);
+        var dark = IsDark(well);
         foreach (var element in document.Descendants())
         {
             element.Attribute("background")?.Remove();
             if (element.Attribute("foreground") is not { } foreground) continue;
             if (!TryResolve(foreground.Value, out var color)) continue;
-            foreground.Value = PaletteColor(element, color, IsDark(well));
+            var role = ClassifyRole(element, color);
+            foreground.Value = PaletteColor(role, dark);
+            if (role == "comment" && element.Name.LocalName is "Color" or "Span")
+                element.SetAttributeValue("fontStyle", "italic");
         }
 
         return document.ToString(SaveOptions.DisableFormatting);
@@ -127,31 +131,67 @@ internal static class DarkSyntax
 
     // Named roles take precedence; legacy unnamed rules use their original hue as a fallback. This keeps
     // each language's lexical rules while replacing its unrelated vendor palette with Hub's shared colors.
-    private static string PaletteColor(XElement element, Color original, bool dark)
+    private static string ClassifyRole(XElement element, Color original)
     {
         var name = string.Join(" ", element.AncestorsAndSelf().SelectMany(e =>
             new[] { e.Attribute("name")?.Value, e.Attribute("color")?.Value }).Where(s => s is not null)).ToLowerInvariant();
-        string role;
-        if (name.Contains("comment") || name.Contains("documentation")) role = "comment";
-        else if (name.Contains("string") || name.Contains("charliteral") || name.Contains("attributevalue")) role = "string";
-        else if (name.Contains("number") || name.Contains("literal") || name.Contains("constant")) role = "number";
-        else if (name.Contains("type") || name.Contains("class") || name.Contains("tag")) role = "type";
-        else if (name.Contains("keyword") || name.Contains("command") || name.Contains("preprocessor")) role = "keyword";
-        else if (name.Contains("attribute") || name.Contains("variable")) role = "variable";
-        else
+        if (name.Contains("comment") || name.Contains("doc")) return "comment";
+        if (name.Contains("string") || name.Contains("char") || name.Contains("regex")
+            || name.Contains("attributevalue") || name.Contains("addedtext")) return "string";
+        if (name.Contains("jump") || name.Contains("selection") || name.Contains("iteration")
+            || name.Contains("loop") || name.Contains("control") || name.Contains("goto")
+            || name.Contains("exception") || name.Contains("removedtext")) return "control";
+        if (name.Contains("number") || name.Contains("digit") || name.Contains("literal")
+            || name.Contains("constant") || name.Contains("truefalse") || name.Contains("bool")
+            || name.Contains("null")) return "number";
+        if (name.Contains("method") || name.Contains("functioncall") || name.Contains("globalfunction")
+            || name.Contains("command")) return "method";
+        if (name.Contains("namespacekeyword")) return "keyword";
+        if (name.Contains("type") || name.Contains("class") || name.Contains("tag")
+            || name.Contains("void") || name.Contains("namespace") || name.Contains("package")
+            || name.Contains("entit")) return "type";
+        if (name.Contains("attribute") || name.Contains("variable") || name.Contains("preprocessor")
+            || name.Contains("this") || name.Contains("property") || name.Contains("field")
+            || name.Contains("heading")) return "variable";
+        if (name.Contains("keyword") || name.Contains("modifier") || name.Contains("visibility")
+            || name.Contains("access") || name.Contains("operator") || name.Contains("getset")) return "keyword";
+
+        var (hue, saturation, _) = ToHsl(original);
+        return saturation < 0.18 ? "comment"
+            : hue < 0.13 || hue > 0.92 ? "control"
+            : hue < 0.42 ? "string"
+            : hue < 0.62 ? "type"
+            : "keyword";
+    }
+
+    private static string PaletteColor(string role, bool dark)
+    {
+        var index = role switch
         {
-            var (hue, saturation, _) = ToHsl(original);
-            role = saturation < 0.18 ? "comment" : hue < 0.13 || hue > 0.92 ? "keyword"
-                : hue < 0.42 ? "string" : hue < 0.62 ? "type" : "number";
-        }
-        var index = role switch { "comment" => 0, "string" => 1, "number" => 2, "type" => 3, "variable" => 4, _ => 5 };
+            "comment" => 0,
+            "string" => 1,
+            "number" => 2,
+            "type" => 3,
+            "method" => 4,
+            "keyword" => 5,
+            "control" => 6,
+            _ => 7,
+        };
         return dark ? Palette[index].Dark : Palette[index].Light;
     }
 
+    // Modern One Dark / Tokyo Night balanced palette: 8 distinct roles, every pair verified >= 4.5:1 AA
+    // against both the editor well and all diff/selection row tints in Dark and Light themes.
     private static readonly (string Dark, string Light)[] Palette =
     [
-        ("#A0AAB5", "#52616D"), ("#B4CF9A", "#426B30"), ("#D0B2E3", "#70448C"),
-        ("#8FC9D5", "#1C6575"), ("#D7C193", "#76571D"), ("#C0B4E8", "#58428B"),
+        ("#99A6BA", "#525E70"), // 0: comment  (cool slate italic)
+        ("#9ED58A", "#246632"), // 1: string   (fresh sage-emerald)
+        ("#F0AF74", "#9E4708"), // 2: number   (warm amber-peach: numbers, literals, null/bool)
+        ("#6BD6CC", "#0D676E"), // 3: type     (crisp mint-teal: types, classes, tags)
+        ("#7DBBFF", "#1952B8"), // 4: method   (clear sky-blue: methods, functions, commands)
+        ("#C9A0FA", "#6938C7"), // 5: keyword  (refined violet: declarations, modifiers)
+        ("#F78DA7", "#B21B57"), // 6: control  (soft rose-coral: if, return, loop, try/catch)
+        ("#E8C97E", "#7C520B"), // 7: variable (warm gold: variables, attributes, preprocessor)
     ];
 
     internal static IBrush? BrushForTheme(IBrush? brush, ThemeVariant theme)

@@ -1,9 +1,11 @@
 <SyntaxDefinition name="Lua" extensions=".lua"
                   xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
-  <Color name="Comment" foreground="#7F8799" />
-  <Color name="Keyword" foreground="#F7768E" fontWeight="bold" />
-  <Color name="String" foreground="#7DCFFF" />
-  <Color name="Number" foreground="#BB9AF7" />
+  <Color name="Comment" foreground="#99A6BA" fontStyle="italic" />
+  <Color name="Keyword" foreground="#C9A0FA" />
+  <Color name="ControlFlow" foreground="#F78DA7" />
+  <Color name="MethodCall" foreground="#7DBBFF" />
+  <Color name="String" foreground="#9ED58A" />
+  <Color name="Number" foreground="#F0AF74" />
   <RuleSet>
     <!-- Long comments and long strings first: a "[" or "-" span declared before them would win the position. -->
     <Span color="Comment" begin="--\[\[" end="\]\]" />
@@ -12,29 +14,34 @@
     <Span color="String" begin="&quot;" end="&quot;" />
     <Span color="String" begin="'" end="'" />
     <Rule color="Number">\b(0x[0-9a-fA-F]+|\d+(\.\d+)?([eE][+-]?\d+)?)\b</Rule>
-    <Keywords color="Keyword">
-      <Word>and</Word>
+    <Keywords color="ControlFlow">
       <Word>break</Word>
       <Word>do</Word>
       <Word>else</Word>
       <Word>elseif</Word>
       <Word>end</Word>
-      <Word>false</Word>
       <Word>for</Word>
-      <Word>function</Word>
       <Word>goto</Word>
       <Word>if</Word>
-      <Word>in</Word>
-      <Word>local</Word>
-      <Word>nil</Word>
-      <Word>not</Word>
-      <Word>or</Word>
       <Word>repeat</Word>
       <Word>return</Word>
       <Word>then</Word>
-      <Word>true</Word>
       <Word>until</Word>
       <Word>while</Word>
     </Keywords>
+    <Keywords color="Number">
+      <Word>false</Word>
+      <Word>nil</Word>
+      <Word>true</Word>
+    </Keywords>
+    <Keywords color="Keyword">
+      <Word>and</Word>
+      <Word>function</Word>
+      <Word>in</Word>
+      <Word>local</Word>
+      <Word>not</Word>
+      <Word>or</Word>
+    </Keywords>
+    <Rule color="MethodCall">\b[A-Za-z_]\w*(?=\s*\()</Rule>
   </RuleSet>
 </SyntaxDefinition>

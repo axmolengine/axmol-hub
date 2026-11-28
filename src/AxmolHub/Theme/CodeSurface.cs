@@ -12,9 +12,10 @@ namespace AxmolHub;
 /// <summary>The shared palette, typography and gutter for read-only and editable code surfaces.</summary>
 internal static class CodeSurface
 {
-    /// <summary>The font a project file is read in. One name for both the gutter and the text, because a gutter
-    /// in a different family than the code it numbers drifts by a pixel a line.</summary>
-    internal static readonly FontFamily Mono = FontFamily.Parse("Menlo,Consolas,monospace");
+    /// <summary>The font a project file is read in. One name for both the gutter and the text, matching
+    /// <c>Hub.Font.Mono</c> so macOS uses SF Mono, Windows uses Cascadia Mono, and CJK comments stay crisp.</summary>
+    internal static readonly FontFamily Mono =
+        FontFamily.Parse("Cascadia Mono, Consolas, SF Mono, Menlo, DejaVu Sans Mono, Noto Sans Mono CJK SC, monospace");
 
     internal static void ApplySelection(TextEditor editor, string brushKey = "Hub.CodeSelection")
         => editor.TextArea.Bind(TextArea.SelectionBrushProperty, new DynamicResourceExtension(brushKey));
@@ -49,6 +50,7 @@ internal static class CodeSurface
         });
         editor.Bind(TemplatedControl.ForegroundProperty, new DynamicResourceExtension("Hub.TextBody"));
         editor.Bind(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("Hub.SurfaceSunken"));
+        editor.Bind(TextEditor.LineNumbersForegroundProperty, new DynamicResourceExtension("Hub.TextTertiary"));
         // Keep the gutter's existing spacing without painting the default dotted separator.
         foreach (var margin in editor.TextArea.LeftMargins.Where(DottedLineMargin.IsDottedLineMargin))
         {

@@ -42,6 +42,10 @@ internal sealed class CodeEditorView : Grid
         _editor = CodeSurface.ForFile(path, TextEol.ToLf(baseline.Text), regularSyntaxWeight: isWorkspaceTab);
         _editor.IsReadOnly = !writable;
         _editor.ShowLineNumbers = true;
+        _editor.Options.HighlightCurrentLine = true;
+        _editor.TextArea.TextView.Bind(AvaloniaEdit.Rendering.TextView.CurrentLineBackgroundProperty,
+            new DynamicResourceExtension("Hub.CodeCurrentLine"));
+        _editor.TextArea.TextView.CurrentLineBorder = null;
         _editor.Name = "WorkspaceTextEditor";
         _editor.ContextMenu = CreateTextMenu();
         _editor.TextChanged += (_, _) => UpdateStatus();

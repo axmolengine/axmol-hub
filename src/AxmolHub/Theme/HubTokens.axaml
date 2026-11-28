@@ -66,6 +66,7 @@
            replaces. -->
       <SolidColorBrush x:Key="Hub.Selection" Color="#663675D1" />
       <SolidColorBrush x:Key="Hub.CodeSelection" Color="#2A3B52" />
+      <SolidColorBrush x:Key="Hub.CodeCurrentLine" Color="#0AFFFFFF" />
       <SolidColorBrush x:Key="Hub.SelectionChip" Color="#335382" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#5AD2A2" />
@@ -194,6 +195,7 @@
       <!-- Light counterparts; see the Dark dictionary's note for what the pair is for. -->
       <SolidColorBrush x:Key="Hub.Selection" Color="#55265CB0" />
       <SolidColorBrush x:Key="Hub.CodeSelection" Color="#D8E6FB" />
+      <SolidColorBrush x:Key="Hub.CodeCurrentLine" Color="#09182436" />
       <SolidColorBrush x:Key="Hub.SelectionChip" Color="#A3C1F5" />
 
       <SolidColorBrush x:Key="Hub.Success" Color="#1C9B72" />
