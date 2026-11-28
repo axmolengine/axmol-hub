@@ -770,8 +770,25 @@
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
-    <Style Selector="Button.git-row-action"><Setter Property="Opacity" Value="0" /></Style>
-    <Style Selector="Grid:pointerover > Button.git-row-action, Grid:focus-within > Button.git-row-action"><Setter Property="Opacity" Value="1" /></Style>
+    <Style Selector="Grid.inspector-repo-row Grid.git-row-actions">
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="IsHitTestVisible" Value="False" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:00:00.090" Easing="CubicEaseOut" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Grid.inspector-repo-row:pointerover Grid.git-row-actions, Grid.inspector-repo-row:focus-within Grid.git-row-actions">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="IsHitTestVisible" Value="True" />
+    </Style>
+    <Style Selector="Border.git-row-actions-fade">
+      <Setter Property="Background" Value="{DynamicResource Hub.InspectorRowFade}" />
+    </Style>
+    <Style Selector="Border.git-row-actions-plate">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceChrome}" />
+    </Style>
     <Style Selector="Button.inspector-file-menu:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>

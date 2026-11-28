@@ -1802,10 +1802,19 @@ internal sealed partial class InspectorPanel : UserControl
             header.Classes.Set("expanded", true);
         };
 
-        var repositoryRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+        var repositoryRow = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            Background = Brushes.Transparent,
+            Classes = { "inspector-repo-row" },
+        };
         repositoryRow.Children.Add(header);
-        var numbers = new ContentControl { HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center };
+        var numbers = new ContentControl
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 2, 0),
+        };
         _statusCountSlots[entry.RelativePath] = numbers;
         SetStatusCount(numbers, entry.RelativePath, state);
         Grid.SetColumn(numbers, 1);
@@ -1816,19 +1825,60 @@ internal sealed partial class InspectorPanel : UserControl
         repositoryRow.Children.Add(repositoryFileActions);
         if (GitRequested is not null)
         {
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 0,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
             void Add(Control glyph, string label, WorkspaceGitAction action)
             {
-                var button = new Button { Content = glyph, Classes = { "inspector-file-menu", "git-row-action" }, Width = 26,
-                    Height = 26, Padding = new Thickness(0), VerticalContentAlignment = VerticalAlignment.Center };
+                var button = new Button
+                {
+                    Content = glyph,
+                    Classes = { "inspector-file-menu", "git-row-action" },
+                    Width = 26,
+                    Height = 26,
+                    MinWidth = 26,
+                    MinHeight = 26,
+                    Padding = new Thickness(0),
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                };
                 ToolTip.SetTip(button, HubStrings.Get(label));
                 Avalonia.Automation.AutomationProperties.SetName(button, HubStrings.Get(label));
                 button.Click += (_, _) => RequestGit(state, action, entry);
-                Grid.SetColumn(button, repositoryRow.ColumnDefinitions.Count);
-                repositoryRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-                repositoryRow.Children.Add(button);
+                actions.Children.Add(button);
             }
-            if (_scope != GitReviewScope.Staged && entry.WorktreeState != " ") Add(HubActionIcon.Create("Hub.Icon.Plus"), "GitStageFile", WorkspaceGitAction.Stage);
-            if (_scope != GitReviewScope.Unstaged && entry.IndexState is not (" " or "?")) Add(Themed(new TextBlock { Text = "−", FontSize = 16 }, "Hub.TextSecondary"), "GitUnstageFile", WorkspaceGitAction.Unstage);
+            if (_scope != GitReviewScope.Staged && entry.WorktreeState != " ")
+                Add(HubActionIcon.Create("Hub.Icon.Plus"), "GitStageFile", WorkspaceGitAction.Stage);
+            if (_scope != GitReviewScope.Unstaged && entry.IndexState is not (" " or "?"))
+                Add(Themed(new TextBlock { Text = "−", FontSize = 16 }, "Hub.TextSecondary"), "GitUnstageFile", WorkspaceGitAction.Unstage);
+            if (actions.Children.Count > 0)
+            {
+                var fade = new Border
+                {
+                    Width = 22,
+                    IsHitTestVisible = false,
+                    Classes = { "git-row-actions-fade" },
+                };
+                var plate = new Border
+                {
+                    Child = actions,
+                    Classes = { "git-row-actions-plate" },
+                };
+                Grid.SetColumn(plate, 1);
+                var overlay = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("Auto,Auto"),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                    Classes = { "git-row-actions" },
+                    Children = { fade, plate },
+                };
+                Grid.SetColumn(overlay, 0);
+                Grid.SetColumnSpan(overlay, 2);
+                repositoryRow.Children.Add(overlay);
+            }
         }
         container.Children.Add(repositoryRow);
         container.Children.Add(detail);

@@ -33,6 +33,11 @@
         <GradientStop Offset="0.45" Color="#FF2C313C" />
         <GradientStop Offset="1" Color="#FF2C313C" />
       </LinearGradientBrush>
+      <!-- Right-edge fade behind a repository row's hover git actions, matching Hub.SurfaceChrome. -->
+      <LinearGradientBrush x:Key="Hub.InspectorRowFade" StartPoint="0%,0%" EndPoint="100%,0%">
+        <GradientStop Offset="0" Color="#0014161A" />
+        <GradientStop Offset="1" Color="#FF14161A" />
+      </LinearGradientBrush>
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#333A47" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#232730" />
 
@@ -196,6 +201,11 @@
         <GradientStop Offset="0" Color="#00E3E6EE" />
         <GradientStop Offset="0.45" Color="#FFE3E6EE" />
         <GradientStop Offset="1" Color="#FFE3E6EE" />
+      </LinearGradientBrush>
+      <!-- Light counterpart matching Hub.SurfaceChrome behind a repository row's hover git actions. -->
+      <LinearGradientBrush x:Key="Hub.InspectorRowFade" StartPoint="0%,0%" EndPoint="100%,0%">
+        <GradientStop Offset="0" Color="#00E7E9EF" />
+        <GradientStop Offset="1" Color="#FFE7E9EF" />
       </LinearGradientBrush>
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#D9E4F7" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#FFFFFF" />
