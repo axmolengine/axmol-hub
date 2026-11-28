@@ -2,7 +2,7 @@
   <PropertyGroup>
     <!-- WinExe only suppresses the console window on Windows; on macOS / Linux it is a plain executable. -->
     <OutputType>WinExe</OutputType>
-    <!-- Deliberately no -windows suffix: this project must build on all three platforms. Avalonia 12.1.6's
+    <!-- Deliberately no -windows suffix: this project must build on all three platforms. Avalonia 12.2.0's
          lib/ ships both net8.0 and net10.0, so aligning with Core / Cli on net8.0 is enough — no TFM bump.
          On 2026-10-09 we did bump to net8.0-windows10.0.19041.0 for in-process WinRT toasts, and reverted it
          the same day after measuring, for two reasons:
@@ -82,16 +82,16 @@
          and a package Hub writes code against is declared here rather than leaned on through someone else's
          dependency: the day that plugin drops it, a transitive-only reference becomes a compile error nobody
          links to this decision. Namespace Avalonia.Svg: SvgImage is an IImage, so it goes into Image.Source.
-         The pin also decides the Svg.Skia chain: 12.0.0.17 asks for Svg.Model / Svg.SceneGraph 5.2.3, while
+         The pin also decides the Svg.Skia chain: 12.2.0 asks for Svg.Model / Svg.SceneGraph 5.2.4, while
          Markdown.Avalonia.Svg's own 12.0.0.1 would have kept them at 4.1.0. That chain does not reach
          SkiaSharp — Svg.Model draws through ShimSkiaSharp — so SkiaSharp stays at the 3.119.4 Avalonia.Skia
          pins and the per-RID native-asset set is untouched, which is the thing an SVG bump used to threaten. -->
-    <PackageReference Include="Svg.Controls.Avalonia" Version="12.0.0.17" />
+    <PackageReference Include="Svg.Controls.Avalonia" Version="12.2.0" />
     <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="Velopack" Version="1.2.161" />
-    <PackageReference Include="Avalonia" Version="12.1.6" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+    <PackageReference Include="Avalonia" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.2.0" />
     <!-- DataGrid is not in Avalonia core and must be referenced separately. This is the conclusion of
          spike #2: pick the package over the built-in TableView added in 12.1 — the WPF version has 35
          DataGrid references (column definitions + cell templates), and DataGrid's API surface is the
