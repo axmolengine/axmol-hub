@@ -982,11 +982,15 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
     </Style>
 
-    <!-- The composer frame. -->
+    <!-- The composer frame. Its shadow lives on a sibling Border behind the frame (like MainWindow's
+         WindowShadowLayer) so ClipToBounds on ComposerFrame does not clip the shadow or break scaled captures. -->
+    <Style Selector="Border.composer-shadow">
+      <Setter Property="Background" Value="{DynamicResource Hub.Surface}" />
+      <Setter Property="BoxShadow" Value="{DynamicResource Hub.Shadow.Card}" />
+    </Style>
     <Style Selector="Border.composer">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="BoxShadow" Value="{DynamicResource Hub.Shadow.Card}" />
     </Style>
     <Style Selector="Border.composer.focused">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
@@ -1604,9 +1608,13 @@
               ClipToBounds="True" HorizontalAlignment="Stretch" Margin="0,0,0,6"
               Background="{DynamicResource Hub.SurfaceAlt}"
               BorderBrush="{DynamicResource Hub.Border}" BorderThickness="1" CornerRadius="8" />
+      <Border Grid.Row="7" Classes="composer-shadow" IsHitTestVisible="False"
+              CornerRadius="14" HorizontalAlignment="Stretch" MaxWidth="820"
+              Margin="0,6,0,0" />
       <Border x:Name="ComposerFrame" Classes="composer" Grid.Row="7"
               Background="{DynamicResource Hub.Surface}" CornerRadius="14"
-              HorizontalAlignment="Stretch" MaxWidth="820" ClipToBounds="True"
+              ClipToBounds="True"
+              HorizontalAlignment="Stretch" MaxWidth="820"
               Margin="0,6,0,0" Padding="14,12,12,10">
         <Grid x:Name="ComposerContent" RowDefinitions="Auto,Auto,Auto,Auto">
           <Border x:Name="ReplyPreview" Grid.Row="0" Classes="reply-preview" IsVisible="False" />
