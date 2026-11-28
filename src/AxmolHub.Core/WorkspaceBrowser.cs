@@ -57,7 +57,9 @@ public sealed record BrowserActRequest(
     string? Script,
     TimeSpan Timeout,
     string? Key = null,
-    string[]? Modifiers = null);
+    string[]? Modifiers = null,
+    double? X = null,
+    double? Y = null);
 
 /// <summary>Outcome of an embedded browser action.</summary>
 public sealed record BrowserActResult(

@@ -1893,12 +1893,18 @@ internal static class AiToolsChecks
             || readLocal.Contains("SUPERSECRET", StringComparison.Ordinal) || !readLocal.Contains("[REDACTED]", StringComparison.Ordinal))
             throw new Exception($"browser_read did not frame untrusted page data or redact secrets:{Environment.NewLine}{readLocal}");
         var badAct = await browserTools.BrowserActAsync("click");
+        var badHalfCoord = await browserTools.BrowserActAsync("click", x: 10);
+        var badNegCoord = await browserTools.BrowserActAsync("click", x: -5, y: 10);
         var badSelect = await browserTools.BrowserActAsync("select", element_ref: 1);
         var badKey = await browserTools.BrowserActAsync("press_key");
         var goodAct = await browserTools.BrowserActAsync("eval", script: "document.title");
+        var goodCoordClick = await browserTools.BrowserActAsync("click", x: 40, y: 24);
         var goodHover = await browserTools.BrowserActAsync("hover", selector: "button");
         var goodClose = await browserTools.BrowserActAsync("close");
+        var coordPreview = ToolPreviews.PreviewFor(ToolNames.BrowserAct, """{"action":"click","x":40,"y":24}""", browserScope);
         if (!badAct.StartsWith("Refused:", StringComparison.Ordinal)
+            || !badHalfCoord.StartsWith("Refused:", StringComparison.Ordinal)
+            || !badNegCoord.StartsWith("Refused:", StringComparison.Ordinal)
             || !badSelect.StartsWith("Refused:", StringComparison.Ordinal)
             || !badKey.StartsWith("Refused:", StringComparison.Ordinal)
             || !WorkspaceBrowserPolicy.IsMutatingAction("select")
@@ -1906,8 +1912,10 @@ internal static class AiToolsChecks
             || WorkspaceBrowserPolicy.IsMutatingAction("hover")
             || WorkspaceBrowserPolicy.IsMutatingAction("close")
             || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodAct)
+            || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodCoordClick)
             || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodHover)
             || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodClose)
+            || !coordPreview.Contains("at (40, 24)", StringComparison.Ordinal)
             || goodAct.Contains("SUPERSECRET", StringComparison.Ordinal))
             throw new Exception($"browser_act validation, progress or redaction failed:{Environment.NewLine}{badAct}{Environment.NewLine}{goodAct}");
         var browserCard = ToolPreviews.PreviewFor(ToolNames.BrowserOpen, """{"url":"https://example.com/app?key=SUPERSECRET"}""", browserScope);

@@ -228,7 +228,8 @@ public sealed partial class WorkspaceTools
     [Description("Interact with an embedded workspace browser tab: click, type, select (dropdown option), "
                  + "press_key, hover, scroll, back, forward, reload, wait (for ms or a selector), eval "
                  + "(synchronous JavaScript expression/body), or close (close the tab). "
-                 + "Prefer element_ref from browser_read over guessing selectors.")]
+                 + "Prefer element_ref from browser_read over guessing selectors; for canvas/WebGL targets, "
+                 + "you can also pass x and y CSS pixel coordinates (viewport coords, or offset inside element_ref/selector).")]
     public async Task<string> BrowserActAsync(
         [Description("Action: click, type, select, press_key, hover, scroll, back, forward, reload, wait, eval, or close.")] string action,
         [Description("Optional tab_id from browser_open or browser_read. Omit for the active workspace browser tab.")] string? tab_id = null,
@@ -242,6 +243,8 @@ public sealed partial class WorkspaceTools
         [Description("Synchronous JavaScript expression or function body to run when action is 'eval'.")] string? script = null,
         [Description("Key name when action is 'press_key' (for example Enter, Escape, Tab, ArrowDown, Space, or a single character).")] string? key = null,
         [Description("Optional modifier keys for 'press_key': ctrl, alt, shift, meta.")] string[]? modifiers = null,
+        [Description("Optional X coordinate in CSS pixels for 'click' or 'hover' (viewport X, or offset inside the target element when element_ref/selector is also given).")] double? x = null,
+        [Description("Optional Y coordinate in CSS pixels for 'click' or 'hover' (viewport Y, or offset inside the target element when element_ref/selector is also given).")] double? y = null,
         CancellationToken cancellationToken = default)
     {
         if (context.Browser is not { } bridge)
@@ -251,8 +254,17 @@ public sealed partial class WorkspaceTools
         if (!WorkspaceBrowserPolicy.IsSupportedAction(verb))
             return $"Refused: unsupported browser_act action '{action}'. Use one of: click, type, select, press_key, hover, scroll, back, forward, reload, wait, eval, close.";
 
-        if (verb is "click" or "type" or "select" or "hover" && element_ref is null && string.IsNullOrWhiteSpace(selector))
+        if (x.HasValue != y.HasValue)
+            return "Refused: browser_act requires both x and y when specifying coordinates.";
+        if (x is { } px && y is { } py && (double.IsNaN(px) || double.IsInfinity(px) || double.IsNaN(py) || double.IsInfinity(py) || px < 0 || py < 0))
+            return "Refused: browser_act x and y must be finite non-negative CSS pixel coordinates.";
+
+        var hasTarget = element_ref is not null || !string.IsNullOrWhiteSpace(selector);
+        var hasCoords = x.HasValue && y.HasValue;
+        if (verb is "type" or "select" && !hasTarget)
             return $"Refused: browser_act '{verb}' requires element_ref (from browser_read) or a CSS selector.";
+        if (verb is "click" or "hover" && !hasTarget && !hasCoords)
+            return $"Refused: browser_act '{verb}' requires element_ref, a CSS selector, or x/y coordinates.";
         if (verb is "type" or "select" && text is null)
             return $"Refused: browser_act '{verb}' requires the text parameter.";
         if (verb == "press_key" && string.IsNullOrWhiteSpace(key))
@@ -287,7 +299,9 @@ public sealed partial class WorkspaceTools
                     script,
                     WorkspaceBrowserPolicy.DefaultActionTimeout,
                     string.IsNullOrWhiteSpace(key) ? null : key.Trim(),
-                    cleanModifiers is { Length: > 0 } ? cleanModifiers : null),
+                    cleanModifiers is { Length: > 0 } ? cleanModifiers : null,
+                    x,
+                    y),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

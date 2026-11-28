@@ -441,6 +441,9 @@ public static class ToolPreviews
         if (elementRef > 0) detail.Add($"ref #{elementRef}");
         var selector = Text(arguments, "selector");
         if (selector.Length > 0) detail.Add($"selector {selector}");
+        if (arguments.TryGetValue("x", out var xEl) && arguments.TryGetValue("y", out var yEl)
+            && xEl.ValueKind == JsonValueKind.Number && yEl.ValueKind == JsonValueKind.Number)
+            detail.Add($"at ({xEl.GetDouble():0.#}, {yEl.GetDouble():0.#})");
         var text = Text(arguments, "text");
         if (text.Length > 0)
         {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -209,12 +210,21 @@ internal sealed partial class WorkspaceBrowserView
                 HubStrings.Get(_lastErrorKey ?? "WorkspaceBrowserLoadFailed"));
 
         var windowBounds = TryGetWindowBounds(web);
-        var (frame, error) = await WebViewSnapshot.CaptureAsync(web.TryGetPlatformHandle(), windowBounds, timeout, cancellationToken, Log);
-        if (frame is null)
-            return new BrowserScreenshotResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
-                error ?? "Could not capture the embedded browser screenshot.");
+        var hidPointer = await SetVirtualPointerHiddenAsync(web, hidden: true);
+        try
+        {
+            if (hidPointer) await Task.Delay(35, cancellationToken);
+            var (frame, error) = await WebViewSnapshot.CaptureAsync(web.TryGetPlatformHandle(), windowBounds, timeout, cancellationToken, Log);
+            if (frame is null)
+                return new BrowserScreenshotResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
+                    error ?? "Could not capture the embedded browser screenshot.");
 
-        return new BrowserScreenshotResult(true, TabId, _currentUri?.AbsoluteUri, _pageTitle, frame, null);
+            return new BrowserScreenshotResult(true, TabId, _currentUri?.AbsoluteUri, _pageTitle, frame, null);
+        }
+        finally
+        {
+            if (hidPointer) await SetVirtualPointerHiddenAsync(web, hidden: false);
+        }
     }
 
     private static WebViewWindowBounds? TryGetWindowBounds(NativeWebView web)
@@ -346,13 +356,18 @@ internal sealed partial class WorkspaceBrowserView
         try
         {
             await InstallConsoleHookAsync();
+            if (request.Action is "click" or "hover" or "type" or "select")
+            {
+                var moved = await GlideVirtualPointerAsync(web, request, cancellationToken);
+                if (moved is not null) return moved;
+            }
             var script = request.Action switch
             {
-                "click" => BuildClickScript(request.ElementRef, request.Selector),
+                "click" => BuildClickScript(request.ElementRef, request.Selector, request.X, request.Y),
                 "type" => BuildTypeScript(request.ElementRef, request.Selector, request.Text ?? "", request.Submit),
                 "select" => BuildSelectScript(request.ElementRef, request.Selector, request.Text ?? ""),
                 "press_key" => BuildPressKeyScript(request.ElementRef, request.Selector, request.Key ?? "", request.Modifiers),
-                "hover" => BuildHoverScript(request.ElementRef, request.Selector),
+                "hover" => BuildHoverScript(request.ElementRef, request.Selector, request.X, request.Y),
                 "scroll" => BuildScrollScript(request.ElementRef, request.Selector, request.DeltaX, request.DeltaY),
                 "eval" => BuildEvalScript(request.Script ?? ""),
                 _ => throw new InvalidOperationException($"Unsupported action {request.Action}"),
@@ -379,6 +394,51 @@ internal sealed partial class WorkspaceBrowserView
         {
             return new BrowserActResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
                 $"Browser '{request.Action}' failed: {ex.Message}");
+        }
+    }
+
+    private async Task<BrowserActResult?> GlideVirtualPointerAsync(NativeWebView web, BrowserActRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await InvokeScriptStringAsync(web, VirtualPointerScript);
+            var raw = await InvokeScriptStringAsync(web, BuildPreparePointerScript(request.ElementRef, request.Selector, request.X, request.Y));
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                using var doc = JsonDocument.Parse(raw);
+                if (!BoolProp(doc.RootElement, "ok"))
+                {
+                    return new BrowserActResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, null,
+                        StringProp(doc.RootElement, "error") ?? "Target element not found.");
+                }
+            }
+            // Let the user watch the pointer glide smoothly onto the target when the tab is visible on screen.
+            if (_active) await Task.Delay(230, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Visual pointer animation is best-effort; never block the underlying action if overlay setup fails.
+        }
+        return null;
+    }
+
+    private async Task<bool> SetVirtualPointerHiddenAsync(NativeWebView web, bool hidden)
+    {
+        if (_disposed || _message.IsVisible) return false;
+        try
+        {
+            var flag = hidden ? "true" : "false";
+            var raw = await InvokeScriptStringAsync(web,
+                $"window.__axmolHubPointer ? window.__axmolHubPointer.setHidden({flag}) : 'none'");
+            return string.Equals(raw, "hidden", StringComparison.Ordinal);
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 
@@ -479,6 +539,7 @@ internal sealed partial class WorkspaceBrowserView
                 let ref = 0;
                 for (const el of nodes) {
                   if (ref >= 80) break;
+                  if (el.closest && el.closest('[data-axmol-hub-overlay]')) continue;
                   const style = window.getComputedStyle(el);
                   if (style.display === 'none' || style.visibility === 'hidden') continue;
                   const rect = el.getBoundingClientRect();
@@ -549,19 +610,205 @@ internal sealed partial class WorkspaceBrowserView
             """;
     }
 
-    private static string BuildClickScript(int? elementRef, string? selector)
+    private const string VirtualPointerScript = """
+        (() => {
+          if (window.__axmolHubPointer) return 'ok';
+          let host = null, cursor = null, svg = null;
+          let tapTimer = 0;
+          let visible = false;
+          let pos = null;
+
+          const ensure = () => {
+            if (host && host.isConnected) return true;
+            const root = document.documentElement;
+            if (!root) return false;
+            if (!document.querySelector('style[data-axmol-hub-overlay="1"]')) {
+              const style = document.createElement('style');
+              style.setAttribute('data-axmol-hub-overlay', '1');
+              style.textContent = '@keyframes axmolHubRipple{0%{transform:translate(-50%,-50%) scale(.35);opacity:.9}100%{transform:translate(-50%,-50%) scale(1.9);opacity:0}}';
+              root.appendChild(style);
+            }
+            host = document.createElement('div');
+            host.setAttribute('data-axmol-hub-overlay', '1');
+            host.setAttribute('aria-hidden', 'true');
+            host.style.cssText = 'position:fixed!important;inset:0!important;pointer-events:none!important;user-select:none!important;z-index:2147483647!important;overflow:hidden!important;margin:0!important;padding:0!important;border:0!important;';
+
+            cursor = document.createElement('div');
+            cursor.style.cssText = 'position:fixed;left:0;top:0;width:24px;height:24px;opacity:0;pointer-events:none;will-change:transform,opacity;transition:transform 220ms cubic-bezier(0.22,1,0.36,1),opacity 260ms ease;';
+            const ns = 'http://www.w3.org/2000/svg';
+            svg = document.createElementNS(ns, 'svg');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('width', '22');
+            svg.setAttribute('height', '22');
+            svg.style.cssText = 'display:block;overflow:visible;transform-origin:4.5px 3.8px;transition:transform 110ms ease;filter:drop-shadow(0 0 5px rgba(59,130,246,0.55)) drop-shadow(0 1.5px 3px rgba(0,0,0,0.48));';
+            const d = 'M 4.5 3.8 L 10.1 19.3 L 12.6 13.0 L 19.2 10.6 Z';
+            const halo = document.createElementNS(ns, 'path');
+            halo.setAttribute('d', d);
+            halo.setAttribute('fill', '#FFFFFF');
+            halo.setAttribute('stroke', '#FFFFFF');
+            halo.setAttribute('stroke-width', '4.2');
+            halo.setAttribute('stroke-linejoin', 'round');
+            halo.setAttribute('stroke-linecap', 'round');
+            const body = document.createElementNS(ns, 'path');
+            body.setAttribute('d', d);
+            body.setAttribute('fill', '#000000');
+            body.setAttribute('stroke', '#000000');
+            body.setAttribute('stroke-width', '0.6');
+            body.setAttribute('stroke-linejoin', 'round');
+            svg.appendChild(halo);
+            svg.appendChild(body);
+            cursor.appendChild(svg);
+            host.appendChild(cursor);
+            root.appendChild(host);
+            return true;
+          };
+
+          const clamp = (x, y) => ({
+            x: Math.max(2, Math.min(Math.max(2, window.innerWidth - 4), Number.isFinite(x) ? x : 0)),
+            y: Math.max(2, Math.min(Math.max(2, window.innerHeight - 4), Number.isFinite(y) ? y : 0))
+          });
+
+          const move = (x, y) => {
+            if (!ensure()) return;
+            const p = clamp(x, y);
+            const tipOffsetX = 4.5, tipOffsetY = 3.8;
+            if (!pos) {
+              const start = clamp(p.x + 28, p.y + 24);
+              cursor.style.transition = 'none';
+              cursor.style.transform = `translate3d(${start.x - tipOffsetX}px,${start.y - tipOffsetY}px,0)`;
+              cursor.style.opacity = '0';
+              void cursor.offsetWidth;
+              cursor.style.transition = 'transform 220ms cubic-bezier(0.22,1,0.36,1),opacity 260ms ease';
+            }
+            pos = p;
+            visible = true;
+            cursor.style.opacity = '1';
+            cursor.style.transform = `translate3d(${p.x - tipOffsetX}px,${p.y - tipOffsetY}px,0)`;
+          };
+
+          const click = (x, y) => {
+            if (!ensure()) return;
+            const p = clamp(x, y);
+            move(p.x, p.y);
+            clearTimeout(tapTimer);
+            if (svg) {
+              svg.style.transform = 'scale(0.84)';
+              tapTimer = setTimeout(() => { if (svg) svg.style.transform = 'scale(1)'; }, 120);
+            }
+            const ring = document.createElement('div');
+            ring.style.cssText = `position:fixed;left:${p.x}px;top:${p.y}px;width:24px;height:24px;border-radius:50%;pointer-events:none;box-sizing:border-box;border:1.5px solid rgba(255,255,255,0.88);background:rgba(59,130,246,0.16);box-shadow:0 0 6px rgba(59,130,246,0.5);animation:axmolHubRipple 420ms cubic-bezier(0.22,1,0.36,1) forwards;`;
+            host.appendChild(ring);
+            setTimeout(() => ring.remove(), 460);
+          };
+
+          const setHidden = (hidden) => {
+            if (!host || !host.isConnected) return 'none';
+            if (hidden) {
+              if (!visible) return 'none';
+              host.style.visibility = 'hidden';
+              return 'hidden';
+            }
+            host.style.visibility = '';
+            return 'shown';
+          };
+
+          const hideOnUserInput = (e) => {
+            if (!e || !e.isTrusted || !visible) return;
+            visible = false;
+            if (cursor) cursor.style.opacity = '0';
+          };
+          for (const evt of ['pointerdown', 'mousedown', 'wheel', 'keydown', 'touchstart']) {
+            window.addEventListener(evt, hideOnUserInput, { capture: true, passive: true });
+          }
+
+          window.__axmolHubPointer = { move, click, setHidden };
+          return 'ok';
+        })()
+        """;
+
+    private static string ResolvePointJs(int? elementRef, string? selector, double? x, double? y)
     {
-        var lookup = TargetLookupJs(elementRef, selector);
+        var hasTarget = elementRef is not null || !string.IsNullOrWhiteSpace(selector);
+        var hasCoords = x.HasValue && y.HasValue;
+        var xJs = hasCoords ? x!.Value.ToString("0.###", CultureInfo.InvariantCulture) : "null";
+        var yJs = hasCoords ? y!.Value.ToString("0.###", CultureInfo.InvariantCulture) : "null";
+        var lookup = hasTarget ? TargetLookupJs(elementRef, selector) : "null";
+        return $$"""
+            let el = {{lookup}};
+            const reqX = {{xJs}}, reqY = {{yJs}};
+            if ({{(hasTarget ? "true" : "false")}}) {
+              if (!el) return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
+              el.scrollIntoView({ block: 'center', inline: 'nearest' });
+            }
+            const rect = el ? el.getBoundingClientRect() : null;
+            let cx, cy;
+            if (rect && reqX !== null && reqY !== null) {
+              cx = rect.left + reqX;
+              cy = rect.top + reqY;
+            } else if (rect) {
+              cx = rect.left + rect.width / 2;
+              cy = rect.top + rect.height / 2;
+            } else {
+              cx = reqX;
+              cy = reqY;
+              el = document.elementFromPoint(cx, cy);
+            }
+            """;
+    }
+
+    private static string BuildPreparePointerScript(int? elementRef, string? selector, double? x, double? y)
+    {
+        var resolve = ResolvePointJs(elementRef, selector, x, y);
         return $$"""
             (() => {
               try {
-                const el = {{lookup}};
-                if (!el) return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
-                el.scrollIntoView({ block: 'center', inline: 'nearest' });
-                if (typeof el.focus === 'function') el.focus();
-                el.click();
-                const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Clicked <${el.tagName.toLowerCase()}>${label ? ' "' + label + '"' : ''}` });
+                {{resolve}}
+                if (window.__axmolHubPointer) window.__axmolHubPointer.move(cx, cy);
+                return JSON.stringify({ ok: true, cx, cy });
+              } catch (e) {
+                return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
+              }
+            })()
+            """;
+    }
+
+    private static string BuildClickScript(int? elementRef, string? selector, double? x, double? y)
+    {
+        var hasCoords = x.HasValue && y.HasValue;
+        var resolve = ResolvePointJs(elementRef, selector, x, y);
+        return $$"""
+            (() => {
+              try {
+                {{resolve}}
+                if (window.__axmolHubPointer) window.__axmolHubPointer.click(cx, cy);
+                const target = el || document.body || document.documentElement;
+                if (!target) return JSON.stringify({ ok: false, error: 'No clickable element found at the target coordinates.' });
+                const tag = target.tagName ? target.tagName.toLowerCase() : 'document';
+                // Only focus editable controls or canvas; calling focus() on a button/link triggers keyboard :focus-visible rings.
+                if ((tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'canvas' || target.isContentEditable)
+                    && typeof target.focus === 'function') target.focus();
+                const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1 };
+                if (typeof PointerEvent === 'function') {
+                  target.dispatchEvent(new PointerEvent('pointerover', opts));
+                  target.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
+                  target.dispatchEvent(new PointerEvent('pointermove', opts));
+                  target.dispatchEvent(new PointerEvent('pointerdown', opts));
+                }
+                target.dispatchEvent(new MouseEvent('mouseover', opts));
+                target.dispatchEvent(new MouseEvent('mousedown', opts));
+                const upOpts = { ...opts, buttons: 0 };
+                if (typeof PointerEvent === 'function') target.dispatchEvent(new PointerEvent('pointerup', upOpts));
+                target.dispatchEvent(new MouseEvent('mouseup', upOpts));
+                if (tag === 'canvas' || {{(hasCoords ? "true" : "false")}}) {
+                  target.dispatchEvent(new MouseEvent('click', upOpts));
+                } else if (typeof target.click === 'function') {
+                  target.click();
+                } else {
+                  target.dispatchEvent(new MouseEvent('click', upOpts));
+                }
+                const label = (target.innerText || (target.getAttribute && target.getAttribute('aria-label')) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                const coordText = ` at (${Math.round(cx)}, ${Math.round(cy)})`;
+                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Clicked <${tag}>${label ? ' "' + label + '"' : ''}${coordText}` });
               } catch (e) {
                 return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
               }
@@ -706,27 +953,27 @@ internal sealed partial class WorkspaceBrowserView
             """;
     }
 
-    private static string BuildHoverScript(int? elementRef, string? selector)
+    private static string BuildHoverScript(int? elementRef, string? selector, double? x, double? y)
     {
-        var lookup = TargetLookupJs(elementRef, selector);
+        var resolve = ResolvePointJs(elementRef, selector, x, y);
         return $$"""
             (() => {
               try {
-                const el = {{lookup}};
-                if (!el) return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
-                el.scrollIntoView({ block: 'center', inline: 'nearest' });
-                const rect = el.getBoundingClientRect();
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };
+                {{resolve}}
+                const target = el || document.body || document.documentElement;
+                if (!target) return JSON.stringify({ ok: false, error: 'No element found at the target coordinates.' });
+                const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
                 if (typeof PointerEvent === 'function') {
-                  el.dispatchEvent(new PointerEvent('pointerover', opts));
-                  el.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
+                  target.dispatchEvent(new PointerEvent('pointerover', opts));
+                  target.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
+                  target.dispatchEvent(new PointerEvent('pointermove', opts));
                 }
-                el.dispatchEvent(new MouseEvent('mouseover', opts));
-                el.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
-                const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Hovered <${el.tagName.toLowerCase()}>${label ? ' "' + label + '"' : ''}` });
+                target.dispatchEvent(new MouseEvent('mouseover', opts));
+                target.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
+                target.dispatchEvent(new MouseEvent('mousemove', opts));
+                const tag = target.tagName ? target.tagName.toLowerCase() : 'document';
+                const label = (target.innerText || (target.getAttribute && target.getAttribute('aria-label')) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Hovered <${tag}>${label ? ' "' + label + '"' : ''} at (${Math.round(cx)}, ${Math.round(cy)})` });
               } catch (e) {
                 return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
               }
