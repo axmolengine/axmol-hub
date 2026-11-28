@@ -226,7 +226,31 @@ public sealed partial class ChatWorkspace : IDisposable
         if (ActiveWorkspaceRoot != request.Workspace) return null;
         var log = LogProvider?.Invoke();
         return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(),
-            finished, BeginGitStatus, _gitHubPushSignIn, gitHubProgress, stageAllBeforeCommit);
+            (item, committed, feedback) =>
+            {
+                if (request.Action == WorkspaceGitAction.AuthorizeGitHub && item.State == TaskQueue.Phase.Done)
+                    GitHubPushSignInChanged?.Invoke();
+                finished(item, committed, feedback);
+            }, BeginGitStatus, _gitHubPushSignIn, gitHubProgress, stageAllBeforeCommit);
+    }
+
+    internal event Action? GitHubPushSignInChanged;
+
+    internal bool HasGitHubPushSignIn()
+    {
+        try { return OperatingSystem.IsLinux() && _gitHubPushSignIn.Read() is not null; }
+        catch (Exception ex) when (ex is SecretStoreException or IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    internal UserFeedback SignOutGitHubPush()
+    {
+        if (TaskQueue.Instance.ActiveMutating is { } busy)
+            return UserFeedback.Warning(string.Format(HubStrings.Get("GitWriteBusy"), busy.Title), "git-busy");
+        try { _gitHubPushSignIn.SignOut(); }
+        catch (Exception ex) when (ex is SecretStoreException or IOException or UnauthorizedAccessException)
+        { return UserFeedback.Error(HubStrings.Get("GitAuthStorageFailed"), "git-failed"); }
+        GitHubPushSignInChanged?.Invoke();
+        return UserFeedback.Success(HubStrings.Get("GitPushSignedOut"), "git-succeeded");
     }
 
     internal Task<IReadOnlyList<GitBranchInfo>> ReadLocalBranchesAsync(string root)

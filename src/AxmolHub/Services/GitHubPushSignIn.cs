@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using AxmolHub.Agent;
 using AxmolHub.Core;
 
@@ -9,29 +7,20 @@ internal sealed class GitHubPushSignIn(ISecretStore? secrets)
 {
     private const string DevicePage = "https://github.com/login/device";
     private const string Scope = "repo";
+    private const string SecretId = "git-github-com";
 
-    internal string? Read(string url)
+    internal string? Read()
     {
-        var token = secrets?.Read(SecretId(url));
+        var token = secrets?.Read(SecretId);
         return GitPushCredentialCache.IsToken(token) ? token : null;
     }
 
-    internal async Task<GitCommitResult> ForgetAsync(WorkspaceGitRequest request, CancellationToken cancellation)
-    {
-        if (request.PushTarget is not { GitHubUrl: { } url } target) return new(false, "git-auth-unsupported", null);
-        var validation = await GitRepository.ValidateGitHubPushTargetAsync(request.Workspace, request.Root, request.Branch,
-            target, cancellation);
-        if (!validation.Success) return validation;
-        if (secrets is null) return new(false, "git-auth-storage", null);
-        try { secrets.Delete(SecretId(url)); }
-        catch (Exception) { return new(false, "git-auth-storage", null); }
-        return new(true, null, null);
-    }
+    internal void SignOut() => secrets?.Delete(SecretId);
 
     internal async Task<GitCommitResult> AuthorizeAsync(WorkspaceGitRequest request,
         IProgress<DeviceCodeChallenge>? progress, CancellationToken cancellation)
     {
-        if (!OperatingSystem.IsLinux() || request.PushTarget is not { GitHubUrl: { } url } target)
+        if (!OperatingSystem.IsLinux() || request.PushTarget is not { GitHubUrl: not null } target)
             return new(false, "git-auth-unsupported", null);
         if (secrets is null) return new(false, "git-auth-storage", null);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -63,7 +52,7 @@ internal sealed class GitHubPushSignIn(ISecretStore? secrets)
                 target, deadline.Token).ConfigureAwait(false);
             if (!validation.Success) return validation;
             deadline.Token.ThrowIfCancellationRequested();
-            try { secrets.Write(SecretId(url), result.Key); }
+            try { secrets.Write(SecretId, result.Key); }
             catch (Exception) { return new(false, "git-auth-storage", null); }
             return new(true, null, null);
         }
@@ -71,8 +60,6 @@ internal sealed class GitHubPushSignIn(ISecretStore? secrets)
         catch (OperationCanceledException) when (deadline.IsCancellationRequested) { return new(false, "git-auth-timeout", null); }
         catch (Exception) { return new(false, "git-auth-failed", null); }
     }
-
-    private static string SecretId(string url) => "git-github-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)));
 
     private sealed class DeviceProgress(IProgress<DeviceCodeChallenge> progress) : IProgress<DeviceCodeChallenge>
     {

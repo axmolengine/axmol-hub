@@ -12,7 +12,7 @@ using AxmolHub.Core;
 
 namespace AxmolHub;
 
-internal enum WorkspaceGitAction { Stage, Unstage, StageAll, Commit, Push, CommitPush, CreateBranch, Pull, SwitchBranch, AuthorizeGitHub, ForgetGitHubCredential }
+internal enum WorkspaceGitAction { Stage, Unstage, StageAll, Commit, Push, CommitPush, CreateBranch, Pull, SwitchBranch, AuthorizeGitHub }
 internal sealed record WorkspaceGitRequest(string Workspace, string Root, string Branch, WorkspaceGitAction Action,
     string Title, GitStatusEntry? Entry, GitPushTarget? PushTarget = null, string? ExpectedSourceOid = null);
 
@@ -106,8 +106,6 @@ internal sealed partial class InspectorPanel
             Add("GitPull", WorkspaceGitAction.Pull, state.HasUpstream, HubStrings.Get("GitPullNoUpstream"));
             Add(retry ? "GitRetryPush" : "PushSummaryAction", WorkspaceGitAction.Push, state.CanPush,
                 upstream ?? HubStrings.Get("PushSummaryNothingToPush"));
-            if (OperatingSystem.IsLinux() && state.PushTarget?.GitHubUrl is not null)
-                Add("GitForgetCredential", WorkspaceGitAction.ForgetGitHubCredential, true);
             menu.Items.Add(new Separator());
             Add("GitCreateBranch", WorkspaceGitAction.CreateBranch, true, needsTitle: true);
             var branches = new MenuItem { Header = HubStrings.Get("GitSwitchBranch"), Tag = "GitSwitchBranch", IsEnabled = false };

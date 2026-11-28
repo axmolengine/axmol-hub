@@ -260,6 +260,13 @@
           <CheckBox x:Name="WebSearchCheck" Content="{DynamicResource AllowWebSearch}" Margin="0,12,0,0" />
           <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource AllowWebSearchHint}" />
 
+          <StackPanel x:Name="GitHubPushCredentialsGroup" Spacing="6" IsVisible="False" Margin="0,12,0,0">
+            <TextBlock Text="{DynamicResource GitPushCredentialsTitle}" FontSize="13" FontWeight="SemiBold" />
+            <TextBlock Classes="muted" TextWrapping="Wrap" Text="{DynamicResource GitPushCredentialsHint}" />
+            <Button x:Name="GitHubPushSignOutButton" Classes="compact quiet" HorizontalAlignment="Left" Margin="0"
+                    Content="{DynamicResource GitPushSignOut}" />
+          </StackPanel>
+
           <!-- macOS permission diagnostics and management (TCC + UserNotifications). Shown on macOS only so
                permissions can be inspected, requested, or reset without opening a terminal. -->
           <StackPanel x:Name="MacSystemPermissionsGroup" Spacing="10" IsVisible="False">

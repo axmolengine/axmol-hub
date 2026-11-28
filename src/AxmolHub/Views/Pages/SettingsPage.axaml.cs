@@ -178,6 +178,11 @@ public partial class SettingsPage : UserControl
         WebSearchCheck.IsCheckedChanged += (_, _) => OnWebSearchChanged();
         ShowThinkingCheck.IsCheckedChanged += (_, _) => OnShowThinkingChanged();
         CommitSummaryPrefixesBox.LostFocus += (_, _) => OnCommitSummaryPrefixesChanged();
+        GitHubPushSignOutButton.Click += (_, _) =>
+        {
+            var result = _chat.SignOutGitHubPush();
+            if (TopLevel.GetTopLevel(this) is MainWindow window) window.ShowFeedback(result);
+        };
         WireMacSystemPermissions();
         WireProviders();
         InitializeCategories();
@@ -193,9 +198,12 @@ public partial class SettingsPage : UserControl
             HookUpdateService();
             HookMacSystemPermissions();
             StartAcpProbes();
+            _chat.GitHubPushSignInChanged += RefreshGitHubPushSignIn;
+            RefreshGitHubPushSignIn();
         };
         DetachedFromVisualTree += (_, _) =>
         {
+            _chat.GitHubPushSignInChanged -= RefreshGitHubPushSignIn;
             UnhookUpdateService();
             UnhookMacSystemPermissions();
             CancelAcpProbes();
@@ -274,6 +282,7 @@ public partial class SettingsPage : UserControl
         if (key == "permission")
         {
             RefreshMacSystemPermissions();
+            RefreshGitHubPushSignIn();
         }
         else if (key == "providers")
         {
@@ -284,6 +293,9 @@ public partial class SettingsPage : UserControl
         // list would open the next group somewhere in its middle.
         DetailScroll.Offset = default;
     }
+
+    private void RefreshGitHubPushSignIn()
+        => GitHubPushCredentialsGroup.IsVisible = _selectedCategory == "permission" && _chat.HasGitHubPushSignIn();
 
     /// <summary>Whether any picker in the card has its dropdown up. The shell's Escape handler asks, because a
     /// dropdown is its own top-level: the key belongs to the list the reader is looking at, not to the card

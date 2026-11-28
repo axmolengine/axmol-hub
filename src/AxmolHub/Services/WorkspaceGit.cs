@@ -16,7 +16,7 @@ internal static class WorkspaceGit
         WorkspaceGitAction.Unstage => "GitUnstageFile", WorkspaceGitAction.Commit => "CommitSummaryAction",
         WorkspaceGitAction.Push => "PushSummaryAction", WorkspaceGitAction.CommitPush => "CommitPushSummaryAction",
         WorkspaceGitAction.CreateBranch => "GitCreateBranch", WorkspaceGitAction.Pull => "GitPull", WorkspaceGitAction.SwitchBranch => "GitSwitchBranch",
-        WorkspaceGitAction.AuthorizeGitHub => "GitAuthorizeGitHub", WorkspaceGitAction.ForgetGitHubCredential => "GitForgetCredential",
+        WorkspaceGitAction.AuthorizeGitHub => "GitAuthorizeGitHub",
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -41,11 +41,6 @@ internal static class WorkspaceGit
                 return;
             }
             item.SealCancellation();
-            if (action == WorkspaceGitAction.ForgetGitHubCredential)
-            {
-                Check(await gitHubSignIn.ForgetAsync(request, token));
-                return;
-            }
             void Stage(string key) => item.ApplyProgress(new(key, null, null, null, false, null));
             if (action is WorkspaceGitAction.Stage or WorkspaceGitAction.Unstage or WorkspaceGitAction.StageAll)
             {
@@ -80,9 +75,9 @@ internal static class WorkspaceGit
             {
                 Stage("GitPushing");
                 string? credential = null;
-                if (OperatingSystem.IsLinux() && request.PushTarget?.GitHubUrl is { } url)
+                if (OperatingSystem.IsLinux() && request.PushTarget?.GitHubUrl is not null)
                 {
-                    try { credential = gitHubSignIn.Read(url); }
+                    try { credential = gitHubSignIn.Read(); }
                     catch (Exception) { Check(new(false, "git-auth-storage", null), committed); }
                 }
                 var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token,
@@ -98,8 +93,6 @@ internal static class WorkspaceGit
 
         UserFeedback? CompletionFeedback()
         {
-            if (action == WorkspaceGitAction.ForgetGitHubCredential)
-                return UserFeedback.Success(HubStrings.Get("GitCredentialForgotten"), "git-succeeded");
             if (action is WorkspaceGitAction.CreateBranch or WorkspaceGitAction.SwitchBranch)
                 return UserFeedback.Success(string.Format(HubStrings.Get(action == WorkspaceGitAction.CreateBranch ? "GitBranchCreated" : "GitBranchSwitched"), request.Title), "git-succeeded");
             var key = (committed, pushed) switch
