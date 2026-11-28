@@ -31,6 +31,7 @@ namespace AxmolHub;
 public partial class MainWindow : Window
 {
     private HubWorkspace _workspace;
+    private BrowserHistoryStore _browserHistory;
     private readonly PreferencesStore _preferencesStore;
     private readonly HubPreferences _preferences;
     private readonly SystemAttentionService _attention = new();
@@ -185,6 +186,7 @@ public partial class MainWindow : Window
         _preferences = preferences;
         _workspace = new HubWorkspace(dataRoot, preferences, preferencesStore, StorageLayout(dataRoot).AuthRoot);
         _workspace.Owner = this;
+        _browserHistory = new BrowserHistoryStore(dataRoot);
         _chat = new ChatWorkspace(StorageLayout(dataRoot));
         // Diagnostic before Initialize: the macOS channel reports its environment note (for example "not inside
         // an .app bundle") from Initialize, and a sink attached afterwards would lose the one line that explains
@@ -1593,6 +1595,7 @@ public partial class MainWindow : Window
         _workspace.Dispose();
         _workspace = next;
         _workspace.Owner = this;
+        _browserHistory = new BrowserHistoryStore(next.Store.Root);
 
         // Events are wired on the new instance, so re-subscribing here won't append the log twice.
         WireWorkspace();

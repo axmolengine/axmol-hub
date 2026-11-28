@@ -631,6 +631,71 @@
       <Setter Property="Padding" Value="12,8" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
     </Style>
+    <Style Selector="TextBox.browser-address">
+      <Setter Property="CornerRadius" Value="13" />
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="Padding" Value="26,0,10,0" />
+    </Style>
+    <Style Selector="TextBox.browser-address:pointerover">
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+    </Style>
+    <Style Selector="TextBox.browser-address:focus">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSunken}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+    </Style>
+    <Style Selector="Border.browser-suggestions-popover">
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="5" />
+      <Setter Property="BoxShadow" Value="{DynamicResource Hub.Shadow.Popover}" />
+    </Style>
+    <Style Selector="Border.browser-suggestion-row">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="10,6,8,6" />
+      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Border.browser-suggestion-row:pointerover, Border.browser-suggestion-row.selected">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
+    <Style Selector="Button.browser-suggestion-remove">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Width" Value="22" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="CornerRadius" Value="11" />
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="IsHitTestVisible" Value="False" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:00:00.090" Easing="CubicEaseOut" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Border.browser-suggestion-row:pointerover Button.browser-suggestion-remove, Border.browser-suggestion-row.selected Button.browser-suggestion-remove">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="IsHitTestVisible" Value="True" />
+    </Style>
+    <Style Selector="Button.browser-suggestion-remove Path.browser-suggestion-remove-path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.browser-suggestion-remove:pointerover Path.browser-suggestion-remove-path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.browser-suggestion-remove:pointerover /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
     <Style Selector="Button.inspector-file-menu">
       <Setter Property="Padding" Value="6,0" />
       <Setter Property="MinWidth" Value="30" />

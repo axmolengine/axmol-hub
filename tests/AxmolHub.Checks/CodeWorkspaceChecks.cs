@@ -630,6 +630,44 @@ internal static class CodeWorkspaceChecks
             }
             return Task.CompletedTask;
         });
+        await Claim("browser history refuses credentials, persists visits, and ranks tab switches before history", () =>
+        {
+            var data = Path.Combine(folder, "browser-history-data");
+            var store = new BrowserHistoryStore(data);
+            var t0 = new DateTimeOffset(2026, 11, 28, 8, 0, 0, TimeSpan.Zero);
+            Require(!store.RecordVisit(new Uri("https://user:secret@axmol.dev/"), "Secret"), "credentialed URL refused");
+            Require(!store.RecordVisit(new Uri("about:blank"), "Blank"), "about:blank refused");
+            Require(store.RecordVisit(new Uri("https://axmol.dev/"), "Axmol 3", "https://axmol.dev/favicon.ico", t0), "axmol recorded");
+            Require(store.RecordVisit(new Uri("http://127.0.0.1:8786/lua-tests.html?navmesh-smoke"), null, null, t0.AddMinutes(1)), "loopback recorded");
+            Require(store.RecordVisit(new Uri("https://github.com/axmolengine/axmol"), "GitHub - axmolengine/axmol", null, t0.AddMinutes(2)), "github recorded");
+            Require(store.UpdateMetadata(new Uri("https://github.com/axmolengine/axmol"), "GitHub - axmolengine/axmol", "https://github.com/favicon.ico"), "metadata updated");
+
+            var reloaded = new BrowserHistoryStore(data);
+            Require(reloaded.Entries.Count == 3 && reloaded.Entries[0].Url == "https://github.com/axmolengine/axmol"
+                && reloaded.Entries[0].FaviconUrl == "https://github.com/favicon.ico", "history reloaded in recency order");
+
+            var empty = BrowserAddressSuggestions.Build("", [], reloaded.Entries);
+            Require(empty.Count == 3 && empty[1].DisplayTitle == "127.0.0.1"
+                && empty[1].DisplayUrl == "127.0.0.1:8786/lua-tests.html?navmesh-smoke"
+                && empty[2].DisplayUrl == "axmol.dev", "display title and compact URL formatted");
+
+            var tabs = new[] { new BrowserOpenTabInfo("tab-1", "https://axmol.dev/", "Axmol Hub") };
+            var filtered = BrowserAddressSuggestions.Build("axmol", tabs, reloaded.Entries);
+            Require(filtered.Count == 2 && filtered[0].Kind == BrowserSuggestionKind.SwitchToTab && filtered[0].TabId == "tab-1"
+                && filtered[1].Kind == BrowserSuggestionKind.History && filtered[1].Url == "https://github.com/axmolengine/axmol",
+                "matching open tab ranked first and deduplicated from history");
+
+            var spans = BrowserAddressSuggestions.HighlightSpans("GitHub - axmolengine/axmol", ["axmol", "mol"]);
+            Require(spans.Count == 2 && spans[0] == new BrowserHighlightSpan(9, 5) && spans[1] == new BrowserHighlightSpan(21, 5),
+                "overlapping highlight spans merged");
+            Require(BrowserAddressSuggestions.LooksLikeDirectAddress("axmol.dev")
+                && BrowserAddressSuggestions.LooksLikeDirectAddress("127.0.0.1:8786")
+                && !BrowserAddressSuggestions.LooksLikeDirectAddress("axmol"), "direct address heuristic");
+
+            Require(reloaded.Remove("http://127.0.0.1:8786/lua-tests.html?navmesh-smoke"), "entry removed");
+            Require(new BrowserHistoryStore(data).Entries.Count == 2, "removal persisted");
+            return Task.CompletedTask;
+        });
         Console.WriteLine($"RESULT: {passed}/{total} code workspace checks passed");
         if (passed != total) Environment.ExitCode = 1;
     }

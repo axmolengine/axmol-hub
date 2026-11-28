@@ -98,7 +98,7 @@ internal sealed partial class WorkspaceBrowserView
 
         _requested = uri;
         _currentUri = uri;
-        _address.Text = uri.AbsoluteUri;
+        SetAddressText(uri.AbsoluteUri);
         _loading = true;
         _lastErrorKey = null;
         ResetMetadata();

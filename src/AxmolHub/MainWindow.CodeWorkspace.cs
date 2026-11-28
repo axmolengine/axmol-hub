@@ -19,7 +19,7 @@ public partial class MainWindow
         if (_chatPanel?.BuildInspectorContent(_inspectorTab, _inspectorTurn) is not InspectorPanel inspector) return null;
         if (_workspaceView is null)
         {
-            _workspaceView = new WorkspaceView(this, inspector, WriteLog);
+            _workspaceView = new WorkspaceView(this, inspector, WriteLog, () => _browserHistory);
             inspector.GitTitleResizeHandle = () => _workspaceView.VisibleTreeSplitter
                 ?? (InspectorResizeGrip.IsEffectivelyVisible ? InspectorResizeGrip : null);
             _workspaceView.ToolRequested += tab => _inspectorTab = tab;

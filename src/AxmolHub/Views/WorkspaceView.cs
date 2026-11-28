@@ -39,6 +39,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly InspectorPanel _inspector;
     private readonly Window _owner;
     private readonly Action<string> _log;
+    private readonly Func<BrowserHistoryStore> _browserHistory;
     private readonly Grid _body;
     private readonly ContentControl _content = new();
     private readonly ContentControl _treeHost = new();
@@ -121,10 +122,11 @@ internal sealed class WorkspaceView : Grid, IDisposable
     internal event Action? OpenRequested;
     internal event Action? OpenFolderRequested;
 
-    internal WorkspaceView(Window owner, InspectorPanel inspector, Action<string> log)
+    internal WorkspaceView(Window owner, InspectorPanel inspector, Action<string> log, Func<BrowserHistoryStore> browserHistory)
     {
         _owner = owner;
         _log = log;
+        _browserHistory = browserHistory;
         _inspector = inspector;
         _inspector.SelectToolForCheck = ClickToolForCheck;
         ClipToBounds = true;
@@ -231,7 +233,19 @@ internal sealed class WorkspaceView : Grid, IDisposable
 
     private WorkspaceBrowserView AddBrowser(State state)
     {
-        var browser = new WorkspaceBrowserView(_log);
+        var host = new WorkspaceBrowserHost(
+            _browserHistory,
+            current => state.Browsers
+                .Where(other => !ReferenceEquals(other, current) && other.CurrentUri is not null)
+                .Select(other => new BrowserOpenTabCandidate(
+                    other.TabId, other.CurrentUri!.AbsoluteUri, other.PageTitle ?? other.TabTitle, other.Favicon))
+                .ToArray(),
+            tabId =>
+            {
+                if (state.Browsers.Find(item => string.Equals(item.TabId, tabId, StringComparison.Ordinal)) is { } target)
+                    SelectBrowser(state, target);
+            });
+        var browser = new WorkspaceBrowserView(_log, host);
         state.Browsers.Add(browser);
         browser.StateChanged += b => { PublishBrowserSnapshot(state); SyncBrowserTab(b); };
         browser.Released += () => _body.Children.Remove(browser);

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -15,8 +16,9 @@ namespace AxmolHub;
 internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
 {
     private readonly TextBox _address = new() { Name = "WorkspaceBrowserAddress", MinWidth = 40,
-        Height = 24, MinHeight = 24, Margin = default, Padding = new Thickness(8, 0), FontSize = 12,
+        Height = 26, MinHeight = 26, Margin = default, FontSize = 12,
         VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+    private readonly Grid _bar = new() { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto"), Margin = new Thickness(6), ColumnSpacing = 4 };
     private readonly Button _back;
     private readonly Button _forward;
     private readonly Button _reload;
@@ -26,6 +28,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
     private readonly SelectableTextBlock _message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16),
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 480 };
     private readonly Action<string> _log;
+    private readonly WorkspaceBrowserHost? _host;
     private readonly string _logId = Guid.NewGuid().ToString("N")[..8];
     private NativeWebView? _web;
     private MacWebViewPointerLock? _pointerLock;
@@ -44,6 +47,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
     private string? _pageTitle;
     private int _navigationVersion;
     private IImage? _favicon;
+    private string? _faviconSourceUrl;
     private string? _faviconCandidates;
     private CancellationTokenSource? _faviconCancellation;
     internal string TabId { get; } = "browser:" + Guid.NewGuid().ToString("N");
@@ -55,21 +59,36 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
         ? Path.GetFileName(_requested.LocalPath) : _requested?.Host);
     internal IImage? Favicon => _favicon;
 
-    internal WorkspaceBrowserView(Action<string> log)
+    internal WorkspaceBrowserView(Action<string> log, WorkspaceBrowserHost? host = null)
     {
         _log = log;
+        _host = host;
         RowDefinitions = new RowDefinitions("Auto,*");
         ClipToBounds = true;
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto"), Margin = new Thickness(6), ColumnSpacing = 4 };
+        _suggestionsScroll = new ScrollViewer
+        {
+            Content = _suggestionsList,
+            MaxHeight = 320,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        _suggestionsBorder = new Border
+        {
+            Name = "WorkspaceBrowserSuggestionsBorder",
+            Child = _suggestionsScroll,
+            Classes = { "browser-suggestions-popover" },
+            ClipToBounds = false,
+        };
+        _suggestionsPopup = new Popup { Name = "WorkspaceBrowserSuggestionsPopup" };
         _back = Action("WorkspaceBrowserBack", BrowserIcon("Hub.Icon.Back"), () => _web?.GoBack());
         _forward = Action("WorkspaceBrowserForward", BrowserIcon("Hub.Icon.Forward"), () => _web?.GoForward());
         _reload = Action("WorkspaceBrowserReload", _reloadIcon, ReloadOrStop);
         var external = Action("WorkspaceBrowserExternal", BrowserIcon("Hub.Icon.OpenFile"), OpenExternal);
         _address.Bind(TextBox.PlaceholderTextProperty, new DynamicResourceExtension("WorkspaceBrowserAddressHint"));
-        _address.KeyDown += (_, e) => { if (e.Key == Key.Enter) { NavigateAddress(); e.Handled = true; } };
-        foreach (var (control, column) in new (Control, int)[] { (_back, 0), (_forward, 1), (_reload, 2), (_address, 3), (external, 4) })
-        { Grid.SetColumn(control, column); bar.Children.Add(control); }
-        Children.Add(bar);
+        InitializeAddressSuggestions();
+        foreach (var (control, column) in new (Control, int)[] { (_back, 0), (_forward, 1), (_reload, 2), (_addressHost, 3), (external, 4) })
+        { Grid.SetColumn(control, column); _bar.Children.Add(control); }
+        Children.Add(_bar);
         Grid.SetRow(_surface, 1);
         Children.Add(_surface);
         _surface.Children.Add(_message);
@@ -100,6 +119,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
     {
         _active = active && !obscured && !_disposed;
         IsVisible = active && !_disposed;
+        if (!_active) CloseSuggestions();
         if (_web is not null) _web.IsVisible = _active && !_message.IsVisible;
     }
 
@@ -110,12 +130,21 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
     internal bool NativeVisibleForCheck => _web?.IsEffectivelyVisible == true;
     internal bool DisposedForCheck => _disposed;
     internal bool CanNavigateForCheck(Uri uri) => CanNavigate(uri);
-    internal void NavigateForCheck(Uri uri) { _address.Text = uri.AbsoluteUri; NavigateAddress(); }
+    internal void NavigateForCheck(Uri uri) { SetAddressText(uri.AbsoluteUri); NavigateAddress(); }
 
     private void NavigateAddress()
     {
+        SuppressSuggestionsUntilIdle();
+        ClearAddressFocus();
+        CloseSuggestions();
         var text = _address.Text?.Trim() ?? "";
-        if (!text.Contains("://", StringComparison.Ordinal)) text = "https://" + text;
+        if (!text.Contains("://", StringComparison.Ordinal))
+        {
+            var isLoopback = text.StartsWith("localhost", StringComparison.OrdinalIgnoreCase)
+                || text.StartsWith("127.0.0.1", StringComparison.Ordinal)
+                || text.StartsWith("[::1]", StringComparison.Ordinal);
+            text = (isLoopback ? "http://" : "https://") + text;
+        }
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !(IsWebAddress(uri) || IsLocalFileAddress(uri)))
         { ShowMessage("WorkspaceBrowserInvalidAddress"); return; }
         if (uri.IsFile)
@@ -128,7 +157,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
         }
         _requested = uri;
         _currentUri = uri;
-        _address.Text = uri.AbsoluteUri;
+        SetAddressText(uri.AbsoluteUri);
         _loading = true;
         ResetMetadata();
         if (!EnsureWebView()) { _loading = false; SyncNavigation(); return; }
@@ -225,7 +254,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
                 if (!CanNavigate(args.Request)) { args.Cancel = true; return; }
                 _requested = args.Request;
                 _currentUri = args.Request;
-                _address.Text = args.Request!.AbsoluteUri;
+                SetAddressText(args.Request!.AbsoluteUri);
                 _loading = true;
                 ResetMetadata(keepWaiter: true);
                 // GTK's policy callback waits for this handler. Reading native history here waits for
@@ -241,10 +270,17 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
                 {
                     _requested = args.Request;
                     _currentUri = args.Request;
-                    _address.Text = args.Request!.AbsoluteUri;
+                    SetAddressText(args.Request!.AbsoluteUri);
                 }
                 if (!args.IsSuccess) ShowMessage("WorkspaceBrowserLoadFailed");
-                else { _lastErrorKey = null; _message.IsVisible = false; web.IsVisible = _active; }
+                else
+                {
+                    _lastErrorKey = null;
+                    _message.IsVisible = false;
+                    web.IsVisible = _active;
+                    if (_currentUri is { } visited && CanNavigate(visited))
+                        _host?.HistoryStore().RecordVisit(visited, _pageTitle, _faviconSourceUrl);
+                }
                 SyncNavigation();
                 CompleteNavigationWaiter(args.IsSuccess, args.Request);
                 if (args.IsSuccess) _ = OnNavigationSucceededAsync();
@@ -361,6 +397,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
         _pageTitle = title.Length > 0 ? title : null;
         StateChanged?.Invoke(this);
         if (_requested is not { } address) return;
+        _host?.HistoryStore().UpdateMetadata(address, _pageTitle, _faviconSourceUrl);
         var candidates = (metadata?.Icons ?? []).Where(icon => !string.IsNullOrWhiteSpace(icon) && icon.Length <= 4096).Take(4);
         // Favicon decoding never reads local disk. The page engine can load its own relative icon;
         // Hub's tab accepts only self-contained data icons or ordinary network icons.
@@ -371,13 +408,12 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
         _faviconCandidates = key;
         CancelFavicon();
         var cancellation = _faviconCancellation = new CancellationTokenSource();
-        var image = await BrowserFavicon.LoadAsync(icons, cancellation.Token);
+        var loaded = await BrowserFavicon.LoadWithSourceAsync(icons, address, cancellation.Token);
         if (_disposed || version != _navigationVersion || !ReferenceEquals(cancellation, _faviconCancellation))
-        {
-            (image as IDisposable)?.Dispose();
             return;
-        }
-        SetFavicon(image);
+        _faviconSourceUrl = loaded?.SourceUrl;
+        SetFavicon(loaded?.Image);
+        if (loaded is not null) _host?.HistoryStore().UpdateMetadata(address, _pageTitle, loaded.SourceUrl);
     }
 
     private void ResetMetadata(bool keepWaiter = false)
@@ -385,6 +421,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
         _navigationVersion++;
         if (!keepWaiter) CompleteNavigationWaiter(false, null);
         _pageTitle = null;
+        _faviconSourceUrl = null;
         _faviconCandidates = null;
         CancelFavicon();
         SetFavicon(null);
@@ -399,10 +436,8 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
 
     private void SetFavicon(IImage? image)
     {
-        var previous = _favicon;
         _favicon = image;
         StateChanged?.Invoke(this);
-        (previous as IDisposable)?.Dispose();
     }
 
     private void OpenExternal()
@@ -431,6 +466,7 @@ internal sealed partial class WorkspaceBrowserView : Grid, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        CloseSuggestions();
         _navigationVersion++;
         CompleteNavigationWaiter(false, null);
         StateChanged = null;
