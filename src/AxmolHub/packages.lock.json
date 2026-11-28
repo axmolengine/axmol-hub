@@ -91,12 +91,6 @@
           "Markdown.Avalonia.Tight": "12.0.2"
         }
       },
-      "Microsoft.NET.ILLink.Tasks": {
-        "type": "Direct",
-        "requested": "[8.0.32, )",
-        "resolved": "8.0.32",
-        "contentHash": "FQXkG87JK9+SEbF6vRcWmevk0Pjqgehhz+9e1hHATDh7U8EvgmVQQcEUJTXj1IKi8VqLrdi/c1QHOpVjZcd9ng=="
-      },
       "Svg.Controls.Avalonia": {
         "type": "Direct",
         "requested": "[12.2.0, )",

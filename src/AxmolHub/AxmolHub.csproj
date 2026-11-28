@@ -66,6 +66,10 @@
          Keep JSON reflection, built-in COM (Windows Start Menu shortcut AUMID stamping), and
          NullabilityInfoContext (AI tool parameter schema generation) explicitly enabled. -->
     <PublishTrimmed Condition="'$(PublishTrimmed)' == '' and '$(SelfContained)' == 'true'">true</PublishTrimmed>
+    <!-- Self-contained / trimmed publishes pull in SDK-version-dependent Microsoft.NET.ILLink.Tasks and
+         single-RID graphs; keep their lock file in obj/ so the tracked packages.lock.json stays stable
+         without triggering NU1005. -->
+    <NuGetLockFilePath Condition="'$(SelfContained)' == 'true' or '$(PublishTrimmed)' == 'true'">$(BaseIntermediateOutputPath)publish.packages.lock.json</NuGetLockFilePath>
     <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
