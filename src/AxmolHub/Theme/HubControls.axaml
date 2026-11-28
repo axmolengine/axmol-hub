@@ -227,13 +227,17 @@
 
   <!-- ==================== ComboBoxItem ==================== -->
   <ControlTheme x:Key="{x:Type ComboBoxItem}" TargetType="ComboBoxItem">
+    <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-    <Setter Property="Padding" Value="10,6" />
+    <Setter Property="CornerRadius" Value="5" />
+    <Setter Property="Padding" Value="8,6" />
+    <Setter Property="Margin" Value="0,1" />
     <Setter Property="FocusAdorner" Value="{x:Null}" />
     <Setter Property="Template">
       <ControlTemplate>
         <Border Name="Frame"
-                Background="{DynamicResource Hub.PopupSurface}"
+                Background="{TemplateBinding Background}"
+                CornerRadius="{TemplateBinding CornerRadius}"
                 Padding="{TemplateBinding Padding}">
           <ContentPresenter Name="PART_ContentPresenter"
                             Content="{TemplateBinding Content}"
@@ -312,7 +316,8 @@
                       BorderBrush="{DynamicResource Hub.BorderStrong}"
                       BorderThickness="1"
                       CornerRadius="8"
-                      Padding="0">
+                      Padding="4"
+                      ClipToBounds="True">
                 <ScrollViewer IsScrollChainingEnabled="False"
                               HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
                               VerticalScrollBarVisibility="{TemplateBinding (ScrollViewer.VerticalScrollBarVisibility)}">
