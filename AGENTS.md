@@ -124,6 +124,14 @@ report each step; the first failing step stops the run. `click`/`type` locate a 
 (`Control.Name`) first, else by exact visible `text`. Run it through `run_command` with `timeout_seconds: 300` (the first
 build is slow); keep the script and output under ignored `tmp/`. View the PNGs afterwards. See `Services/DriveRunner.cs`.
 
+### Refreshing README screenshots (`docs/images/`)
+
+- **Baseline:** `resize` `1260×770`, `theme` `"Dark"`, `language` `"en-US"`, `nav-view` `"WorkbenchPlus"`, `screenshot` `"scale": 2` (`2520×1540` main window; child dialogs use `"window": "latest"` and `"async": true` on the triggering `click`, followed by `close-child`).
+- **Useful `DriveRunner` verbs:** `theme`, `nav-view`, `select-session`, `select-combo`, `inspector` (`open`/`expanded`/`tab`), `inspector-width` (~`390` for split chat+Changes), `open-file`, `show-files`, `open-android-release`.
+- **AI shots (`ai-ask`, `ai-plan`, `ai-git-ops`):** run with `--data-root ./tmp/<fixture>/data` containing clean English `ai/sessions/*.json`, `ai/plans/*.md`, `ai/workspaces.json`, and a temp sample git repo (no personal chats or dirty repo diffs). Populate `ProviderId` and `ModelName` from an existing configured provider so the composer model chip renders instead of "Authenticate a provider".
+- **Dialog & page shots:** `proj-list`, `proj-new`, `toolchain-verify` (expand `DetailsExpander` before `Verify`), `code-editor` (expanded inspector + `show-files`), and `android-release` (`open-android-release` on a project whose engine is installed) run against the default data root. For `engine-management.png`, capture the Engines page and the `Install official engine` dialog (`window: "latest"`) separately and composite the modal centered over the page with rounded corners and a drop shadow.
+- **2x capture caveat:** in Avalonia's scaled `RenderTargetBitmap`, a `Border` with `BoxShadow` directly on a parent hides its children; keep `BoxShadow` on a childless sibling `Border` behind the surface (like `WindowShadowLayer` and `Border.composer-shadow`). Visually inspect every PNG before copying to `docs/images/`.
+
 ## A small UI change is finished by a build, and verified by a person
 
 **For a cosmetic tweak — a glyph's size, a gap, a colour, a weight, a label — the assistant's job is the edit and a
