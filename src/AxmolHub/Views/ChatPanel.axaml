@@ -394,7 +394,10 @@
       <Setter Property="MinHeight" Value="28" />
       <Setter Property="Padding" Value="14,4" />
       <Setter Property="FontSize" Value="12" />
-      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="Button.approval-allow TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
     </Style>
     <!-- The button carries `approval-action` too, and that class's :pointerover rule declares a Background, so
          this rule has to declare one as well: a state rule that only sets Opacity loses the fill to the other
@@ -413,6 +416,9 @@
     <Style Selector="Button.approval-allow:disabled">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
+    </Style>
+    <Style Selector="Button.approval-allow:disabled TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Hub.Accent}" />
     </Style>
     <Style Selector="Button.approval-allow:disabled /template/ Border#Frame">

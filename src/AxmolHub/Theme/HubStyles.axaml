@@ -166,7 +166,11 @@
     <Setter Property="Background" Value="{DynamicResource Hub.Accent}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.AccentBorder}" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <!-- The global TextBlock rule paints Hub.TextPrimary, which turns string labels dark on blue buttons in Light theme. -->
+  <Style Selector="Button.primary TextBlock, Button.danger TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
   </Style>
 
   <!-- WPF's Style x:Key="Quiet" -->
@@ -314,7 +318,7 @@
     <Setter Property="Background" Value="{DynamicResource Hub.Danger}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.Danger}" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontWeight" Value="Medium" />
   </Style>
 
   <!--

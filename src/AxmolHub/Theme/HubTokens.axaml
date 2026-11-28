@@ -33,8 +33,8 @@
       <SolidColorBrush x:Key="Hub.Border" Color="#24FFFFFF" />
       <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#16FFFFFF" />
       <SolidColorBrush x:Key="Hub.BorderStrong" Color="#33FFFFFF" />
-      <SolidColorBrush x:Key="Hub.BorderHover" Color="#60A5FA" />
-      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#4B8FF7" />
+      <SolidColorBrush x:Key="Hub.BorderHover" Color="#5C95E6" />
+      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#4A85D8" />
 
       <SolidColorBrush x:Key="Hub.TextPrimary" Color="#ECEFF4" />
       <!-- The reading rung: the ink a body of prose is read in, one step below the primary that chrome,
@@ -48,12 +48,12 @@
       <SolidColorBrush x:Key="Hub.TextDisabled" Color="#5E6678" />
       <SolidColorBrush x:Key="Hub.TextOnAccent" Color="#FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.Accent" Color="#2B74EA" />
-      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#4B8FF7" />
-      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#357AE8" />
-      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#5394F8" />
-      <SolidColorBrush x:Key="Hub.Link" Color="#73B3FA" />
-      <SolidColorBrush x:Key="Hub.LinkHover" Color="#9DCBFF" />
+      <SolidColorBrush x:Key="Hub.Accent" Color="#2A64B8" />
+      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#3B76C9" />
+      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#2F6BC2" />
+      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#4580D4" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#72A8F0" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#9BC3F8" />
 
       <!-- Text selection on the reading surfaces (chat Markdown and the inspector's plan tab). A translucent
            accent rather than an opaque plate, so the ink under it keeps its own colour and a bold or code run
@@ -64,7 +64,7 @@
            itself is drawn by the library inside CTextBlock.Render, which fills it with SelectionBrush and falls
            back to Brushes.Cyan when no brush is set — that cyan is what the setter in HubMarkdownStyles
            replaces. -->
-      <SolidColorBrush x:Key="Hub.Selection" Color="#663B82F6" />
+      <SolidColorBrush x:Key="Hub.Selection" Color="#663675D1" />
       <SolidColorBrush x:Key="Hub.CodeSelection" Color="#2A3B52" />
       <SolidColorBrush x:Key="Hub.SelectionChip" Color="#335382" />
 
@@ -166,8 +166,8 @@
       <SolidColorBrush x:Key="Hub.Border" Color="#21182436" />
       <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#14182436" />
       <SolidColorBrush x:Key="Hub.BorderStrong" Color="#33182436" />
-      <SolidColorBrush x:Key="Hub.BorderHover" Color="#4B8FF7" />
-      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#2563EB" />
+      <SolidColorBrush x:Key="Hub.BorderHover" Color="#4C82D4" />
+      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#265CB0" />
 
       <SolidColorBrush x:Key="Hub.TextPrimary" Color="#171A21" />
       <!-- Light counterpart of the reading rung; see the Dark dictionary's note. Light has nowhere darker than
@@ -179,15 +179,15 @@
       <SolidColorBrush x:Key="Hub.TextDisabled" Color="#A0A7B6" />
       <SolidColorBrush x:Key="Hub.TextOnAccent" Color="#FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.Accent" Color="#2563EB" />
-      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#3B82F6" />
-      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#3B82F6" />
-      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#60A5FA" />
-      <SolidColorBrush x:Key="Hub.Link" Color="#1D5CD6" />
-      <SolidColorBrush x:Key="Hub.LinkHover" Color="#1545A8" />
+      <SolidColorBrush x:Key="Hub.Accent" Color="#265CB0" />
+      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#1E4E99" />
+      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#3068BF" />
+      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#2557A6" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#2258AB" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#184285" />
 
       <!-- Light counterparts; see the Dark dictionary's note for what the pair is for. -->
-      <SolidColorBrush x:Key="Hub.Selection" Color="#592563EB" />
+      <SolidColorBrush x:Key="Hub.Selection" Color="#55265CB0" />
       <SolidColorBrush x:Key="Hub.CodeSelection" Color="#D8E6FB" />
       <SolidColorBrush x:Key="Hub.SelectionChip" Color="#A3C1F5" />
 
