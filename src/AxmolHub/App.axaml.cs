@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -15,8 +17,41 @@ public partial class App : Application
     internal static HubHostOptions Options { get; set; } = HubHostOptions.Parse([]);
     internal static DeepLinkActivationBroker? Activations { get; set; }
     private WindowsTrayIntegration? _trayIntegration;
+    private static bool _menuItemHandlerRegistered;
 
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+        if (!_menuItemHandlerRegistered)
+        {
+            _menuItemHandlerRegistered = true;
+            TemplatedControl.TemplateAppliedEvent.AddClassHandler<MenuItem>(OnMenuItemTemplateApplied);
+        }
+    }
+
+    /// <summary>FluentTheme sets PART_ChevronPath's size/data and PART_Popup's border radius/padding as
+    /// template LocalValues, which outrank Style setters; patch them once when each MenuItem template applies
+    /// so submenus match primary menus and use Hub's compact rounded chevron.</summary>
+    private static void OnMenuItemTemplateApplied(MenuItem item, TemplateAppliedEventArgs e)
+    {
+        if (e.NameScope.Find<Avalonia.Controls.Shapes.Path>("PART_ChevronPath") is { } chevron)
+        {
+            chevron.Width = 5.4;
+            chevron.Height = 9;
+            chevron.Stretch = Stretch.Uniform;
+            if (Current?.TryFindResource("Hub.Icon.MenuChevron", out var raw) == true
+                && raw is Geometry geometry)
+            {
+                chevron.Data = geometry;
+            }
+        }
+
+        if (e.NameScope.Find<Popup>("PART_Popup") is { Child: Border popupBorder })
+        {
+            popupBorder.CornerRadius = new CornerRadius(10);
+            popupBorder.Padding = new Thickness(4);
+        }
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {
