@@ -363,6 +363,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           ./installer/Publish.ps1 -Stage Build -Runtime win-x64 -PrereleaseBuild:$prereleaseBuild
@@ -371,6 +372,7 @@ jobs:
         shell: pwsh
         env:
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: ./installer/Test.ps1 -Isolated
 
       - name: Upload release artifacts
@@ -416,6 +418,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           $signArgs = @{}
@@ -470,6 +473,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           $signArgs = @{}
@@ -518,6 +522,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           ./installer/Publish.ps1 -Stage Build -Runtime linux-x64 -PrereleaseBuild:$prereleaseBuild
@@ -553,6 +558,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           ./installer/Publish.ps1 -Stage Build -Runtime win-arm64 -PrereleaseBuild:$prereleaseBuild
@@ -589,6 +595,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE_BUILD: ${{ needs.meta.outputs.is_prerelease }}
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
           ./installer/Publish.ps1 -Stage Build -Runtime linux-arm64 -PrereleaseBuild:$prereleaseBuild

@@ -124,12 +124,41 @@ internal static class AiCommitSummaryChecks
                     if (!(await Branch("main", "topic", create: true)).Success
                         || (await GitRepository.ReadAsync(repo, runner, includeDiffs: false)).Branch != "topic")
                         throw new Exception("Creating a local branch did not switch to it.");
-                    var first = new GitPushTarget("origin", "topic", true);
+                    var first = (await GitRepository.ReadAsync(repo, runner, includeDiffs: false, includePushTarget: true)).PushTarget
+                        ?? throw new Exception("Git did not resolve the first push destination.");
                     await RunGit("config", "branch.topic.pushRemote", "missing");
-                    if ((await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).FailureKey != "workspace-changed")
+                    if ((await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).FailureKey != "push-target-changed")
                         throw new Exception("Invalidated first-push target silently fell back to origin.");
                     await RunGit("config", "--unset", "branch.topic.pushRemote");
-                    if (!(await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first)).Success
+
+                    // A URL rewrite can change the destination without changing the remote or branch name.
+                    await RunGit("config", "remote.origin.url", "hub-check:owner/repo.git");
+                    await RunGit("config", "url.https://github.com/.pushInsteadOf", "hub-check:");
+                    var rewritten = (await GitRepository.ReadAsync(repo, runner, includeDiffs: false, includePushTarget: true)).PushTarget;
+                    await RunGit("config", "--add", "remote.origin.pushurl", "https://github.com/owner/repo.git");
+                    await RunGit("config", "--add", "remote.origin.pushurl", "ssh://example.invalid/repo.git");
+                    var multiple = (await GitRepository.ReadAsync(repo, runner, includeDiffs: false, includePushTarget: true)).PushTarget;
+                    if (rewritten is null || rewritten.GitHubUrl != "https://github.com/owner/repo.git"
+                        || multiple is null || multiple.GitHubUrl is not null)
+                        throw new Exception("Git did not resolve the rewritten push URL, or allowed browser sign-in for multiple destinations.");
+                    if (OperatingSystem.IsLinux())
+                        await CheckGitHubCredentialCacheAsync(git, repo, rewritten.GitHubUrl);
+                    await RunGit("config", "--unset-all", "remote.origin.pushurl");
+                    await RunGit("config", "--add", "remote.origin.pushurl", Path.Combine(remote, "other.git"));
+                    if ((await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: rewritten, gitHubToken: "offline_fixture_token")).FailureKey != "push-target-changed")
+                        throw new Exception("Retry did not refuse a changed push URL under the same remote name.");
+                    await RunGit("config", "--unset-all", "remote.origin.pushurl");
+                    await RunGit("config", "remote.origin.url", remote);
+
+                    var approvedOid = await ReadHead(repo, "HEAD");
+                    await RunGit("commit", "--allow-empty", "-m", "advance during sign-in");
+                    var staleRetry = await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedBranch: "topic",
+                        expectedTarget: first, expectedSourceOid: approvedOid);
+                    if (staleRetry.FailureKey != "push-source-changed"
+                        || (await runner.RunAsync(git, ["show-ref", "--verify", "--quiet", "refs/heads/topic"], remote)).ExitCode == 0)
+                        throw new Exception("A changed branch tip was published by an authorization retry.");
+                    if (!(await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first,
+                            expectedSourceOid: await ReadHead(repo, "HEAD"))).Success
                         || await ReadHead(remote, "refs/heads/topic") != await ReadHead(repo, "HEAD")
                         || (await runner.RunAsync(git, ["rev-parse", "--abbrev-ref", "@{upstream}"], repo)).Output.Trim() != first.Display)
                         throw new Exception("First push did not publish and track exactly the displayed branch.");
@@ -180,7 +209,7 @@ internal static class AiCommitSummaryChecks
                     await RunGit("-c", "remote.origin.mirror=false", "push", "--force", "--no-follow-tags", "origin", "divergent:published");
                     await RunGit("checkout", "main");
                     var rejected = await GitRepository.PushAsync(repo, repositoryRoot, runner);
-                    if (rejected.Success || rejected.FailureKey != "push-failed"
+                    if (rejected.Success || rejected.FailureKey != "push-non-fast-forward"
                         || await ReadHead(remote, "refs/heads/published") != divergent
                         || await ReadHead(repo, "HEAD") != partialHead)
                         throw new Exception("A divergent upstream was not rejected without changing either branch.");
@@ -195,7 +224,7 @@ internal static class AiCommitSummaryChecks
                         || await File.ReadAllTextAsync(collision) != "keep untracked content")
                         throw new Exception("Branch switch overwrote a conflicting worktree file.");
                     await RunGit("checkout", "--detach");
-                    var detached = await GitRepository.PushAsync(repo, repositoryRoot, runner);
+                    var detached = await GitRepository.PushAsync(repo, repositoryRoot, runner, expectedTarget: first);
                     if (detached.Success || detached.FailureKey != "branch-unavailable")
                         throw new Exception("Push accepted a detached HEAD.");
                 }
@@ -228,5 +257,40 @@ internal static class AiCommitSummaryChecks
         }
         Console.WriteLine("PASS: commit-summary parsing and legacy defaults; commit preserves unstaged content; first push sets upstream, tracked push is scoped and non-forced, pull rejects divergence, switch preserves worktree content.");
         return;
+    }
+
+    // Use Git's actual credential protocol with a fake token and no network.
+    private static async Task CheckGitHubCredentialCacheAsync(string git, string repo, string url)
+    {
+        const string token = "offline_fixture_token";
+        var runner = new ProcessRunner(_ => { });
+        var environment = new Dictionary<string, string>
+        {
+            ["PATH"] = HostEnvironment.PathValue, ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = "/dev/null",
+            ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_ASKPASS"] = "",
+        };
+        var cache = new GitPushCredentialCache(git);
+        var options = cache.GitOptions(url);
+        Task<ProcessResult> Read(string requested) => runner.RunAsync(git, [.. options, "credential", "fill"], repo,
+            environment: environment, timeout: TimeSpan.FromSeconds(10), standardInput: $"url={requested}\n\n");
+        await using (cache)
+        {
+            if (await cache.StoreAsync(url, token + "\npassword=invalid", default) || !await cache.StoreAsync(url, token, default))
+                throw new Exception("Could not seed the private Git credential cache safely.");
+            var matching = await Read(url + "/");
+            if (matching.ExitCode != 0 || !matching.Output.Split('\n').Contains("password=" + token))
+                throw new Exception("Git did not retrieve the temporary credential for the matching repository.");
+            await RequireUnavailable("https://github.com/owner/different.git");
+            await RequireUnavailable("https://example.invalid/owner/repo.git");
+        }
+        await RequireUnavailable(url);
+        Console.WriteLine("PASS: Linux Git credentials are scoped to the matching HTTPS repository and removed after the operation.");
+
+        async Task RequireUnavailable(string requested)
+        {
+            var refused = await Read(requested);
+            if (refused.ExitCode == 0 || refused.Output.Contains(token, StringComparison.Ordinal))
+                throw new Exception("Git credential remained accessible outside its repository or after cache disposal.");
+        }
     }
 }

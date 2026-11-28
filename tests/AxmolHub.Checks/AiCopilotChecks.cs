@@ -14,8 +14,11 @@ internal static class AiCopilotChecks
         }
 
         var copilot = AiProviderManifest.CreateBuiltIn("github-copilot") ?? throw new Exception("github-copilot is missing from ai-providers.json.");
+        // Packaging injects the real ID. This check only talks to the in-memory transport.
+        const string FixtureClientId = "offline-copilot-check";
+        if (copilot.OAuth is not null) copilot.OAuth.ClientId = FixtureClientId;
         Assert(copilot.SupportsOAuth, "a device-code preset offers browser sign-in with no discovery document to point at");
-        Assert(copilot.OAuth is { EffectiveFlow: ProviderOAuthFlows.DeviceCode, ClientId.Length: > 0 }, "the Copilot entry arrives with its flow and public client id intact");
+        Assert(copilot.OAuth?.EffectiveFlow == ProviderOAuthFlows.DeviceCode, "the Copilot preset uses the device-code flow");
         Assert(copilot.RequestSemantics == ProviderRequestSemantics.Copilot && copilot.ExtraHeaders.Count > 0 && copilot.CapabilitySource == "github-copilot-models", "headers, request semantics and the catalog source survive the manifest-to-provider trip");
         Assert(!copilot.Affiliate && copilot.ReferralUrl is null, "Copilot carries no affiliate declaration — the referral arrangement is OrcaRouter's, not GitHub's");
         // The endpoint guard: these are the addresses a credential is handed over at, so a hand-edited manifest
@@ -65,7 +68,7 @@ internal static class AiCopilotChecks
         var wire = new AiProviderOAuth
         {
             Flow = ProviderOAuthFlows.DeviceCode,
-            ClientId = "Ov23lidzcoGFYNmdeTsg",
+            ClientId = FixtureClientId,
             DeviceAuthorizationUrl = "https://github.com/login/device/code",
             TokenUrl = "https://github.com/login/oauth/access_token",
             Scope = "read:user",
@@ -80,7 +83,7 @@ internal static class AiCopilotChecks
         var approved = await new DeviceCodeOAuthFlow(new HttpClient(approvedTransport)).SignInAsync(wire, new InlineProgress<DeviceCodeChallenge>(challenge => reported = challenge));
         Assert(approved.Key == "gho_token" && approved.Scope == "read:user", "an approved device code comes back as the token the provider issued");
         Assert(reported is { UserCode: "WXYZ-5678" } && reported.VerificationUri == "https://github.com/login/device", "the surface is handed the user code and the address from the response, not from the manifest");
-        Assert(approvedTransport.Requests.Count == 2 && approvedTransport.Requests[0].StartsWith("POST /login/device/code ") && approvedTransport.Requests[0].Contains("\"client_id\":\"Ov23lidzcoGFYNmdeTsg\"") && approvedTransport.Requests[0].Contains("read:user"), "the code request goes to the declared device endpoint with the public id and the declared scope");
+        Assert(approvedTransport.Requests.Count == 2 && approvedTransport.Requests[0].StartsWith("POST /login/device/code ") && approvedTransport.Requests[0].Contains($"\"client_id\":\"{FixtureClientId}\"") && approvedTransport.Requests[0].Contains("read:user"), "the code request goes to the declared device endpoint with the public id and the declared scope");
         Assert(approvedTransport.Requests[1].Contains("urn:ietf:params:oauth:grant-type:device_code") && approvedTransport.Requests[1].Contains("dc-1"), "the poll is the device grant carrying the code that was issued");
         Assert(approvedTransport.Requests.All(entry => !entry.Contains("client_secret", StringComparison.Ordinal)), "no request on either arm ever carries a client secret");
         // Nobody approved this one, and the wait is what has to say so. The clamp is what makes the assertion take
@@ -251,9 +254,9 @@ internal static class AiCopilotChecks
         Assert(probeRequest.Headers.TryGetValues(ProviderRequestPolicy.InitiatorHeader, out var initiator) && initiator.SequenceEqual(new[] { ProviderRequestPolicy.InitiatorAgent }), "the plain shell derives the same x-initiator the pipeline shell does");
         Assert(probeRequest.Headers.TryGetValues(ProviderRequestPolicy.InteractionIdHeader, out var interaction) && interaction.SequenceEqual(new[] { "interaction-7" }), "the conversation id rides the same request");
         Assert(!probeRequest.Headers.Contains("Authorization"), "no shell writes the credential: that header belongs to whoever authenticates the call");
-        // A provider outside any family gets nothing derived, whatever the body says — the path every preset shipping
-        // today walks, and the reason the pure function has to be the one both shells call.
-        Assert(ProviderRequestPolicy.Headers(new Dictionary<string, string>(), null, "ignored", """{"messages":[{"role":"user","content":[{"type":"tool_result"}]}]}""").Count() == 0, "no declared family means no derived header, even for a body full of tool results");
+        // The default user-agent is static; a tool result must not add any Copilot-specific headers here.
+        Assert(ProviderRequestPolicy.Headers(new Dictionary<string, string>(), null, "ignored", """{"messages":[{"role":"user","content":[{"type":"tool_result"}]}]}""")
+            .SequenceEqual([("user-agent", AxmolHubUserAgent.Value)]), "without family semantics only the default user-agent is sent");
         var manifestText = File.ReadAllText(AiProviderManifest.ManifestPath);
         Assert(!manifestText.Contains("clientSecret", StringComparison.OrdinalIgnoreCase) && !manifestText.Contains("client_secret", StringComparison.OrdinalIgnoreCase), "the shipped manifest names a public client id and never a client secret");
         return;

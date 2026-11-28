@@ -26,7 +26,9 @@ $version = @($product.Project.PropertyGroup.Version) | Where-Object { $_ } | Sel
 if (-not $release.IsVersionCommit -or $release.Version -cne $version) {
     throw 'The release commit title must be a ver: marker matching Directory.Build.props.'
 }
-if ([string]::IsNullOrWhiteSpace($env:ORCAROUTER_APP_ID)) { throw 'Set ORCAROUTER_APP_ID as for the CI packages.' }
+foreach ($name in 'ORCAROUTER_APP_ID', 'GH_OAUTH_CLIENT_ID') {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Set $name as for the CI packages." }
+}
 if (-not (Test-Path -LiteralPath "Cert:\CurrentUser\My\$SigningThumbprint")) {
     throw 'The signing certificate is not in the current user Personal certificate store.'
 }

@@ -592,7 +592,7 @@ public static partial class GitRepository
         if (git is null) return new(false, "git-missing", null);
         var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false, includePushTarget: expectedTarget is not null).ConfigureAwait(false);
         if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure) return new(false, failure, state.Detail);
-        if (expectedTarget is not null && state.PushTarget != expectedTarget) return new(false, "workspace-changed", null);
+        if (expectedTarget is not null && state.PushTarget != expectedTarget) return new(false, "push-target-changed", null);
         var root = state.Root!;
         if (state.Entries.Any(entry => entry.Mark is "DD" or "AU" or "UD" or "UA" or "DU" or "AA" or "UU"))
             return new(false, "conflict", null);
@@ -635,7 +635,7 @@ public static partial class GitRepository
             sensitiveValues: sensitiveValues, cancellation: cancellation);
         try
         {
-            // Read names, not remote URLs. A partially configured upstream must not fall back to another remote.
+            // Select the remote by name first. A partially configured upstream must not fall back to another remote.
             var config = await Run("config", "--null", "--get-regexp", @"^(branch\..*\.(remote|merge|pushremote)|remote\.pushdefault)$").ConfigureAwait(false);
             if (config.ExitCode is not (0 or 1)) return null;
             var settings = config.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(pair => pair.Split('\n', 2))
@@ -652,7 +652,9 @@ public static partial class GitRepository
             var names = list.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
             if (!tracked) remote = settings[prefix + "pushremote"].LastOrDefault() ?? settings["remote.pushdefault"].LastOrDefault()
                 ?? (names.Contains("origin") ? "origin" : names.Length == 1 ? names[0] : null);
-            return remote is not null && names.Contains(remote) ? new(remote, tracked ? merges[0][11..] : branch, !tracked) : null;
+            if (remote is null || !names.Contains(remote)) return null;
+            var destination = await ReadPushDestinationAsync(git, root, remote, cancellation).ConfigureAwait(false);
+            return destination is null ? null : new(remote, tracked ? merges[0][11..] : branch, !tracked) { Destination = destination };
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
     }
@@ -660,18 +662,20 @@ public static partial class GitRepository
     /// <summary>Push one explicit refspec, never broadening a user's request through Git push configuration.</summary>
     public static async Task<GitCommitResult> PushAsync(string workspaceRoot, string expectedRoot,
         ProcessRunner runner, IReadOnlyList<string>? sensitiveValues = null,
-        CancellationToken cancellation = default, string? expectedBranch = null, GitPushTarget? expectedTarget = null)
+        CancellationToken cancellation = default, string? expectedBranch = null, GitPushTarget? expectedTarget = null,
+        string? gitHubToken = null, string? expectedSourceOid = null)
     {
         var git = CommandShells.Resolve("git");
         if (git is null) return new(false, "git-missing", null);
-        var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false, includePushTarget: true).ConfigureAwait(false);
-        if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure) return new(false, failure, state.Detail);
-        if (expectedTarget is not null && state.PushTarget != expectedTarget) return new(false, "workspace-changed", null);
-        if (state.PushTarget is not { } target) return new(false, "upstream-unavailable", null);
-        if (!state.CanPush) return new(false, "nothing-to-push", null);
-        var root = state.Root!;
         try
         {
+            var state = await ReadAsync(workspaceRoot, runner, sensitiveValues, cancellation, includeDiffs: false, includePushTarget: true).ConfigureAwait(false);
+            if (TargetFailure(state, expectedRoot, expectedBranch) is { } failure)
+                return new(false, failure, state.Detail);
+            if (expectedTarget is not null && state.PushTarget != expectedTarget) return new(false, "push-target-changed", null);
+            if (state.PushTarget is not { } target) return new(false, "upstream-unavailable", null);
+            if (!state.CanPush && expectedSourceOid is null) return new(false, "nothing-to-push", null);
+            var root = state.Root!;
             // Read the exact checked-out ref instead of trusting a display name (including detached HEAD).
             var branch = await runner.RunAsync(git, ["symbolic-ref", "--quiet", "HEAD"], root,
                 timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
@@ -679,21 +683,64 @@ public static partial class GitRepository
             if (branch.ExitCode != 0 || !branchRef.StartsWith("refs/heads/", StringComparison.Ordinal))
                 return new(false, "branch-unavailable", FirstText(branch.Error, branch.Output));
             if (branchRef != "refs/heads/" + state.Branch) return new(false, "workspace-changed", null);
+            string? sourceOid = null;
+            if (expectedSourceOid is not null || (OperatingSystem.IsLinux() && target.GitHubUrl is not null))
+            {
+                var source = await runner.RunAsync(git, ["rev-parse", "--verify", "--end-of-options", branchRef + "^{commit}"], root,
+                    timeout: ReadIdleTimeout, cancellation: cancellation).ConfigureAwait(false);
+                sourceOid = source.Output.Trim();
+                if (source.ExitCode != 0 || sourceOid.Length is not (40 or 64) || !sourceOid.All(char.IsAsciiHexDigit))
+                    return new(false, "branch-unavailable", null);
+                if (expectedSourceOid is not null && sourceOid != expectedSourceOid) return new(false, "push-source-changed", null);
+            }
+            if (!state.CanPush) return new(false, "nothing-to-push", null);
             // One explicit, non-forced branch refspec ignores push.default and remote push refspecs. Disable
             // mirror/follow-tags as well: repository configuration must not widen this action to other refs.
-            var args = new List<string> { "--no-pager", "-c", "remote." + target.Remote + ".mirror=false", "push",
-                "--no-force", "--no-follow-tags", "--recurse-submodules=no" };
-            if (target.SetUpstream) args.Add("--set-upstream");
-            args.AddRange(["--", target.Remote, branchRef + ":refs/heads/" + target.Branch]);
-            var push = await runner.RunAsync(git, args, root,
-                timeout: ReadIdleTimeout, sensitiveValues: sensitiveValues, cancellation: cancellation).ConfigureAwait(false);
-            return push.ExitCode == 0
-                ? new(true, null, FirstText(push.Output, push.Error))
-                : new(false, "push-failed", FirstText(push.Error, push.Output));
+            var args = new List<string> { "--no-pager", "-c", "remote." + target.Remote + ".mirror=false" };
+            var environment = PushEnvironment(OperatingSystem.IsLinux() && target.GitHubUrl is not null);
+            var credentialUrl = OperatingSystem.IsLinux() && expectedTarget == target && gitHubToken is not null ? target.GitHubUrl : null;
+            await using var cache = credentialUrl is null ? null : new GitPushCredentialCache(git);
+            if (cache is not null && credentialUrl is { } githubUrl)
+            {
+                var protocols = Environment.GetEnvironmentVariable("GIT_ALLOW_PROTOCOL");
+                if (protocols is not null && !protocols.Split(':').Contains("https", StringComparer.Ordinal))
+                    return new(false, "push-failed", null);
+                environment["GIT_ALLOW_PROTOCOL"] = "https";
+                // Clear other helpers so Git never forwards Hub's credential to their store or erase handlers.
+                args.AddRange(cache.GitOptions(githubUrl));
+                args.AddRange(["-c", "http.followRedirects=false", "-c", $"http.{githubUrl}.followRedirects=false",
+                    "-c", $"http.{githubUrl}.sslVerify=true", "-c", $"http.{githubUrl}.extraHeader="]);
+                if (!await cache.StoreAsync(githubUrl, gitHubToken!, cancellation).ConfigureAwait(false))
+                    return new(false, "git-auth-bridge", null);
+            }
+            args.AddRange(["push", "--no-force", "--no-follow-tags", "--recurse-submodules=no"]);
+            if (target.SetUpstream && sourceOid is null) args.Add("--set-upstream");
+            // Use the exact object on both attempts, even if another process moves the branch during push.
+            args.AddRange(["--", target.Remote, (sourceOid ?? branchRef) + ":refs/heads/" + target.Branch]);
+            if (expectedTarget is not null && target.Destination is { } destination
+                && await ReadPushDestinationAsync(git, root, target.Remote, cancellation).ConfigureAwait(false) != destination)
+                return new(false, "push-target-changed", null);
+            // Push output can quote a configured URL with embedded credentials, or echo arbitrary remote text.
+            // Read it privately for classification; only product-authored diagnostics leave this path.
+            var push = await new ProcessRunner(_ => { }).RunAsync(git, args, root,
+                timeout: PushIdleTimeout, overrides: environment, cancellation: cancellation,
+                sensitiveValues: cache is null ? null : [gitHubToken!],
+                // Git checks presence, not truth: even GIT_SSL_NO_VERIFY=false disables peer verification.
+                unsetEnvironment: ["GIT_CURL_VERBOSE", "GIT_SSL_NO_VERIFY"]).ConfigureAwait(false);
+            if (push.ExitCode != 0) return new(false, PushFailure(target, push.Error + "\n" + push.Output), null) { PushSourceOid = sourceOid };
+            if (target.SetUpstream && sourceOid is not null)
+            {
+                // Git cannot infer a tracking branch from an object ID on the left side of the refspec.
+                var track = await runner.RunAsync(git, ["branch", "--set-upstream-to=" + target.Display, "--", state.Branch!], root,
+                    timeout: ReadIdleTimeout, cancellation: cancellation).ConfigureAwait(false);
+                if (track.ExitCode != 0) return new(false, "push-tracking-failed", null);
+            }
+            return new(true, null, null);
         }
+        catch (IdleTimeoutException) { return new(false, "push-timeout", null); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new(false, "push-failed", ex is IdleTimeoutException stalled ? Stalled(stalled) : ex.Message);
+            return new(false, "push-failed", null);
         }
     }
 
@@ -909,9 +956,15 @@ public sealed record GitBranch(string? Name, int Ahead, int Behind, bool Detache
 
 public sealed record GitPushTarget(string Remote, string Branch, bool SetUpstream)
 {
+    internal GitPushDestination? Destination { get; init; }
     public string Display => Remote + "/" + Branch;
+    /// <summary>A single public GitHub HTTPS destination without embedded credentials, query or fragment.</summary>
+    public string? GitHubUrl => Destination?.GitHubUrl;
 }
 
 /// <summary>An action result. The keys <c>nothing-staged</c> and <c>nothing-to-push</c> are terminal no-ops,
 /// not operational errors; <c>commit-succeeded-push-failed</c> preserves a completed local commit.</summary>
-public sealed record GitCommitResult(bool Success, string? FailureKey, string? Detail);
+public sealed record GitCommitResult(bool Success, string? FailureKey, string? Detail)
+{
+    internal string? PushSourceOid { get; init; }
+}

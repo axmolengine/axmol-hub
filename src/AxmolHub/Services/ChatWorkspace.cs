@@ -14,6 +14,7 @@ public sealed partial class ChatWorkspace : IDisposable
     private readonly ChatProviderCoordinator _providers;
     private readonly ChatSessionCoordinator _sessions;
     private readonly ChatExecutionCoordinator _execution;
+    private readonly GitHubPushSignIn _gitHubPushSignIn;
     /// <summary>Isolated legacy fixtures only. Product windows supply the resolved shared layout explicitly.</summary>
     internal ChatWorkspace(string dataRoot) : this(HubStorageLayout.Legacy(dataRoot)) { }
 
@@ -22,6 +23,7 @@ public sealed partial class ChatWorkspace : IDisposable
         var dataRoot = layout.DataRoot;
         _sessions = new ChatSessionCoordinator(dataRoot);
         _providers = new ChatProviderCoordinator(layout);
+        _gitHubPushSignIn = new GitHubPushSignIn(_providers.SecretStore);
         _execution = new ChatExecutionCoordinator(dataRoot);
         _execution.AuthRoot = layout.AuthRoot == layout.DataRoot ? null : layout.AuthRoot;
         _providers.Sessions = _sessions;
@@ -219,11 +221,12 @@ public sealed partial class ChatWorkspace : IDisposable
     internal Func<TaskQueue.Item, Action>? BeginGitStatus { get; set; }
 
     internal TaskQueue.Item? StartWorkspaceGit(WorkspaceGitRequest request, Action<TaskQueue.Item, bool, UserFeedback?> finished,
-        bool stageAllBeforeCommit = false)
+        bool stageAllBeforeCommit = false, IProgress<DeviceCodeChallenge>? gitHubProgress = null)
     {
         if (ActiveWorkspaceRoot != request.Workspace) return null;
         var log = LogProvider?.Invoke();
-        return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(), finished, BeginGitStatus, stageAllBeforeCommit);
+        return WorkspaceGit.Start(request, new ProcessRunner(line => log?.Write(line)), _providers.SensitiveValues(),
+            finished, BeginGitStatus, _gitHubPushSignIn, gitHubProgress, stageAllBeforeCommit);
     }
 
     internal Task<IReadOnlyList<GitBranchInfo>> ReadLocalBranchesAsync(string root)

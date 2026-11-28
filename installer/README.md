@@ -155,7 +155,7 @@ macOS 验收：先确认新 release 有该 RID 的 full、delta，且 `releases.
 
 **实机验收完成后才切换**：确认没有旧 `Dist` 正在上传，在 GitHub Actions 仓库变量中设置 `WINDOWS_SIGNED_RELEASES=true`，然后再推下一条 `ver:` 提交。此后 GitHub runner 保留验证和 Windows x64 隔离安装检查，只有 macOS/Linux 的四个 RID 上传发布产物；`Dist` 不再公开发布。
 
-在 Windows 签名机检出该 Build run 的完整 SHA，保持工作区干净，准备 `ORCAROUTER_APP_ID`（与 CI 一致）和有发布权限的 `gh` 登录。选择这个 SHA 对应的成功 Build run ID 后执行：
+在 Windows 签名机检出该 Build run 的完整 SHA，保持工作区干净，准备 `ORCAROUTER_APP_ID` 和 `GH_OAUTH_CLIENT_ID`（与 CI 一致）和有发布权限的 `gh` 登录。选择这个 SHA 对应的成功 Build run ID 后执行：
 
 ```powershell
 ./installer/Release-WindowsSigned.ps1 -BuildRunId $buildRunId -Commit $commitSha `

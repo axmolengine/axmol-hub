@@ -1558,12 +1558,9 @@
          Row 0 is the band — the session's change tally and the way back down to the newest line. It is the only
          thing up here that is not owed an answer, and that is exactly why it sits farthest from the box: a question
          keeps the row nearest the input, so nothing a person has to reply to is ever pushed behind a readout.
-         Row 1 is the decision host — a pending call or a pending plan; row 2 the steer-confirm strip, where a
-         second tap stands between Enter and a steer, because a steer is the routing table's strongest signal and
-         worth reading once before it is said. Row 4 is the active goal capsule, nearest the box after a steer draft.
-         Nothing is cancelled either way: the sentence waits for the step in flight. Row 5 holds live Computer Use controls; row 7 aligns the workspace
-         picker, per-request metrics and context button below the frame.
-         Both strips are siblings of the frame, never children of it: the input box stays live and its draft stays
+         The plan sits above the decision and steer-confirm rows. The goal, Computer Use and
+         subagent capsules follow. The workspace picker, metrics and context button sit below the input.
+         These strips are siblings of the frame, never children of it: the input box stays live and its draft stays
          visible while a question is waiting, which is the whole reason they moved. -->
     <!-- The composer, and every question that may stand above it, sit in the reading column with the same gutter
          as the transcript: the column's right edge is where the transcript's is meant to be, so the inset goes on

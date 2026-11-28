@@ -976,6 +976,8 @@ internal sealed class ShellProvidersChecks
             shell.Chat.RemoveProvider("github-copilot");
         var copilot = shell.Chat.AddPreset("github-copilot");
         Check(copilot is not null, "清单里的 GitHub Copilot 预设可以被采纳");
+        // The fixture is offline and must not require or print the release CI client ID.
+        if (copilot?.OAuth is { } copilotOAuth) copilotOAuth.ClientId = "offline-copilot-check";
         settings.RefreshProviderGroupsForCheck();
         Check(copilot is { SupportsOAuth: true }
               && copilot.OAuth?.EffectiveFlow == ProviderOAuthFlows.DeviceCode,
@@ -1009,8 +1011,8 @@ internal sealed class ShellProvidersChecks
               && !refusedWindow.TextsForCheck.Contains("dc-never-display-this", StringComparison.Ordinal),
             "屏上只有用户要输的代码，没有轮询用的 device_code");
         Check((refusedWindow?.LogicalChildCountForCheck ?? 0) >= 5
-              && refusedWindow is not null && !refusedWindow.CopyRevealedForCheck,
-            "窗口里真的摆了控件，复制按钮要悬停才亮（实际 "
+              && refusedWindow is not null && refusedWindow.CopyRevealedForCheck,
+            "窗口里真的摆了控件，复制按钮无需悬停即可看到（实际 "
             + (refusedWindow?.LogicalChildCountForCheck ?? 0) + " 个节点）");
         Check(refusedWindow?.StatusForCheck == HubStrings.Get("AuthDeviceWaiting"),
             "窗口先说一句在等什么（实际「" + refusedWindow?.StatusForCheck + "」）");
@@ -1021,7 +1023,7 @@ internal sealed class ShellProvidersChecks
         Check(refused.Requests.Count > 0
               && refused.Requests[0].Contains("\"client_id\":\"" + (copilot?.OAuth?.ClientId ?? "") + "\"")
               && refused.Requests[0].Contains("read:user"),
-            "取码请求带的是清单里的公开 client_id 和 read:user（实际 " + refused.Requests.FirstOrDefault() + "）");
+            "取码请求携带测试 client_id 和 read:user");
         Check(refused.Requests.All(entry => !entry.Contains("client_secret", StringComparison.Ordinal)),
             "客户端密钥一次都没有出现：这是公开客户端，密钥存在 GitHub 那边但不属于这个二进制");
         Check(CountCredentials(shell.Chat, "github-copilot") == 0, "被拒绝的登录不留任何凭据");

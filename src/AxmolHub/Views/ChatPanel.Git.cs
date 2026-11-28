@@ -1,12 +1,71 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using AxmolHub.Agent;
 using AxmolHub.Core;
 
 namespace AxmolHub;
 
 public partial class ChatPanel
 {
+    private void FinishWorkspaceGit(WorkspaceGitRequest request, TaskQueue.Item item, bool committed, UserFeedback? feedback,
+        bool autoAuthorize = true)
+    {
+        _inspector?.GitFinished(request, item, committed);
+        if (feedback is { } result) StatusMessage?.Invoke(result);
+        if (_chat.ActiveWorkspaceRoot != request.Workspace) return;
+        var failure = (item.Fault as WorkspaceGit.Failure)?.Result;
+        var next = request.Action switch
+        {
+            WorkspaceGitAction.AuthorizeGitHub when item.State == TaskQueue.Phase.Done && request.ExpectedSourceOid is not null => WorkspaceGitAction.Push,
+            WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush when autoAuthorize && OperatingSystem.IsLinux()
+                && request.PushTarget?.GitHubUrl is not null && failure is { FailureKey: "push-auth", PushSourceOid: not null }
+                => WorkspaceGitAction.AuthorizeGitHub,
+            _ => (WorkspaceGitAction?)null,
+        };
+        if (next is null)
+        {
+            if (item.Error is { } error) ShowGitError(error);
+            return;
+        }
+        // Preserve the original target for revalidation; neither follow-up can commit or start another login.
+        var followUp = request with { Action = next.Value, Title = "", Entry = null,
+            ExpectedSourceOid = failure?.PushSourceOid ?? request.ExpectedSourceOid };
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (_chat.ActiveWorkspaceRoot == request.Workspace && !StartGitFollowUp(followUp))
+                ShowGitError(item.Error ?? HubStrings.Get("CommitSummaryBusy"));
+        });
+    }
+
+    private void ShowGitError(string error) => StatusMessage?.Invoke(UserFeedback.Error(error, "git-failed"));
+
+    private bool StartGitFollowUp(WorkspaceGitRequest request)
+    {
+        TaskQueue.Item? task = null;
+        DeviceAuthWindow? device = null;
+        var progress = request.Action == WorkspaceGitAction.AuthorizeGitHub
+            ? new Progress<DeviceCodeChallenge>(challenge =>
+            {
+                if (task is not { CanCancel: true }) return;
+                device = new DeviceAuthWindow(challenge, titleKey: "GitAuthorizeGitHub");
+                device.Closed += (_, _) =>
+                {
+                    device = null;
+                    if (task.CanCancel) TaskQueue.Instance.Cancel(task.Identity);
+                };
+                if (TopLevel.GetTopLevel(this) is Window owner) device.Show(owner);
+                else device.Show();
+            }) : null;
+        task = _chat.StartWorkspaceGit(request, (item, committed, feedback) =>
+        {
+            device?.Close();
+            FinishWorkspaceGit(request, item, committed, feedback, autoAuthorize: false);
+            if (_chat.ActiveWorkspaceRoot == request.Workspace && _inspector is not null) RequestRepositoryRead();
+        }, gitHubProgress: progress);
+        return task is not null;
+    }
+
     private void AddGitShortcuts(StackPanel bar, string session, Func<int> currentIndex)
     {
         ChatTurn? Source()
@@ -94,10 +153,8 @@ public partial class ChatPanel
                 var request = new WorkspaceGitRequest(workspace, root, state.Branch, action, summary ?? "", null, state.PushTarget);
                 if (_chat.StartWorkspaceGit(request, async (item, committed, feedback) =>
                     {
-                        _inspector?.GitFinished(request, item, committed);
-                        if (feedback is { } result) StatusMessage?.Invoke(result);
+                        FinishWorkspaceGit(request, item, committed, feedback);
                         if (_chat.ActiveWorkspaceRoot != workspace) return;
-                        if (item.Error is { } error) StatusMessage?.Invoke(UserFeedback.Error(error, "git-failed"));
                         if (_inspector is not null) RequestRepositoryRead();
                         try { await RefreshAsync(); }
                         catch (Exception) { /* A failed status read does not change the operation's outcome. */ }

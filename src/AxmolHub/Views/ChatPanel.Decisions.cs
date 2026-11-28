@@ -697,10 +697,8 @@ public partial class ChatPanel
             {
                 if (_chat?.StartWorkspaceGit(request, (item, committed, feedback) =>
                     {
-                        _inspector.GitFinished(request, item, committed);
-                        if (feedback is { } result) StatusMessage?.Invoke(result);
+                        FinishWorkspaceGit(request, item, committed, feedback);
                         if (_chat.ActiveWorkspaceRoot != request.Workspace) return;
-                        if (item.Error is { } error) StatusMessage?.Invoke(UserFeedback.Error(error, "git-failed"));
                         RequestRepositoryRead();
                     }) is null)
                 {

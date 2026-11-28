@@ -87,6 +87,12 @@ dotnet run --project src/AxmolHub -- --data-root ./data --preferences ./artifact
 
 `--data-root` 优先于保存的设置；`--preferences` 仅隔离设置，不隔离登记索引、提供商或鉴权，开发时也使用当前用户的固定用户存储。CLI 同样使用固定登记索引；离线检查通过 CLI 的 `--profile-root <directory>` 显式选择临时索引目录。不要将设置、数据目录或下载的工具链提交到 Git。
 
+### Linux：GitHub HTTPS 推送授权
+
+发布包使用 GitHub Actions Secret `GH_OAUTH_CLIENT_ID` 注入输出清单中 `github-copilot.oauth.clientId`，不修改源码清单，也不需要 Client Secret 或 Git Credential Manager。若要从源码验证真实登录，在本地设置同名环境变量，构建后对输出目录运行 `pwsh installer/Set-ProviderAppIds.ps1 -PublishDir src/AxmolHub/bin/Release/net8.0`。未注入时 Git 仍可用已有凭据推送，但 Hub 无法发起 GitHub OAuth 登录。推送不要求在 Hub 中添加或登录 Copilot 模型提供商。
+
+推送授权独立请求 `repo` 权限；Copilot 的登录请求仍是 `read:user`。`repo` 涵盖账号有权访问的公开和私有仓库，但 Hub 仅将推送令牌用于触发授权的 HTTPS 仓库，并用独立的加密条目保存，不读取或覆盖 Copilot 令牌。授权成功后，Hub 重新校验仓库、分支、目标和首次推送的提交，仅当分支仍指向同一提交时自动重试一次推送，不会再次提交。只有首次推送明确报告凭据错误时才会打开授权浏览器；重试失败直接报告原因。如选错账号，可在仓库的 Git 菜单中选择「忘记此仓库的 GitHub 凭据」，再重新推送。该操作不会清除 Copilot 凭据。凭据通过 Git 自带的临时内存缓存传递，不写 `pushurl` 或全局凭据配置。
+
 ### macOS 开发构建：钥串提示与本地签名
 
 密钥与登录令牌在登录钥串里只用**一条**共享条目（服务名 `dev.axmol.hub`，账户 `hub-secrets`，值是「凭据 id → 密钥」的 JSON）。旧版本的 `dev.axmol.hub.<数据根的 sha256>` 条目仅在迁移时读取，迁移保留原条目，包括更早的逐凭据条目，不在旧 service 下折叠或删除它们。首次迁移可能分别请求源条目与共享条目的访问授权。

@@ -24,8 +24,7 @@ namespace AxmolHub;
 ///
 /// <para><b>The code is the point of the screen, so it is the biggest thing on it.</b> Monospaced because the
 /// characters have to be distinguishable when read aloud or copied by eye (GitHub issues them as
-/// <c>XXXX-XXXX</c>), and paired with a copy button that stays quiet until hovered, per the shell charter: the
-/// person either reads four characters or copies them, and only one of those needs a control.</para>
+/// <c>XXXX-XXXX</c>), and paired with an always-visible copy button.</para>
 /// </summary>
 public sealed partial class DeviceAuthWindow : Window
 {
@@ -39,9 +38,9 @@ public sealed partial class DeviceAuthWindow : Window
     /// <c>--verify-shell</c> pass can read the built state of a window it never puts on screen, the same way it
     /// reads <see cref="AuthDialog"/>.
     /// </summary>
-    public DeviceAuthWindow(DeviceCodeChallenge challenge)
+    public DeviceAuthWindow(DeviceCodeChallenge challenge, string titleKey = "AuthDeviceTitle")
     {
-        Title = HubStrings.Get("AuthDeviceTitle");
+        Title = HubStrings.Get(titleKey);
         Width = 420;
         SizeToContent = SizeToContent.Height;
         CanResize = false;
@@ -81,15 +80,10 @@ public sealed partial class DeviceAuthWindow : Window
         {
             Content = HubStrings.Get("AuthDeviceCopy"),
             Classes = { "compact" },
-            Opacity = 0,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 6, 0, 0),
         };
         _copy.Click += async (_, _) => await CopyCodeAsync();
-        // Reveal on hover, not on first paint: the code itself is what this window exists to show.
-        _code.PointerEntered += (_, _) => _copy.Opacity = 1;
-        _code.PointerExited += (_, _) => _copy.Opacity = 0;
-        _copy.PointerEntered += (_, _) => _copy.Opacity = 1;
 
         var root = new StackPanel
         {

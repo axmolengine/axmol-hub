@@ -1,21 +1,29 @@
+using AxmolHub.Agent;
 using AxmolHub.Core;
 
 namespace AxmolHub;
 
 internal static class WorkspaceGit
 {
+    internal sealed class Failure(GitCommitResult result, string message) : InvalidOperationException(message)
+    {
+        internal GitCommitResult Result { get; } = result;
+    }
+
     internal static string ActionKey(WorkspaceGitAction action) => action switch
     {
         WorkspaceGitAction.StageAll => "GitStageAll", WorkspaceGitAction.Stage => "GitStageFile",
         WorkspaceGitAction.Unstage => "GitUnstageFile", WorkspaceGitAction.Commit => "CommitSummaryAction",
         WorkspaceGitAction.Push => "PushSummaryAction", WorkspaceGitAction.CommitPush => "CommitPushSummaryAction",
         WorkspaceGitAction.CreateBranch => "GitCreateBranch", WorkspaceGitAction.Pull => "GitPull", WorkspaceGitAction.SwitchBranch => "GitSwitchBranch",
+        WorkspaceGitAction.AuthorizeGitHub => "GitAuthorizeGitHub", WorkspaceGitAction.ForgetGitHubCredential => "GitForgetCredential",
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
     internal static TaskQueue.Item? Start(WorkspaceGitRequest request, ProcessRunner runner,
         IReadOnlyList<string> secrets, Action<TaskQueue.Item, bool, UserFeedback?> finished,
-        Func<TaskQueue.Item, Action>? beginStatus, bool stageAllBeforeCommit = false)
+        Func<TaskQueue.Item, Action>? beginStatus, GitHubPushSignIn gitHubSignIn,
+        IProgress<DeviceCodeChallenge>? gitHubProgress, bool stageAllBeforeCommit)
     {
         var queue = TaskQueue.Instance;
         if (queue.ActiveMutating is not null) return null;
@@ -27,7 +35,17 @@ internal static class WorkspaceGit
         return queue.Enqueue("git:" + request.Root, label, request.Root + " · " + request.Branch, async (item, token) =>
         {
             token.ThrowIfCancellationRequested();
+            if (action == WorkspaceGitAction.AuthorizeGitHub)
+            {
+                Check(await gitHubSignIn.AuthorizeAsync(request, gitHubProgress, token));
+                return;
+            }
             item.SealCancellation();
+            if (action == WorkspaceGitAction.ForgetGitHubCredential)
+            {
+                Check(await gitHubSignIn.ForgetAsync(request, token));
+                return;
+            }
             void Stage(string key) => item.ApplyProgress(new(key, null, null, null, false, null));
             if (action is WorkspaceGitAction.Stage or WorkspaceGitAction.Unstage or WorkspaceGitAction.StageAll)
             {
@@ -61,16 +79,16 @@ internal static class WorkspaceGit
             if (action is WorkspaceGitAction.Push or WorkspaceGitAction.CommitPush)
             {
                 Stage("GitPushing");
-                try
+                string? credential = null;
+                if (OperatingSystem.IsLinux() && request.PushTarget?.GitHubUrl is { } url)
                 {
-                    var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token, request.Branch, request.PushTarget);
-                    if (result.FailureKey != "nothing-to-push") Check(result);
-                    pushed = result.Success;
+                    try { credential = gitHubSignIn.Read(url); }
+                    catch (Exception) { Check(new(false, "git-auth-storage", null), committed); }
                 }
-                catch (Exception ex) when (committed)
-                {
-                    throw new InvalidOperationException(HubStrings.Get("CommitPushPartialFailure") + " " + ex.Message, ex);
-                }
+                var result = await GitRepository.PushAsync(request.Workspace, request.Root, runner, secrets, token,
+                    request.Branch, request.PushTarget, credential, request.ExpectedSourceOid);
+                if (result.FailureKey != "nothing-to-push") Check(result, committed);
+                pushed = result.Success;
             }
         }, item =>
         {
@@ -80,6 +98,8 @@ internal static class WorkspaceGit
 
         UserFeedback? CompletionFeedback()
         {
+            if (action == WorkspaceGitAction.ForgetGitHubCredential)
+                return UserFeedback.Success(HubStrings.Get("GitCredentialForgotten"), "git-succeeded");
             if (action is WorkspaceGitAction.CreateBranch or WorkspaceGitAction.SwitchBranch)
                 return UserFeedback.Success(string.Format(HubStrings.Get(action == WorkspaceGitAction.CreateBranch ? "GitBranchCreated" : "GitBranchSwitched"), request.Title), "git-succeeded");
             var key = (committed, pushed) switch
@@ -95,7 +115,7 @@ internal static class WorkspaceGit
         }
     }
 
-    private static void Check(GitCommitResult result)
+    private static void Check(GitCommitResult result, bool committed = false)
     {
         if (result.Success) return;
         var key = result.FailureKey switch
@@ -105,10 +125,18 @@ internal static class WorkspaceGit
             "repository-unavailable" => "CommitSummaryRepoUnavailable", "conflict" => "CommitSummaryConflict",
             "nothing-staged" => "CommitSummaryNothingStaged", "stage-failed" => "CommitSummaryStageFailed",
             "upstream-unavailable" => "PushSummaryUpstreamUnavailable", "push-failed" => "PushSummaryFailed",
+            "push-auth" => "GitPushAuthFailed", "push-ssh-auth" => "GitPushSshFailed", "push-network" => "GitPushNetworkFailed",
+            "push-protected" => "GitPushProtected", "push-access" => "GitPushAccessDenied", "push-timeout" => "GitPushTimedOut",
+            "push-source-changed" => "GitPushSourceChanged", "push-tracking-failed" => "GitPushTrackingFailed",
+            "push-non-fast-forward" => "GitPushNonFastForward", "push-target-changed" => "GitPushTargetChanged",
+            "git-auth-unsupported" => "GitAuthUnsupported", "git-auth-not-configured" => "GitAuthNotConfigured",
+            "git-auth-storage" => "GitAuthStorageFailed", "git-auth-scope" => "GitAuthScopeFailed", "git-auth-bridge" => "GitAuthBridgeFailed",
+            "git-auth-failed" => "GitAuthFailed", "git-auth-timeout" => "GitAuthTimedOut",
             "pull-no-upstream" => "GitPullNoUpstream", "pull-failed" => "GitPullFailed",
             "invalid-branch" => "GitInvalidBranch", "branch-failed" => "GitBranchFailed",
             _ => "CommitSummaryFailed",
         };
-        throw new InvalidOperationException(HubStrings.Get(key) + (string.IsNullOrWhiteSpace(result.Detail) ? "" : "\n" + result.Detail));
+        var prefix = committed && result.FailureKey != "push-tracking-failed" ? HubStrings.Get("CommitPushPartialFailure") + " " : "";
+        throw new Failure(result, prefix + HubStrings.Get(key) + (string.IsNullOrWhiteSpace(result.Detail) ? "" : "\n" + result.Detail));
     }
 }

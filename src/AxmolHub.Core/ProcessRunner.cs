@@ -254,12 +254,28 @@ public sealed class ProcessRunner(Action<string> log)
     /// ours, and the human decides — see <c>WorkspaceTools.RunInShellAsync</c>.</summary>
     public bool AdoptOnIdle { get; init; }
 
+    private static async Task SendInputAsync(Process process, string? input, CancellationToken cancellation)
+    {
+        try
+        {
+            if (input is not null)
+                await process.StandardInput.WriteAsync(input.AsMemory(), cancellation).ConfigureAwait(false);
+            process.StandardInput.Close();
+        }
+        catch (IOException)
+        {
+            // A child that refused the input reports its own exit code and stderr.
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+    }
+
     public void Write(string message) => log(message);
     public async Task<ProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
         string workingDirectory, IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellation = default, TimeSpan? timeout = null, IReadOnlyList<string>? sensitiveValues = null,
         IReadOnlyDictionary<string, string>? overrides = null, bool firstLineOnly = false,
-        Action<string>? onLine = null, RawStdoutCapture? rawStdout = null)
+        Action<string>? onLine = null, RawStdoutCapture? rawStdout = null, string? standardInput = null,
+        IReadOnlyList<string>? unsetEnvironment = null)
     {
         // Only an inherited environment gets the recovered Unix shell PATH and non-secret variables.
         // Explicit overrides and complete isolated environments remain authoritative.
@@ -269,11 +285,7 @@ public sealed class ProcessRunner(Action<string> log)
         {
             WorkingDirectory = workingDirectory, UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
-            // stdin is redirected for one reason only: so it can be closed right after the process starts.
-            // Left inherited, a child that waits for input reads Hub's own stdin — and where that is a console it
-            // waits for a key nobody presses, while where it is a pipe Hub holds and never writes it waits for an
-            // EOF that never comes. Either way Hub ends up waiting for an exit that will not happen. A closed pipe
-            // answers every prompt with EOF, which is the honest answer: there is nobody here to answer it.
+            // Never inherit Hub's stdin. Close the pipe even when there is no input, so an unexpected prompt sees EOF.
             RedirectStandardInput = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
@@ -293,6 +305,8 @@ public sealed class ProcessRunner(Action<string> log)
         {
             foreach (var entry in overrides) start.Environment[entry.Key] = entry.Value;
         }
+        if (unsetEnvironment is not null)
+            foreach (var key in unsetEnvironment) start.Environment.Remove(key);
         // On Unix Process.Start resolves bare names using the parent's PATH, not StartInfo.Environment.
         // Resolve explicitly on macOS and Linux so command discovery and the child use the same PATH, and an isolated
         // environment cannot accidentally execute a tool from Hub's inherited PATH.
@@ -323,9 +337,7 @@ public sealed class ProcessRunner(Action<string> log)
             var idleTimeout = timeout ?? DefaultIdleTimeout;
             cancellation.ThrowIfCancellationRequested();
             process.Start();
-            // The write end goes as soon as the child exists: from here on its stdin is an open pipe with nobody
-            // on the other side, so a prompt reads EOF and returns instead of parking the build on a key press.
-            process.StandardInput.Close();
+            var input = SendInputAsync(process, standardInput, cancellation);
 
             // Record the timestamp of "the most recent output"; both read pumps update it (Interlocked writes a long for thread safety).
             var lastOutputTicks = Environment.TickCount64;
@@ -430,6 +442,7 @@ public sealed class ProcessRunner(Action<string> log)
             // it open for as long as it lives. Awaiting the readers unbounded is then a Hub frozen on "Configuring"
             // with a log that already says the build succeeded — the failure this bound exists for.
             var exitCode = process.ExitCode;
+            await input.ConfigureAwait(false);
             var (finalOutput, finalError) = await DrainAfterExitAsync(output, error, outputSink, errorSink, executable)
                 .ConfigureAwait(false);
             log($"Exit code: {exitCode}");

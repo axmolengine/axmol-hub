@@ -44,6 +44,7 @@ internal sealed partial class ChatProviderCoordinator
     private string? _selectedProviderId;
     private string? _selectedModelName;
     internal bool CanStoreSecrets => _secrets is not null;
+    internal ISecretStore? SecretStore => _secrets;
     internal SecretStoreDescriptor SecretBackend => _secrets?.Descriptor ?? SecretStoreDescriptor.None;
     internal IReadOnlyList<ModelProvider> Providers => _providerList;
     internal IReadOnlyList<ChatModelOption> AvailableChatModels

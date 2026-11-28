@@ -192,14 +192,12 @@
       "keyValidation": { "type": "httpGetModels", "path": "/models" },
       "oauth": {
         "flow": "deviceCode",
-        "clientId": "Ov23lidzcoGFYNmdeTsg",
         "deviceAuthorizationUrl": "https://github.com/login/device/code",
         "tokenUrl": "https://github.com/login/oauth/access_token",
         "scope": "read:user",
         "appName": "Axmol Hub",
         "minIntervalSeconds": 5
-      },
-      "_oauthNote": "clientId is a public identifier, not a secret (RFC 8252 §2.1): a native client's id ships in the binary whatever it says, so GitHub's device flow asks for nothing beside it. The app's client secret is deliberately absent — storing one here would distribute it. Scope is read:user and nothing else: it is the minimum that authenticates a Copilot call, and it cannot read repositories, so a token leaked by a rebuilt client costs its owner premium requests rather than their code."
+      }
     },
     {
       "id": "ollama",
