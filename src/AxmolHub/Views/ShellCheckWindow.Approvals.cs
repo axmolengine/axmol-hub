@@ -660,6 +660,18 @@ internal sealed class ShellApprovalsChecks
             var planTools = ChatTools.CreateFor(ChatModes.Plan, new ChatToolScope(
                 chat.HubSnapshotProvider?.Invoke(),
                 new WorkspaceToolScope(null, new WorkspaceGuards(null, []), null, "schema", [], null, null)));
+            var localBrowserScope = WorkspaceToolScope.Empty with
+            {
+                Browser = new BrowserBridge(() => true, (_, _) => new Uri("http://127.0.0.1:8080/app.html"),
+                    (_, _) => Task.FromResult<IReadOnlyList<BrowserTabSummary>>([]),
+                    (_, _, _) => Task.FromResult(new BrowserOpenResult(false, null, null, null, null)),
+                    (_, _, _) => Task.FromResult(new BrowserReadResult(false, null, null, null, false, null, null, false, null, null, null)),
+                    (_, _, _) => Task.FromResult(new BrowserActResult(false, null, null, null, null, null))),
+            };
+            var publicBrowserScope = WorkspaceToolScope.Empty with
+            {
+                Browser = localBrowserScope.Browser! with { PeekTabUrl = (_, _) => new Uri("https://example.com/app") },
+            };
             Check(ChatTools.CreateFor(ChatModes.Ask, ChatToolScope.Empty).Count == 0
                   // Questions and access requests involve the person without enabling workspace mutations.
                   && planTools.Where(tool => tool.Name != AskUserTool.ToolName
@@ -668,6 +680,11 @@ internal sealed class ShellApprovalsChecks
                   && planTools.Count(tool => tool.Name is ToolNames.WebSearch or ToolNames.WebFetch) == 2
                   && ChatTools.RiskOf(ToolNames.WebSearch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
                   && ChatTools.RiskOf(ToolNames.WebFetch, null, WorkspaceToolScope.Empty) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf(ToolNames.BrowserAct, """{"action":"click","element_ref":1}""", localBrowserScope) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf(ToolNames.BrowserAct, """{"action":"select","element_ref":1,"text":"a"}""", publicBrowserScope) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf(ToolNames.BrowserAct, """{"action":"press_key","key":"Enter"}""", publicBrowserScope) == ToolRisk.SystemCommand
+                  && ChatTools.RiskOf(ToolNames.BrowserAct, """{"action":"hover","element_ref":1}""", publicBrowserScope) == ToolRisk.WorkspaceCommand
+                  && ChatTools.RiskOf(ToolNames.BrowserAct, """{"action":"close"}""", publicBrowserScope) == ToolRisk.WorkspaceCommand
                   && planTools.Count(tool => tool.Name == ToolNames.FsRequestAccess) == 1
                   && ChatTools.RiskOf(ToolNames.FsRequestAccess, null, WorkspaceToolScope.Empty) == ToolRisk.SystemCommand
                   && planTools.Any(tool => tool.Name == AskUserTool.ToolName)

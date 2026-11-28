@@ -411,7 +411,9 @@ public static class ToolPreviews
     {
         if (Flag(arguments, "list_tabs")) return "browser_read · list open tabs";
         var tab = Text(arguments, "tab_id");
-        return $"browser_read · {(tab.Length > 0 ? tab : "active tab")}";
+        var selector = Text(arguments, "selector");
+        return $"browser_read · {(tab.Length > 0 ? tab : "active tab")}"
+               + (selector.Length > 0 ? $" · selector {selector}" : "");
     }
 
     private static string BrowserScreenshotPreview(IReadOnlyDictionary<string, JsonElement> arguments, WorkspaceToolScope scope)
@@ -445,6 +447,8 @@ public static class ToolPreviews
             var head = text.Length <= 120 ? text : text[..120] + "…";
             detail.Add($"text \"{SecretRedaction.Redact(head, scope.SensitiveValues)}\"");
         }
+        var key = Text(arguments, "key");
+        if (key.Length > 0) detail.Add($"key {key}");
         var script = Text(arguments, "script");
         if (script.Length > 0)
         {

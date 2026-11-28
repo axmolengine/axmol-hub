@@ -26,7 +26,8 @@ public sealed record BrowserReadRequest(
     bool IncludeElements,
     bool IncludeConsole,
     bool ClearConsole,
-    int MaxCharacters);
+    int MaxCharacters,
+    string? Selector = null);
 
 /// <summary>Snapshot read from an embedded browser tab.</summary>
 public sealed record BrowserReadResult(
@@ -54,7 +55,9 @@ public sealed record BrowserActRequest(
     int DeltaY,
     int WaitMs,
     string? Script,
-    TimeSpan Timeout);
+    TimeSpan Timeout,
+    string? Key = null,
+    string[]? Modifiers = null);
 
 /// <summary>Outcome of an embedded browser action.</summary>
 public sealed record BrowserActResult(
@@ -127,7 +130,7 @@ public static class WorkspaceBrowserPolicy
 
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "scroll", "back", "forward", "reload", "wait", "eval",
+        "click", "type", "select", "press_key", "hover", "scroll", "back", "forward", "reload", "wait", "eval", "close",
     };
 
     /// <summary>Whether <paramref name="action"/> is a recognized <c>browser_act</c> verb.</summary>
@@ -140,7 +143,7 @@ public static class WorkspaceBrowserPolicy
     /// cannot silently mutate external state under automatic approval.
     /// </summary>
     public static bool IsMutatingAction(string? action)
-        => action?.Trim().ToLowerInvariant() is "click" or "type" or "eval";
+        => action?.Trim().ToLowerInvariant() is "click" or "type" or "select" or "press_key" or "eval";
 
     /// <summary>Whether <paramref name="uri"/> points to a local file or loopback dev server.</summary>
     public static bool IsLocalTarget(Uri? uri)

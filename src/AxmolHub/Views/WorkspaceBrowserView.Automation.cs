@@ -165,6 +165,8 @@ internal sealed partial class WorkspaceBrowserView
 
             using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
+            if (StringProp(root, "error") is { Length: > 0 } readError)
+                return new BrowserReadResult(false, TabId, _currentUri?.AbsoluteUri, _pageTitle, Loading, null, null, false, null, null, readError);
             var url = StringProp(root, "url") ?? _currentUri?.AbsoluteUri;
             var title = StringProp(root, "title");
             if (!string.IsNullOrWhiteSpace(title) && !string.Equals(_pageTitle, title, StringComparison.Ordinal))
@@ -271,6 +273,9 @@ internal sealed partial class WorkspaceBrowserView
 
             case "click":
             case "type":
+            case "select":
+            case "press_key":
+            case "hover":
             case "scroll":
             case "eval":
                 return await ExecuteScriptActionAsync(web, request, cancellationToken);
@@ -345,6 +350,9 @@ internal sealed partial class WorkspaceBrowserView
             {
                 "click" => BuildClickScript(request.ElementRef, request.Selector),
                 "type" => BuildTypeScript(request.ElementRef, request.Selector, request.Text ?? "", request.Submit),
+                "select" => BuildSelectScript(request.ElementRef, request.Selector, request.Text ?? ""),
+                "press_key" => BuildPressKeyScript(request.ElementRef, request.Selector, request.Key ?? "", request.Modifiers),
+                "hover" => BuildHoverScript(request.ElementRef, request.Selector),
                 "scroll" => BuildScrollScript(request.ElementRef, request.Selector, request.DeltaX, request.DeltaY),
                 "eval" => BuildEvalScript(request.Script ?? ""),
                 _ => throw new InvalidOperationException($"Unsupported action {request.Action}"),
@@ -430,26 +438,43 @@ internal sealed partial class WorkspaceBrowserView
         var includeConsole = request.IncludeConsole ? "true" : "false";
         var clearConsole = request.ClearConsole ? "true" : "false";
         var maxChars = request.MaxCharacters;
+        var encodedScope = request.Selector is { Length: > 0 } sel ? JsonSerializer.Serialize(sel) : "null";
         return $$"""
             (() => {
+              let scopeEl = document.body;
+              let scopeInfo = '';
+              const scopeSelector = {{encodedScope}};
+              if (scopeSelector) {
+                try {
+                  scopeEl = document.querySelector(scopeSelector);
+                } catch (e) {
+                  return JSON.stringify({ error: `Invalid CSS selector: ${e && e.message ? e.message : String(e)}` });
+                }
+                if (!scopeEl) return JSON.stringify({ error: `Selector '${scopeSelector}' did not match any element on the page.` });
+                const sr = scopeEl.getBoundingClientRect();
+                scopeInfo = ` · scope=${scopeSelector} (${Math.round(sr.left)},${Math.round(sr.top)} ${Math.round(sr.width)}x${Math.round(sr.height)})`;
+              }
               const out = {
                 url: location.href,
                 title: document.title || '',
-                viewport: `${window.innerWidth}x${window.innerHeight} (scrollY=${Math.round(window.scrollY)}/${document.documentElement ? document.documentElement.scrollHeight : 0})`,
+                viewport: `${window.innerWidth}x${window.innerHeight} (scrollY=${Math.round(window.scrollY)}/${document.documentElement ? document.documentElement.scrollHeight : 0})${scopeInfo}`,
                 text: '',
                 textTruncated: false,
                 elements: '',
                 console: ''
               };
               if ({{includeText}}) {
-                const raw = ((document.body && document.body.innerText) || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+                const raw = ((scopeEl && scopeEl.innerText) || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
                 out.textTruncated = raw.length > {{maxChars}};
                 out.text = out.textTruncated ? raw.slice(0, {{maxChars}}) : raw;
               }
               if ({{includeElements}}) {
                 document.querySelectorAll('[data-axmol-ref]').forEach(el => el.removeAttribute('data-axmol-ref'));
                 const selector = 'a[href],button,input,textarea,select,[role="button"],[role="link"],[role="textbox"],[contenteditable="true"],canvas';
-                const nodes = Array.from(document.querySelectorAll(selector));
+                const rootNode = scopeEl || document;
+                const nodes = [];
+                if (scopeSelector && scopeEl && typeof scopeEl.matches === 'function' && scopeEl.matches(selector)) nodes.push(scopeEl);
+                if (rootNode && typeof rootNode.querySelectorAll === 'function') nodes.push(...rootNode.querySelectorAll(selector));
                 const lines = [];
                 let ref = 0;
                 for (const el of nodes) {
@@ -467,14 +492,21 @@ internal sealed partial class WorkspaceBrowserView
                   if (type) attrs.push(`type="${type}"`);
                   const role = el.getAttribute('role');
                   if (role) attrs.push(`role="${role}"`);
+                  const expanded = el.getAttribute('aria-expanded');
+                  if (expanded) attrs.push(`aria-expanded="${expanded}"`);
                   if (el.disabled) attrs.push('disabled');
                   if (tag === 'a' && el.getAttribute('href')) attrs.push(`href="${el.getAttribute('href').slice(0, 120)}"`);
                   if (tag === 'canvas') attrs.push(`size=${el.width}x${el.height}`);
-                  const label = (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.innerText || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                  const label = (el.getAttribute('aria-label') || el.getAttribute('placeholder') || (tag === 'select' ? '' : el.innerText) || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
                   let val = '';
                   if (tag === 'input' || tag === 'textarea' || tag === 'select') {
                     if ((type || '').toLowerCase() === 'password') val = ' value="***"';
                     else if ((type || '').toLowerCase() === 'checkbox' || (type || '').toLowerCase() === 'radio') val = el.checked ? ' checked' : '';
+                    else if (tag === 'select') {
+                      const opt = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+                      const optText = opt ? opt.text.trim().slice(0, 60) : '';
+                      val = ` value="${String(el.value).slice(0, 60)}"${optText && optText !== el.value ? ` (${optText})` : ''}`;
+                    }
                     else if (el.value) val = ` value="${String(el.value).slice(0, 80)}"`;
                   }
                   const attrText = attrs.length ? ' ' + attrs.join(' ') : '';
@@ -602,6 +634,106 @@ internal sealed partial class WorkspaceBrowserView
             """;
     }
 
+    private static string BuildSelectScript(int? elementRef, string? selector, string option)
+    {
+        var lookup = TargetLookupJs(elementRef, selector);
+        var encodedOption = JsonSerializer.Serialize(option);
+        return $$"""
+            (() => {
+              try {
+                const el = {{lookup}};
+                if (!el) return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
+                if (el.tagName.toLowerCase() !== 'select')
+                  return JSON.stringify({ ok: false, error: `Element <${el.tagName.toLowerCase()}> is not a <select> element.` });
+                const wanted = {{encodedOption}};
+                const opts = Array.from(el.options || []);
+                const match = opts.find(o => o.value === wanted)
+                  || opts.find(o => o.text.trim() === wanted.trim())
+                  || opts.find(o => o.text.trim().toLowerCase() === wanted.trim().toLowerCase());
+                if (!match) {
+                  const available = opts.slice(0, 12).map(o => `${o.value} (${o.text.trim()})`).join(', ');
+                  return JSON.stringify({ ok: false, error: `Option '${wanted}' not found in <select>. Available: ${available}` });
+                }
+                el.scrollIntoView({ block: 'center', inline: 'nearest' });
+                if (typeof el.focus === 'function') el.focus();
+                el.value = match.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Selected option "${match.text.trim()}" (value="${match.value}")` });
+              } catch (e) {
+                return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
+              }
+            })()
+            """;
+    }
+
+    private static string BuildPressKeyScript(int? elementRef, string? selector, string key, string[]? modifiers)
+    {
+        var hasTarget = elementRef is not null || !string.IsNullOrWhiteSpace(selector);
+        var lookup = hasTarget ? TargetLookupJs(elementRef, selector) : "null";
+        var encodedKey = JsonSerializer.Serialize(key);
+        var ctrl = modifiers?.Any(m => m is "ctrl" or "control") == true ? "true" : "false";
+        var alt = modifiers?.Contains("alt") == true ? "true" : "false";
+        var shift = modifiers?.Contains("shift") == true ? "true" : "false";
+        var meta = modifiers?.Any(m => m is "meta" or "cmd" or "command") == true ? "true" : "false";
+        return $$"""
+            (() => {
+              try {
+                let target = {{lookup}};
+                if ({{(hasTarget ? "true" : "false")}} && !target)
+                  return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
+                if (target) {
+                  target.scrollIntoView({ block: 'center', inline: 'nearest' });
+                  if (typeof target.focus === 'function') target.focus();
+                } else {
+                  target = document.activeElement || document.body || document.documentElement;
+                }
+                const rawKey = {{encodedKey}};
+                const key = rawKey === 'Space' ? ' ' : rawKey;
+                const code = rawKey === 'Space' ? 'Space'
+                  : (key.length === 1 && /[a-zA-Z]/.test(key)) ? 'Key' + key.toUpperCase()
+                  : (key.length === 1 && /[0-9]/.test(key)) ? 'Digit' + key
+                  : rawKey;
+                const init = { key, code, bubbles: true, cancelable: true, ctrlKey: {{ctrl}}, altKey: {{alt}}, shiftKey: {{shift}}, metaKey: {{meta}} };
+                target.dispatchEvent(new KeyboardEvent('keydown', init));
+                if (key.length === 1 || key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', init));
+                target.dispatchEvent(new KeyboardEvent('keyup', init));
+                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Pressed key ${rawKey} on <${target.tagName ? target.tagName.toLowerCase() : 'document'}>.` });
+              } catch (e) {
+                return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
+              }
+            })()
+            """;
+    }
+
+    private static string BuildHoverScript(int? elementRef, string? selector)
+    {
+        var lookup = TargetLookupJs(elementRef, selector);
+        return $$"""
+            (() => {
+              try {
+                const el = {{lookup}};
+                if (!el) return JSON.stringify({ ok: false, error: 'Target element not found. Call browser_read to refresh element refs.' });
+                el.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };
+                if (typeof PointerEvent === 'function') {
+                  el.dispatchEvent(new PointerEvent('pointerover', opts));
+                  el.dispatchEvent(new PointerEvent('pointerenter', { ...opts, bubbles: false }));
+                }
+                el.dispatchEvent(new MouseEvent('mouseover', opts));
+                el.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
+                const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                return JSON.stringify({ ok: true, url: location.href, title: document.title || '', output: `Hovered <${el.tagName.toLowerCase()}>${label ? ' "' + label + '"' : ''}` });
+              } catch (e) {
+                return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
+              }
+            })()
+            """;
+    }
+
     private static string BuildEvalScript(string script)
     {
         var trimmed = script.Trim();
@@ -622,6 +754,8 @@ internal sealed partial class WorkspaceBrowserView
                 const value = {{wrapped}};
                 let text;
                 if (value === undefined) text = 'undefined';
+                else if (value !== null && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function')
+                  text = '[Promise returned — browser_act eval is synchronous; assign the resolved result to window and read it after action="wait"]';
                 else if (typeof value === 'string') text = value;
                 else {
                   try { text = JSON.stringify(value, null, 2); }

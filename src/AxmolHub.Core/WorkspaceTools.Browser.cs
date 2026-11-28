@@ -67,6 +67,7 @@ public sealed partial class WorkspaceTools
         [Description("Include captured console messages and uncaught page errors (default true).")] bool include_console = true,
         [Description("Clear the captured console buffer after reading (default false).")] bool clear_console = false,
         [Description("Maximum characters of visible page text to return (default 8000, max 20000).")] int max_characters = WorkspaceBrowserPolicy.DefaultReadCharacters,
+        [Description("Optional CSS selector to scope text and interactive element extraction to one subtree (for example 'nav', 'main', or '#dialog').")] string? selector = null,
         CancellationToken cancellationToken = default)
     {
         if (context.Browser is not { } bridge)
@@ -111,7 +112,8 @@ public sealed partial class WorkspaceTools
             result = await bridge.Read(
                 context.WorkspaceRoot,
                 new BrowserReadRequest(string.IsNullOrWhiteSpace(tab_id) ? null : tab_id.Trim(),
-                    include_text, include_elements, include_console, clear_console, limit),
+                    include_text, include_elements, include_console, clear_console, limit,
+                    string.IsNullOrWhiteSpace(selector) ? null : selector.Trim()),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -223,20 +225,23 @@ public sealed partial class WorkspaceTools
         return SecretRedaction.Redact(TextEol.ToLf(sb.ToString()), context.SensitiveValues);
     }
 
-    [Description("Interact with an embedded workspace browser tab: click, type, scroll, back, forward, reload, "
-                 + "wait (for ms or a selector), or eval (synchronous JavaScript expression/body). "
+    [Description("Interact with an embedded workspace browser tab: click, type, select (dropdown option), "
+                 + "press_key, hover, scroll, back, forward, reload, wait (for ms or a selector), eval "
+                 + "(synchronous JavaScript expression/body), or close (close the tab). "
                  + "Prefer element_ref from browser_read over guessing selectors.")]
     public async Task<string> BrowserActAsync(
-        [Description("Action: click, type, scroll, back, forward, reload, wait, or eval.")] string action,
+        [Description("Action: click, type, select, press_key, hover, scroll, back, forward, reload, wait, eval, or close.")] string action,
         [Description("Optional tab_id from browser_open or browser_read. Omit for the active workspace browser tab.")] string? tab_id = null,
-        [Description("Element ref number returned by browser_read (for click, type, scroll, or wait).")] int? element_ref = null,
-        [Description("CSS selector alternative to element_ref (for click, type, scroll, or wait).")] string? selector = null,
-        [Description("Text to enter when action is 'type'.")] string? text = null,
+        [Description("Element ref number returned by browser_read (for click, type, select, press_key, hover, scroll, or wait).")] int? element_ref = null,
+        [Description("CSS selector alternative to element_ref (for click, type, select, press_key, hover, scroll, or wait).")] string? selector = null,
+        [Description("Text to enter when action is 'type', or option value/visible label when action is 'select'.")] string? text = null,
         [Description("When true on action 'type', press Enter or submit the enclosing form.")] bool submit = false,
         [Description("Horizontal scroll pixels when action is 'scroll'.")] int delta_x = 0,
         [Description("Vertical scroll pixels when action is 'scroll' (positive scrolls down; defaults to 600 if no target or delta is set).")] int delta_y = 0,
         [Description("Milliseconds to wait when action is 'wait' (50 to 10000, default 1000).")] int wait_ms = 1000,
-        [Description("JavaScript expression or function body to run when action is 'eval'.")] string? script = null,
+        [Description("Synchronous JavaScript expression or function body to run when action is 'eval'.")] string? script = null,
+        [Description("Key name when action is 'press_key' (for example Enter, Escape, Tab, ArrowDown, Space, or a single character).")] string? key = null,
+        [Description("Optional modifier keys for 'press_key': ctrl, alt, shift, meta.")] string[]? modifiers = null,
         CancellationToken cancellationToken = default)
     {
         if (context.Browser is not { } bridge)
@@ -244,18 +249,25 @@ public sealed partial class WorkspaceTools
 
         var verb = (action ?? "").Trim().ToLowerInvariant();
         if (!WorkspaceBrowserPolicy.IsSupportedAction(verb))
-            return $"Refused: unsupported browser_act action '{action}'. Use one of: click, type, scroll, back, forward, reload, wait, eval.";
+            return $"Refused: unsupported browser_act action '{action}'. Use one of: click, type, select, press_key, hover, scroll, back, forward, reload, wait, eval, close.";
 
-        if (verb is "click" or "type" && element_ref is null && string.IsNullOrWhiteSpace(selector))
+        if (verb is "click" or "type" or "select" or "hover" && element_ref is null && string.IsNullOrWhiteSpace(selector))
             return $"Refused: browser_act '{verb}' requires element_ref (from browser_read) or a CSS selector.";
-        if (verb == "type" && text is null)
-            return "Refused: browser_act 'type' requires the text parameter.";
+        if (verb is "type" or "select" && text is null)
+            return $"Refused: browser_act '{verb}' requires the text parameter.";
+        if (verb == "press_key" && string.IsNullOrWhiteSpace(key))
+            return "Refused: browser_act 'press_key' requires a non-empty key parameter.";
         if (verb == "eval" && string.IsNullOrWhiteSpace(script))
             return "Refused: browser_act 'eval' requires a non-empty script parameter.";
 
         var clampedWait = Math.Clamp(wait_ms, 50, WorkspaceBrowserPolicy.MaxWaitMs);
         var effectiveDeltaY = verb == "scroll" && element_ref is null && string.IsNullOrWhiteSpace(selector) && delta_x == 0 && delta_y == 0
             ? 600 : delta_y;
+        var cleanModifiers = modifiers?
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         BrowserActResult result;
         try
@@ -273,7 +285,9 @@ public sealed partial class WorkspaceTools
                     effectiveDeltaY,
                     clampedWait,
                     script,
-                    WorkspaceBrowserPolicy.DefaultActionTimeout),
+                    WorkspaceBrowserPolicy.DefaultActionTimeout,
+                    string.IsNullOrWhiteSpace(key) ? null : key.Trim(),
+                    cleanModifiers is { Length: > 0 } ? cleanModifiers : null),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -36,6 +36,18 @@ The component accepts older WebKitGTK 4.0/libsoup 2.4, but this integration targ
 - DevTools are disabled. Hub does not turn off the browser sandbox or request permissions merely by opening the tab. Website features remain subject to the engine/platform's behavior; they are not granted access to Hub's computer-use capabilities.
 - Closing while WebView2 initializes hides the view and defers detachment until the native callback finishes. An actual window close waits for pending adapters. `WebViewInitialization` handles only exceptions originating from the pinned WebView assembly while initialization is pending; unrelated Hub exceptions remain unhandled normally.
 
+## AI assistant integration
+
+The assistant drives the workspace's embedded browser through four tools routed over `BrowserBridge` (keeping one-way Hub -> page control; pages still have no bridge back to Hub tools, files, or credentials):
+
+- `browser_open` (`ToolRisk.WorkspaceCommand`, Agent mode): opens or reuses a browser tab in the session's workspace. Loopback dev servers (`localhost`, `127.0.0.1`, `[::1]`) and local `.html`/`.htm`/`.xhtml` files inside the session read sandbox work without enabling outbound web access; public HTTP/HTTPS URLs require the existing outbound web fetch setting, and non-loopback private/link-local/metadata addresses and non-HTTP(S) schemes are refused.
+- `browser_read` (`ToolRisk.ReadOnly`, Plan and Agent modes): lists open browser tabs in the workspace or reads a tab's URL, title, visible text, indexed interactive elements (`element_ref` / canvas sizes / `aria-expanded` / selected options, with password values masked), optional CSS subtree scope (`selector`), and captured console/error logs. Returned content is framed as untrusted page data and redacted against stored secrets.
+- `browser_screenshot` (`ToolRisk.ReadOnly`, Plan and Agent modes): captures the embedded browser tab as a PNG, rejects blank frames, saves the attachment, and delivers it to multimodal models via `RecordFrames`.
+  - macOS: prefers a WindowServer snapshot of Hub's own window cropped strictly to the `WKWebView` bounds when Screen Recording permission is already granted (preserving CoreAnimation `CABackdropLayer` effects such as CSS `backdrop-filter: blur`), and silently falls back to `WKWebView.takeSnapshotWithConfiguration:completionHandler:` without ever prompting for permission.
+  - Windows: `ICoreWebView2::CapturePreview` (PNG stream).
+  - Linux: `webkit_web_view_get_snapshot` + Cairo PNG stream on the GLib main loop.
+- `browser_act` (Agent mode): executes `click`, `type`, `select`, `press_key`, `hover`, `scroll`, `back`, `forward`, `reload`, `wait`, synchronous `eval`, or `close`. Non-mutating actions and actions targeting local files or loopback dev servers stay on `ToolRisk.WorkspaceCommand`; mutating actions (`click`, `type`, `select`, `press_key`, `eval`) on public or unknown URLs escalate to `ToolRisk.SystemCommand` (requiring confirmation in both Ask and Auto modes, without blanket "Always allow").
+
 ## Verification (2026-11-10)
 
 Host: **Windows 11 26H2**, build 26300, win-x64; detected WebView2 Runtime **157.0.4341.42**.

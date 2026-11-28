@@ -101,6 +101,11 @@ internal sealed partial class ShellDecisionsChecks
             var typed = await bridge.Act(root, new BrowserActRequest(browser.TabId, "type", 1, null, "assistant typed", false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
             var evaluated = await bridge.Act(root, new BrowserActRequest(browser.TabId, "eval", null, null, null, false, 0, 0, 1000, "console.warn('probe'); return document.querySelector('input').value;", TimeSpan.FromSeconds(10)), CancellationToken.None);
             var afterConsole = await bridge.Read(root, new BrowserReadRequest(browser.TabId, false, false, true, true, 1000), CancellationToken.None);
+            var scopedRead = await bridge.Read(root, new BrowserReadRequest(browser.TabId, true, true, false, false, 1000, Selector: "#panel"), CancellationToken.None);
+            var selected = await bridge.Act(root, new BrowserActRequest(browser.TabId, "select", null, "#mode", "beta", false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var hovered = await bridge.Act(root, new BrowserActRequest(browser.TabId, "hover", null, "#mode", null, false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            var pressed = await bridge.Act(root, new BrowserActRequest(browser.TabId, "press_key", null, "input", null, false, 0, 0, 1000, null, TimeSpan.FromSeconds(10), Key: "Enter"), CancellationToken.None);
+            var promiseHint = await bridge.Act(root, new BrowserActRequest(browser.TabId, "eval", null, null, null, false, 0, 0, 1000, "Promise.resolve(42)", TimeSpan.FromSeconds(10)), CancellationToken.None);
             var shot = await bridge.Capture!(root, new BrowserScreenshotRequest(browser.TabId, TimeSpan.FromSeconds(10)), CancellationToken.None);
             var screenshot = shot.Ok && shot.Frame is { Width: > 0, Height: > 0 } capturedFrame
                 && !capturedFrame.Stats.IsBlank() && ChatImageFormat.Identify(capturedFrame.Png) == ChatImageFormat.Png;
@@ -108,9 +113,13 @@ internal sealed partial class ShellDecisionsChecks
                 && snapshot.Ok && snapshot.Elements?.Contains("fixture", StringComparison.Ordinal) == true
                 && typed.Ok && evaluated.Ok && evaluated.Output == "assistant typed"
                 && afterConsole.Ok && afterConsole.ConsoleOutput?.Contains("[WARN] probe", StringComparison.Ordinal) == true
+                && scopedRead.Ok && scopedRead.Elements?.Contains("id=\"mode\"", StringComparison.Ordinal) == true
+                && selected.Ok && hovered.Ok && pressed.Ok
+                && promiseHint.Ok && promiseHint.Output?.Contains("Promise returned", StringComparison.Ordinal) == true
                 && bridge.PeekTabUrl(root, browser.TabId) == url
                 && screenshot;
-            view.CloseToolForCheck(browser.TabId);
+            var closedByAssistant = await bridge.Act(root, new BrowserActRequest(browser.TabId, "close", null, null, null, false, 0, 0, 1000, null, TimeSpan.FromSeconds(10)), CancellationToken.None);
+            assistant &= closedByAssistant.Ok;
             Dispatcher.UIThread.RunJobs();
             var released = browser.DisposedForCheck && browser.WebViewForCheck is null && ReferenceEquals(second, view.BrowserForCheck)
                 && !second.DisposedForCheck && second.NativeVisibleForCheck;
@@ -151,7 +160,7 @@ internal sealed partial class ShellDecisionsChecks
                     var title = other ? "Second page" : "First page";
                     var body = png ? File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Assets/hub-icon-256.png"))
                         : Encoding.UTF8.GetBytes(svg ? "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#36a'/></svg>"
-                            : $"<!doctype html><html><head><title>{title}</title>{(other ? "<link rel='icon' href='/icon.svg'>" : "")}</head><body><input aria-label='fixture' value='native browser fixture'></body></html>");
+                            : $"<!doctype html><html><head><title>{title}</title>{(other ? "<link rel='icon' href='/icon.svg'>" : "")}</head><body><input aria-label='fixture' value='native browser fixture'><div id='panel'><select id='mode'><option value='alpha'>Alpha</option><option value='beta'>Beta</option></select></div></body></html>");
                     var type = png ? "image/png" : svg ? "image/svg+xml" : "text/html; charset=utf-8";
                     var header = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: {type}\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
                     await stream.WriteAsync(header, stop.Token);

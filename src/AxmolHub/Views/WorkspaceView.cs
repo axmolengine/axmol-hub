@@ -892,6 +892,25 @@ internal sealed class WorkspaceView : Grid, IDisposable
             var browser = ResolveBrowserForState(state, request.TabId, out var error);
             if (browser is null)
                 return new BrowserActResult(false, null, null, null, null, error);
+            if (request.Action == "close")
+            {
+                var closedId = browser.TabId;
+                var closedUrl = browser.CurrentUri?.AbsoluteUri;
+                var closedTitle = browser.PageTitle ?? browser.TabTitle;
+                var index = state!.Browsers.IndexOf(browser);
+                browser.Dispose();
+                state.Browsers.Remove(browser);
+                if (state.Selected == closedId)
+                {
+                    if (state.Browsers.Count > 0)
+                        state.Selected = state.Browsers[Math.Min(index, state.Browsers.Count - 1)].TabId;
+                    else
+                        ChooseRemaining(state);
+                }
+                PublishBrowserSnapshot(state);
+                if (ReferenceEquals(state, _state)) Render();
+                return new BrowserActResult(true, closedId, closedUrl, closedTitle, "Closed browser tab.", null);
+            }
             return await browser.ExecuteActionAsync(request, cancellationToken);
         });
 

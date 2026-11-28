@@ -1893,9 +1893,21 @@ internal static class AiToolsChecks
             || readLocal.Contains("SUPERSECRET", StringComparison.Ordinal) || !readLocal.Contains("[REDACTED]", StringComparison.Ordinal))
             throw new Exception($"browser_read did not frame untrusted page data or redact secrets:{Environment.NewLine}{readLocal}");
         var badAct = await browserTools.BrowserActAsync("click");
+        var badSelect = await browserTools.BrowserActAsync("select", element_ref: 1);
+        var badKey = await browserTools.BrowserActAsync("press_key");
         var goodAct = await browserTools.BrowserActAsync("eval", script: "document.title");
+        var goodHover = await browserTools.BrowserActAsync("hover", selector: "button");
+        var goodClose = await browserTools.BrowserActAsync("close");
         if (!badAct.StartsWith("Refused:", StringComparison.Ordinal)
+            || !badSelect.StartsWith("Refused:", StringComparison.Ordinal)
+            || !badKey.StartsWith("Refused:", StringComparison.Ordinal)
+            || !WorkspaceBrowserPolicy.IsMutatingAction("select")
+            || !WorkspaceBrowserPolicy.IsMutatingAction("press_key")
+            || WorkspaceBrowserPolicy.IsMutatingAction("hover")
+            || WorkspaceBrowserPolicy.IsMutatingAction("close")
             || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodAct)
+            || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodHover)
+            || !GoalProgress.StateChanged(ToolNames.BrowserAct, goodClose)
             || goodAct.Contains("SUPERSECRET", StringComparison.Ordinal))
             throw new Exception($"browser_act validation, progress or redaction failed:{Environment.NewLine}{badAct}{Environment.NewLine}{goodAct}");
         var browserCard = ToolPreviews.PreviewFor(ToolNames.BrowserOpen, """{"url":"https://example.com/app?key=SUPERSECRET"}""", browserScope);
