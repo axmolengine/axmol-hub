@@ -1077,6 +1077,8 @@ public sealed partial class HubWorkspace : IDisposable
 
             var project = StateStore.ReadProject(fullPath);
             if (!File.Exists(StateStore.MetadataPath(fullPath))) StateStore.LockProject(project);
+            // Adding an existing project counts as project activity.
+            project.LastOpened = DateTimeOffset.Now;
             State.Projects.Add(project);
             return Task.CompletedTask;
         });
