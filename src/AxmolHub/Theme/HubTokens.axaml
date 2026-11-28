@@ -27,6 +27,12 @@
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#16181D" />
       <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#1E2128" />
       <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#2C313C" />
+      <!-- Right-edge fade behind a workspace tab's hover close button, matching Hub.SurfaceHover. -->
+      <LinearGradientBrush x:Key="Hub.WorkspaceTabFade" StartPoint="0%,0%" EndPoint="100%,0%">
+        <GradientStop Offset="0" Color="#002C313C" />
+        <GradientStop Offset="0.45" Color="#FF2C313C" />
+        <GradientStop Offset="1" Color="#FF2C313C" />
+      </LinearGradientBrush>
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#333A47" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#232730" />
 
@@ -168,6 +174,12 @@
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#FFFFFF" />
       <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#EEF0F5" />
       <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#E3E6EE" />
+      <!-- Light counterpart matching Hub.SurfaceHover behind a workspace tab's hover close button. -->
+      <LinearGradientBrush x:Key="Hub.WorkspaceTabFade" StartPoint="0%,0%" EndPoint="100%,0%">
+        <GradientStop Offset="0" Color="#00E3E6EE" />
+        <GradientStop Offset="0.45" Color="#FFE3E6EE" />
+        <GradientStop Offset="1" Color="#FFE3E6EE" />
+      </LinearGradientBrush>
       <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#D9E4F7" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#FFFFFF" />
 

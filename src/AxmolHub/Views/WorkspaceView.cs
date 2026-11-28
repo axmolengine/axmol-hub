@@ -43,7 +43,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly ContentControl _content = new();
     private readonly ContentControl _treeHost = new();
     private readonly GridSplitter _splitter;
-    private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry, Button Select, BrowserTabIcon? Icon);
+    private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry, Button Select,
+        BrowserTabIcon? Icon, double ExtraWidth);
     private sealed class BrowserTabIcon : Grid
     {
         private readonly ActivityGlyph _activity = new() { Width = 12, Height = 12, IsVisible = false };
@@ -74,10 +75,20 @@ internal sealed class WorkspaceView : Grid, IDisposable
         }
     }
     private const double AddTabGap = 4;
+    private const double TabHeight = 24;
+    private const double TabRadius = 12;
+    private const double TabPadLeft = 10;
+    private const double TabPadRight = 10;
+    private const double TabPadRightDirty = 24;
+    private const double TabFadeWidth = 42;
+    private const double MaxTabWidth = 200;
     private const double BrowserIconSlotWidth = 17;
+    private const double ToolIconSlotWidth = 19;
+    private const double FileIconSlotWidth = 22;
     private const double BrowserTabWidth = 180;
     private readonly List<Tab> _tabs = [];
-    private readonly StackPanel _tabRows = new() { Orientation = Orientation.Horizontal, Spacing = 3, ClipToBounds = true };
+    private readonly StackPanel _tabRows = new() { Orientation = Orientation.Horizontal, Spacing = 4,
+        VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
     private readonly Grid _tabGrid;
     private readonly Button _overflow;
     private readonly MenuFlyout _overflowMenu = new();
@@ -405,27 +416,51 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private void AddTab(string id, string? caption, string? resource, Action select, Action close, bool dirty = false,
         CodeEditorView? editor = null, WorkspaceBrowserView? browser = null)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), VerticalAlignment = VerticalAlignment.Center };
-        var plate = new Border { Child = row, Classes = { "workspace-tab" }, CornerRadius = new CornerRadius(6), ClipToBounds = true };
+        var row = new Grid { VerticalAlignment = VerticalAlignment.Stretch };
+        var plate = new Border { Child = row, Classes = { "workspace-tab" }, Height = TabHeight,
+            CornerRadius = new CornerRadius(TabRadius), VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
         plate.Classes.Set("selected", _state?.Selected == id);
         plate.Classes.Set("dirty", dirty);
         var label = new TextBlock { Text = caption, FontSize = 12, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center };
+            VerticalAlignment = VerticalAlignment.Center, Classes = { "workspace-tab-label" } };
         if (resource is not null) label.Bind(TextBlock.TextProperty, new DynamicResourceExtension(resource));
-        Control content = label;
         BrowserTabIcon? icon = null;
+        Control leadingIcon;
+        double iconSlot;
         if (browser is not null)
         {
             icon = new BrowserTabIcon { HorizontalAlignment = HorizontalAlignment.Left };
-            var titleRow = new Grid { ColumnDefinitions = new ColumnDefinitions($"{BrowserIconSlotWidth},*"),
-                Children = { icon, label }, ClipToBounds = true };
-            Grid.SetColumn(label, 1);
-            content = titleRow;
+            leadingIcon = icon;
+            iconSlot = BrowserIconSlotWidth;
         }
-        var button = new Button { Content = content, MaxWidth = 180, Height = 28,
-            Classes = { "workspace-tab-select" }, Padding = new Thickness(9, 0, 0, 0),
+        else if (id is "plan" or "repo")
+        {
+            var toolIcon = HubActionIcon.Create(id == "plan" ? "Hub.Icon.Plan" : "Hub.Icon.Changes");
+            toolIcon.Width = toolIcon.Height = 13;
+            toolIcon.StrokeThickness = 1.25;
+            toolIcon.HorizontalAlignment = HorizontalAlignment.Left;
+            toolIcon.VerticalAlignment = VerticalAlignment.Center;
+            toolIcon.ClearValue(Avalonia.Controls.Shapes.Shape.StrokeProperty);
+            toolIcon.Classes.Add("workspace-tab-icon");
+            leadingIcon = toolIcon;
+            iconSlot = ToolIconSlotWidth;
+        }
+        else
+        {
+            var fileIcon = WorkspaceFileTree.FileTypeIcon(caption ?? id);
+            fileIcon.HorizontalAlignment = HorizontalAlignment.Left;
+            fileIcon.Classes.Add("workspace-tab-file-icon");
+            leadingIcon = fileIcon;
+            iconSlot = FileIconSlotWidth;
+        }
+        var titleRow = new Grid { ColumnDefinitions = new ColumnDefinitions($"{iconSlot},*"),
+            Children = { leadingIcon, label }, ClipToBounds = true };
+        Grid.SetColumn(label, 1);
+        var rightPad = dirty ? TabPadRightDirty : TabPadRight;
+        var button = new Button { Content = titleRow, Height = TabHeight,
+            Classes = { "workspace-tab-select" }, Padding = new Thickness(TabPadLeft, 0, rightPad, 0),
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            ClipToBounds = true };
+            VerticalAlignment = VerticalAlignment.Stretch, ClipToBounds = true };
         if (resource is null) ToolTip.SetTip(button, id);
         var state = _state!;
         ContextMenu TabMenu() => CreateTabMenu(state, id, editor);
@@ -434,23 +469,38 @@ internal sealed class WorkspaceView : Grid, IDisposable
         plate.Tag = id;
         button.Click += (_, _) => select();
         row.Children.Add(button);
-        var closeGlyph = HubActionIcon.Close();
+        // Overlay fade + close action on the right so hovering never shifts the tab's width.
+        var fade = new Border
+        {
+            Width = TabFadeWidth,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            CornerRadius = new CornerRadius(0, TabRadius, TabRadius, 0),
+            IsHitTestVisible = false,
+            Classes = { "workspace-tab-fade" },
+        };
+        row.Children.Add(fade);
+        var closeGlyph = HubActionIcon.Close(9, 1.25);
         closeGlyph.Classes.Add("workspace-tab-close-glyph");
+        if (closeGlyph is Panel closePanel && closePanel.Children.FirstOrDefault() is Avalonia.Controls.Shapes.Path closePath)
+        {
+            closePath.ClearValue(Avalonia.Controls.Shapes.Shape.StrokeProperty);
+            closePath.Classes.Add("workspace-tab-close-path");
+        }
         Control closeContent = closeGlyph;
         if (dirty)
         {
             var dot = HubActionIcon.Unsaved();
             dot.Classes.Add("workspace-tab-dirty-dot");
-            closeContent = new Grid { Width = 8, Height = 8, Children = { closeGlyph, dot } };
+            closeContent = new Grid { Width = 9, Height = 9, Children = { closeGlyph, dot } };
         }
         var x = new Button { Content = closeContent, Width = 20, Height = 20,
             Name = resource is null ? "WorkspaceCloseDocumentTab" : "WorkspaceClose" + (browser is not null ? "Browser" : id == "plan" ? "Plan" : "Changes") + "Tab",
             Classes = { "workspace-tab-close" }, Padding = new Thickness(0), Margin = new Thickness(0, 0, 2, 0),
-            VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center };
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
         x.Bind(ToolTip.TipProperty, new DynamicResourceExtension("WorkspaceCloseTab"));
         x.Click += (_, _) => close();
-        Grid.SetColumn(x, 1);
         row.Children.Add(x);
         _tabRows.Children.Add(plate);
         var entry = new MenuItem { Tag = id };
@@ -458,7 +508,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
         else { entry.Header = caption; ToolTip.SetTip(entry, id); }
         entry.ContextMenu = TabMenu();
         entry.Click += (_, _) => select();
-        _tabs.Add(new Tab(id, plate, label, entry, button, icon));
+        var extraWidth = TabPadLeft + iconSlot + rightPad + 2;
+        _tabs.Add(new Tab(id, plate, label, entry, button, icon, extraWidth));
         if (browser is not null)
         {
             entry.Icon = new BrowserTabIcon();
@@ -478,8 +529,8 @@ internal sealed class WorkspaceView : Grid, IDisposable
         var widths = _tabs.Select(tab =>
         {
             if (tab.Icon is not null) return BrowserTabWidth;
-            tab.Label.Measure(new Size(double.PositiveInfinity, 28));
-            return Math.Min(180, Math.Ceiling(tab.Label.DesiredSize.Width) + 9) + 22;
+            tab.Label.Measure(new Size(double.PositiveInfinity, TabHeight));
+            return Math.Min(MaxTabWidth, Math.Ceiling(tab.Label.DesiredSize.Width) + tab.ExtraWidth);
         }).ToArray();
         var available = Math.Max(0, _tabGrid.Bounds.Width - 28 - AddTabGap);
         var total = widths.Sum() + Math.Max(0, _tabs.Count - 1) * _tabRows.Spacing;

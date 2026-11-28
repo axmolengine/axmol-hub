@@ -501,20 +501,28 @@ internal sealed class WorkspaceFileTree : Grid, IDisposable
         _rows.Children.Add(button);
     }
 
-    private static Control FileTypeIcon(string name)
+    internal static Control FileTypeIcon(string name)
     {
-        var caption = Path.GetExtension(name).ToLowerInvariant() switch
+        var (caption, brushKey) = Path.GetExtension(name).ToLowerInvariant() switch
         {
-            ".cs" => "C#", ".cpp" or ".cc" or ".cxx" or ".hpp" or ".hxx" => "C+",
-            ".c" or ".h" => "C", ".js" or ".jsx" => "JS", ".ts" or ".tsx" => "TS",
-            ".py" => "Py", ".lua" => "Lu", ".json" => "{}", ".sh" or ".ps1" => ">_",
-            _ => null,
+            ".cs" => ("C#", "Hub.SuccessText"),
+            ".cpp" or ".cc" or ".cxx" or ".hpp" or ".hxx" => ("C+", "Hub.Link"),
+            ".c" or ".h" => ("C", "Hub.Link"),
+            ".js" or ".jsx" => ("JS", "Hub.WarningText"),
+            ".ts" or ".tsx" => ("TS", "Hub.Link"),
+            ".py" => ("Py", "Hub.WarningText"),
+            ".lua" => ("Lu", "Hub.Link"),
+            ".json" => ("{}", "Hub.WarningText"),
+            ".sh" or ".ps1" => (">_", "Hub.SuccessText"),
+            ".axaml" or ".xaml" or ".xml" or ".csproj" or ".props" => ("<>", "Hub.Link"),
+            ".md" => ("MD", "Hub.TextSecondary"),
+            _ => ((string?)null, "Hub.TextSecondary"),
         };
         Control icon;
         if (caption is not null)
         {
             var code = new TextBlock { Text = caption, FontSize = 10, FontWeight = FontWeight.SemiBold };
-            code.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("Hub.Accent"));
+            code.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension(brushKey));
             icon = code;
         }
         else

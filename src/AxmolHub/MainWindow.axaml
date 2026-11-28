@@ -480,31 +480,16 @@
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
     </Style>
 
-    <!-- ==================== Inspector pane ====================
-         The tabs read as text with an underline on the selected one rather than as a boxed TabControl: the pane
-         is already a boxed column, and a second box inside it is chrome saying "navigation" a second time.
-         They are drawn in the title bar rather than in the pane (see InspectorTabSlot), so they are 32 high —
-         the bar's own height — and the selected underline is their bottom border, which lands exactly on the
-         bar's lower edge: the streak of colour a reader follows down is the pane's own top edge. -->
-    <Style Selector="Button.inspector-tab">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0,0,0,2" />
-      <Setter Property="Padding" Value="2,0" />
-      <Setter Property="MinHeight" Value="32" />
-      <Setter Property="FontSize" Value="13" />
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
-      <Setter Property="CornerRadius" Value="0" />
-    </Style>
-    <Style Selector="Button.inspector-tab:pointerover">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-    </Style>
-    <Style Selector="Button.inspector-tab.selected">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Accent}" />
-    </Style>
+    <!-- ==================== Inspector / workspace tabs ====================
+         Pill-shaped tabs in the title bar: unselected tabs stay borderless with muted ink; the selected
+         pill is filled without reserving trailing space for a close button. Hovering any tab reveals a
+         right-aligned gradient fade and close plate in place with zero width shift; dirty documents keep
+         a trailing unsaved dot until hovered. -->
     <Style Selector="Border.workspace-tab">
       <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="Border.workspace-tab.selected, Border.workspace-tab:pointerover">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
@@ -517,7 +502,7 @@
       <Setter Property="MinWidth" Value="0" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="FontSize" Value="12" />
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="12" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -536,17 +521,61 @@
         </ControlTemplate>
       </Setter>
     </Style>
-    <Style Selector="Border.workspace-tab.selected Button.workspace-tab-select">
-      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    <Style Selector="Button.workspace-tab-select:pointerover /template/ Border#Frame">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.workspace-tab-select:pressed /template/ Border#Frame">
+      <Setter Property="Opacity" Value="0.88" />
     </Style>
     <Style Selector="Button.workspace-tab-select:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="Transparent" />
     </Style>
+    <Style Selector="Border.workspace-tab TextBlock.workspace-tab-label">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Border.workspace-tab.selected TextBlock.workspace-tab-label, Border.workspace-tab:pointerover TextBlock.workspace-tab-label">
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Border.workspace-tab Path.workspace-tab-icon">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Border.workspace-tab.selected Path.workspace-tab-icon, Border.workspace-tab:pointerover Path.workspace-tab-icon">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Border.workspace-tab Grid.workspace-tab-file-icon">
+      <Setter Property="Opacity" Value="0.82" />
+    </Style>
+    <Style Selector="Border.workspace-tab.selected Grid.workspace-tab-file-icon, Border.workspace-tab:pointerover Grid.workspace-tab-file-icon">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Border.workspace-tab-fade">
+      <Setter Property="Background" Value="{DynamicResource Hub.WorkspaceTabFade}" />
+      <Setter Property="Opacity" Value="0" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:00:00.090" Easing="CubicEaseOut" />
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="Border.workspace-tab:not(.dirty):pointerover Border.workspace-tab-fade">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
     <Style Selector="Button.workspace-tab-close">
       <Setter Property="Opacity" Value="0" />
+      <Setter Property="IsHitTestVisible" Value="False" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:00:00.090" Easing="CubicEaseOut" />
+        </Transitions>
+      </Setter>
     </Style>
-    <Style Selector="Border.workspace-tab.selected Button.workspace-tab-close, Border.workspace-tab.dirty Button.workspace-tab-close, Border.workspace-tab:pointerover Button.workspace-tab-close, Border.workspace-tab:focus-within Button.workspace-tab-close">
+    <Style Selector="Border.workspace-tab.dirty Button.workspace-tab-close">
       <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Border.workspace-tab:pointerover Button.workspace-tab-close, Button.workspace-tab-close:focus-visible">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="IsHitTestVisible" Value="True" />
     </Style>
     <Style Selector="Border.workspace-tab.dirty Canvas.workspace-tab-close-glyph">
       <Setter Property="Opacity" Value="0" />
@@ -557,8 +586,22 @@
     <Style Selector="Button.workspace-tab-close:pointerover Ellipse.workspace-tab-dirty-dot, Button.workspace-tab-close:focus-visible Ellipse.workspace-tab-dirty-dot">
       <Setter Property="Opacity" Value="0" />
     </Style>
-    <Style Selector="Button.workspace-tab-close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Style Selector="Button.workspace-tab-close Path.workspace-tab-close-path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextSecondary}" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:pointerover Path.workspace-tab-close-path, Button.workspace-tab-close:focus-visible Path.workspace-tab-close-path">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:pointerover /template/ Border#Frame">
       <Setter Property="Background" Value="{DynamicResource Hub.BorderSubtle}" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.workspace-tab-close:focus-visible /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="Button.titlebar.selected">
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
