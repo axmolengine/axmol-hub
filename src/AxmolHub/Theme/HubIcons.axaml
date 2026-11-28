@@ -173,9 +173,6 @@
   <!-- A desktop application window: outer frame, title bar, and clear content area. -->
   <StreamGeometry x:Key="Hub.Icon.Application">F0 M3 4H21V20H3Z M5 6V18H19V6Z M5 8H19V9.3H5Z</StreamGeometry>
 
-  <!-- A rounded document with folded corner and text lines = License. Stroked, matching the menu icon set. -->
-  <StreamGeometry x:Key="Hub.Icon.License">M7.5 3.5H14L18.5 8V18.5A2 2 0 0 1 16.5 20.5H7.5A2 2 0 0 1 5.5 18.5V5.5A2 2 0 0 1 7.5 3.5Z M14 3.5V8H18.5 M8.5 12H15.5 M8.5 15.5H13.5</StreamGeometry>
-
   <!-- An information circle for About, square-bounded (4..20) like the other menu glyphs. -->
   <StreamGeometry x:Key="Hub.Icon.Info">M12 4A8 8 0 1 0 12 20A8 8 0 1 0 12 4Z M12 11.2V16 M12 8.2V8.3</StreamGeometry>
 

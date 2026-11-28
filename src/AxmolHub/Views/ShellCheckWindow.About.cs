@@ -87,15 +87,17 @@ internal sealed class ShellAboutChecks
             "关于对话框的标题就是菜单项的名字（菜单「" + about?.Header + "」，标题「" + title
             + "」，窗口「" + dialog.Title + "」）");
 
-        // ⑥ Product name, the running assembly's version, then the one sentence. Built the same way the dialog
-        //    builds it on purpose: what this catches is a body written as a literal, which is how a version goes
-        //    stale, and a sentence dropped in a later edit.
-        var body = NamedDescendant<TextBlock>(dialog, "DialogMessage")?.Text;
-        var expectedBody = "Axmol Hub v" + HubReleaseInfo.DisplayVersion + "\n\n" + AboutTagline;
-        var lines = body?.Split('\n') ?? [];
-        Check(body == expectedBody && lines.Length == 3 && lines[0] == "Axmol Hub v" + HubReleaseInfo.DisplayVersion
-              && lines[1].Length == 0 && lines[2] == AboutTagline,
-            "关于信息是「产品名 + 当前版本」一行、空行、一句介绍（实际「" + body + "」）");
+        // ⑥ Product name (enlarged & bold), the running assembly's version on its own line, then the one sentence.
+        var heading = NamedDescendant<TextBlock>(dialog, "DialogHeading");
+        var subheading = NamedDescendant<TextBlock>(dialog, "DialogSubheading");
+        var bodyControl = NamedDescendant<TextBlock>(dialog, "DialogMessage");
+        var expectedVersion = "Version " + HubReleaseInfo.DisplayVersion;
+        Check(heading is { IsVisible: true, Text: "Axmol Hub", FontWeight: Avalonia.Media.FontWeight.Bold }
+              && bodyControl is not null && heading.FontSize > bodyControl.FontSize
+              && subheading is { IsVisible: true } && subheading.Text == expectedVersion
+              && bodyControl.Text == AboutTagline,
+            "关于信息包含放大加粗的产品名、单独一行的版本号和一句介绍（实际「"
+            + heading?.Text + "」/「" + subheading?.Text + "」/「" + bodyControl?.Text + "」）");
 
         // ⑦ The logo. Read off the control rather than off the call: a picture handed to the dialog and never
         //    shown is exactly the kind of silent failure this suite exists for.
@@ -105,9 +107,9 @@ internal sealed class ShellAboutChecks
             "关于对话框带 Axmol Hub 的图标（实际 "
             + (logo is null ? "没有图标" : logo.PixelSize.Width + "x" + logo.PixelSize.Height + " 像素") + "）");
 
-        // ⑧ The repository link: its own row above the answers, captioned with the address, and wired — pressed
-        //    through the same path a click takes, with the browser launch replaced so the suite opens nothing.
+        // ⑧ The repository link and the License and Open Source Notices footer link.
         var link = NamedDescendant<Button>(dialog, "DialogLink");
+        var licenseLink = NamedDescendant<Button>(dialog, "DialogFooterLink");
         var savedOpener = HubDialog.LinkOpener;
         string? opened = null;
         try
@@ -125,9 +127,11 @@ internal sealed class ShellAboutChecks
         }
 
         Check(link is not null && link.Content?.ToString() == AboutRepository && opened == AboutRepository
-              && link.Classes.Contains("link"),
-            "关于对话框带 Axmol Hub 的 GitHub 仓库链接，点下去交给打开器的是同一个地址（实际「"
-            + link?.Content + "」→「" + opened + "」）");
+              && link.Classes.Contains("link")
+              && licenseLink is not null && licenseLink.Content?.ToString() == "License and Open Source Notices"
+              && licenseLink.Classes.Contains("link"),
+            "关于对话框带 Axmol Hub 的 GitHub 仓库链接与 License 入口（实际「"
+            + link?.Content + "」→「" + opened + "」，License「" + licenseLink?.Content + "」）");
 
         // ⑨ The bar is Hub's own: one close plate, drawn by HubDialogChrome — minimise and maximise belong to the
         //    main window, and this box is a dialog like every other one in the shell.

@@ -33,6 +33,11 @@
            box: a confirmation or a notice with a blank square above the question would be chrome saying nothing. -->
       <Image Name="DialogPicture" Width="64" Height="64" IsVisible="False" HorizontalAlignment="Left"
              RenderOptions.BitmapInterpolationMode="HighQuality" />
+      <!-- Optional enlarged heading and version line (used by the About box). Collapsed when omitted. -->
+      <StackPanel Name="DialogHeader" Spacing="4" IsVisible="False">
+        <TextBlock Name="DialogHeading" FontSize="20" FontWeight="Bold" TextWrapping="Wrap" IsVisible="False" />
+        <TextBlock Name="DialogSubheading" Classes="muted" FontSize="13" TextWrapping="Wrap" IsVisible="False" />
+      </StackPanel>
       <!-- Long text (exception stack traces) goes through scrolling, so the dialog never grows off-screen. -->
       <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <TextBlock Name="DialogMessage" Classes="muted" TextWrapping="Wrap" />

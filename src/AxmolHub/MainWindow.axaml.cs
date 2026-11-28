@@ -1854,7 +1854,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The bottom entry's popup: Settings, Appearance, License, Check for updates, About and Exit. Appearance opens the two
+    /// The bottom entry's popup: Settings, Appearance, Check for updates, About and Exit. Appearance opens the two
     /// questions it answers, Language and Theme, and each of those opens its own answers. Every row is one
     /// line: a name, and a tick when it is the answer in force. Built fresh on every open, so the labels follow
     /// the UI language and exactly one tick per question is drawn without any sync machinery.
@@ -1951,18 +1951,6 @@ public partial class MainWindow : Window
         appearance.Items.Add(theme);
         menu.Items.Add(appearance);
 
-        var license = new MenuItem
-        {
-            Header = MenuRow.Build("Hub.Icon.License", "License", current: false),
-            Tag = MenuRowTag.License,
-        };
-        license.Click += async (_, _) =>
-        {
-            menu.Hide();
-            await LicenseWindow.ShowAsync(this);
-        };
-        menu.Items.Add(license);
-
         var checkForUpdates = new MenuItem
         {
             Header = MenuRow.Build("Hub.Icon.Refresh", HubStrings.Get("CheckForUpdates"), current: false),
@@ -2046,7 +2034,6 @@ public partial class MainWindow : Window
         internal const string Appearance = "menu:appearance";
         internal const string Language = "menu:language";
         internal const string Theme = "menu:theme";
-        internal const string License = "menu:license";
         internal const string CheckForUpdates = "menu:check-for-updates";
         internal const string About = "menu:about";
         internal const string Exit = "menu:exit";

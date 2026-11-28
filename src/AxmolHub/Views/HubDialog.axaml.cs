@@ -33,7 +33,11 @@ public enum HubDialogResult
     Discard,
 }
 
-public sealed record HubDialogLink(string Caption, string Url, string? Label = null);
+public sealed record HubDialogLink(
+    string Caption,
+    string? Url = null,
+    string? Label = null,
+    Action<Window>? OnClick = null);
 
 /// <summary>
 /// The Avalonia replacement for WPF's <c>MessageBox.Show</c>. See Views/HubDialog.axaml for details.
@@ -76,13 +80,28 @@ public partial class HubDialog : Window
         IReadOnlyList<HubDialogLink>? links = null,
         HubDialogLink? footerLink = null,
         bool centerBody = false,
-        Control? options = null)
+        Control? options = null,
+        string? heading = null,
+        string? subheading = null)
     {
         var dialog = new HubDialog();
 
         // One write, two readers: Window.Title is what the OS's window list reads, and the drawn header's caption
         // is bound to it (see HubDialogChrome), so the title cannot be said twice and cannot go out of step.
         dialog.Title = title;
+        if (!string.IsNullOrEmpty(heading))
+        {
+            dialog.DialogHeading.Text = heading;
+            dialog.DialogHeading.IsVisible = true;
+        }
+
+        if (!string.IsNullOrEmpty(subheading))
+        {
+            dialog.DialogSubheading.Text = subheading;
+            dialog.DialogSubheading.IsVisible = true;
+        }
+
+        dialog.DialogHeader.IsVisible = dialog.DialogHeading.IsVisible || dialog.DialogSubheading.IsVisible;
         dialog.DialogMessage.Text = message;
         dialog.DialogOptions.Content = options;
         dialog.DialogOptions.IsVisible = options is not null;
@@ -91,6 +110,8 @@ public partial class HubDialog : Window
         if (centerBody)
         {
             dialog.DialogPicture.HorizontalAlignment = HorizontalAlignment.Center;
+            dialog.DialogHeading.TextAlignment = TextAlignment.Center;
+            dialog.DialogSubheading.TextAlignment = TextAlignment.Center;
             dialog.DialogMessage.TextAlignment = TextAlignment.Center;
             dialog.DialogLinks.HorizontalAlignment = HorizontalAlignment.Stretch;
             foreach (var row in dialog.DialogLinks.Children)
@@ -100,7 +121,7 @@ public partial class HubDialog : Window
         dialog.Build(buttons, danger);
         if (footerLink is not null)
         {
-            dialog.DialogFooter.Content = CreateLinkRow(footerLink, "DialogFooterLink");
+            dialog.DialogFooter.Content = dialog.CreateLinkRow(footerLink, "DialogFooterLink");
             dialog.DialogFooter.IsVisible = true;
         }
 
@@ -158,7 +179,7 @@ public partial class HubDialog : Window
         DialogLinks.IsVisible = DialogLinks.Children.Count > 0;
     }
 
-    private static StackPanel CreateLinkRow(HubDialogLink destination, string name)
+    private StackPanel CreateLinkRow(HubDialogLink destination, string name)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         if (destination.Label is { Length: > 0 } label)
@@ -176,7 +197,19 @@ public partial class HubDialog : Window
             Classes = { "link" },
             VerticalAlignment = VerticalAlignment.Center,
         };
-        link.Click += (_, _) => _ = LinkOpener(destination.Url);
+        link.Click += (_, _) =>
+        {
+            if (destination.OnClick is { } onClick)
+            {
+                onClick(this);
+                return;
+            }
+
+            if (destination.Url is { Length: > 0 } url)
+            {
+                _ = LinkOpener(url);
+            }
+        };
         row.Children.Add(link);
         return row;
     }

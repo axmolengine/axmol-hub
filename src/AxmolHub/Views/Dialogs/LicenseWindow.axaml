@@ -4,7 +4,7 @@
         x:Class="AxmolHub.LicenseWindow"
         Width="860" Height="620" MinWidth="600" MinHeight="420"
         CanResize="True" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
-        Title="License">
+        Title="License and Open Source Notices">
   <Window.Styles>
     <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
   </Window.Styles>

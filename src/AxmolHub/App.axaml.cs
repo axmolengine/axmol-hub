@@ -87,6 +87,8 @@ public partial class App : Application
     /// which is why they live here rather than in <see cref="HubTexts"/>.
     /// </summary>
     private const string AboutTitle = "About Axmol Hub";
+    private const string AboutProductName = "Axmol Hub";
+    private const string AboutLicenseLabel = "License and Open Source Notices";
 
     private const string AboutTagline =
         "Axmol Hub is the desktop workspace for Axmol game development: engines, projects, toolchains and an AI "
@@ -104,24 +106,27 @@ public partial class App : Application
     /// own arrangement (HubDialog degrades to a non-modal Show), which is also what lets the check drive it without
     /// blocking the suite.
     ///
-    /// <para>The body is the name with the assembly's version — one product version, in Directory.Build.props —
-    /// and then the one sentence that says what Hub is. The logo is the same 256 px icon the window wears, and it
-    /// is read once and kept: a box the user can open all day must not reload it on every open, and a missing icon
+    /// <para>The header shows the product name and assembly version on separate lines, followed by the one-sentence
+    /// description and links (including third-party licenses). The logo is the same 256 px icon the window wears,
+    /// read once and kept: a box the user can open all day must not reload it on every open, and a missing icon
     /// file is an appearance problem rather than a reason for the dialog to fail.</para>
     /// </summary>
     internal static Task<HubDialogResult> ShowAboutAsync(Window? owner)
         => HubDialog.ShowAsync(
             owner,
             AboutTitle,
-            "Axmol Hub v" + HubReleaseInfo.DisplayVersion + "\n\n" + AboutTagline,
+            AboutTagline,
             buttons: HubDialogButtons.None,
             picture: AboutPicture(),
+            heading: AboutProductName,
+            subheading: "Version " + HubReleaseInfo.DisplayVersion,
             links:
             [
                 new(AboutRepository, AboutRepository, "Source code:"),
                 new("axmol.dev", "https://axmol.dev", "Super project:"),
+                new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"),
             ],
-            footerLink: new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"),
+            footerLink: new(AboutLicenseLabel, OnClick: dialog => _ = LicenseWindow.ShowAsync(dialog)),
             centerBody: true);
 
     private static Bitmap? _aboutPicture;
