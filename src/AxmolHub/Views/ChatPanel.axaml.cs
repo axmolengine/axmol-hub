@@ -1650,7 +1650,7 @@ public partial class ChatPanel : UserControl
             Height = 15,
             Stretch = Stretch.Uniform,
             Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
+            StrokeThickness = 1.5,
             StrokeLineCap = PenLineCap.Round,
             StrokeJoin = PenLineJoin.Round,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1665,7 +1665,7 @@ public partial class ChatPanel : UserControl
         {
             Text = HubStrings.Get(ToolApprovalModeKey(mode)),
             FontSize = 13,
-            FontWeight = FontWeight.SemiBold,
+            FontWeight = FontWeight.Normal,
             VerticalAlignment = VerticalAlignment.Center,
         };
         if (danger)
@@ -5225,12 +5225,12 @@ public partial class ChatPanel : UserControl
 
         if (streaming)
         {
-            // The stop square is solid; the fill is what makes it read differently from the arrow.
-            path.Bind(Avalonia.Controls.Shapes.Path.FillProperty, new DynamicResourceExtension("Hub.TextOnAccent"));
+            // The stop square is solid; styled in ChatPanel.axaml so disabled/theme states follow automatically.
+            path.Classes.Add("send-stop");
             return path;
         }
 
-        path.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextOnAccent"));
+        path.Classes.Add("send-arrow");
         path.StrokeThickness = 2;
         path.StrokeLineCap = PenLineCap.Round;
         path.StrokeJoin = PenLineJoin.Round;

@@ -1947,7 +1947,7 @@ public partial class MainWindow : Window
 
         var license = new MenuItem
         {
-            Header = MenuRow.Build("Hub.Icon.Application", "License", current: false),
+            Header = MenuRow.Build("Hub.Icon.License", "License", current: false),
             Tag = MenuRowTag.License,
         };
         license.Click += async (_, _) =>

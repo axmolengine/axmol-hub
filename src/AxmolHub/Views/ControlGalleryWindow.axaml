@@ -167,19 +167,19 @@
         <Border Classes="card">
           <StackPanel Orientation="Horizontal" Spacing="30">
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path x:Name="IconProjects" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Projects}" />
+              <Path x:Name="IconProjects" Width="22" Height="22" Stretch="Uniform" Fill="Transparent" Stroke="{DynamicResource Hub.TextPrimary}" StrokeThickness="1.6" StrokeLineCap="Round" StrokeJoin="Round" Data="{StaticResource Hub.Icon.Projects}" />
               <TextBlock Text="Projects" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path x:Name="IconInstalls" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Installs}" />
+              <Path x:Name="IconInstalls" Width="22" Height="22" Stretch="Uniform" Fill="Transparent" Stroke="{DynamicResource Hub.TextPrimary}" StrokeThickness="1.6" StrokeLineCap="Round" StrokeJoin="Round" Data="{StaticResource Hub.Icon.Installs}" />
               <TextBlock Text="Engine" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path x:Name="IconToolchains" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Toolchains}" />
+              <Path x:Name="IconToolchains" Width="22" Height="22" Stretch="Uniform" Fill="Transparent" Stroke="{DynamicResource Hub.TextPrimary}" StrokeThickness="1.6" StrokeLineCap="Round" StrokeJoin="Round" Data="{StaticResource Hub.Icon.Toolchains}" />
               <TextBlock Text="Toolchain" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path x:Name="IconSettings" Width="22" Height="22" Stretch="Uniform" Fill="{DynamicResource Hub.TextPrimary}" Data="{StaticResource Hub.Icon.Settings}" />
+              <Path x:Name="IconSettings" Width="22" Height="22" Stretch="Uniform" Fill="Transparent" Stroke="{DynamicResource Hub.TextPrimary}" StrokeThickness="1.6" StrokeLineCap="Round" StrokeJoin="Round" Data="{StaticResource Hub.Icon.Settings}" />
               <TextBlock Text="Settings" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="10">

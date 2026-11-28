@@ -167,7 +167,8 @@ internal sealed class ShellInlineCodeChecks
                 bool SamePixel(int index) => original.AsSpan(index, 3).SequenceEqual(selected.AsSpan(index, 3));
                 Check(SamePixel(Pixel(0.5)) && !SamePixel(Pixel(4.5)) && SamePixel(Pixel(9.5)),
                     name + "：渲染高亮只覆盖选中字符，两端未选中文字仍保留静态底色");
-                var surfacePixel = Pixel(0.5);
+                // Sample above lowercase 'e' (no ascender) so the backdrop read never grazes capital 'C' ink.
+                var surfacePixel = Pixel(8.5);
                 var surface = viewer.GetVisualDescendants().OfType<InlineCodeBackdrop>().Single()
                     .GetValue(InlineCodeBackdrop.SurfaceProperty);
                 // Allow two levels for rounded-edge/glyph antialiasing in the rendered sample.

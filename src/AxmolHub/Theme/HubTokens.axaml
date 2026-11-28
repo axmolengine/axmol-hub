@@ -16,79 +16,76 @@
 
     <ResourceDictionary x:Key="Dark">
 
-      <SolidColorBrush x:Key="Hub.Background" Color="#1E1E1E" />
-      <SolidColorBrush x:Key="Hub.Surface" Color="#2E2E2E" />
-      <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#242424" />
+      <SolidColorBrush x:Key="Hub.Background" Color="#1A1C21" />
+      <SolidColorBrush x:Key="Hub.Surface" Color="#262A33" />
+      <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#20232A" />
       <!-- The spine: sidebar and inspector column. In dark it sits *below* the reading page so the page
            reads as the forward surface and the spine recedes; in light it is a touch darker than the page,
            the macOS / ChatGPT convention. Separate from SurfaceAlt (the composer/log card) on purpose. -->
-      <SolidColorBrush x:Key="Hub.SurfaceChrome" Color="#1A1A1A" />
-      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#353535" />
-      <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#202020" />
-      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#252525" />
-      <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#343434" />
-      <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#383838" />
-      <SolidColorBrush x:Key="Hub.PopupSurface" Color="#292929" />
+      <SolidColorBrush x:Key="Hub.SurfaceChrome" Color="#14161A" />
+      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#2F3440" />
+      <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#16181D" />
+      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#1E2128" />
+      <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#2C313C" />
+      <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#333A47" />
+      <SolidColorBrush x:Key="Hub.PopupSurface" Color="#232730" />
 
-      <SolidColorBrush x:Key="Hub.Border" Color="#3A3A3A" />
-      <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#353535" />
-      <SolidColorBrush x:Key="Hub.BorderStrong" Color="#4B4B4B" />
-      <SolidColorBrush x:Key="Hub.BorderHover" Color="#6AB6EB" />
-      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#399BDC" />
+      <SolidColorBrush x:Key="Hub.Border" Color="#24FFFFFF" />
+      <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#16FFFFFF" />
+      <SolidColorBrush x:Key="Hub.BorderStrong" Color="#33FFFFFF" />
+      <SolidColorBrush x:Key="Hub.BorderHover" Color="#60A5FA" />
+      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#4B8FF7" />
 
-      <SolidColorBrush x:Key="Hub.TextPrimary" Color="#E4E4E4" />
+      <SolidColorBrush x:Key="Hub.TextPrimary" Color="#ECEFF4" />
       <!-- The reading rung: the ink a body of prose is read in, one step below the primary that chrome,
-           headings and icons use. Primary was picked for labels and controls, and at #E4E4E4 on #1E1E1E it
-           measures about 13:1 — right for a menu item, tiring for an answer somebody reads for minutes. The
-           prose and the code sitting inside it take this rung instead, which is what makes the heading above a
-           paragraph the brightest thing in it. It stays above AAA (7:1) on every surface it can land on:
-           Background ≈10:1, SurfaceRaised (an inline code chip) ≈7.4:1, SurfaceSunken (a fenced block) ≈9.8:1.
-           Headings deliberately keep Hub.TextPrimary — that difference is the reading hierarchy, so do not
-           collapse the two rungs into one. -->
-      <SolidColorBrush x:Key="Hub.TextBody" Color="#C9C9C9" />
-      <SolidColorBrush x:Key="Hub.TextSecondary" Color="#A8A8A8" />
-      <SolidColorBrush x:Key="Hub.TextTertiary" Color="#888888" />
-      <SolidColorBrush x:Key="Hub.TextDisabled" Color="#7A7A7A" />
+           headings and icons use. Primary was picked for labels and controls, while prose and inline code
+           take this rung so headings stay the brightest thing on the page. It clears WCAG AAA (7:1) on
+           Background, SurfaceRaised, and SurfaceSunken. Headings deliberately keep Hub.TextPrimary — that
+           difference is the reading hierarchy, so do not collapse the two rungs into one. -->
+      <SolidColorBrush x:Key="Hub.TextBody" Color="#CFD4DE" />
+      <SolidColorBrush x:Key="Hub.TextSecondary" Color="#9BA3B4" />
+      <SolidColorBrush x:Key="Hub.TextTertiary" Color="#757E91" />
+      <SolidColorBrush x:Key="Hub.TextDisabled" Color="#5E6678" />
       <SolidColorBrush x:Key="Hub.TextOnAccent" Color="#FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.Accent" Color="#2188CF" />
-      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#399BDC" />
-      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#2879CE" />
-      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#398BE0" />
-      <SolidColorBrush x:Key="Hub.Link" Color="#70B8F2" />
-      <SolidColorBrush x:Key="Hub.LinkHover" Color="#9BCBFA" />
+      <SolidColorBrush x:Key="Hub.Accent" Color="#2B74EA" />
+      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#4B8FF7" />
+      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#357AE8" />
+      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#5394F8" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#73B3FA" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#9DCBFF" />
 
       <!-- Text selection on the reading surfaces (chat Markdown and the inspector's plan tab). A translucent
            accent rather than an opaque plate, so the ink under it keeps its own colour and a bold or code run
-           stays legible the way it does in the reference shells: 45% of Hub.Accent over Hub.Background lands on
-           #1F4E6E. Two tokens because the inline code chip paints an opaque surface of its own — a translucent
-           brush set on the chip would composite against the selection band already beneath it and come out
-           darker than the band around it, so Hub.SelectionChip is that same mix over Hub.SurfaceRaised, worked
-           out here once instead of at paint time. The band itself is drawn by the library inside
-           CTextBlock.Render, which fills it with SelectionBrush and falls back to Brushes.Cyan when no brush is
-           set — that cyan is what the setter in HubMarkdownStyles replaces. -->
-      <SolidColorBrush x:Key="Hub.Selection" Color="#732188CF" />
-      <SolidColorBrush x:Key="Hub.CodeSelection" Color="#303A46" />
-      <SolidColorBrush x:Key="Hub.SelectionChip" Color="#2C5A7A" />
+           stays legible the way it does in the reference shells. Two tokens because the inline code chip paints
+           an opaque surface of its own — a translucent brush set on the chip would composite against the
+           selection band already beneath it and come out darker than the band around it, so Hub.SelectionChip
+           is that same mix over Hub.SurfaceRaised, worked out here once instead of at paint time. The band
+           itself is drawn by the library inside CTextBlock.Render, which fills it with SelectionBrush and falls
+           back to Brushes.Cyan when no brush is set — that cyan is what the setter in HubMarkdownStyles
+           replaces. -->
+      <SolidColorBrush x:Key="Hub.Selection" Color="#663B82F6" />
+      <SolidColorBrush x:Key="Hub.CodeSelection" Color="#2A3B52" />
+      <SolidColorBrush x:Key="Hub.SelectionChip" Color="#335382" />
 
-      <SolidColorBrush x:Key="Hub.Success" Color="#70D7AF" />
-    <SolidColorBrush x:Key="Hub.StatusWorking" Color="#FFD166" />
+      <SolidColorBrush x:Key="Hub.Success" Color="#5AD2A2" />
+      <SolidColorBrush x:Key="Hub.StatusWorking" Color="#FFD166" />
       <!-- Success split the way Danger is: Hub.Success is a fill (the context meter's bar), Hub.SuccessText is the
-           same hue used as ink. On dark the fill colour already reads as ink — #70D7AF on Hub.SurfaceAlt is ≈8.9:1
-           — so the pair holds one value here; the Light dictionary is where it has to differ. -->
-      <SolidColorBrush x:Key="Hub.SuccessText" Color="#70D7AF" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#594313" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#FFE08A" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#80611F" />
-      <SolidColorBrush x:Key="Hub.Danger" Color="#F294A7" />
+           same hue used as ink. On dark the fill colour already reads as ink (>8:1 on Hub.SurfaceAlt) — so the
+           pair holds one value here; the Light dictionary is where it has to differ. -->
+      <SolidColorBrush x:Key="Hub.SuccessText" Color="#5AD2A2" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#2E2614" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#F5D076" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#59471E" />
+      <SolidColorBrush x:Key="Hub.Danger" Color="#F28B9E" />
       <!-- Danger split in two weights. Hub.Danger is a fill: on a dark page it is a bright block, which is
            why only HubDialog's confirm key uses it. Hub.DangerText is the same hue used as ink, and
            Hub.DangerBorder is that hue mixed into the surface, so a page button can be marked
            consequential without shouting over the action bar's primary button. -->
-      <SolidColorBrush x:Key="Hub.WarningText" Color="#FF9B59" />
+      <SolidColorBrush x:Key="Hub.WarningText" Color="#FFA45B" />
       <SolidColorBrush x:Key="Hub.LogWarning" Color="#FFD166" />
-      <SolidColorBrush x:Key="Hub.DangerText" Color="#F294A7" />
-      <SolidColorBrush x:Key="Hub.DangerBorder" Color="#8A5A64" />
+      <SolidColorBrush x:Key="Hub.DangerText" Color="#F28B9E" />
+      <SolidColorBrush x:Key="Hub.DangerBorder" Color="#7A4652" />
 
       <!-- Alert red, and it is not a shade of Hub.Danger. Danger is a statement about an act ("this will do
            something you cannot undo"); this one is a statement about attention ("something here is waiting for
@@ -101,21 +98,21 @@
            play here; these two are the row's floor. They must separate from Hub.SurfaceAlt in both variants —
            a tint that equals its surface is a tint nobody can see, which is exactly how the light-theme
            SurfaceRaised/SurfaceAlt bug looked. -->
-      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#26342E" />
-      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#382B30" />
+      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#1E322B" />
+      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#36232B" />
 
-      <SolidColorBrush x:Key="Hub.GridSurface" Color="#252525" />
-      <SolidColorBrush x:Key="Hub.GridAlternate" Color="#292929" />
-      <SolidColorBrush x:Key="Hub.GridHeader" Color="#2D2D2D" />
-      <SolidColorBrush x:Key="Hub.RowHover" Color="#313131" />
-      <SolidColorBrush x:Key="Hub.RowSelected" Color="#454545" />
+      <SolidColorBrush x:Key="Hub.GridSurface" Color="#1D2026" />
+      <SolidColorBrush x:Key="Hub.GridAlternate" Color="#21252C" />
+      <SolidColorBrush x:Key="Hub.GridHeader" Color="#232730" />
+      <SolidColorBrush x:Key="Hub.RowHover" Color="#282D37" />
+      <SolidColorBrush x:Key="Hub.RowSelected" Color="#303B4E" />
 
-      <SolidColorBrush x:Key="Hub.ScrollTrack" Color="#202020" />
-      <SolidColorBrush x:Key="Hub.ScrollThumb" Color="#575757" />
-      <SolidColorBrush x:Key="Hub.ScrollThumbHover" Color="#6E6E6E" />
+      <SolidColorBrush x:Key="Hub.ScrollTrack" Color="#00000000" />
+      <SolidColorBrush x:Key="Hub.ScrollThumb" Color="#28FFFFFF" />
+      <SolidColorBrush x:Key="Hub.ScrollThumbHover" Color="#48FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.CheckBoxFill" Color="#2B2B2B" />
-      <SolidColorBrush x:Key="Hub.CheckBoxBorder" Color="#4B4B4B" />
+      <SolidColorBrush x:Key="Hub.CheckBoxFill" Color="#22262E" />
+      <SolidColorBrush x:Key="Hub.CheckBoxBorder" Color="#38FFFFFF" />
       <SolidColorBrush x:Key="Hub.CheckMark" Color="#FFFFFF" />
 
       <!-- ==================== Brand mark ====================
@@ -136,12 +133,12 @@
            Hub.Background rather than a surface of its own, because the bar has no content of its own to sit
            above — it is the same plane as the page, separated by the one hairline. One subtle hairline
            rather than Hub.Border, so the bar reads as the window's edge and not as a toolbar. -->
-      <SolidColorBrush x:Key="Hub.TitleBarBackground" Color="#1E1E1E" />
-      <SolidColorBrush x:Key="Hub.TitleBarBorder" Color="#353535" />
+      <SolidColorBrush x:Key="Hub.TitleBarBackground" Color="#1A1C21" />
+      <SolidColorBrush x:Key="Hub.TitleBarBorder" Color="#18FFFFFF" />
       <!-- The three caption plates. Hover/pressed follow the platform convention (a plain neutral wash) and the
            close plate is the one exception it always is: nothing else may turn red, and this must. -->
-      <SolidColorBrush x:Key="Hub.WindowButtonHover" Color="#343434" />
-      <SolidColorBrush x:Key="Hub.WindowButtonPressed" Color="#4A4A4A" />
+      <SolidColorBrush x:Key="Hub.WindowButtonHover" Color="#18FFFFFF" />
+      <SolidColorBrush x:Key="Hub.WindowButtonPressed" Color="#26FFFFFF" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseHover" Color="#C42B1C" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseForeground" Color="#FFFFFF" />
 
@@ -152,61 +149,58 @@
       <!-- Light is not the inverse of dark but a separately chosen set of values: cards are brighter
            than the page (white), and the sidebar is slightly darker than the page, matching the
            light-theme conventions of macOS / Windows. -->
-      <SolidColorBrush x:Key="Hub.Background" Color="#F4F5F7" />
+      <SolidColorBrush x:Key="Hub.Background" Color="#F5F6F9" />
       <SolidColorBrush x:Key="Hub.Surface" Color="#FFFFFF" />
-      <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#EDEEF2" />
-      <SolidColorBrush x:Key="Hub.SurfaceChrome" Color="#E8E9ED" />
+      <SolidColorBrush x:Key="Hub.SurfaceAlt" Color="#ECEEF3" />
+      <SolidColorBrush x:Key="Hub.SurfaceChrome" Color="#E7E9EF" />
       <!-- A light theme has nowhere above white to lift a surface, so "raised" here means "one step above the well
-           it sits in": the chips and attachment pills live on SurfaceAlt (the composer), and the value below was
-           within five levels of it — a chip that was there and could not be seen. The border each of them draws is
-           what carries the edge in this variant. -->
-      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#F8F9FB" />
+           it sits in": the chips and attachment pills live on SurfaceAlt (the composer), and the value below
+           separates cleanly from SurfaceAlt while keeping a hairline border. -->
+      <SolidColorBrush x:Key="Hub.SurfaceRaised" Color="#F8F9FC" />
       <SolidColorBrush x:Key="Hub.SurfaceSunken" Color="#FFFFFF" />
-      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#EEF0F4" />
-      <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#E4E4EA" />
-      <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#DCE4F0" />
+      <SolidColorBrush x:Key="Hub.ProviderSurface" Color="#EEF0F5" />
+      <SolidColorBrush x:Key="Hub.SurfaceHover" Color="#E3E6EE" />
+      <SolidColorBrush x:Key="Hub.SurfaceSelected" Color="#D9E4F7" />
       <SolidColorBrush x:Key="Hub.PopupSurface" Color="#FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.Border" Color="#D8D9DF" />
-      <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#E4E5EA" />
-      <SolidColorBrush x:Key="Hub.BorderStrong" Color="#C3C4CC" />
-      <SolidColorBrush x:Key="Hub.BorderHover" Color="#4FA8E8" />
-      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#1A73BE" />
+      <SolidColorBrush x:Key="Hub.Border" Color="#21182436" />
+      <SolidColorBrush x:Key="Hub.BorderSubtle" Color="#14182436" />
+      <SolidColorBrush x:Key="Hub.BorderStrong" Color="#33182436" />
+      <SolidColorBrush x:Key="Hub.BorderHover" Color="#4B8FF7" />
+      <SolidColorBrush x:Key="Hub.BorderFocus" Color="#2563EB" />
 
-      <SolidColorBrush x:Key="Hub.TextPrimary" Color="#1B1C20" />
+      <SolidColorBrush x:Key="Hub.TextPrimary" Color="#171A21" />
       <!-- Light counterpart of the reading rung; see the Dark dictionary's note. Light has nowhere darker than
-           the primary to go, so one step toward the page's own grey is all this can be: ≈13:1 on
+           the primary to go, so one step toward the page's own grey is all this can be: >12:1 on
            Hub.Background, still the brightest ink in a message after its headings. -->
-      <SolidColorBrush x:Key="Hub.TextBody" Color="#2A2B31" />
-      <SolidColorBrush x:Key="Hub.TextSecondary" Color="#6A6B75" />
-      <SolidColorBrush x:Key="Hub.TextTertiary" Color="#8A8B95" />
-      <SolidColorBrush x:Key="Hub.TextDisabled" Color="#A6A7B0" />
+      <SolidColorBrush x:Key="Hub.TextBody" Color="#2B303B" />
+      <SolidColorBrush x:Key="Hub.TextSecondary" Color="#5F6778" />
+      <SolidColorBrush x:Key="Hub.TextTertiary" Color="#81899B" />
+      <SolidColorBrush x:Key="Hub.TextDisabled" Color="#A0A7B6" />
       <SolidColorBrush x:Key="Hub.TextOnAccent" Color="#FFFFFF" />
 
-      <SolidColorBrush x:Key="Hub.Accent" Color="#1A73BE" />
-      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#2E86C8" />
-      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#2E86C8" />
-      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#3D93D6" />
-      <SolidColorBrush x:Key="Hub.Link" Color="#1769AA" />
-      <SolidColorBrush x:Key="Hub.LinkHover" Color="#0E4F88" />
+      <SolidColorBrush x:Key="Hub.Accent" Color="#2563EB" />
+      <SolidColorBrush x:Key="Hub.AccentBorder" Color="#3B82F6" />
+      <SolidColorBrush x:Key="Hub.AccentSoft" Color="#3B82F6" />
+      <SolidColorBrush x:Key="Hub.AccentSoftBorder" Color="#60A5FA" />
+      <SolidColorBrush x:Key="Hub.Link" Color="#1D5CD6" />
+      <SolidColorBrush x:Key="Hub.LinkHover" Color="#1545A8" />
 
-      <!-- Light counterparts; see the Dark dictionary's note for what the pair is for. Same 45% of Hub.Accent,
-           which over this page's #F4F5F7 lands on #92BBDD, and the chip's opaque mix over #F8F9FB. -->
-      <SolidColorBrush x:Key="Hub.Selection" Color="#731A73BE" />
-      <SolidColorBrush x:Key="Hub.CodeSelection" Color="#DAE7F2" />
-      <SolidColorBrush x:Key="Hub.SelectionChip" Color="#94BDE0" />
+      <!-- Light counterparts; see the Dark dictionary's note for what the pair is for. -->
+      <SolidColorBrush x:Key="Hub.Selection" Color="#592563EB" />
+      <SolidColorBrush x:Key="Hub.CodeSelection" Color="#D8E6FB" />
+      <SolidColorBrush x:Key="Hub.SelectionChip" Color="#A3C1F5" />
 
-      <SolidColorBrush x:Key="Hub.Success" Color="#1E9E76" />
-    <SolidColorBrush x:Key="Hub.StatusWorking" Color="#A66C00" />
-      <!-- The ink weight of success, and it has to differ here: #1E9E76 is a fill, and as 14px text on
-           Hub.SurfaceAlt (#EDEEF2) it measures ≈2.9:1 — not readable. This is the same hue taken dark enough to
-           clear AA (≈5.2:1 on SurfaceAlt, ≈5.4:1 on Surface). -->
-      <SolidColorBrush x:Key="Hub.SuccessText" Color="#137054" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#FFF1BF" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#664D00" />
-      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#E5C75C" />
+      <SolidColorBrush x:Key="Hub.Success" Color="#1C9B72" />
+      <SolidColorBrush x:Key="Hub.StatusWorking" Color="#A66C00" />
+      <!-- The ink weight of success, and it has to differ here: Hub.Success is a fill and does not clear AA
+           as small text on Hub.SurfaceAlt. This is the same hue taken dark enough to clear AA (>5:1). -->
+      <SolidColorBrush x:Key="Hub.SuccessText" Color="#126E52" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBackground" Color="#FEF3C7" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeForeground" Color="#78490A" />
+      <SolidColorBrush x:Key="Hub.PreviewBadgeBorder" Color="#E6C46A" />
       <SolidColorBrush x:Key="Hub.Danger" Color="#C63A55" />
-      <SolidColorBrush x:Key="Hub.WarningText" Color="#A94700" />
+      <SolidColorBrush x:Key="Hub.WarningText" Color="#B45309" />
       <SolidColorBrush x:Key="Hub.LogWarning" Color="#825600" />
       <SolidColorBrush x:Key="Hub.DangerText" Color="#C63A55" />
       <SolidColorBrush x:Key="Hub.DangerBorder" Color="#E5A6B2" />
@@ -215,22 +209,22 @@
       <SolidColorBrush x:Key="Hub.AlertDot" Color="#FF0000" />
 
       <!-- Light counterparts of the diff row tints; see the Dark dictionary's note. Light has nowhere above
-           white to go, so both sit clearly below Hub.SurfaceAlt (#EDEEF2) instead of above it. -->
-      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#E4F0E8" />
-      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#F5E8EB" />
+           white to go, so both sit clearly below Hub.SurfaceAlt instead of above it. -->
+      <SolidColorBrush x:Key="Hub.DiffAddSurface" Color="#E3F1E8" />
+      <SolidColorBrush x:Key="Hub.DiffDeleteSurface" Color="#F6E6EA" />
 
       <SolidColorBrush x:Key="Hub.GridSurface" Color="#FFFFFF" />
-      <SolidColorBrush x:Key="Hub.GridAlternate" Color="#FAFAFC" />
-      <SolidColorBrush x:Key="Hub.GridHeader" Color="#F0F1F4" />
-      <SolidColorBrush x:Key="Hub.RowHover" Color="#EFF2F7" />
-      <SolidColorBrush x:Key="Hub.RowSelected" Color="#D0E2F8" />
+      <SolidColorBrush x:Key="Hub.GridAlternate" Color="#F9FAFC" />
+      <SolidColorBrush x:Key="Hub.GridHeader" Color="#F0F2F6" />
+      <SolidColorBrush x:Key="Hub.RowHover" Color="#EDF1F7" />
+      <SolidColorBrush x:Key="Hub.RowSelected" Color="#D6E4FA" />
 
-      <SolidColorBrush x:Key="Hub.ScrollTrack" Color="#EFEFF2" />
-      <SolidColorBrush x:Key="Hub.ScrollThumb" Color="#B9BAC2" />
-      <SolidColorBrush x:Key="Hub.ScrollThumbHover" Color="#9A9BA4" />
+      <SolidColorBrush x:Key="Hub.ScrollTrack" Color="#00000000" />
+      <SolidColorBrush x:Key="Hub.ScrollThumb" Color="#28182436" />
+      <SolidColorBrush x:Key="Hub.ScrollThumbHover" Color="#47182436" />
 
       <SolidColorBrush x:Key="Hub.CheckBoxFill" Color="#FFFFFF" />
-      <SolidColorBrush x:Key="Hub.CheckBoxBorder" Color="#B9BAC4" />
+      <SolidColorBrush x:Key="Hub.CheckBoxBorder" Color="#33182436" />
       <SolidColorBrush x:Key="Hub.CheckMark" Color="#FFFFFF" />
 
       <!-- Light counterparts; see the Dark dictionary's note for what each one is for. The brand gradient is
@@ -245,9 +239,9 @@
       <!-- The title bar is white here rather than Hub.Background: on light, the page's plane is a near-white
            with no card under the bar, and a bar one step *above* the page is what the platform does. -->
       <SolidColorBrush x:Key="Hub.TitleBarBackground" Color="#FFFFFF" />
-      <SolidColorBrush x:Key="Hub.TitleBarBorder" Color="#E4E5EA" />
-      <SolidColorBrush x:Key="Hub.WindowButtonHover" Color="#E8E9EE" />
-      <SolidColorBrush x:Key="Hub.WindowButtonPressed" Color="#D8D9E0" />
+      <SolidColorBrush x:Key="Hub.TitleBarBorder" Color="#16182436" />
+      <SolidColorBrush x:Key="Hub.WindowButtonHover" Color="#12182436" />
+      <SolidColorBrush x:Key="Hub.WindowButtonPressed" Color="#21182436" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseHover" Color="#C42B1C" />
       <SolidColorBrush x:Key="Hub.WindowButtonCloseForeground" Color="#FFFFFF" />
 

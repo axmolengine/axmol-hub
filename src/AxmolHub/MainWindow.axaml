@@ -60,10 +60,10 @@
     <!-- Nav items (kept from the previous shell). -->
     <Style Selector="RadioButton.nav">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="Padding" Value="9,10" />
+      <Setter Property="FontSize" Value="13.5" />
+      <Setter Property="Padding" Value="9,9" />
       <Setter Property="Margin" Value="0,0,0,2" />
-      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="CornerRadius" Value="7" />
     </Style>
     <Style Selector="RadioButton.nav:pointerover">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -73,14 +73,26 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
       <Setter Property="Background" Value="{DynamicResource Hub.SurfaceSelected}" />
     </Style>
+    <!-- The assistant nav row owns the conversation list below it; keep its checked plate transparent
+         so the active conversation row stays the single solid selection highlight in the sidebar. -->
+    <Style Selector="RadioButton#NavAssistant:checked /template/ Border#Frame">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="RadioButton#NavAssistant:checked:pointerover /template/ Border#Frame">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceHover}" />
+    </Style>
     <Style Selector="RadioButton.nav Path.icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="StrokeThickness" Value="1.6" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
     </Style>
     <Style Selector="RadioButton.nav:pointerover Path.icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="RadioButton.nav:checked Path.icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.AccentBorder}" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.AccentBorder}" />
     </Style>
 
     <Style Selector="Button.assistant-action">
@@ -150,10 +162,14 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.gear:pointerover Path.icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextPrimary}" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Button.gear Path.icon">
-      <Setter Property="Fill" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="Fill" Value="Transparent" />
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextTertiary}" />
+      <Setter Property="StrokeThickness" Value="1.55" />
+      <Setter Property="StrokeLineCap" Value="Round" />
+      <Setter Property="StrokeJoin" Value="Round" />
     </Style>
 
     <!-- Both update glyphs use the same quiet square plate. While downloading, the status strip
@@ -302,6 +318,7 @@
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="16,14" />
       <Setter Property="Width" Value="400" />
+      <Setter Property="BoxShadow" Value="0 8 24 0 #38000000" />
     </Style>
     <Style Selector="TextBlock.task-title">
       <Setter Property="FontSize" Value="13" />
@@ -439,6 +456,7 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Hub.Radius.Frame}" />
       <Setter Property="ClipToBounds" Value="True" />
+      <Setter Property="BoxShadow" Value="0 12 32 0 #48000000" />
     </Style>
     <!-- The category rail. Derived from the sidebar's `RadioButton.nav` and deliberately stripped of it: no icon
          arms (seven text-only rows, so the nav item's Path.icon fill rules have nothing to apply to), and a
@@ -1062,7 +1080,7 @@
 
           <!-- Fill child of the DockPanel: it receives a bounded height, so the ChatSidebar's own
                ScrollViewer scrolls instead of overflowing over the bottom brand block. -->
-          <ContentControl x:Name="ChatSidebarHost" Margin="8,6,0,0" />
+          <ContentControl x:Name="ChatSidebarHost" Margin="2,6,0,0" />
 
         </DockPanel>
       </Border>

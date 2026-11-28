@@ -338,7 +338,7 @@ public partial class ChatSidebar : UserControl
             Background = Brushes.Transparent,
             // One indent step per level, so the heading and the groups under it are one shape rather than a
             // list of names that happen to be related.
-            Margin = new Thickness(bucket.Depth * 12, 8, 0, 2),
+            Margin = new Thickness(bucket.Depth * 10, 8, 0, 2),
         };
         row.Classes.Add("group-row");
         if (bucket.WorkspaceRoot is { Length: > 0 })
@@ -646,7 +646,7 @@ public partial class ChatSidebar : UserControl
             CornerRadius = new CornerRadius(6),
             // The rows follow their header in, so a session reads as belonging to the group above it without a
             // line, a box or a second label saying so.
-            Margin = new Thickness(depth * 12, 0, 0, 0),
+            Margin = new Thickness(depth * 10, 0, 0, 0),
         };
         row.Classes.Add("session-row");
         row.Classes.Set("active", summary.Id == activeId);
@@ -667,9 +667,9 @@ public partial class ChatSidebar : UserControl
         var item = new Button
         {
             Content = label,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Padding = new Thickness(10, 4),
+            Padding = new Thickness(8, 4),
             Margin = new Thickness(0),
         };
         ToolTip.SetTip(item, summary.SpawnedTask is { Length: > 0 } task

@@ -27,8 +27,8 @@
        tells a heading from the paragraph under it. -->
   <Style Selector=".Markdown_Avalonia_MarkdownViewer ctxt|CTextBlock">
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextBody}" />
-    <Setter Property="FontSize" Value="12" />
-    <Setter Property="LineHeight" Value="20" />
+    <Setter Property="FontSize" Value="13.5" />
+    <Setter Property="LineHeight" Value="22" />
     <Setter Property="Cursor" Value="Ibeam" />
     <!-- The selection band. CTextBlock.Render fills its selection rectangles with this brush and falls back to
          Brushes.Cyan when it is null, which is the bright cyan a reader used to see over the dark page;
@@ -112,7 +112,7 @@
   </Style>
   <Style Selector=".Markdown_Avalonia_MarkdownViewer TextBlock.CodeBlock">
     <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />
-    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontSize" Value="12.5" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextBody}" />
   </Style>
 
@@ -125,7 +125,7 @@
          reading rung here is not a claim about the coloured spans, only about the text between them. -->
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextBody}" />
     <Setter Property="FontFamily" Value="{DynamicResource Hub.Font.Mono}" />
-    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontSize" Value="12.5" />
   </Style>
   <Style Selector="Button.inspector-plan-copy">
     <Setter Property="Width" Value="32" />

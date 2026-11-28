@@ -21,6 +21,26 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <!-- Bounded template so inner TextBlock receives the column width and elides cleanly instead of clipping mid-glyph. -->
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Frame"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  Padding="{TemplateBinding Padding}"
+                  ClipToBounds="True">
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Foreground="{TemplateBinding Foreground}"
+                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalContentAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
     </Style>
     <Style Selector="Border.session-row:pointerover Button.session">
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
@@ -130,11 +150,11 @@
       <ScrollViewer x:Name="ConversationScrollViewer"
                     VerticalScrollBarVisibility="Visible">
         <!-- Keep group actions out of the scrollbar's hit area at every list height. -->
-        <StackPanel x:Name="ConversationList" Spacing="3" Margin="0,0,16,0" />
+        <StackPanel x:Name="ConversationList" Spacing="2" Margin="0,0,16,0" />
       </ScrollViewer>
-      <Border x:Name="IdleScrollThumb" Width="6" Margin="0,2,2,2"
+      <Border x:Name="IdleScrollThumb" Width="4" Margin="0,2,3,2"
               HorizontalAlignment="Right"
-              Background="{DynamicResource Hub.ScrollThumb}" CornerRadius="4"
+              Background="{DynamicResource Hub.ScrollThumb}" CornerRadius="3"
               IsVisible="False" IsHitTestVisible="False" />
     </Grid>
   </DockPanel>

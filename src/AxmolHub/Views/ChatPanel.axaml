@@ -947,6 +947,7 @@
     <Style Selector="Border.composer">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BoxShadow" Value="0 6 20 0 #34000000" />
     </Style>
     <Style Selector="Border.composer.focused">
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.BorderFocus}" />
@@ -1165,12 +1166,13 @@
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
     <Style Selector="Border.model-settings-popover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="16" />
       <Setter Property="Width" Value="340" />
+      <Setter Property="BoxShadow" Value="0 8 24 0 #38000000" />
     </Style>
     <Style Selector="TextBlock.model-settings-title">
       <Setter Property="FontSize" Value="15" />
@@ -1191,12 +1193,13 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextPrimary}" />
     </Style>
     <Style Selector="Border.context-popover">
-      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceAlt}" />
+      <Setter Property="Background" Value="{DynamicResource Hub.PopupSurface}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Padding" Value="18" />
       <Setter Property="Width" Value="400" />
+      <Setter Property="BoxShadow" Value="0 8 24 0 #38000000" />
     </Style>
     <Style Selector="TextBlock.context-popover-title">
       <Setter Property="FontSize" Value="16" />
@@ -1357,10 +1360,10 @@
          no type of its own to resolve them on. SelectionBrush stays in its own rule below: it is the one property
          only the selectable half has. -->
     <Style Selector=".turn-text" x:SetterTargetType="TextBlock">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="13.5" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextBody}" />
       <Setter Property="TextWrapping" Value="Wrap" />
-      <Setter Property="LineHeight" Value="20" />
+      <Setter Property="LineHeight" Value="22" />
     </Style>
     <!-- Selecting the person's own words paints the same band the rendered answers do, so the row does not change
          colour depending on which side of the transcript it sits on. -->
@@ -1373,10 +1376,10 @@
          so the two do not fight over line height when they sit one above the other, and one rung quieter so the
          answer stays the thing being looked at. -->
     <Style Selector="TextBlock.turn-reasoning">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="13" />
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextSecondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
-      <Setter Property="LineHeight" Value="20" />
+      <Setter Property="LineHeight" Value="21" />
     </Style>
     <!-- How long a run took, said once at the end of the answer it belongs to. Quieter than the body, and
          deliberately not hover-revealed: the reader watched this number climb, so the moment it stops working is
@@ -1431,6 +1434,24 @@
       <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- Quiet matte disc when there is nothing to send; lights up to Hub.Accent once the box has content or a run is active. -->
+    <Style Selector="Button.send:disabled">
+      <Setter Property="Background" Value="{DynamicResource Hub.SurfaceRaised}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Hub.Border}" />
+      <Setter Property="Foreground" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Button.send:disabled /template/ Border#Frame">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.send Path.send-arrow">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextOnAccent}" />
+    </Style>
+    <Style Selector="Button.send:disabled Path.send-arrow">
+      <Setter Property="Stroke" Value="{DynamicResource Hub.TextTertiary}" />
+    </Style>
+    <Style Selector="Button.send Path.send-stop">
+      <Setter Property="Fill" Value="{DynamicResource Hub.TextOnAccent}" />
     </Style>
   </UserControl.Styles>
 
@@ -1545,6 +1566,7 @@
         <Grid x:Name="ComposerContent" RowDefinitions="Auto,Auto,Auto,Auto">
           <Border x:Name="ReplyPreview" Grid.Row="0" Classes="reply-preview" IsVisible="False" />
           <TextBox x:Name="InputBox" Grid.Row="1" AcceptsReturn="True" MinHeight="48" MaxHeight="160"
+                   FontSize="13.5"
                    TextWrapping="Wrap" PlaceholderText="{DynamicResource InputPlaceholder}"
                    PlaceholderForeground="{DynamicResource Hub.TextTertiary}"
                    VerticalContentAlignment="Top"

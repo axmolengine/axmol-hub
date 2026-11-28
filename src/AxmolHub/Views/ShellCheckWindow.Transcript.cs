@@ -446,8 +446,8 @@ internal sealed class ShellTranscriptChecks
             await WaitUntilAsync(() => panel.MarkdownBodyFontSizeForCheck > 0);
             var plain = panel.PlainTurnFontSizeForCheck;
             var markdown = panel.MarkdownBodyFontSizeForCheck;
-            Check(Math.Abs(markdown - 12) < 0.001,
-                "markdown 正文仍是主题里那档 12，而不是被拉回控件默认的 14（实际 "
+            Check(Math.Abs(markdown - 13.5) < 0.001,
+                "markdown 正文仍是主题里那档 13.5，而不是被拉回控件默认的 14（实际 "
                 + markdown.ToString(CultureInfo.InvariantCulture) + "）");
 
             // The ink, for the same boundary the size pair above guards: only the last forty turns are Markdown,

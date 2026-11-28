@@ -287,8 +287,8 @@ public partial class ControlGalleryWindow : Window
         check(IconProjects.Data is not null && IconInstalls.Data is not null
               && IconToolchains.Data is not null && IconSettings.Data is not null,
             "四个导航图标几何解析成功（StaticResource 未失效）");
-        check(IsToken(IconProjects.Fill, "Hub.TextPrimary"),
-            "图标填充 = Hub.TextPrimary（实际 " + Describe(IconProjects.Fill) + "）");
+        check(IsToken(IconProjects.Stroke, "Hub.TextPrimary"),
+            "图标描边 = Hub.TextPrimary（实际 " + Describe(IconProjects.Stroke) + "）");
 
         // ---- Theme variant switching ----
         var darkBackground = ColorOf(Background);

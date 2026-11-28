@@ -122,7 +122,7 @@ internal static partial class MarkdownMessageRenderer
         // inks are named apart on purpose: a heading keeps Hub.TextPrimary and the prose — including the code
         // inside it — reads in Hub.TextBody, so a rung that went missing would be caught as a wrong colour
         // rather than as a passing assertion that only ever looked at one of them.
-        return heading is not null && body is not null && MatchesToken(heading.Foreground, "Hub.TextPrimary") && MatchesToken(body.Foreground, "Hub.TextBody") && body.FontSize == 12 && heading.FontSize > body.FontSize && inline is not null && MatchesToken(inline.Foreground, "Hub.TextBody") && inline is ReadingCode && IsTransparent(inline.Background) && viewer.GetVisualDescendants().OfType<InlineCodeBackdrop>().Any() && codeBlock is not null && MatchesToken(codeBlock.Background, "Hub.SurfaceSunken") && MatchesToken(codeBlock.BorderBrush, "Hub.BorderSubtle") && link is not null && MatchesToken(link.Foreground, "Hub.Link");
+        return heading is not null && body is not null && MatchesToken(heading.Foreground, "Hub.TextPrimary") && MatchesToken(body.Foreground, "Hub.TextBody") && Math.Abs(body.FontSize - 13.5) < 0.001 && heading.FontSize > body.FontSize && inline is not null && MatchesToken(inline.Foreground, "Hub.TextBody") && inline is ReadingCode && IsTransparent(inline.Background) && viewer.GetVisualDescendants().OfType<InlineCodeBackdrop>().Any() && codeBlock is not null && MatchesToken(codeBlock.Background, "Hub.SurfaceSunken") && MatchesToken(codeBlock.BorderBrush, "Hub.BorderSubtle") && link is not null && MatchesToken(link.Foreground, "Hub.Link");
     }
 
 

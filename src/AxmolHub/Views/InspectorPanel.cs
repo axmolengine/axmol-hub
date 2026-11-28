@@ -154,7 +154,7 @@ internal sealed partial class InspectorPanel : UserControl
         //    (The pane's lift/shut pair left this header even earlier — see MainWindow.axaml.) ──
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"), Margin = new Thickness(12, 10, 8, 8) };
         _header = header;
-        var settingsIcon = HubActionIcon.Create("Hub.Icon.SettingsOutline");
+        var settingsIcon = HubActionIcon.Create("Hub.Icon.Settings");
         // The edit and settings actions share the same plate and line up in the header.
         _viewSettings = new Button
         {
