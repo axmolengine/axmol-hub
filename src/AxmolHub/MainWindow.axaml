@@ -577,6 +577,12 @@
       <Setter Property="Opacity" Value="1" />
       <Setter Property="IsHitTestVisible" Value="True" />
     </Style>
+    <Style Selector="Ellipse.workspace-tab-dirty-dot">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Border.workspace-tab.dirty Ellipse.workspace-tab-dirty-dot">
+      <Setter Property="IsVisible" Value="True" />
+    </Style>
     <Style Selector="Border.workspace-tab.dirty Canvas.workspace-tab-close-glyph">
       <Setter Property="Opacity" Value="0" />
     </Style>

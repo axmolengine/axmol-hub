@@ -43,8 +43,18 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly ContentControl _content = new();
     private readonly ContentControl _treeHost = new();
     private readonly GridSplitter _splitter;
-    private sealed record Tab(string Id, Border Plate, TextBlock Label, MenuItem Entry, Button Select,
-        BrowserTabIcon? Icon, double ExtraWidth);
+    private sealed class Tab(string id, Border plate, TextBlock label, MenuItem entry, Button select,
+        BrowserTabIcon? icon, double iconSlot, double extraWidth)
+    {
+        internal string Id { get; } = id;
+        internal Border Plate { get; } = plate;
+        internal TextBlock Label { get; } = label;
+        internal MenuItem Entry { get; } = entry;
+        internal Button Select { get; } = select;
+        internal BrowserTabIcon? Icon { get; } = icon;
+        internal double IconSlot { get; } = iconSlot;
+        internal double ExtraWidth { get; set; } = extraWidth;
+    }
     private sealed class BrowserTabIcon : Grid
     {
         private readonly ActivityGlyph _activity = new() { Width = 12, Height = 12, IsVisible = false };
@@ -95,6 +105,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private readonly Button _folder;
     private readonly StackPanel _empty;
     private State? _state;
+    private State? _tabsState;
     private string _key = "";
     private bool _drawer;
     private bool _sizing;
@@ -371,9 +382,30 @@ internal sealed class WorkspaceView : Grid, IDisposable
     private void RenderTabs()
     {
         if (_state is null) return;
+        var state = _state;
+        var ids = TabIds(state);
+        // Update existing tab plates in place when the roster is unchanged so clicking a tab keeps
+        // its live visual and :pointerover state instead of briefly hiding and re-fading the close overlay.
+        if (ReferenceEquals(_tabsState, state) && _tabs.Count == ids.Length
+            && _tabs.Select(tab => tab.Id).SequenceEqual(ids))
+        {
+            for (var i = 0; i < _tabs.Count; i++)
+            {
+                var tab = _tabs[i];
+                var dirty = state.Documents.Find(document => document.Path == tab.Id)?.Dirty() == true;
+                var rightPad = dirty ? TabPadRightDirty : TabPadRight;
+                tab.Plate.Classes.Set("selected", state.Selected == tab.Id);
+                tab.Plate.Classes.Set("dirty", dirty);
+                tab.Select.Padding = new Thickness(TabPadLeft, 0, rightPad, 0);
+                tab.ExtraWidth = TabPadLeft + tab.IconSlot + rightPad + 2;
+            }
+            LayoutTabs();
+            foreach (var browser in state.Browsers) SyncBrowserTab(browser);
+            return;
+        }
+        _tabsState = state;
         _tabRows.Children.Clear();
         _tabs.Clear();
-        var state = _state;
         foreach (var tool in new[] { "plan", "repo" })
         {
             if (!state.Tools.Contains(tool)) continue;
@@ -488,7 +520,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             closePath.Classes.Add("workspace-tab-close-path");
         }
         Control closeContent = closeGlyph;
-        if (dirty)
+        if (resource is null)
         {
             var dot = HubActionIcon.Unsaved();
             dot.Classes.Add("workspace-tab-dirty-dot");
@@ -509,7 +541,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
         entry.ContextMenu = TabMenu();
         entry.Click += (_, _) => select();
         var extraWidth = TabPadLeft + iconSlot + rightPad + 2;
-        _tabs.Add(new Tab(id, plate, label, entry, button, icon, extraWidth));
+        _tabs.Add(new Tab(id, plate, label, entry, button, icon, iconSlot, extraWidth));
         if (browser is not null)
         {
             entry.Icon = new BrowserTabIcon();
@@ -821,6 +853,7 @@ internal sealed class WorkspaceView : Grid, IDisposable
             state.Tree.Dispose();
         }
         _browserSnapshots.Clear();
+        _tabsState = null;
         _tabRows.Children.Clear();
         _tabs.Clear();
     }
