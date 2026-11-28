@@ -23,6 +23,7 @@ try {
     if ($taskPlists.Count -ne 1) { throw "Expected one Hub app Info.plist in the package, found $($taskPlists.Count)." }
 
     $taskPlist = $taskPlists[0].FullName
+    $taskPlistModified = $false
     & /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' $taskPlist *> $null
     if ($LASTEXITCODE -eq 0) {
         $taskScheme = & /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' $taskPlist
@@ -41,17 +42,23 @@ try {
             & /usr/libexec/PlistBuddy -c $taskCommand $taskPlist
             if ($LASTEXITCODE -ne 0) { throw "PlistBuddy failed: $taskCommand" }
         }
+        $taskPlistModified = $true
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($SignIdentity)) {
+    $taskEffectiveSignIdentity = $SignIdentity
+    if ([string]::IsNullOrWhiteSpace($taskEffectiveSignIdentity) -and $taskPlistModified) {
+        # Re-seal the bundle if Info.plist had to be modified so the existing signature is never left broken.
+        $taskEffectiveSignIdentity = '-'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($taskEffectiveSignIdentity)) {
         $taskAppBundle = Split-Path -Parent (Split-Path -Parent $taskPlist)
-        # Hardened runtime and timestamping are intentionally omitted for local certificates:
+        # Hardened runtime and timestamping are intentionally omitted for local certificates / ad-hoc re-sealing:
         # self-signed certificates cannot use Apple's timestamp server, and local builds are not notarized.
-        & /usr/bin/codesign --force --deep --sign $SignIdentity --timestamp=none $taskAppBundle
-        if ($LASTEXITCODE -ne 0) { throw "codesign failed to sign $taskAppBundle with identity '$SignIdentity'." }
+        & /usr/bin/codesign --force --deep --sign $taskEffectiveSignIdentity --timestamp=none $taskAppBundle
+        if ($LASTEXITCODE -ne 0) { throw "codesign failed to sign $taskAppBundle with identity '$taskEffectiveSignIdentity'." }
         & /usr/bin/codesign --verify --deep --strict $taskAppBundle
         if ($LASTEXITCODE -ne 0) { throw "codesign verification failed for $taskAppBundle." }
-        Write-Host "Signed macOS app bundle with identity: $SignIdentity"
+        Write-Host "Signed macOS app bundle with identity: $taskEffectiveSignIdentity"
         & /usr/bin/codesign -d -r- $taskAppBundle 2>&1 | Select-String -Pattern '^designated' | ForEach-Object { Write-Host $_.Line }
     }
 

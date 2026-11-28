@@ -30,6 +30,19 @@ try {
     }
     $taskScheme = & /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' $taskPlist
     if ($LASTEXITCODE -ne 0 -or $taskScheme -cne 'axmolhub') { throw 'The Hub app must declare the axmolhub URL scheme.' }
+
+    # Verify the .app bundle itself is code-signed with CFBundleIdentifier bound (not bare apphost):
+    # macOS UserNotifications rejects an unbound bundle with UNErrorDomain error 1.
+    $taskAppBundle = Split-Path -Parent (Split-Path -Parent $taskPlist)
+    & /usr/bin/codesign --verify --deep --strict $taskAppBundle
+    if ($LASTEXITCODE -ne 0) { throw "The Hub app bundle signature failed verification: $taskAppBundle." }
+    $taskSignInfo = (& /usr/bin/codesign -dv $taskAppBundle 2>&1) -join "`n"
+    if ($taskSignInfo -notmatch "(?m)^Identifier=$([regex]::Escape($taskBundleId))$") {
+        throw "The Hub app bundle signature Identifier must match CFBundleIdentifier '$taskBundleId'."
+    }
+    if ($taskSignInfo -match '(?m)^Info\.plist=not bound$') {
+        throw 'The Hub app bundle signature must bind Info.plist.'
+    }
 }
 finally {
     if (Test-Path -LiteralPath $taskWork) { Remove-Item -LiteralPath $taskWork -Recurse -Force }

@@ -12,8 +12,10 @@
     [string]$SigningThumbprint,
     [ValidatePattern('\Ahttps?://[a-zA-Z0-9.-]+(?::[0-9]+)?(?:/[a-zA-Z0-9._~/-]*)?\z')]
     [string]$TimestampUrl,
-    # Optional macOS code-signing identity (subject name, SHA-1, or 'auto' for the first valid
-    # code-signing identity in the login keychain). Local non-CI builds also read HUB_MAC_SIGN_IDENTITY.
+    # Optional macOS code-signing identity (subject name, SHA-1, 'auto' for the first valid
+    # code-signing identity in the login keychain, or '-' for ad-hoc bundle signing).
+    # When omitted: local non-CI builds check HUB_MAC_SIGN_IDENTITY, then auto-select the first valid
+    # keychain identity and fall back to ad-hoc ('-'); CI builds default to ad-hoc ('-').
     [string]$MacSignIdentity,
     # Delta packages presuppose the previous version's .nupkg already present in the output
     # directory at pack time. Publish.ps1 first fetches it with `vpk download github`, then
@@ -186,12 +188,25 @@ if ($Runtime -like 'osx-*') {
     if ([string]::IsNullOrWhiteSpace($taskMacSignIdentity) -and -not $taskIsCi -and -not [string]::IsNullOrWhiteSpace($env:HUB_MAC_SIGN_IDENTITY)) {
         $taskMacSignIdentity = $env:HUB_MAC_SIGN_IDENTITY.Trim()
     }
-    if ($taskMacSignIdentity -eq 'auto') {
+    $taskExplicitAuto = $taskMacSignIdentity -eq 'auto'
+    if ($taskExplicitAuto -or ([string]::IsNullOrWhiteSpace($taskMacSignIdentity) -and -not $taskIsCi)) {
         $taskFoundIdentity = & /usr/bin/security find-identity -v -p codesigning | Select-String -Pattern '"([^"]+)"' | Select-Object -First 1
-        if (-not $taskFoundIdentity) {
-            throw 'No code-signing identity found in the login keychain. Create a Code Signing certificate in Keychain Access -> Certificate Assistant -> Create a Certificate..., or omit -MacSignIdentity.'
+        if ($taskFoundIdentity) {
+            $taskMacSignIdentity = [regex]::Match($taskFoundIdentity.Line, '"([^"]+)"').Groups[1].Value
         }
-        $taskMacSignIdentity = [regex]::Match($taskFoundIdentity.Line, '"([^"]+)"').Groups[1].Value
+        elseif ($taskExplicitAuto) {
+            throw 'No code-signing identity found in the login keychain. Create a Code Signing certificate in Keychain Access -> Certificate Assistant -> Create a Certificate..., or pass -MacSignIdentity - for ad-hoc signing.'
+        }
+        else {
+            # No signing certificate in the local keychain; fall back to ad-hoc bundle signing so Info.plist
+            # and CFBundleIdentifier are still bound into the code signature (required by macOS notifications).
+            $taskMacSignIdentity = '-'
+        }
+    }
+    elseif ([string]::IsNullOrWhiteSpace($taskMacSignIdentity)) {
+        # CI builds without a Developer ID certificate still ad-hoc sign the .app bundle so Info.plist and
+        # CFBundleIdentifier are bound in both the .pkg installer and the .nupkg update payload.
+        $taskMacSignIdentity = '-'
     }
 
     # The same custom plist goes into both the installer and Velopack's update payload. Editing only the .pkg after
@@ -216,17 +231,18 @@ if ($Runtime -like 'osx-*') {
     # packing anything. The plist is the one we need, so the identity travels in it as __BUNDLE_ID__ above.
     $taskArguments += @('--plist', $taskMacPlist)
 
-    if (-not [string]::IsNullOrWhiteSpace($taskMacSignIdentity)) {
-        if ($taskMacSignIdentity -like 'Developer ID Application:*') {
-            # Developer ID builds use Velopack's hardened-runtime signing with .NET JIT entitlements so both
-            # the .pkg and the .nupkg update payload carry notarization-ready signatures.
-            $taskArguments += @('--signAppIdentity', $taskMacSignIdentity, '--signEntitlements', (Join-Path $PSScriptRoot 'HubMacEntitlements.plist'))
-        }
-        else {
-            # Local self-signed / Apple Development certificates cannot use Apple's secure timestamp service.
-            # Sign the .app bundle offline during Register-Protocol-Mac.ps1 with --timestamp=none instead.
-            $taskMacLocalSignIdentity = $taskMacSignIdentity
-        }
+    $taskMacEntitlements = Join-Path $PSScriptRoot 'HubMacEntitlements.entitlements'
+    if ($taskMacSignIdentity -like 'Developer ID Application:*' -or $taskMacSignIdentity -eq '-') {
+        # Developer ID and ad-hoc ('-') builds sign inside vpk pack with .NET JIT entitlements so the .pkg,
+        # the .nupkg update payload, and the portable zip all carry a valid bundle-bound signature.
+        $taskArguments += @('--signAppIdentity', $taskMacSignIdentity, '--signEntitlements', $taskMacEntitlements)
+    }
+    else {
+        # Local self-signed / Apple Development certificates cannot rely on Apple's secure timestamp service
+        # (especially offline). Ad-hoc sign during vpk pack so .nupkg still carries a bound bundle signature,
+        # then re-sign the .pkg's .app bundle offline during Register-Protocol-Mac.ps1 with --timestamp=none.
+        $taskArguments += @('--signAppIdentity', '-', '--signEntitlements', $taskMacEntitlements)
+        $taskMacLocalSignIdentity = $taskMacSignIdentity
     }
 }
 try {
