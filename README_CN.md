@@ -90,7 +90,17 @@ Hub 不收集遥测数据，日志只保存在本机。Hub 会向你配置的模
 
 ## 代码签名
 
-安装包未签名，Windows 可能显示 SmartScreen 提示，macOS 可能显示 Gatekeeper 提示。[@halx99](https://github.com/halx99) 负责提交、审阅和批准。
+安装包未经商业证书签名或 Apple 公证（macOS 应用包可能带有自签或 ad-hoc 签名以维持本地权限与通知功能）。Windows 可能显示 SmartScreen 提示，macOS 可能显示 Gatekeeper 提示。[@halx99](https://github.com/halx99) 负责提交、审阅和批准。
+
+在 macOS 上，如果 Gatekeeper 拦截了下载的 `.pkg` 安装包或已安装的应用，可先移除隔离属性：
+
+```sh
+# 打开下载的安装包之前
+sudo xattr -r -d com.apple.quarantine ~/Downloads/axmol-hub-*-osx-*.pkg
+
+# 或安装后若仍被拦截启动
+sudo xattr -r -d com.apple.quarantine "/Applications/Axmol Hub.app"
+```
 
 ## 许可证
 

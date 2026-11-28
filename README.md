@@ -88,7 +88,17 @@ No telemetry; logs stay on your machine. Hub contacts configured AI providers fo
 
 ## Code signing
 
-Installers are unsigned. Windows may show a SmartScreen warning; macOS may show a Gatekeeper warning. Committer, reviewer, and approver: [@halx99](https://github.com/halx99).
+Installers are not notarized or signed with a commercial certificate (macOS app bundles may carry a self-signed or ad-hoc signature to keep local permissions and notifications working). Windows may show a SmartScreen warning; macOS may show a Gatekeeper warning. Committer, reviewer, and approver: [@halx99](https://github.com/halx99).
+
+On macOS, if Gatekeeper blocks the downloaded `.pkg` or installed app, remove the quarantine attribute first:
+
+```sh
+# Before opening the downloaded installer
+sudo xattr -r -d com.apple.quarantine ~/Downloads/axmol-hub-*-osx-*.pkg
+
+# Or after installation if macOS blocks launching the app
+sudo xattr -r -d com.apple.quarantine "/Applications/Axmol Hub.app"
+```
 
 ## License
 
