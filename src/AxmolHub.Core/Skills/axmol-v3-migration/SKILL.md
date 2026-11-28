@@ -9,12 +9,13 @@ Keep lookups narrow and index-first. Call `axmol_api_query` first to locate exac
 1. **Core layout & includes**
    - v2: `core/` (`core/2d/Node.h`, `core/2d/Scene.h`, `core/2d/Camera.h`, `core/2d/Component.h`, `core/renderer/backend/ProgramManager.h`).
    - v3: `axmol/` (`axmol/scene/Node.h`, `axmol/scene/Scene.h`, `axmol/scene/Camera.h`, `axmol/scene/Component.h`, `axmol/renderer/ProgramManager.h`, `axmol/rhi/`).
+   - Game source assets/resources live in `Content/` in both v2 and v3 (never `Resources/`, which is only a packaged build output directory).
    - Always use `ax::` and `AX_*` (never legacy `cocos2d::` or `CC_*`). Never wrap `ax::Ref`/`ax::Object` scene-graph nodes in `std::shared_ptr`/`std::unique_ptr`; use `::create()` with `retain()`/`release()` when held outside the scene graph.
    - Standard: v2 targets C++17/C++20; v3 targets C++23.
 
 2. **Graphics backend / RHI & shaders**
    - v2: `core/renderer/backend/` (`ax::backend::DriverBase`, `CommandBuffer`, `RenderPipeline`, `ProgramState`, `ProgramManager`); GLSL shaders (`Source/shaders/*.fsh`, `*.vsh`) compiled via `axslcc`.
-   - v3: `axmol/rhi/` (`ax::rhi::GraphicsCore`, `GraphicsDevice`, `GraphicsContext`, `GraphicsPipeline`, `ComputePipeline`, `PipelineDesc`, `RenderPassDesc`, `ProgramState`) with `axmol/renderer/ProgramManager.h`; HLSL shaders (`Source/Shaders/*_fs.hlsl`, `*_vs.hlsl`, see `docs/hlsl-spec.md`). Experimental D3D11/D3D12/Vulkan plus Metal/GL backends.
+   - v3: `axmol/rhi/` (`ax::rhi::GraphicsCore`, `GraphicsDevice`, `GraphicsContext`, `GraphicsPipeline`, `ComputePipeline`, `PipelineDesc`, `RenderPassDesc`, `ProgramState`) with `axmol/renderer/ProgramManager.h`; HLSL shaders (`Source/Shaders/*_fs.hlsl`, `*_vs.hlsl` — always read `<engine>/docs/hlsl-spec.md` and `<engine>/docs/hlsl-faq.md` before writing or migrating shaders). Experimental D3D11/D3D12/Vulkan plus Metal/GL backends.
 
 3. **Input & event system**
    - v2: `EventTouch`, `EventMouse`, `EventListenerTouchOneByOne`, `EventListenerTouchAllAtOnce`, `EventListenerMouse`, `EventKeyboard`, `EventListenerKeyboard`.
@@ -32,7 +33,7 @@ Keep lookups narrow and index-first. Call `axmol_api_query` first to locate exac
 
 1. Confirm engine version and `core/` vs `axmol/` from the workspace digest or `axmol_skill_read`.
 2. For each symbol being migrated or used, query `axmol_api_query` (set `language: "cpp"` or `"lua"` as needed). Check absence in the target version as well as the replacement signature.
-3. Read only the exact `file:line` windows returned by `axmol_api_query` (and `extensions/scripting/lua-bindings/MIGRATION.md` or `docs/hlsl-spec.md` when directly relevant).
+3. Read only the exact `file:line` windows returned by `axmol_api_query` (and `extensions/scripting/lua-bindings/MIGRATION.md` when migrating Lua). When writing or migrating v3 shaders, `fs_read` both `<engine>/docs/hlsl-spec.md` and `<engine>/docs/hlsl-faq.md` before editing shader code.
 4. Cite exact target-version `file:line` evidence and produce the minimal, idiomatic patch for the target version.
 
 **Verify:** build the target project with the matching engine's `axmol build` (adding `-forceConfig` if files or shaders were added) and run/test the changed path; clearly separate built, runtime-verified, and not-run steps.

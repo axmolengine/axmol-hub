@@ -49,8 +49,14 @@ internal static class AiWorkspaceChecks
         const string skill = "axmol-sprite-shader";
         var revoked = new WorkspaceTools(scope);
         var granted = new WorkspaceTools(scope with { Sandbox = other });
-        if (!granted.ReadAxmolSkill(skill).StartsWith("Matched registered")
-            || !granted.ReadAxmolSkill("axmol-v3-migration").Contains("PointerEventListener")
+        var shaderSkill = granted.ReadAxmolSkill(skill);
+        var migrationSkill = granted.ReadAxmolSkill("axmol-v3-migration");
+        if (!shaderSkill.StartsWith("Matched registered")
+            || !shaderSkill.Contains("docs/hlsl-spec.md")
+            || !shaderSkill.Contains("docs/hlsl-faq.md")
+            || !migrationSkill.Contains("PointerEventListener")
+            || !migrationSkill.Contains("docs/hlsl-spec.md")
+            || !migrationSkill.Contains("docs/hlsl-faq.md")
             || !granted.ReadAxmolSkill("axmol-build-cmake").Contains("-forceConfig")
             || !granted.ReadAxmolSkill("list").Contains("axmol-v3-migration")
             || !revoked.ReadAxmolSkill(skill).StartsWith("Not authorized")
@@ -59,8 +65,12 @@ internal static class AiWorkspaceChecks
             throw new Exception("The engine query, API index and parent search did not respect the session's current grant.");
         var nonAxmol = Path.Combine(Path.GetDirectoryName(workspace)!, "plain-folder");
         Directory.CreateDirectory(nonAxmol);
+        var digest = AxmolProjectDigest.Build(scope with { Sandbox = other });
         if (AxmolProjectDigest.Build(scope with { WorkspaceRoot = nonAxmol, Sandbox = WorkspaceSandbox.For(nonAxmol) }).Length != 0
-            || !AxmolProjectDigest.Build(scope with { Sandbox = other }).Contains("Axmol 3.0.0")
+            || !digest.Contains("Axmol 3.0.0")
+            || !digest.Contains("Content/")
+            || !digest.Contains("docs/hlsl-spec.md")
+            || !digest.Contains("docs/hlsl-faq.md")
             || !AxmolProjectDigest.Build(scope).Contains("Not authorized"))
             throw new Exception("AxmolProjectDigest did not match Axmol scope, stay silent on generic folders, or reflect revocation.");
 

@@ -246,7 +246,7 @@ public static class AxmolProjectDigest
         var series = resolution.MajorVersion switch
         {
             2 => "v2 LTS (core/, C++17/20, GLSL shaders, ax::backend, tolua++ Lua)",
-            3 => "v3 (axmol/, C++23, HLSL shaders, ax::rhi, InputSystem/PointerEventListener, sol2 Lua manifests)",
+            3 => "v3 (axmol/, C++23, HLSL shaders per docs/hlsl-spec.md & docs/hlsl-faq.md, ax::rhi, InputSystem/PointerEventListener, sol2 Lua manifests)",
             _ => $"v{resolution.MajorVersion} ({resolution.CoreDirectory}/)",
         };
         var kindLabel = resolution.Status switch
@@ -262,6 +262,7 @@ public static class AxmolProjectDigest
         return "\n\n# Axmol workspace context\n"
             + $"- Source ({kindLabel}): {resolution.EngineRoot}\n"
             + $"- Engine: Axmol {resolution.Version}{rev} — {series}; project: {resolution.ProjectType}{target}.{warning}\n"
+            + "- Project assets: Axmol v2/v3 game projects store source resources/assets in Content/ (not Resources/; Resources/ only appears in packaged build outputs).\n"
             + "- Version rule: always cite the version from <core>/axmolver.h.in above, never the top heading of CHANGELOG.md. For game projects, still confirm CMakeLists.txt / AXGameEngineSetup.cmake selects this tree.\n"
             + $"- Workflows: call axmol_skill_read with one of [{AxmolSkillCatalog.DigestList()}] for task-specific v2/v3 rules.\n"
             + "- Fast lookup: call axmol_api_query BEFORE broad fs_grep/fs_find sweeps to locate C++ declarations and Lua bindings with exact file:line, then verify only the short needed windows with fs_read.";

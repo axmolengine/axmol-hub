@@ -24,6 +24,7 @@ Keep checks narrow: read the game's `CMakeLists.txt`, `cmake/modules/AXGameEngin
 
 3. **Shader build & packaging rules**
    - Trace `app_shaders_dir` in `<engine>/cmake/Modules/AXBuildHelpers.cmake` to confirm directory case (`shaders` vs `Shaders`), shader extension (`.fsh`/`.vsh` in v2 GLSL vs `_fs.hlsl`/`_vs.hlsl` in v3 HLSL), and output resource key (`custom/<name>`).
+   - Game source assets live in `Content/` (not `Resources/`); `Resources/` only appears in packaged build outputs (e.g., `.app/Contents/Resources/axslc/custom/...` on macOS).
    - Verify both shader compiler (`axslcc`) exit status and that the compiled output is packaged into the app's resources directory (e.g., `.app/Contents/Resources/axslc/custom/...` on macOS).
 
 4. **CMake options & v3 RHI backends**
