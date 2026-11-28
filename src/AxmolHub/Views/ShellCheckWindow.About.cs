@@ -107,9 +107,12 @@ internal sealed class ShellAboutChecks
             "关于对话框带 Axmol Hub 的图标（实际 "
             + (logo is null ? "没有图标" : logo.PixelSize.Width + "x" + logo.PixelSize.Height + " 像素") + "）");
 
-        // ⑧ The repository link and the License and Open Source Notices footer link.
+        // ⑧ The website link (following UI language) and the License and Open Source Notices footer link.
         var link = NamedDescendant<Button>(dialog, "DialogLink");
         var licenseLink = NamedDescendant<Button>(dialog, "DialogFooterLink");
+        var expectedWebsite = HubStrings.Language == HubTexts.ChineseLanguage
+            ? AboutWebsiteChinese
+            : AboutWebsiteEnglish;
         var savedOpener = HubDialog.LinkOpener;
         string? opened = null;
         try
@@ -126,11 +129,11 @@ internal sealed class ShellAboutChecks
             HubDialog.LinkOpener = savedOpener;
         }
 
-        Check(link is not null && link.Content?.ToString() == AboutRepository && opened == AboutRepository
+        Check(link is not null && link.Content?.ToString() == expectedWebsite && opened == expectedWebsite
               && link.Classes.Contains("link")
               && licenseLink is not null && licenseLink.Content?.ToString() == "License and Open Source Notices"
               && licenseLink.Classes.Contains("link"),
-            "关于对话框带 Axmol Hub 的 GitHub 仓库链接与 License 入口（实际「"
+            "关于对话框带随语言切换的官网链接与 License 入口（实际「"
             + link?.Content + "」→「" + opened + "」，License「" + licenseLink?.Content + "」）");
 
         // ⑨ The bar is Hub's own: one close plate, drawn by HubDialogChrome — minimise and maximise belong to the

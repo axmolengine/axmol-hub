@@ -94,7 +94,10 @@ public partial class App : Application
         "Axmol Hub is the desktop workspace for Axmol game development: engines, projects, toolchains and an AI "
         + "assistant in one place.";
 
-    private const string AboutRepository = "https://github.com/axmolengine/axmol-hub";
+    internal static string AboutWebsite =>
+        HubStrings.Language == HubTexts.ChineseLanguage
+            ? "https://axmol.dev/zh/hub"
+            : "https://axmol.dev/hub";
 
     /// <summary>The application menu's About entry, clicked (see the <c>NativeMenu</c> in App.axaml).</summary>
     private void OnAboutMenuClick(object? sender, EventArgs e)
@@ -112,7 +115,9 @@ public partial class App : Application
     /// file is an appearance problem rather than a reason for the dialog to fail.</para>
     /// </summary>
     internal static Task<HubDialogResult> ShowAboutAsync(Window? owner)
-        => HubDialog.ShowAsync(
+    {
+        var website = AboutWebsite;
+        return HubDialog.ShowAsync(
             owner,
             AboutTitle,
             AboutTagline,
@@ -122,12 +127,12 @@ public partial class App : Application
             subheading: "Version " + HubReleaseInfo.DisplayVersion,
             links:
             [
-                new(AboutRepository, AboutRepository, "Source code:"),
-                new("axmol.dev", "https://axmol.dev", "Super project:"),
+                new(website, website, "Website:"),
                 new("Simdsoft Limited.", "https://simdsoft.com", "Copyright © 2026"),
             ],
             footerLink: new(AboutLicenseLabel, OnClick: dialog => _ = LicenseWindow.ShowAsync(dialog)),
             centerBody: true);
+    }
 
     private static Bitmap? _aboutPicture;
 

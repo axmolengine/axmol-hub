@@ -1226,7 +1226,8 @@ internal static class ShellCheckSupport
 
     internal const string AboutMenuLabel = "About Axmol Hub…";
     internal const string AboutTagline = "Axmol Hub is the desktop workspace for Axmol game development: engines, projects, toolchains and an AI " + "assistant in one place.";
-    internal const string AboutRepository = "https://github.com/axmolengine/axmol-hub";
+    internal const string AboutWebsiteEnglish = "https://axmol.dev/hub";
+    internal const string AboutWebsiteChinese = "https://axmol.dev/zh/hub";
     internal sealed class ContextBurstClient : IChatClient
     {
         public int Executed { get; private set; }
