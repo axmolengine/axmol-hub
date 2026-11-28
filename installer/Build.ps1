@@ -12,11 +12,14 @@
     [string]$SigningThumbprint,
     [ValidatePattern('\Ahttps?://[a-zA-Z0-9.-]+(?::[0-9]+)?(?:/[a-zA-Z0-9._~/-]*)?\z')]
     [string]$TimestampUrl,
-    # Optional macOS code-signing identity (subject name, SHA-1, 'auto' for the first valid
+    # Optional macOS code-signing identity (subject name, SHA-1, 'auto' for the best matching
     # code-signing identity in the login keychain, or '-' for ad-hoc bundle signing).
-    # When omitted: local non-CI builds check HUB_MAC_SIGN_IDENTITY, then auto-select the first valid
-    # keychain identity and fall back to ad-hoc ('-'); CI builds default to ad-hoc ('-').
+    # When omitted: local non-CI builds check HUB_MAC_SIGN_IDENTITY, then auto-select the best
+    # keychain identity (Developer ID -> Simdsoft Limited -> first valid identity) and fall
+    # back to ad-hoc ('-'); CI builds default to ad-hoc ('-') unless -MacSignIdentity is supplied.
     [string]$MacSignIdentity,
+    # Optional keychain path passed to Velopack / codesign (used by CI temporary keychains).
+    [string]$MacSignKeychain,
     # Delta packages presuppose the previous version's .nupkg already present in the output
     # directory at pack time. Publish.ps1 first fetches it with `vpk download github`, then
     # calls this script with -NoClean; the default still cleans, because releases.<channel>.json is a single index and leftover old versions would be pulled into the release content.
@@ -181,7 +184,6 @@ if ($Runtime -like 'linux-*') {
     $taskArguments += @('--categories', 'Development;Utility')
 }
 $taskMacPlist = $null
-$taskMacLocalSignIdentity = ''
 if ($Runtime -like 'osx-*') {
     $taskIsCi = $env:CI -in @('true', '1') -or $env:GITHUB_ACTIONS -eq 'true'
     $taskMacSignIdentity = $MacSignIdentity
@@ -190,12 +192,27 @@ if ($Runtime -like 'osx-*') {
     }
     $taskExplicitAuto = $taskMacSignIdentity -eq 'auto'
     if ($taskExplicitAuto -or ([string]::IsNullOrWhiteSpace($taskMacSignIdentity) -and -not $taskIsCi)) {
-        $taskFoundIdentity = & /usr/bin/security find-identity -v -p codesigning | Select-String -Pattern '"([^"]+)"' | Select-Object -First 1
-        if ($taskFoundIdentity) {
-            $taskMacSignIdentity = [regex]::Match($taskFoundIdentity.Line, '"([^"]+)"').Groups[1].Value
+        # Prefer Developer ID, then the dedicated self-signed project identity (even if untrusted in keychain),
+        # then the first valid code-signing identity (e.g. Apple Development).
+        $taskValidIds = @(
+            & /usr/bin/security find-identity -v -p codesigning |
+                Select-String -Pattern '^\s*\d+\)\s+[0-9A-Fa-f]{40}\s+"([^"]+)"' |
+                ForEach-Object { [regex]::Match($_.Line, '"([^"]+)"').Groups[1].Value }
+        )
+        $taskAllIds = @(
+            & /usr/bin/security find-identity -p codesigning |
+                Select-String -Pattern '^\s*\d+\)\s+[0-9A-Fa-f]{40}\s+"([^"]+)"' |
+                ForEach-Object { [regex]::Match($_.Line, '"([^"]+)"').Groups[1].Value }
+        )
+        $taskPicked = ($taskValidIds | Where-Object { $_ -like 'Developer ID Application:*' } | Select-Object -First 1)
+        if (-not $taskPicked) { $taskPicked = ($taskAllIds | Where-Object { $_ -eq 'Simdsoft Limited' } | Select-Object -First 1) }
+        if (-not $taskPicked) { $taskPicked = ($taskValidIds | Select-Object -First 1) }
+
+        if ($taskPicked) {
+            $taskMacSignIdentity = $taskPicked
         }
         elseif ($taskExplicitAuto) {
-            throw 'No code-signing identity found in the login keychain. Create a Code Signing certificate in Keychain Access -> Certificate Assistant -> Create a Certificate..., or pass -MacSignIdentity - for ad-hoc signing.'
+            throw 'No code-signing identity found in the login keychain. Run pwsh installer/New-MacSelfSignedCert.ps1 -ImportToLoginKeychain, or pass -MacSignIdentity - for ad-hoc signing.'
         }
         else {
             # No signing certificate in the local keychain; fall back to ad-hoc bundle signing so Info.plist
@@ -204,8 +221,8 @@ if ($Runtime -like 'osx-*') {
         }
     }
     elseif ([string]::IsNullOrWhiteSpace($taskMacSignIdentity)) {
-        # CI builds without a Developer ID certificate still ad-hoc sign the .app bundle so Info.plist and
-        # CFBundleIdentifier are bound in both the .pkg installer and the .nupkg update payload.
+        # CI builds without a configured signing certificate fall back to ad-hoc bundle signing so Info.plist
+        # and CFBundleIdentifier are bound in both the .pkg installer and the .nupkg update payload.
         $taskMacSignIdentity = '-'
     }
 
@@ -231,19 +248,15 @@ if ($Runtime -like 'osx-*') {
     # packing anything. The plist is the one we need, so the identity travels in it as __BUNDLE_ID__ above.
     $taskArguments += @('--plist', $taskMacPlist)
 
+    # Sign directly inside vpk pack with .NET JIT entitlements for all identities (Developer ID, Apple Development,
+    # self-signed project certificate, or ad-hoc '-'), so .pkg, .nupkg update payloads, and the portable zip all
+    # share the exact same application identity and designated requirement.
     $taskMacEntitlements = Join-Path $PSScriptRoot 'HubMacEntitlements.entitlements'
-    if ($taskMacSignIdentity -like 'Developer ID Application:*' -or $taskMacSignIdentity -eq '-') {
-        # Developer ID and ad-hoc ('-') builds sign inside vpk pack with .NET JIT entitlements so the .pkg,
-        # the .nupkg update payload, and the portable zip all carry a valid bundle-bound signature.
-        $taskArguments += @('--signAppIdentity', $taskMacSignIdentity, '--signEntitlements', $taskMacEntitlements)
+    $taskArguments += @('--signAppIdentity', $taskMacSignIdentity, '--signEntitlements', $taskMacEntitlements)
+    if (-not [string]::IsNullOrWhiteSpace($MacSignKeychain)) {
+        $taskArguments += @('--keychain', $MacSignKeychain)
     }
-    else {
-        # Local self-signed / Apple Development certificates cannot rely on Apple's secure timestamp service
-        # (especially offline). Ad-hoc sign during vpk pack so .nupkg still carries a bound bundle signature,
-        # then re-sign the .pkg's .app bundle offline during Register-Protocol-Mac.ps1 with --timestamp=none.
-        $taskArguments += @('--signAppIdentity', '-', '--signEntitlements', $taskMacEntitlements)
-        $taskMacLocalSignIdentity = $taskMacSignIdentity
-    }
+    Write-Host "macOS app signing identity: $taskMacSignIdentity"
 }
 try {
     & $taskVpk @taskArguments
@@ -281,7 +294,7 @@ $taskSetup = switch -Wildcard ($Runtime) {
 }
 if ($taskSetup.Count -ne 1) { throw "Expected exactly one installer in $taskOutput for $Runtime, found $($taskSetup.Count)." }
 if ($Runtime -like 'osx-*') {
-    & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName -SignIdentity $taskMacLocalSignIdentity
+    & "$PSScriptRoot/Register-Protocol-Mac.ps1" -PackagePath $taskSetup[0].FullName
 }
 $taskSetupName = Get-HubAssetName -AssetPrefix $taskManifest.assetPrefix -Version $Version -Runtime $Runtime `
     -Extension $taskSetup[0].Extension -ReleaseAssetNames:$ReleaseAssetNames

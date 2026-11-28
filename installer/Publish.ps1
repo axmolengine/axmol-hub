@@ -10,6 +10,8 @@ param(
     [string]$OutputDir,
     [string]$SigningThumbprint,
     [string]$TimestampUrl,
+    [string]$MacSignIdentity,
+    [string]$MacSignKeychain,
     [switch]$PrereleaseBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -19,6 +21,13 @@ if ($SigningThumbprint -or $TimestampUrl) {
         throw 'Pass both signing options with -Stage Build on Windows. Use Release-WindowsSigned.ps1 to publish.'
     }
     $taskSigning = @{ SigningThumbprint = $SigningThumbprint; TimestampUrl = $TimestampUrl }
+}
+if ($MacSignIdentity -or $MacSignKeychain) {
+    if ($Stage -ne 'Build' -or -not $IsMacOS -or $Runtime -notlike 'osx-*') {
+        throw 'Pass macOS signing options only with -Stage Build on macOS (osx-*).'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($MacSignIdentity)) { $taskSigning['MacSignIdentity'] = $MacSignIdentity }
+    if (-not [string]::IsNullOrWhiteSpace($MacSignKeychain)) { $taskSigning['MacSignKeychain'] = $MacSignKeychain }
 }
 . "$PSScriptRoot/GitHubRelease.ps1"
 . "$PSScriptRoot/AssetNames.ps1"

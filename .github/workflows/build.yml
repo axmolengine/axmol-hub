@@ -402,6 +402,14 @@ jobs:
       - name: Prepare pinned Velopack CLI
         run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
+      - name: Import macOS code-signing certificate
+        shell: pwsh
+        env:
+          MAC_SIGN_P12_BASE64: ${{ secrets.MAC_SIGN_P12_BASE64 }}
+          MAC_SIGN_P12_PASSWORD: ${{ secrets.MAC_SIGN_P12_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+        run: ./installer/Import-MacSigningCert.ps1
+
       - name: Build release packages
         shell: pwsh
         env:
@@ -410,7 +418,15 @@ jobs:
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
-          ./installer/Publish.ps1 -Stage Build -Runtime osx-arm64 -PrereleaseBuild:$prereleaseBuild
+          $signArgs = @{}
+          if (-not [string]::IsNullOrWhiteSpace($env:MAC_SIGN_IDENTITY)) { $signArgs['MacSignIdentity'] = $env:MAC_SIGN_IDENTITY }
+          if (-not [string]::IsNullOrWhiteSpace($env:MAC_SIGN_KEYCHAIN)) { $signArgs['MacSignKeychain'] = $env:MAC_SIGN_KEYCHAIN }
+          ./installer/Publish.ps1 -Stage Build -Runtime osx-arm64 -PrereleaseBuild:$prereleaseBuild @signArgs
+
+      - name: Clean up temporary signing keychain
+        if: always()
+        shell: pwsh
+        run: ./installer/Import-MacSigningCert.ps1 -Cleanup
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
@@ -440,6 +456,14 @@ jobs:
       - name: Prepare pinned Velopack CLI
         run: dotnet run --project tests/AxmolHub.Checks -c Release -- cache/packaging-tools --prepare-packaging
 
+      - name: Import macOS code-signing certificate
+        shell: pwsh
+        env:
+          MAC_SIGN_P12_BASE64: ${{ secrets.MAC_SIGN_P12_BASE64 }}
+          MAC_SIGN_P12_PASSWORD: ${{ secrets.MAC_SIGN_P12_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+        run: ./installer/Import-MacSigningCert.ps1
+
       - name: Build release packages
         shell: pwsh
         env:
@@ -448,7 +472,15 @@ jobs:
           ORCAROUTER_APP_ID: ${{ secrets.ORCAROUTER_APP_ID }}
         run: |
           $prereleaseBuild = $env:PRERELEASE_BUILD -eq 'true'
-          ./installer/Publish.ps1 -Stage Build -Runtime osx-x64 -PrereleaseBuild:$prereleaseBuild
+          $signArgs = @{}
+          if (-not [string]::IsNullOrWhiteSpace($env:MAC_SIGN_IDENTITY)) { $signArgs['MacSignIdentity'] = $env:MAC_SIGN_IDENTITY }
+          if (-not [string]::IsNullOrWhiteSpace($env:MAC_SIGN_KEYCHAIN)) { $signArgs['MacSignKeychain'] = $env:MAC_SIGN_KEYCHAIN }
+          ./installer/Publish.ps1 -Stage Build -Runtime osx-x64 -PrereleaseBuild:$prereleaseBuild @signArgs
+
+      - name: Clean up temporary signing keychain
+        if: always()
+        shell: pwsh
+        run: ./installer/Import-MacSigningCert.ps1 -Cleanup
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7

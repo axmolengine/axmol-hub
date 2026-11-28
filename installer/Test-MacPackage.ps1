@@ -43,6 +43,7 @@ try {
     if ($taskSignInfo -match '(?m)^Info\.plist=not bound$') {
         throw 'The Hub app bundle signature must bind Info.plist.'
     }
+    & /usr/bin/codesign -d -r- $taskAppBundle 2>&1 | Select-String -Pattern '^designated' | ForEach-Object { Write-Host $_.Line }
 }
 finally {
     if (Test-Path -LiteralPath $taskWork) { Remove-Item -LiteralPath $taskWork -Recurse -Force }
