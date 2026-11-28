@@ -4845,22 +4845,28 @@ public partial class ChatPanel : UserControl
     private static Button IconActionButton(
         string textKey, string geometryKey, Action? onClick, double size = 13, double thickness = 1.7)
     {
-        var icon = geometryKey == "Hub.Icon.Edit" ? HubActionIcon.Create(geometryKey) : new Avalonia.Controls.Shapes.Path
+        Control icon;
+        if (geometryKey == "Hub.Icon.Close")
+            icon = HubActionIcon.Close();
+        else if (geometryKey == "Hub.Icon.Edit")
+            icon = HubActionIcon.Create(geometryKey);
+        else
         {
-            Width = size,
-            Height = size,
-            Stretch = Stretch.Uniform,
-            Fill = Brushes.Transparent,
-            StrokeThickness = thickness,
-            StrokeLineCap = PenLineCap.Round,
-            StrokeJoin = PenLineJoin.Round,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        if (geometryKey != "Hub.Icon.Edit")
-        {
-            icon.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension(geometryKey));
-            icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            var path = new Avalonia.Controls.Shapes.Path
+            {
+                Width = size,
+                Height = size,
+                Stretch = Stretch.Uniform,
+                Fill = Brushes.Transparent,
+                StrokeThickness = thickness,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            path.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension(geometryKey));
+            path.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            icon = path;
         }
 
         var button = new Button { Content = icon, Tag = textKey };

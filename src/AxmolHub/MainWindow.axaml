@@ -401,8 +401,8 @@
     </Style>
     <!-- The square caption-row button: the picture viewer's copy and close, the review column's repo refresh, and
          the settings card's ×. Quieter than the round nav arrows because they sit beside text, but still visible
-         at rest for the same reason the arrows are. All four hold a 14 DIP glyph, which is why the padding below
-         belongs to the class and not to one of them. -->
+         at rest for the same reason the arrows are. Margin is zeroed so the base Button theme's trailing 0,0,8,0
+         does not stack onto a cluster's Spacing. -->
     <Style Selector="Button.viewer-action">
       <Setter Property="MinHeight" Value="0" />
       <Setter Property="Width" Value="30" />
@@ -411,6 +411,7 @@
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Margin" Value="0" />
       <!-- Padding is stated, not left to the control theme. Fluent's Button pads itself by 12 on each side, which
            leaves a 6 DIP content box inside a 30 DIP plate: the 14 DIP glyph does not fit, and a ContentPresenter
            centres the box rather than the child that overflows it — so the × hung out to the right of the hover
@@ -1296,8 +1297,8 @@
     <Grid VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,14"
           ColumnDefinitions="Auto,Auto">
       <TextBlock x:Name="PictureViewerCaption" Classes="picture-viewer-caption" />
-      <StackPanel x:Name="PictureViewerBar" Grid.Column="1" Orientation="Horizontal" Spacing="4"
-                  Margin="14,0,0,0" />
+      <StackPanel x:Name="PictureViewerBar" Grid.Column="1" Orientation="Horizontal" Spacing="2"
+                  Margin="10,0,0,0" />
     </Grid>
   </Grid>
 

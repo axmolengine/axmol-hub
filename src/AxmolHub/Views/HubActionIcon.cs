@@ -8,19 +8,31 @@ namespace AxmolHub;
 internal static class HubActionIcon
 {
     /// <summary>A close glyph authored in a fixed square, not stretched from the 24-unit toolbar geometry.
-    /// The surrounding 20-unit target stays easy to hit while the ink remains a quiet, centered eight-unit cross.</summary>
-    internal static Avalonia.Controls.Control Close()
+    /// The surrounding target stays easy to hit while the ink remains a quiet, centered cross.</summary>
+    internal static Avalonia.Controls.Control Close(double size = 8, double thickness = 1.2)
     {
+        var far = size - 1;
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
+        {
+            ctx.BeginFigure(new Avalonia.Point(1, 1), false);
+            ctx.LineTo(new Avalonia.Point(far, far));
+            ctx.EndFigure(false);
+            ctx.BeginFigure(new Avalonia.Point(far, 1), false);
+            ctx.LineTo(new Avalonia.Point(1, far));
+            ctx.EndFigure(false);
+        }
+
         var path = new Path
         {
-            Data = Geometry.Parse("M1,1 L7,7 M7,1 L1,7"),
-            StrokeThickness = 1.2,
+            Data = geometry,
+            StrokeThickness = thickness,
             StrokeLineCap = PenLineCap.Round,
             IsHitTestVisible = false,
             Tag = "Hub.Icon.Close",
         };
         path.Bind(Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
-        var square = new Avalonia.Controls.Canvas { Width = 8, Height = 8, IsHitTestVisible = false };
+        var square = new Avalonia.Controls.Canvas { Width = size, Height = size, IsHitTestVisible = false };
         square.Children.Add(path);
         return square;
     }

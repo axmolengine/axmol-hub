@@ -435,20 +435,29 @@ public partial class MainWindow
 
     private static Button ViewerActionButton(string textKey, string geometryKey, Action? onClick)
     {
-        var icon = new Avalonia.Controls.Shapes.Path
+        Control icon;
+        if (geometryKey == "Hub.Icon.Close")
         {
-            Width = 14,
-            Height = 14,
-            Stretch = Stretch.Uniform,
-            Fill = Brushes.Transparent,
-            StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round,
-            StrokeJoin = PenLineJoin.Round,
-        };
-        icon.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension(geometryKey));
-        icon.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            icon = HubActionIcon.Close(10, 1.35);
+        }
+        else
+        {
+            var path = new Avalonia.Controls.Shapes.Path
+            {
+                Width = 13,
+                Height = 13,
+                Stretch = Stretch.Uniform,
+                Fill = Brushes.Transparent,
+                StrokeThickness = 1.5,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+            };
+            path.Bind(Avalonia.Controls.Shapes.Path.DataProperty, new DynamicResourceExtension(geometryKey));
+            path.Bind(Avalonia.Controls.Shapes.Path.StrokeProperty, new DynamicResourceExtension("Hub.TextSecondary"));
+            icon = path;
+        }
 
-        var button = new Button { Content = icon, Tag = textKey };
+        var button = new Button { Content = icon, Tag = textKey, Width = 26, Height = 26 };
         button.Classes.Add("viewer-action");
         ToolTip.SetTip(button, HubStrings.Get(textKey));
         if (onClick is not null)
