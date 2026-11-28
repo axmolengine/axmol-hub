@@ -236,7 +236,9 @@ public partial class HubDialog : Window
 
         if (danger)
         {
-            button.Classes.Add("danger");
+            // Keep solid danger fill for the sole destructive confirmation key; when a safe primary action
+            // shares the row (e.g. Save / Discard / Cancel), use the quieter destructive outline instead.
+            button.Classes.Add(primary ? "danger" : "destructive");
         }
 
         button.Click += (_, _) => Finish(result);

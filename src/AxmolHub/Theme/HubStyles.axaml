@@ -315,10 +315,13 @@
        only swapped the icon, and the confirm button of uninstall / delete confirmation dialogs looked exactly
        like a normal confirm button. HubDialog adds this tier as a button variant. -->
   <Style Selector="Button.danger">
-    <Setter Property="Background" Value="{DynamicResource Hub.Danger}" />
+    <Setter Property="Background" Value="{DynamicResource Hub.DangerFill}" />
     <Setter Property="Foreground" Value="{DynamicResource Hub.TextOnAccent}" />
-    <Setter Property="BorderBrush" Value="{DynamicResource Hub.Danger}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerFillBorder}" />
     <Setter Property="FontWeight" Value="Medium" />
+  </Style>
+  <Style Selector="Button.danger:pointerover /template/ Border#Frame">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerFillBorder}" />
   </Style>
 
   <!--
@@ -354,9 +357,13 @@
     <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerBorder}" />
   </Style>
+  <Style Selector="Button.destructive TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Hub.DangerText}" />
+  </Style>
   <!-- Without this the shared hover rule would repaint a destructive button's frame in the accent blue
        on hover, which reads as if the warning had been withdrawn. -->
   <Style Selector="Button.destructive:pointerover /template/ Border#Frame">
+    <Setter Property="Background" Value="{DynamicResource Hub.DangerHover}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Hub.DangerText}" />
   </Style>
 
