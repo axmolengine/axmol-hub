@@ -6,27 +6,27 @@ DEVELOPMENT-ONLY PACKAGE
 AvaloniaUI.DiagnosticsSupport 2.2.3 — excluded from Release assets by the project configuration. Its NuGet package metadata does not declare a license expression. It is not included in the runtime license list below.
 
 RELEASE PACKAGE INVENTORY
-• Anthropic 13.6.0 — Apache-2.0 (see Anthropic.txt)
-• Avalonia 12.1.6 — MIT
+• Anthropic 13.14.0 — Apache-2.0 (see Anthropic.txt)
+• Avalonia 12.2.0 — MIT
 • Avalonia.Controls.DataGrid 12.1.2 — MIT
 • Avalonia.Controls.WebView 12.1.2 — MIT (Copyright (c) 2026 AvaloniaUI OÜ; shared MIT text below)
-• Avalonia.Desktop 12.1.6 — MIT
-• Avalonia.Themes.Fluent 12.1.6 — MIT
+• Avalonia.Desktop 12.2.0 — MIT
+• Avalonia.Themes.Fluent 12.2.0 — MIT
 • Markdig 1.6.0 — BSD-2-Clause
 • Markdown.Avalonia 12.0.2 — MIT
-• Svg.Controls.Avalonia 12.0.0.17 — MIT
+• Svg.Controls.Avalonia 12.2.0 — MIT
 • Velopack 1.2.161 — MIT (see the Velopack license text in Velopack.txt)
 • Avalonia.Angle.Windows.Natives 2.1.27548.20260419 — BSD-3-Clause variant (see ANGLE.txt)
 • Avalonia.AvaloniaEdit 12.0.0 — MIT
-• Avalonia.BuildServices 11.3.2 — MIT
-• Avalonia.FreeDesktop 12.1.6 — MIT
-• Avalonia.FreeDesktop.AtSpi 12.1.6 — MIT
-• Avalonia.HarfBuzz 12.1.6 — MIT
-• Avalonia.Native 12.1.6 — MIT
-• Avalonia.Remote.Protocol 12.1.6 — MIT
-• Avalonia.Skia 12.1.6 — MIT
-• Avalonia.Win32 12.1.6 — MIT
-• Avalonia.X11 12.1.6 — MIT
+• Avalonia.BuildServices 12.0.0 — MIT
+• Avalonia.FreeDesktop 12.2.0 — MIT
+• Avalonia.FreeDesktop.AtSpi 12.2.0 — MIT
+• Avalonia.HarfBuzz 12.2.0 — MIT
+• Avalonia.Native 12.2.0 — MIT
+• Avalonia.Remote.Protocol 12.2.0 — MIT
+• Avalonia.Skia 12.2.0 — MIT
+• Avalonia.Win32 12.2.0 — MIT
+• Avalonia.X11 12.2.0 — MIT
 • ColorDocument.Avalonia 12.0.2 — MIT
 • ColorTextBlock.Avalonia 12.0.2 — MIT
 • ExCSS 4.3.1 — MIT
@@ -44,44 +44,50 @@ RELEASE PACKAGE INVENTORY
 • Markdown.Avalonia.Svg 12.0.2 — MIT
 • Markdown.Avalonia.SyntaxHigh 12.0.2 — MIT
 • Markdown.Avalonia.Tight 12.0.2 — MIT
-• MicroCom.Runtime 0.11.6 — MIT
-• Microsoft.Extensions.AI 10.10.0 — MIT
-• Microsoft.Extensions.AI.Abstractions 10.10.1 — MIT
-• Microsoft.Extensions.AI.OpenAI 10.10.1 — MIT
-• Microsoft.Extensions.Caching.Abstractions 10.0.12 — MIT
-• Microsoft.Extensions.Configuration.Abstractions 10.0.9 — MIT
-• Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12 — MIT
-• Microsoft.Extensions.Diagnostics.Abstractions 10.0.9 — MIT
-• Microsoft.Extensions.FileProviders.Abstractions 10.0.9 — MIT
-• Microsoft.Extensions.Hosting.Abstractions 10.0.9 — MIT
-• Microsoft.Extensions.Logging.Abstractions 10.0.12 — MIT
-• Microsoft.Extensions.Options 10.0.9 — MIT
-• Microsoft.Extensions.Primitives 10.0.12 — MIT
+• MicroCom.Runtime 0.11.7 — MIT
+• Microsoft.Bcl.Cryptography 10.0.2 — MIT
+• Microsoft.Extensions.AI 11.0.1 — MIT
+• Microsoft.Extensions.AI.Abstractions 11.0.1 — MIT
+• Microsoft.Extensions.AI.OpenAI 11.0.1 — MIT
+• Microsoft.Extensions.Caching.Abstractions 10.0.15 — MIT
+• Microsoft.Extensions.Configuration.Abstractions 10.0.10 — MIT
+• Microsoft.Extensions.DependencyInjection.Abstractions 10.0.15 — MIT
+• Microsoft.Extensions.Diagnostics.Abstractions 10.0.10 — MIT
+• Microsoft.Extensions.FileProviders.Abstractions 10.0.10 — MIT
+• Microsoft.Extensions.Hosting.Abstractions 10.0.10 — MIT
+• Microsoft.Extensions.Logging.Abstractions 10.0.15 — MIT
+• Microsoft.Extensions.Options 10.0.10 — MIT
+• Microsoft.Extensions.Primitives 10.0.15 — MIT
+• Microsoft.IdentityModel.Abstractions 8.23.0 — MIT
+• Microsoft.IdentityModel.JsonWebTokens 8.23.0 — MIT
+• Microsoft.IdentityModel.Logging 8.23.0 — MIT
+• Microsoft.IdentityModel.Tokens 8.23.0 — MIT
 • Microsoft.IO.RecyclableMemoryStream 3.0.1 — MIT
 • MimeTypes 2.5.2 — Apache-2.0 (see Google.GenAI.txt)
 • Newtonsoft.Json 13.0.3 — MIT
-• OpenAI 2.14.0 — MIT
-• ShimSkiaSharp 5.2.3 — MIT
+• OpenAI 2.15.0 — MIT
+• ShimSkiaSharp 5.2.4 — MIT
 • SkiaSharp 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.Linux 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.macOS 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.WebAssembly 3.119.4 — MIT (the package license; third-party notices are listed separately below)
 • SkiaSharp.NativeAssets.Win32 3.119.4 — MIT (the package license; third-party notices are listed separately below)
-• Svg.Custom 5.2.3 — MS-PL
-• Svg.Model 5.2.3 — MIT
-• Svg.SceneGraph 5.2.3 — MIT
-• System.ClientModel 1.15.0 — MIT
+• Svg.Custom 5.2.4 — MS-PL
+• Svg.Model 5.2.4 — MIT
+• Svg.SceneGraph 5.2.4 — MIT
+• System.ClientModel 1.16.0 — MIT
 • System.CodeDom 7.0.0 — MIT
-• System.Diagnostics.DiagnosticSource 10.0.12 — MIT
-• System.IO.Pipelines 10.0.12 — MIT
+• System.Diagnostics.DiagnosticSource 10.0.15 — MIT
+• System.Formats.Asn1 10.0.2 — MIT
+• System.IO.Pipelines 10.0.15 — MIT
 • System.Management 7.0.2 — MIT
-• System.Memory.Data 10.0.9 — MIT
-• System.Net.ServerSentEvents 10.0.11 — MIT
-• System.Numerics.Tensors 10.0.12 — MIT
+• System.Memory.Data 10.0.10 — MIT
+• System.Net.ServerSentEvents 10.0.14 — MIT
+• System.Numerics.Tensors 10.0.15 — MIT
 • System.Security.Cryptography.ProtectedData 10.0.15 — MIT
-• System.Text.Encodings.Web 10.0.12 — MIT
-• System.Text.Json 10.0.12 — MIT
-• System.Threading.Channels 10.0.12 — MIT
+• System.Text.Encodings.Web 10.0.15 — MIT
+• System.Text.Json 10.0.15 — MIT
+• System.Threading.Channels 10.0.15 — MIT
 • Tmds.DBus.Protocol 0.94.1 — MIT
 
 BUNDLED THIRD-PARTY COMPONENT NOTICES
